@@ -668,27 +668,9 @@ impl SkillIndex {
         let root = self
             .write_dir()
             .ok_or("skill_write requires a bot_id and a configured per-bot skills directory")?;
-        let written = scoped_store::write(root, name, content, expected_version)?;
-        // The marker is daemon-owned and sits beside SKILL.md. A clean
-        // overwrite deletes it, so the skill can become trusted instructions
-        // again. Sticky until that overwrite.
-        set_untrusted_marker(&written.path, untrusted)?;
+        let written = scoped_store::write(root, name, content, expected_version, untrusted)?;
         self.reload();
         Ok(written)
-    }
-
-    /// Mark a published skill directory as untrusted data and reload.
-    ///
-    /// The source skill is left as it was. Publishing a trusted skill from a
-    /// tainted run marks only the shared copy.
-    ///
-    /// # Errors
-    /// The marker cannot be written.
-    pub fn mark_dir_untrusted(&self, dir: &Path) -> Result<(), String> {
-        let marker = dir.join(UNTRUSTED_MARKER);
-        fs::write(&marker, b"untrusted\n").map_err(|e| e.to_string())?;
-        self.reload();
-        Ok(())
     }
 
     /// Publish this bot's skill as `<shared>/<name>@<version>/`, preserving
@@ -698,6 +680,13 @@ impl SkillIndex {
     /// # Errors
     /// Missing scopes/skill, unsafe paths, a replacement conflict, or I/O error.
     pub fn publish(&self, name: &str, replace: bool) -> Result<PathBuf, String> {
+        self.publish_with_trust(name, replace, false)
+    }
+
+    /// Publish with the caller's exposure recorded before the shared copy is visible.
+    /// # Errors
+    /// Same path, conflict and I/O errors as [`Self::publish`].
+    pub fn publish_with_trust(&self, name: &str, replace: bool, untrusted: bool) -> Result<PathBuf, String> {
         self.check_bound_scope()?;
         let bot = self
             .write_dir()
@@ -708,7 +697,7 @@ impl SkillIndex {
             .user
             .as_deref()
             .ok_or("no shared skills directory is configured")?;
-        let path = scoped_store::publish(bot, shared, name, replace, &self.bundled_names())?;
+        let path = scoped_store::publish(bot, shared, name, replace, &self.bundled_names(), untrusted)?;
         self.reload();
         Ok(path)
     }
@@ -721,7 +710,7 @@ fn untrusted_marker(dir: &Path) -> bool {
     dir.join(UNTRUSTED_MARKER).is_file()
 }
 
-fn set_untrusted_marker(skill_file: &Path, untrusted: bool) -> Result<(), String> {
+pub(crate) fn set_untrusted_marker(skill_file: &Path, untrusted: bool) -> Result<(), String> {
     let Some(dir) = skill_file.parent() else {
         return Ok(());
     };

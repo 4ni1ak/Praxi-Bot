@@ -254,13 +254,8 @@ impl Tool for SkillTool {
                         return Err(ToolError::InvalidInput("replace must be a boolean".into()));
                     }
                 };
-                let source_untrusted = index.get(name).is_some_and(|skill| skill.untrusted);
-                let path = index.publish(name, replace).map_err(ToolError::Execution)?;
-                if ctx.content_tainted || source_untrusted {
-                    index
-                        .mark_dir_untrusted(&path)
-                        .map_err(ToolError::Execution)?;
-                }
+                let path = index.publish_with_trust(name, replace, ctx.content_tainted)
+                    .map_err(ToolError::Execution)?;
                 self.index.reload();
                 Ok(ToolOutput::text(format!(
                     "Published skill `{name}` to {}",
