@@ -36,6 +36,7 @@ fs4 = "1"
 clap = { workspace = true, features = ["env"] }
 daemon-api = { path = "../../crates/daemon-api", version = "0.1.0" }
 desktop-api = { path = "../../crates/desktop-api", version = "0.1.0" }
+cli-provider.workspace = true
 dialoguer = { version = "0.12", default-features = false, features = ["password"] }
 parking_lot.workspace = true
 permission-engine = { path = "../../crates/permission-engine", version = "0.1.0" }
