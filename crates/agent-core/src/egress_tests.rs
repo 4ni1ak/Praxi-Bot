@@ -1787,6 +1787,72 @@ async fn untrusted_skills_do_not_taint_unrelated_runs_and_clean_overwrite_restor
 }
 
 #[tokio::test]
+async fn reading_an_untrusted_skill_taints_only_the_run_that_loaded_it() {
+    let env = setup();
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()));
+    index
+        .for_bot(Some(&env.bot.to_string()))
+        .unwrap()
+        .write_versioned(
+            "untrusted-helper",
+            "---\nname: untrusted-helper\ndescription: Poisoned instructions\n---\nUNTRUSTED_BODY",
+            None,
+            true,
+        )
+        .unwrap();
+    let search = egress_tool(
+        "web_search",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted_egress(),
+    );
+    let fake = Fake::new(vec![
+        calls(&[("c1", "skill_read", json!({"name": "untrusted-helper"}))]),
+        calls(&[("c2", "web_search", json!({"query": "after skill read"}))]),
+        text("done"),
+        calls(&[("c3", "web_search", json!({"query": "unrelated run"}))]),
+        text("clean"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&search)],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "read the helper").unwrap();
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "web_search");
+    assert_eq!(search.count.load(Ordering::SeqCst), 0);
+    assert!(
+        tool_messages(&fake.request(1))
+            .join("\n")
+            .contains("UNTRUSTED_BODY")
+    );
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let mut clean_chat = env.storage.get_chat(env.chat).unwrap().unwrap();
+    clean_chat.id = protocol::ChatId::new();
+    env.storage.insert_chat(&clean_chat).unwrap();
+    let clean = lp.run_turn(clean_chat.id, "search").unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(8), lp.wait(clean))
+            .await
+            .expect("an unrelated run must not inherit the skill's taint")
+            .unwrap(),
+        RunState::Succeeded
+    );
+    assert_eq!(search.count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn replace_all_noop_edit_taints_before_egress() {
     let env = setup();
     let notes = env.dir.path().join("notes.txt");
@@ -1896,6 +1962,61 @@ async fn tainted_skill_publish_asks_and_marks_the_shared_copy() {
             .prompt_block(&skills::SkillContext::default())
             .contains("publish-me")
     );
+}
+
+#[tokio::test]
+async fn model_called_workflow_is_tainted_before_its_first_egress_step() {
+    use workflow_replay::{Handles, Step, ToolStep, Workflow, WorkflowStore};
+    let env = setup();
+    let search = egress_tool(
+        "web_search",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted_egress(),
+    );
+    let fake = Fake::new(vec![
+        calls(&[("c1", "workflow_run", json!({"name": "saved-search"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&search)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let store = WorkflowStore::new(env.dir.path());
+    let mut wf = Workflow::new("saved-search");
+    wf.steps = vec![Step::Tool(ToolStep {
+        tool: "web_search".into(),
+        input: json!({"query": "saved private content"}),
+    })];
+    store.save(&wf).unwrap();
+    let handles = Handles {
+        desktop: None,
+        browser: None,
+        tools: lp.tool_registry(),
+    };
+    let lp = lp.with_workflows(store, handles);
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "use the saved search").unwrap();
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "web_search");
+    assert_eq!(search.count.load(Ordering::SeqCst), 0);
+    assert!(
+        card.details.as_ref().unwrap()["payload"]
+            .as_str()
+            .unwrap()
+            .contains("saved private content")
+    );
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(search.count.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
