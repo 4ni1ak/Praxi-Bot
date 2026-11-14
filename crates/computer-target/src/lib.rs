@@ -15,6 +15,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 /// Durable pause reason stored on a run waiting for a paired PC node.
 pub const WAIT_FOR_PC_REASON: &str = "waiting_for_pc";
 
+/// Legacy computer id used before ids were bound to the daemon identity key.
+///
+/// It is not a machine identity. A grant or run that still says `local` must
+/// be migrated on the machine that created it; another machine must not treat
+/// it as its own desktop.
+pub const LEGACY_LOCAL_COMPUTER_ID: &str = "local";
+
 /// Where a bot may execute computer actions (`[runtime].computer`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ComputerTarget {
@@ -162,7 +169,10 @@ impl fmt::Display for ComputerLabel {
     }
 }
 
-/// Stable identity of a resolved desktop. `local` denotes this daemon's desktop.
+/// Stable identity of a resolved desktop.
+///
+/// This daemon's own computer uses a machine-bound id (the identity-key
+/// fingerprint in production). [`LEGACY_LOCAL_COMPUTER_ID`] is not that id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputerNode {
     pub id: String,
@@ -181,9 +191,14 @@ pub trait ComputerProvider: Send + Sync {
     fn local(&self) -> Option<Arc<dyn DesktopBackend>>;
 
     /// Display identity of this daemon's local computer.
+    ///
+    /// The default id is [`LEGACY_LOCAL_COMPUTER_ID`], for tests and embeds that
+    /// have no identity key. A daemon whose `bot.db` can move to another
+    /// machine must override this with a machine-bound id. The display name
+    /// stays "Local computer".
     fn local_node(&self) -> ComputerNode {
         ComputerNode {
-            id: "local".into(),
+            id: LEGACY_LOCAL_COMPUTER_ID.into(),
             name: "Local computer".into(),
         }
     }
@@ -204,6 +219,13 @@ pub trait ComputerProvider: Send + Sync {
     /// Whether remote PC networking can become available.
     fn pc_network_enabled(&self) -> bool {
         true
+    }
+
+    /// A paired desktop PC exists but is not in the usable cache.
+    ///
+    /// `auto` uses this to explain a fall-through to the host or the browser.
+    fn paired_pc_unreachable(&self) -> bool {
+        false
     }
 
     /// Whether this daemon runs in always-on host mode (`--host`).
@@ -269,10 +291,12 @@ impl fmt::Debug for Resolution {
     }
 }
 
-fn browser_or_off(browser: bool) -> Resolution {
+fn browser_or_off(browser: bool, provider: &dyn ComputerProvider) -> Resolution {
     if browser {
         Resolution {
-            node: None,
+            // The browser runs on this daemon, so the grant scope must be this
+            // machine's id rather than a shared alias.
+            node: Some(provider.local_node()),
             unavailable_reason: None,
             desktop: None,
             browser: true,
@@ -306,7 +330,8 @@ fn pc_desktop(provider: &dyn ComputerProvider) -> Option<ComputerDesktop> {
 fn pc_resolution(desktop: Option<ComputerDesktop>, provider: &dyn ComputerProvider) -> Resolution {
     let unavailable_reason = (desktop.is_none() && !provider.pc_network_enabled())
         .then(|| "PC desktop unavailable: peer networking is disabled".into());
-    let local = desktop.as_ref().is_some_and(|d| d.node.id == "local");
+    let local_id = provider.local_node().id;
+    let local = desktop.as_ref().is_some_and(|d| d.node.id == local_id);
     Resolution {
         wait_for_pc: desktop.is_none() && unavailable_reason.is_none(),
         browser: local && provider.browser_available(),
@@ -333,7 +358,7 @@ fn resolve_auto(provider: &dyn ComputerProvider, browser: bool) -> Resolution {
             wait_for_pc: false,
         };
     }
-    browser_or_off(browser)
+    browser_or_off(browser, provider)
 }
 
 /// Resolve a bot's [`ComputerTarget`] against current [`ComputerProvider`] state
@@ -342,8 +367,8 @@ fn resolve_auto(provider: &dyn ComputerProvider, browser: bool) -> Resolution {
 pub fn resolve(target: &ComputerTarget, provider: &dyn ComputerProvider) -> Resolution {
     let browser = provider.browser_available();
     match target {
-        ComputerTarget::Off => browser_or_off(false),
-        ComputerTarget::Browser => browser_or_off(browser),
+        ComputerTarget::Off => browser_or_off(false, provider),
+        ComputerTarget::Browser => browser_or_off(browser, provider),
         ComputerTarget::Host => match provider.local() {
             Some(d) => Resolution {
                 node: Some(provider.local_node()),
@@ -662,5 +687,48 @@ mod tests {
             "local-pc"
         );
         assert!(!r.wait_for_pc);
+    }
+
+    /// A fingerprint id, not the constant `local`, still means this machine:
+    /// the local PC keeps its browser, and the browser-only resolution records
+    /// that same id so a grant cannot say `browser:local`.
+    #[test]
+    fn machine_bound_local_id_keeps_browser_on_the_local_pc() {
+        struct Bound(MockProvider);
+        impl ComputerProvider for Bound {
+            fn local(&self) -> Option<Arc<dyn DesktopBackend>> {
+                self.0.local.clone()
+            }
+            fn local_node(&self) -> ComputerNode {
+                ComputerNode {
+                    id: "machine-a".into(),
+                    name: "Local computer".into(),
+                }
+            }
+            fn pc(&self) -> Option<Arc<dyn DesktopBackend>> {
+                None
+            }
+            fn is_host(&self) -> bool {
+                false
+            }
+            fn browser_available(&self) -> bool {
+                true
+            }
+        }
+        let provider = Bound(MockProvider {
+            local: Some(dummy("local-pc")),
+            pc: None,
+            node: None,
+            is_host: false,
+            browser: true,
+        });
+        let r = resolve(&ComputerTarget::Auto, &provider);
+        assert_eq!(r.node.as_ref().map(|n| n.id.as_str()), Some("machine-a"));
+        assert!(r.browser, "the local PC's browser follows its real id");
+        let browser = resolve(&ComputerTarget::Browser, &provider);
+        assert_eq!(
+            browser.node.as_ref().map(|n| n.id.as_str()),
+            Some("machine-a")
+        );
     }
 }

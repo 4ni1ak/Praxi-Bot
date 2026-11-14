@@ -883,12 +883,21 @@ pub fn serve(
         };
         let peer =
             crate::peer::start_server(data_dir, *host_mode, *peer_enabled, state.clone()).await?;
+        let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
         let computer = Arc::new(crate::computer::CliComputerProvider::new(
             *host_mode,
             local_desktop,
             peer.clone(),
+            local_id.clone(),
         ));
         agent.set_computer_provider(Arc::clone(&computer) as Arc<dyn agent_core::ComputerProvider>);
+        if crate::computer::legacy_local_owned(
+            crate::computer::identity_key_mtime_ms(data_dir),
+            agent.oldest_legacy_local_computer_ms(),
+        ) && let Err(err) = agent.migrate_legacy_local_computer(&local_id)
+        {
+            eprintln!("warning: could not migrate legacy local computer ids: {err}");
+        }
         agent.reconcile_waiting_for_pc_runs()?;
         // A revoked pairing loses screen privileges, live sessions and takeover
         // within a couple of seconds, wherever the revoke happened.

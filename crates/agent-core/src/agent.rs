@@ -27,11 +27,12 @@ use crate::exec::TurnExecutor;
 use crate::history::{status_of, step_output};
 use crate::profile::BotProfile;
 use crate::shared::{
-    ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants,
-    LoopError, MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork,
-    Shared, StreamItem, Verdict, initiator_of, kind_for, kind_for_schedule,
+    ApprovalScope, COMPUTER_PREPARE_TIMEOUT_NOTICE, CategoryDecision, Delivery, EffectivePolicy,
+    Grant, GrantTarget, Grants, LoopError, MessageMode, ModelOut, Pending, Providers, STEP_MODEL,
+    STEP_TOOLS, ScheduleWork, Shared, StreamItem, Verdict, initiator_of, kind_for,
+    kind_for_schedule,
 };
-use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_REVOKED};
+use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REBOUND, AUDIT_GRANT_REVOKED};
 
 type Result<T> = std::result::Result<T, LoopError>;
 
@@ -578,6 +579,96 @@ impl AgentLoop {
             .map_err(|_| LoopError::NoPendingApproval(call_id))
     }
 
+    /// Oldest legacy `kind:local` grant or run on this database, if any.
+    #[must_use]
+    pub fn oldest_legacy_local_computer_ms(&self) -> Option<i64> {
+        let grant_ms = self
+            .sh
+            .grants
+            .lock()
+            .always
+            .iter()
+            .filter(|g| {
+                g.computer
+                    .as_deref()
+                    .is_some_and(|scope| legacy_local_kind(scope).is_some())
+            })
+            .map(|g| g.granted_at_ms)
+            .min();
+        let run_ms = self.sh.storage.oldest_legacy_local_run_ms().ok().flatten();
+        match (grant_ms, run_ms) {
+            (Some(grant), Some(run)) => Some(grant.min(run)),
+            (Some(grant), None) => Some(grant),
+            (None, Some(run)) => Some(run),
+            (None, None) => None,
+        }
+    }
+
+    /// Rewrite legacy `host:local` / `pc:local` / `browser:local` scopes to
+    /// `machine_id` on this install. `machine_id` must be the daemon identity
+    /// fingerprint. A different machine must not call this.
+    ///
+    /// # Errors
+    /// Fails if the audit row or the run update cannot be written.
+    pub fn migrate_legacy_local_computer(&self, machine_id: &str) -> Result<usize> {
+        if machine_id.len() != 64 || !machine_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(0);
+        }
+        let changes: Vec<(BotId, GrantTarget, String, String)> = self
+            .sh
+            .grants
+            .lock()
+            .always
+            .iter()
+            .filter_map(|g| {
+                let scope = g.computer.as_deref()?;
+                let kind = legacy_local_kind(scope)?;
+                Some((
+                    g.bot_id,
+                    g.target.clone(),
+                    scope.to_owned(),
+                    format!("{kind}:{machine_id}"),
+                ))
+            })
+            .collect();
+        let mut n = 0usize;
+        for (bot_id, target, from, to) in &changes {
+            let Some(bot) = self.sh.storage.get_bot(*bot_id)? else {
+                continue;
+            };
+            let mut detail = match target {
+                GrantTarget::Tool(name) => {
+                    serde_json::json!({ "bot_id": bot_id.to_string(), "tool": name })
+                }
+                GrantTarget::Category(category) => {
+                    serde_json::json!({ "bot_id": bot_id.to_string(), "category": category })
+                }
+            };
+            detail["from"] = serde_json::json!(from);
+            detail["to"] = serde_json::json!(to);
+            self.sh.storage.append_audit(
+                bot.user_id,
+                None,
+                "system",
+                AUDIT_GRANT_REBOUND,
+                &detail,
+            )?;
+            n += 1;
+        }
+        if !changes.is_empty() {
+            let mut grants = self.sh.grants.lock();
+            for grant in &mut grants.always {
+                if let Some(scope) = grant.computer.as_deref()
+                    && let Some(kind) = legacy_local_kind(scope)
+                {
+                    grant.computer = Some(format!("{kind}:{machine_id}"));
+                }
+            }
+        }
+        n += usize::try_from(self.sh.storage.rebind_legacy_local_nodes(machine_id)?).unwrap_or(0);
+        Ok(n)
+    }
+
     /// The persisted "always allow" rules of a bot.
     #[must_use]
     pub fn list_grants(&self, bot_id: BotId) -> Vec<Grant> {
@@ -614,6 +705,7 @@ impl AgentLoop {
                 target: target.clone(),
                 granted_at_ms: 0,
                 computer: None,
+                inert: false,
             };
             self.sh.storage.append_audit(
                 bot.user_id,
@@ -1071,12 +1163,14 @@ impl AgentLoop {
         ]
         .into_iter()
         .map(|c| {
-            let (decision, via_grant) = self.sh.effective_category(bot_id, policy.as_ref(), c);
+            let (decision, via_grant, scopes) =
+                self.sh.effective_category(bot_id, policy.as_ref(), c);
             (
                 c,
                 CategoryDecision {
                     decision,
                     via_grant,
+                    scopes,
                 },
             )
         })
@@ -1191,12 +1285,15 @@ impl AgentLoop {
                     let is_child = run.as_ref().is_some_and(|r| r.parent_run_id.is_some());
                     let mut wait_for_pc = false;
                     let mut unavailable = None;
+                    let mut prepare_timed_out = false;
+                    let mut computer_notice = None;
                     if !is_child
                         && let Some(run) = &run
                         && let Ok(profile) = self.sh.profile_for(run.bot_id)
                     {
-                        self.sh.prepare_run_computer(&profile, run).await;
+                        prepare_timed_out = self.sh.prepare_run_computer(&profile, run).await;
                         let rc = self.sh.resolve_computer_for_run(&profile, None);
+                        computer_notice.clone_from(&rc.notice);
                         wait_for_pc = rc.wait_for_pc;
                         unavailable.clone_from(&rc.unavailable_reason);
                         if let Err(e) = self.sh.bind_computer(run_id, &rc) {
@@ -1217,6 +1314,26 @@ impl AgentLoop {
                                 schedule_id: ctx.schedule_id,
                             }),
                         );
+                        if prepare_timed_out {
+                            self.sh.emit(
+                                &ctx,
+                                Event::Error(RunError {
+                                    run_id,
+                                    message: COMPUTER_PREPARE_TIMEOUT_NOTICE.into(),
+                                    recoverable: true,
+                                }),
+                            );
+                        }
+                        if let Some(message) = computer_notice {
+                            self.sh.emit(
+                                &ctx,
+                                Event::Error(RunError {
+                                    run_id,
+                                    message,
+                                    recoverable: true,
+                                }),
+                            );
+                        }
                     }
                     if let Some(reason) = unavailable {
                         let result = self.rt.pause_queued(run_id, None);
@@ -1253,12 +1370,24 @@ impl AgentLoop {
         if run.parent_run_id.is_none()
             && let Ok(profile) = self.sh.profile_for(run.bot_id)
         {
-            self.sh.prepare_run_computer(&profile, &run).await;
+            let prepare_timed_out = self.sh.prepare_run_computer(&profile, &run).await;
             let rc = self.sh.resolve_computer_for_run(&profile, Some(&run));
-            if let Some(reason) = &rc.unavailable_reason {
-                return self.rt.fail_paused(run_id, reason);
+            if let Some(reason) = rc.unavailable_reason.clone() {
+                if prepare_timed_out {
+                    self.sh.run_computers.lock().insert(run_id, rc);
+                    self.emit_computer_notice(run_id, COMPUTER_PREPARE_TIMEOUT_NOTICE);
+                }
+                return self.rt.fail_paused(run_id, &reason);
             }
             self.sh.bind_computer(run_id, &rc)?;
+            let computer_notice = rc.notice.clone();
+            self.sh.run_computers.lock().insert(run_id, rc.clone());
+            if prepare_timed_out {
+                self.emit_computer_notice(run_id, COMPUTER_PREPARE_TIMEOUT_NOTICE);
+            }
+            if let Some(message) = computer_notice {
+                self.emit_computer_notice(run_id, &message);
+            }
             if rc.wait_for_pc {
                 self.sh
                     .storage
@@ -1276,7 +1405,6 @@ impl AgentLoop {
                 );
                 return Ok(RunState::Paused);
             }
-            self.sh.run_computers.lock().insert(run_id, rc);
         }
         match self.rt.resume(run_id).await {
             Err(RuntimeError::NeedsDecision(_)) => {
@@ -1284,6 +1412,20 @@ impl AgentLoop {
             }
             other => other,
         }
+    }
+
+    fn emit_computer_notice(&self, run_id: RunId, message: &str) {
+        let Some(ctx) = self.ctx_of(run_id) else {
+            return;
+        };
+        self.sh.emit(
+            &ctx,
+            Event::Error(RunError {
+                run_id,
+                message: message.to_owned(),
+                recoverable: true,
+            }),
+        );
     }
 
     pub(crate) fn ctx_of(&self, run_id: RunId) -> Option<Arc<crate::shared::RunCtx>> {
@@ -1473,9 +1615,13 @@ impl AgentLoop {
 
 fn load_grants(storage: &Storage) -> Grants {
     let mut grants = Grants::default();
+    let mut inert_audited = HashSet::new();
     for user in storage.list_users().unwrap_or_default() {
         for e in storage.list_audit(user.id).unwrap_or_default() {
-            if e.action != AUDIT_GRANT_ALWAYS && e.action != AUDIT_GRANT_REVOKED {
+            if !matches!(
+                e.action.as_str(),
+                AUDIT_GRANT_ALWAYS | AUDIT_GRANT_REVOKED | AUDIT_GRANT_INERT | AUDIT_GRANT_REBOUND
+            ) {
                 continue;
             }
             let bot = e.detail["bot_id"]
@@ -1485,6 +1631,37 @@ fn load_grants(storage: &Storage) -> Grants {
             let (Some(bot_id), Some(target)) = (bot, grant_target(&e.detail)) else {
                 continue;
             };
+            if e.action == AUDIT_GRANT_REBOUND {
+                let from = e.detail["from"].as_str();
+                let to = e.detail["to"].as_str().map(str::to_owned);
+                if let Some(from) = from {
+                    for g in &mut grants.always {
+                        if g.bot_id == bot_id
+                            && g.target == target
+                            && g.computer.as_deref() == Some(from)
+                        {
+                            g.computer.clone_from(&to);
+                        }
+                    }
+                }
+                continue;
+            }
+            if e.action == AUDIT_GRANT_INERT {
+                inert_audited.insert((
+                    bot_id,
+                    target.clone(),
+                    e.detail["computer"].as_str().map(str::to_owned),
+                ));
+                for g in &mut grants.always {
+                    if g.bot_id == bot_id
+                        && g.target == target
+                        && g.computer.as_deref() == e.detail["computer"].as_str()
+                    {
+                        g.inert = true;
+                    }
+                }
+                continue;
+            }
             let computer = e.detail["computer"].as_str().map(str::to_owned);
             grants.always.retain(|g| {
                 !(g.bot_id == bot_id
@@ -1497,11 +1674,64 @@ fn load_grants(storage: &Storage) -> Grants {
                     target,
                     granted_at_ms: e.ts_ms,
                     computer,
+                    inert: false,
                 });
             }
         }
     }
+    let mut pending_inert = Vec::new();
+    for g in &mut grants.always {
+        if legacy_unscoped_computer(g) {
+            g.inert = true;
+            let key = (g.bot_id, g.target.clone(), None);
+            if inert_audited.insert(key) {
+                pending_inert.push((g.bot_id, g.target.clone()));
+            }
+        }
+    }
+    for (bot_id, target) in pending_inert {
+        let Ok(Some(bot)) = storage.get_bot(bot_id) else {
+            continue;
+        };
+        let mut detail = match &target {
+            GrantTarget::Tool(name) => serde_json::json!({
+                "bot_id": bot_id.to_string(),
+                "tool": name,
+            }),
+            GrantTarget::Category(category) => serde_json::json!({
+                "bot_id": bot_id.to_string(),
+                "category": category,
+            }),
+        };
+        detail["computer"] = serde_json::Value::Null;
+        detail["reason"] =
+            serde_json::json!("unscoped desktop/browser grant cannot apply to a computer");
+        let _ = storage.append_audit(bot.user_id, None, "system", AUDIT_GRANT_INERT, &detail);
+    }
     grants
+}
+
+fn legacy_local_kind(scope: &str) -> Option<&str> {
+    let (kind, id) = scope.split_once(':')?;
+    if id == computer_target::LEGACY_LOCAL_COMPUTER_ID && matches!(kind, "pc" | "host" | "browser")
+    {
+        Some(kind)
+    } else {
+        None
+    }
+}
+
+fn legacy_unscoped_computer(g: &Grant) -> bool {
+    if g.computer.is_some() {
+        return false;
+    }
+    match &g.target {
+        GrantTarget::Category(category) => matches!(
+            category,
+            PermissionCategory::Desktop | PermissionCategory::Browser
+        ),
+        GrantTarget::Tool(name) => name.starts_with("desktop_") || name.starts_with("browser_"),
+    }
 }
 
 fn format_wait_duration(d: Duration) -> String {

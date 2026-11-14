@@ -332,7 +332,8 @@ impl Shared {
                 && d.unsupported_limits().is_none()
                 && !floor
                 && self.grants.lock().always.iter().any(|g| {
-                    g.bot_id == ctx.bot_id
+                    !g.inert
+                        && g.bot_id == ctx.bot_id
                         && g.target == GrantTarget::Category(c)
                         && g.computer == ctx.grant_scope(c)
                 })
@@ -374,36 +375,58 @@ impl Shared {
         bot_id: BotId,
         bot_policy: Option<&Policy>,
         category: PermissionCategory,
-    ) -> (Decision, bool) {
+    ) -> (Decision, bool, Vec<String>) {
         let req = ActionRequest {
             category,
             raw_command: String::new(),
             initiator: InitiatorKind::Human,
         };
         let r = &self.resolver;
+        let computer_scoped = matches!(
+            category,
+            PermissionCategory::Desktop | PermissionCategory::Browser
+        );
+        let scopes = {
+            let mut scopes: Vec<String> = self
+                .grants
+                .lock()
+                .always
+                .iter()
+                .filter(|g| {
+                    !g.inert
+                        && g.bot_id == bot_id
+                        && g.target == GrantTarget::Category(category)
+                        && g.computer.is_some()
+                })
+                .filter_map(|g| g.computer.clone())
+                .collect();
+            scopes.sort();
+            scopes.dedup();
+            scopes
+        };
         if self.locked_deny(category) {
-            return (Decision::Deny, false);
+            return (Decision::Deny, false, scopes);
         }
         let d = r.resolve(&self.global_policy.read(), bot_policy, None, &req);
         // Same rule as `decide`: only a plain policy-level `Ask` can be waived.
         // An unsupported-limit ask is not waivable, grant or not.
+        // Desktop and browser grants are per computer: the category stays ask
+        // here, and `scopes` names the computers that are allowed.
         let floor = r.resolve(&Policy::full(), None, None, &req) != Decision::Allow;
         if d.is_ask()
             && d.unsupported_limits().is_none()
             && !floor
+            && !computer_scoped
             && self.grants.lock().always.iter().any(|g| {
-                g.bot_id == bot_id
+                !g.inert
+                    && g.bot_id == bot_id
                     && g.target == GrantTarget::Category(category)
                     && g.computer.is_none()
-                    && !matches!(
-                        category,
-                        PermissionCategory::Desktop | PermissionCategory::Browser
-                    )
             })
         {
-            return (Decision::Allow, true);
+            return (Decision::Allow, true, scopes);
         }
-        (d, false)
+        (d, false, scopes)
     }
 
     pub(crate) fn set_state(&self, run_id: RunId, to: RunState) {
@@ -654,6 +677,7 @@ impl Shared {
             target,
             granted_at_ms: now_ms(),
             computer: ctx.tool_grant_scope(name, category),
+            inert: false,
         };
         {
             let mut g = self.grants.lock();

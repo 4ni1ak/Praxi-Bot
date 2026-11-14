@@ -56,3 +56,7 @@ pub use shared::{
 pub(crate) const AUDIT_GRANT_ALWAYS: &str = "grant.always";
 /// Audit-log action recording the removal of such a rule.
 pub(crate) const AUDIT_GRANT_REVOKED: &str = "grant.revoked";
+/// Audit-log action recording that a legacy unscoped computer grant is inert.
+pub(crate) const AUDIT_GRANT_INERT: &str = "grant.inert";
+/// Audit-log action recording a legacy `local` computer id rebound to this machine.
+pub(crate) const AUDIT_GRANT_REBOUND: &str = "grant.rebound";

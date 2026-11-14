@@ -96,7 +96,7 @@ pub struct Run {
     /// Resolved computer target label (`pc`, `host`, `browser`, `off`), fixed
     /// at run start.
     pub computer_target: Option<String>,
-    /// Stable resolved node key (`local` for this daemon).
+    /// Stable resolved node key (this daemon's identity fingerprint, or a peer key).
     pub computer_node: Option<String>,
     /// Display name captured when the run was bound.
     pub computer_node_name: Option<String>,

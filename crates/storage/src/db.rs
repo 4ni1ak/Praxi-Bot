@@ -505,6 +505,37 @@ impl Storage {
         Ok(())
     }
 
+    /// Rewrite persisted `computer_node = 'local'` to this machine's id.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn rebind_legacy_local_nodes(&self, machine_id: &str) -> Result<u64> {
+        if machine_id.is_empty()
+            || machine_id == "local"
+            || machine_id.len() != 64
+            || !machine_id.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Ok(0);
+        }
+        let n = self.conn().execute(
+            "UPDATE runs SET computer_node = ?1 WHERE computer_node = 'local'",
+            params![machine_id],
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    /// Creation time of the oldest run still stored on the legacy `local` id.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn oldest_legacy_local_run_ms(&self) -> Result<Option<i64>> {
+        Ok(self.conn().query_row(
+            "SELECT MIN(created_at_ms) FROM runs WHERE computer_node = 'local'",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Update the pause reason on a paused run (e.g. `waiting_for_pc`).
     ///
     /// # Errors
@@ -1372,5 +1403,77 @@ mod tests {
         let running = st.get_run(run_id).unwrap().unwrap();
         assert_eq!(running.pause_reason, None);
         assert_eq!(running.paused_at_ms, None);
+    }
+
+    #[test]
+    fn legacy_local_run_nodes_rebind_only_to_a_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        let u = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        st.insert_user(&u).unwrap();
+        let b = Bot {
+            id: BotId::new(),
+            user_id: u.id,
+            name: "b".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        };
+        st.insert_bot(&b).unwrap();
+        let legacy = Run {
+            id: RunId::new(),
+            user_id: u.id,
+            bot_id: b.id,
+            chat_id: None,
+            kind: "turn".into(),
+            state: "paused".into(),
+            error: None,
+            created_at_ms: 50,
+            updated_at_ms: 50,
+            parent_run_id: None,
+            spec: None,
+            computer_target: Some("host".into()),
+            computer_node: Some("local".into()),
+            computer_node_name: Some("Local computer".into()),
+            paused_at_ms: Some(50),
+            pause_reason: None,
+        };
+        let kept = Run {
+            id: RunId::new(),
+            computer_node: Some("pc-A".into()),
+            computer_node_name: Some("Other".into()),
+            created_at_ms: 10,
+            ..legacy.clone()
+        };
+        st.insert_run(&legacy).unwrap();
+        st.insert_run(&kept).unwrap();
+        assert_eq!(st.oldest_legacy_local_run_ms().unwrap(), Some(50));
+        assert_eq!(st.rebind_legacy_local_nodes("local").unwrap(), 0);
+        assert_eq!(
+            st.rebind_legacy_local_nodes("not-a-fingerprint").unwrap(),
+            0
+        );
+        let fingerprint = "ab".repeat(32);
+        assert_eq!(st.rebind_legacy_local_nodes(&fingerprint).unwrap(), 1);
+        assert_eq!(
+            st.get_run(legacy.id)
+                .unwrap()
+                .unwrap()
+                .computer_node
+                .as_deref(),
+            Some(fingerprint.as_str())
+        );
+        assert_eq!(
+            st.get_run(kept.id)
+                .unwrap()
+                .unwrap()
+                .computer_node
+                .as_deref(),
+            Some("pc-A")
+        );
+        assert_eq!(st.oldest_legacy_local_run_ms().unwrap(), None);
     }
 }

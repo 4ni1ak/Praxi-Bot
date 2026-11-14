@@ -94,6 +94,10 @@ pub struct CategoryDecisionDto {
     pub decision: String,
     /// `true` when `allow` holds only because of a category grant.
     pub via_grant: bool,
+    /// Computers where a category grant allows this category. The decision
+    /// stays `ask` for every computer not listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
 }
 
 /// What an "always allow" grant covers.
@@ -123,6 +127,10 @@ pub struct GrantDto {
     pub target: GrantTargetDto,
     /// When it was granted.
     pub granted_at_ms: i64,
+    /// Legacy desktop/browser rule with no computer. It does not authorize
+    /// anything; it is listed so the user can see that it stopped applying.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inert: bool,
 }
 
 /// `DELETE /v1/bots/{id}/grants`.

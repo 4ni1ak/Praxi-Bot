@@ -19,6 +19,27 @@ use peer_network::{Device, PeerNetwork, RemoteDesktop, Role, key_from_string, ke
 use tokio::sync::broadcast::error::RecvError;
 
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// Cold relay or hole-punch dials do two RPCs. Two seconds is not enough for
+/// that handshake, so the background monitor waits long enough for a relay
+/// path. Run start does not dial; it only reads this cache.
+const MONITOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+enum MonitorConnectError {
+    Failed(String),
+    TimedOut,
+}
+
+/// Apply [`MONITOR_CONNECT_TIMEOUT`] to one connect attempt.
+async fn within_monitor_budget<T, F>(work: F) -> Result<T, MonitorConnectError>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    match tokio::time::timeout(MONITOR_CONNECT_TIMEOUT, work).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(err)) => Err(MonitorConnectError::Failed(err)),
+        Err(_elapsed) => Err(MonitorConnectError::TimedOut),
+    }
+}
 
 #[derive(Clone)]
 struct CachedRemote {
@@ -36,6 +57,8 @@ pub struct CliComputerProvider {
     local_desktop: Option<Arc<dyn DesktopBackend>>,
     has_display: bool,
     browser_available: bool,
+    /// Machine-bound id of this daemon (identity-key fingerprint). Not `"local"`.
+    local_id: String,
     net: Option<PeerNetwork>,
     remotes: RwLock<HashMap<String, CachedRemote>>,
     active_pc_id: RwLock<Option<String>>,
@@ -49,6 +72,7 @@ impl CliComputerProvider {
         host_mode: bool,
         local_desktop: Option<Arc<dyn DesktopBackend>>,
         net: Option<PeerNetwork>,
+        local_id: impl Into<String>,
     ) -> Self {
         let has_display = local_desktop.is_some() || browser_cdp::host::has_display();
         let browser_available = browser_cdp::find_browser().is_ok();
@@ -57,6 +81,7 @@ impl CliComputerProvider {
             local_desktop,
             has_display,
             browser_available,
+            local_id: local_id.into(),
             net,
             remotes: RwLock::new(HashMap::new()),
             active_pc_id: RwLock::new(None),
@@ -105,32 +130,68 @@ impl CliComputerProvider {
             if self.remotes.read().contains_key(&device.id) {
                 continue;
             }
-            if let Ok(Ok(remote)) =
-                tokio::time::timeout(Duration::from_secs(2), RemoteDesktop::connect(net, pk)).await
+            match within_monitor_budget(async {
+                RemoteDesktop::connect(net, pk)
+                    .await
+                    .map_err(|err| err.to_string())
+            })
+            .await
             {
-                // Pairing/capabilities may have changed while RPC was in flight.
-                if !net.device(pk).is_some_and(|d| {
-                    d.pairing_generation == device.pairing_generation
-                        && d.capabilities == device.capabilities
-                        && d.role == device.role
-                }) {
-                    continue;
+                Err(MonitorConnectError::Failed(err)) => {
+                    eprintln!(
+                        "warning: remote desktop connect to {} failed: {err}",
+                        device.id
+                    );
                 }
-                let backend: Arc<dyn DesktopBackend> = Arc::new(remote);
-                self.remotes.write().insert(
-                    device.id.clone(),
-                    CachedRemote {
-                        id: device.id.clone(),
-                        name: device.name.clone(),
-                        role: device.role,
-                        pairing_generation: device.pairing_generation.clone(),
-                        capabilities: device.capabilities.clone(),
-                        backend,
-                    },
-                );
+                Err(MonitorConnectError::TimedOut) => {
+                    eprintln!(
+                        "warning: remote desktop connect to {} timed out after {}s",
+                        device.id,
+                        MONITOR_CONNECT_TIMEOUT.as_secs()
+                    );
+                }
+                Ok(remote) => {
+                    // Pairing/capabilities may have changed while RPC was in flight.
+                    if !net.device(pk).is_some_and(|d| {
+                        d.pairing_generation == device.pairing_generation
+                            && d.capabilities == device.capabilities
+                            && d.role == device.role
+                    }) {
+                        continue;
+                    }
+                    let backend: Arc<dyn DesktopBackend> = Arc::new(remote);
+                    self.remotes.write().insert(
+                        device.id.clone(),
+                        CachedRemote {
+                            id: device.id.clone(),
+                            name: device.name.clone(),
+                            role: device.role,
+                            pairing_generation: device.pairing_generation.clone(),
+                            capabilities: device.capabilities.clone(),
+                            backend,
+                        },
+                    );
+                }
             }
         }
 
+        self.select_active_pc();
+    }
+
+    /// Drop remotes whose peer is gone. Does not dial.
+    fn prune_cached_remotes(&self) {
+        let Some(net) = &self.net else {
+            return;
+        };
+        {
+            let mut remotes = self.remotes.write();
+            remotes.retain(|id, cached| {
+                let Ok(pk) = key_from_string(id) else {
+                    return false;
+                };
+                net.is_connected(&pk) && net.device(&pk).is_some_and(|d| cached.matches(&d))
+            });
+        }
         self.select_active_pc();
     }
 
@@ -184,11 +245,20 @@ impl ComputerProvider for CliComputerProvider {
 
     fn local_node(&self) -> ComputerNode {
         ComputerNode {
-            id: "local".into(),
-            name: std::env::var("COMPUTERNAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .unwrap_or_else(|_| "Local computer".into()),
+            id: self.local_id.clone(),
+            name: "Local computer".into(),
         }
+    }
+
+    fn paired_pc_unreachable(&self) -> bool {
+        let Some(net) = &self.net else {
+            return false;
+        };
+        let paired = net
+            .devices()
+            .iter()
+            .any(|device| device.role == Role::Desktop && is_remote_desktop_candidate(device));
+        paired && self.pc_target().is_none()
     }
 
     fn pc(&self) -> Option<Arc<dyn DesktopBackend>> {
@@ -229,6 +299,14 @@ impl ComputerProvider for CliComputerProvider {
         }
         self.cached_target(id)
     }
+
+    /// Run start calls this under a short bound. It only prunes the cache; the
+    /// monitor is what dials, on [`MONITOR_CONNECT_TIMEOUT`].
+    fn prepare(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            self.prune_cached_remotes();
+        })
+    }
 }
 
 impl CachedRemote {
@@ -238,6 +316,51 @@ impl CachedRemote {
             && self.role == device.role
             && self.capabilities == device.capabilities
             && self.name == device.name
+    }
+}
+
+/// This install created the legacy `local` computer rows when its identity
+/// key already existed at the time those rows were written. A key created
+/// later (a server that imported `bot.db`) must not adopt them.
+pub(crate) fn legacy_local_owned(
+    identity_created_ms: Option<i64>,
+    oldest_legacy_ms: Option<i64>,
+) -> bool {
+    match (identity_created_ms, oldest_legacy_ms) {
+        (Some(created), Some(legacy)) => created <= legacy,
+        _ => false,
+    }
+}
+
+/// Identity-key fingerprint for this daemon. Peer networking and a disabled
+/// peer stack share `peer/identity.key`, which the state bundle excludes.
+pub(crate) fn identity_key_mtime_ms(data_dir: &std::path::Path) -> Option<i64> {
+    let modified = std::fs::metadata(data_dir.join("peer").join("identity.key"))
+        .ok()?
+        .modified()
+        .ok()?;
+    let millis = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    i64::try_from(millis).ok()
+}
+
+pub(crate) fn machine_computer_id(data_dir: &std::path::Path, net: Option<&PeerNetwork>) -> String {
+    if let Some(net) = net {
+        return key_to_string(&net.id());
+    }
+    let path = data_dir.join("peer").join("identity.key");
+    match peer_network::load_or_create_secret_key(&path) {
+        Ok(key) => key_to_string(&key.public()),
+        Err(err) => {
+            eprintln!(
+                "warning: cannot read the daemon identity key ({err}); local computer grants will not match a previous machine"
+            );
+            // Not the legacy constant, and not a fingerprint, so imported
+            // `local` grants are not rewritten onto this process.
+            "unbound-machine".into()
+        }
     }
 }
 
@@ -327,6 +450,10 @@ mod tests {
     use tool_registry::ToolRegistry;
 
     use super::*;
+
+    fn test_machine_id() -> &'static str {
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
 
     struct FakePcDesktop {
         label: &'static str,
@@ -495,7 +622,8 @@ mod tests {
             vec!["desktop"]
         )));
 
-        let vps_no_pc = CliComputerProvider::new(true, None, None).with_capabilities(false, true);
+        let vps_no_pc = CliComputerProvider::new(true, None, None, test_machine_id())
+            .with_capabilities(false, true);
         let auto_res = resolve(&ComputerTarget::Auto, &vps_no_pc);
         assert_eq!(auto_res.label, ComputerLabel::Browser);
         assert!(auto_res.browser);
@@ -511,8 +639,13 @@ mod tests {
                 .contains("networking is disabled")
         );
 
-        let local_app = CliComputerProvider::new(false, Some(FakePcDesktop::new("local")), None)
-            .with_capabilities(true, false);
+        let local_app = CliComputerProvider::new(
+            false,
+            Some(FakePcDesktop::new("local")),
+            None,
+            test_machine_id(),
+        )
+        .with_capabilities(true, false);
         let pc_local = resolve(&ComputerTarget::Pc, &local_app);
         assert_eq!(pc_local.label, ComputerLabel::Pc);
         assert!(pc_local.desktop.is_some());
@@ -532,7 +665,7 @@ mod tests {
 
     #[test]
     fn duplicate_names_never_select_nodes_and_pc_excludes_server_nodes() {
-        let provider = CliComputerProvider::new(true, None, None);
+        let provider = CliComputerProvider::new(true, None, None, test_machine_id());
         let a = "00".repeat(32);
         let b = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".to_owned();
         key_from_string(&a).unwrap();
@@ -619,7 +752,7 @@ mod tests {
             .unwrap();
 
         let provider = Arc::new(
-            CliComputerProvider::new(true, None, Some(host_net.clone()))
+            CliComputerProvider::new(true, None, Some(host_net.clone()), test_machine_id())
                 .with_capabilities(false, false),
         );
         let mut bcfg = BuiltinConfig::new(host_data.join("bt"), Arc::new(ReplaceableGate));
@@ -791,8 +924,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let provider =
-            CliComputerProvider::new(true, None, Some(net.clone())).with_capabilities(false, true);
+        let provider = CliComputerProvider::new(true, None, Some(net.clone()), test_machine_id())
+            .with_capabilities(false, true);
         let (_, a, ha) = start_pc_peer(&net, &dir.path().join("a"), "A", true).await;
         let a_id = key_to_string(&a.id());
         for _ in 0..200 {
@@ -831,5 +964,38 @@ mod tests {
         hb.abort();
         b.shutdown().await;
         net.shutdown().await;
+    }
+
+    /// A cold dial of 3s fits the monitor budget and would have been dropped
+    /// by the old 2s bound. Virtual time, so the wait is instant.
+    #[tokio::test(start_paused = true)]
+    async fn monitor_connect_budget_accepts_a_three_second_dial() {
+        let started = tokio::time::Instant::now();
+        let connected = within_monitor_budget(async {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            Ok::<String, String>("desktop".into())
+        })
+        .await;
+        assert!(
+            connected.is_ok(),
+            "a 3s cold dial must fit the monitor budget"
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(3));
+        assert!(
+            (10..=15).contains(&MONITOR_CONNECT_TIMEOUT.as_secs()),
+            "monitor budget must stay in the 10-15s relay window"
+        );
+    }
+
+    #[test]
+    fn legacy_local_owner_requires_the_identity_to_predate_the_grant() {
+        assert!(legacy_local_owned(Some(10), Some(20)));
+        assert!(legacy_local_owned(Some(20), Some(20)));
+        assert!(
+            !legacy_local_owned(Some(30), Some(20)),
+            "a key created after the grant belongs to another machine"
+        );
+        assert!(!legacy_local_owned(None, Some(20)));
+        assert!(!legacy_local_owned(Some(10), None));
     }
 }

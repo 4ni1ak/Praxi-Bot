@@ -90,6 +90,7 @@ fn grant_dto(g: &Grant) -> GrantDto {
             },
         },
         granted_at_ms: g.granted_at_ms,
+        inert: g.inert,
     }
 }
 
@@ -126,6 +127,7 @@ fn effective_policy_dto(e: EffectivePolicy) -> EffectivePolicyDto {
                     CategoryDecisionDto {
                         decision: decision.to_owned(),
                         via_grant: d.via_grant,
+                        scopes: d.scopes.clone(),
                     },
                 )
             })

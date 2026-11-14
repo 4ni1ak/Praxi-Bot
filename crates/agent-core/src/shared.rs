@@ -117,6 +117,9 @@ pub struct Grant {
     pub granted_at_ms: i64,
     /// Concrete computer scope for desktop/browser grants.
     pub computer: Option<String>,
+    /// Legacy desktop/browser rule with no computer. It authorizes nothing and
+    /// stays listed so the user can see that the old rule no longer applies.
+    pub inert: bool,
 }
 
 /// What to do with a user message arriving while a turn is running.
@@ -163,6 +166,10 @@ pub struct CategoryDecision {
     /// `true` when `decision` is `Allow` only because of a category grant (the
     /// policy alone would ask).
     pub via_grant: bool,
+    /// Computers where a category grant allows this category. Empty when the
+    /// decision does not depend on a computer. A non-empty list does not allow
+    /// the category on any other computer.
+    pub scopes: Vec<String>,
 }
 
 /// One event of the run stream.
@@ -562,7 +569,8 @@ impl Grants {
         computer: Option<&str>,
     ) -> bool {
         self.always.iter().any(|g| {
-            g.bot_id == bot
+            !g.inert
+                && g.bot_id == bot
                 && g.computer.as_deref() == computer
                 && match &g.target {
                     GrantTarget::Tool(t) => t == tool,
@@ -590,6 +598,8 @@ pub(crate) struct RunComputer {
     pub browser: bool,
     pub browser_headless: Option<bool>,
     pub wait_for_pc: bool,
+    /// User-visible note about this resolution, emitted once as a run event.
+    pub notice: Option<String>,
 }
 
 struct FallbackComputerProvider {
@@ -645,21 +655,20 @@ impl RunCtx {
         name: &str,
         category: PermissionCategory,
     ) -> Option<String> {
-        (matches!(
+        let computer_tool = matches!(
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
         ) || name.starts_with("desktop_")
-            || name.starts_with("browser_"))
-        .then(|| {
-            format!(
-                "{}:{}",
-                self.resolved_computer.label.as_str(),
-                self.resolved_computer
-                    .node
-                    .as_ref()
-                    .map_or("local", |n| n.id.as_str())
-            )
-        })
+            || name.starts_with("browser_");
+        if !computer_tool {
+            return None;
+        }
+        // No node means no machine. Do not fall back to a shared `local` alias.
+        let id = self.resolved_computer.node.as_ref()?.id.as_str();
+        if id.is_empty() {
+            return None;
+        }
+        Some(format!("{}:{id}", self.resolved_computer.label.as_str()))
     }
 
     /// Subagent nesting level: 0 for a top-level run.
@@ -788,9 +797,33 @@ pub enum ScheduleWork {
     },
 }
 
+fn auto_unreachable_notice(
+    target: &ComputerTarget,
+    provider: &dyn ComputerProvider,
+    rc: &RunComputer,
+) -> Option<String> {
+    if !matches!(target, ComputerTarget::Auto) || !provider.paired_pc_unreachable() {
+        return None;
+    }
+    let using = match rc.label {
+        ComputerLabel::Host => "host",
+        ComputerLabel::Browser => "browser",
+        ComputerLabel::Pc | ComputerLabel::Off => return None,
+    };
+    Some(format!("auto: PC not reachable, using {using}"))
+}
+
 pub(crate) fn xe(e: impl std::fmt::Display) -> ExecError {
     ExecError(e.to_string())
 }
+
+/// Run start may wait this long on a cache-only prepare. Dialing belongs to
+/// the background monitor, which has a longer budget.
+pub(crate) const COMPUTER_PREPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Run event emitted when [`COMPUTER_PREPARE_TIMEOUT`] fires.
+pub(crate) const COMPUTER_PREPARE_TIMEOUT_NOTICE: &str =
+    "computer prepare timed out; using the cached desktop list without dialing";
 
 pub(crate) const KIND_PREFIX: &str = "turn";
 
@@ -855,32 +888,46 @@ impl Shared {
         Ok(profile)
     }
 
-    /// Warm up any async remote desktop connection on the installed
-    /// [`ComputerProvider`] before resolving a run's target synchronously.
-    pub(crate) async fn prepare_computer_provider(&self, target: &ComputerTarget) {
+    /// Warm the installed [`ComputerProvider`] before resolving a run.
+    ///
+    /// The short bound is only for this path. It must not dial: providers
+    /// prepare from the cache the background monitor fills. Returns whether
+    /// the bound fired.
+    pub(crate) async fn prepare_computer_provider(&self, target: &ComputerTarget) -> bool {
         if !matches!(
             target,
             ComputerTarget::Auto | ComputerTarget::Pc | ComputerTarget::Node(_)
         ) {
-            return;
+            return false;
         }
         let provider = self.computer_provider.read().clone();
-        if let Some(p) = provider {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), p.prepare()).await;
+        let Some(provider) = provider else {
+            return false;
+        };
+        if tokio::time::timeout(COMPUTER_PREPARE_TIMEOUT, provider.prepare())
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                budget_secs = COMPUTER_PREPARE_TIMEOUT.as_secs(),
+                "{COMPUTER_PREPARE_TIMEOUT_NOTICE}"
+            );
+            return true;
         }
+        false
     }
 
-    pub(crate) async fn prepare_run_computer(&self, profile: &BotProfile, run: &Run) {
+    pub(crate) async fn prepare_run_computer(&self, profile: &BotProfile, run: &Run) -> bool {
         let target = match run.computer_target.as_deref() {
             Some("pc") => match run.computer_node.as_deref() {
-                Some("local") => ComputerTarget::Host,
+                Some(id) if id == computer_target::LEGACY_LOCAL_COMPUTER_ID => ComputerTarget::Host,
                 Some(id) => ComputerTarget::Node(id.into()),
                 None => ComputerTarget::Pc,
             },
-            Some(_) => return,
+            Some(_) => return false,
             None => profile.runtime.computer.clone(),
         };
-        self.prepare_computer_provider(&target).await;
+        self.prepare_computer_provider(&target).await
     }
 
     fn desktop_tools_registered(&self) -> bool {
@@ -905,6 +952,9 @@ impl Shared {
         persisted: Option<&Run>,
     ) -> RunComputer {
         let provider = self.computer_provider.read().clone();
+        if persisted.is_some_and(|run| run.computer_target.is_none()) {
+            return self.legacy_local_computer(provider.as_deref());
+        }
         if let Some(run) = persisted
             && let Some(label) = run.computer_target.as_deref()
         {
@@ -942,17 +992,20 @@ impl Shared {
                         .clone()
                         .unwrap_or_else(|| "Unknown PC".into()),
                 });
-                let desktop =
-                    provider
-                        .as_deref()
-                        .and_then(|p| match run.computer_node.as_deref() {
-                            Some("local") if !p.is_host() => p.local(),
-                            Some("local") | None => None,
-                            Some(id) => p.node_target(id).filter(|d| d.node.id == id).map(|d| {
-                                node = Some(d.node);
-                                d.backend
-                            }),
-                        });
+                let desktop = provider.as_deref().and_then(|p| {
+                    let local_id = p.local_node().id;
+                    match run.computer_node.as_deref() {
+                        // This daemon's own desktop. The legacy constant matches
+                        // only when this provider still uses that constant.
+                        Some(id) if id == local_id && !p.is_host() => p.local(),
+                        Some(id) if id == local_id => None,
+                        Some(id) => p.node_target(id).filter(|d| d.node.id == id).map(|d| {
+                            node = Some(d.node);
+                            d.backend
+                        }),
+                        None => None,
+                    }
+                });
                 let mut rc = Self::offline_pc(node);
                 rc.wait_for_pc = desktop.is_none();
                 rc.desktop_available = desktop.is_some();
@@ -962,7 +1015,9 @@ impl Shared {
                     rc.unavailable_reason =
                         Some("PC desktop unavailable: peer networking is disabled".into());
                 }
-                let local = run.computer_node.as_deref() == Some("local");
+                let local = provider.as_ref().is_some_and(|p| {
+                    run.computer_node.as_deref() == Some(p.local_node().id.as_str())
+                });
                 rc.browser = local
                     && provider
                         .as_deref()
@@ -984,12 +1039,59 @@ impl Shared {
             };
         }
         if let Some(p) = provider.as_deref() {
-            return Self::run_computer(
+            let mut rc = Self::run_computer(
                 resolve_computer(&profile.runtime.computer, p),
                 p.has_display(),
             );
+            rc.notice = auto_unreachable_notice(&profile.runtime.computer, p, &rc);
+            return rc;
         }
         self.resolve_fallback_computer(profile)
+    }
+
+    /// A paused run from before computer targets existed only ever used this
+    /// daemon's own computer. Do not re-resolve `auto` onto a paired PC.
+    fn legacy_local_computer(&self, provider: Option<&dyn ComputerProvider>) -> RunComputer {
+        if let Some(provider) = provider {
+            let desktop = provider.local();
+            let label = if provider.is_host() {
+                ComputerLabel::Host
+            } else {
+                ComputerLabel::Pc
+            };
+            let browser = provider.browser_available();
+            let browser_headless =
+                browser.then(|| !(label == ComputerLabel::Host && provider.has_display()));
+            let desktop_available = desktop.is_some();
+            return RunComputer {
+                node: Some(provider.local_node()),
+                unavailable_reason: None,
+                label,
+                desktop,
+                desktop_available,
+                browser,
+                browser_headless,
+                wait_for_pc: false,
+                notice: None,
+            };
+        }
+        let desktop = self.static_desktop.read().clone();
+        let desktop_available = desktop.is_some();
+        let browser = self.browser_tools_registered();
+        RunComputer {
+            node: Some(computer_target::ComputerNode {
+                id: computer_target::LEGACY_LOCAL_COMPUTER_ID.into(),
+                name: "Local computer".into(),
+            }),
+            unavailable_reason: None,
+            label: ComputerLabel::Pc,
+            desktop,
+            desktop_available,
+            browser,
+            browser_headless: browser.then_some(true),
+            wait_for_pc: false,
+            notice: None,
+        }
     }
 
     fn offline_pc(node: Option<computer_target::ComputerNode>) -> RunComputer {
@@ -1002,6 +1104,7 @@ impl Shared {
             browser: false,
             browser_headless: None,
             wait_for_pc: true,
+            notice: None,
         }
     }
 
@@ -1016,6 +1119,7 @@ impl Shared {
             browser: res.browser,
             browser_headless,
             wait_for_pc: res.wait_for_pc,
+            notice: None,
         }
     }
 
@@ -1069,6 +1173,7 @@ impl Shared {
             browser: res.browser,
             browser_headless,
             wait_for_pc: res.wait_for_pc,
+            notice: None,
         }
     }
 
