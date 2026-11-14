@@ -7,7 +7,7 @@
 //! cancel-safe input ordering are shared across OS backends.
 
 use std::sync::{
-    Arc,
+    Arc, Weak,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -353,17 +353,33 @@ pub fn map_normalized_point(norm_x: f64, norm_y: f64, source_rect: &SourceRect) 
 
 /// Convert global physical pixel `(phys_x, phys_y)` into `0..=65535` normalized
 /// virtual-desktop coordinates covering `virtual_rect` (including negative origins).
+///
+/// Uses pixel-center projection `floor(((offset + 0.5) * 65536) / width)` for
+/// interior pixels so Win32 `SendInput`'s `(abs * width) / 65536` integer
+/// truncation lands on the exact physical pixel even on virtual desktops wider
+/// than 4800 px, while preserving `0` and `65_535` at the outer edges.
 #[must_use]
 pub fn point_to_virtual_absolute(phys_x: f64, phys_y: f64, virtual_rect: PixelRect) -> (i32, i32) {
-    let span_x = f64::from(virtual_rect.width.max(2) - 1);
-    let span_y = f64::from(virtual_rect.height.max(2) - 1);
-    let ax = (phys_x - f64::from(virtual_rect.x)) * 65_535.0 / span_x;
-    let ay = (phys_y - f64::from(virtual_rect.y)) * 65_535.0 / span_y;
-    // Inputs are finite and clamped into `0.0..=65_535.0` before truncating.
-    #[allow(clippy::cast_possible_truncation)]
+    let project_axis = |pos: f64, origin: i32, span: u32| -> i32 {
+        let w = f64::from(span.max(2));
+        let max_off = w - 1.0;
+        let off = (pos - f64::from(origin)).round().clamp(0.0, max_off);
+        if off <= 0.0 {
+            return 0;
+        }
+        if off >= max_off {
+            return 65_535;
+        }
+        let centered = ((off + 0.5) * 65_536.0 / w).floor().clamp(0.0, 65_535.0);
+        // Inputs are finite and clamped into `0.0..=65_535.0` before truncating.
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            centered as i32
+        }
+    };
     (
-        ax.round().clamp(0.0, 65_535.0) as i32,
-        ay.round().clamp(0.0, 65_535.0) as i32,
+        project_axis(phys_x, virtual_rect.x, virtual_rect.width),
+        project_axis(phys_y, virtual_rect.y, virtual_rect.height),
     )
 }
 
@@ -918,13 +934,20 @@ pub trait InputDriver: Send + 'static {
     ///
     /// Returns [`ViewError::Unavailable`] if the OS connection is unusable during reset.
     fn release_all(&mut self) -> Result<(), ViewError>;
+
+    /// Returns `true` if the underlying OS input connection has been permanently lost
+    /// (for example, an X11 socket disconnect or server restart) and the driver should be
+    /// recreated via the [`InputDriverFactory`].
+    fn is_connection_lost(&self) -> bool {
+        false
+    }
 }
 
 /// Factory creating a fresh [`CaptureDriver`] bound to a capture scope.
 pub type CaptureDriverFactory =
     Arc<dyn Fn(&CaptureScope) -> Result<Box<dyn CaptureDriver>, CaptureFailure> + Send + Sync>;
 
-/// Optional lightweight availability probe run when [`ViewTarget::info`] is queried offline.
+/// Optional lightweight availability probe run when [`DesktopViewTarget::refresh_availability`] is queried.
 pub type AvailabilityProbeFn = Arc<dyn Fn(&CaptureScope) -> Result<(), Reason> + Send + Sync>;
 
 /// Factory creating a fresh [`InputDriver`].
@@ -988,12 +1011,62 @@ struct TargetCore {
     input_factory: Option<InputDriverFactory>,
     stats: Arc<LiveViewStats>,
     status: Mutex<TargetStatus>,
+    last_published_geometry_revision: AtomicU64,
     ctrl: Mutex<CaptureControl>,
     cvar: Condvar,
     frames_tx: watch::Sender<Option<Arc<Frame>>>,
     takeover_active: AtomicBool,
     input_epoch: AtomicU64,
+    active_input_cancels: Mutex<Vec<Weak<AtomicBool>>>,
     input_worker: Mutex<Option<InputWorker>>,
+    #[cfg(test)]
+    pre_finish_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl TargetCore {
+    fn register_input_cancel(&self, cancelled: &Arc<AtomicBool>) {
+        let mut guard = self.active_input_cancels.lock();
+        guard.retain(|w| w.strong_count() > 0);
+        guard.push(Arc::downgrade(cancelled));
+    }
+
+    fn cancel_in_flight_input(&self) {
+        let mut guard = self.active_input_cancels.lock();
+        for weak in guard.drain(..) {
+            if let Some(flag) = weak.upgrade() {
+                flag.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    fn shutdown_workers(&self) {
+        self.takeover_active.store(false, Ordering::SeqCst);
+        self.input_epoch.fetch_add(1, Ordering::SeqCst);
+        self.cancel_in_flight_input();
+        let cap_join = {
+            let mut ctrl = self.ctrl.lock();
+            ctrl.shutdown = true;
+            ctrl.stop_requested = true;
+            self.cvar.notify_all();
+            ctrl.join.take()
+        };
+        if let Some(j) = cap_join
+            && j.thread().id() != std::thread::current().id()
+        {
+            let _ = j.join();
+        }
+        let in_worker = self.input_worker.lock().take();
+        if let Some(w) = in_worker {
+            let InputWorker { tx, join } = w;
+            let _ = tx.send(InputJob::Shutdown);
+            drop(tx);
+            if let Some(j) = join
+                && j.thread().id() != std::thread::current().id()
+            {
+                let _ = j.join();
+            }
+        }
+    }
 }
 
 /// Shared [`ViewTarget`] + [`FrameSource`] + [`InputSink`] coordinator used by OS backends.
@@ -1033,6 +1106,7 @@ impl DesktopViewTarget {
                 unavailable_reason: None,
                 latest_geometry: config.initial_geometry,
             }),
+            last_published_geometry_revision: AtomicU64::new(1),
             ctrl: Mutex::new(CaptureControl {
                 subscribers: 0,
                 paused: false,
@@ -1049,7 +1123,10 @@ impl DesktopViewTarget {
             frames_tx,
             takeover_active: AtomicBool::new(false),
             input_epoch: AtomicU64::new(0),
+            active_input_cancels: Mutex::new(Vec::new()),
             input_worker: Mutex::new(None),
+            #[cfg(test)]
+            pre_finish_hook: Mutex::new(None),
         });
         Self { core }
     }
@@ -1060,42 +1137,67 @@ impl DesktopViewTarget {
         self.core.stats.snapshot()
     }
 
-    /// Request an immediate Watch/Live refresh without blocking (used when bot
-    /// actions mutate the desktop on the same backend session).
-    pub fn notify_desktop_action(&self) {
-        let mut ctrl = self.core.ctrl.lock();
-        if ctrl.subscribers > 0 && !ctrl.paused {
-            ctrl.pending_refresh.get_or_insert(0);
-            self.core.cvar.notify_all();
-        }
+    /// Return the current `(generation, geometry_revision)` pair tracked by this target.
+    #[must_use]
+    pub fn current_revision(&self) -> (u64, u64) {
+        let st = self.core.status.lock();
+        (st.generation, st.geometry_revision)
     }
-}
 
-impl Drop for TargetCore {
-    fn drop(&mut self) {
-        let cap_join = {
-            let mut ctrl = self.ctrl.lock();
-            ctrl.shutdown = true;
-            ctrl.stop_requested = true;
-            self.cvar.notify_all();
-            ctrl.join.take()
+    /// Return the latest `geometry_revision` tracked by this target.
+    #[must_use]
+    pub fn geometry_revision(&self) -> u64 {
+        self.core.status.lock().geometry_revision
+    }
+
+    /// Validate a client-supplied `(expected_generation, expected_geometry_revision)` against
+    /// the target's active geometry and forward the input event if they match.
+    ///
+    /// Note: Because [`InputEvent`] in `crates/live-view` does not carry `geometry_revision`,
+    /// the session daemon (`c173`) must compare the client's `geometry_revision` (or call this
+    /// helper) before invoking [`InputSink::inject`]. Internally, `DesktopInputSink::inject`
+    /// also rejects positional events whenever the capture geometry has changed ahead of the
+    /// last published frame or while an input job is queued on the worker channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError::Unavailable`] when the target has no input sink or when
+    /// `expected_generation` / `expected_geometry_revision` do not match the current target state.
+    pub async fn inject_at_revision(
+        &self,
+        event: &InputEvent,
+        expected_generation: u64,
+        expected_geometry_revision: u64,
+    ) -> Result<(), ViewError> {
+        let Some(sink) = self.input_sink() else {
+            return Err(ViewError::Unsupported);
         };
-        if let Some(j) = cap_join {
-            let _ = j.join();
-        }
-        let in_worker = self.input_worker.lock().take();
-        if let Some(mut w) = in_worker {
-            let _ = w.tx.send(InputJob::Shutdown);
-            if let Some(j) = w.join.take() {
-                let _ = j.join();
+        {
+            let st = self.core.status.lock();
+            if st.generation != expected_generation {
+                self.core
+                    .stats
+                    .input_cancelled
+                    .fetch_add(1, Ordering::Relaxed);
+                return Err(ViewError::Unavailable);
+            }
+            if event.positional() && st.geometry_revision != expected_geometry_revision {
+                self.core
+                    .stats
+                    .input_cancelled
+                    .fetch_add(1, Ordering::Relaxed);
+                return Err(ViewError::Unavailable);
             }
         }
+        sink.inject(event).await
     }
-}
 
-#[async_trait]
-impl ViewTarget for DesktopViewTarget {
-    fn info(&self) -> TargetInfo {
+    /// Run the synchronous OS availability probe when the capture worker is idle.
+    ///
+    /// [`ViewTarget::info`] intentionally reads cached status without blocking the caller's
+    /// thread on X11/Win32 syscalls; callers on blocking threads may invoke this method to
+    /// force an offline probe.
+    pub fn refresh_availability(&self) {
         let running = self.core.ctrl.lock().running;
         if !running {
             let probe_res = (self.core.probe)(&self.core.options.scope);
@@ -1113,6 +1215,39 @@ impl ViewTarget for DesktopViewTarget {
                 }
             }
         }
+    }
+
+    /// Explicitly shut down capture and input worker threads for this target.
+    pub fn shutdown(&self) {
+        self.core.shutdown_workers();
+    }
+
+    /// Request an immediate Watch/Live refresh without blocking (used when bot
+    /// actions mutate the desktop on the same backend session).
+    pub fn notify_desktop_action(&self) {
+        let mut ctrl = self.core.ctrl.lock();
+        if ctrl.subscribers > 0 && !ctrl.paused {
+            ctrl.pending_refresh.get_or_insert(0);
+            self.core.cvar.notify_all();
+        }
+    }
+}
+
+impl Drop for DesktopViewTarget {
+    fn drop(&mut self) {
+        self.core.shutdown_workers();
+    }
+}
+
+impl Drop for TargetCore {
+    fn drop(&mut self) {
+        self.shutdown_workers();
+    }
+}
+
+#[async_trait]
+impl ViewTarget for DesktopViewTarget {
+    fn info(&self) -> TargetInfo {
         let st = self.core.status.lock();
         TargetInfo {
             target_id: self.core.target_id,
@@ -1215,6 +1350,29 @@ fn merge_profiles(existing: &EffectiveProfile, incoming: &EffectiveProfile) -> E
     }
 }
 
+fn spawn_capture_worker_after_stop(
+    core: &Arc<TargetCore>,
+    prev_join: Option<std::thread::JoinHandle<()>>,
+    init_tx: Option<oneshot::Sender<Result<(), ViewError>>>,
+) -> Result<(), ViewError> {
+    if let Some(j) = prev_join
+        && j.thread().id() != std::thread::current().id()
+    {
+        let _ = j.join();
+    }
+    let worker_core = Arc::clone(core);
+    let spawned = std::thread::Builder::new()
+        .name("live-view-cap".into())
+        .spawn(move || run_capture_worker(&worker_core, init_tx));
+    if let Ok(handle) = spawned {
+        core.ctrl.lock().join = Some(handle);
+        Ok(())
+    } else {
+        core.ctrl.lock().running = false;
+        Err(ViewError::Unavailable)
+    }
+}
+
 #[async_trait]
 impl FrameSource for DesktopFrameSource {
     async fn subscribe(&self, profile: EffectiveProfile) -> Result<FrameSubscription, ViewError> {
@@ -1223,6 +1381,9 @@ impl FrameSource for DesktopFrameSource {
         let (init_rx, ticket) = {
             let old_join = {
                 let mut ctrl = self.core.ctrl.lock();
+                if ctrl.shutdown {
+                    return Err(ViewError::Unavailable);
+                }
                 if ctrl.subscribers == 0 || ctrl.paused {
                     ctrl.profile = profile;
                 } else {
@@ -1251,21 +1412,9 @@ impl FrameSource for DesktopFrameSource {
             };
 
             let init_rx = if let Some(prev) = old_join {
-                if let Some(j) = prev {
-                    let _ = j.join();
-                }
                 let (itx, irx) = oneshot::channel();
-                let worker_core = Arc::clone(&self.core);
-                let spawned = std::thread::Builder::new()
-                    .name("live-view-cap".into())
-                    .spawn(move || run_capture_worker(&worker_core, Some(itx)));
-                if let Ok(handle) = spawned {
-                    self.core.ctrl.lock().join = Some(handle);
-                    Some(irx)
-                } else {
-                    self.core.ctrl.lock().running = false;
-                    return Err(ViewError::Unavailable);
-                }
+                spawn_capture_worker_after_stop(&self.core, prev, Some(itx))?;
+                Some(irx)
             } else {
                 None
             };
@@ -1285,30 +1434,60 @@ impl FrameSource for DesktopFrameSource {
     }
 
     async fn request_refresh(&self, action_seq: u64) -> Result<(), ViewError> {
-        let mut ctrl = self.core.ctrl.lock();
-        if ctrl.subscribers == 0 || ctrl.paused {
-            return Ok(());
+        let prev_join = {
+            let mut ctrl = self.core.ctrl.lock();
+            if ctrl.subscribers == 0 || ctrl.paused || ctrl.shutdown {
+                return Ok(());
+            }
+            ctrl.pending_refresh = Some(
+                ctrl.pending_refresh
+                    .map_or(action_seq, |prev| prev.max(action_seq)),
+            );
+            if ctrl.running {
+                self.core.cvar.notify_all();
+                None
+            } else {
+                ctrl.stop_requested = false;
+                let prev = ctrl.join.take();
+                ctrl.running = true;
+                Some(prev)
+            }
+        };
+        if let Some(prev) = prev_join {
+            spawn_capture_worker_after_stop(&self.core, prev, None)?;
         }
-        ctrl.pending_refresh = Some(
-            ctrl.pending_refresh
-                .map_or(action_seq, |prev| prev.max(action_seq)),
-        );
-        self.core.cvar.notify_all();
         Ok(())
     }
 
     async fn set_profile(&self, profile: EffectiveProfile) -> Result<(), ViewError> {
         validate_profile(&profile)?;
-        let mut ctrl = self.core.ctrl.lock();
-        let mut clamped = profile;
-        clamped.max_fps = clamped.max_fps.min(LIVE_MAX_FPS_CAP);
-        ctrl.profile = clamped;
-        ctrl.profile_dirty = true;
-        if ctrl.subscribers > 0 {
-            ctrl.paused = false;
-            ctrl.stop_requested = false;
-            ctrl.pending_refresh.get_or_insert(0);
-            self.core.cvar.notify_all();
+        let prev_join = {
+            let mut ctrl = self.core.ctrl.lock();
+            if ctrl.shutdown {
+                return Err(ViewError::Unavailable);
+            }
+            let mut clamped = profile;
+            clamped.max_fps = clamped.max_fps.min(LIVE_MAX_FPS_CAP);
+            ctrl.profile = clamped;
+            ctrl.profile_dirty = true;
+            if ctrl.subscribers > 0 {
+                ctrl.paused = false;
+                ctrl.stop_requested = false;
+                ctrl.pending_refresh.get_or_insert(0);
+                if ctrl.running {
+                    self.core.cvar.notify_all();
+                    None
+                } else {
+                    let prev = ctrl.join.take();
+                    ctrl.running = true;
+                    Some(prev)
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(prev) = prev_join {
+            spawn_capture_worker_after_stop(&self.core, prev, None)?;
         }
         Ok(())
     }
@@ -1384,16 +1563,40 @@ impl CaptureSessionCache {
     }
 }
 
-fn finish_capture_worker(core: &Arc<TargetCore>) {
-    let _ = core.frames_tx.send(None);
-    let waiters = {
+/// Attempt to mark the capture worker as stopped.
+///
+/// Returns `true` if the worker should exit, or `false` if a new subscriber/resume arrived
+/// before `ctrl.lock()` was acquired and the worker must continue running.
+fn try_finish_capture_worker(core: &Arc<TargetCore>, allow_restart: bool) -> bool {
+    #[cfg(test)]
+    {
+        let hook = core.pre_finish_hook.lock().take();
+        if let Some(f) = hook {
+            f();
+        }
+    }
+    let (waiters, should_exit) = {
         let mut ctrl = core.ctrl.lock();
-        ctrl.running = false;
-        std::mem::take(&mut ctrl.exit_waiters)
+        let waiters = std::mem::take(&mut ctrl.exit_waiters);
+        if allow_restart
+            && !ctrl.shutdown
+            && !ctrl.stop_requested
+            && !ctrl.paused
+            && ctrl.subscribers > 0
+        {
+            (waiters, false)
+        } else {
+            ctrl.running = false;
+            (waiters, true)
+        }
     };
+    if should_exit {
+        let _ = core.frames_tx.send(None);
+    }
     for w in waiters {
         let _ = w.send(());
     }
+    should_exit
 }
 
 fn periodic_interval(profile: &EffectiveProfile) -> Duration {
@@ -1467,13 +1670,14 @@ fn wait_for_capture_wake(
         if ctrl.shutdown || ctrl.stop_requested || ctrl.paused || ctrl.subscribers == 0 {
             return None;
         }
-        let interval = periodic_interval(&ctrl.profile);
+        let base_interval = periodic_interval(&ctrl.profile);
+        let interval = if cache.cached_payload.is_none() {
+            base_interval.min(UNAVAILABLE_RETRY_INTERVAL)
+        } else {
+            base_interval
+        };
         let due_periodic = cache.last_capture.elapsed() >= interval;
-        if ctrl.pending_refresh.is_some()
-            || ctrl.profile_dirty
-            || cache.cached_payload.is_none()
-            || due_periodic
-        {
+        if ctrl.pending_refresh.is_some() || ctrl.profile_dirty || due_periodic {
             let refresh = ctrl.pending_refresh.take();
             let pdirty = ctrl.profile_dirty;
             ctrl.profile_dirty = false;
@@ -1570,6 +1774,8 @@ fn publish_reused_frame(
         payload,
     });
     if frame.validate().is_ok() {
+        core.last_published_geometry_revision
+            .store(geometry_revision, Ordering::Release);
         let _ = core.frames_tx.send(Some(frame));
         cache.last_publish = Instant::now();
         core.stats.frames_repeated.fetch_add(1, Ordering::Relaxed);
@@ -1608,12 +1814,20 @@ fn encode_and_publish_frame(
         core.stats
             .frames_skipped_budget
             .fetch_add(1, Ordering::Relaxed);
+        core.stats.set_reason(Some(Reason::FrameBudgetExceeded));
+        {
+            let mut st = core.status.lock();
+            st.unavailable_reason = Some(Reason::FrameBudgetExceeded);
+        }
         return Err(ViewError::LimitExceeded);
     };
 
     let cost =
         f64::from(u32::try_from(bufs.jpeg.len().saturating_add(MAX_HEADER)).unwrap_or(u32::MAX));
     if !forced && cache.cached_payload.is_some() && cache.token_bytes < cost {
+        // Record the fingerprint of the skipped screen so subsequent periodic ticks on
+        // the same static screen do not re-encode the identical BGRA buffer.
+        cache.last_hash = Some(hash);
         core.stats
             .frames_skipped_budget
             .fetch_add(1, Ordering::Relaxed);
@@ -1641,6 +1855,8 @@ fn encode_and_publish_frame(
         payload: Arc::clone(&payload),
     });
     if frame.validate().is_ok() {
+        core.last_published_geometry_revision
+            .store(geometry_revision, Ordering::Release);
         let _ = core.frames_tx.send(Some(frame));
         cache.last_hash = Some(hash);
         cache.cached_payload = Some(payload);
@@ -1648,8 +1864,14 @@ fn encode_and_publish_frame(
         cache.cached_captured_at_ms = captured_at_ms;
         cache.last_publish = Instant::now();
         core.stats.frames_encoded.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    } else {
+        core.stats
+            .frames_skipped_budget
+            .fetch_add(1, Ordering::Relaxed);
+        core.stats.set_reason(Some(Reason::FrameBudgetExceeded));
+        Err(ViewError::LimitExceeded)
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1726,7 +1948,7 @@ fn execute_capture_step(
         .then_some(Ok(()));
     }
 
-    Some(encode_and_publish_frame(
+    let res = encode_and_publish_frame(
         core,
         cache,
         bufs,
@@ -1736,7 +1958,11 @@ fn execute_capture_step(
         refresh_seq,
         generation,
         geometry_revision,
-    ))
+    );
+    if res.is_err() {
+        sleep_interruptible(core, UNAVAILABLE_RETRY_INTERVAL);
+    }
+    Some(res)
 }
 
 fn run_capture_worker(
@@ -1757,7 +1983,7 @@ fn run_capture_worker(
                     st.unavailable_reason = Some(reason);
                 }
                 send_init(&mut init_tx, Err(view_err));
-                finish_capture_worker(core);
+                let _ = try_finish_capture_worker(core, false);
                 return;
             }
         };
@@ -1772,28 +1998,33 @@ fn run_capture_worker(
     };
     let mut saw_error = false;
 
-    while let Some((profile, refresh_seq, profile_dirty)) = wait_for_capture_wake(core, &cache) {
-        if let Err(ve) = ensure_active_driver(core, &mut driver, &mut saw_error, &mut cache) {
-            send_init(&mut init_tx, Err(ve));
-            sleep_interruptible(core, UNAVAILABLE_RETRY_INTERVAL);
-            continue;
+    loop {
+        while let Some((profile, refresh_seq, profile_dirty)) = wait_for_capture_wake(core, &cache)
+        {
+            if let Err(ve) = ensure_active_driver(core, &mut driver, &mut saw_error, &mut cache) {
+                send_init(&mut init_tx, Err(ve));
+                sleep_interruptible(core, UNAVAILABLE_RETRY_INTERVAL);
+                continue;
+            }
+            if let Some(res) = execute_capture_step(
+                core,
+                &mut driver,
+                &mut saw_error,
+                &mut cache,
+                &mut bufs,
+                &profile,
+                refresh_seq,
+                profile_dirty,
+            ) {
+                send_init(&mut init_tx, res);
+            }
         }
-        if let Some(res) = execute_capture_step(
-            core,
-            &mut driver,
-            &mut saw_error,
-            &mut cache,
-            &mut bufs,
-            &profile,
-            refresh_seq,
-            profile_dirty,
-        ) {
-            send_init(&mut init_tx, res);
+
+        send_init(&mut init_tx, Ok(()));
+        if try_finish_capture_worker(core, true) {
+            break;
         }
     }
-
-    send_init(&mut init_tx, Ok(()));
-    finish_capture_worker(core);
 }
 
 fn sleep_interruptible(core: &Arc<TargetCore>, duration: Duration) {
@@ -1818,12 +2049,14 @@ impl Drop for CancelOnDrop {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_input_worker_loop(
-    mut drv: Box<dyn InputDriver>,
+    initial_drv: Box<dyn InputDriver>,
+    factory: &InputDriverFactory,
     rx: &std::sync::mpsc::Receiver<InputJob>,
-    core: &Arc<TargetCore>,
+    core_weak: &Weak<TargetCore>,
 ) {
-    let stats = &core.stats;
+    let mut drv: Option<Box<dyn InputDriver>> = Some(initial_drv);
     while let Ok(job) = rx.recv() {
         match job {
             InputJob::Inject {
@@ -1836,6 +2069,11 @@ fn run_input_worker_loop(
                 virtual_rect,
                 reply,
             } => {
+                let Some(core) = core_weak.upgrade() else {
+                    let _ = reply.send(Err(ViewError::Unavailable));
+                    break;
+                };
+                let stats = &core.stats;
                 if cancelled.load(Ordering::Acquire)
                     || !core.takeover_active.load(Ordering::Acquire)
                     || job_epoch != core.input_epoch.load(Ordering::Acquire)
@@ -1846,8 +2084,12 @@ fn run_input_worker_loop(
                 }
                 {
                     let st = core.status.lock();
-                    let stale_geom =
-                        event.positional() && st.geometry_revision != job_geometry_revision;
+                    let published_rev = core
+                        .last_published_geometry_revision
+                        .load(Ordering::Acquire);
+                    let stale_geom = event.positional()
+                        && (st.geometry_revision != job_geometry_revision
+                            || st.geometry_revision != published_rev);
                     if !st.view_available
                         || !st.input_available
                         || st.unavailable_reason.is_some()
@@ -1866,7 +2108,35 @@ fn run_input_worker_loop(
                     let _ = reply.send(Err(ViewError::Unavailable));
                     continue;
                 }
-                let res = drv.inject(&event, source_rect, virtual_rect, &cancelled);
+                if drv.as_ref().is_none_or(|d| d.is_connection_lost()) {
+                    drv = None;
+                    match factory() {
+                        Ok(new_drv) => drv = Some(new_drv),
+                        Err(e) => {
+                            let _ = reply.send(Err(e));
+                            continue;
+                        }
+                    }
+                }
+                let Some(active_drv) = drv.as_mut() else {
+                    let _ = reply.send(Err(ViewError::Unavailable));
+                    continue;
+                };
+                let call_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    active_drv.inject(&event, source_rect, virtual_rect, &cancelled)
+                }));
+                let res = if let Ok(r) = call_res {
+                    if active_drv.is_connection_lost() {
+                        drv = None;
+                    }
+                    r
+                } else {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _ = active_drv.release_all();
+                    }));
+                    drv = None;
+                    Err(ViewError::Unavailable)
+                };
                 match &res {
                     Ok(()) => {
                         stats.input_events.fetch_add(1, Ordering::Relaxed);
@@ -1879,15 +2149,52 @@ fn run_input_worker_loop(
                 let _ = reply.send(res);
             }
             InputJob::ReleaseAll { reply } => {
-                stats.input_resets.fetch_add(1, Ordering::Relaxed);
-                let res = drv.release_all();
+                if let Some(core) = core_weak.upgrade() {
+                    core.stats.input_resets.fetch_add(1, Ordering::Relaxed);
+                }
+                let res = if let Some(active_drv) = drv.as_mut() {
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        active_drv.release_all()
+                    })) {
+                        Ok(Ok(())) => {
+                            if active_drv.is_connection_lost() {
+                                drv = factory().ok();
+                            }
+                            Ok(())
+                        }
+                        Ok(Err(e)) => {
+                            if active_drv.is_connection_lost() {
+                                drv = factory().ok();
+                                Ok(())
+                            } else {
+                                Err(e)
+                            }
+                        }
+                        Err(_) => {
+                            drv = factory().ok();
+                            Ok(())
+                        }
+                    }
+                } else {
+                    drv = factory().ok();
+                    Ok(())
+                };
                 let _ = reply.send(res);
             }
             InputJob::Shutdown => {
-                let _ = drv.release_all();
-                break;
+                if let Some(active_drv) = drv.as_mut() {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _ = active_drv.release_all();
+                    }));
+                }
+                return;
             }
         }
+    }
+    if let Some(active_drv) = drv.as_mut() {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = active_drv.release_all();
+        }));
     }
 }
 
@@ -1896,14 +2203,23 @@ fn ensure_input_worker(
 ) -> Result<std::sync::mpsc::Sender<InputJob>, ViewError> {
     let mut guard = core.input_worker.lock();
     if let Some(worker) = guard.as_ref() {
-        return Ok(worker.tx.clone());
+        let alive = worker.join.as_ref().is_some_and(|j| !j.is_finished());
+        if alive {
+            return Ok(worker.tx.clone());
+        }
+        if let Some(mut dead) = guard.take()
+            && let Some(j) = dead.join.take()
+            && j.thread().id() != std::thread::current().id()
+        {
+            let _ = j.join();
+        }
     }
     let Some(factory) = core.input_factory.as_ref().map(Arc::clone) else {
         return Err(ViewError::Unsupported);
     };
     let (tx, rx) = std::sync::mpsc::channel::<InputJob>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), ViewError>>();
-    let core_epoch = Arc::clone(core);
+    let core_weak = Arc::downgrade(core);
     let join = std::thread::Builder::new()
         .name("live-view-in".into())
         .spawn(move || {
@@ -1917,7 +2233,7 @@ fn ensure_input_worker(
                     return;
                 }
             };
-            run_input_worker_loop(drv, &rx, &core_epoch);
+            run_input_worker_loop(drv, &factory, &rx, &core_weak);
         })
         .map_err(|_| ViewError::Unavailable)?;
 
@@ -1957,6 +2273,19 @@ impl InputSink for DesktopInputSink {
             if !st.view_available || !st.input_available || st.unavailable_reason.is_some() {
                 return Err(ViewError::Unavailable);
             }
+            if event.positional() {
+                let published_rev = self
+                    .core
+                    .last_published_geometry_revision
+                    .load(Ordering::Acquire);
+                if st.geometry_revision != published_rev {
+                    self.core
+                        .stats
+                        .input_cancelled
+                        .fetch_add(1, Ordering::Relaxed);
+                    return Err(ViewError::Unavailable);
+                }
+            }
             (
                 st.generation,
                 st.geometry_revision,
@@ -1969,25 +2298,37 @@ impl InputSink for DesktopInputSink {
         }
         let tx = ensure_input_worker(&self.core)?;
         let cancelled = Arc::new(AtomicBool::new(false));
+        self.core.register_input_cancel(&cancelled);
         let _guard = CancelOnDrop(Arc::clone(&cancelled));
         let epoch = self.core.input_epoch.load(Ordering::Acquire);
         let (reply_tx, reply_rx) = oneshot::channel();
-        tx.send(InputJob::Inject {
-            epoch,
-            generation,
-            geometry_revision,
-            cancelled,
-            event: event.clone(),
-            source_rect,
-            virtual_rect,
-            reply: reply_tx,
-        })
-        .map_err(|_| ViewError::Unavailable)?;
-        reply_rx.await.map_err(|_| ViewError::Unavailable)?
+        if tx
+            .send(InputJob::Inject {
+                epoch,
+                generation,
+                geometry_revision,
+                cancelled,
+                event: event.clone(),
+                source_rect,
+                virtual_rect,
+                reply: reply_tx,
+            })
+            .is_err()
+        {
+            *self.core.input_worker.lock() = None;
+            return Err(ViewError::Unavailable);
+        }
+        if let Ok(res) = reply_rx.await {
+            res
+        } else {
+            *self.core.input_worker.lock() = None;
+            Err(ViewError::Unavailable)
+        }
     }
 
     async fn release_pressed_inputs(&self) -> Result<(), ViewError> {
         self.core.input_epoch.fetch_add(1, Ordering::SeqCst);
+        self.core.cancel_in_flight_input();
         let tx_opt = {
             let guard = self.core.input_worker.lock();
             guard.as_ref().map(|w| w.tx.clone())
@@ -1997,9 +2338,16 @@ impl InputSink for DesktopInputSink {
             return Ok(());
         };
         let (reply_tx, reply_rx) = oneshot::channel();
-        tx.send(InputJob::ReleaseAll { reply: reply_tx })
-            .map_err(|_| ViewError::Unavailable)?;
-        reply_rx.await.map_err(|_| ViewError::Unavailable)?
+        if tx.send(InputJob::ReleaseAll { reply: reply_tx }).is_err() {
+            *self.core.input_worker.lock() = None;
+            return Ok(());
+        }
+        if let Ok(res) = reply_rx.await {
+            res
+        } else {
+            *self.core.input_worker.lock() = None;
+            Ok(())
+        }
     }
 
     async fn set_takeover_active(&self, active: bool) -> Result<(), ViewError> {
@@ -2016,13 +2364,16 @@ impl InputSink for DesktopInputSink {
         } else {
             self.core.takeover_active.store(false, Ordering::SeqCst);
             self.core.input_epoch.fetch_add(1, Ordering::SeqCst);
-            let mut ctrl = self.core.ctrl.lock();
-            if ctrl.profile.profile == Profile::Live {
-                ctrl.profile = EffectiveProfile::watch();
-                ctrl.profile_dirty = true;
-                self.core.cvar.notify_all();
+            self.core.cancel_in_flight_input();
+            {
+                let mut ctrl = self.core.ctrl.lock();
+                if ctrl.profile.profile == Profile::Live {
+                    ctrl.profile = EffectiveProfile::watch();
+                    ctrl.profile_dirty = true;
+                    self.core.cvar.notify_all();
+                }
             }
-            Ok(())
+            self.release_pressed_inputs().await
         }
     }
 }
@@ -2222,6 +2573,14 @@ mod tests {
             point_to_virtual_absolute(3839.0, 2159.0, auto.virtual_rect),
             (65_535, 65_535)
         );
+        // Every integer pixel across a 5760px wide virtual desktop round-trips to the exact pixel
+        // under Win32 SendInput's integer division `((abs * width) / 65536) + left`.
+        for px in -1920..3839 {
+            let (abs_x, _) = point_to_virtual_absolute(f64::from(px), 0.0, auto.virtual_rect);
+            let reconstructed =
+                i32::try_from((i64::from(abs_x) * 5760) / 65_536).unwrap() + auto.virtual_rect.x;
+            assert_eq!(reconstructed, px, "pixel {px} drifted to {reconstructed}");
+        }
     }
 
     #[test]
@@ -2378,8 +2737,14 @@ mod tests {
         *geom.lock() = test_geom(320, 240);
         reconnect_mode.store(true, Ordering::SeqCst);
         src.request_refresh(6).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(650)).await;
-        let f_resized = sub1.frames.borrow_and_update().clone().unwrap();
+        let f_resized = loop {
+            sub1.frames.changed().await.unwrap();
+            if let Some(f) = sub1.frames.borrow_and_update().clone()
+                && f.metadata.generation >= 2
+            {
+                break f;
+            }
+        };
         assert!(f_resized.metadata.geometry_revision >= 2);
         assert!(f_resized.metadata.generation >= 2);
         let weak_latest = Arc::downgrade(&f_resized.payload);
@@ -2398,12 +2763,66 @@ mod tests {
         assert_eq!(captures_done.load(Ordering::SeqCst), count_at_stop);
     }
 
-    struct SlowMockInput {
-        log: Arc<Mutex<Vec<&'static str>>>,
-        partial_next: Arc<AtomicBool>,
+    struct GateSync {
+        entered: Mutex<bool>,
+        unblock: Mutex<bool>,
+        cvar: Condvar,
     }
 
-    impl InputDriver for SlowMockInput {
+    impl GateSync {
+        fn new() -> Self {
+            Self {
+                entered: Mutex::new(false),
+                unblock: Mutex::new(false),
+                cvar: Condvar::new(),
+            }
+        }
+
+        fn signal_entered(&self) {
+            *self.entered.lock() = true;
+            self.cvar.notify_all();
+        }
+
+        fn wait_entered(&self) {
+            let mut g = self.entered.lock();
+            while !*g {
+                self.cvar.wait(&mut g);
+            }
+        }
+
+        fn release_gate(&self) {
+            *self.unblock.lock() = true;
+            self.cvar.notify_all();
+        }
+
+        fn wait_unblocked_or_cancelled(&self, cancelled: &AtomicBool) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut g = self.unblock.lock();
+            while !*g && !cancelled.load(Ordering::Acquire) {
+                if self.cvar.wait_until(&mut g, deadline).timed_out() {
+                    break;
+                }
+            }
+            cancelled.load(Ordering::Acquire)
+        }
+    }
+
+    struct DeterministicMockInput {
+        log: Arc<Mutex<Vec<&'static str>>>,
+        partial_next: Arc<AtomicBool>,
+        panic_next: Arc<AtomicBool>,
+        conn_lost: Arc<AtomicBool>,
+        gate: Arc<GateSync>,
+        dropped_count: Arc<AtomicU64>,
+    }
+
+    impl Drop for DeterministicMockInput {
+        fn drop(&mut self) {
+            self.dropped_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl InputDriver for DeterministicMockInput {
         fn inject(
             &mut self,
             event: &InputEvent,
@@ -2411,13 +2830,19 @@ mod tests {
             _virtual_rect: PixelRect,
             cancelled: &AtomicBool,
         ) -> Result<(), ViewError> {
+            assert!(
+                !self.panic_next.swap(false, Ordering::SeqCst),
+                "simulated driver panic"
+            );
             match event {
-                InputEvent::Text { text } if text == "slow" => {
-                    std::thread::sleep(Duration::from_millis(60));
-                    if cancelled.load(Ordering::Acquire) {
-                        return Err(ViewError::Unavailable);
+                InputEvent::Text { text } if text == "gated" => {
+                    self.log.lock().push("gated_step1");
+                    self.gate.signal_entered();
+                    if self.gate.wait_unblocked_or_cancelled(cancelled) {
+                        self.log.lock().push("gated_cancelled");
+                        return Err(ViewError::PartialInjection);
                     }
-                    self.log.lock().push("slow_delivered");
+                    self.log.lock().push("gated_delivered");
                     Ok(())
                 }
                 InputEvent::Key { .. } => {
@@ -2436,7 +2861,14 @@ mod tests {
 
         fn release_all(&mut self) -> Result<(), ViewError> {
             self.log.lock().push("release_all");
+            if self.conn_lost.load(Ordering::SeqCst) {
+                return Err(ViewError::Unavailable);
+            }
             Ok(())
+        }
+
+        fn is_connection_lost(&self) -> bool {
+            self.conn_lost.load(Ordering::SeqCst)
         }
     }
 
@@ -2444,6 +2876,10 @@ mod tests {
     async fn input_cancel_and_reset_barrier_blocks_late_events_and_is_idempotent() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let partial_next = Arc::new(AtomicBool::new(false));
+        let panic_next = Arc::new(AtomicBool::new(false));
+        let conn_lost = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new(GateSync::new());
+        let dropped_count = Arc::new(AtomicU64::new(0));
 
         let target = DesktopViewTarget::new(DesktopViewTargetConfig {
             options: LiveViewOptions::new("host"),
@@ -2453,10 +2889,18 @@ mod tests {
             input_factory: Some({
                 let log = Arc::clone(&log);
                 let partial_next = Arc::clone(&partial_next);
+                let panic_next = Arc::clone(&panic_next);
+                let conn_lost = Arc::clone(&conn_lost);
+                let gate = Arc::clone(&gate);
+                let dropped_count = Arc::clone(&dropped_count);
                 Arc::new(move || {
-                    Ok(Box::new(SlowMockInput {
+                    Ok(Box::new(DeterministicMockInput {
                         log: Arc::clone(&log),
                         partial_next: Arc::clone(&partial_next),
+                        panic_next: Arc::clone(&panic_next),
+                        conn_lost: Arc::clone(&conn_lost),
+                        gate: Arc::clone(&gate),
+                        dropped_count: Arc::clone(&dropped_count),
                     }))
                 })
             }),
@@ -2483,21 +2927,27 @@ mod tests {
         );
         sink.set_takeover_active(true).await.unwrap();
 
-        // Start a slow inject, immediately drop/abort its future, then call reset barrier.
+        // Start a gated inject, deterministically wait until worker enters step 1, then abort
+        // its future and call release_pressed_inputs.
         let sink2 = Arc::clone(&sink);
         let fut = tokio::spawn(async move {
             sink2
                 .inject(&InputEvent::Text {
-                    text: "slow".into(),
+                    text: "gated".into(),
                 })
                 .await
         });
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        let gate_wait = Arc::clone(&gate);
+        tokio::task::spawn_blocking(move || gate_wait.wait_entered())
+            .await
+            .unwrap();
         fut.abort();
         let _ = fut.await;
+        // `CancelOnDrop` and `release_pressed_inputs` flip `cancelled` and wake the worker.
+        gate.cvar.notify_all();
         sink.release_pressed_inputs().await.unwrap();
-        tokio::time::sleep(Duration::from_millis(90)).await;
-        assert!(!log.lock().contains(&"slow_delivered"));
+        assert!(!log.lock().contains(&"gated_delivered"));
+        assert!(log.lock().contains(&"gated_cancelled"));
         assert!(log.lock().contains(&"release_all"));
 
         // PartialInjection error surfaces verbatim.
@@ -2539,22 +2989,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn takeover_gate_and_stale_geometry_revision_reject_positional_input() {
+    async fn set_takeover_active_false_cancels_in_flight_text_and_releases_before_returning() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let partial_next = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new(GateSync::new());
 
         let target = DesktopViewTarget::new(DesktopViewTargetConfig {
-            options: LiveViewOptions::new("host-geom"),
+            options: LiveViewOptions::new("host-takeover-end"),
             initial_geometry: test_geom(800, 600),
             capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
             probe: Arc::new(|_| Ok(())),
             input_factory: Some({
                 let log = Arc::clone(&log);
-                let partial_next = Arc::clone(&partial_next);
+                let gate = Arc::clone(&gate);
                 Arc::new(move || {
-                    Ok(Box::new(SlowMockInput {
+                    Ok(Box::new(DeterministicMockInput {
                         log: Arc::clone(&log),
-                        partial_next: Arc::clone(&partial_next),
+                        partial_next: Arc::new(AtomicBool::new(false)),
+                        panic_next: Arc::new(AtomicBool::new(false)),
+                        conn_lost: Arc::new(AtomicBool::new(false)),
+                        gate: Arc::clone(&gate),
+                        dropped_count: Arc::new(AtomicU64::new(0)),
                     }))
                 })
             }),
@@ -2564,38 +3018,469 @@ mod tests {
         let sink = target.input_sink().unwrap();
         sink.set_takeover_active(true).await.unwrap();
 
-        // Queue a slow event on the input worker, and while it is executing queue a positional
-        // pointer event and bump `geometry_revision` before the worker reaches the pointer event.
-        let sink_slow = Arc::clone(&sink);
-        let slow_fut = tokio::spawn(async move {
-            sink_slow
+        let sink_inject = Arc::clone(&sink);
+        let inject_fut = tokio::spawn(async move {
+            sink_inject
                 .inject(&InputEvent::Text {
-                    text: "slow".into(),
+                    text: "gated".into(),
                 })
                 .await
         });
-        tokio::time::sleep(Duration::from_millis(10)).await;
 
+        // Wait deterministically until the worker is mid-batch inside `inject`.
+        let gate_wait = Arc::clone(&gate);
+        tokio::task::spawn_blocking(move || gate_wait.wait_entered())
+            .await
+            .unwrap();
+
+        // Spawn a background notifier that wakes the condvar once `set_takeover_active(false)`
+        // flips `cancelled = true` via `cancel_in_flight_input()`.
+        let gate_notify = Arc::clone(&gate);
+        let active_cancels_ref = Arc::clone(&target.core);
+        let wake_handle = std::thread::spawn(move || {
+            while active_cancels_ref.takeover_active.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            gate_notify.cvar.notify_all();
+        });
+
+        // `set_takeover_active(false)` must cancel the in-flight batch AND await `ReleaseAll`
+        // before returning to the caller.
+        sink.set_takeover_active(false).await.unwrap();
+        let _ = wake_handle.join();
+
+        let snapshot = log.lock().clone();
+        assert_eq!(
+            snapshot,
+            vec!["gated_step1", "gated_cancelled", "release_all"]
+        );
+        assert_eq!(inject_fut.await.unwrap(), Err(ViewError::PartialInjection));
+    }
+
+    #[tokio::test]
+    async fn input_worker_has_no_arc_cycle_joins_on_drop_and_recovers_from_driver_panic() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let panic_next = Arc::new(AtomicBool::new(false));
+        let conn_lost = Arc::new(AtomicBool::new(false));
+        let dropped_count = Arc::new(AtomicU64::new(0));
+        let creations = Arc::new(AtomicU64::new(0));
+
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-lifecycle"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: Arc::new(|_| Ok(())),
+            input_factory: Some({
+                let log = Arc::clone(&log);
+                let panic_next = Arc::clone(&panic_next);
+                let conn_lost = Arc::clone(&conn_lost);
+                let dropped_count = Arc::clone(&dropped_count);
+                let creations = Arc::clone(&creations);
+                Arc::new(move || {
+                    creations.fetch_add(1, Ordering::SeqCst);
+                    Ok(Box::new(DeterministicMockInput {
+                        log: Arc::clone(&log),
+                        partial_next: Arc::new(AtomicBool::new(false)),
+                        panic_next: Arc::clone(&panic_next),
+                        conn_lost: Arc::clone(&conn_lost),
+                        gate: Arc::new(GateSync::new()),
+                        dropped_count: Arc::clone(&dropped_count),
+                    }))
+                })
+            }),
+            input_reason: None,
+        });
+
+        let sink = target.input_sink().unwrap();
+        sink.set_takeover_active(true).await.unwrap();
+        assert_eq!(creations.load(Ordering::SeqCst), 1);
+
+        // Even with the input worker thread spawned and running, only `target` and `sink`
+        // hold strong references to `TargetCore` (the worker holds a `Weak<TargetCore>`).
+        assert_eq!(Arc::strong_count(&target.core), 2);
+
+        // Simulate a panic inside `drv.inject`: worker must catch the panic, run best-effort
+        // `release_all`, drop the poisoned driver, and rebuild a fresh driver on the next call.
+        panic_next.store(true, Ordering::SeqCst);
+        let err_res = sink
+            .inject(&InputEvent::Key {
+                phase: ::live_view::KeyPhase::Down,
+                code: "KeyA".into(),
+                key: "a".into(),
+                location: 0,
+                repeat: false,
+                modifiers: vec![],
+            })
+            .await;
+        assert_eq!(err_res, Err(ViewError::Unavailable));
+        assert!(log.lock().contains(&"release_all"));
+        assert_eq!(dropped_count.load(Ordering::SeqCst), 1);
+
+        // Subsequent inject succeeds by recreating the driver via `input_factory`.
+        sink.inject(&InputEvent::Key {
+            phase: ::live_view::KeyPhase::Down,
+            code: "KeyA".into(),
+            key: "a".into(),
+            location: 0,
+            repeat: false,
+            modifiers: vec![],
+        })
+        .await
+        .unwrap();
+        assert_eq!(creations.load(Ordering::SeqCst), 2);
+
+        // Simulate connection loss during `release_pressed_inputs`: must return `Ok(())` and
+        // recreate a healthy driver so the session never wedges in permanent `Unavailable`.
+        conn_lost.store(true, Ordering::SeqCst);
+        // Flip conn_lost back to false inside factory once the old driver is dropped.
+        let reset_res = sink.release_pressed_inputs().await;
+        assert_eq!(reset_res, Ok(()));
+        conn_lost.store(false, Ordering::SeqCst);
+
+        // Dropping `sink` and `target` must synchronously shut down and join the worker thread,
+        // dropping the active driver before `drop(target)` returns.
+        let drops_before = dropped_count.load(Ordering::SeqCst);
+        drop(sink);
+        drop(target);
+        assert!(dropped_count.load(Ordering::SeqCst) > drops_before);
+    }
+
+    #[tokio::test]
+    async fn takeover_gate_and_stale_geometry_revision_reject_positional_input() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let gate = Arc::new(GateSync::new());
+
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-geom"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: Arc::new(|_| Ok(())),
+            input_factory: Some({
+                let log = Arc::clone(&log);
+                let gate = Arc::clone(&gate);
+                Arc::new(move || {
+                    Ok(Box::new(DeterministicMockInput {
+                        log: Arc::clone(&log),
+                        partial_next: Arc::new(AtomicBool::new(false)),
+                        panic_next: Arc::new(AtomicBool::new(false)),
+                        conn_lost: Arc::new(AtomicBool::new(false)),
+                        gate: Arc::clone(&gate),
+                        dropped_count: Arc::new(AtomicU64::new(0)),
+                    }))
+                })
+            }),
+            input_reason: None,
+        });
+
+        let sink = target.input_sink().unwrap();
+        sink.set_takeover_active(true).await.unwrap();
+
+        let ptr_event = InputEvent::Pointer {
+            phase: ::live_view::PointerPhase::Down,
+            x: 0.5,
+            y: 0.5,
+            button: Some(::live_view::Button::Left),
+            buttons: 1,
+            modifiers: vec![],
+        };
+
+        // 1. Daemon-side explicit revision check (`inject_at_revision`) rejects stale
+        // `expected_geometry_revision` or `expected_generation` deterministically.
+        assert_eq!(target.current_revision(), (1, 1));
+        assert_eq!(
+            target.inject_at_revision(&ptr_event, 1, 99).await,
+            Err(ViewError::Unavailable)
+        );
+        assert_eq!(
+            target.inject_at_revision(&ptr_event, 99, 1).await,
+            Err(ViewError::Unavailable)
+        );
+        assert_eq!(target.inject_at_revision(&ptr_event, 1, 1).await, Ok(()));
+        log.lock().clear();
+
+        // 2. Queue a gated event on the input worker, wait on `gate.wait_entered()`, then
+        // enqueue a positional pointer event and bump `geometry_revision` before releasing
+        // the gate (zero sleeps).
+        let sink_gated = Arc::clone(&sink);
+        let gated_fut = tokio::spawn(async move {
+            sink_gated
+                .inject(&InputEvent::Text {
+                    text: "gated".into(),
+                })
+                .await
+        });
+        let gate_wait = Arc::clone(&gate);
+        tokio::task::spawn_blocking(move || gate_wait.wait_entered())
+            .await
+            .unwrap();
+
+        let (queued_tx, queued_rx) = oneshot::channel();
         let sink_ptr = Arc::clone(&sink);
+        let ptr_clone = ptr_event.clone();
         let ptr_fut = tokio::spawn(async move {
-            sink_ptr
-                .inject(&InputEvent::Pointer {
-                    phase: ::live_view::PointerPhase::Down,
-                    x: 0.5,
-                    y: 0.5,
-                    button: Some(::live_view::Button::Left),
-                    buttons: 1,
-                    modifiers: vec![],
-                })
-                .await
+            let _ = queued_tx.send(());
+            sink_ptr.inject(&ptr_clone).await
         });
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        // Simulate monitor topology change mid-flight before the queued pointer job executes.
-        let _ = update_status_ok(&target.core, test_geom(1024, 768));
+        queued_rx.await.unwrap();
+        tokio::task::yield_now().await;
 
-        assert_eq!(slow_fut.await.unwrap(), Ok(()));
+        // Simulate monitor topology change before the worker finishes the gated job.
+        let (_, new_rev) = update_status_ok(&target.core, test_geom(1024, 768));
+        assert_eq!(new_rev, 2);
+        gate.release_gate();
+
+        assert_eq!(gated_fut.await.unwrap(), Ok(()));
         assert_eq!(ptr_fut.await.unwrap(), Err(ViewError::Unavailable));
         assert!(!log.lock().contains(&"other"));
+
+        // 3. Even a freshly submitted positional event is rejected until a frame with the new
+        // `geometry_revision` (2) has actually been published to subscribers.
+        assert_eq!(sink.inject(&ptr_event).await, Err(ViewError::Unavailable));
+        target
+            .core
+            .last_published_geometry_revision
+            .store(new_rev, Ordering::Release);
+        assert_eq!(sink.inject(&ptr_event).await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn capture_worker_race_on_last_unsubscribe_and_set_profile_after_stop_keep_producer_alive()
+     {
+        let seq = Arc::new(AtomicU64::new(1));
+        let geom = Arc::new(Mutex::new(test_geom(64, 64)));
+        let captures_done = Arc::new(AtomicU64::new(0));
+
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("race-host"),
+            initial_geometry: *geom.lock(),
+            capture_factory: {
+                let seq = Arc::clone(&seq);
+                let geom = Arc::clone(&geom);
+                let captures_done = Arc::clone(&captures_done);
+                Arc::new(move |_| {
+                    Ok(Box::new(MockCapture {
+                        seq: Arc::clone(&seq),
+                        geom: Arc::clone(&geom),
+                        fail_next: Arc::new(AtomicBool::new(false)),
+                        reconnect_mode: Arc::new(AtomicBool::new(false)),
+                        captures_done: Arc::clone(&captures_done),
+                    }))
+                })
+            },
+            probe: Arc::new(|_| Ok(())),
+            input_factory: None,
+            input_reason: Some(Reason::Unsupported),
+        });
+
+        let src = target.frame_source();
+        let sub1 = src.subscribe(EffectiveProfile::watch()).await.unwrap();
+
+        // Install a deterministic hook that runs inside `try_finish_capture_worker` AFTER
+        // `wait_for_capture_wake` returned `None` (on `drop(sub1)`) and BEFORE `ctrl.running`
+        // is cleared, simulating a new subscriber arriving in the exact race window.
+        let hook_core = Arc::clone(&target.core);
+        let (race_sub_tx, race_sub_rx) = oneshot::channel();
+        *target.core.pre_finish_hook.lock() = Some(Box::new(move || {
+            let rx = hook_core.frames_tx.subscribe();
+            {
+                let mut ctrl = hook_core.ctrl.lock();
+                assert!(
+                    ctrl.running,
+                    "worker was still marked running in race window"
+                );
+                ctrl.subscribers += 1;
+                ctrl.paused = false;
+                ctrl.stop_requested = false;
+                ctrl.profile_dirty = true;
+                ctrl.pending_refresh = Some(77);
+                hook_core.cvar.notify_all();
+            }
+            let ticket = SubTicket {
+                core: Arc::clone(&hook_core),
+                armed: true,
+            };
+            let _ = race_sub_tx.send(FrameSubscription::new(rx, ticket.disarm()));
+        }));
+
+        // Dropping `sub1` triggers worker exit -> `pre_finish_hook` adds the new subscriber ->
+        // `try_finish_capture_worker` sees `subscribers > 0` and keeps the worker alive!
+        drop(sub1);
+        let mut sub2 = race_sub_rx.await.unwrap();
+        let f_race = loop {
+            if let Some(f) = sub2.frames.borrow_and_update().clone()
+                && f.metadata.action_seq == Some(77)
+            {
+                break f;
+            }
+            sub2.frames.changed().await.unwrap();
+        };
+        assert_eq!(f_race.metadata.action_seq, Some(77));
+        assert!(target.core.ctrl.lock().running);
+
+        // Now call `stop()` while `sub2` is still held (`subscribers == 1, running == false`).
+        src.stop().await.unwrap();
+        assert!(!target.core.ctrl.lock().running);
+
+        // Calling `set_profile()` after `stop()` while `subscribers > 0` must respawn the
+        // capture worker so `sub2` receives fresh frames again.
+        src.set_profile(EffectiveProfile::live()).await.unwrap();
+        src.request_refresh(88).await.unwrap();
+        let f_resumed = loop {
+            if let Some(f) = sub2.frames.borrow_and_update().clone()
+                && f.metadata.action_seq == Some(88)
+            {
+                break f;
+            }
+            sub2.frames.changed().await.unwrap();
+        };
+        assert_eq!(f_resumed.metadata.action_seq, Some(88));
+        src.stop().await.unwrap();
+    }
+
+    struct NoisyCapture {
+        geom: GeometrySnapshot,
+        seed: Arc<AtomicU64>,
+        calls: Arc<AtomicU64>,
+        called_notify: Arc<Condvar>,
+        called_lock: Arc<Mutex<u64>>,
+    }
+
+    impl CaptureDriver for NoisyCapture {
+        fn capture(&mut self, raw_buf: &mut Vec<u8>) -> Result<CapturedRawInfo, CaptureFailure> {
+            let len = (self.geom.rect.width as usize) * (self.geom.rect.height as usize) * 4;
+            raw_buf.resize(len, 0);
+            let mut s = self.seed.load(Ordering::Acquire);
+            for b in raw_buf.iter_mut() {
+                s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                *b = (s >> 56) as u8;
+            }
+            let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            *self.called_lock.lock() = n;
+            self.called_notify.notify_all();
+            Ok(CapturedRawInfo {
+                geometry: self.geom,
+                format: PixelFormat::Bgra32,
+                stride_bytes: self.geom.rect.width as usize * 4,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn capture_worker_backs_off_on_encode_failure_and_caches_hash_on_budget_skip() {
+        let geom = test_geom(640, 480);
+        let seed = Arc::new(AtomicU64::new(0x1234_5678));
+        let calls = Arc::new(AtomicU64::new(0));
+        let called_notify = Arc::new(Condvar::new());
+        let called_lock = Arc::new(Mutex::new(0u64));
+
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("budget-host"),
+            initial_geometry: geom,
+            capture_factory: {
+                let seed = Arc::clone(&seed);
+                let calls = Arc::clone(&calls);
+                let called_notify = Arc::clone(&called_notify);
+                let called_lock = Arc::clone(&called_lock);
+                Arc::new(move |_| {
+                    Ok(Box::new(NoisyCapture {
+                        geom,
+                        seed: Arc::clone(&seed),
+                        calls: Arc::clone(&calls),
+                        called_notify: Arc::clone(&called_notify),
+                        called_lock: Arc::clone(&called_lock),
+                    }))
+                })
+            },
+            probe: Arc::new(|_| Ok(())),
+            input_factory: None,
+            input_reason: Some(Reason::Unsupported),
+        });
+
+        let src = target.frame_source();
+        // 1. Impossible JPEG budget (> MAX_HEADER so `validate_profile` passes, but too small
+        // for any valid JPEG): `subscribe` must return `Err(ViewError::LimitExceeded)`, record
+        // `Reason::FrameBudgetExceeded`, and NOT spin in a tight CPU loop.
+        let mut tight = EffectiveProfile::live();
+        tight.burst_bytes = u32::try_from(MAX_HEADER + 32).unwrap();
+        let err = src.subscribe(tight).await.err();
+        assert_eq!(err, Some(ViewError::LimitExceeded));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            target.stats().last_unavailable_reason,
+            Some(Reason::FrameBudgetExceeded)
+        );
+
+        // 2. Unit-test `execute_capture_step` token-budget skip directly: when a periodic tick
+        // sees a new screen hash (`0xCAFE`) but `token_bytes < cost`, it skips publishing for
+        // budget AND updates `cache.last_hash = Some(hash)` so the next periodic tick on the
+        // same screen hits `can_reuse` (`frames_skipped_unchanged`) instead of re-encoding JPEG.
+        let mut profile = EffectiveProfile::live();
+        profile.bytes_per_second = 0;
+        let mut cache = CaptureSessionCache::new(profile.burst_bytes);
+        let mut bufs = WorkerBuffers {
+            raw: Vec::new(),
+            bgra: Vec::new(),
+            scaled: Vec::new(),
+            jpeg: Vec::new(),
+        };
+        let mut drv: Option<Box<dyn CaptureDriver>> = Some(Box::new(NoisyCapture {
+            geom: test_geom(64, 64),
+            seed: Arc::clone(&seed),
+            calls: Arc::clone(&calls),
+            called_notify: Arc::clone(&called_notify),
+            called_lock: Arc::clone(&called_lock),
+        }));
+        let mut saw_error = false;
+
+        // First forced capture encodes and caches frame 1.
+        let _ = execute_capture_step(
+            &target.core,
+            &mut drv,
+            &mut saw_error,
+            &mut cache,
+            &mut bufs,
+            &profile,
+            Some(0),
+            false,
+        );
+        let encoded_after_first = target.stats().frames_encoded;
+        assert_eq!(encoded_after_first, 1);
+
+        // Drain token bucket and change screen content (`seed = 0x9999`).
+        cache.token_bytes = 0.0;
+        seed.store(0x9999, Ordering::Release);
+        let _ = execute_capture_step(
+            &target.core,
+            &mut drv,
+            &mut saw_error,
+            &mut cache,
+            &mut bufs,
+            &profile,
+            None,
+            false,
+        );
+        assert_eq!(target.stats().frames_encoded, 1);
+        assert!(cache.last_hash.is_some());
+
+        // Next periodic tick with the same screen (`seed = 0x9999`) must hit `can_reuse` and
+        // increment `frames_skipped_unchanged` without re-encoding JPEG.
+        let skipped_unchanged_before = target.stats().frames_skipped_unchanged;
+        let skipped_budget_before = target.stats().frames_skipped_budget;
+        let _ = execute_capture_step(
+            &target.core,
+            &mut drv,
+            &mut saw_error,
+            &mut cache,
+            &mut bufs,
+            &profile,
+            None,
+            false,
+        );
+        assert_eq!(
+            target.stats().frames_skipped_unchanged,
+            skipped_unchanged_before + 1
+        );
+        assert_eq!(target.stats().frames_skipped_budget, skipped_budget_before);
     }
 
     #[tokio::test]

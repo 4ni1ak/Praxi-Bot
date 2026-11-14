@@ -309,6 +309,81 @@ const fn modifier_matches_vk(m: &Modifier, vk: u16) -> bool {
     }
 }
 
+fn is_fixed_non_text_code(code: &str) -> bool {
+    if matches!(
+        code,
+        "ShiftLeft"
+            | "ShiftRight"
+            | "ControlLeft"
+            | "ControlRight"
+            | "AltLeft"
+            | "AltRight"
+            | "MetaLeft"
+            | "MetaRight"
+            | "CapsLock"
+            | "Enter"
+            | "Tab"
+            | "Escape"
+            | "Backspace"
+            | "Delete"
+            | "Space"
+            | "ArrowLeft"
+            | "ArrowUp"
+            | "ArrowRight"
+            | "ArrowDown"
+            | "Home"
+            | "End"
+            | "PageUp"
+            | "PageDown"
+    ) {
+        return true;
+    }
+    if let Some(n) = code.strip_prefix('F').and_then(|s| s.parse::<u32>().ok())
+        && (1..=12).contains(&n)
+    {
+        return true;
+    }
+    false
+}
+
+/// Classify whether a DOM `Key` event represents a layout-resolved printable character
+/// (including Turkish `ş ğ ü ı ö ç İ`, Shift punctuation, and `AltGr` combinations such
+/// as `@ € ₺ { [ ] } \`) that should be injected via `KEYEVENTF_UNICODE` rather than a
+/// host-layout-dependent `VIRTUAL_KEY` or shortcut chord (`Ctrl+C`, `Alt+F`, `Meta+R`).
+#[must_use]
+pub fn is_printable_text_key(code: &str, key: &str, effective_mods: &[Modifier]) -> Option<char> {
+    if matches!(
+        key,
+        "Dead" | "Unidentified" | "Process" | "Compose" | "AltGraph"
+    ) || is_fixed_non_text_code(code)
+    {
+        return None;
+    }
+    let mut chars = key.chars();
+    let (Some(ch), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    if ch < ' ' || ch == '\u{007f}' {
+        return None;
+    }
+    let has_ctrl = effective_mods.contains(&Modifier::Ctrl);
+    let has_alt = effective_mods.contains(&Modifier::Alt);
+    let has_meta = effective_mods.contains(&Modifier::Meta);
+    if has_meta {
+        return None;
+    }
+    if !has_ctrl && !has_alt {
+        return Some(ch);
+    }
+    if has_alt && !ch.is_ascii() {
+        return Some(ch);
+    }
+    if has_alt && !ch.is_ascii_alphanumeric() {
+        return Some(ch);
+    }
+    None
+}
+
 fn vk_click_chunk(vk: u16, scan: u16) -> Vec<WinInputAction> {
     vec![
         WinInputAction::KeyVk {
@@ -471,6 +546,7 @@ pub struct WinInputDriver<A: WinInputApi> {
     pressed_vks: Vec<u16>,
     transient_mod_vks: Vec<u16>,
     pressed_unicode: Vec<u16>,
+    pressed_code_unicode: Vec<(String, Vec<u16>)>,
 }
 
 impl<A: WinInputApi> WinInputDriver<A> {
@@ -483,7 +559,59 @@ impl<A: WinInputApi> WinInputDriver<A> {
             pressed_vks: Vec::new(),
             transient_mod_vks: Vec::new(),
             pressed_unicode: Vec::new(),
+            pressed_code_unicode: Vec::new(),
         }
+    }
+
+    fn effective_modifiers(&self, event_mods: &[Modifier]) -> Vec<Modifier> {
+        let mut out = event_mods.to_vec();
+        for &vk in self.pressed_vks.iter().chain(self.transient_mod_vks.iter()) {
+            for m in [
+                Modifier::Shift,
+                Modifier::Ctrl,
+                Modifier::Alt,
+                Modifier::Meta,
+            ] {
+                if modifier_matches_vk(&m, vk) && !out.contains(&m) {
+                    out.push(m);
+                }
+            }
+        }
+        out
+    }
+
+    fn release_non_shift_modifiers(&mut self) -> Result<(), ViewError> {
+        let to_release: Vec<u16> = self
+            .pressed_vks
+            .iter()
+            .chain(self.transient_mod_vks.iter())
+            .copied()
+            .filter(|&vk| {
+                modifier_matches_vk(&Modifier::Ctrl, vk) || modifier_matches_vk(&Modifier::Alt, vk)
+            })
+            .collect();
+        if to_release.is_empty() {
+            return Ok(());
+        }
+        let actions: Vec<WinInputAction> = to_release
+            .iter()
+            .copied()
+            .rev()
+            .map(|vk| self.key_vk_action(vk, false))
+            .collect();
+        let sent = self.api.send_inputs(&actions)?;
+        for &vk in to_release.iter().rev().take(sent) {
+            if let Some(pos) = self.pressed_vks.iter().rposition(|&x| x == vk) {
+                let _ = self.pressed_vks.remove(pos);
+            }
+            if let Some(tpos) = self.transient_mod_vks.iter().rposition(|&x| x == vk) {
+                let _ = self.transient_mod_vks.remove(tpos);
+            }
+        }
+        if sent < actions.len() {
+            return Err(ViewError::PartialInjection);
+        }
+        Ok(())
     }
 
     fn key_vk_action(&self, vk: u16, down: bool) -> WinInputAction {
@@ -727,6 +855,107 @@ impl<A: WinInputApi> WinInputDriver<A> {
         rel_res
     }
 
+    fn press_printable_key_char(&mut self, code: &str, ch: char) -> Result<(), ViewError> {
+        // Release any held Ctrl/Alt modifiers (for example from an `AltGr` sequence)
+        // and inject the exact character via `KEYEVENTF_UNICODE` so typing is
+        // independent of the host's active keyboard layout.
+        self.release_non_shift_modifiers()?;
+        let mut utf16 = [0u16; 2];
+        let units: Vec<u16> = ch.encode_utf16(&mut utf16).to_vec();
+        let actions: Vec<WinInputAction> = units
+            .iter()
+            .map(|&unit| WinInputAction::UnicodeKey { unit, down: true })
+            .collect();
+        let sent = self.api.send_inputs(&actions)?;
+        if sent == 0 {
+            return Err(ViewError::Unavailable);
+        }
+        self.pressed_code_unicode
+            .push((code.to_string(), units[..sent].to_vec()));
+        if sent < actions.len() {
+            return Err(ViewError::PartialInjection);
+        }
+        Ok(())
+    }
+
+    fn release_pressed_code_unicode(&mut self, pos: usize) -> Result<(), ViewError> {
+        let units = self.pressed_code_unicode[pos].1.clone();
+        let actions: Vec<WinInputAction> = units
+            .iter()
+            .map(|&unit| WinInputAction::UnicodeKey { unit, down: false })
+            .collect();
+        let sent = self
+            .api
+            .send_inputs(&actions)
+            .map_err(|_| ViewError::PartialInjection)?;
+        if sent == 0 {
+            return Err(ViewError::PartialInjection);
+        }
+        if sent < actions.len() {
+            self.pressed_code_unicode[pos].1 = units[sent..].to_vec();
+            return Err(ViewError::PartialInjection);
+        }
+        let _ = self.pressed_code_unicode.remove(pos);
+        if self.pressed_vks.is_empty() && self.pressed_code_unicode.is_empty() {
+            self.release_transient_modifiers()?;
+        }
+        Ok(())
+    }
+
+    fn press_vk_key(
+        &mut self,
+        vk: u16,
+        repeat: bool,
+        modifiers: &[Modifier],
+    ) -> Result<(), ViewError> {
+        if self.pressed_vks.contains(&vk) {
+            if !repeat {
+                return Ok(());
+            }
+            let action = self.key_vk_action(vk, true);
+            let sent = self
+                .api
+                .send_inputs(&[action])
+                .map_err(|_| ViewError::PartialInjection)?;
+            if sent == 0 {
+                return Err(ViewError::PartialInjection);
+            }
+            return Ok(());
+        }
+        let added_mods = if modifiers.is_empty() {
+            Vec::new()
+        } else {
+            let mod_only: Vec<Modifier> = modifiers
+                .iter()
+                .filter(|m| !modifier_matches_vk(m, vk))
+                .cloned()
+                .collect();
+            self.apply_transient_modifiers(&mod_only)?
+        };
+        let action = self.key_vk_action(vk, true);
+        let sent = match self.api.send_inputs(&[action]) {
+            Ok(n) => n,
+            Err(e) => {
+                let _ = self.release_specific_transient(&added_mods);
+                return Err(if added_mods.is_empty() {
+                    e
+                } else {
+                    ViewError::PartialInjection
+                });
+            }
+        };
+        if sent == 0 {
+            let _ = self.release_specific_transient(&added_mods);
+            return Err(if added_mods.is_empty() {
+                ViewError::Unavailable
+            } else {
+                ViewError::PartialInjection
+            });
+        }
+        self.pressed_vks.push(vk);
+        Ok(())
+    }
+
     fn handle_key(
         &mut self,
         phase: &KeyPhase,
@@ -735,57 +964,50 @@ impl<A: WinInputApi> WinInputDriver<A> {
         repeat: bool,
         modifiers: &[Modifier],
     ) -> Result<(), ViewError> {
-        let vk = dom_code_to_vk(code, key)?;
+        // Browser `AltGraph` keydown/keyup is a client-side layout shift latch; pressing
+        // `VK_RMENU` on the host would hold Alt across subsequent character keys.
+        if key == "AltGraph" {
+            return Ok(());
+        }
         match phase {
             KeyPhase::Down => {
-                if self.pressed_vks.contains(&vk) {
+                if let Some((_, units)) = self.pressed_code_unicode.iter().find(|(c, _)| c == code)
+                {
                     if !repeat {
                         return Ok(());
                     }
-                    let action = self.key_vk_action(vk, true);
+                    let actions: Vec<WinInputAction> = units
+                        .iter()
+                        .map(|&unit| WinInputAction::UnicodeKey { unit, down: true })
+                        .collect();
                     let sent = self
                         .api
-                        .send_inputs(&[action])
+                        .send_inputs(&actions)
                         .map_err(|_| ViewError::PartialInjection)?;
-                    if sent == 0 {
+                    if sent < actions.len() {
                         return Err(ViewError::PartialInjection);
                     }
                     return Ok(());
                 }
-                let added_mods = if modifiers.is_empty() {
-                    Vec::new()
-                } else {
-                    let mod_only: Vec<Modifier> = modifiers
-                        .iter()
-                        .filter(|m| !modifier_matches_vk(m, vk))
-                        .cloned()
-                        .collect();
-                    self.apply_transient_modifiers(&mod_only)?
-                };
-                let action = self.key_vk_action(vk, true);
-                let sent = match self.api.send_inputs(&[action]) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        let _ = self.release_specific_transient(&added_mods);
-                        return Err(if added_mods.is_empty() {
-                            e
-                        } else {
-                            ViewError::PartialInjection
-                        });
-                    }
-                };
-                if sent == 0 {
-                    let _ = self.release_specific_transient(&added_mods);
-                    return Err(if added_mods.is_empty() {
-                        ViewError::Unavailable
-                    } else {
-                        ViewError::PartialInjection
-                    });
+
+                let effective_mods = self.effective_modifiers(modifiers);
+                if let Some(ch) = is_printable_text_key(code, key, &effective_mods) {
+                    return self.press_printable_key_char(code, ch);
                 }
-                self.pressed_vks.push(vk);
-                Ok(())
+
+                let vk = dom_code_to_vk(code, key)?;
+                self.press_vk_key(vk, repeat, modifiers)
             }
             KeyPhase::Up => {
+                if let Some(pos) = self
+                    .pressed_code_unicode
+                    .iter()
+                    .rposition(|(c, _)| c == code)
+                {
+                    return self.release_pressed_code_unicode(pos);
+                }
+
+                let vk = dom_code_to_vk(code, key)?;
                 if let Some(pos) = self.pressed_vks.iter().rposition(|&x| x == vk) {
                     let action = self.key_vk_action(vk, false);
                     let sent = self
@@ -803,7 +1025,7 @@ impl<A: WinInputApi> WinInputDriver<A> {
                 } else if self.transient_mod_vks.contains(&vk) {
                     self.release_specific_transient(&[vk])?;
                 }
-                if self.pressed_vks.is_empty() {
+                if self.pressed_vks.is_empty() && self.pressed_code_unicode.is_empty() {
                     self.release_transient_modifiers()?;
                 }
                 Ok(())
@@ -968,6 +1190,15 @@ impl<A: WinInputApi> InputDriver for WinInputDriver<A> {
         for &vk in &tmods {
             actions.push(self.key_vk_action(vk, false));
         }
+        let code_ukeys: Vec<(String, u16)> = self
+            .pressed_code_unicode
+            .iter()
+            .rev()
+            .flat_map(|(c, units)| units.iter().copied().rev().map(move |u| (c.clone(), u)))
+            .collect();
+        for &(_, unit) in &code_ukeys {
+            actions.push(WinInputAction::UnicodeKey { unit, down: false });
+        }
         let ukeys: Vec<u16> = self.pressed_unicode.iter().copied().rev().collect();
         for &unit in &ukeys {
             actions.push(WinInputAction::UnicodeKey { unit, down: false });
@@ -1000,6 +1231,26 @@ impl<A: WinInputApi> InputDriver for WinInputDriver<A> {
                 && let Some(pos) = self.transient_mod_vks.iter().rposition(|&x| x == vk)
             {
                 let _ = self.transient_mod_vks.remove(pos);
+            }
+            idx += 1;
+        }
+        for (code, unit) in code_ukeys {
+            if idx < sent
+                && let Some(pos) = self
+                    .pressed_code_unicode
+                    .iter()
+                    .rposition(|(c, _)| *c == code)
+            {
+                if let Some(upos) = self.pressed_code_unicode[pos]
+                    .1
+                    .iter()
+                    .rposition(|&u| u == unit)
+                {
+                    let _ = self.pressed_code_unicode[pos].1.remove(upos);
+                }
+                if self.pressed_code_unicode[pos].1.is_empty() {
+                    let _ = self.pressed_code_unicode.remove(pos);
+                }
             }
             idx += 1;
         }
@@ -1486,7 +1737,7 @@ mod windows_os {
         }
     }
 
-    fn to_win32_input(action: WinInputAction) -> INPUT {
+    pub(super) fn to_win32_input(action: WinInputAction) -> INPUT {
         match action {
             WinInputAction::MouseMoveAbs { abs_x, abs_y } => mouse_input(
                 abs_x,
@@ -1539,6 +1790,26 @@ mod windows_os {
                     KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
                 },
             ),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn decode_win32_input_for_test(action: WinInputAction) -> (u32, i32, i32, u32, u32) {
+        let inp = to_win32_input(action);
+        if inp.r#type == INPUT_MOUSE {
+            // SAFETY: `inp.r#type == INPUT_MOUSE` selects the `mi` union arm.
+            let mi = unsafe { inp.Anonymous.mi };
+            (inp.r#type.0, mi.dx, mi.dy, mi.mouseData, mi.dwFlags.0)
+        } else {
+            // SAFETY: `inp.r#type == INPUT_KEYBOARD` selects the `ki` union arm.
+            let ki = unsafe { inp.Anonymous.ki };
+            (
+                inp.r#type.0,
+                i32::from(ki.wVk.0),
+                i32::from(ki.wScan),
+                0,
+                ki.dwFlags.0,
+            )
         }
     }
 
@@ -1959,8 +2230,22 @@ mod tests {
 
     #[tokio::test]
     async fn winlogon_lock_refuses_capture_with_zero_black_frames_and_topology_bumps_revision() {
-        let tmp_dir = tempfile::tempdir().expect("tempdir");
-        let before_entries = std::fs::read_dir(tmp_dir.path()).expect("read_dir").count();
+        let prod_src = include_str!("live_view_win.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source section");
+        for forbidden in [
+            "std::fs",
+            "tokio::fs",
+            "tempfile",
+            "capture::screenshot",
+            "File::create",
+        ] {
+            assert!(
+                !prod_src.contains(forbidden),
+                "live_view_win production capture path must not reference `{forbidden}`"
+            );
+        }
 
         let cap_state = Arc::new(StdMutex::new(MockWinCaptureState {
             layout: mixed_dpi_layout(),
@@ -2006,6 +2291,7 @@ mod tests {
             g.layout.display_token = hash_win_layout(g.layout.virtual_rect, &g.layout.monitors);
             g.fill_rgb = [180, 60, 30];
         }
+        source.request_refresh(1).await.expect("refresh");
 
         let second = loop {
             sub.frames.changed().await.expect("frame2");
@@ -2018,23 +2304,27 @@ mod tests {
         assert!(second.metadata.geometry_revision >= 2);
         assert_eq!(second.metadata.source_rect.width, 5120);
 
-        // Transition desktop to Winlogon / locked: must NOT publish black frame, must go Unavailable.
+        // Transition desktop to Winlogon / locked while subscriber is active:
+        // must NOT publish any black frame, must clear latest frame to None and go Unavailable.
         {
             let mut g = cap_state.lock().expect("lock");
             g.layout.input_desktop_accessible = false;
             g.layout.desktop_name = Some("Winlogon".into());
         }
-        // Poll target info after stopping subscriber.
-        let _ = source.stop().await;
-        drop(sub);
+        source.request_refresh(2).await.expect("refresh locked");
+        loop {
+            sub.frames.changed().await.expect("locked transition");
+            if sub.frames.borrow().is_none() {
+                break;
+            }
+        }
 
         let info_locked = target.info();
         assert!(!info_locked.capabilities.view);
         assert_eq!(info_locked.unavailable_reason, Some(Reason::Unavailable));
-        assert_eq!(
-            std::fs::read_dir(tmp_dir.path()).expect("read_dir").count(),
-            before_entries
-        );
+
+        let _ = source.stop().await;
+        drop(sub);
     }
 
     fn mock_win_input(
@@ -2424,7 +2714,7 @@ mod tests {
         let (in_state, mut driver) = mock_win_input(virtual_rect);
         let cancel = AtomicBool::new(false);
 
-        // Press Left mouse button and KeyA.
+        // Press Left mouse button and ArrowRight (non-printable VK 0x27).
         for ev in [
             InputEvent::Pointer {
                 phase: PointerPhase::Down,
@@ -2436,8 +2726,8 @@ mod tests {
             },
             InputEvent::Key {
                 phase: KeyPhase::Down,
-                code: "KeyA".into(),
-                key: "a".into(),
+                code: "ArrowRight".into(),
+                key: "ArrowRight".into(),
                 location: 0,
                 repeat: false,
                 modifiers: vec![],
@@ -2466,8 +2756,8 @@ mod tests {
                 0,
                 InputEvent::Key {
                     phase: KeyPhase::Up,
-                    code: "KeyA".into(),
-                    key: "a".into(),
+                    code: "ArrowRight".into(),
+                    key: "ArrowRight".into(),
                     location: 0,
                     repeat: false,
                     modifiers: vec![],
@@ -2497,7 +2787,7 @@ mod tests {
         assert!(retry_sent.iter().any(|a| matches!(
             a,
             WinInputAction::KeyVk {
-                vk: 0x41,
+                vk: 0x27,
                 down: false,
                 ..
             }
@@ -2611,9 +2901,180 @@ mod tests {
         assert_eq!(in_state.lock().expect("lock").sent.len(), 0);
     }
 
-    /// Explicit interactive Windows desktop smoke test (moves real mouse / sends real GDI `BitBlt`).
+    fn test_key_event(
+        phase: KeyPhase,
+        code: &str,
+        key: &str,
+        location: u8,
+        modifiers: Vec<Modifier>,
+    ) -> InputEvent {
+        InputEvent::Key {
+            phase,
+            code: code.into(),
+            key: key.into(),
+            location,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn has_vk_action(actions: &[WinInputAction], vk: u16, down: bool) -> bool {
+        actions.iter().any(
+            |a| matches!(a, WinInputAction::KeyVk { vk: v, down: d, .. } if *v == vk && *d == down),
+        )
+    }
+
+    #[test]
+    fn win_input_turkish_layout_and_altgr_key_events_emit_unicode_and_shortcuts_emit_vk() {
+        let virtual_rect = PixelRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let src = virtual_rect.to_source_rect();
+        let (in_state, mut driver) = mock_win_input(virtual_rect);
+        let cancel = AtomicBool::new(false);
+
+        // 1. Turkish Q/F layout printable `InputEvent::Key` events (`BracketLeft` -> `ğ`,
+        //    `Semicolon` -> `ş`, `Quote` -> `i`/`İ`) must inject `KEYEVENTF_UNICODE`.
+        for (code, ch) in [("BracketLeft", 'ğ'), ("Semicolon", 'ş'), ("Quote", 'İ')] {
+            in_state.lock().expect("lock").sent.clear();
+            let s = ch.to_string();
+            for phase in [KeyPhase::Down, KeyPhase::Up] {
+                driver
+                    .inject(
+                        &test_key_event(phase, code, &s, 0, vec![]),
+                        src.clone(),
+                        virtual_rect,
+                        &cancel,
+                    )
+                    .expect("turkish key");
+            }
+            let unit = ch as u16;
+            assert_eq!(
+                in_state.lock().expect("lock").sent.clone(),
+                vec![
+                    WinInputAction::UnicodeKey { unit, down: true },
+                    WinInputAction::UnicodeKey { unit, down: false },
+                ]
+            );
+        }
+
+        // 2. AltGr printable key (`Digit2` + AltGr -> `@` on Turkish Q): must release held
+        //    Ctrl/Alt VKs before sending `KEYEVENTF_UNICODE` `@` so Windows does not see Ctrl+Alt+@.
+        let altgr_mods = vec![Modifier::Ctrl, Modifier::Alt];
+        for ev in [
+            test_key_event(
+                KeyPhase::Down,
+                "ControlLeft",
+                "Control",
+                1,
+                vec![Modifier::Ctrl],
+            ),
+            test_key_event(
+                KeyPhase::Down,
+                "AltRight",
+                "AltGraph",
+                2,
+                altgr_mods.clone(),
+            ),
+        ] {
+            driver
+                .inject(&ev, src.clone(), virtual_rect, &cancel)
+                .expect("mod down");
+        }
+        in_state.lock().expect("lock").sent.clear();
+        for ev in [
+            test_key_event(KeyPhase::Down, "Digit2", "@", 0, altgr_mods),
+            test_key_event(KeyPhase::Up, "Digit2", "2", 0, vec![]),
+        ] {
+            driver
+                .inject(&ev, src.clone(), virtual_rect, &cancel)
+                .expect("altgr @");
+        }
+        let altgr_sent = in_state.lock().expect("lock").sent.clone();
+        assert!(has_vk_action(&altgr_sent, 0xA2, false));
+        assert!(!has_vk_action(&altgr_sent, 0xA5, true));
+        for down in [true, false] {
+            assert!(altgr_sent.contains(&WinInputAction::UnicodeKey {
+                unit: u16::from(b'@'),
+                down,
+            }));
+        }
+
+        // 3. Keyboard shortcuts like Ctrl+C (`modifiers: [Ctrl]`, `key: "c"`) must still emit
+        //    physical virtual-key `VK_C` (`0x43`) rather than `KEYEVENTF_UNICODE`.
+        in_state.lock().expect("lock").sent.clear();
+        driver
+            .inject(
+                &test_key_event(KeyPhase::Down, "KeyC", "c", 0, vec![Modifier::Ctrl]),
+                src,
+                virtual_rect,
+                &cancel,
+            )
+            .expect("ctrl+c");
+        assert!(has_vk_action(
+            &in_state.lock().expect("lock").sent,
+            0x43,
+            true
+        ));
+    }
+
     #[cfg(windows)]
-    #[ignore = "requires an active interactive Windows desktop session; touches live cursor/screen"]
+    #[test]
+    fn win32_input_struct_builder_encodes_mouse_vk_and_unicode_flags() {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            INPUT_KEYBOARD, INPUT_MOUSE, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+            MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL,
+        };
+
+        let (ty, dx, dy, data, flags) =
+            super::windows_os::decode_win32_input_for_test(WinInputAction::MouseMoveAbs {
+                abs_x: 32_768,
+                abs_y: 16_384,
+            });
+        assert_eq!(ty, INPUT_MOUSE.0);
+        assert_eq!((dx, dy, data), (32_768, 16_384, 0));
+        assert_eq!(
+            flags,
+            (MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK).0
+        );
+
+        let (ty, _, _, data, flags) =
+            super::windows_os::decode_win32_input_for_test(WinInputAction::WheelVertical {
+                abs_x: 0,
+                abs_y: 0,
+                delta: -120,
+            });
+        assert_eq!(ty, INPUT_MOUSE.0);
+        assert_eq!(flags, MOUSEEVENTF_WHEEL.0);
+        assert_eq!(data, (-120i32).cast_unsigned());
+
+        let (ty, vk, scan, _, flags) =
+            super::windows_os::decode_win32_input_for_test(WinInputAction::KeyVk {
+                vk: 0x27,
+                scan: 0x4D,
+                extended: true,
+                down: false,
+            });
+        assert_eq!(ty, INPUT_KEYBOARD.0);
+        assert_eq!((vk, scan), (0x27, 0x4D));
+        assert_eq!(flags, (KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP).0);
+
+        let (ty, vk, scan, _, flags) =
+            super::windows_os::decode_win32_input_for_test(WinInputAction::UnicodeKey {
+                unit: 'ş' as u16,
+                down: true,
+            });
+        assert_eq!(ty, INPUT_KEYBOARD.0);
+        assert_eq!((vk, scan), (0, i32::from('ş' as u16)));
+        assert_eq!(flags, KEYEVENTF_UNICODE.0);
+    }
+
+    /// Explicit interactive Windows desktop capture smoke test (calls real GDI `BitBlt`).
+    #[cfg(windows)]
+    #[ignore = "requires an active interactive Windows desktop session for real GDI BitBlt capture"]
     #[tokio::test]
     async fn live_windows_session_smoke() {
         let target = super::open_windows_live_view_target(&LiveViewOptions::new("local-win"))

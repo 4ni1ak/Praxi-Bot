@@ -144,6 +144,9 @@ impl DesktopBackend for LinuxBackend {
             return Ok(Arc::clone(&cached.target) as Arc<dyn ::live_view::ViewTarget>);
         }
         let target = open_x11_live_view_target(options)?;
+        if let Some(prev) = guard.take() {
+            prev.target.shutdown();
+        }
         *guard = Some(CachedLiveView {
             options: options.clone(),
             target: Arc::clone(&target),

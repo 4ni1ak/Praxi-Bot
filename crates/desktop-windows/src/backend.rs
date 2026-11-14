@@ -155,10 +155,12 @@ impl DesktopBackend for WindowsBackend {
             return Ok(Arc::clone(&cached.target) as Arc<dyn ::live_view::ViewTarget>);
         }
         let target = open_windows_live_view_target(options)?;
-        *guard = Some(CachedLiveView {
+        if let Some(prev) = guard.replace(CachedLiveView {
             options: options.clone(),
             target: Arc::clone(&target),
-        });
+        }) {
+            prev.target.shutdown();
+        }
         Ok(target)
     }
 }
