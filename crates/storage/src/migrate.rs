@@ -15,6 +15,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0003_subagents",
         include_str!("../migrations/0003_subagents.sql"),
     ),
+    (
+        "0004_bot_skill_assignment",
+        include_str!("../migrations/0004_bot_skill_assignment.sql"),
+    ),
 ];
 
 /// Highest schema version this build supports.
@@ -83,6 +87,7 @@ mod tests {
             [
                 "approvals",
                 "audit_log",
+                "bot_skill_assignment",
                 "bots",
                 "chats",
                 "event_index",
