@@ -226,6 +226,9 @@ pub fn build_agent_with_live_views(
     let mut tools = BuiltinConfig::new(data_dir.to_path_buf(), Arc::new(gate));
     tools.desktop.clone_from(&desktop);
     tools.view_registry = view_registry;
+    tools.knowledge = Some(Arc::new(
+        builtin_tools::knowledge::LocalKnowledgeBackend::new(Arc::clone(storage)),
+    ));
     let host_limits = std::fs::read_to_string(data_dir.join("host.toml")).unwrap_or_default();
     let (max_computer_runs, idle) = computer_limits(
         &host_limits,
@@ -241,6 +244,9 @@ pub fn build_agent_with_live_views(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
+            knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
+                Arc::clone(storage),
+            ))),
             ..LoopConfig::default()
         },
     )

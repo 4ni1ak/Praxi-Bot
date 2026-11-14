@@ -94,6 +94,12 @@ pub trait Tool: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
 
+    /// Daemon-owned provenance for a call that actually starts executing.
+    /// This sideband must never be inferred from model-visible result bytes.
+    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
+        None
+    }
+
     /// Whether the bot `bot_id` (`None` = no bot) may see this tool in
     /// discovery and in the model's tool list.  Default: every bot.  This is
     /// a visibility filter only; a tool that restricts callers must still
@@ -147,6 +153,12 @@ pub trait ToolWrapper: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
 
+    /// Forward the wrapped tool's provenance when available. A wrapper that
+    /// does not override this remains conservatively untrusted and private.
+    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
+        Some(crate::OutputProvenance::untrusted_private("delegated tool"))
+    }
+
     /// Whether the bot `bot_id` (`None` = no bot) may see this tool.
     fn visible_to(&self, _bot_id: Option<&str>) -> bool {
         true
@@ -179,6 +191,10 @@ pub trait ToolWrapper: Send + Sync {
 impl<W: ToolWrapper> Tool for W {
     fn spec(&self) -> &ToolSpec {
         ToolWrapper::spec(self)
+    }
+
+    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
+        ToolWrapper::output_provenance(self)
     }
 
     fn visible_to(&self, bot_id: Option<&str>) -> bool {

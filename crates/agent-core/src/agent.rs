@@ -210,6 +210,20 @@ impl AgentLoop {
         names
     }
 
+    /// Mask registered secrets in external data before an authorized source
+    /// adapter persists or embeds it. Source adapters refresh the secret
+    /// snapshot once per admitted batch with [`Self::refresh_external_redactor`].
+    #[must_use]
+    pub fn redact_external_text(&self, text: String) -> String {
+        self.sh.redact(text)
+    }
+
+    /// Refresh registered secrets once before admitting an external source
+    /// batch. Individual lines can then be redacted without secret-store I/O.
+    pub fn refresh_external_redactor(&self) {
+        self.sh.refresh_redactor();
+    }
+
     /// The loop's tool registry (cheap clone). MCP servers register their
     /// tools here, so a turn can call them.
     #[must_use]

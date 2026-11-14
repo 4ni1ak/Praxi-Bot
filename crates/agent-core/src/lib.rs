@@ -18,6 +18,7 @@ mod control;
 pub mod control_note;
 mod exec;
 mod history;
+mod knowledge;
 mod memory;
 mod profile;
 mod router;
@@ -37,6 +38,7 @@ pub use config::{
     MemoryConfig, ModelPrice, RedactorRefreshFn, SharedRedactor, secret_variants,
 };
 pub use control::{ControlGate, ControlRequest};
+pub use knowledge::{HeuristicKnowledgeDecider, KnowledgeDecider};
 pub use permission_engine::Decision as PolicyDecision;
 pub use profile::{
     BotProfile, ModelsConfig, PermissionsConfig, ProfileError, RouterSettings, ToolFilter,

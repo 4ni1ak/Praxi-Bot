@@ -207,6 +207,13 @@ pub(crate) fn build_messages(
             STEP_TOOLS => {
                 let calls: Vec<CallRec> =
                     serde_json::from_value(step.input["calls"].clone()).unwrap_or_default();
+                if step.input["pre_retrieval"] == true {
+                    // A daemon-scheduled search still needs a matching call
+                    // before its Tool-role result in provider conversations.
+                    flush(&mut out, &mut outstanding);
+                    outstanding = calls.iter().map(|c| c.id.clone()).collect();
+                    out.push(pre_retrieval_call(&calls));
+                }
                 let results: Vec<ResultRec> = step
                     .output
                     .as_ref()
@@ -233,6 +240,23 @@ pub(crate) fn build_messages(
         out.push(Message::text(MessageRole::System, note));
     }
     Ok(out)
+}
+
+fn pre_retrieval_call(calls: &[CallRec]) -> Message {
+    Message {
+        role: MessageRole::Assistant,
+        content: Value::Null,
+        tool_calls: calls
+            .iter()
+            .map(|call| ToolCall {
+                id: call.id.clone(),
+                name: expose(&call.name),
+                arguments: call.arguments.clone(),
+                provider_extra: None,
+            })
+            .collect(),
+        tool_call_id: None,
+    }
 }
 
 pub(crate) fn step_output<T: serde::de::DeserializeOwned>(step: &RunStep) -> Option<T> {
