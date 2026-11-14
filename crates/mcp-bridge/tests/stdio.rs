@@ -741,3 +741,303 @@ async fn bots_change_applies_live_without_dropping_in_flight_calls() {
     );
     assert!(mgr.set_server_bots("missing", None).is_err());
 }
+
+// ── spec coverage: list-changed, resources/prompts, results, lifecycle ──────
+
+async fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
+    for _ in 0..400 {
+        if ready() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_list_changed_refreshes_the_registry_without_a_reconnect() {
+    let reg = ToolRegistry::new();
+    let mgr = McpManager::with_policy(reg.clone(), fast_policy(3));
+    mgr.add_server(mode_config("dyn", "features"))
+        .await
+        .unwrap();
+    assert!(reg.get("mcp:dyn/extra").is_none());
+    let pid = call(&reg, "mcp:dyn/echo", json!({"pid": true}))
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&reg, "mcp:dyn/grow", json!({})).await.unwrap(),
+        "grown"
+    );
+    wait_until("the announced tool", || reg.get("mcp:dyn/extra").is_some()).await;
+    assert_eq!(
+        call(&reg, "mcp:dyn/extra", json!({})).await.unwrap(),
+        "extra"
+    );
+    assert!(
+        mgr.snapshot("dyn")
+            .unwrap()
+            .tools
+            .contains(&"mcp:dyn/extra".to_owned())
+    );
+    // Same process: the list was refreshed on the live session.
+    assert_eq!(
+        call(&reg, "mcp:dyn/echo", json!({"pid": true}))
+            .await
+            .unwrap(),
+        pid
+    );
+    mgr.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resources_and_prompts_are_reachable_only_when_the_server_has_them() {
+    let reg = ToolRegistry::new();
+    let mgr = McpManager::with_policy(reg.clone(), fast_policy(3));
+    mgr.add_server(config("plain")).await.unwrap();
+    assert!(reg.get("mcp:plain/@resources_list").is_none());
+    assert!(reg.get("mcp:plain/@prompts_get").is_none());
+
+    // Untrusted server: the bridge tools need approval like its own tools.
+    let mut untrusted = mode_config("u", "features");
+    untrusted.trust_hints = false;
+    mgr.add_server(untrusted).await.unwrap();
+    assert_eq!(
+        reg.get("mcp:u/@resources_read").unwrap().spec().effect,
+        Effect::Destructive
+    );
+    // The user's tool filter covers them.
+    let mut filtered = mode_config("f", "features");
+    filtered.tool_exclude = vec!["@*".into()];
+    mgr.add_server(filtered).await.unwrap();
+    assert!(reg.get("mcp:f/@resources_list").is_none());
+    assert!(reg.get("mcp:f/echo").is_some());
+
+    mgr.add_server(mode_config("r", "features")).await.unwrap();
+    let list = reg.get("mcp:r/@resources_list").unwrap();
+    assert_eq!(list.spec().effect, Effect::Read);
+    let listed = list.call(&ToolContext::default(), json!({})).await.unwrap();
+    let ContentPart::Json { data } = &listed.content[0] else {
+        panic!("{listed:?}");
+    };
+    assert_eq!(data["resources"][0]["uri"], "memo://notes");
+
+    assert_eq!(
+        call(
+            &reg,
+            "mcp:r/@resources_read",
+            json!({"uri": "memo://notes"})
+        )
+        .await
+        .unwrap(),
+        "remember the milk"
+    );
+    let blob = reg
+        .get("mcp:r/@resources_read")
+        .unwrap()
+        .call(&ToolContext::default(), json!({"uri": "memo://blob"}))
+        .await
+        .unwrap();
+    assert!(
+        matches!(&blob.content[0], ContentPart::Binary { mime_type, base64 }
+            if mime_type == "application/x-test" && base64 == "QUJD"),
+        "{blob:?}"
+    );
+    let missing = call(&reg, "mcp:r/@resources_read", json!({}))
+        .await
+        .unwrap_err();
+    assert!(missing.contains("uri"), "{missing}");
+    // A server-side error is an answer, not a failure of the server.
+    assert!(
+        call(&reg, "mcp:r/@resources_read", json!({"uri": "memo://nope"}))
+            .await
+            .is_err()
+    );
+    assert_eq!(mgr.snapshot("r").unwrap().consecutive_failures, 0);
+
+    let prompts = reg
+        .get("mcp:r/@prompts_list")
+        .unwrap()
+        .call(&ToolContext::default(), json!({}))
+        .await
+        .unwrap();
+    let ContentPart::Json { data } = &prompts.content[0] else {
+        panic!("{prompts:?}");
+    };
+    assert_eq!(data["prompts"][0]["name"], "greet");
+    let prompt = reg
+        .get("mcp:r/@prompts_get")
+        .unwrap()
+        .call(
+            &ToolContext::default(),
+            json!({"name": "greet", "arguments": {"who": "Ada"}}),
+        )
+        .await
+        .unwrap();
+    let ContentPart::Json { data } = &prompt.content[0] else {
+        panic!("{prompt:?}");
+    };
+    assert_eq!(data["messages"][0]["content"]["text"], "Say hello to Ada");
+
+    // Per-bot scoping applies to the bridge tools as well.
+    mgr.set_server_bots("r", Some(vec!["bot-a".into()]))
+        .unwrap();
+    let denied = list
+        .call(&ToolContext::default(), json!({}))
+        .await
+        .unwrap_err();
+    assert!(matches!(denied, ToolError::PermissionDenied(_)), "{denied}");
+    mgr.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn structured_content_embedded_resources_and_hidden_description_characters() {
+    let reg = ToolRegistry::new();
+    let mgr = McpManager::with_policy(reg.clone(), fast_policy(3));
+    mgr.add_server(mode_config("s", "features")).await.unwrap();
+
+    let out = reg
+        .get("mcp:s/structured")
+        .unwrap()
+        .call(&ToolContext::default(), json!({}))
+        .await
+        .unwrap();
+    assert!(matches!(&out.content[0], ContentPart::Text { text } if text == "two rows"));
+    assert!(
+        matches!(out.content.get(1), Some(ContentPart::Json { data }) if data["rows"] == json!([1, 2])),
+        "structured content was dropped: {out:?}"
+    );
+
+    assert_eq!(
+        call(&reg, "mcp:s/embedded", json!({})).await.unwrap(),
+        "inline note"
+    );
+
+    let hidden = reg.get("mcp:s/hidden").unwrap();
+    assert_eq!(hidden.spec().description, "visible text");
+    mgr.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_call_times_out_without_taking_the_server_down() {
+    let reg = ToolRegistry::new();
+    let mut policy = fast_policy(1);
+    policy.call_timeout = Duration::from_secs(1);
+    let mgr = McpManager::with_policy(reg.clone(), policy);
+    mgr.add_server(config("slow")).await.unwrap();
+    let pid = call(&reg, "mcp:slow/echo", json!({"pid": true}))
+        .await
+        .unwrap();
+    let err = call(&reg, "mcp:slow/echo", json!({"sleep_ms": 30_000}))
+        .await
+        .unwrap_err();
+    assert!(err.contains("timed out"), "{err}");
+    // `quarantine_after` is 1: a counted failure would have hidden the tools.
+    let snapshot = mgr.snapshot("slow").unwrap();
+    assert_eq!(snapshot.status, ServerStatus::Connected, "{snapshot:?}");
+    assert_eq!(snapshot.consecutive_failures, 0);
+    assert_eq!(
+        call(&reg, "mcp:slow/echo", json!({"pid": true}))
+            .await
+            .unwrap(),
+        pid,
+        "the server was restarted"
+    );
+    mgr.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dead_server_is_not_reported_as_connected() {
+    let reg = ToolRegistry::new();
+    let mgr = McpManager::with_policy(reg.clone(), fast_policy(5));
+    mgr.add_server(config("dead")).await.unwrap();
+    assert_eq!(
+        mgr.snapshot("dead").unwrap().status,
+        ServerStatus::Connected
+    );
+    // The call itself succeeds; the process dies afterwards with no call in
+    // flight, so only the snapshot can notice.
+    call(&reg, "mcp:dead/echo", json!({"exit_after_ms": 100}))
+        .await
+        .unwrap();
+    let mut status = ServerStatus::Connected;
+    for _ in 0..200 {
+        status = mgr.snapshot("dead").unwrap().status;
+        if status != ServerStatus::Connected {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(status, ServerStatus::Disconnected);
+    mgr.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_closes_stdin_first_so_the_server_can_exit_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("exit.marker");
+    let reg = ToolRegistry::new();
+    let mgr = McpManager::with_policy(reg, fast_policy(3));
+    let mut cfg = config("clean");
+    if let McpTransport::Stdio { env, .. } = &mut cfg.transport {
+        env.insert("MCP_EXIT_MARKER".into(), marker.display().to_string());
+    }
+    mgr.add_server(cfg).await.unwrap();
+    mgr.shutdown().await;
+    assert_eq!(
+        std::fs::read_to_string(&marker).ok().as_deref(),
+        Some("clean"),
+        "the server was killed before it could exit by itself"
+    );
+}
+
+/// HTTP endpoint that answers every request with `401` and an OAuth
+/// challenge, like a remote MCP server that wants a sign-in.
+async fn unauthorized_endpoint() -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 16 * 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 401 Unauthorized\r\n\
+                          WWW-Authenticate: Bearer resource_metadata=\"http://127.0.0.1/.well-known/oauth-protected-resource\"\r\n\
+                          Content-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+    (url, task)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_http_server_that_wants_oauth_gives_an_actionable_error_and_is_not_retried() {
+    let (url, endpoint) = unauthorized_endpoint().await;
+    let reg = ToolRegistry::new();
+    let mut policy = fast_policy(3);
+    // A retried connect would wait for these.
+    policy.backoff.initial = Duration::from_secs(30);
+    policy.backoff.max = Duration::from_secs(30);
+    policy.backoff.max_attempts = 3;
+    let mgr = McpManager::with_policy(reg, policy);
+    let started = std::time::Instant::now();
+    let err = mgr
+        .add_server(McpServerConfig::http("remote", url))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("requires authorization"), "{err}");
+    assert!(err.contains("secret_headers.Authorization"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(25),
+        "connect was retried"
+    );
+    endpoint.abort();
+    mgr.shutdown().await;
+}

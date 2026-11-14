@@ -1,24 +1,36 @@
 //! Lifecycle of MCP servers: connect, reconnect with backoff, tool
 //! registration, failure counting and quarantine.
 
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use crate::diagnostics::ExternalRedactor;
 use parking_lot::Mutex;
 use rmcp::{
-    model::{CallToolRequestParams, CallToolResult, JsonObject},
-    service::ServiceError,
+    RoleClient,
+    model::{
+        CallToolRequestParams, CallToolResult, ClientRequest, JsonObject, PingRequest,
+        ServerNotification, SubscriptionFilter,
+    },
+    service::{Peer, ServiceError},
 };
 use secret_store::SecretStore;
 use tool_registry::{Tool, ToolRegistry};
 
 use crate::{
+    client::Signals,
     config::{McpServerConfig, ToolFilter},
     diagnostics::StderrLog,
     discovery::discover,
     error::{McpError, Result},
     session::Session,
-    tool::{McpToolAdapter, qualified_name},
+    tool::{Aux, McpAuxAdapter, McpToolAdapter, qualified_name},
     transport::{open, resolve_secrets},
 };
 
@@ -52,13 +64,22 @@ impl Default for Backoff {
     }
 }
 
+/// How long a server gets to answer the liveness probe sent after one of its
+/// calls timed out.
+const LIVENESS_PROBE: Duration = Duration::from_secs(5);
+/// Quiet period after a `tools/list_changed` notification before the tools are
+/// listed again, so a burst of notifications costs one discovery.
+const LIST_CHANGED_DEBOUNCE: Duration = Duration::from_millis(250);
+
 /// Tunables of the bridge.
 #[derive(Debug, Clone, Copy)]
 pub struct McpPolicy {
-    /// Consecutive failures (a failed connect cycle, or a call that failed at
-    /// transport level or timed out) after which a server is quarantined.
-    /// Tool-level errors (`isError`) and JSON-RPC errors answered by the
-    /// server are *not* failures: the server is evidently alive.
+    /// Consecutive failures (a failed connect cycle, a call that failed at
+    /// transport level, or a call that timed out on a server that then did
+    /// not answer a liveness probe either) after which a server is quarantined.
+    /// Tool-level errors (`isError`), JSON-RPC errors answered by the server
+    /// and a slow call on a server that still answers are *not* failures: the
+    /// server is evidently alive.
     pub quarantine_after: u32,
     /// Reconnect backoff.
     pub backoff: Backoff,
@@ -135,6 +156,10 @@ pub(crate) struct Server {
     /// Live copy of `config.bots`: adapters read this, so a `bots` change
     /// takes effect on the next call without restarting the server.
     bots: Mutex<Option<Vec<String>>>,
+    /// Raised by every session of this server (list-changed notifications).
+    signals: Arc<Signals>,
+    /// Whether the list-changed watcher task was started.
+    watching: AtomicBool,
 }
 
 impl Server {
@@ -272,6 +297,7 @@ impl Server {
                 &self.stderr,
                 self.policy.connect_timeout,
                 self.redactor.clone(),
+                Arc::clone(&self.signals),
             )
             .await
             {
@@ -340,13 +366,34 @@ impl Server {
         remote_name: &str,
         arguments: Option<JsonObject>,
     ) -> Result<CallToolResult> {
-        self.check_usable()?;
-        let session = self.ensure_connected(false).await?;
         let mut params = CallToolRequestParams::new(remote_name.to_owned());
         params.arguments = arguments;
+        self.request_inner(|peer| async move { peer.call_tool(params).await })
+            .await
+    }
+
+    /// Run one request on the live session with the call timeout and the
+    /// failure accounting of a tool call.
+    pub(crate) async fn request<T, F, Fut>(&self, run: F) -> Result<T>
+    where
+        F: FnOnce(Peer<RoleClient>) -> Fut,
+        Fut: std::future::Future<Output = std::result::Result<T, ServiceError>>,
+    {
+        self.until_retired(self.request_inner(run)).await
+    }
+
+    async fn request_inner<T, F, Fut>(&self, run: F) -> Result<T>
+    where
+        F: FnOnce(Peer<RoleClient>) -> Fut,
+        Fut: std::future::Future<Output = std::result::Result<T, ServiceError>>,
+    {
+        self.check_usable()?;
+        let session = self.ensure_connected(false).await?;
         let id = self.config.id.clone();
+        // Dropping the request future (this timeout, or the caller's own
+        // cancellation) makes rmcp send `notifications/cancelled` for it.
         let outcome =
-            tokio::time::timeout(self.policy.call_timeout, session.peer().call_tool(params)).await;
+            tokio::time::timeout(self.policy.call_timeout, run(session.peer().clone())).await;
         let failure = match outcome {
             Ok(Ok(result)) => {
                 self.record_session_success(&session).await;
@@ -364,10 +411,19 @@ impl Server {
                 server: id,
                 message: e.to_string(),
             },
-            Err(_) => McpError::Timeout {
-                server: id,
-                seconds: self.policy.call_timeout.as_secs().max(1),
-            },
+            Err(_) => {
+                let timeout = McpError::Timeout {
+                    server: id,
+                    seconds: self.policy.call_timeout.as_secs().max(1),
+                };
+                // One slow tool must not take the server down for the calls
+                // running next to it: the session is only dropped when the
+                // server does not answer anything any more.
+                if still_answers(&session).await {
+                    return Err(session.redactor.error(timeout));
+                }
+                timeout
+            }
         };
         let failure = session.redactor.error(failure);
         self.fail_session(&session, &failure).await;
@@ -453,10 +509,94 @@ impl Server {
                 tracing::warn!(tool = %session.redactor.scrub(&name), "MCP tool name already registered; skipped");
             }
         }
+        // Resources and prompts are reached through fixed bridge tools, only
+        // for a server that declares the capability. `@` cannot appear in a
+        // server tool name, and the user's tool filter applies to them too.
+        let info = session.peer().peer_info();
+        let capabilities = info.as_ref().map(|i| &i.capabilities);
+        for aux in Aux::ALL {
+            if !capabilities.is_some_and(|c| aux.supported_by(c))
+                || !self.filter.permits(aux.remote_name())
+            {
+                continue;
+            }
+            let name = qualified_name(&self.config.id, aux.remote_name());
+            let adapter: Arc<dyn Tool> = Arc::new(McpAuxAdapter::new(Arc::clone(self), aux));
+            if self.registry.register(adapter) {
+                st.tools.push(name);
+            }
+        }
         st.status = ServerStatus::Connected;
         st.failures = 0;
         st.last_error = None;
-        Ok(st.tools.len())
+        let count = st.tools.len();
+        drop(st);
+        drop(slot);
+        self.watch_list_changes(&session);
+        Ok(count)
+    }
+
+    /// Keep the registry in step with a server that changes its tools at
+    /// runtime. One watcher task per registration re-lists (debounced) when a
+    /// session signals a change; on a `2026-07-28` connection the notification
+    /// only arrives on a `subscriptions/listen` stream, which is opened once
+    /// per session.
+    fn watch_list_changes(self: &Arc<Self>, session: &Arc<Session>) {
+        if !self.watching.swap(true, Ordering::SeqCst) {
+            let server = Arc::downgrade(self);
+            let signals = Arc::clone(&self.signals);
+            let mut retired = self.retired.subscribe();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = retired.wait_for(|gone| *gone) => return,
+                        () = signals.tools_changed.notified() => {}
+                    }
+                    tokio::time::sleep(LIST_CHANGED_DEBOUNCE).await;
+                    let Some(server) = server.upgrade() else {
+                        return;
+                    };
+                    match server.sync_tools().await {
+                        Ok(_) => {}
+                        Err(McpError::UnknownServer(_)) => return,
+                        Err(error) => {
+                            tracing::warn!(server = %server.id(), %error, "MCP tool list refresh failed");
+                        }
+                    }
+                }
+            });
+        }
+        let Some(info) = session.peer().peer_info() else {
+            return;
+        };
+        let filter = SubscriptionFilter::builder()
+            .tools_list_changed()
+            .build()
+            .supported_by(&info.capabilities);
+        if info.protocol_version.has_initialize()
+            || filter.tools_list_changed != Some(true)
+            || session.listening.swap(true, Ordering::SeqCst)
+        {
+            return;
+        }
+        // Only a peer handle: it does not keep the session alive, and the
+        // stream (and this task) ends when the session closes.
+        let peer = session.peer().clone();
+        let signals = Arc::clone(&self.signals);
+        tokio::spawn(async move {
+            let Ok(mut stream) = peer.listen(filter).await else {
+                return;
+            };
+            while let Ok(Some(notification)) = stream.next().await {
+                if matches!(
+                    notification,
+                    ServerNotification::ToolListChangedNotification(_)
+                ) {
+                    signals.tools_changed.notify_one();
+                }
+            }
+        });
     }
 
     fn retire(&self) {
@@ -471,15 +611,38 @@ impl Server {
     }
 
     fn snapshot(&self) -> ServerSnapshot {
+        // A server whose process died or whose connection dropped is only
+        // noticed by the next call; do not report it as connected meanwhile.
+        // (Same lock order as everywhere else: session, then state.)
+        let dead = self
+            .session
+            .try_lock()
+            .is_ok_and(|slot| slot.as_ref().is_some_and(|s| !Self::is_alive(s)));
         let st = self.state.lock();
         ServerSnapshot {
             id: self.config.id.clone(),
-            status: st.status,
+            status: if dead && st.status == ServerStatus::Connected {
+                ServerStatus::Disconnected
+            } else {
+                st.status
+            },
             consecutive_failures: st.failures,
             tools: st.tools.clone(),
             last_error: st.last_error.clone(),
         }
     }
+}
+
+/// Whether the server still answers anything after one of its calls timed
+/// out. A JSON-RPC error counts: `2026-07-28` servers have no `ping`.
+async fn still_answers(session: &Session) -> bool {
+    let probe = session
+        .peer()
+        .send_request(ClientRequest::PingRequest(PingRequest::default()));
+    matches!(
+        tokio::time::timeout(LIVENESS_PROBE, probe).await,
+        Ok(Ok(_) | Err(ServiceError::McpError(_)))
+    )
 }
 
 /// Signal the session's runtime owner and wait for its bounded cleanup.
@@ -621,6 +784,8 @@ impl McpManager {
             operation: tokio::sync::Mutex::new(()),
             retired: tokio::sync::watch::channel(false).0,
             bots: Mutex::new(config.bots.clone()),
+            signals: Arc::default(),
+            watching: AtomicBool::new(false),
             config,
         });
         {
@@ -842,7 +1007,10 @@ mod tests {
             release: Arc::clone(&release),
         };
         let (client_io, server_io) = tokio::io::duplex(16 * 1024);
-        let (client, server) = tokio::join!(().serve(client_io), server.serve(server_io));
+        let (client, server) = tokio::join!(
+            crate::client::BridgeClient::default().serve(client_io),
+            server.serve(server_io)
+        );
         *handle.0.session.lock().await = Some(Arc::new(Session::from_running(
             client.unwrap(),
             crate::diagnostics::Redactor::default(),

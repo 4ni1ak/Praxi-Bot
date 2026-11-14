@@ -22,6 +22,7 @@ use secret_store::{SecretRef, SecretStore, resolve};
 use tracing::instrument::WithSubscriber;
 
 use crate::{
+    client::{BridgeClient, Signals},
     config::{McpServerConfig, McpTransport, refused_stdio_command},
     diagnostics::{ExternalRedactor, Redactor, StderrLog, capture_stderr},
     error::{McpError, Result},
@@ -44,6 +45,11 @@ pub const OS_ESSENTIAL_ENV: &[&str] = &[];
 /// frame closes the transport; an oversized SSE event is rejected by rmcp.
 /// (A JSON HTTP body has rmcp's own fixed bound.)
 pub(crate) const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+/// How long a stdio server gets to exit on its own after its stdin was closed
+/// (the shutdown order the MCP stdio transport asks for) before its process
+/// tree is killed. Well below the session's close timeout.
+const GRACEFUL_EXIT: Duration = Duration::from_secs(2);
 
 /// Fails the read as soon as one line exceeds `cap` bytes, so a newline-free
 /// or huge frame never grows rmcp's line buffer past `cap` plus one read.
@@ -309,10 +315,23 @@ impl Transport<RoleClient> for ChildTree {
     }
 
     async fn close(&mut self) -> std::io::Result<()> {
+        // The guard kills the tree if this future is dropped at any await.
         let mut guard = self.take_child();
         if let Some(child) = guard.0.as_mut() {
-            child.start_kill()?;
-            child.wait().await?;
+            // Spec order: close the server's stdin and let it exit by itself,
+            // so it can flush state and stop its own helpers.
+            let _ = self.io.close().await;
+            let exited = tokio::time::timeout(GRACEFUL_EXIT, child.wait())
+                .await
+                .is_ok_and(|status| status.is_ok());
+            // Kill what is left either way: a server that ignored EOF, or the
+            // wrapper tree (`npx`, `uvx`) of one that exited. After a clean
+            // exit there may be nothing left to signal, which is not an error.
+            let killed = child.start_kill();
+            if !exited {
+                killed?;
+                child.wait().await?;
+            }
         }
         guard.0 = None;
         Ok(())
@@ -347,6 +366,7 @@ pub(crate) async fn open(
     stderr: &Arc<StderrLog>,
     timeout: Duration,
     external: Option<ExternalRedactor>,
+    signals: Arc<Signals>,
 ) -> Result<Session> {
     let redactor = Redactor::new(
         secrets
@@ -374,7 +394,10 @@ pub(crate) async fn open(
                 if let Some(pipe) = child_stderr {
                     forward_stderr(id.to_owned(), pipe, stderr, stderr_redactor, diagnostics);
                 }
-                ().serve(transport).await.map_err(|e| transport_err(id, e))
+                BridgeClient { signals }
+                    .serve(transport)
+                    .await
+                    .map_err(|e| transport_err(id, e))
             }
             McpTransport::Http { url, headers } => {
                 let transport = StreamableHttpClientTransport::from_config(http_config(
@@ -383,7 +406,20 @@ pub(crate) async fn open(
                     headers,
                     &secrets.headers,
                 )?);
-                ().serve(transport).await.map_err(|e| transport_err(id, e))
+                BridgeClient { signals }
+                    .serve(transport)
+                    .await
+                    .map_err(|e| {
+                        if e.is_authorization_required() {
+                            // A config error is not retried with backoff: only
+                            // the user can supply the missing credential.
+                            McpError::Config(format!(
+                                "server `{id}` requires authorization (HTTP 401/403). The OAuth                                  sign-in flow is not supported yet: store an access token in the                                  secret store and reference it under `secret_headers.Authorization`"
+                            ))
+                        } else {
+                            transport_err(id, e)
+                        }
+                    })
             }
         }
     })
@@ -516,6 +552,7 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();
@@ -542,6 +579,7 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();
@@ -561,6 +599,7 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();

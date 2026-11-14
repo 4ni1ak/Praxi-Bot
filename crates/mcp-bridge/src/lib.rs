@@ -43,6 +43,7 @@
 //! meta-tools rather than shown to the model directly.
 
 mod catalog;
+mod client;
 mod config;
 mod diagnostics;
 mod discovery;
