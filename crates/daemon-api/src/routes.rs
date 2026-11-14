@@ -205,7 +205,7 @@ fn decide(list: &mut [ApprovalDto], call: ToolCallId, what: &str, at_ms: i64) {
 }
 
 /// Validate a bot definition; returns `(name, config json)`.
-fn resolve_bot(input: BotInput) -> Result<(String, Value), ApiError> {
+pub(crate) fn resolve_bot(input: BotInput) -> Result<(String, Value), ApiError> {
     let config = match (input.config, input.profile_toml) {
         (Some(c), None) => c,
         (None, Some(t)) => toml::from_str::<Value>(&t)
@@ -369,18 +369,9 @@ pub(crate) async fn update_bot(
     Ok(Json(bot_dto(bot)))
 }
 
-/// Delete a bot that has no chats or runs.
-#[utoipa::path(delete, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Bot id")),
-    responses((status = 204), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
-pub(crate) async fn delete_bot(
-    State(s): State<AppState>,
-    Path(bid): Path<String>,
-) -> Result<StatusCode, ApiError> {
-    let bot = s.bot_of_user(BotId(id(&bid)?))?;
-    s.storage()
-        .delete_bot(bot.id)
-        .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+/// Drop what other stores keep about a deleted bot: its id in MCP servers'
+/// `bots` lists and its bound e-mail accounts.
+pub(crate) async fn forget_bot_links(s: &AppState, bot: &Bot) {
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.
@@ -396,6 +387,21 @@ pub(crate) async fn delete_bot(
     {
         eprintln!("daemon-api: warning: could not remove e-mail accounts of deleted bot: {e:?}");
     }
+}
+
+/// Delete a bot that has no chats or runs.
+#[utoipa::path(delete, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Bot id")),
+    responses((status = 204), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
+pub(crate) async fn delete_bot(
+    State(s): State<AppState>,
+    Path(bid): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    s.storage()
+        .delete_bot(bot.id)
+        .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+    forget_bot_links(&s, &bot).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

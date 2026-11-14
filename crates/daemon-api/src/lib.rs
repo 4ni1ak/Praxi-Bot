@@ -13,6 +13,7 @@
 //! browser `EventSource` clients (Host / Origin still apply).
 
 pub mod auth;
+mod bot_tools;
 pub mod control;
 pub mod dto;
 pub mod email;
@@ -549,6 +550,21 @@ impl AppState {
                 .filter(|t| registry.register(Arc::clone(t)))
                 .count(),
         )
+    }
+
+    /// Register the `bot_*` tools so a bot can create and manage other bots
+    /// (bounded by its own authority; create / update / delete always ask the
+    /// user and are visible only to bots with `tools.manage_bots`). Returns
+    /// how many tools were registered. [`serve`]'s embedder calls this once
+    /// after [`AppState::new`].
+    #[must_use]
+    pub fn enable_bot_tools(&self) -> usize {
+        let host = Arc::new(bot_tools::DaemonBotHost::new(self));
+        let registry = self.0.agent.tool_registry();
+        builtin_tools::bots::tools(&(host as Arc<dyn builtin_tools::BotHost>))
+            .into_iter()
+            .filter(|t| registry.register(Arc::clone(t)))
+            .count()
     }
 
     /// Stop the scheduler (no new firings); running firings are left to the

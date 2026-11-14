@@ -414,6 +414,15 @@ fn register_schedule_tools(data_dir: &Path, state: &AppState) {
     }
 }
 
+/// Give bots that have the "Can create bots" switch the `bot_*` tools. They
+/// are hidden from every other bot and always ask the user.
+fn register_bot_tools(state: &AppState) {
+    let n = state.enable_bot_tools();
+    if n != builtin_tools::BOT_TOOL_NAMES.len() {
+        eprintln!("warning: only {n} bot tool(s) registered (name clash)");
+    }
+}
+
 /// Filename of the optional web tools configuration in `<data_dir>`.
 pub const WEB_FILE: &str = "web.toml";
 
@@ -846,6 +855,7 @@ pub fn serve(
     }
     let state = AppState::with_view_registry(agent, storage, cfg, views)?;
     register_schedule_tools(data_dir, &state);
+    register_bot_tools(&state);
     if let Some(host) = host {
         state.set_provider_host(host);
     }

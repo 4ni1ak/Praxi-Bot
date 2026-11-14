@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod bot_tools;
 mod email;
 mod host;
 mod mcp;

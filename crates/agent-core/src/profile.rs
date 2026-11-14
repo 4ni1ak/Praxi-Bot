@@ -265,6 +265,48 @@ impl BotProfile {
         Ok(p)
     }
 
+    /// Whether a bot with tool filter `candidate` could never see a tool this
+    /// profile cannot (the ceiling for bots that create bots). Conservative: a
+    /// pattern it cannot prove narrower is refused, so a glob must be one of
+    /// this profile's own allow patterns (or this profile must allow every
+    /// tool), and this profile's exclude patterns must all be carried over.
+    ///
+    /// # Errors
+    /// The first pattern or omission that could widen the tool surface.
+    pub fn covers_tool_filter(&self, candidate: &ToolFilter) -> Result<(), String> {
+        let literal = |p: &str| !p.contains(['*', '?', '[', ']', '{', '}']);
+        if candidate.allow.is_empty() && !self.tools.allow.is_empty() {
+            return Err(
+                "an empty tool list means every tool, which is more than this bot has; name the tools".into(),
+            );
+        }
+        let all_literal = !candidate.allow.is_empty() && candidate.allow.iter().all(|p| literal(p));
+        if !all_literal
+            && let Some(missing) = self
+                .tools
+                .exclude
+                .iter()
+                .find(|e| !candidate.exclude.contains(e))
+        {
+            return Err(format!(
+                "the exclusion {missing:?} of this bot must stay in the new tool filter"
+            ));
+        }
+        for p in &candidate.allow {
+            let ok = if literal(p) {
+                self.tool_visible(p)
+            } else {
+                self.tools.allow.is_empty() || self.tools.allow.contains(p)
+            };
+            if !ok {
+                return Err(format!(
+                    "tool {p:?} is not one this bot has itself (use exact tool names it can see)"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The bot's own permission policy; `None` when the profile defines none
     /// (the global policy then applies, ADR-0012).
     #[must_use]
@@ -376,5 +418,79 @@ exclude = ["fs.delete*"]
             "models": {"executor": "cli:claude/claude-sonnet-4-5", "planner": "openai/gpt-4o-mini"},
         });
         assert!(serde_json::from_value::<BotProfile>(ok).is_ok());
+    }
+
+    fn filter(allow: &[&str], exclude: &[&str]) -> ToolFilter {
+        ToolFilter {
+            allow: allow.iter().map(|s| (*s).to_owned()).collect(),
+            exclude: exclude.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
+
+    fn with_tools(allow: &[&str], exclude: &[&str]) -> BotProfile {
+        let mut p = BotProfile::from_toml_str(
+            "[bot]
+id = \"a\"
+name = \"A\"
+[models]
+executor = \"m\"
+",
+        )
+        .unwrap();
+        p.allow = globs(&allow.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).unwrap();
+        p.exclude = globs(&exclude.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).unwrap();
+        p.tools = filter(allow, exclude);
+        p
+    }
+
+    #[test]
+    fn tool_ceiling_refuses_anything_not_provably_narrower() {
+        let caller = with_tools(&["fs_*", "web_search"], &["fs_delete"]);
+        // Own pattern, a visible literal, and a narrower literal are fine.
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["fs_*"], &["fs_delete"]))
+                .is_ok()
+        );
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["web_search", "fs_read"], &[]))
+                .is_ok()
+        );
+        // A tool the caller lacks, an excluded one, a wider glob, "everything".
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["shell_run"], &[]))
+                .is_err()
+        );
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["fs_delete"], &[]))
+                .is_err()
+        );
+        assert!(caller.covers_tool_filter(&filter(&["*"], &[])).is_err());
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["fs_r*"], &["fs_delete"]))
+                .is_err()
+        );
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&[], &["fs_delete"]))
+                .is_err()
+        );
+        // Dropping the caller's exclusion while using its glob would widen.
+        assert!(caller.covers_tool_filter(&filter(&["fs_*"], &[])).is_err());
+        // A caller that sees everything may hand out globs, keeping its exclusions.
+        let open = with_tools(&[], &["shell_run"]);
+        assert!(
+            open.covers_tool_filter(&filter(&["fs_*"], &["shell_run"]))
+                .is_ok()
+        );
+        assert!(open.covers_tool_filter(&filter(&["fs_*"], &[])).is_err());
+        assert!(
+            open.covers_tool_filter(&filter(&["shell_run"], &[]))
+                .is_err()
+        );
     }
 }
