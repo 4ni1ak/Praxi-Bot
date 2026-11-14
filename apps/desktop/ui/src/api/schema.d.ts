@@ -1251,6 +1251,11 @@ export interface components {
         CategoryDecisionDto: {
             /** @description `allow`, `ask` or `deny`. */
             decision: string;
+            /**
+             * @description Computers where a category grant allows this category. The decision
+             *     stays `ask` for every computer not listed.
+             */
+            scopes?: string[];
             /** @description `true` when `allow` holds only because of a category grant. */
             via_grant: boolean;
         };
@@ -1722,6 +1727,11 @@ export interface components {
              * @description When it was granted.
              */
             granted_at_ms: number;
+            /**
+             * @description Legacy desktop/browser rule with no computer. It does not authorize
+             *     anything; it is listed so the user can see that it stopped applying.
+             */
+            inert?: boolean;
             /** @description What it covers. */
             target: components["schemas"]["GrantTargetDto"];
         };

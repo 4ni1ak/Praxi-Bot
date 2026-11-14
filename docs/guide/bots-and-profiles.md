@@ -162,19 +162,29 @@ Remote PC runs expose desktop tools only. Browser tools and browser workflow
 steps are disabled because the browser driver runs on the daemon computer.
 Choose `browser` for a browser on the daemon, or `host` for its desktop and
 browser. Local PC runs can use their local browser. Headed and headless browser
-sessions have separate session keys and profiles so concurrent runs cannot close
-each other's session by changing launch mode.
+sessions have separate session keys and profile directories, so they do not
+share cookies or logins, and a run that switches launch mode does not reuse the
+managed profile of the other mode.
+
+The local computer id stored on grants and runs is this daemon's identity-key
+fingerprint. The display name stays "Local computer". The word `local` is not
+an identity: a grant or run written as `local` on one machine does not become
+valid on another machine that receives `bot.db`.
 
 Every run records `computer_target`, `computer_node`, and `computer_node_name`.
-A resumed run uses its original PC key, including after a profile edit. If that
-PC is offline (or the provider has not been installed yet), the run pauses with
-`waiting_for_pc`; another PC or the host desktop cannot take over. A legacy PC
-run without a recoverable node key also pauses rather than guessing. Runs that
+A resumed run uses its original PC key, including after a profile edit. A paused
+run from before computer targets were stored has no target; resuming it binds
+this daemon's own computer and does not follow `auto` onto a paired PC. If a
+stored PC is offline (or the provider has not been installed yet), the run pauses
+with `waiting_for_pc`; another PC or the host desktop cannot take over. A legacy
+PC run without a recoverable node key also pauses rather than guessing. Runs that
 have never selected a PC can bind their first PC when it arrives. Waiting expires
 after 24 hours measured from `paused_at_ms`, independent of other row updates.
+When `auto` has a paired PC that is not reachable and falls through to the host
+or the browser, the run records that choice.
 
 Computer approvals include the target kind, name, and key. Desktop/browser
 "always allow" and "this chat" grants apply only to that concrete target. Old
-unscoped computer grants cannot authorize a new computer action. API bot updates
+unscoped computer grants stay visible and authorize nothing. API bot updates
 that omit `runtime` preserve its stored value; conflicting runtime declarations
 in the request and profile are rejected.

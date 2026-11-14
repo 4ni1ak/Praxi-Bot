@@ -127,6 +127,8 @@
       "viaGrant": "Allowed because of an “Always allow” rule",
       "grantCategory": "Always allow every {{name}} tool",
       "grantTool": "Always allow {{name}}",
+      "inertGrant": "Inactive: this rule is not tied to a computer and no longer applies.",
+      "scopedAllow": "Allowed on {{scopes}}",
       "revoke": "Revoke",
       "workspace": {
         "title": "Workspace default",

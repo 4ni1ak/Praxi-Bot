@@ -537,6 +537,9 @@ impl BrowserDriver for CdpDriver {
                     let mode = if headless { "headless" } else { "headed" };
                     settings.profile_dir = settings.profile_dir.map(|p| p.join(mode));
                     settings.profiles_root = settings.profiles_root.join(mode);
+                    // `settings` is already this bot's profile. The caller must
+                    // not wrap this driver in the managed-browser pool again:
+                    // headed and headless keep separate directories and cookies.
                     let mut driver = CdpDriver::new(settings);
                     driver.takeover_pin = Arc::clone(&self.takeover_pin);
                     driver.activity = Arc::clone(&self.activity);
@@ -1593,6 +1596,8 @@ impl Tool for BrowserTool {
             .and_then(|gate| gate.browser_headless_for_run(&ctx.run_id))
             && let Some(driver) = shared.driver.for_headless(headless)
         {
+            // The alternate driver is already bot-scoped. Wrapping it in
+            // `managed` would attach the other mode's profile pool.
             shared = Arc::new(Shared {
                 driver,
                 managed: None,
