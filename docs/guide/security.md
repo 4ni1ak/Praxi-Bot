@@ -220,12 +220,17 @@ Omit `--bot-id` for a shared skill. A changed file invalidates the fingerprint;
 review it again. These commands are user actions, never model tools.
 
 
+`fs_edit` is a private read, including failed and no-op edits: its match counts
+and specific errors reveal file content. Normal editing retains those diagnostics;
+the following egress now asks.
+
 File tools cannot modify anything under the daemon data directory, even with
 an exact file grant. Existing path resolution checks also apply to move
 endpoints, symlink targets, and checkpoint restore destinations. Inert output
 stores (`files`, `spill`, `screenshots`, `logs`, and the daemon-owned checkpoint
 blobs) remain readable; all other stores default to protected. Skills and
-workflows must use their owning tools. Saved workflows are treated as untrusted
+workflows must use their owning tools. The same daemon boundary is enforced
+for document/converter output paths (including CSV output). Saved workflows are treated as untrusted
 private input before replay, including legacy files without a trust proof.
 
 Known remaining display channels include prompt-free search joiners and

@@ -1287,6 +1287,25 @@ min_interval_secs = 0",
         let state =
             AppState::new(agent.clone(), storage, DaemonConfig::new("daemon-token")).unwrap();
         register_schedule_tools(dir.path(), &state);
+        // Optional mail tools use the real daemon registration path, with a
+        // memory credential store and no connection to either example host.
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
+        secrets.set("email/work/password", "test-fixture").unwrap();
+        std::fs::write(
+            dir.path().join(EMAIL_FILE),
+            r#"
+[[accounts]]
+name = "work"
+address = "alice@example.com"
+password = "email/work/password"
+[accounts.imap]
+host = "imap.example.com"
+[accounts.smtp]
+host = "smtp.example.com"
+"#,
+        )
+        .unwrap();
+        assert_eq!(register_email(dir.path(), &registry, Some(&secrets)), 6);
         let audited = agent.audit_egress_card_schemas().unwrap();
         for name in [
             "workflow_run",
@@ -1296,6 +1315,8 @@ min_interval_secs = 0",
             "shell_run",
             "script_run",
             "web_search",
+            "email_send",
+            "email_draft",
         ] {
             assert!(
                 audited.iter().any(|item| item == name),

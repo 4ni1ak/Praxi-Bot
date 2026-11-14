@@ -691,27 +691,33 @@ impl TurnExecutor {
         let Some(w) = self.sh.router.workflows.get() else {
             return Ok(fail("workflows are not available".into()));
         };
+        // Loading/parsing can itself return file content in an error. Record
+        // exposure before touching the store and persist it on failure too.
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "saved workflow",
+        );
+        let fail_after_read = |why| {
+            let mut failed = fail(why);
+            failed["exposure"] = json!({"ran": true, "ingests_untrusted": true,
+                "reads_private": true, "label": "saved workflow"});
+            failed
+        };
         let wf = match w.store.get(&name) {
             Ok(wf) => wf,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
         let mut opts = w.opts.clone();
         opts.run_id = run.id.to_string();
         let gate = LoopGate {
             sh: Arc::downgrade(&self.sh),
         };
-        // Legacy or externally edited workflow files have no daemon trust proof.
-        // Treat persisted behaviour as data before any inner call, not after replay.
-        ctx.taint.lock().note(
-            tool_registry::ContentClass::untrusted_private(),
-            "saved workflow",
-        );
         let report = match Replayer::new(w.handles.clone(), opts)
             .replay(&wf, &params, &gate)
             .await
         {
             Ok(r) => r,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
         let summary = summarize(&report);
         let exposure = json!({

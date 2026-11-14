@@ -622,6 +622,7 @@ fn run() -> Result<()> {
             SecretsCmd::Delete { name } => commands::secrets_delete(store, name),
         },
         Command::Host { .. }
+        | Command::Skills { .. }
         | Command::SelfUpdate(_)
         | Command::Doctor(_)
         | Command::Serve { .. }

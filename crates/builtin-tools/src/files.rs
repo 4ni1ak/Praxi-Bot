@@ -943,8 +943,8 @@ fn credential_blocked(sh: &Shared, lexical: &Path, resolved: &Path) -> bool {
 }
 
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
-    under_data_sensitive(path, data_dir)
-        || (is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path)))
+    is_protected(path, data_dir)
+        && (under_data_sensitive(path, data_dir) || !grants.iter().any(|g| grant_matches(g, path)))
 }
 
 /// Exact path, or the same file under its 8.3 and long names.
