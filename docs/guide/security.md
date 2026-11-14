@@ -197,9 +197,9 @@ WAL/SHM/journal, `control-latch.json`, `policy.json`, `host.toml`, `config.toml`
 `mcp.toml`, `providers.toml`, `web.toml`, the Telegram state files, the
 `peer`, `bots`, `profiles` and `runs` folders and the bearer token) are protected
 from the bot's file tools for reading and writing, including names that differ
-only by a trailing dot or space or by a `:stream` suffix on Windows; skills and
-workflows stay writable because the bot authors them, and a shell command that names them
-always asks for approval. That last rule is damping only: one approved
+only by a trailing dot or space or by a `:stream` suffix on Windows. Skills and
+workflows use their owning tools; generic file tools cannot change them. A
+shell command that names them always asks for approval. That rule is damping only: one approved
 `shell_run` still runs as you and can reach those files and the loopback API
 (see below). Audit stores only
 actor/target IDs, event-type counts, sequence ranges, timing and fixed outcomes;
@@ -232,6 +232,13 @@ blobs) remain readable; all other stores default to protected. Skills and
 workflows must use their owning tools. The same daemon boundary is enforced
 for document/converter output paths (including CSV output). Saved workflows are treated as untrusted
 private input before replay, including legacy files without a trust proof.
+
+Native CLI authority outside the daemon directory is protected too: the user's
+`.codex`, `.claude`, and `.claude.json`, plus the configured `CODEX_HOME` and
+`CLAUDE_CONFIG_DIR` locations. File tools cannot use exact grants, moves,
+symlinks, or checkpoint restores to change those stores. Document output paths
+use the same boundary. As with daemon data, an approved shell command still
+runs with the user's rights and is not an OS sandbox.
 
 Known remaining display channels include prompt-free search joiners and
 formatting characters, homoglyphs and normalization variants, and literal text
