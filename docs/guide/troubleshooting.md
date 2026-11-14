@@ -3,6 +3,28 @@
 Start with `bot status`. It checks that the daemon is up and that your token is
 accepted, and shows how many approvals are waiting.
 
+## Diagnostics (Settings → Diagnostics, `bot doctor`)
+
+The desktop app has a **Diagnostics** page in Settings. It lists the same
+checks as `bot doctor`: provider keys and coding-CLI sign-in, loaded
+providers, data folder (including a file name with Turkish letters),
+browser, desktop automation, peer / VPS link, disk space and clock.
+Something the platform does not offer is shown as *not available*, not as an
+error.
+
+- **Reading the page changes nothing.** A few problems have a repair button
+  (create the data folder, reload the providers). A repair runs only when you
+  press its button, and every attempt is written to the audit log. Nothing
+  else is offered as a one-click fix; the API token is never regenerated.
+- **Copy support report** copies a Markdown summary (versions, platform,
+  check results, config file *names*). Your user folder is shown as `~`, and
+  stored secrets, the API token, key-like strings and e-mail addresses are
+  masked. Read it before you share it.
+- The daemon routes behind the page are `GET /v1/doctor`, `POST
+  /v1/doctor/repair/{id}` and `GET /v1/doctor/report` (bearer token required).
+  `bot doctor` runs more checks that need a terminal (port probe, browser
+  launch, `--online` connection tests).
+
 ## `daemon not reachable at http://127.0.0.1:47821` (exit code 3)
 
 The daemon is not running, or it listens on another port.
