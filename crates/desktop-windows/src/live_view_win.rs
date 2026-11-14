@@ -859,6 +859,9 @@ impl<A: WinInputApi> WinInputDriver<A> {
         // Release any held Ctrl/Alt modifiers (for example from an `AltGr` sequence)
         // and inject the exact character via `KEYEVENTF_UNICODE` so typing is
         // independent of the host's active keyboard layout.
+        // Limitation: `KEYEVENTF_UNICODE` synthesizes `VK_PACKET` Unicode events rather than
+        // physical hardware scancodes/virtual keys, so applications reading raw scancodes or
+        // `GetAsyncKeyState` directly (such as games and some terminals) will not see them.
         self.release_non_shift_modifiers()?;
         let mut utf16 = [0u16; 2];
         let units: Vec<u16> = ch.encode_utf16(&mut utf16).to_vec();
@@ -2924,6 +2927,10 @@ mod tests {
         )
     }
 
+    /// Verifies layout-independent printable characters (Turkish letters plus `AltGr` `€`/`₺`)
+    /// use `KEYEVENTF_UNICODE` while shortcuts retain physical `VK_*` chords.
+    /// Limitation: apps reading raw scancodes or `GetAsyncKeyState` (games, some terminals) will
+    /// not observe `KEYEVENTF_UNICODE` characters as hardware keystrokes.
     #[test]
     fn win_input_turkish_layout_and_altgr_key_events_emit_unicode_and_shortcuts_emit_vk() {
         let virtual_rect = PixelRect {
@@ -2937,8 +2944,15 @@ mod tests {
         let cancel = AtomicBool::new(false);
 
         // 1. Turkish Q/F layout printable `InputEvent::Key` events (`BracketLeft` -> `ğ`,
-        //    `Semicolon` -> `ş`, `Quote` -> `i`/`İ`) must inject `KEYEVENTF_UNICODE`.
-        for (code, ch) in [("BracketLeft", 'ğ'), ("Semicolon", 'ş'), ("Quote", 'İ')] {
+        //    `Semicolon` -> `ş`, `Quote` -> `i`/`İ`) and `AltGr` currency symbols (`€`, `₺`) must
+        //    inject `KEYEVENTF_UNICODE`.
+        for (code, ch) in [
+            ("BracketLeft", 'ğ'),
+            ("Semicolon", 'ş'),
+            ("Quote", 'İ'),
+            ("KeyE", '€'),
+            ("KeyT", '₺'),
+        ] {
             in_state.lock().expect("lock").sent.clear();
             let s = ch.to_string();
             for phase in [KeyPhase::Down, KeyPhase::Up] {

@@ -37,6 +37,10 @@ pub const WATCH_IDLE_INTERVAL: Duration = Duration::from_secs(3);
 pub const LIVE_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(800);
 /// Default retry backoff when the OS display is temporarily locked or unavailable.
 const UNAVAILABLE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+/// Default periodic interval for background availability probing while capture is idle.
+const AVAILABILITY_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+/// Hard bound on how long an individual availability probe may run before timing out.
+const AVAILABILITY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Minimum downscaled side length allowed when trimming frame size under tight burst budgets.
 const MIN_BUDGET_DIM: u32 = 64;
 
@@ -1003,6 +1007,22 @@ struct InputWorker {
     join: Option<std::thread::JoinHandle<()>>,
 }
 
+struct ProbeControl {
+    shutdown: bool,
+    trigger_now: bool,
+    in_flight: bool,
+    in_flight_started_at: Option<Instant>,
+    interval: Duration,
+    timeout: Duration,
+    last_probe_at: Option<Instant>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+struct ProbeSync {
+    ctrl: Mutex<ProbeControl>,
+    cvar: Condvar,
+}
+
 struct TargetCore {
     target_id: Uuid,
     options: LiveViewOptions,
@@ -1012,6 +1032,7 @@ struct TargetCore {
     stats: Arc<LiveViewStats>,
     status: Mutex<TargetStatus>,
     last_published_geometry_revision: AtomicU64,
+    require_explicit_revision: AtomicBool,
     ctrl: Mutex<CaptureControl>,
     cvar: Condvar,
     frames_tx: watch::Sender<Option<Arc<Frame>>>,
@@ -1019,6 +1040,8 @@ struct TargetCore {
     input_epoch: AtomicU64,
     active_input_cancels: Mutex<Vec<Weak<AtomicBool>>>,
     input_worker: Mutex<Option<InputWorker>>,
+    unclean_input_reset: AtomicBool,
+    probe_sync: Arc<ProbeSync>,
     #[cfg(test)]
     pre_finish_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
@@ -1039,10 +1062,65 @@ impl TargetCore {
         }
     }
 
+    fn request_availability_probe(&self) {
+        let mut p = self.probe_sync.ctrl.lock();
+        if !p.shutdown {
+            p.trigger_now = true;
+            self.probe_sync.cvar.notify_all();
+        }
+    }
+
+    fn notify_input_unavailable(&self) {
+        {
+            let mut ctrl = self.ctrl.lock();
+            if ctrl.running {
+                ctrl.pending_refresh.get_or_insert(0);
+                self.cvar.notify_all();
+                return;
+            }
+        }
+        self.request_availability_probe();
+    }
+
+    fn apply_probe_result(&self, probe_res: Result<(), Reason>) {
+        let running = self.ctrl.lock().running;
+        if !running {
+            let mut st = self.status.lock();
+            match probe_res {
+                Ok(()) => {
+                    st.view_available = true;
+                    st.unavailable_reason = None;
+                    self.stats.set_reason(None);
+                }
+                Err(reason) => {
+                    st.view_available = false;
+                    st.unavailable_reason = Some(reason.clone());
+                    self.stats.set_reason(Some(reason));
+                }
+            }
+        }
+        let mut p = self.probe_sync.ctrl.lock();
+        p.in_flight = false;
+        p.in_flight_started_at = None;
+        p.last_probe_at = Some(Instant::now());
+        self.probe_sync.cvar.notify_all();
+    }
+
     fn shutdown_workers(&self) {
         self.takeover_active.store(false, Ordering::SeqCst);
         self.input_epoch.fetch_add(1, Ordering::SeqCst);
         self.cancel_in_flight_input();
+        let probe_join = {
+            let mut p = self.probe_sync.ctrl.lock();
+            p.shutdown = true;
+            self.probe_sync.cvar.notify_all();
+            p.join.take()
+        };
+        if let Some(j) = probe_join
+            && j.thread().id() != std::thread::current().id()
+        {
+            let _ = j.join();
+        }
         let cap_join = {
             let mut ctrl = self.ctrl.lock();
             ctrl.shutdown = true;
@@ -1064,6 +1142,83 @@ impl TargetCore {
                 && j.thread().id() != std::thread::current().id()
             {
                 let _ = j.join();
+            }
+        }
+    }
+}
+
+fn run_availability_probe_loop(core_weak: &Weak<TargetCore>, probe_sync: &ProbeSync) {
+    loop {
+        // Hold no strong `Arc<TargetCore>` across condvar waits so `TargetCore` ownership
+        // stays strictly with external callers (`DesktopViewTarget`, `FrameSource`, `DesktopInputSink`).
+        let spawn_args = {
+            let mut p = probe_sync.ctrl.lock();
+            loop {
+                if p.shutdown || core_weak.strong_count() == 0 {
+                    return;
+                }
+                if p.in_flight {
+                    let timed_out = p
+                        .in_flight_started_at
+                        .is_some_and(|t| t.elapsed() >= p.timeout);
+                    if timed_out {
+                        if let Some(core) = core_weak.upgrade()
+                            && !core.ctrl.lock().running
+                        {
+                            let mut st = core.status.lock();
+                            st.view_available = false;
+                            st.unavailable_reason = Some(Reason::Unavailable);
+                            core.stats.set_reason(Some(Reason::Unavailable));
+                        }
+                        let wait_for = p.interval;
+                        let _ = probe_sync.cvar.wait_for(&mut p, wait_for);
+                    } else {
+                        let rem = p
+                            .in_flight_started_at
+                            .map_or(p.timeout, |t| p.timeout.saturating_sub(t.elapsed()));
+                        let _ = probe_sync.cvar.wait_for(&mut p, rem);
+                    }
+                    continue;
+                }
+
+                let due =
+                    p.trigger_now || p.last_probe_at.is_none_or(|t| t.elapsed() >= p.interval);
+                if due {
+                    p.trigger_now = false;
+                    let Some(core) = core_weak.upgrade() else {
+                        return;
+                    };
+                    let running = core.ctrl.lock().running;
+                    if running {
+                        p.last_probe_at = Some(Instant::now());
+                        continue;
+                    }
+                    p.in_flight = true;
+                    p.in_flight_started_at = Some(Instant::now());
+                    break Some((Arc::clone(&core.probe), core.options.scope.clone()));
+                }
+
+                let wait_for = p.last_probe_at.map_or(p.interval, |t| {
+                    (t + p.interval).saturating_duration_since(Instant::now())
+                });
+                let _ = probe_sync.cvar.wait_for(&mut p, wait_for);
+            }
+        };
+
+        if let Some((probe, scope)) = spawn_args {
+            let weak = Weak::clone(core_weak);
+            let spawned = std::thread::Builder::new()
+                .name("live-view-probe-call".into())
+                .spawn(move || {
+                    let res = (probe)(&scope);
+                    if let Some(c) = weak.upgrade() {
+                        c.apply_probe_result(res);
+                    }
+                });
+            if spawned.is_err()
+                && let Some(c) = core_weak.upgrade()
+            {
+                c.apply_probe_result(Err(Reason::Unavailable));
             }
         }
     }
@@ -1107,6 +1262,7 @@ impl DesktopViewTarget {
                 latest_geometry: config.initial_geometry,
             }),
             last_published_geometry_revision: AtomicU64::new(1),
+            require_explicit_revision: AtomicBool::new(false),
             ctrl: Mutex::new(CaptureControl {
                 subscribers: 0,
                 paused: false,
@@ -1125,9 +1281,31 @@ impl DesktopViewTarget {
             input_epoch: AtomicU64::new(0),
             active_input_cancels: Mutex::new(Vec::new()),
             input_worker: Mutex::new(None),
+            unclean_input_reset: AtomicBool::new(false),
+            probe_sync: Arc::new(ProbeSync {
+                ctrl: Mutex::new(ProbeControl {
+                    shutdown: false,
+                    trigger_now: false,
+                    in_flight: false,
+                    in_flight_started_at: None,
+                    interval: AVAILABILITY_PROBE_INTERVAL,
+                    timeout: AVAILABILITY_PROBE_TIMEOUT,
+                    last_probe_at: Some(Instant::now()),
+                    join: None,
+                }),
+                cvar: Condvar::new(),
+            }),
             #[cfg(test)]
             pre_finish_hook: Mutex::new(None),
         });
+        let probe_weak = Arc::downgrade(&core);
+        let probe_sync = Arc::clone(&core.probe_sync);
+        if let Ok(handle) = std::thread::Builder::new()
+            .name("live-view-probe".into())
+            .spawn(move || run_availability_probe_loop(&probe_weak, &probe_sync))
+        {
+            core.probe_sync.ctrl.lock().join = Some(handle);
+        }
         Self { core }
     }
 
@@ -1150,46 +1328,68 @@ impl DesktopViewTarget {
         self.core.status.lock().geometry_revision
     }
 
+    /// Return the typed desktop [`DesktopInputSink`] handle directly so callers that
+    /// carry `(generation, geometry_revision)` (daemon / UI) can invoke
+    /// [`DesktopInputSink::inject_at_revision`] without passing through revision-less
+    /// [`InputSink::inject`].
+    #[must_use]
+    pub fn desktop_input_sink(&self) -> Option<Arc<DesktopInputSink>> {
+        self.core.input_factory.as_ref().map(|_| {
+            Arc::new(DesktopInputSink {
+                core: Arc::clone(&self.core),
+            })
+        })
+    }
+
+    /// Require callers to supply an explicit `(generation, geometry_revision)` via
+    /// [`Self::inject_at_revision`] / [`DesktopInputSink::inject_at_revision`] for
+    /// positional input events, making the legacy revision-less [`InputSink::inject`]
+    /// entry point fail closed for positional clicks/wheels.
+    pub fn set_require_explicit_revision(&self, required: bool) {
+        self.core
+            .require_explicit_revision
+            .store(required, Ordering::Release);
+    }
+
+    /// Override the background availability probe interval (and wake the probe thread).
+    pub fn set_availability_probe_interval(&self, interval: Duration) {
+        let mut p = self.core.probe_sync.ctrl.lock();
+        p.interval = interval.max(Duration::from_millis(1));
+        self.core.probe_sync.cvar.notify_all();
+    }
+
+    /// Trigger an immediate non-blocking background availability probe when idle.
+    pub fn trigger_availability_probe(&self) {
+        self.core.request_availability_probe();
+    }
+
     /// Validate a client-supplied `(expected_generation, expected_geometry_revision)` against
     /// the target's active geometry and forward the input event if they match.
     ///
-    /// Note: Because [`InputEvent`] in `crates/live-view` does not carry `geometry_revision`,
-    /// the session daemon (`c173`) must compare the client's `geometry_revision` (or call this
-    /// helper) before invoking [`InputSink::inject`]. Internally, `DesktopInputSink::inject`
-    /// also rejects positional events whenever the capture geometry has changed ahead of the
-    /// last published frame or while an input job is queued on the worker channel.
+    /// Note: Because [`InputEvent`] in `crates/live-view` does not carry `geometry_revision`
+    /// and `crates/live-view` cannot be modified from the desktop-backend card, the daemon
+    /// (`c170`/`c173`) must pass the client's `(generation, geometry_revision)` through this
+    /// helper (or [`DesktopInputSink::inject_at_revision`]). Both at enqueue time and on the
+    /// input worker thread, positional events whose `expected_geometry_revision` differs from
+    /// the backend's current `geometry_revision` are rejected even after a new frame has been
+    /// published.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewError::Unavailable`] when the target has no input sink or when
-    /// `expected_generation` / `expected_geometry_revision` do not match the current target state.
+    /// Returns [`ViewError::Unsupported`] when the target has no input sink, or
+    /// [`ViewError::Unavailable`] when `expected_generation` / `expected_geometry_revision`
+    /// do not match the current target state.
     pub async fn inject_at_revision(
         &self,
         event: &InputEvent,
         expected_generation: u64,
         expected_geometry_revision: u64,
     ) -> Result<(), ViewError> {
-        let Some(sink) = self.input_sink() else {
+        let Some(sink) = self.desktop_input_sink() else {
             return Err(ViewError::Unsupported);
         };
-        {
-            let st = self.core.status.lock();
-            if st.generation != expected_generation {
-                self.core
-                    .stats
-                    .input_cancelled
-                    .fetch_add(1, Ordering::Relaxed);
-                return Err(ViewError::Unavailable);
-            }
-            if event.positional() && st.geometry_revision != expected_geometry_revision {
-                self.core
-                    .stats
-                    .input_cancelled
-                    .fetch_add(1, Ordering::Relaxed);
-                return Err(ViewError::Unavailable);
-            }
-        }
-        sink.inject(event).await
+        sink.inject_at_revision(event, expected_generation, expected_geometry_revision)
+            .await
     }
 
     /// Run the synchronous OS availability probe when the capture worker is idle.
@@ -1248,25 +1448,42 @@ impl Drop for TargetCore {
 #[async_trait]
 impl ViewTarget for DesktopViewTarget {
     fn info(&self) -> TargetInfo {
-        let st = self.core.status.lock();
-        TargetInfo {
-            target_id: self.core.target_id,
-            kind: TargetKind::Desktop,
-            host_id: self.core.options.host_id.clone(),
-            bot_id: self.core.options.bot_id,
-            run_id: self.core.options.run_id,
-            generation: st.generation,
-            capabilities: LiveCapabilities {
-                view: st.view_available && st.unavailable_reason.is_none(),
-                input: st.input_available,
-                codecs: vec![Codec::Jpeg],
-                reason: st
-                    .unavailable_reason
-                    .clone()
-                    .or_else(|| st.input_reason.clone()),
-            },
-            unavailable_reason: st.unavailable_reason.clone(),
+        let info = {
+            let st = self.core.status.lock();
+            let available = st.view_available && st.unavailable_reason.is_none();
+            TargetInfo {
+                target_id: self.core.target_id,
+                kind: TargetKind::Desktop,
+                host_id: self.core.options.host_id.clone(),
+                bot_id: self.core.options.bot_id,
+                run_id: self.core.options.run_id,
+                generation: st.generation,
+                capabilities: LiveCapabilities {
+                    view: available,
+                    input: st.input_available && available,
+                    codecs: vec![Codec::Jpeg],
+                    reason: st
+                        .unavailable_reason
+                        .clone()
+                        .or_else(|| st.input_reason.clone()),
+                },
+                unavailable_reason: st.unavailable_reason.clone(),
+            }
+        };
+        // Non-blocking nudge for the background probe when idle and due.
+        if !self.core.ctrl.lock().running {
+            let mut p = self.core.probe_sync.ctrl.lock();
+            let gap = p.interval.min(Duration::from_secs(1));
+            if !p.shutdown
+                && !p.in_flight
+                && !p.trigger_now
+                && p.last_probe_at.is_none_or(|t| t.elapsed() >= gap)
+            {
+                p.trigger_now = true;
+                self.core.probe_sync.cvar.notify_one();
+            }
         }
+        info
     }
 
     fn frame_source(&self) -> Arc<dyn FrameSource> {
@@ -1276,11 +1493,8 @@ impl ViewTarget for DesktopViewTarget {
     }
 
     fn input_sink(&self) -> Option<Arc<dyn InputSink>> {
-        self.core.input_factory.as_ref().map(|_| {
-            Arc::new(DesktopInputSink {
-                core: Arc::clone(&self.core),
-            }) as Arc<dyn InputSink>
-        })
+        self.desktop_input_sink()
+            .map(|sink| sink as Arc<dyn InputSink>)
     }
 }
 
@@ -2037,8 +2251,130 @@ fn sleep_interruptible(core: &Arc<TargetCore>, duration: Duration) {
 
 // ── Cancel-safe InputSink coordinator ─────────────────────────────────────────
 
-struct DesktopInputSink {
+/// Cancel-safe desktop [`InputSink`] coordinator exposing revision-checked
+/// [`Self::inject_at_revision`] alongside the trait's [`InputSink::inject`].
+pub struct DesktopInputSink {
     core: Arc<TargetCore>,
+}
+
+impl DesktopInputSink {
+    /// Validate `(expected_generation, expected_geometry_revision)` both at enqueue time
+    /// and on the input worker thread before calling the OS driver.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError::InvalidRecord`] on invalid input or [`ViewError::Unavailable`] /
+    /// [`ViewError::PartialInjection`] when takeover is inactive, revisions mismatch, or OS
+    /// injection fails.
+    pub async fn inject_at_revision(
+        &self,
+        event: &InputEvent,
+        expected_generation: u64,
+        expected_geometry_revision: u64,
+    ) -> Result<(), ViewError> {
+        self.inject_inner(
+            event,
+            Some((expected_generation, expected_geometry_revision)),
+        )
+        .await
+    }
+
+    async fn inject_inner(
+        &self,
+        event: &InputEvent,
+        expected: Option<(u64, u64)>,
+    ) -> Result<(), ViewError> {
+        if !event.valid() {
+            return Err(ViewError::InvalidRecord);
+        }
+        if matches!(event, InputEvent::Reset) {
+            return self.release_pressed_inputs().await;
+        }
+        if !self.core.takeover_active.load(Ordering::Acquire) {
+            return Err(ViewError::Unavailable);
+        }
+        let (generation, geometry_revision, source_rect, virtual_rect) = {
+            let st = self.core.status.lock();
+            if !st.view_available || !st.input_available || st.unavailable_reason.is_some() {
+                return Err(ViewError::Unavailable);
+            }
+            if expected.is_none()
+                && event.positional()
+                && self.core.require_explicit_revision.load(Ordering::Acquire)
+            {
+                self.core
+                    .stats
+                    .input_cancelled
+                    .fetch_add(1, Ordering::Relaxed);
+                return Err(ViewError::Unavailable);
+            }
+            let published_rev = self
+                .core
+                .last_published_geometry_revision
+                .load(Ordering::Acquire);
+            let (expected_gen, expected_rev) = if let Some((g, r)) = expected {
+                if st.generation != g
+                    || (event.positional()
+                        && (st.geometry_revision != r || st.geometry_revision != published_rev))
+                {
+                    self.core
+                        .stats
+                        .input_cancelled
+                        .fetch_add(1, Ordering::Relaxed);
+                    return Err(ViewError::Unavailable);
+                }
+                (g, r)
+            } else {
+                if event.positional() && st.geometry_revision != published_rev {
+                    self.core
+                        .stats
+                        .input_cancelled
+                        .fetch_add(1, Ordering::Relaxed);
+                    return Err(ViewError::Unavailable);
+                }
+                (st.generation, st.geometry_revision)
+            };
+            (
+                expected_gen,
+                expected_rev,
+                st.latest_geometry.rect.to_source_rect(),
+                st.latest_geometry.virtual_rect,
+            )
+        };
+        if event.positional() {
+            validate_positional_geometry(&source_rect, virtual_rect)?;
+        }
+        let tx = ensure_input_worker(&self.core)?;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.core.register_input_cancel(&cancelled);
+        let _guard = CancelOnDrop(Arc::clone(&cancelled));
+        let epoch = self.core.input_epoch.load(Ordering::Acquire);
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if tx
+            .send(InputJob::Inject {
+                epoch,
+                generation,
+                geometry_revision,
+                cancelled,
+                event: event.clone(),
+                source_rect,
+                virtual_rect,
+                reply: reply_tx,
+            })
+            .is_err()
+        {
+            self.core.unclean_input_reset.store(true, Ordering::Release);
+            *self.core.input_worker.lock() = None;
+            return Err(ViewError::Unavailable);
+        }
+        if let Ok(res) = reply_rx.await {
+            res
+        } else {
+            self.core.unclean_input_reset.store(true, Ordering::Release);
+            *self.core.input_worker.lock() = None;
+            Err(ViewError::Unavailable)
+        }
+    }
 }
 
 struct CancelOnDrop(Arc<AtomicBool>);
@@ -2057,6 +2393,7 @@ fn run_input_worker_loop(
     core_weak: &Weak<TargetCore>,
 ) {
     let mut drv: Option<Box<dyn InputDriver>> = Some(initial_drv);
+    let mut unclean_driver_loss = false;
     while let Ok(job) = rx.recv() {
         match job {
             InputJob::Inject {
@@ -2108,11 +2445,13 @@ fn run_input_worker_loop(
                     let _ = reply.send(Err(ViewError::Unavailable));
                     continue;
                 }
-                if drv.as_ref().is_none_or(|d| d.is_connection_lost()) {
-                    drv = None;
+                if drv.is_none() {
                     match factory() {
                         Ok(new_drv) => drv = Some(new_drv),
                         Err(e) => {
+                            if matches!(e, ViewError::Unavailable) {
+                                core.notify_input_unavailable();
+                            }
                             let _ = reply.send(Err(e));
                             continue;
                         }
@@ -2126,15 +2465,20 @@ fn run_input_worker_loop(
                     active_drv.inject(&event, source_rect, virtual_rect, &cancelled)
                 }));
                 let res = if let Ok(r) = call_res {
-                    if active_drv.is_connection_lost() {
-                        drv = None;
-                    }
                     r
                 } else {
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let _ = active_drv.release_all();
+                    // Best-effort release on the panicked driver; if release itself fails or
+                    // panics (e.g. a poisoned mutex), keep the reset owed (`unclean_driver_loss`).
+                    let rel = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        active_drv.release_all()
                     }));
                     drv = None;
+                    if matches!(rel, Ok(Ok(()))) {
+                        unclean_driver_loss = false;
+                    } else {
+                        unclean_driver_loss = true;
+                        core.unclean_input_reset.store(true, Ordering::Release);
+                    }
                     Err(ViewError::Unavailable)
                 };
                 match &res {
@@ -2144,12 +2488,16 @@ fn run_input_worker_loop(
                     Err(ViewError::PartialInjection) => {
                         stats.input_partial_failures.fetch_add(1, Ordering::Relaxed);
                     }
+                    Err(ViewError::Unavailable) => {
+                        core.notify_input_unavailable();
+                    }
                     Err(_) => {}
                 }
                 let _ = reply.send(res);
             }
             InputJob::ReleaseAll { reply } => {
-                if let Some(core) = core_weak.upgrade() {
+                let core_opt = core_weak.upgrade();
+                if let Some(core) = core_opt.as_ref() {
                     core.stats.input_resets.fetch_add(1, Ordering::Relaxed);
                 }
                 let res = if let Some(active_drv) = drv.as_mut() {
@@ -2157,26 +2505,45 @@ fn run_input_worker_loop(
                         active_drv.release_all()
                     })) {
                         Ok(Ok(())) => {
+                            unclean_driver_loss = false;
+                            if let Some(core) = core_opt.as_ref() {
+                                core.unclean_input_reset.store(false, Ordering::Release);
+                            }
                             if active_drv.is_connection_lost() {
-                                drv = factory().ok();
+                                drv = None;
                             }
                             Ok(())
                         }
                         Ok(Err(e)) => {
-                            if active_drv.is_connection_lost() {
-                                drv = factory().ok();
-                                Ok(())
-                            } else {
-                                Err(e)
+                            // Keep `drv` alive with its remaining held-input debt for retries.
+                            if matches!(e, ViewError::Unavailable)
+                                && let Some(core) = core_opt.as_ref()
+                            {
+                                core.notify_input_unavailable();
                             }
+                            Err(e)
                         }
                         Err(_) => {
-                            drv = factory().ok();
-                            Ok(())
+                            // A panicking or poisoned `release_all` must NEVER report `Ok(())`:
+                            // drop the poisoned driver and keep the reset owed.
+                            drv = None;
+                            unclean_driver_loss = true;
+                            if let Some(core) = core_opt.as_ref() {
+                                core.unclean_input_reset.store(true, Ordering::Release);
+                                core.notify_input_unavailable();
+                            }
+                            Err(ViewError::Unavailable)
                         }
                     }
+                } else if unclean_driver_loss {
+                    if let Some(core) = core_opt.as_ref() {
+                        core.notify_input_unavailable();
+                    }
+                    Err(ViewError::Unavailable)
                 } else {
-                    drv = factory().ok();
+                    if let Some(core) = core_opt.as_ref() {
+                        core.unclean_input_reset.store(false, Ordering::Release);
+                    }
                     Ok(())
                 };
                 let _ = reply.send(res);
@@ -2259,71 +2626,7 @@ fn ensure_input_worker(
 #[async_trait]
 impl InputSink for DesktopInputSink {
     async fn inject(&self, event: &InputEvent) -> Result<(), ViewError> {
-        if !event.valid() {
-            return Err(ViewError::InvalidRecord);
-        }
-        if matches!(event, InputEvent::Reset) {
-            return self.release_pressed_inputs().await;
-        }
-        if !self.core.takeover_active.load(Ordering::Acquire) {
-            return Err(ViewError::Unavailable);
-        }
-        let (generation, geometry_revision, source_rect, virtual_rect) = {
-            let st = self.core.status.lock();
-            if !st.view_available || !st.input_available || st.unavailable_reason.is_some() {
-                return Err(ViewError::Unavailable);
-            }
-            if event.positional() {
-                let published_rev = self
-                    .core
-                    .last_published_geometry_revision
-                    .load(Ordering::Acquire);
-                if st.geometry_revision != published_rev {
-                    self.core
-                        .stats
-                        .input_cancelled
-                        .fetch_add(1, Ordering::Relaxed);
-                    return Err(ViewError::Unavailable);
-                }
-            }
-            (
-                st.generation,
-                st.geometry_revision,
-                st.latest_geometry.rect.to_source_rect(),
-                st.latest_geometry.virtual_rect,
-            )
-        };
-        if event.positional() {
-            validate_positional_geometry(&source_rect, virtual_rect)?;
-        }
-        let tx = ensure_input_worker(&self.core)?;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.core.register_input_cancel(&cancelled);
-        let _guard = CancelOnDrop(Arc::clone(&cancelled));
-        let epoch = self.core.input_epoch.load(Ordering::Acquire);
-        let (reply_tx, reply_rx) = oneshot::channel();
-        if tx
-            .send(InputJob::Inject {
-                epoch,
-                generation,
-                geometry_revision,
-                cancelled,
-                event: event.clone(),
-                source_rect,
-                virtual_rect,
-                reply: reply_tx,
-            })
-            .is_err()
-        {
-            *self.core.input_worker.lock() = None;
-            return Err(ViewError::Unavailable);
-        }
-        if let Ok(res) = reply_rx.await {
-            res
-        } else {
-            *self.core.input_worker.lock() = None;
-            Err(ViewError::Unavailable)
-        }
+        self.inject_inner(event, None).await
     }
 
     async fn release_pressed_inputs(&self) -> Result<(), ViewError> {
@@ -2334,19 +2637,24 @@ impl InputSink for DesktopInputSink {
             guard.as_ref().map(|w| w.tx.clone())
         };
         let Some(tx) = tx_opt else {
+            if self.core.unclean_input_reset.load(Ordering::Acquire) {
+                return Err(ViewError::Unavailable);
+            }
             // No input worker was ever spawned; nothing was pressed by this sink.
             return Ok(());
         };
         let (reply_tx, reply_rx) = oneshot::channel();
         if tx.send(InputJob::ReleaseAll { reply: reply_tx }).is_err() {
+            self.core.unclean_input_reset.store(true, Ordering::Release);
             *self.core.input_worker.lock() = None;
-            return Ok(());
+            return Err(ViewError::Unavailable);
         }
         if let Ok(res) = reply_rx.await {
             res
         } else {
+            self.core.unclean_input_reset.store(true, Ordering::Release);
             *self.core.input_worker.lock() = None;
-            Ok(())
+            Err(ViewError::Unavailable)
         }
     }
 
@@ -2811,6 +3119,7 @@ mod tests {
         log: Arc<Mutex<Vec<&'static str>>>,
         partial_next: Arc<AtomicBool>,
         panic_next: Arc<AtomicBool>,
+        panic_release_next: Arc<AtomicBool>,
         conn_lost: Arc<AtomicBool>,
         gate: Arc<GateSync>,
         dropped_count: Arc<AtomicU64>,
@@ -2861,6 +3170,10 @@ mod tests {
 
         fn release_all(&mut self) -> Result<(), ViewError> {
             self.log.lock().push("release_all");
+            assert!(
+                !self.panic_release_next.swap(false, Ordering::SeqCst),
+                "simulated release_all panic"
+            );
             if self.conn_lost.load(Ordering::SeqCst) {
                 return Err(ViewError::Unavailable);
             }
@@ -2898,6 +3211,7 @@ mod tests {
                         log: Arc::clone(&log),
                         partial_next: Arc::clone(&partial_next),
                         panic_next: Arc::clone(&panic_next),
+                        panic_release_next: Arc::new(AtomicBool::new(false)),
                         conn_lost: Arc::clone(&conn_lost),
                         gate: Arc::clone(&gate),
                         dropped_count: Arc::clone(&dropped_count),
@@ -3006,6 +3320,7 @@ mod tests {
                         log: Arc::clone(&log),
                         partial_next: Arc::new(AtomicBool::new(false)),
                         panic_next: Arc::new(AtomicBool::new(false)),
+                        panic_release_next: Arc::new(AtomicBool::new(false)),
                         conn_lost: Arc::new(AtomicBool::new(false)),
                         gate: Arc::clone(&gate),
                         dropped_count: Arc::new(AtomicU64::new(0)),
@@ -3082,6 +3397,7 @@ mod tests {
                         log: Arc::clone(&log),
                         partial_next: Arc::new(AtomicBool::new(false)),
                         panic_next: Arc::clone(&panic_next),
+                        panic_release_next: Arc::new(AtomicBool::new(false)),
                         conn_lost: Arc::clone(&conn_lost),
                         gate: Arc::new(GateSync::new()),
                         dropped_count: Arc::clone(&dropped_count),
@@ -3129,13 +3445,15 @@ mod tests {
         .unwrap();
         assert_eq!(creations.load(Ordering::SeqCst), 2);
 
-        // Simulate connection loss during `release_pressed_inputs`: must return `Ok(())` and
-        // recreate a healthy driver so the session never wedges in permanent `Unavailable`.
+        // Simulate transient connection loss during `release_pressed_inputs`: must preserve the
+        // driver/reset debt and return `Err(ViewError::Unavailable)` instead of silently claiming
+        // `Ok(())`, then succeed once the server connection recovers.
         conn_lost.store(true, Ordering::SeqCst);
-        // Flip conn_lost back to false inside factory once the old driver is dropped.
-        let reset_res = sink.release_pressed_inputs().await;
-        assert_eq!(reset_res, Ok(()));
+        let reset_err = sink.release_pressed_inputs().await;
+        assert_eq!(reset_err, Err(ViewError::Unavailable));
         conn_lost.store(false, Ordering::SeqCst);
+        let reset_ok = sink.release_pressed_inputs().await;
+        assert_eq!(reset_ok, Ok(()));
 
         // Dropping `sink` and `target` must synchronously shut down and join the worker thread,
         // dropping the active driver before `drop(target)` returns.
@@ -3163,6 +3481,7 @@ mod tests {
                         log: Arc::clone(&log),
                         partial_next: Arc::new(AtomicBool::new(false)),
                         panic_next: Arc::new(AtomicBool::new(false)),
+                        panic_release_next: Arc::new(AtomicBool::new(false)),
                         conn_lost: Arc::new(AtomicBool::new(false)),
                         gate: Arc::clone(&gate),
                         dropped_count: Arc::new(AtomicU64::new(0)),
@@ -3535,5 +3854,344 @@ mod tests {
         );
         assert_eq!(repeated.metadata.cause, Cause::Idle);
         src.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn release_all_panic_keeps_reset_owed_and_returns_unavailable() {
+        // 1. Direct panic inside `release_all` must return `Err(ViewError::Unavailable)` and keep
+        // reset owed across subsequent `release_pressed_inputs` calls.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let panic_next = Arc::new(AtomicBool::new(false));
+        let panic_release_next = Arc::new(AtomicBool::new(false));
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-release-panic"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: Arc::new(|_| Ok(())),
+            input_factory: Some({
+                let log = Arc::clone(&log);
+                let panic_next = Arc::clone(&panic_next);
+                let panic_release_next = Arc::clone(&panic_release_next);
+                Arc::new(move || {
+                    Ok(Box::new(DeterministicMockInput {
+                        log: Arc::clone(&log),
+                        partial_next: Arc::new(AtomicBool::new(false)),
+                        panic_next: Arc::clone(&panic_next),
+                        panic_release_next: Arc::clone(&panic_release_next),
+                        conn_lost: Arc::new(AtomicBool::new(false)),
+                        gate: Arc::new(GateSync::new()),
+                        dropped_count: Arc::new(AtomicU64::new(0)),
+                    }))
+                })
+            }),
+            input_reason: None,
+        });
+
+        let sink = target.input_sink().unwrap();
+        sink.set_takeover_active(true).await.unwrap();
+        sink.inject(&InputEvent::Key {
+            phase: ::live_view::KeyPhase::Down,
+            code: "KeyA".into(),
+            key: "a".into(),
+            location: 0,
+            repeat: false,
+            modifiers: vec![],
+        })
+        .await
+        .unwrap();
+
+        panic_release_next.store(true, Ordering::SeqCst);
+        assert_eq!(
+            sink.release_pressed_inputs().await,
+            Err(ViewError::Unavailable)
+        );
+        // Subsequent release attempt still surfaces the unverified reset debt cleanly.
+        assert_eq!(
+            sink.release_pressed_inputs().await,
+            Err(ViewError::Unavailable)
+        );
+
+        // 2. Panic inside `inject` followed by a panic in the follow-up `release_all` must also
+        // mark the reset debt unclean so `release_pressed_inputs()` returns `Unavailable`.
+        let log2 = Arc::new(Mutex::new(Vec::new()));
+        let panic_next2 = Arc::new(AtomicBool::new(false));
+        let panic_release_next2 = Arc::new(AtomicBool::new(false));
+        let target2 = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-both-panic"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: Arc::new(|_| Ok(())),
+            input_factory: Some({
+                let log2 = Arc::clone(&log2);
+                let panic_next2 = Arc::clone(&panic_next2);
+                let panic_release_next2 = Arc::clone(&panic_release_next2);
+                Arc::new(move || {
+                    Ok(Box::new(DeterministicMockInput {
+                        log: Arc::clone(&log2),
+                        partial_next: Arc::new(AtomicBool::new(false)),
+                        panic_next: Arc::clone(&panic_next2),
+                        panic_release_next: Arc::clone(&panic_release_next2),
+                        conn_lost: Arc::new(AtomicBool::new(false)),
+                        gate: Arc::new(GateSync::new()),
+                        dropped_count: Arc::new(AtomicU64::new(0)),
+                    }))
+                })
+            }),
+            input_reason: None,
+        });
+
+        let sink2 = target2.input_sink().unwrap();
+        sink2.set_takeover_active(true).await.unwrap();
+        panic_next2.store(true, Ordering::SeqCst);
+        panic_release_next2.store(true, Ordering::SeqCst);
+        assert_eq!(
+            sink2
+                .inject(&InputEvent::Key {
+                    phase: ::live_view::KeyPhase::Down,
+                    code: "KeyB".into(),
+                    key: "b".into(),
+                    location: 0,
+                    repeat: false,
+                    modifiers: vec![],
+                })
+                .await,
+            Err(ViewError::Unavailable)
+        );
+        assert_eq!(
+            sink2.release_pressed_inputs().await,
+            Err(ViewError::Unavailable)
+        );
+    }
+
+    #[tokio::test]
+    async fn inject_at_revision_rejects_stale_revision_after_frame_published_and_enforces_explicit_mode()
+     {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let gate = Arc::new(GateSync::new());
+
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-explicit-rev"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: Arc::new(|_| Ok(())),
+            input_factory: Some({
+                let log = Arc::clone(&log);
+                let gate = Arc::clone(&gate);
+                Arc::new(move || {
+                    Ok(Box::new(DeterministicMockInput {
+                        log: Arc::clone(&log),
+                        partial_next: Arc::new(AtomicBool::new(false)),
+                        panic_next: Arc::new(AtomicBool::new(false)),
+                        panic_release_next: Arc::new(AtomicBool::new(false)),
+                        conn_lost: Arc::new(AtomicBool::new(false)),
+                        gate: Arc::clone(&gate),
+                        dropped_count: Arc::new(AtomicU64::new(0)),
+                    }))
+                })
+            }),
+            input_reason: None,
+        });
+
+        let desktop_sink = target.desktop_input_sink().unwrap();
+        let dyn_sink = target.input_sink().unwrap();
+        dyn_sink.set_takeover_active(true).await.unwrap();
+
+        let ptr_event = InputEvent::Pointer {
+            phase: ::live_view::PointerPhase::Down,
+            x: 0.5,
+            y: 0.5,
+            button: Some(::live_view::Button::Left),
+            buttons: 1,
+            modifiers: vec![],
+        };
+
+        // Advance geometry revision to 2 AND publish frame at revision 2.
+        let (generation, new_rev) = update_status_ok(&target.core, test_geom(1280, 720));
+        assert_eq!((generation, new_rev), (1, 2));
+        target
+            .core
+            .last_published_geometry_revision
+            .store(new_rev, Ordering::Release);
+
+        // A click computed for revision 1 must still be rejected even after revision 2 is published.
+        assert_eq!(
+            desktop_sink.inject_at_revision(&ptr_event, 1, 1).await,
+            Err(ViewError::Unavailable)
+        );
+        assert_eq!(
+            target.inject_at_revision(&ptr_event, 1, 1).await,
+            Err(ViewError::Unavailable)
+        );
+        assert!(!log.lock().contains(&"other"));
+        assert_eq!(
+            desktop_sink
+                .inject_at_revision(&ptr_event, generation, new_rev)
+                .await,
+            Ok(())
+        );
+        log.lock().clear();
+
+        // Worker-queue race: queue `inject_at_revision(..., rev 2)` behind a gated job, bump +
+        // publish rev 3 while queued, and verify the worker rejects the stale rev 2 event.
+        let sink_gated = Arc::clone(&dyn_sink);
+        let gated_fut = tokio::spawn(async move {
+            sink_gated
+                .inject(&InputEvent::Text {
+                    text: "gated".into(),
+                })
+                .await
+        });
+        let gate_wait = Arc::clone(&gate);
+        tokio::task::spawn_blocking(move || gate_wait.wait_entered())
+            .await
+            .unwrap();
+        let (queued_tx, queued_rx) = oneshot::channel();
+        let desktop_sink_queued = Arc::clone(&desktop_sink);
+        let ptr_clone = ptr_event.clone();
+        let ptr_fut = tokio::spawn(async move {
+            let _ = queued_tx.send(());
+            desktop_sink_queued
+                .inject_at_revision(&ptr_clone, generation, new_rev)
+                .await
+        });
+        queued_rx.await.unwrap();
+        tokio::task::yield_now().await;
+
+        let (_, rev3) = update_status_ok(&target.core, test_geom(1920, 1080));
+        target
+            .core
+            .last_published_geometry_revision
+            .store(rev3, Ordering::Release);
+        gate.release_gate();
+
+        assert_eq!(gated_fut.await.unwrap(), Ok(()));
+        assert_eq!(ptr_fut.await.unwrap(), Err(ViewError::Unavailable));
+        assert!(!log.lock().contains(&"other"));
+
+        // `require_explicit_revision` fails closed on legacy `InputSink::inject` for positional events.
+        target.set_require_explicit_revision(true);
+        assert_eq!(
+            dyn_sink.inject(&ptr_event).await,
+            Err(ViewError::Unavailable)
+        );
+        assert_eq!(
+            desktop_sink
+                .inject_at_revision(&ptr_event, generation, rev3)
+                .await,
+            Ok(())
+        );
+    }
+
+    #[tokio::test]
+    async fn background_availability_probe_updates_info_without_blocking_on_display_loss_and_inject_error()
+     {
+        struct FailingKeyInput(Arc<AtomicBool>);
+        impl InputDriver for FailingKeyInput {
+            fn inject(
+                &mut self,
+                _: &InputEvent,
+                _: SourceRect,
+                _: PixelRect,
+                _: &AtomicBool,
+            ) -> Result<(), ViewError> {
+                if self.0.swap(false, Ordering::SeqCst) {
+                    return Err(ViewError::Unavailable);
+                }
+                Ok(())
+            }
+            fn release_all(&mut self) -> Result<(), ViewError> {
+                Ok(())
+            }
+        }
+
+        let probe_gate = Arc::new(GateSync::new());
+        let fail_probe = Arc::new(AtomicBool::new(false));
+        let block_next_probe = Arc::new(AtomicBool::new(false));
+        let inject_fail_next = Arc::new(AtomicBool::new(false));
+        let probe_calls = Arc::new(AtomicU64::new(0));
+
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-probe"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: {
+                let (pg, fp, bp, pc) = (
+                    Arc::clone(&probe_gate),
+                    Arc::clone(&fail_probe),
+                    Arc::clone(&block_next_probe),
+                    Arc::clone(&probe_calls),
+                );
+                Arc::new(move |_| {
+                    pc.fetch_add(1, Ordering::SeqCst);
+                    if bp.swap(false, Ordering::SeqCst) {
+                        pg.signal_entered();
+                        let _ = pg.wait_unblocked_or_cancelled(&AtomicBool::new(false));
+                    }
+                    if fp.load(Ordering::SeqCst) {
+                        Err(Reason::Disconnected)
+                    } else {
+                        Ok(())
+                    }
+                })
+            },
+            input_factory: Some({
+                let fail_next = Arc::clone(&inject_fail_next);
+                Arc::new(move || Ok(Box::new(FailingKeyInput(Arc::clone(&fail_next)))))
+            }),
+            input_reason: None,
+        });
+
+        assert!(target.info().capabilities.view);
+
+        // Block probe on a barrier returning `Reason::Disconnected`; `info()` must not block.
+        fail_probe.store(true, Ordering::SeqCst);
+        block_next_probe.store(true, Ordering::SeqCst);
+        target.set_availability_probe_interval(Duration::from_millis(1));
+        target.trigger_availability_probe();
+        let probe_wait = Arc::clone(&probe_gate);
+        tokio::task::spawn_blocking(move || probe_wait.wait_entered())
+            .await
+            .unwrap();
+        let started = Instant::now();
+        assert!(target.info().capabilities.view);
+        assert!(started.elapsed() < Duration::from_millis(200));
+
+        probe_gate.release_gate();
+        while target.info().capabilities.view {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(target.info().unavailable_reason, Some(Reason::Disconnected));
+
+        // Recover, raise interval to 1h, and confirm an inject `Unavailable` error while idle
+        // immediately triggers a probe that picks up `Reason::Disconnected`.
+        fail_probe.store(false, Ordering::SeqCst);
+        target.set_availability_probe_interval(Duration::from_secs(3600));
+        target.trigger_availability_probe();
+        while !target.info().capabilities.view {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let sink = target.input_sink().unwrap();
+        sink.set_takeover_active(true).await.unwrap();
+        let calls_before = probe_calls.load(Ordering::SeqCst);
+        fail_probe.store(true, Ordering::SeqCst);
+        inject_fail_next.store(true, Ordering::SeqCst);
+        assert_eq!(
+            sink.inject(&InputEvent::Key {
+                phase: ::live_view::KeyPhase::Down,
+                code: "KeyA".into(),
+                key: "a".into(),
+                location: 0,
+                repeat: false,
+                modifiers: vec![],
+            })
+            .await,
+            Err(ViewError::Unavailable)
+        );
+        while probe_calls.load(Ordering::SeqCst) == calls_before || target.info().capabilities.view
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(target.info().unavailable_reason, Some(Reason::Disconnected));
     }
 }

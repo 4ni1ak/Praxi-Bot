@@ -92,6 +92,33 @@ pub struct X11KeymapSnapshot {
     pub keysyms: Vec<u32>,
 }
 
+/// Snapshot of currently depressed X11 keycodes (`XQueryKeymap`) and pointer buttons (`XQueryPointer`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct X11ServerPressedState {
+    pub keys: [u8; 32],
+    pub buttons_1_to_5: u8,
+}
+
+impl X11ServerPressedState {
+    /// Returns whether `keycode` is currently marked pressed in `keys`.
+    #[must_use]
+    pub fn is_key_down(&self, keycode: u8) -> bool {
+        let byte_idx = usize::from(keycode / 8);
+        let bit_mask = 1_u8 << (keycode % 8);
+        (self.keys[byte_idx] & bit_mask) != 0
+    }
+
+    /// Returns whether pointer button `1..=5` is depressed in `XQueryPointer`'s modifier mask.
+    #[must_use]
+    pub fn is_button_down(&self, button: u8) -> Option<bool> {
+        if (1..=5).contains(&button) {
+            Some((self.buttons_1_to_5 & (1_u8 << (button - 1))) != 0)
+        } else {
+            None
+        }
+    }
+}
+
 /// Abstract X11 connection used for `XTest` input injection and keymap updates.
 pub trait X11InputConnection: Send + 'static {
     /// Check if `XTest` is present on this X11 display.
@@ -151,6 +178,16 @@ pub trait X11InputConnection: Send + 'static {
     ///
     /// Returns [`ViewError::Unavailable`] if querying root geometry fails.
     fn root_rect(&mut self) -> Result<Option<PixelRect>, ViewError> {
+        Ok(None)
+    }
+
+    /// Query currently held keycodes (`XQueryKeymap`) and core pointer buttons (`XQueryPointer`)
+    /// on the X server, if supported by this connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError::Unavailable`] if the X11 connection fails while querying state.
+    fn query_server_pressed_state(&mut self) -> Result<Option<X11ServerPressedState>, ViewError> {
         Ok(None)
     }
 
@@ -330,17 +367,38 @@ impl<C: X11InputConnection> X11InputDriver<C> {
         self.cached_keymap = None;
     }
 
-    fn try_reconnect(&mut self) -> Result<(), ViewError> {
+    /// Reconnect to the X11 server while preserving locally tracked held keys/buttons/scratches
+    /// so `release_all` can still release `XTest` server state over the new connection.
+    ///
+    /// Returns:
+    /// - `Ok(true)`: connected to a live server with `XTest`.
+    /// - `Ok(false)`: reconnection factory failed, indicating the X11 server itself is gone.
+    /// - `Err(_)`: no reconnection factory is configured, or post-connect validation failed.
+    fn try_reconnect_preserving_state(&mut self) -> Result<bool, ViewError> {
         let Some(factory) = self.reconnect.as_ref().map(Arc::clone) else {
             return Err(ViewError::Unavailable);
         };
-        let mut new_conn = factory()?;
+        let Ok(mut new_conn) = factory() else {
+            return Ok(false);
+        };
         if !new_conn.has_xtest()? {
             return Err(ViewError::Unsupported);
         }
         self.conn = new_conn;
-        self.clear_local_session_state();
-        Ok(())
+        self.cached_keymap = None;
+        Ok(true)
+    }
+
+    fn reconcile_with_server_state(&mut self) {
+        let Ok(Some(server)) = self.conn.query_server_pressed_state() else {
+            return;
+        };
+        self.pressed_keys
+            .retain(|_, rec| server.is_key_down(rec.keycode));
+        self.transient_mods
+            .retain(|&(_, kc)| server.is_key_down(kc));
+        self.pressed_buttons
+            .retain(|&btn| server.is_button_down(btn) != Some(false));
     }
 
     fn is_shift_held(&self) -> bool {
@@ -719,8 +777,12 @@ impl<C: X11InputConnection> X11InputDriver<C> {
         effective_mods: &[Modifier],
     ) -> Result<(), ViewError> {
         // Printable character (plain, Shift, or `AltGr`): release any held Ctrl/Alt
-        // modifiers from an `AltGr` sequence and inject the exact character keysym
-        // rather than relying on the host's active keyboard layout.
+        // modifiers from an `AltGr` sequence and inject the exact character keysym via a
+        // temporary scratch keycode rather than relying on the host's active keyboard layout.
+        // Limitation: because unmodified printable characters are bound as Unicode keysyms on
+        // dynamically assigned scratch keycodes (rather than fixed physical keycodes/scancodes),
+        // applications that read raw scancodes directly (such as games and some terminals) will
+        // not observe them as hardware keystrokes.
         self.release_non_shift_modifiers()?;
         let sym = char_to_keysym(ch);
         if sym == 0 {
@@ -924,7 +986,11 @@ impl<C: X11InputConnection> InputDriver for X11InputDriver<C> {
             return Err(ViewError::Unavailable);
         }
         if self.conn.is_connection_lost() {
-            self.try_reconnect()?;
+            if !self.try_reconnect_preserving_state()? {
+                self.clear_local_session_state();
+                return Err(ViewError::Unavailable);
+            }
+            self.reconcile_with_server_state();
         }
         if event.positional() {
             validate_positional_geometry(&source_rect, virtual_rect)?;
@@ -981,11 +1047,42 @@ impl<C: X11InputConnection> InputDriver for X11InputDriver<C> {
     }
 
     fn release_all(&mut self) -> Result<(), ViewError> {
-        if self.conn.is_connection_lost() {
+        // Check whether any local state was actually held before reconnecting: we never
+        // discard owed releases when reconnecting to a live server, because XTest key and
+        // button state lives on the X server and survives closing a client socket.
+        if self.conn.is_connection_lost() && !self.try_reconnect_preserving_state()? {
+            // The X server itself is unreachable/gone, so no live XTest state remains.
             self.clear_local_session_state();
-            let _ = self.try_reconnect();
             return Ok(());
         }
+
+        let res = self.send_owed_releases_on_current_conn();
+        if res.is_err() && self.conn.is_connection_lost() {
+            if !self.try_reconnect_preserving_state()? {
+                self.clear_local_session_state();
+                return Ok(());
+            }
+            return self.send_owed_releases_on_current_conn();
+        }
+        res
+    }
+
+    fn is_connection_lost(&self) -> bool {
+        self.conn.is_connection_lost()
+    }
+}
+
+impl<C: X11InputConnection> X11InputDriver<C> {
+    fn send_owed_releases_on_current_conn(&mut self) -> Result<(), ViewError> {
+        let server_state = match self.conn.query_server_pressed_state() {
+            Ok(state) => state,
+            Err(err) => {
+                if self.conn.is_connection_lost() {
+                    return Err(err);
+                }
+                None
+            }
+        };
 
         let mut failed = false;
 
@@ -995,6 +1092,12 @@ impl<C: X11InputConnection> InputDriver for X11InputDriver<C> {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         for (code, rec) in keys.into_iter().rev() {
+            if let Some(st) = &server_state
+                && !st.is_key_down(rec.keycode)
+            {
+                self.pressed_keys.remove(&code);
+                continue;
+            }
             if self.conn.key(rec.keycode, false).is_ok() {
                 self.pressed_keys.remove(&code);
             } else {
@@ -1002,12 +1105,31 @@ impl<C: X11InputConnection> InputDriver for X11InputDriver<C> {
             }
         }
 
-        if self.release_transient_modifiers().is_err() {
-            failed = true;
+        let mut idx = self.transient_mods.len();
+        while idx > 0 {
+            idx -= 1;
+            let kc = self.transient_mods[idx].1;
+            if let Some(st) = &server_state
+                && !st.is_key_down(kc)
+            {
+                let _ = self.transient_mods.remove(idx);
+                continue;
+            }
+            if self.conn.key(kc, false).is_ok() {
+                let _ = self.transient_mods.remove(idx);
+            } else {
+                failed = true;
+            }
         }
 
         let buttons: Vec<u8> = self.pressed_buttons.iter().copied().collect();
         for btn in buttons {
+            if let Some(st) = &server_state
+                && st.is_button_down(btn) == Some(false)
+            {
+                self.pressed_buttons.remove(&btn);
+                continue;
+            }
             if self.conn.button(btn, false).is_ok() {
                 self.pressed_buttons.remove(&btn);
             } else {
@@ -1031,26 +1153,11 @@ impl<C: X11InputConnection> InputDriver for X11InputDriver<C> {
             }
         }
 
-        // If the X11 server restarted or the client socket closed mid-release, the server
-        // either destroyed its `xtestkeyboard`/`xtestpointer` device state (server restart)
-        // or the broken socket can never carry further release requests. Clear local state,
-        // attempt to reconnect, and return `Ok(())` so reset/takeover-end never latches in
-        // permanent `Unavailable`.
-        if self.conn.is_connection_lost() {
-            self.clear_local_session_state();
-            let _ = self.try_reconnect();
-            return Ok(());
-        }
-
         if failed {
             Err(ViewError::Unavailable)
         } else {
             Ok(())
         }
-    }
-
-    fn is_connection_lost(&self) -> bool {
-        self.conn.is_connection_lost()
     }
 }
 
@@ -1312,8 +1419,9 @@ mod linux_x11 {
     use super::{
         AvailabilityProbeFn, CaptureFailure, DesktopViewTarget, LiveViewOptions, MonitorDescriptor,
         PixelFormat, PixelRect, Reason, ViewError, X11CaptureConnection, X11DisplayLayout,
-        X11InputConnection, X11KeymapSnapshot, X11PixmapFormat, build_x11_view_target,
-        compute_x11_stride, select_capture_rect, validate_x11_env, x11_pixel_format,
+        X11InputConnection, X11KeymapSnapshot, X11PixmapFormat, X11ServerPressedState,
+        build_x11_view_target, compute_x11_stride, select_capture_rect, validate_x11_env,
+        x11_pixel_format,
     };
     use x11rb::{
         CURRENT_TIME, NONE,
@@ -1322,7 +1430,7 @@ mod linux_x11 {
             randr::ConnectionExt as _,
             xproto::{
                 BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt as _, ImageFormat,
-                ImageOrder, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
+                ImageOrder, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, KeyButMask, MOTION_NOTIFY_EVENT,
             },
             xtest::ConnectionExt as _,
         },
@@ -1555,9 +1663,14 @@ mod linux_x11 {
             &self,
             res: Result<T, x11rb::errors::ConnectionError>,
         ) -> Result<T, ViewError> {
-            res.map_err(|_| {
-                self.conn_lost
-                    .store(true, std::sync::atomic::Ordering::Release);
+            res.map_err(|err| {
+                // Only actual socket / I/O errors mean the X11 connection died; request-encoding
+                // or protocol limits (`ParseError`, `MaximumRequestLengthExceeded`, etc.) must not
+                // poison a live socket as `conn_lost`.
+                if matches!(err, x11rb::errors::ConnectionError::IoError(_)) {
+                    self.conn_lost
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
                 ViewError::Unavailable
             })
         }
@@ -1567,7 +1680,12 @@ mod linux_x11 {
             res: Result<T, x11rb::errors::ReplyError>,
         ) -> Result<T, ViewError> {
             res.map_err(|err| {
-                if matches!(err, x11rb::errors::ReplyError::ConnectionError(_)) {
+                if matches!(
+                    err,
+                    x11rb::errors::ReplyError::ConnectionError(
+                        x11rb::errors::ConnectionError::IoError(_)
+                    )
+                ) {
                     self.conn_lost
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
@@ -1671,6 +1789,35 @@ mod linux_x11 {
                 y: 0,
                 width: u32::from(geom.width).max(1),
                 height: u32::from(geom.height).max(1),
+            }))
+        }
+
+        fn query_server_pressed_state(
+            &mut self,
+        ) -> Result<Option<X11ServerPressedState>, ViewError> {
+            let keymap_cookie = self.map_conn_err(self.conn.query_keymap())?;
+            let pointer_cookie = self.map_conn_err(self.conn.query_pointer(self.root))?;
+            let keymap = self.map_reply_err(keymap_cookie.reply())?;
+            let pointer = self.map_reply_err(pointer_cookie.reply())?;
+            let mask_bits = u16::from(pointer.mask);
+            let mut buttons_1_to_5 = 0_u8;
+            for (idx, bit) in [
+                KeyButMask::BUTTON1,
+                KeyButMask::BUTTON2,
+                KeyButMask::BUTTON3,
+                KeyButMask::BUTTON4,
+                KeyButMask::BUTTON5,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if (mask_bits & u16::from(bit)) != 0 {
+                    buttons_1_to_5 |= 1_u8 << idx;
+                }
+            }
+            Ok(Some(X11ServerPressedState {
+                keys: keymap.keys,
+                buttons_1_to_5,
             }))
         }
 
@@ -1805,6 +1952,10 @@ mod tests {
         has_xtest: bool,
         keymap: X11KeymapSnapshot,
         keymap_calls: usize,
+        next_conn_id: u64,
+        calls_with_conn: Vec<(u64, X11Call)>,
+        server_keys: BTreeSet<u8>,
+        server_buttons: BTreeSet<u8>,
         calls: Vec<X11Call>,
         fail_after_n: Option<usize>,
         conn_lost: bool,
@@ -1813,20 +1964,27 @@ mod tests {
 
     struct MockX11Input {
         state: Arc<Mutex<MockX11InputState>>,
+        conn_id: u64,
         local_conn_lost: bool,
     }
 
     impl MockX11Input {
         fn new(state: Arc<Mutex<MockX11InputState>>) -> Self {
+            let conn_id = {
+                let mut st = state.lock();
+                st.next_conn_id += 1;
+                st.next_conn_id
+            };
             Self {
                 state,
+                conn_id,
                 local_conn_lost: false,
             }
         }
 
         fn record(&mut self, call: X11Call) -> Result<(), ViewError> {
             let mut st = self.state.lock();
-            if st.conn_lost {
+            if self.local_conn_lost || st.conn_lost {
                 self.local_conn_lost = true;
                 return Err(ViewError::Unavailable);
             }
@@ -1836,6 +1994,22 @@ mod tests {
                 }
                 *rem -= 1;
             }
+            match &call {
+                X11Call::Key(kc, true) => {
+                    st.server_keys.insert(*kc);
+                }
+                X11Call::Key(kc, false) => {
+                    st.server_keys.remove(kc);
+                }
+                X11Call::Button(btn, true) => {
+                    st.server_buttons.insert(*btn);
+                }
+                X11Call::Button(btn, false) => {
+                    st.server_buttons.remove(btn);
+                }
+                _ => {}
+            }
+            st.calls_with_conn.push((self.conn_id, call.clone()));
             st.calls.push(call);
             Ok(())
         }
@@ -1844,7 +2018,7 @@ mod tests {
     impl X11InputConnection for MockX11Input {
         fn has_xtest(&mut self) -> Result<bool, ViewError> {
             let st = self.state.lock();
-            if st.conn_lost {
+            if self.local_conn_lost || st.conn_lost {
                 self.local_conn_lost = true;
                 return Err(ViewError::Unavailable);
             }
@@ -1853,7 +2027,7 @@ mod tests {
 
         fn keymap(&mut self) -> Result<X11KeymapSnapshot, ViewError> {
             let mut st = self.state.lock();
-            if st.conn_lost {
+            if self.local_conn_lost || st.conn_lost {
                 self.local_conn_lost = true;
                 return Err(ViewError::Unavailable);
             }
@@ -1895,11 +2069,35 @@ mod tests {
 
         fn root_rect(&mut self) -> Result<Option<PixelRect>, ViewError> {
             let st = self.state.lock();
-            if st.conn_lost {
+            if self.local_conn_lost || st.conn_lost {
                 self.local_conn_lost = true;
                 return Err(ViewError::Unavailable);
             }
             Ok(st.root_rect)
+        }
+
+        fn query_server_pressed_state(
+            &mut self,
+        ) -> Result<Option<X11ServerPressedState>, ViewError> {
+            let st = self.state.lock();
+            if self.local_conn_lost || st.conn_lost {
+                self.local_conn_lost = true;
+                return Err(ViewError::Unavailable);
+            }
+            let mut keys = [0_u8; 32];
+            for &kc in &st.server_keys {
+                keys[usize::from(kc / 8)] |= 1_u8 << (kc % 8);
+            }
+            let mut buttons_1_to_5 = 0_u8;
+            for &btn in &st.server_buttons {
+                if (1..=5).contains(&btn) {
+                    buttons_1_to_5 |= 1_u8 << (btn - 1);
+                }
+            }
+            Ok(Some(X11ServerPressedState {
+                keys,
+                buttons_1_to_5,
+            }))
         }
 
         fn is_connection_lost(&self) -> bool {
@@ -2168,6 +2366,10 @@ mod tests {
             has_xtest: true,
             keymap: base_keymap(false),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: None,
             conn_lost: false,
@@ -2273,6 +2475,10 @@ mod tests {
                 has_xtest: true,
                 keymap: base_keymap(true),
                 keymap_calls: 0,
+                next_conn_id: 0,
+                calls_with_conn: Vec::new(),
+                server_keys: BTreeSet::new(),
+                server_buttons: BTreeSet::new(),
                 calls: Vec::new(),
                 fail_after_n: None,
                 conn_lost: false,
@@ -2309,6 +2515,10 @@ mod tests {
             has_xtest: true,
             keymap: base_keymap(false),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: Some(2), // first char down+up succeeds, second char down fails
             conn_lost: false,
@@ -2345,6 +2555,10 @@ mod tests {
             has_xtest: true,
             keymap: base_keymap(false),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: None,
             conn_lost: false,
@@ -2474,6 +2688,10 @@ mod tests {
             has_xtest: true,
             keymap: base_keymap(false),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: None,
             conn_lost: false,
@@ -2515,7 +2733,17 @@ mod tests {
         sink.set_takeover_active(true).await.unwrap();
         assert_eq!(conn_creations.load(Ordering::SeqCst), 1);
 
-        // Hold down a scratch-bound key ('ğ') and a mouse button.
+        // Hold down ShiftLeft (kc 10), a scratch-bound key ('ğ', kc 12), and Left mouse button (1)
+        // on connection 1.
+        sink.inject(&x11_test_key_event(
+            KeyPhase::Down,
+            "ShiftLeft",
+            "Shift",
+            1,
+            vec![Modifier::Shift],
+        ))
+        .await
+        .unwrap();
         sink.inject(&x11_test_key_event(
             KeyPhase::Down,
             "BracketRight",
@@ -2536,13 +2764,28 @@ mod tests {
         .await
         .unwrap();
 
-        // Simulate X11 connection death while keys/buttons are held!
+        assert!(active_in_state.lock().server_keys.contains(&10));
+        assert!(active_in_state.lock().server_keys.contains(&12));
+        assert!(active_in_state.lock().server_buttons.contains(&1));
+
+        // Drop the X11 client socket while the X server is still alive and holding those XTest
+        // keys/buttons.
         active_in_state.lock().conn_lost = true;
 
-        // `release_pressed_inputs` must NOT wedge in permanent `Err(ViewError::Unavailable)`;
-        // it clears the dead connection's state, reconnects via the factory, and returns `Ok(())`.
+        // `release_pressed_inputs` must reconnect WITHOUT discarding held debt, query the live
+        // server, send Shift/key/button releases and scratch unbind on the NEW connection (conn_id 2),
+        // and only then return `Ok(())`.
         assert_eq!(sink.release_pressed_inputs().await, Ok(()));
-        assert!(conn_creations.load(Ordering::SeqCst) >= 2);
+        assert_eq!(conn_creations.load(Ordering::SeqCst), 2);
+        {
+            let st = active_in_state.lock();
+            assert!(st.calls_with_conn.contains(&(2, X11Call::Key(10, false))));
+            assert!(st.calls_with_conn.contains(&(2, X11Call::Key(12, false))));
+            assert!(st.calls_with_conn.contains(&(2, X11Call::Button(1, false))));
+            assert!(st.calls_with_conn.contains(&(2, X11Call::Unbind(12))));
+            assert!(st.server_keys.is_empty());
+            assert!(st.server_buttons.is_empty());
+        }
 
         // Subsequent input injection on the recovered session works cleanly.
         active_in_state.lock().calls.clear();
@@ -2553,12 +2796,173 @@ mod tests {
         sink.set_takeover_active(false).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn xtest_server_gone_clears_held_debt_and_returns_ok() {
+        let cap_state = make_mock_x11_cap_state(200, 100, 200 * 4, vec![0x44; 200 * 100 * 4], 1);
+        let active_in_state = Arc::new(Mutex::new(MockX11InputState {
+            has_xtest: true,
+            keymap: base_keymap(false),
+            keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
+            calls: Vec::new(),
+            fail_after_n: None,
+            conn_lost: false,
+            root_rect: None,
+        }));
+        let server_gone = Arc::new(AtomicBool::new(false));
+
+        let target = build_x11_view_target(
+            &LiveViewOptions::new("x11-server-gone"),
+            MockX11Capture {
+                state: Arc::clone(&cap_state),
+            },
+            Arc::new({
+                let s = Arc::clone(&cap_state);
+                move || {
+                    Ok(MockX11Capture {
+                        state: Arc::clone(&s),
+                    })
+                }
+            }),
+            Arc::new(|_| Ok(())),
+            Some(Arc::new({
+                let s = Arc::clone(&active_in_state);
+                let gone = Arc::clone(&server_gone);
+                move || {
+                    if gone.load(Ordering::SeqCst) {
+                        return Err(ViewError::Unavailable);
+                    }
+                    Ok(MockX11Input::new(Arc::clone(&s)))
+                }
+            })),
+            None,
+        )
+        .unwrap();
+
+        let sink = target.input_sink().unwrap();
+        sink.set_takeover_active(true).await.unwrap();
+        sink.inject(&x11_test_key_event(
+            KeyPhase::Down,
+            "ShiftLeft",
+            "Shift",
+            1,
+            vec![Modifier::Shift],
+        ))
+        .await
+        .unwrap();
+
+        // Now both the socket dies AND the X server itself disappears (reconnect fails).
+        server_gone.store(true, Ordering::SeqCst);
+        active_in_state.lock().conn_lost = true;
+        assert_eq!(sink.release_pressed_inputs().await, Ok(()));
+    }
+
+    #[test]
+    fn xtest_transient_error_without_connection_loss_keeps_held_until_replacement_connection_releases()
+     {
+        let in_state = Arc::new(Mutex::new(MockX11InputState {
+            has_xtest: true,
+            keymap: base_keymap(false),
+            keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
+            calls: Vec::new(),
+            fail_after_n: None,
+            conn_lost: false,
+            root_rect: None,
+        }));
+        let mut drv = X11InputDriver::with_reconnect(
+            MockX11Input::new(Arc::clone(&in_state)),
+            Arc::new({
+                let s = Arc::clone(&in_state);
+                move || {
+                    let mut guard = s.lock();
+                    guard.conn_lost = false;
+                    guard.fail_after_n = None;
+                    drop(guard);
+                    Ok(MockX11Input::new(Arc::clone(&s)))
+                }
+            }),
+        )
+        .unwrap();
+
+        let vr = PixelRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+        let sr = vr.to_source_rect();
+        let cancel = AtomicBool::new(false);
+
+        // Hold ShiftLeft (kc 10) and Left mouse button (1).
+        drv.inject(
+            &x11_test_key_event(
+                KeyPhase::Down,
+                "ShiftLeft",
+                "Shift",
+                1,
+                vec![Modifier::Shift],
+            ),
+            sr.clone(),
+            vr,
+            &cancel,
+        )
+        .unwrap();
+        drv.inject(
+            &InputEvent::Pointer {
+                phase: PointerPhase::Down,
+                x: 0.5,
+                y: 0.5,
+                button: Some(Button::Left),
+                buttons: 1,
+                modifiers: vec![],
+            },
+            sr,
+            vr,
+            &cancel,
+        )
+        .unwrap();
+
+        // Fail `key(10, false)` once WITHOUT losing the connection (`conn_lost == false`):
+        // `release_all` must return `Err(ViewError::Unavailable)` and retain held keys/buttons.
+        in_state.lock().fail_after_n = Some(0);
+        assert_eq!(drv.release_all(), Err(ViewError::Unavailable));
+        assert!(!drv.is_connection_lost());
+        assert!(!drv.pressed_keys.is_empty());
+        assert!(!drv.pressed_buttons.is_empty());
+
+        // Clear transient failure and force reconnect (e.g. replacement connection on next reset):
+        // the preserved held debt must still be sent over the replacement connection.
+        in_state.lock().fail_after_n = None;
+        in_state.lock().conn_lost = true;
+        assert_eq!(drv.release_all(), Ok(()));
+        let st = in_state.lock();
+        assert!(st.calls_with_conn.contains(&(2, X11Call::Key(10, false))));
+        assert!(st.calls_with_conn.contains(&(2, X11Call::Button(1, false))));
+        assert!(st.server_keys.is_empty());
+        assert!(st.server_buttons.is_empty());
+    }
+
+    /// Verifies layout-independent printable characters (Turkish letters plus `AltGr` `€`/`₺`)
+    /// use exact X11 keysyms via scratch keycodes while shortcuts retain physical keycodes.
+    /// Limitation: apps reading raw scancodes (games, some terminals) will not observe
+    /// scratch-bound Unicode keysyms as hardware scancodes.
     #[test]
     fn xtest_turkish_layout_and_altgr_characters_inject_exact_keysyms_on_us_host() {
         let in_state = Arc::new(Mutex::new(MockX11InputState {
             has_xtest: true,
             keymap: multi_scratch_keymap(),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: None,
             conn_lost: false,
@@ -2604,7 +3008,7 @@ mod tests {
             );
         }
 
-        // 2. Browser `AltGraph` latch + `Ctrl+Alt` (`AltGr`) sequence for `@`.
+        // 2. Browser `AltGraph` latch + `Ctrl+Alt` (`AltGr`) sequence for `@`, `€`, and `₺`.
         in_state.lock().calls.clear();
         let altgr = vec![Modifier::Ctrl, Modifier::Alt];
         for ev in [
@@ -2617,7 +3021,11 @@ mod tests {
             ),
             x11_test_key_event(KeyPhase::Down, "AltRight", "AltGraph", 2, altgr.clone()),
             x11_test_key_event(KeyPhase::Down, "KeyQ", "@", 0, altgr.clone()),
-            x11_test_key_event(KeyPhase::Up, "KeyQ", "@", 0, altgr),
+            x11_test_key_event(KeyPhase::Up, "KeyQ", "@", 0, altgr.clone()),
+            x11_test_key_event(KeyPhase::Down, "KeyE", "€", 0, altgr.clone()),
+            x11_test_key_event(KeyPhase::Up, "KeyE", "€", 0, altgr.clone()),
+            x11_test_key_event(KeyPhase::Down, "KeyT", "₺", 0, altgr.clone()),
+            x11_test_key_event(KeyPhase::Up, "KeyT", "₺", 0, altgr),
         ] {
             drv.inject(&ev, sr.clone(), vr, &cancel).unwrap();
         }
@@ -2625,11 +3033,14 @@ mod tests {
         // `ControlLeft` (kc 11) must be released BEFORE `@` is pressed, and `AltGraph` must not press Alt_R!
         assert!(altgr_calls.contains(&X11Call::Key(11, false)));
         assert!(!altgr_calls.contains(&X11Call::Key(13, true)));
-        assert!(
-            altgr_calls
-                .iter()
-                .any(|c| matches!(c, X11Call::Bind(_, sym) if *sym == u32::from(b'@')))
-        );
+        for expected_sym in [u32::from(b'@'), char_to_keysym('€'), char_to_keysym('₺')] {
+            assert!(
+                altgr_calls
+                    .iter()
+                    .any(|c| matches!(c, X11Call::Bind(_, sym) if *sym == expected_sym)),
+                "expected Bind for 0x{expected_sym:x}, got {altgr_calls:?}"
+            );
+        }
 
         // 3. Real shortcut `Ctrl + KeyI` on a Turkish layout (`key: "ı", modifiers: [Ctrl]`)
         // must fall back to physical `KeyI` (`'i'`, kc 17) rather than failing with `Unsupported`.
@@ -2652,6 +3063,10 @@ mod tests {
             has_xtest: true,
             keymap: multi_scratch_keymap(),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: None,
             conn_lost: false,
@@ -2731,6 +3146,10 @@ mod tests {
             has_xtest: true,
             keymap: base_keymap(false),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: None,
             conn_lost: false,
@@ -2830,6 +3249,10 @@ mod tests {
             has_xtest: true,
             keymap: base_keymap(false),
             keymap_calls: 0,
+            next_conn_id: 0,
+            calls_with_conn: Vec::new(),
+            server_keys: BTreeSet::new(),
+            server_buttons: BTreeSet::new(),
             calls: Vec::new(),
             fail_after_n: None,
             conn_lost: false,
