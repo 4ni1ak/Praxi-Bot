@@ -19,6 +19,7 @@ mod serve;
 mod update;
 mod web_host;
 mod wizard;
+mod workflow;
 
 use std::path::PathBuf;
 
@@ -74,6 +75,11 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 enum Command {
+    /// Record, review, save and replay workflows from successful runs.
+    Workflow {
+        #[command(subcommand)]
+        action: workflow::WorkflowCmd,
+    },
     /// Manage the active host and paired devices.
     Host {
         #[command(subcommand)]
@@ -528,6 +534,7 @@ fn run() -> Result<()> {
                 | Command::Approve { .. }
                 | Command::Answer { .. }
                 | Command::Schedules { .. }
+                | Command::Workflow { .. }
                 | Command::Email { .. }
                 | Command::Grants { .. }
                 | Command::Channels {
@@ -559,6 +566,7 @@ fn run() -> Result<()> {
         | Command::Approve { .. }
         | Command::Answer { .. }
         | Command::Schedules { .. }
+        | Command::Workflow { .. }
         | Command::Email { .. }
         | Command::Grants { .. }
         | Command::Channels {
@@ -622,6 +630,7 @@ fn run() -> Result<()> {
         | Command::Approve { .. }
         | Command::Answer { .. }
         | Command::Schedules { .. }
+        | Command::Workflow { .. }
         | Command::Email { .. }
         | Command::Grants { .. } => Ok(()),
         Command::Providers { action } => match action {
@@ -906,6 +915,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
                 remote::grants_revoke(&c, bot_id, target, json, &mut out).await
             }
             Command::Schedules { action } => run_schedules(&c, action, json, &mut out).await,
+            Command::Workflow { action } => workflow::run(&c, action, &mut out).await,
             Command::Email { action } => run_email(&c, action, json, &mut out).await,
             Command::Channels {
                 action:
