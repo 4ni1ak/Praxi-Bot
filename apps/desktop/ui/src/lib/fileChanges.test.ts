@@ -40,7 +40,7 @@ test("evaluateRestoreGate blocks confirm when modified_since is non-empty until 
     run_id: "r1",
     checkpoint_id: "cp-1",
     entries: [
-      { path: "/tmp/a.txt", current_matches_after: true, action: "restore" }
+      { path: "/tmp/a.txt", accessible: true, changed_by_run: null, via_link_of: null, current_matches_after: true, action: "restore" }
     ],
     modified_since: [],
     covered: ["fs_write"],
@@ -65,10 +65,14 @@ test("evaluateRestoreGate blocks confirm when modified_since is non-empty until 
     requiresForce: false
   });
 
+  assert.equal(evaluateRestoreGate(cleanPreview, false, false, true).canConfirm, false);
+  assert.equal(evaluateRestoreGate(cleanPreview, true, false, true).requiresForce, true);
+  assert.equal(evaluateRestoreGate({ ...cleanPreview, entries: [{ ...cleanPreview.entries[0], accessible: false, action: "keep" }] }, true, false).canConfirm, false);
+
   const dirtyPreview: RestorePreview = {
     ...cleanPreview,
     entries: [
-      { path: "/tmp/a.txt", current_matches_after: false, action: "restore" }
+      { path: "/tmp/a.txt", accessible: true, changed_by_run: null, via_link_of: null, current_matches_after: false, action: "restore" }
     ],
     modified_since: ["/tmp/a.txt"]
   };

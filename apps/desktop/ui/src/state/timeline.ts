@@ -464,11 +464,12 @@ function reduce(
             kind: "notice",
             key: `notice-${seq}`,
             ts,
-            tone: "info",
-            i18nKey: "chat.notice.checkpointRestored",
+            tone: e.partial ? "danger" : "info",
+            i18nKey: e.partial ? "chat.notice.checkpointRestorePartial" : "chat.notice.checkpointRestored",
             values: {
               count: String(e.restored.length),
-              checkpointId: e.checkpoint_id
+              checkpointId: e.checkpoint_id,
+              safetyId: e.safety_checkpoint_id
             }
           }
         ]

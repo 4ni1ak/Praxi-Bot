@@ -417,5 +417,13 @@ test("checkpoint_restored appends an informational notice item", () => {
   });
   const notice = s.runs[RUN].items.find((i) => i.kind === "notice");
   assert.equal(notice?.i18nKey, "chat.notice.checkpointRestored");
-  assert.deepEqual(notice?.values, { count: "2", checkpointId: "cp-abc" });
+  assert.deepEqual(notice?.values, { count: "2", checkpointId: "cp-abc", safetyId: "cp-safe" });
+});
+
+test("partial restore persists a warning and the safety recovery id", () => {
+  const state = feed(started(), { type: "checkpoint_restored", run_id: RUN, checkpoint_id: "all", safety_checkpoint_id: "cp-safe", restored: [], partial: true });
+  const notice = state.runs[RUN].items.find((item) => item.kind === "notice");
+  assert.equal(notice?.tone, "danger");
+  assert.equal(notice?.i18nKey, "chat.notice.checkpointRestorePartial");
+  assert.equal(notice?.values?.safetyId, "cp-safe");
 });

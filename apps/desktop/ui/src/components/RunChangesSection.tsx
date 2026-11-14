@@ -9,7 +9,7 @@ import {
   Undo2
 } from "lucide-react";
 import { Button } from "ui";
-import type { ApiClient } from "../api/client";
+import { ApiError, type ApiClient } from "../api/client";
 import type { FileChange, RestorePreview, RunChanges } from "../api/types";
 import { highlight, type Token } from "../lib/highlight";
 import {
@@ -116,12 +116,14 @@ export function RunChangesSection({
   runId,
   client,
   restoreSignal,
+  safetyCheckpointIds = [],
   defaultExpanded = false
 }: {
   runId: string;
   client: ApiClient | null;
   /** Increments whenever a `checkpoint_restored` event arrives for this run. */
   restoreSignal: number;
+  safetyCheckpointIds?: string[];
   defaultExpanded?: boolean;
 }) {
   const { t } = useTranslation();
@@ -139,16 +141,19 @@ export function RunChangesSection({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [overwriteChecked, setOverwriteChecked] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [conflictRequiresConfirm, setConflictRequiresConfirm] = useState(false);
+  const [safetyIds, setSafetyIds] = useState<string[]>([]);
+  const [restoreWarning, setRestoreWarning] = useState<string | null>(null);
 
-  const loadChanges = useCallback(async () => {
+  const loadChanges = useCallback(async (offset = 0) => {
     if (!client) {
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const next = await client.getRunChanges(runId);
-      setData(next);
+      const next = await client.getRunChanges(runId, offset);
+      setData((previous) => offset > 0 && previous ? { ...next, changes: [...previous.changes, ...next.changes] } : next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -157,8 +162,8 @@ export function RunChangesSection({
   }, [client, runId]);
 
   useEffect(() => {
-    void loadChanges();
-  }, [loadChanges, restoreSignal]);
+    if (open) void loadChanges();
+  }, [loadChanges, restoreSignal, open]);
 
   const toggleFile = (path: string) => {
     setExpandedFiles((prev) => ({
@@ -174,6 +179,7 @@ export function RunChangesSection({
     if (!client) {
       return;
     }
+    setConflictRequiresConfirm(false);
     setPending({ checkpointId, targetPath });
     setPreview(null);
     setPreviewError(null);
@@ -194,9 +200,10 @@ export function RunChangesSection({
     setPreview(null);
     setPreviewError(null);
     setOverwriteChecked(false);
+    setConflictRequiresConfirm(false);
   };
 
-  const gate = evaluateRestoreGate(preview, overwriteChecked, restoring);
+  const gate = evaluateRestoreGate(preview, overwriteChecked, restoring, conflictRequiresConfirm);
 
   const confirmRestore = async () => {
     if (!client || !pending || !gate.canConfirm) {
@@ -210,12 +217,14 @@ export function RunChangesSection({
         pending.checkpointId,
         gate.requiresForce
       );
+      setSafetyIds(res.safety_checkpoint_ids);
+      setRestoreWarning([res.error, ...res.warnings].filter(Boolean).join("; ") || null);
       setPending(null);
       setPreview(null);
       setOverwriteChecked(false);
       toast.show(
-        t("chat.changes.restoreDone", { count: res.restored.length }),
-        "success"
+        t(res.partial ? "chat.changes.restorePartial" : "chat.changes.restoreDone", { count: res.restored.length }),
+        res.partial ? "danger" : "success"
       );
       await loadChanges();
     } catch (e) {
@@ -224,15 +233,23 @@ export function RunChangesSection({
           message: e instanceof Error ? e.message : String(e)
         })
       );
+      // Discard the old clean preview immediately, and reset explicit consent.
+      if (e instanceof ApiError && e.status === 409 && e.code === "modified_since") {
+        setPreview(null);
+        setConflictRequiresConfirm(true);
+        setOverwriteChecked(false);
+        try {
+          setPreview(await client.previewRestore(runId, pending.checkpointId));
+        } catch (previewFailure) {
+          setPreviewError(previewFailure instanceof Error ? previewFailure.message : String(previewFailure));
+        }
+      }
     } finally {
       setRestoring(false);
     }
   };
 
   const changes = data?.changes ?? [];
-  if (!loading && !error && changes.length === 0) {
-    return null;
-  }
 
   return (
     <div className={styles.container} data-testid="run-changes-section">
@@ -279,6 +296,15 @@ export function RunChangesSection({
             ) : null}
           </div>
 
+          {[...new Set([...safetyCheckpointIds, ...safetyIds])].map((id) => (
+            <p key={id} className={styles.metaText} data-testid="safety-checkpoint">
+              {t("chat.changes.safetyCheckpoint", { id })}
+              <Button size="sm" variant="secondary" onClick={() => void openRestoreModal(id, null)} data-testid="undo-undo-button">
+                {t("chat.changes.undoUndo")}
+              </Button>
+            </p>
+          ))}
+          {restoreWarning ? <p role="alert">{restoreWarning}</p> : null}
           <div className={styles.disclaimer} role="note">
             <Info className={styles.disclaimerIcon} aria-hidden="true" />
             <span>{t("chat.changes.scopeDisclaimer")}</span>
@@ -343,13 +369,21 @@ export function RunChangesSection({
                         {t(`chat.changes.kind.${change.kind}`)}
                       </span>
 
-                      {!change.current_matches_after ? (
+                      {!change.accessible ? (
                         <span
                           className={[styles.badge, styles.badgeWarning].join(
                             " "
                           )}
                         >
-                          {t("chat.changes.modifiedSinceBadge")}
+                          {t("chat.changes.omitted.not_accessible")}
+                        </span>
+                      ) : !change.current_matches_after ? (
+                        <span
+                          className={[styles.badge, styles.badgeWarning].join(
+                            " "
+                          )}
+                        >
+                          {t(change.changed_by_run ? "chat.changes.changedByRun" : "chat.changes.changedOutsideRun", { run: change.changed_by_run })}
                         </span>
                       ) : null}
 
@@ -383,6 +417,7 @@ export function RunChangesSection({
                       <Button
                         size="sm"
                         variant="ghost"
+                        disabled={!change.accessible}
                         onClick={() =>
                           void openRestoreModal(change.checkpoint_id, shownPath)
                         }
@@ -399,6 +434,11 @@ export function RunChangesSection({
               );
             })}
           </div>
+          {data?.next_offset !== null && data?.next_offset !== undefined ? (
+            <Button size="sm" disabled={loading} onClick={() => void loadChanges(data.next_offset ?? 0)} data-testid="changes-load-more">
+              {t("chat.changes.loadMore")}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -430,7 +470,8 @@ export function RunChangesSection({
                       {displayPath(entry.path)}
                     </span>
                     <span className={styles.previewAction}>
-                      {t(`chat.changes.modal.action.${entry.action}`)}
+                      {!entry.accessible ? t("chat.changes.omitted.not_accessible") : t(`chat.changes.modal.action.${entry.action}`)}
+                      {!entry.current_matches_after && entry.accessible ? t(entry.changed_by_run ? "chat.changes.changedByRun" : "chat.changes.changedOutsideRun", { run: entry.changed_by_run }) : null}
                     </span>
                   </div>
                 ))}

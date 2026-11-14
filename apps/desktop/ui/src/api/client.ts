@@ -192,8 +192,8 @@ export class ApiClient {
   }
 
   /** List collapsed file changes and capped inline diffs for a run. */
-  getRunChanges(runId: string): Promise<RunChanges> {
-    return this.request("GET", `/runs/${encodeURIComponent(runId)}/changes`);
+  getRunChanges(runId: string, offset = 0): Promise<RunChanges> {
+    return this.request("GET", `/runs/${encodeURIComponent(runId)}/changes`, { query: { offset, limit: 50 } });
   }
 
   /** Preview restoring one checkpoint or `"all"` across a run. */

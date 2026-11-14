@@ -196,6 +196,7 @@ export type DaemonEvent =
       run_id: string;
       checkpoint_id: string;
       safety_checkpoint_id: string;
+      partial?: boolean;
       restored: string[];
     }
   | {

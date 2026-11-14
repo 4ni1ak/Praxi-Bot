@@ -339,7 +339,8 @@
       "modelFallback": "Model {{from}} yerine {{to}} oldu: {{reason}}",
       "error": "{{message}}",
       "workflowDrift": "{{workflow}} iş akışı sapma gösterdi: {{reason}}",
-      "checkpointRestored": "{{checkpointId}} denetim noktasından {{count}} dosya geri yüklendi."
+      "checkpointRestored": "{{checkpointId}} denetim noktasından {{count}} dosya geri yüklendi. Güvenlik denetim noktası: {{safetyId}}.",
+      "checkpointRestorePartial": "{{checkpointId}} geri alma işlemi başarısız; {{count}} dosya hâlâ değişmiş olabilir. {{safetyId}} güvenlik denetim noktasından kurtarabilirsiniz."
     },
     "changes": {
       "tab": "Değişiklikler",
@@ -369,14 +370,16 @@
         "run_budget_exceeded": "Çalıştırma fark bütçesi aşıldı — satır içi fark gösterilmiyor ({{before}} -> {{after}}).",
         "directory": "Klasör — satır içi fark gösterilmiyor.",
         "symlink": "Sembolik bağlantı — satır içi fark gösterilmiyor.",
-        "modified_since": "Dosya bu çalıştırma bittikten sonra diskte değişti."
+        "modified_since": "Dosya bu çalıştırma bittikten sonra diskte değişti.",
+        "not_accessible": "Güncel dosya erişim ayarlarıyla erişilemiyor.",
+        "line_endings": "Yalnızca satır sonları değişti (LF/CRLF)."
       },
       "modal": {
         "titleSingle": "{{path}} değişikliği geri alınsın mı?",
         "titleAll": "Bu çalıştırmadaki tüm dosya değişiklikleri geri alınsın mı?",
         "previewLoading": "Diskteki güncel dosyalar denetleniyor...",
-        "safetyNote": "Geri yükleme öncesinde mevcut dosyalarınızın güvenlik anlık görüntüsü oluşturulur.",
-        "modifiedWarning": "Bir veya daha fazla dosya bu çalıştırma bittikten sonra diskte değiştirildi. Geri alma bu yeni düzenlemelerin üzerine yazacaktır.",
+        "safetyNote": "Geri alma, bağlantılı tüm dosya işlemlerini etkiler; aşağıdaki yolları inceleyin. Güvenlik denetim noktası, bu geri almayı geri alabilmeniz için güncel durumu saklar.",
+        "modifiedWarning": "Bu dosyalar çalışmadan sonra değişti veya son durumları kaydedilemedi. Biliniyorsa diğer çalışma gösterilir; diğer değişiklikler sizin düzenlemeleriniz olabilir. Üzerine yazmadan önce onaylayın.",
         "overwriteLabel": "Yeni değişikliklerimin üzerine yaz",
         "confirm": "Geri yükle",
         "restoring": "Geri yükleniyor...",
@@ -388,7 +391,13 @@
         }
       },
       "restoreDone": "{{count}} dosya geri yüklendi. Güvenlik anlık görüntüsü kaydedildi.",
-      "restoreFailed": "Geri yüklenemedi: {{message}}"
+      "restoreFailed": "Geri yüklenemedi: {{message}}",
+      "loadMore": "Daha fazla dosya yükle",
+      "safetyCheckpoint": "Güvenlik denetim noktası: {{id}}",
+      "undoUndo": "Bu geri almayı geri al",
+      "changedByRun": "Başka bir çalışma değiştirdi ({{run}})",
+      "changedOutsideRun": "Bu çalışma dışında değişti veya son durum kaydı yok",
+      "restorePartial": "Geri alma başarısız; aşağıdaki geri dönüş uyarısını ve güvenlik denetim noktasını inceleyin."
     },
     "route": {
       "workflow": "İş akışı: {{name}} (0 LLM çağrısı)",

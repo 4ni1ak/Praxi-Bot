@@ -146,7 +146,8 @@ export function parseUnifiedDiff(unified: string): DiffRow[] {
 export function evaluateRestoreGate(
   preview: RestorePreview | null,
   overwriteChecked: boolean,
-  busy: boolean
+  busy: boolean,
+  conflictRequiresConfirm = false
 ): RestoreGateState {
   if (!preview || busy) {
     return {
@@ -155,10 +156,10 @@ export function evaluateRestoreGate(
       requiresForce: false
     };
   }
-  const needsOverwriteConfirm = preview.modified_since.length > 0;
+  const needsOverwriteConfirm = conflictRequiresConfirm || preview.modified_since.length > 0;
   return {
     needsOverwriteConfirm,
-    canConfirm: !needsOverwriteConfirm || overwriteChecked,
+    canConfirm: preview.entries.some((entry) => entry.accessible && entry.action !== "keep") && (!needsOverwriteConfirm || overwriteChecked),
     requiresForce: needsOverwriteConfirm && overwriteChecked
   };
 }

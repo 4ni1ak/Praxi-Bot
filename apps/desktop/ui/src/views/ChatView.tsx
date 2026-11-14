@@ -847,7 +847,7 @@ export function ChatView({
                 const restoreSignal = e.run.items.filter(
                   (item) =>
                     item.kind === "notice" &&
-                    item.i18nKey === "chat.notice.checkpointRestored"
+                    ["chat.notice.checkpointRestored", "chat.notice.checkpointRestorePartial"].includes(item.i18nKey ?? "")
                 ).length;
                 return (
                   <RunChangesSection
@@ -855,6 +855,7 @@ export function ChatView({
                     runId={e.run.id}
                     client={client}
                     restoreSignal={restoreSignal}
+                    safetyCheckpointIds={e.run.items.flatMap((item) => item.kind === "notice" && ["chat.notice.checkpointRestored", "chat.notice.checkpointRestorePartial"].includes(item.i18nKey ?? "") && item.values?.safetyId ? [String(item.values.safetyId)] : [])}
                   />
                 );
               }

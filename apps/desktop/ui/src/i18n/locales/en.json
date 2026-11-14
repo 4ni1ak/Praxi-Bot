@@ -339,7 +339,8 @@
       "modelFallback": "Switched model from {{from}} to {{to}}: {{reason}}",
       "error": "{{message}}",
       "workflowDrift": "Workflow {{workflow}} drifted: {{reason}}",
-      "checkpointRestored": "Restored {{count}} file(s) from checkpoint {{checkpointId}}."
+      "checkpointRestored": "Restored {{count}} file(s) from checkpoint {{checkpointId}}. Safety checkpoint: {{safetyId}}.",
+      "checkpointRestorePartial": "Restore {{checkpointId}} failed; {{count}} file(s) may still be changed. Recover with safety checkpoint {{safetyId}}."
     },
     "changes": {
       "tab": "Changes",
@@ -369,14 +370,16 @@
         "run_budget_exceeded": "Run diff budget exceeded — inline diff omitted ({{before}} -> {{after}}).",
         "directory": "Directory — inline diff omitted.",
         "symlink": "Symlink — inline diff omitted.",
-        "modified_since": "File changed on disk after this run finished."
+        "modified_since": "File changed on disk after this run finished.",
+        "not_accessible": "Not accessible under current file access settings.",
+        "line_endings": "Only line endings changed (LF/CRLF)."
       },
       "modal": {
         "titleSingle": "Undo change to {{path}}?",
         "titleAll": "Undo all file changes from this run?",
         "previewLoading": "Checking current files on disk...",
-        "safetyNote": "A safety snapshot of your current files is created before restoring.",
-        "modifiedWarning": "One or more files were modified on disk after this run finished. Restoring will overwrite those newer edits.",
+        "safetyNote": "Undo affects every related file operation; review all paths below. A safety checkpoint saves the current state so this undo can be undone.",
+        "modifiedWarning": "These files changed after this run, or their after-state could not be recorded. Another run is identified when known; other changes may be your edits. Confirm before overwriting.",
         "overwriteLabel": "Overwrite my newer changes",
         "confirm": "Restore",
         "restoring": "Restoring...",
@@ -388,7 +391,13 @@
         }
       },
       "restoreDone": "Restored {{count}} file(s). Safety snapshot saved.",
-      "restoreFailed": "Could not restore: {{message}}"
+      "restoreFailed": "Could not restore: {{message}}",
+      "loadMore": "Load more files",
+      "safetyCheckpoint": "Safety checkpoint: {{id}}",
+      "undoUndo": "Undo this undo",
+      "changedByRun": "Changed by another run ({{run}})",
+      "changedOutsideRun": "Changed outside this run, or after-state unavailable",
+      "restorePartial": "Restore failed; review the rollback warning and safety checkpoint below."
     },
     "route": {
       "workflow": "Workflow: {{name}} (0 LLM calls)",

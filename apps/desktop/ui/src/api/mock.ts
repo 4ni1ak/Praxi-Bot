@@ -439,6 +439,7 @@ export class MockApiClient extends ApiClient {
           return ok({
             run_id: runId,
             changes: [],
+            next_offset: null,
             covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
             not_covered: ["shell", "web", "email", "desktop"]
           });
@@ -560,6 +561,8 @@ export class MockApiClient extends ApiClient {
           return ok({
             run_id: seg[1] ?? "",
             checkpoint_id: seg[3] ?? "all",
+            partial: false,
+            error: null,
             safety_checkpoint_ids: [],
             restored: [],
             warnings: [],
