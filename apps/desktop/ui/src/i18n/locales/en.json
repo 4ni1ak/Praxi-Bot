@@ -1372,6 +1372,7 @@
       "repairFailed": "The repair did not succeed",
       "offline": "Not connected to the daemon. Start Praxi to run diagnostics.",
       "loadError": "Could not run diagnostics",
+      "empty": "No checks were returned",
       "notOnPlatform": "Not available on this platform.",
       "privacy": "Diagnostics only read your settings. A repair runs only when you click its button.",
       "status": {

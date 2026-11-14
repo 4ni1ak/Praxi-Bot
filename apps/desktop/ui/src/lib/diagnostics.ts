@@ -104,11 +104,13 @@ export interface RepairButton {
 
 /**
  * The repair button of a check: only for a fixable warning / failure, and
- * disabled while any repair runs or the checks reload.
+ * disabled while any repair runs, the checks reload or the support report is
+ * being made (`busy`: any daemon call of the card in flight).
  */
 export function repairButton(
   check: DoctorCheck,
-  state: Pick<DiagnosticsState, "phase" | "running">
+  state: Pick<DiagnosticsState, "phase" | "running">,
+  busy: DiagnosticsTask | null = null
 ): RepairButton | null {
   const tone = checkTone(check.status);
   if (!check.repair || (tone !== "fail" && tone !== "warn")) {
@@ -116,7 +118,94 @@ export function repairButton(
   }
   return {
     repair: check.repair,
-    disabled: state.running !== null || state.phase === "loading",
+    disabled: state.running !== null || state.phase === "loading" || busy !== null,
     busy: state.running === check.repair
   };
+}
+
+/** A daemon call of the card.  The daemon runs one diagnostics request at a
+ * time (`GET /v1/doctor` and `GET /v1/doctor/report` share one slot and answer
+ * 429 to an overlapping call), and a repair reloads the checks afterwards, so
+ * the card runs at most one of these at once. */
+export type DiagnosticsTask = "load" | "copy" | "repair";
+
+/**
+ * Serializes the card's daemon calls: a task that starts while another runs
+ * is refused (not queued) and never reaches the daemon.  `onChange` reports
+ * the task in flight (`null` when idle) so the buttons can be disabled.
+ */
+export class DiagnosticsQueue {
+  private busy: DiagnosticsTask | null = null;
+  private readonly onChange: (busy: DiagnosticsTask | null) => void;
+
+  constructor(onChange: (busy: DiagnosticsTask | null) => void = () => {}) {
+    this.onChange = onChange;
+  }
+
+  /** The task in flight, if any. */
+  get current(): DiagnosticsTask | null {
+    return this.busy;
+  }
+
+  /** Run `fn` as `task` unless another task runs: `{ started: false }` then. */
+  async run<T>(
+    task: DiagnosticsTask,
+    fn: () => Promise<T>
+  ): Promise<{ started: false } | { started: true; value: T }> {
+    if (this.busy !== null) {
+      return { started: false };
+    }
+    this.busy = task;
+    this.onChange(task);
+    try {
+      return { started: true, value: await fn() };
+    } finally {
+      this.busy = null;
+      this.onChange(null);
+    }
+  }
+}
+
+export interface DiagnosticsControls {
+  rerunDisabled: boolean;
+  copyDisabled: boolean;
+  /** Spinner on Copy support report. */
+  copying: boolean;
+  /** Spinner on Run again. */
+  loading: boolean;
+}
+
+/** Which header actions are usable while `busy` runs (all of them compete
+ * for the daemon's single diagnostics slot). */
+export function controls(connected: boolean, busy: DiagnosticsTask | null): DiagnosticsControls {
+  return {
+    rerunDisabled: !connected || busy !== null,
+    copyDisabled: !connected || busy !== null,
+    copying: busy === "copy",
+    loading: busy === "load"
+  };
+}
+
+/** Which heading the card shows. */
+export type DiagnosticsHeading = "title" | "running" | "error" | "empty" | "allGood" | "problems";
+
+export function heading(
+  connected: boolean,
+  state: Pick<DiagnosticsState, "phase" | "checks">,
+  problems: number
+): DiagnosticsHeading {
+  if (!connected) {
+    return "title";
+  }
+  if (state.checks.length === 0) {
+    switch (state.phase) {
+      case "error":
+        return "error";
+      case "ready":
+        return "empty";
+      default:
+        return "running";
+    }
+  }
+  return problems === 0 ? "allGood" : "problems";
 }

@@ -10,15 +10,19 @@ import {
   TriangleAlert,
   Wrench
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { DoctorCheck, RepairId } from "../../api/types";
 import { useToast } from "../../components/Toast";
 import {
   type CheckTone,
+  type DiagnosticsTask,
+  DiagnosticsQueue,
   INITIAL_DIAGNOSTICS,
   checkTone,
+  controls,
   diagnosticsReducer,
+  heading,
   repairButton,
   sortChecks,
   summarize
@@ -52,20 +56,28 @@ export function DiagnosticsCard() {
   const { client } = useDaemon();
   const [state, dispatch] = useReducer(diagnosticsReducer, INITIAL_DIAGNOSTICS);
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
-  const [copying, setCopying] = useState(false);
+  // Checks, report and repairs share the daemon's single diagnostics slot:
+  // one call at a time, the competing buttons are disabled meanwhile.
+  const [busy, setBusy] = useState<DiagnosticsTask | null>(null);
+  const queue = useRef<DiagnosticsQueue | null>(null);
+  if (queue.current === null) {
+    queue.current = new DiagnosticsQueue(setBusy);
+  }
 
   const load = useCallback(async () => {
     if (!client) {
       return;
     }
-    dispatch({ type: "load_start" });
-    try {
-      const report = await client.doctor();
-      dispatch({ type: "load_ok", checks: report.checks });
-      setCheckedAt(new Date());
-    } catch (e) {
-      dispatch({ type: "load_error", error: errorText(e) });
-    }
+    await queue.current?.run("load", async () => {
+      dispatch({ type: "load_start" });
+      try {
+        const report = await client.doctor();
+        dispatch({ type: "load_ok", checks: report.checks });
+        setCheckedAt(new Date());
+      } catch (e) {
+        dispatch({ type: "load_error", error: errorText(e) });
+      }
+    });
   }, [client]);
 
   useEffect(() => {
@@ -76,19 +88,26 @@ export function DiagnosticsCard() {
     if (!client || state.running) {
       return;
     }
-    dispatch({ type: "repair_start", repair });
-    try {
-      const r = await client.doctorRepair(repair);
-      dispatch({ type: "repair_done", checkId: check.id, outcome: { ok: true, text: r.detail } });
-      toast.show(t("settingsModal.diagnostics.repairDone"), "success");
-      if (repair === "reload_providers") {
-        notifyProvidersChanged();
+    const ran = await queue.current?.run("repair", async () => {
+      dispatch({ type: "repair_start", repair });
+      try {
+        const r = await client.doctorRepair(repair);
+        dispatch({ type: "repair_done", checkId: check.id, outcome: { ok: true, text: r.detail } });
+        toast.show(t("settingsModal.diagnostics.repairDone"), "success");
+        if (repair === "reload_providers") {
+          notifyProvidersChanged();
+        }
+        return true;
+      } catch (e) {
+        const text = errorText(e);
+        dispatch({ type: "repair_done", checkId: check.id, outcome: { ok: false, text } });
+        toast.show(t("settingsModal.diagnostics.repairFailed"), "danger");
+        return false;
       }
+    });
+    // Reload once the repair released the slot.
+    if (ran?.started && ran.value) {
       await load();
-    } catch (e) {
-      const text = errorText(e);
-      dispatch({ type: "repair_done", checkId: check.id, outcome: { ok: false, text } });
-      toast.show(t("settingsModal.diagnostics.repairFailed"), "danger");
     }
   };
 
@@ -96,22 +115,24 @@ export function DiagnosticsCard() {
     if (!client) {
       return;
     }
-    setCopying(true);
-    try {
-      const text = await client.doctorReport();
-      await navigator.clipboard.writeText(text);
-      toast.show(t("settingsModal.diagnostics.reportCopied"), "success");
-    } catch (e) {
-      toast.show(`${t("settingsModal.diagnostics.reportFailed")} (${errorText(e)})`, "danger");
-    } finally {
-      setCopying(false);
-    }
+    await queue.current?.run("copy", async () => {
+      try {
+        const text = await client.doctorReport();
+        await navigator.clipboard.writeText(text);
+        toast.show(t("settingsModal.diagnostics.reportCopied"), "success");
+      } catch (e) {
+        toast.show(`${t("settingsModal.diagnostics.reportFailed")} (${errorText(e)})`, "danger");
+      }
+    });
   };
 
   const checks = useMemo(() => sortChecks(state.checks), [state.checks]);
   const summary = useMemo(() => summarize(state.checks), [state.checks]);
   const loading = state.phase === "loading";
   const problems = summary.fail + summary.warn;
+  const connected = Boolean(client);
+  const ctl = controls(connected, busy);
+  const head = heading(connected, state, problems);
 
   const statusLabel = (tone: CheckTone, check: DoctorCheck) =>
     tone === "neutral" && PLATFORM_CHECKS.has(check.id)
@@ -133,13 +154,17 @@ export function DiagnosticsCard() {
         </span>
         <div className={styles.summaryText}>
           <h3 id="diag-h" className={styles.summaryTitle}>
-            {!client
-              ? t("settingsModal.diagnostics.title")
-              : state.checks.length === 0
-                ? t("settingsModal.diagnostics.running")
-                : problems === 0
-                  ? t("settingsModal.diagnostics.allGood")
-                  : t("settingsModal.diagnostics.problems", { count: problems })}
+            {head === "problems"
+              ? t("settingsModal.diagnostics.problems", { count: problems })
+              : head === "error"
+                ? t("settingsModal.diagnostics.loadError")
+                : head === "empty"
+                  ? t("settingsModal.diagnostics.empty")
+                  : head === "allGood"
+                    ? t("settingsModal.diagnostics.allGood")
+                    : head === "running"
+                      ? t("settingsModal.diagnostics.running")
+                      : t("settingsModal.diagnostics.title")}
           </h3>
           <span className={styles.summarySub}>
             {checkedAt
@@ -151,20 +176,22 @@ export function DiagnosticsCard() {
           <button
             type="button"
             className={styles.textBtn}
-            disabled={!client || loading || state.running !== null}
+            disabled={ctl.rerunDisabled || state.running !== null}
             onClick={() => void load()}
+            data-testid="diagnostics-rerun"
           >
-            <RefreshCw aria-hidden="true" className={loading ? styles.spin : undefined} />
+            <RefreshCw aria-hidden="true" className={ctl.loading ? styles.spin : undefined} />
             {t("settingsModal.diagnostics.rerun")}
           </button>
           <button
             type="button"
             className={styles.pill}
-            disabled={!client || copying}
+            disabled={ctl.copyDisabled}
+            aria-busy={ctl.copying}
             onClick={() => void copyReport()}
             data-testid="diagnostics-copy-report"
           >
-            {copying ? <LoaderCircle aria-hidden="true" className={styles.spin} /> : <ClipboardCopy aria-hidden="true" />}
+            {ctl.copying ? <LoaderCircle aria-hidden="true" className={styles.spin} /> : <ClipboardCopy aria-hidden="true" />}
             {t("settingsModal.diagnostics.copyReport")}
           </button>
         </div>
@@ -185,7 +212,7 @@ export function DiagnosticsCard() {
           {checks.map((check) => {
             const tone = checkTone(check.status);
             const Icon = TONE_ICON[tone];
-            const button = repairButton(check, state);
+            const button = repairButton(check, state, busy);
             const outcome = state.outcomes[check.id];
             const hint = check.status === "warn" || check.status === "fail"
               ? t(`settingsModal.diagnostics.hints.${check.id}`, check.hint ?? "")

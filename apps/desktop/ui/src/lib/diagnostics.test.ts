@@ -4,9 +4,12 @@ import { ApiError } from "../api/client.ts";
 import { MockApiClient } from "../api/mock.ts";
 import type { DoctorCheck } from "../api/types.ts";
 import {
+  DiagnosticsQueue,
   INITIAL_DIAGNOSTICS,
   checkTone,
+  controls,
   diagnosticsReducer,
+  heading,
   repairButton,
   sortChecks,
   summarize
@@ -111,4 +114,95 @@ test("the client talks to the doctor routes; the mock fixes only allow-listed re
   );
   const md = await client.doctorReport();
   assert.ok(md.startsWith("# Praxi diagnostics report"));
+});
+
+/** A promise resolved from outside. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** A daemon with one diagnostics slot: an overlapping call gets 429. */
+function slotDaemon() {
+  let inFlight = 0;
+  const calls: string[] = [];
+  const pending: Array<{ name: string; release: () => void }> = [];
+  const call = async (name: string) => {
+    calls.push(name);
+    if (inFlight > 0) {
+      throw new ApiError(429, "too_many_requests", "diagnostics are already running");
+    }
+    inFlight += 1;
+    const d = deferred<void>();
+    pending.push({ name, release: () => d.resolve() });
+    await d.promise;
+    inFlight -= 1;
+    return name;
+  };
+  return { call, calls, pending };
+}
+
+test("copy report and run again never overlap on the daemon's single slot", async () => {
+  const daemon = slotDaemon();
+  const busyLog: Array<string | null> = [];
+  const queue = new DiagnosticsQueue((b) => busyLog.push(b));
+  // The automatic check run starts when the card opens.
+  const load = queue.run("load", () => daemon.call("doctor"));
+  assert.equal(queue.current, "load");
+  // Copy and Run again are disabled while it runs...
+  assert.deepEqual(controls(true, queue.current), {
+    rerunDisabled: true,
+    copyDisabled: true,
+    copying: false,
+    loading: true
+  });
+  // ...and a click that still gets through never reaches the daemon.
+  assert.deepEqual(await queue.run("copy", () => daemon.call("report")), { started: false });
+  assert.deepEqual(daemon.calls, ["doctor"]);
+  daemon.pending[0].release();
+  assert.deepEqual(await load, { started: true, value: "doctor" });
+
+  // Copy now runs; Run again and repairs wait for it.
+  const copy = queue.run("copy", () => daemon.call("report"));
+  assert.deepEqual(controls(true, queue.current), {
+    rerunDisabled: true,
+    copyDisabled: true,
+    copying: true,
+    loading: false
+  });
+  const fix = check({ status: "fail", repair: "create_data_dir" });
+  assert.equal(repairButton(fix, { phase: "ready", running: null }, queue.current)?.disabled, true);
+  assert.deepEqual(await queue.run("load", () => daemon.call("doctor")), { started: false });
+  daemon.pending[1].release();
+  assert.deepEqual(await copy, { started: true, value: "report" });
+  assert.deepEqual(daemon.calls, ["doctor", "report"], "no 429 was provoked");
+  assert.deepEqual(busyLog, ["load", null, "copy", null]);
+  assert.deepEqual(controls(true, queue.current), {
+    rerunDisabled: false,
+    copyDisabled: false,
+    copying: false,
+    loading: false
+  });
+  assert.equal(repairButton(fix, { phase: "ready", running: null }, queue.current)?.disabled, false);
+});
+
+test("a failed task frees the slot", async () => {
+  const queue = new DiagnosticsQueue();
+  await assert.rejects(queue.run("copy", () => Promise.reject(new Error("boom"))));
+  assert.equal(queue.current, null);
+  assert.deepEqual(await queue.run("load", async () => 1), { started: true, value: 1 });
+});
+
+test("the heading follows the phase: error and empty never say running", () => {
+  const s = (phase: "idle" | "loading" | "ready" | "error", checks: DoctorCheck[] = []) => ({ phase, checks });
+  assert.equal(heading(false, s("idle"), 0), "title");
+  assert.equal(heading(true, s("loading"), 0), "running");
+  assert.equal(heading(true, s("idle"), 0), "running");
+  assert.equal(heading(true, s("error"), 0), "error");
+  assert.equal(heading(true, s("ready"), 0), "empty");
+  assert.equal(heading(true, s("ready", [check()]), 0), "allGood");
+  assert.equal(heading(true, s("error", [check({ status: "fail" })]), 1), "problems");
 });

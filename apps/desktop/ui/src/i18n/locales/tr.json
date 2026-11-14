@@ -1372,6 +1372,7 @@
       "repairFailed": "Onarım başarılı olmadı",
       "offline": "Arka plan servisine bağlı değil. Tanılama için Praxi'yi başlatın.",
       "loadError": "Tanılama çalıştırılamadı",
+      "empty": "Hiç denetim sonucu gelmedi",
       "notOnPlatform": "Bu platformda kullanılamaz.",
       "privacy": "Tanılama yalnızca ayarlarınızı okur. Bir onarım yalnızca düğmesine tıkladığınızda çalışır.",
       "status": {
