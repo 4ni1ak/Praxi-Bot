@@ -4210,3 +4210,336 @@ async fn one_rejected_takeover_counts_as_one_denial() {
         window.1
     );
 }
+
+#[tokio::test]
+async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geometry_is_stale() {
+    use desktop_api::live_view::{
+        CaptureDriver, CaptureFailure, CapturedRawInfo, DesktopViewTarget, DesktopViewTargetConfig,
+        GeometrySnapshot, InputDriver, LiveViewOptions, PixelFormat, PixelRect,
+    };
+
+    struct MockDesktopCapture {
+        geom: Arc<Mutex<GeometrySnapshot>>,
+    }
+    impl CaptureDriver for MockDesktopCapture {
+        fn capture(&mut self, raw_buf: &mut Vec<u8>) -> Result<CapturedRawInfo, CaptureFailure> {
+            let geom = *self.geom.lock();
+            let stride = usize::try_from(geom.rect.width).unwrap() * 4;
+            raw_buf.resize(stride * usize::try_from(geom.rect.height).unwrap(), 0x7f);
+            Ok(CapturedRawInfo {
+                geometry: geom,
+                format: PixelFormat::Bgra32,
+                stride_bytes: stride,
+            })
+        }
+    }
+    struct MockDesktopInput {
+        injected_calls: Arc<AtomicUsize>,
+    }
+    impl InputDriver for MockDesktopInput {
+        fn inject(
+            &mut self,
+            _event: &InputEvent,
+            _source_rect: SourceRect,
+            _virtual_rect: PixelRect,
+            _cancelled: &AtomicBool,
+        ) -> Result<(), ViewError> {
+            self.injected_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn release_all(&mut self) -> Result<(), ViewError> {
+            Ok(())
+        }
+    }
+
+    let geom_1 = GeometrySnapshot {
+        rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        },
+        virtual_rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        },
+        dpi: 96,
+        display_token: 1,
+    };
+    let geom_2 = GeometrySnapshot {
+        rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        },
+        virtual_rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        },
+        dpi: 96,
+        display_token: 2,
+    };
+
+    let current_geom = Arc::new(Mutex::new(geom_1));
+    let injected_calls = Arc::new(AtomicUsize::new(0));
+    let desktop_target = Arc::new(DesktopViewTarget::new(DesktopViewTargetConfig {
+        options: LiveViewOptions::new("hermetic-desktop"),
+        initial_geometry: geom_1,
+        capture_factory: {
+            let geom = Arc::clone(&current_geom);
+            Arc::new(move |_| {
+                Ok(Box::new(MockDesktopCapture {
+                    geom: Arc::clone(&geom),
+                }))
+            })
+        },
+        probe: Arc::new(|_| Ok(())),
+        input_factory: Some({
+            let injected_calls = Arc::clone(&injected_calls);
+            Arc::new(move || {
+                Ok(Box::new(MockDesktopInput {
+                    injected_calls: Arc::clone(&injected_calls),
+                }))
+            })
+        }),
+        input_reason: None,
+    }));
+
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+    let agent = agent_core::AgentLoop::new(
+        storage.clone(),
+        tool_registry::ToolRegistry::new(),
+        agent_core::Providers::single(Arc::new(crate::fake::FakeProvider)),
+        agent_core::LoopConfig::default(),
+    );
+    let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+    state.live_view().registry.register(desktop_target.clone());
+    let t = Test {
+        state,
+        target: Arc::new(Target::new()),
+        dir: Arc::new(dir),
+        auto_grant: AtomicBool::new(true),
+    };
+
+    let target_id = desktop_target.info().target_id;
+    let (status, val) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/view/sessions",
+            Some(json!({
+                "target_id": target_id,
+                "profile": "watch",
+                "max_width": 960,
+                "max_height": 600,
+                "codecs": ["jpeg"],
+                "client_id": Uuid::now_v7()
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{val}");
+    let session_id = Uuid::parse_str(val["session_id"].as_str().unwrap()).unwrap();
+
+    let response = t
+        .response(
+            None,
+            Method::GET,
+            &format!("/v1/view/sessions/{session_id}/frames"),
+            None,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    for _ in 0..8 {
+        if t.state
+            .live_view()
+            .sessions
+            .lock()
+            .get(&session_id)
+            .is_some_and(|s| s.geometry.is_some())
+        {
+            break;
+        }
+        let _ = tokio::time::timeout(Duration::from_millis(250), body.frame()).await;
+    }
+    assert_eq!(
+        t.state
+            .live_view()
+            .sessions
+            .lock()
+            .get(&session_id)
+            .and_then(|s| s.geometry)
+            .map(|(r, _, _)| r),
+        Some(1)
+    );
+
+    let (status, v) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/control/takeover",
+            Some(json!({"session_id": session_id, "request_id": Uuid::now_v7()})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v}");
+    for _ in 0..100 {
+        if t.state
+            .hub()
+            .takeover()
+            .is_some_and(|tk| tk.info.state == ViewState::Active)
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let takeover = t.state.hub().takeover().unwrap().info;
+    assert_eq!(takeover.state, ViewState::Active);
+
+    // Legacy revision-less `InputSink::inject` must refuse positional clicks by default on desktop targets.
+    assert_eq!(
+        desktop_target
+            .input_sink()
+            .unwrap()
+            .inject(&InputEvent::Pointer {
+                phase: PointerPhase::Down,
+                x: 0.5,
+                y: 0.5,
+                button: Some(Button::Left),
+                buttons: 1,
+                modifiers: vec![],
+            })
+            .await,
+        Err(ViewError::Unavailable)
+    );
+
+    // Advance display geometry to revision 2 while NOT draining `body`, so `session.geometry` in
+    // the daemon remains at revision 1 while the backend has already moved to revision 2.
+    *current_geom.lock() = geom_2;
+    desktop_target.notify_desktop_action();
+    for _ in 0..100 {
+        if desktop_target.geometry_revision() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(desktop_target.geometry_revision(), 2);
+
+    let stale_batch = json!({
+        "v": 1,
+        "takeover_id": takeover.id,
+        "control_epoch": takeover.control_epoch,
+        "generation": 1,
+        "geometry_revision": 1,
+        "first_seq": 1,
+        "events": [{
+            "type": "pointer",
+            "phase": "down",
+            "x": 0.5,
+            "y": 0.5,
+            "button": "left",
+            "buttons": 1,
+            "modifiers": []
+        }]
+    });
+    let (status, res) = t
+        .call(
+            None,
+            Method::POST,
+            &format!("/v1/view/sessions/{session_id}/input"),
+            Some(stale_batch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["applied_through"], 0);
+    assert_eq!(res["state"], "paused");
+    assert_eq!(
+        injected_calls.load(Ordering::SeqCst),
+        0,
+        "stale revision 1 click must not be injected after display changed to revision 2"
+    );
+
+    // Now reacquire, drain frames so the client/daemon see revision 2, and verify a batch
+    // computed against revision 2 succeeds through the same daemon path.
+    for _ in 0..8 {
+        if t.state
+            .live_view()
+            .sessions
+            .lock()
+            .get(&session_id)
+            .and_then(|s| s.geometry)
+            .is_some_and(|(r, _, _)| r == 2)
+        {
+            break;
+        }
+        let _ = tokio::time::timeout(Duration::from_millis(250), body.frame()).await;
+    }
+    assert_eq!(
+        t.state
+            .live_view()
+            .sessions
+            .lock()
+            .get(&session_id)
+            .and_then(|s| s.geometry)
+            .map(|(r, _, _)| r),
+        Some(2)
+    );
+    let (status, v) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/control/takeover",
+            Some(json!({
+                "session_id": session_id,
+                "request_id": Uuid::now_v7(),
+                "reacquire_takeover_id": takeover.id
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v}");
+    for _ in 0..100 {
+        if t.state
+            .hub()
+            .takeover()
+            .is_some_and(|tk| tk.info.state == ViewState::Active)
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let takeover2 = t.state.hub().takeover().unwrap().info;
+    let fresh_batch = json!({
+        "v": 1,
+        "takeover_id": takeover2.id,
+        "control_epoch": takeover2.control_epoch,
+        "generation": 1,
+        "geometry_revision": 2,
+        "first_seq": 1,
+        "events": [{
+            "type": "pointer",
+            "phase": "down",
+            "x": 0.5,
+            "y": 0.5,
+            "button": "left",
+            "buttons": 1,
+            "modifiers": []
+        }]
+    });
+    let (status, res2) = t
+        .call(
+            None,
+            Method::POST,
+            &format!("/v1/view/sessions/{session_id}/input"),
+            Some(fresh_batch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res2}");
+    assert_eq!(res2["applied_through"], 1);
+    assert_eq!(res2["state"], "active");
+    assert_eq!(injected_calls.load(Ordering::SeqCst), 1);
+}

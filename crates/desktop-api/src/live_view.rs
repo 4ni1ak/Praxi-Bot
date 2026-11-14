@@ -1016,6 +1016,7 @@ struct ProbeControl {
     timeout: Duration,
     last_probe_at: Option<Instant>,
     join: Option<std::thread::JoinHandle<()>>,
+    call_join: Option<std::thread::JoinHandle<()>>,
 }
 
 struct ProbeSync {
@@ -1121,6 +1122,43 @@ impl TargetCore {
         {
             let _ = j.join();
         }
+        let call_join = {
+            let mut p = self.probe_sync.ctrl.lock();
+            let wait_bound = p
+                .timeout
+                .saturating_mul(4)
+                .clamp(Duration::from_millis(150), Duration::from_secs(3));
+            let deadline = Instant::now() + wait_bound;
+            while p.in_flight {
+                if p.call_join
+                    .as_ref()
+                    .is_some_and(std::thread::JoinHandle::is_finished)
+                {
+                    p.in_flight = false;
+                    p.in_flight_started_at = None;
+                    break;
+                }
+                let rem = deadline.saturating_duration_since(Instant::now());
+                if rem.is_zero() {
+                    break;
+                }
+                let _ = self.probe_sync.cvar.wait_for(&mut p, rem);
+            }
+            if !p.in_flight
+                || p.call_join
+                    .as_ref()
+                    .is_some_and(std::thread::JoinHandle::is_finished)
+            {
+                p.call_join.take()
+            } else {
+                None
+            }
+        };
+        if let Some(j) = call_join
+            && j.thread().id() != std::thread::current().id()
+        {
+            let _ = j.join();
+        }
         let cap_join = {
             let mut ctrl = self.ctrl.lock();
             ctrl.shutdown = true;
@@ -1147,80 +1185,178 @@ impl TargetCore {
     }
 }
 
-fn run_availability_probe_loop(core_weak: &Weak<TargetCore>, probe_sync: &ProbeSync) {
-    loop {
-        // Hold no strong `Arc<TargetCore>` across condvar waits so `TargetCore` ownership
-        // stays strictly with external callers (`DesktopViewTarget`, `FrameSource`, `DesktopInputSink`).
-        let spawn_args = {
-            let mut p = probe_sync.ctrl.lock();
-            loop {
-                if p.shutdown || core_weak.strong_count() == 0 {
-                    return;
-                }
-                if p.in_flight {
-                    let timed_out = p
-                        .in_flight_started_at
-                        .is_some_and(|t| t.elapsed() >= p.timeout);
-                    if timed_out {
-                        if let Some(core) = core_weak.upgrade()
-                            && !core.ctrl.lock().running
-                        {
-                            let mut st = core.status.lock();
-                            st.view_available = false;
-                            st.unavailable_reason = Some(Reason::Unavailable);
-                            core.stats.set_reason(Some(Reason::Unavailable));
-                        }
-                        let wait_for = p.interval;
-                        let _ = probe_sync.cvar.wait_for(&mut p, wait_for);
-                    } else {
-                        let rem = p
-                            .in_flight_started_at
-                            .map_or(p.timeout, |t| p.timeout.saturating_sub(t.elapsed()));
-                        let _ = probe_sync.cvar.wait_for(&mut p, rem);
-                    }
-                    continue;
-                }
+struct ProbeCallFinishGuard {
+    weak: Weak<TargetCore>,
+    probe_sync: Arc<ProbeSync>,
+    finished: bool,
+}
 
-                let due =
-                    p.trigger_now || p.last_probe_at.is_none_or(|t| t.elapsed() >= p.interval);
-                if due {
-                    p.trigger_now = false;
-                    let Some(core) = core_weak.upgrade() else {
-                        return;
-                    };
-                    let running = core.ctrl.lock().running;
-                    if running {
-                        p.last_probe_at = Some(Instant::now());
-                        continue;
-                    }
-                    p.in_flight = true;
-                    p.in_flight_started_at = Some(Instant::now());
-                    break Some((Arc::clone(&core.probe), core.options.scope.clone()));
-                }
+fn finish_probe_call(weak: &Weak<TargetCore>, probe_sync: &ProbeSync, res: Result<(), Reason>) {
+    if let Some(c) = weak.upgrade() {
+        c.apply_probe_result(res);
+    } else {
+        let mut p = probe_sync.ctrl.lock();
+        p.in_flight = false;
+        p.in_flight_started_at = None;
+        p.last_probe_at = Some(Instant::now());
+        probe_sync.cvar.notify_all();
+    }
+}
 
-                let wait_for = p.last_probe_at.map_or(p.interval, |t| {
-                    (t + p.interval).saturating_duration_since(Instant::now())
-                });
-                let _ = probe_sync.cvar.wait_for(&mut p, wait_for);
-            }
-        };
-
-        if let Some((probe, scope)) = spawn_args {
-            let weak = Weak::clone(core_weak);
-            let spawned = std::thread::Builder::new()
-                .name("live-view-probe-call".into())
-                .spawn(move || {
-                    let res = (probe)(&scope);
-                    if let Some(c) = weak.upgrade() {
-                        c.apply_probe_result(res);
-                    }
-                });
-            if spawned.is_err()
-                && let Some(c) = core_weak.upgrade()
-            {
-                c.apply_probe_result(Err(Reason::Unavailable));
-            }
+impl Drop for ProbeCallFinishGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            finish_probe_call(&self.weak, &self.probe_sync, Err(Reason::Unavailable));
         }
+    }
+}
+
+fn mark_probe_timed_out_unavailable(core_weak: &Weak<TargetCore>) {
+    if let Some(core) = core_weak.upgrade()
+        && !core.ctrl.lock().running
+    {
+        let mut st = core.status.lock();
+        st.view_available = false;
+        st.unavailable_reason = Some(Reason::Unavailable);
+        core.stats.set_reason(Some(Reason::Unavailable));
+    }
+}
+
+fn next_probe_call_args(
+    core_weak: &Weak<TargetCore>,
+    probe_sync: &ProbeSync,
+) -> Option<(AvailabilityProbeFn, CaptureScope)> {
+    let mut p = probe_sync.ctrl.lock();
+    loop {
+        if p.shutdown || core_weak.strong_count() == 0 {
+            return None;
+        }
+        if p.in_flight {
+            if p.call_join
+                .as_ref()
+                .is_some_and(std::thread::JoinHandle::is_finished)
+            {
+                let finished = p.call_join.take();
+                p.in_flight = false;
+                p.in_flight_started_at = None;
+                p.last_probe_at.get_or_insert_with(Instant::now);
+                drop(p);
+                if let Some(j) = finished {
+                    let _ = j.join();
+                }
+                p = probe_sync.ctrl.lock();
+                continue;
+            }
+            let timed_out = p
+                .in_flight_started_at
+                .is_some_and(|t| t.elapsed() >= p.timeout);
+            if timed_out {
+                let wait_for = p.interval.min(Duration::from_millis(200));
+                drop(p);
+                mark_probe_timed_out_unavailable(core_weak);
+                p = probe_sync.ctrl.lock();
+                if p.shutdown || core_weak.strong_count() == 0 {
+                    return None;
+                }
+                if p.in_flight
+                    && !p
+                        .call_join
+                        .as_ref()
+                        .is_some_and(std::thread::JoinHandle::is_finished)
+                {
+                    let _ = probe_sync.cvar.wait_for(&mut p, wait_for);
+                }
+            } else {
+                let rem = p
+                    .in_flight_started_at
+                    .map_or(p.timeout, |t| p.timeout.saturating_sub(t.elapsed()));
+                let _ = probe_sync.cvar.wait_for(&mut p, rem);
+            }
+            continue;
+        }
+
+        if let Some(prev) = p.call_join.take() {
+            drop(p);
+            let _ = prev.join();
+            p = probe_sync.ctrl.lock();
+            continue;
+        }
+
+        let due = p.trigger_now || p.last_probe_at.is_none_or(|t| t.elapsed() >= p.interval);
+        if due {
+            drop(p);
+            let core = core_weak.upgrade()?;
+            let running = core.ctrl.lock().running;
+            let probe_fn = Arc::clone(&core.probe);
+            let scope = core.options.scope.clone();
+            drop(core);
+
+            p = probe_sync.ctrl.lock();
+            if p.shutdown || core_weak.strong_count() == 0 {
+                return None;
+            }
+            if p.in_flight {
+                continue;
+            }
+            if running {
+                p.trigger_now = false;
+                p.last_probe_at = Some(Instant::now());
+                continue;
+            }
+            p.trigger_now = false;
+            p.in_flight = true;
+            p.in_flight_started_at = Some(Instant::now());
+            return Some((probe_fn, scope));
+        }
+
+        let wait_for = p.last_probe_at.map_or(p.interval, |t| {
+            (t + p.interval).saturating_duration_since(Instant::now())
+        });
+        let _ = probe_sync.cvar.wait_for(&mut p, wait_for);
+    }
+}
+
+fn spawn_probe_call(
+    core_weak: &Weak<TargetCore>,
+    probe_sync: &ProbeSync,
+    probe: AvailabilityProbeFn,
+    scope: CaptureScope,
+) {
+    let Some(core) = core_weak.upgrade() else {
+        finish_probe_call(core_weak, probe_sync, Err(Reason::Unavailable));
+        return;
+    };
+    let ps = Arc::clone(&core.probe_sync);
+    drop(core);
+
+    let weak = Weak::clone(core_weak);
+    let spawned = std::thread::Builder::new()
+        .name("live-view-probe-call".into())
+        .spawn(move || {
+            let mut guard = ProbeCallFinishGuard {
+                weak: Weak::clone(&weak),
+                probe_sync: Arc::clone(&ps),
+                finished: false,
+            };
+            let res = (probe)(&scope);
+            guard.finished = true;
+            finish_probe_call(&weak, &ps, res);
+        });
+    match spawned {
+        Ok(handle) => {
+            probe_sync.ctrl.lock().call_join = Some(handle);
+        }
+        Err(_) => {
+            finish_probe_call(core_weak, probe_sync, Err(Reason::Unavailable));
+        }
+    }
+}
+
+fn run_availability_probe_loop(core_weak: &Weak<TargetCore>, probe_sync: &ProbeSync) {
+    // Hold no strong `Arc<TargetCore>` across condvar waits so `TargetCore` ownership
+    // stays strictly with external callers (`DesktopViewTarget`, `FrameSource`, `DesktopInputSink`).
+    while let Some((probe, scope)) = next_probe_call_args(core_weak, probe_sync) {
+        spawn_probe_call(core_weak, probe_sync, probe, scope);
     }
 }
 
@@ -1262,7 +1398,7 @@ impl DesktopViewTarget {
                 latest_geometry: config.initial_geometry,
             }),
             last_published_geometry_revision: AtomicU64::new(1),
-            require_explicit_revision: AtomicBool::new(false),
+            require_explicit_revision: AtomicBool::new(true),
             ctrl: Mutex::new(CaptureControl {
                 subscribers: 0,
                 paused: false,
@@ -1292,6 +1428,7 @@ impl DesktopViewTarget {
                     timeout: AVAILABILITY_PROBE_TIMEOUT,
                     last_probe_at: Some(Instant::now()),
                     join: None,
+                    call_join: None,
                 }),
                 cvar: Condvar::new(),
             }),
@@ -1358,6 +1495,13 @@ impl DesktopViewTarget {
         self.core.probe_sync.cvar.notify_all();
     }
 
+    /// Override the background availability probe timeout (and wake the probe thread).
+    pub fn set_availability_probe_timeout(&self, timeout: Duration) {
+        let mut p = self.core.probe_sync.ctrl.lock();
+        p.timeout = timeout.max(Duration::from_millis(1));
+        self.core.probe_sync.cvar.notify_all();
+    }
+
     /// Trigger an immediate non-blocking background availability probe when idle.
     pub fn trigger_availability_probe(&self) {
         self.core.request_availability_probe();
@@ -1388,8 +1532,13 @@ impl DesktopViewTarget {
         let Some(sink) = self.desktop_input_sink() else {
             return Err(ViewError::Unsupported);
         };
-        sink.inject_at_revision(event, expected_generation, expected_geometry_revision)
-            .await
+        InputSink::inject_at_revision(
+            sink.as_ref(),
+            event,
+            expected_generation,
+            expected_geometry_revision,
+        )
+        .await
     }
 
     /// Run the synchronous OS availability probe when the capture worker is idle.
@@ -2251,34 +2400,14 @@ fn sleep_interruptible(core: &Arc<TargetCore>, duration: Duration) {
 
 // ── Cancel-safe InputSink coordinator ─────────────────────────────────────────
 
-/// Cancel-safe desktop [`InputSink`] coordinator exposing revision-checked
-/// [`Self::inject_at_revision`] alongside the trait's [`InputSink::inject`].
+/// Cancel-safe desktop [`InputSink`] coordinator implementing revision-checked
+/// [`InputSink::inject_at_revision`] alongside legacy [`InputSink::inject`]
+/// (which rejects positional events by default).
 pub struct DesktopInputSink {
     core: Arc<TargetCore>,
 }
 
 impl DesktopInputSink {
-    /// Validate `(expected_generation, expected_geometry_revision)` both at enqueue time
-    /// and on the input worker thread before calling the OS driver.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ViewError::InvalidRecord`] on invalid input or [`ViewError::Unavailable`] /
-    /// [`ViewError::PartialInjection`] when takeover is inactive, revisions mismatch, or OS
-    /// injection fails.
-    pub async fn inject_at_revision(
-        &self,
-        event: &InputEvent,
-        expected_generation: u64,
-        expected_geometry_revision: u64,
-    ) -> Result<(), ViewError> {
-        self.inject_inner(
-            event,
-            Some((expected_generation, expected_geometry_revision)),
-        )
-        .await
-    }
-
     async fn inject_inner(
         &self,
         event: &InputEvent,
@@ -2627,6 +2756,16 @@ fn ensure_input_worker(
 impl InputSink for DesktopInputSink {
     async fn inject(&self, event: &InputEvent) -> Result<(), ViewError> {
         self.inject_inner(event, None).await
+    }
+
+    async fn inject_at_revision(
+        &self,
+        event: &InputEvent,
+        generation: u64,
+        geometry_revision: u64,
+    ) -> Result<(), ViewError> {
+        self.inject_inner(event, Some((generation, geometry_revision)))
+            .await
     }
 
     async fn release_pressed_inputs(&self) -> Result<(), ViewError> {
@@ -3538,7 +3677,7 @@ mod tests {
         let ptr_clone = ptr_event.clone();
         let ptr_fut = tokio::spawn(async move {
             let _ = queued_tx.send(());
-            sink_ptr.inject(&ptr_clone).await
+            sink_ptr.inject_at_revision(&ptr_clone, 1, 1).await
         });
         queued_rx.await.unwrap();
         tokio::task::yield_now().await;
@@ -3553,13 +3692,21 @@ mod tests {
         assert!(!log.lock().contains(&"other"));
 
         // 3. Even a freshly submitted positional event is rejected until a frame with the new
-        // `geometry_revision` (2) has actually been published to subscribers.
-        assert_eq!(sink.inject(&ptr_event).await, Err(ViewError::Unavailable));
+        // `geometry_revision` (2) has actually been published to subscribers, and legacy
+        // revision-less `inject` fails closed for positional events by default.
+        assert_eq!(
+            sink.inject_at_revision(&ptr_event, 1, new_rev).await,
+            Err(ViewError::Unavailable)
+        );
         target
             .core
             .last_published_geometry_revision
             .store(new_rev, Ordering::Release);
-        assert_eq!(sink.inject(&ptr_event).await, Ok(()));
+        assert_eq!(sink.inject(&ptr_event).await, Err(ViewError::Unavailable));
+        assert_eq!(
+            sink.inject_at_revision(&ptr_event, 1, new_rev).await,
+            Ok(())
+        );
     }
 
     #[tokio::test]
@@ -4068,14 +4215,14 @@ mod tests {
         assert_eq!(ptr_fut.await.unwrap(), Err(ViewError::Unavailable));
         assert!(!log.lock().contains(&"other"));
 
-        // `require_explicit_revision` fails closed on legacy `InputSink::inject` for positional events.
-        target.set_require_explicit_revision(true);
+        // Explicit revision mode is enabled by default for desktop targets: legacy `InputSink::inject`
+        // fails closed for positional events, while `InputSink::inject_at_revision` succeeds.
         assert_eq!(
             dyn_sink.inject(&ptr_event).await,
             Err(ViewError::Unavailable)
         );
         assert_eq!(
-            desktop_sink
+            dyn_sink
                 .inject_at_revision(&ptr_event, generation, rev3)
                 .await,
             Ok(())
@@ -4193,5 +4340,137 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(target.info().unavailable_reason, Some(Reason::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn wedged_probe_times_out_and_later_probe_recovers() {
+        let probe_gate = Arc::new(GateSync::new());
+        let block_next_probe = Arc::new(AtomicBool::new(true));
+        let fail_while_blocked = Arc::new(AtomicBool::new(true));
+        let probe_calls = Arc::new(AtomicU64::new(0));
+
+        let target = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-probe-timeout"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: {
+                let (pg, bp, fp, pc) = (
+                    Arc::clone(&probe_gate),
+                    Arc::clone(&block_next_probe),
+                    Arc::clone(&fail_while_blocked),
+                    Arc::clone(&probe_calls),
+                );
+                Arc::new(move |_| {
+                    pc.fetch_add(1, Ordering::SeqCst);
+                    if bp.swap(false, Ordering::SeqCst) {
+                        pg.signal_entered();
+                        let _ = pg.wait_unblocked_or_cancelled(&AtomicBool::new(false));
+                        return Err(Reason::Unavailable);
+                    }
+                    if fp.load(Ordering::SeqCst) {
+                        Err(Reason::Unavailable)
+                    } else {
+                        Ok(())
+                    }
+                })
+            },
+            input_factory: None,
+            input_reason: Some(Reason::Unsupported),
+        });
+
+        target.set_availability_probe_timeout(Duration::from_millis(40));
+        target.set_availability_probe_interval(Duration::from_millis(15));
+        target.trigger_availability_probe();
+
+        let probe_wait = Arc::clone(&probe_gate);
+        tokio::task::spawn_blocking(move || probe_wait.wait_entered())
+            .await
+            .unwrap();
+
+        // Wait past the probe timeout while the first call is still wedged:
+        // `info()` must report `Unavailable`, and a second probe must NOT pile up behind it.
+        while target.info().capabilities.view {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(target.info().unavailable_reason, Some(Reason::Unavailable));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(probe_calls.load(Ordering::SeqCst), 1);
+
+        // Now allow the wedged probe call to return and the display to recover.
+        fail_while_blocked.store(false, Ordering::SeqCst);
+        probe_gate.release_gate();
+
+        while !target.info().capabilities.view {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(probe_calls.load(Ordering::SeqCst) >= 2);
+        assert_eq!(target.info().unavailable_reason, None);
+    }
+
+    #[tokio::test]
+    async fn dropping_target_with_wedged_probe_returns_within_bound() {
+        // 1. A bounded probe (simulating bounded socket connect/read) is joined on Drop
+        // before Drop returns, leaving no background thread or connection behind.
+        let bounded_finished = Arc::new(AtomicBool::new(false));
+        let bounded_entered = Arc::new(GateSync::new());
+        let target1 = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-drop-bounded"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: {
+                let (entered, finished) =
+                    (Arc::clone(&bounded_entered), Arc::clone(&bounded_finished));
+                Arc::new(move |_| {
+                    entered.signal_entered();
+                    std::thread::sleep(Duration::from_millis(70));
+                    finished.store(true, Ordering::SeqCst);
+                    Err(Reason::Unavailable)
+                })
+            },
+            input_factory: None,
+            input_reason: Some(Reason::Unsupported),
+        });
+        target1.set_availability_probe_timeout(Duration::from_millis(40));
+        target1.trigger_availability_probe();
+        let wait1 = Arc::clone(&bounded_entered);
+        tokio::task::spawn_blocking(move || wait1.wait_entered())
+            .await
+            .unwrap();
+        let drop_start1 = Instant::now();
+        drop(target1);
+        assert!(bounded_finished.load(Ordering::SeqCst));
+        assert!(drop_start1.elapsed() < Duration::from_millis(400));
+
+        // 2. Even an indefinitely wedged probe call must not hang Drop beyond the bound.
+        let stuck_gate = Arc::new(GateSync::new());
+        let target2 = DesktopViewTarget::new(DesktopViewTargetConfig {
+            options: LiveViewOptions::new("host-drop-stuck"),
+            initial_geometry: test_geom(800, 600),
+            capture_factory: Arc::new(|_| Err(CaptureFailure::Unavailable(Reason::Unavailable))),
+            probe: {
+                let gate = Arc::clone(&stuck_gate);
+                Arc::new(move |_| {
+                    gate.signal_entered();
+                    let _ = gate.wait_unblocked_or_cancelled(&AtomicBool::new(false));
+                    Err(Reason::Unavailable)
+                })
+            },
+            input_factory: None,
+            input_reason: Some(Reason::Unsupported),
+        });
+        target2.set_availability_probe_timeout(Duration::from_millis(40));
+        target2.trigger_availability_probe();
+        let wait2 = Arc::clone(&stuck_gate);
+        tokio::task::spawn_blocking(move || wait2.wait_entered())
+            .await
+            .unwrap();
+        let drop_start2 = Instant::now();
+        drop(target2);
+        let elapsed2 = drop_start2.elapsed();
+        stuck_gate.release_gate();
+        assert!(
+            elapsed2 < Duration::from_millis(500),
+            "drop took {elapsed2:?}"
+        );
     }
 }

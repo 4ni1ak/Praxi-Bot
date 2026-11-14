@@ -1414,7 +1414,12 @@ where
 
 #[cfg(target_os = "linux")]
 mod linux_x11 {
+    use std::io::IoSlice;
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::os::fd::AsFd;
+    use std::os::unix::net::UnixStream;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     use super::{
         AvailabilityProbeFn, CaptureFailure, DesktopViewTarget, LiveViewOptions, MonitorDescriptor,
@@ -1434,13 +1439,138 @@ mod linux_x11 {
             },
             xtest::ConnectionExt as _,
         },
-        rust_connection::RustConnection,
+        reexports::x11rb_protocol::{
+            parse_display::{ConnectAddress, parse_display},
+            xauth::get_auth,
+        },
+        rust_connection::{DefaultStream, PollMode, RustConnection, Stream},
+        utils::RawFdContainer,
         wrapper::ConnectionExt as _,
     };
 
-    struct RealX11Capture {
+    const X11_PROBE_IO_TIMEOUT: Duration = Duration::from_millis(1500);
+
+    pub(super) struct BoundedStream {
+        inner: DefaultStream,
+        deadline: Instant,
+    }
+
+    impl Stream for BoundedStream {
+        fn poll(&self, mode: PollMode) -> std::io::Result<()> {
+            let mut poll_flags = rustix::event::PollFlags::empty();
+            if mode.readable() {
+                poll_flags |= rustix::event::PollFlags::IN;
+            }
+            if mode.writable() {
+                poll_flags |= rustix::event::PollFlags::OUT;
+            }
+            let fd = self.inner.as_fd();
+            let mut poll_fds = [rustix::event::PollFd::from_borrowed_fd(fd, poll_flags)];
+            loop {
+                let remaining = self.deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "X11 probe I/O timed out",
+                    ));
+                }
+                let ts = rustix::event::Timespec::try_from(remaining)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                match rustix::event::poll(&mut poll_fds, Some(&ts)) {
+                    Ok(0) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "X11 probe I/O timed out",
+                        ));
+                    }
+                    Ok(_) => return Ok(()),
+                    Err(rustix::io::Errno::INTR) => {}
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+
+        fn read(
+            &self,
+            buf: &mut [u8],
+            fd_storage: &mut Vec<RawFdContainer>,
+        ) -> std::io::Result<usize> {
+            self.inner.read(buf, fd_storage)
+        }
+
+        fn write(&self, buf: &[u8], fds: &mut Vec<RawFdContainer>) -> std::io::Result<usize> {
+            self.inner.write(buf, fds)
+        }
+
+        fn write_vectored(
+            &self,
+            bufs: &[IoSlice<'_>],
+            fds: &mut Vec<RawFdContainer>,
+        ) -> std::io::Result<usize> {
+            self.inner.write_vectored(bufs, fds)
+        }
+    }
+
+    pub(super) fn connect_bounded_address(
+        addr: &ConnectAddress<'_>,
+        display: u16,
+        screen: usize,
+        deadline: Instant,
+    ) -> Result<RustConnection<BoundedStream>, CaptureFailure> {
+        let (stream, (family, address)) = match addr {
+            ConnectAddress::Hostname(host, port) => {
+                let mut last_err = None;
+                let addrs = (*host, *port)
+                    .to_socket_addrs()
+                    .map_err(|_| CaptureFailure::ConnectionLost(Reason::Disconnected))?;
+                let mut connected = None;
+                for sock_addr in addrs {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(CaptureFailure::Unavailable(Reason::Unavailable));
+                    }
+                    match TcpStream::connect_timeout(&sock_addr, remaining) {
+                        Ok(tcp) => {
+                            connected =
+                                Some(DefaultStream::from_tcp_stream(tcp).map_err(|_| {
+                                    CaptureFailure::ConnectionLost(Reason::Disconnected)
+                                })?);
+                            break;
+                        }
+                        Err(e) => last_err = Some(e),
+                    }
+                }
+                match connected {
+                    Some(res) => res,
+                    None => {
+                        let _ = last_err;
+                        return Err(CaptureFailure::ConnectionLost(Reason::Disconnected));
+                    }
+                }
+            }
+            ConnectAddress::Socket(path) => {
+                let unix = UnixStream::connect(path)
+                    .map_err(|_| CaptureFailure::ConnectionLost(Reason::Disconnected))?;
+                DefaultStream::from_unix_stream(unix)
+                    .map_err(|_| CaptureFailure::ConnectionLost(Reason::Disconnected))?
+            }
+            _ => return Err(CaptureFailure::ConnectionLost(Reason::Disconnected)),
+        };
+
+        let (auth_name, auth_data) = get_auth(family, &address, display)
+            .unwrap_or(None)
+            .unwrap_or_default();
+        let bounded = BoundedStream {
+            inner: stream,
+            deadline,
+        };
+        RustConnection::connect_to_stream_with_auth_info(bounded, screen, auth_name, auth_data)
+            .map_err(|_| CaptureFailure::ConnectionLost(Reason::Disconnected))
+    }
+
+    struct RealX11Capture<S: Stream = DefaultStream> {
         dpy: String,
-        conn: RustConnection,
+        conn: RustConnection<S>,
         screen_num: usize,
     }
 
@@ -1453,6 +1583,30 @@ mod linux_x11 {
                 conn,
                 screen_num,
             })
+        }
+    }
+
+    impl RealX11Capture<BoundedStream> {
+        fn open_bounded(dpy: String, timeout: Duration) -> Result<Self, CaptureFailure> {
+            let deadline = Instant::now() + timeout;
+            let parsed = parse_display(Some(&dpy))
+                .map_err(|_| CaptureFailure::ConnectionLost(Reason::Disconnected))?;
+            let screen_num = usize::from(parsed.screen);
+            for addr in parsed.connect_instruction() {
+                if deadline.saturating_duration_since(Instant::now()).is_zero() {
+                    return Err(CaptureFailure::Unavailable(Reason::Unavailable));
+                }
+                if let Ok(conn) =
+                    connect_bounded_address(&addr, parsed.display, screen_num, deadline)
+                {
+                    return Ok(Self {
+                        dpy,
+                        conn,
+                        screen_num,
+                    });
+                }
+            }
+            Err(CaptureFailure::ConnectionLost(Reason::Disconnected))
         }
     }
 
@@ -1486,7 +1640,7 @@ mod linux_x11 {
         h
     }
 
-    impl X11CaptureConnection for RealX11Capture {
+    impl<S: Stream + Send + Sync> X11CaptureConnection for RealX11Capture<S> {
         fn query_layout(&mut self) -> Result<X11DisplayLayout, CaptureFailure> {
             let setup = self.conn.setup();
             let screen = setup
@@ -1862,7 +2016,8 @@ mod linux_x11 {
             let wayland = std::env::var("WAYLAND_DISPLAY").ok();
             let x11 = std::env::var("DISPLAY").ok();
             let _ = validate_x11_env(xdg.as_deref(), wayland.as_deref(), x11.as_deref())?;
-            let mut c = RealX11Capture::open(dpy_probe.clone()).map_err(|_| Reason::Unavailable)?;
+            let mut c = RealX11Capture::open_bounded(dpy_probe.clone(), X11_PROBE_IO_TIMEOUT)
+                .map_err(|_| Reason::Unavailable)?;
             let layout = c.query_layout().map_err(|_| Reason::Unavailable)?;
             let _ = select_capture_rect(
                 scope,
@@ -2753,14 +2908,18 @@ mod tests {
         ))
         .await
         .unwrap();
-        sink.inject(&InputEvent::Pointer {
-            phase: PointerPhase::Down,
-            x: 0.5,
-            y: 0.5,
-            button: Some(Button::Left),
-            buttons: 1,
-            modifiers: vec![],
-        })
+        sink.inject_at_revision(
+            &InputEvent::Pointer {
+                phase: PointerPhase::Down,
+                x: 0.5,
+                y: 0.5,
+                button: Some(Button::Left),
+                buttons: 1,
+                modifiers: vec![],
+            },
+            1,
+            1,
+        )
         .await
         .unwrap();
 
@@ -3321,5 +3480,39 @@ mod tests {
             &cancel,
         )
         .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11_bounded_probe_times_out_when_server_accepts_and_never_answers() {
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        use x11rb::reexports::x11rb_protocol::parse_display::ConnectAddress;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let accept_thread = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            let _ = done_rx.recv();
+        });
+
+        let started = Instant::now();
+        let res = super::linux_x11::connect_bounded_address(
+            &ConnectAddress::Hostname("127.0.0.1", port),
+            0,
+            0,
+            started + Duration::from_millis(80),
+        );
+        let elapsed = started.elapsed();
+        let _ = done_tx.send(());
+        let _ = accept_thread.join();
+
+        assert!(res.is_err());
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "bounded X11 connect/read took {elapsed:?}"
+        );
     }
 }

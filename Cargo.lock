@@ -2080,6 +2080,7 @@ dependencies = [
  "live-view",
  "parking_lot",
  "png 0.18.1",
+ "rustix",
  "tempfile",
  "tokio",
  "x11rb",
