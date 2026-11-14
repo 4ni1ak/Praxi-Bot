@@ -13,6 +13,7 @@
 //! browser `EventSource` clients (Host / Origin still apply).
 
 pub mod auth;
+pub mod changes;
 pub mod control;
 pub mod dto;
 pub mod email;
@@ -778,6 +779,15 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/runs/{id}/cancel", post(r::cancel_run))
         .route("/v1/runs/{id}/resume", post(r::resume_run))
         .route("/v1/runs/{id}/remember", post(r::remember_run))
+        .route("/v1/runs/{id}/changes", get(changes::get_run_changes))
+        .route(
+            "/v1/runs/{id}/changes/{cp}/preview",
+            get(changes::preview_restore),
+        )
+        .route(
+            "/v1/runs/{id}/changes/{cp}/restore",
+            post(changes::restore_changes),
+        )
         .route("/v1/usage", get(r::usage))
         .route(
             "/v1/control/state",

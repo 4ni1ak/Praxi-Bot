@@ -347,6 +347,48 @@ impl AgentLoop {
         self.sh.events.subscribe()
     }
 
+    /// Append `event` to `run_id`'s durable event log and broadcast it on
+    /// [`Self::subscribe`]. Used for post-run actions (such as checkpoint restore)
+    /// when `run_id` is no longer active.
+    pub fn emit_run_event(&self, run_id: RunId, event: Event) {
+        if let Some(ctx) = self.sh.runs.lock().get(&run_id).cloned() {
+            self.sh.emit(&ctx, event);
+            return;
+        }
+        let parent_run_id = self
+            .sh
+            .storage
+            .get_run(run_id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.parent_run_id);
+        let journal = self
+            .sh
+            .cfg
+            .journal
+            .get_or_init(|| storage::EventJournal::fs(Arc::clone(&self.sh.storage)));
+        let gate = self.sh.emit_gate.lock();
+        journal.flush();
+        let next_seq = storage::read_event_log(self.sh.storage.data_dir(), run_id)
+            .map_or(0, |v| v.last().map_or(0, |e| e.seq + 1));
+        let env = protocol::Envelope::new(next_seq, event).with_parent(parent_run_id);
+        let gseq = self.sh.gseq.fetch_add(1, Ordering::SeqCst) + 1;
+        journal.append(storage::JournalRecord {
+            gseq,
+            run_id,
+            envelope: env.clone(),
+        });
+        let ticket = self.sh.send_gate.lock();
+        drop(gate);
+        journal.flush();
+        let _ = self.sh.events.send(StreamItem {
+            gseq,
+            run_id,
+            envelope: env,
+        });
+        drop(ticket);
+    }
+
     /// The durable runtime (state queries, etc.).
     #[must_use]
     pub fn runtime(&self) -> &Arc<Runtime> {
@@ -1224,4 +1266,55 @@ fn load_grants(storage: &Storage) -> Grants {
         }
     }
     grants
+}
+
+#[cfg(test)]
+mod emit_tests {
+    use super::*;
+    use protocol::event::CheckpointRestored;
+
+    #[test]
+    fn emit_run_event_appends_durable_seq_and_broadcasts() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(dir.path()).unwrap());
+        let run_id = RunId::new();
+        let agent = AgentLoop::new(
+            Arc::clone(&storage),
+            ToolRegistry::new(),
+            Providers::unconfigured(),
+            LoopConfig::default(),
+        );
+        let mut rx = agent.subscribe();
+
+        agent.emit_run_event(
+            run_id,
+            Event::CheckpointRestored(CheckpointRestored {
+                run_id,
+                checkpoint_id: "cp-1".into(),
+                safety_checkpoint_id: "cp-safe".into(),
+                restored: vec!["/tmp/a.txt".into()],
+            }),
+        );
+        agent.emit_run_event(
+            run_id,
+            Event::CheckpointRestored(CheckpointRestored {
+                run_id,
+                checkpoint_id: "cp-2".into(),
+                safety_checkpoint_id: "cp-safe-2".into(),
+                restored: vec!["/tmp/b.txt".into()],
+            }),
+        );
+
+        let first = rx.try_recv().unwrap();
+        let second = rx.try_recv().unwrap();
+        assert_eq!(first.run_id, run_id);
+        assert_eq!(first.envelope.seq, 0);
+        assert_eq!(second.envelope.seq, 1);
+        assert!(second.gseq > first.gseq);
+
+        let log = storage::read_event_log(dir.path(), run_id).unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].seq, 0);
+        assert_eq!(log[1].seq, 1);
+    }
 }

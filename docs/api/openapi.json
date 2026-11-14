@@ -2643,6 +2643,188 @@
         ]
       }
     },
+    "/v1/runs/{id}/changes": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "List net file changes made by a run's file tools, with capped inline diffs.",
+        "operationId": "get_run_changes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunChangesDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}/changes/{cp}/preview": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Dry-run preview of restoring checkpoint `cp` (or `\"all\"` across the run).",
+        "operationId": "preview_restore",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cp",
+            "in": "path",
+            "description": "Checkpoint id or 'all'",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePreviewDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}/changes/{cp}/restore": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Restore checkpoint `cp` (or `\"all\"` across the run), refusing with `409 modified_since`\nunless `force: true` is provided.",
+        "operationId": "restore_changes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cp",
+            "in": "path",
+            "description": "Checkpoint id or 'all'",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "modified_since or run still active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/runs/{id}/remember": {
       "post": {
         "tags": [
@@ -4105,6 +4287,16 @@
           "refresh"
         ]
       },
+      "ChangeKindDto": {
+        "type": "string",
+        "description": "Net file change classification.",
+        "enum": [
+          "created",
+          "modified",
+          "deleted",
+          "moved"
+        ]
+      },
       "ChannelDto": {
         "type": "object",
         "description": "A messaging channel (e.g. Telegram) as seen by the daemon.",
@@ -4621,6 +4813,17 @@
           }
         }
       },
+      "DiffOmittedReasonDto": {
+        "type": "string",
+        "description": "Why inline text diffing was omitted for a changed path.",
+        "enum": [
+          "binary",
+          "too_large",
+          "run_budget_exceeded",
+          "directory",
+          "symlink"
+        ]
+      },
       "EffectivePolicyDto": {
         "type": "object",
         "description": "A bot's permission picture (`GET /v1/bots/{id}`).",
@@ -5088,6 +5291,94 @@
           "message": {
             "type": "string",
             "description": "Human-readable message."
+          }
+        }
+      },
+      "FileChangeDto": {
+        "type": "object",
+        "description": "One collapsed file change recorded during a run.",
+        "required": [
+          "path",
+          "op",
+          "checkpoint_id",
+          "existed",
+          "kind",
+          "current_matches_after",
+          "is_dir",
+          "is_link"
+        ],
+        "properties": {
+          "after_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "before_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "current_matches_after": {
+            "type": "boolean"
+          },
+          "diff_omitted_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DiffOmittedReasonDto"
+              }
+            ]
+          },
+          "existed": {
+            "type": "boolean"
+          },
+          "is_dir": {
+            "type": "boolean"
+          },
+          "is_link": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChangeKindDto"
+          },
+          "moved_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "op": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "text": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UnifiedDiffDto"
+              }
+            ]
+          },
+          "via_link_of": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -7164,6 +7455,147 @@
           }
         }
       },
+      "RestoreActionDto": {
+        "type": "string",
+        "description": "Action a restore operation will apply to a path.",
+        "enum": [
+          "restore",
+          "delete",
+          "keep"
+        ]
+      },
+      "RestorePreviewDto": {
+        "type": "object",
+        "description": "Response for `GET /v1/runs/{id}/changes/{cp}/preview`.",
+        "required": [
+          "run_id",
+          "checkpoint_id",
+          "entries",
+          "modified_since",
+          "covered",
+          "not_covered"
+        ],
+        "properties": {
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestorePreviewEntryDto"
+            }
+          },
+          "modified_since": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "not_covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RestorePreviewEntryDto": {
+        "type": "object",
+        "description": "Per-path dry-run entry for a checkpoint or whole-run restore.",
+        "required": [
+          "path",
+          "current_matches_after",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RestoreActionDto"
+          },
+          "current_matches_after": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "via_link_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RestoreRequestDto": {
+        "type": "object",
+        "description": "Body for `POST /v1/runs/{id}/changes/{cp}/restore`.",
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RestoreResponseDto": {
+        "type": "object",
+        "description": "Response for `POST /v1/runs/{id}/changes/{cp}/restore`.",
+        "required": [
+          "run_id",
+          "checkpoint_id",
+          "safety_checkpoint_ids",
+          "restored",
+          "warnings",
+          "covered",
+          "not_covered"
+        ],
+        "properties": {
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "not_covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "restored": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "safety_checkpoint_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "RevokeGrant": {
         "type": "object",
         "description": "`DELETE /v1/bots/{id}/grants`.",
@@ -7174,6 +7606,40 @@
           "target": {
             "$ref": "#/components/schemas/GrantTargetDto",
             "description": "The rule to remove."
+          }
+        }
+      },
+      "RunChangesDto": {
+        "type": "object",
+        "description": "Response for `GET /v1/runs/{id}/changes`.",
+        "required": [
+          "run_id",
+          "changes",
+          "covered",
+          "not_covered"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileChangeDto"
+            }
+          },
+          "covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "not_covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -7849,6 +8315,33 @@
           "browser",
           "desktop"
         ]
+      },
+      "UnifiedDiffDto": {
+        "type": "object",
+        "description": "Unified text diff payload for a single changed text file.",
+        "required": [
+          "unified",
+          "added_lines",
+          "removed_lines",
+          "hunks"
+        ],
+        "properties": {
+          "added_lines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "removed_lines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unified": {
+            "type": "string"
+          }
+        }
       },
       "Units": {
         "type": "string",
