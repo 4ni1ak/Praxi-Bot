@@ -338,7 +338,57 @@
     "notice": {
       "modelFallback": "Switched model from {{from}} to {{to}}: {{reason}}",
       "error": "{{message}}",
-      "workflowDrift": "Workflow {{workflow}} drifted: {{reason}}"
+      "workflowDrift": "Workflow {{workflow}} drifted: {{reason}}",
+      "checkpointRestored": "Restored {{count}} file(s) from checkpoint {{checkpointId}}."
+    },
+    "changes": {
+      "tab": "Changes",
+      "title": "File changes ({{count}})",
+      "undoAll": "Undo all",
+      "undoFile": "Undo",
+      "loading": "Loading file changes...",
+      "loadError": "Could not load file changes: {{message}}",
+      "empty": "No tracked file changes in this run.",
+      "scopeDisclaimer": "Undo covers file tools (fs_write, fs_edit, fs_move, fs_delete). External effects from shell, web, email, or desktop tools cannot be undone automatically.",
+      "modifiedSinceBadge": "Edited since run",
+      "movedFrom": "From {{path}}",
+      "viaLink": "Via link {{path}}",
+      "diffStats": "+{{added}} / -{{removed}}",
+      "bytes": "{{count}} B",
+      "showDiff": "Show diff",
+      "hideDiff": "Hide diff",
+      "kind": {
+        "created": "Created",
+        "modified": "Modified",
+        "deleted": "Deleted",
+        "moved": "Moved"
+      },
+      "omitted": {
+        "binary": "Binary file — inline diff omitted ({{before}} -> {{after}}).",
+        "too_large": "File exceeds inline diff size limit ({{before}} -> {{after}}).",
+        "run_budget_exceeded": "Run diff budget exceeded — inline diff omitted ({{before}} -> {{after}}).",
+        "directory": "Directory — inline diff omitted.",
+        "symlink": "Symlink — inline diff omitted.",
+        "modified_since": "File changed on disk after this run finished."
+      },
+      "modal": {
+        "titleSingle": "Undo change to {{path}}?",
+        "titleAll": "Undo all file changes from this run?",
+        "previewLoading": "Checking current files on disk...",
+        "safetyNote": "A safety snapshot of your current files is created before restoring.",
+        "modifiedWarning": "One or more files were modified on disk after this run finished. Restoring will overwrite those newer edits.",
+        "overwriteLabel": "Overwrite my newer changes",
+        "confirm": "Restore",
+        "restoring": "Restoring...",
+        "cancel": "Cancel",
+        "action": {
+          "restore": "Restore previous version",
+          "delete": "Delete created file",
+          "keep": "Keep symlink untouched"
+        }
+      },
+      "restoreDone": "Restored {{count}} file(s). Safety snapshot saved.",
+      "restoreFailed": "Could not restore: {{message}}"
     },
     "route": {
       "workflow": "Workflow: {{name}} (0 LLM calls)",

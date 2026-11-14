@@ -876,6 +876,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{id}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List net file changes made by a run's file tools, with capped inline diffs. */
+        get: operations["get_run_changes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}/changes/{cp}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dry-run preview of restoring checkpoint `cp` (or `"all"` across the run). */
+        get: operations["preview_restore"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}/changes/{cp}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore checkpoint `cp` (or `"all"` across the run), refusing with `409 modified_since`
+         *     unless `force: true` is provided.
+         */
+        post: operations["restore_changes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{id}/remember": {
         parameters: {
             query?: never;
@@ -1355,6 +1409,11 @@ export interface components {
         };
         /** @enum {string} */
         Cause: "idle" | "action" | "refresh";
+        /**
+         * @description Net file change classification.
+         * @enum {string}
+         */
+        ChangeKindDto: "created" | "modified" | "deleted" | "moved";
         /** @description A messaging channel (e.g. Telegram) as seen by the daemon. */
         ChannelDto: {
             /** @description Credentials are stored. */
@@ -1572,6 +1631,11 @@ export interface components {
             /** @description CLI version (first line, trimmed, max 80 chars, or null). */
             version?: string | null;
         };
+        /**
+         * @description Why inline text diffing was omitted for a changed path.
+         * @enum {string}
+         */
+        DiffOmittedReasonDto: "binary" | "too_large" | "run_budget_exceeded" | "directory" | "symlink";
         /** @description A bot's permission picture (`GET /v1/bots/{id}`). */
         EffectivePolicyDto: {
             /**
@@ -1780,6 +1844,25 @@ export interface components {
             code: string;
             /** @description Human-readable message. */
             message: string;
+        };
+        /** @description One collapsed file change recorded during a run. */
+        FileChangeDto: {
+            /** Format: int64 */
+            after_size?: number | null;
+            /** Format: int64 */
+            before_size?: number | null;
+            checkpoint_id: string;
+            current_matches_after: boolean;
+            diff_omitted_reason?: null | components["schemas"]["DiffOmittedReasonDto"];
+            existed: boolean;
+            is_dir: boolean;
+            is_link: boolean;
+            kind: components["schemas"]["ChangeKindDto"];
+            moved_from?: string | null;
+            op: string;
+            path: string;
+            text?: null | components["schemas"]["UnifiedDiffDto"];
+            via_link_of?: string | null;
         };
         FrameMetadata: {
             /** Format: int64 */
@@ -2491,10 +2574,55 @@ export interface components {
              */
             route: Record<string, never>;
         };
+        /**
+         * @description Action a restore operation will apply to a path.
+         * @enum {string}
+         */
+        RestoreActionDto: "restore" | "delete" | "keep";
+        /** @description Response for `GET /v1/runs/{id}/changes/{cp}/preview`. */
+        RestorePreviewDto: {
+            checkpoint_id: string;
+            covered: string[];
+            entries: components["schemas"]["RestorePreviewEntryDto"][];
+            modified_since: string[];
+            not_covered: string[];
+            /** Format: uuid */
+            run_id: string;
+        };
+        /** @description Per-path dry-run entry for a checkpoint or whole-run restore. */
+        RestorePreviewEntryDto: {
+            action: components["schemas"]["RestoreActionDto"];
+            current_matches_after: boolean;
+            path: string;
+            via_link_of?: string | null;
+        };
+        /** @description Body for `POST /v1/runs/{id}/changes/{cp}/restore`. */
+        RestoreRequestDto: {
+            force?: boolean;
+        };
+        /** @description Response for `POST /v1/runs/{id}/changes/{cp}/restore`. */
+        RestoreResponseDto: {
+            checkpoint_id: string;
+            covered: string[];
+            not_covered: string[];
+            restored: string[];
+            /** Format: uuid */
+            run_id: string;
+            safety_checkpoint_ids: string[];
+            warnings: string[];
+        };
         /** @description `DELETE /v1/bots/{id}/grants`. */
         RevokeGrant: {
             /** @description The rule to remove. */
             target: components["schemas"]["GrantTargetDto"];
+        };
+        /** @description Response for `GET /v1/runs/{id}/changes`. */
+        RunChangesDto: {
+            changes: components["schemas"]["FileChangeDto"][];
+            covered: string[];
+            not_covered: string[];
+            /** Format: uuid */
+            run_id: string;
         };
         /** @description A run. */
         RunDto: {
@@ -2798,6 +2926,13 @@ export interface components {
         };
         /** @enum {string} */
         TargetKind: "browser" | "desktop";
+        /** @description Unified text diff payload for a single changed text file. */
+        UnifiedDiffDto: {
+            added_lines: number;
+            hunks: number;
+            removed_lines: number;
+            unified: string;
+        };
         /** @enum {string} */
         Units: "physical_px" | "css_px";
         /** @description `GET /v1/usage`. */
@@ -4757,6 +4892,113 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_run_changes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunChangesDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    preview_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+                /** @description Checkpoint id or 'all' */
+                cp: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestorePreviewDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    restore_changes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+                /** @description Checkpoint id or 'all' */
+                cp: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreRequestDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResponseDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description modified_since or run still active */
             409: {
                 headers: {
                     [name: string]: unknown;

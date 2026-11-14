@@ -40,7 +40,10 @@ import type {
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
-  WebSearchTestReport
+  WebSearchTestReport,
+  RunChanges,
+  RestorePreview,
+  RestoreResponse
 } from "./types";
 
 /** An error response of the daemon (`{"error": {"code", "message"}}`) or a network failure. */
@@ -186,6 +189,32 @@ export class ApiClient {
   /** Cache the route of a succeeded run (409 when the run is not eligible). */
   rememberRun(runId: string): Promise<RememberResponse> {
     return this.request("POST", `/runs/${runId}/remember`);
+  }
+
+  /** List collapsed file changes and capped inline diffs for a run. */
+  getRunChanges(runId: string): Promise<RunChanges> {
+    return this.request("GET", `/runs/${encodeURIComponent(runId)}/changes`);
+  }
+
+  /** Preview restoring one checkpoint or `"all"` across a run. */
+  previewRestore(runId: string, checkpointId: string): Promise<RestorePreview> {
+    return this.request(
+      "GET",
+      `/runs/${encodeURIComponent(runId)}/changes/${encodeURIComponent(checkpointId)}/preview`
+    );
+  }
+
+  /** Restore a checkpoint or `"all"` across a run (409 `modified_since` unless `force`). */
+  restoreRunChanges(
+    runId: string,
+    checkpointId: string,
+    force = false
+  ): Promise<RestoreResponse> {
+    return this.request(
+      "POST",
+      `/runs/${encodeURIComponent(runId)}/changes/${encodeURIComponent(checkpointId)}/restore`,
+      { body: { force } }
+    );
   }
 
   listApprovals(runId?: string): Promise<Approval[]> {

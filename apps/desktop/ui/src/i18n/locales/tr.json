@@ -338,7 +338,57 @@
     "notice": {
       "modelFallback": "Model {{from}} yerine {{to}} oldu: {{reason}}",
       "error": "{{message}}",
-      "workflowDrift": "{{workflow}} iş akışı sapma gösterdi: {{reason}}"
+      "workflowDrift": "{{workflow}} iş akışı sapma gösterdi: {{reason}}",
+      "checkpointRestored": "{{checkpointId}} denetim noktasından {{count}} dosya geri yüklendi."
+    },
+    "changes": {
+      "tab": "Değişiklikler",
+      "title": "Dosya değişiklikleri ({{count}})",
+      "undoAll": "Tümünü geri al",
+      "undoFile": "Geri al",
+      "loading": "Dosya değişiklikleri yükleniyor...",
+      "loadError": "Dosya değişiklikleri yüklenemedi: {{message}}",
+      "empty": "Bu çalıştırmada izlenen bir dosya değişikliği yok.",
+      "scopeDisclaimer": "Geri alma yalnızca dosya araçlarını kapsar (fs_write, fs_edit, fs_move, fs_delete). Kabuk, web, e-posta veya masaüstü araçlarının dış etkileri otomatik olarak geri alınamaz.",
+      "modifiedSinceBadge": "Çalıştırma sonrası değişti",
+      "movedFrom": "Kaynak: {{path}}",
+      "viaLink": "Bağlantı üzerinden: {{path}}",
+      "diffStats": "+{{added}} / -{{removed}}",
+      "bytes": "{{count}} B",
+      "showDiff": "Farkı göster",
+      "hideDiff": "Farkı gizle",
+      "kind": {
+        "created": "Oluşturuldu",
+        "modified": "Değiştirildi",
+        "deleted": "Silindi",
+        "moved": "Taşındı"
+      },
+      "omitted": {
+        "binary": "İkili dosya — satır içi fark gösterilmiyor ({{before}} -> {{after}}).",
+        "too_large": "Dosya satır içi fark sınırını aşıyor ({{before}} -> {{after}}).",
+        "run_budget_exceeded": "Çalıştırma fark bütçesi aşıldı — satır içi fark gösterilmiyor ({{before}} -> {{after}}).",
+        "directory": "Klasör — satır içi fark gösterilmiyor.",
+        "symlink": "Sembolik bağlantı — satır içi fark gösterilmiyor.",
+        "modified_since": "Dosya bu çalıştırma bittikten sonra diskte değişti."
+      },
+      "modal": {
+        "titleSingle": "{{path}} değişikliği geri alınsın mı?",
+        "titleAll": "Bu çalıştırmadaki tüm dosya değişiklikleri geri alınsın mı?",
+        "previewLoading": "Diskteki güncel dosyalar denetleniyor...",
+        "safetyNote": "Geri yükleme öncesinde mevcut dosyalarınızın güvenlik anlık görüntüsü oluşturulur.",
+        "modifiedWarning": "Bir veya daha fazla dosya bu çalıştırma bittikten sonra diskte değiştirildi. Geri alma bu yeni düzenlemelerin üzerine yazacaktır.",
+        "overwriteLabel": "Yeni değişikliklerimin üzerine yaz",
+        "confirm": "Geri yükle",
+        "restoring": "Geri yükleniyor...",
+        "cancel": "İptal",
+        "action": {
+          "restore": "Önceki sürümü geri yükle",
+          "delete": "Oluşturulan dosyayı sil",
+          "keep": "Bağlantıyı olduğu gibi bırak"
+        }
+      },
+      "restoreDone": "{{count}} dosya geri yüklendi. Güvenlik anlık görüntüsü kaydedildi.",
+      "restoreFailed": "Geri yüklenemedi: {{message}}"
     },
     "route": {
       "workflow": "İş akışı: {{name}} (0 LLM çağrısı)",

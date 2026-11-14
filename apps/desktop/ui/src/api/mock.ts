@@ -424,6 +424,25 @@ export class MockApiClient extends ApiClient {
           ? [{ call_id: "mock-sch", run_id: "mock-live", requested_at_ms: Date.now() - 3000, decision: null, tool_name: "schedule_create", summary: "Create a schedule" }]
           : []);
       case "GET /runs":
+        if (seg[2] === "changes") {
+          const runId = seg[1] ?? "";
+          if (seg[4] === "preview") {
+            return ok({
+              run_id: runId,
+              checkpoint_id: seg[3] ?? "all",
+              entries: [],
+              modified_since: [],
+              covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
+              not_covered: ["shell", "web", "email", "desktop"]
+            });
+          }
+          return ok({
+            run_id: runId,
+            changes: [],
+            covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
+            not_covered: ["shell", "web", "email", "desktop"]
+          });
+        }
         return ok([]);
       case "GET /usage":
         return ok(USAGE);
@@ -536,6 +555,19 @@ export class MockApiClient extends ApiClient {
       case "PUT /mcp":
       case "DELETE /mcp":
         return ok(this.mcp(method, seg, opts.body));
+      case "POST /runs":
+        if (seg[2] === "changes" && seg[4] === "restore") {
+          return ok({
+            run_id: seg[1] ?? "",
+            checkpoint_id: seg[3] ?? "all",
+            safety_checkpoint_ids: [],
+            restored: [],
+            warnings: [],
+            covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
+            not_covered: ["shell", "web", "email", "desktop"]
+          });
+        }
+        throw new ApiError(404, "not_found", `mock: ${method} ${path}`);
       case "GET /web":
       case "PUT /web":
       case "POST /web":
