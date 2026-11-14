@@ -371,14 +371,15 @@ unprivileged `praxi` user:
   or systemd. Managed `CdpDriver` instances default to a **120 s** idle
   shutdown (`BOT_BROWSER_IDLE_SECONDS=120`, or `[limits] browser_idle_seconds`
   in `/var/lib/praxi/host.toml`) and a concurrency cap of **1** computer run
-  (`BOT_MAX_COMPUTER_RUNS=1`, or `[limits] max_computer_runs`). Watch streams
-  do not launch or pin the browser; an active bot computer run or active
-  takeover pins it. Named browser profiles persist under
-  `/var/lib/praxi/browser-profiles` and are preserved across idle shutdown.
-  Any browser opened manually by a human from the Applications menu is outside
-  `CdpDriver` idle shutdown and still counts toward `praxi.slice` RAM.
-  *(Note: `local_desktop` Linux wiring and headed-on-Xvfb `CdpDriver` policy
-  flags are tracked in tasks 054/170/171/172.)*
+  configured by the installer (`BOT_MAX_COMPUTER_RUNS=1`, or
+  `[limits] max_computer_runs`; the daemon defaults to 1 run below 8 GiB RAM and
+  2 runs above). Watch streams do not launch or pin the browser; an active bot
+  computer run or active takeover pins it. Named browser profiles persist under
+  `/var/lib/praxi/browsers` and are preserved across idle shutdown. Any browser
+  opened manually by a human from the Applications menu is outside `CdpDriver`
+  idle shutdown and still counts toward `praxi.slice` RAM.
+  *(Note: `BrowserSettings::isolated` defaults `headless: true` unless overridden
+  for headed takeover/computer-use targets.)*
 
 ### Small-host resource check
 
@@ -404,15 +405,19 @@ sudo python3 scripts/linux/measure-budget.py \
 You can also inspect cgroup counters directly with
 `sudo systemctl show praxi.slice praxi praxi-desktop praxi-xvfb -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec`.
 Note that summed process `VmRSS` double-counts shared pages across processes;
-prefer `praxi.slice` `memory.current`/`memory.peak` and summed `PSS`.
+prefer `praxi.slice` `memory.current` window max (`praxi.slice/memory.peak` is a
+boot/cgroup-lifetime watermark) and complete summed `PSS`.
 
 ### Troubleshooting desktop, Xauthority, D-Bus, and namespaces
 
 - **Xauthority permission / auth errors (`Invalid MIT-MAGIC-COOKIE-1`):**
-  `/var/lib/praxi/.Xauthority` is regenerated on `praxi-xvfb.service` start
-  with mode `0600` owned by `praxi:praxi`. Restart `praxi-xvfb.service` (which
-  cascades to `praxi-desktop.service` via `PartOf=` and `praxi.service` via
-  `Requires=`): `sudo systemctl restart praxi-xvfb.service`.
+  `/var/lib/praxi/.Xauthority` is created with mode `0600` owned by
+  `praxi:praxi` and reused across `praxi-xvfb.service` restarts when already
+  valid. `praxi-desktop.service` and `praxi.service` bind to `praxi-xvfb.service`
+  (`BindsTo=`/`After=`, with `Upholds=` on `praxi-xvfb.service`) so an
+  unexpected Xvfb exit stops dependents and brings them back cleanly. To force a
+  fresh cookie, remove `/var/lib/praxi/.Xauthority` and run
+  `sudo systemctl restart praxi-xvfb.service`.
 - **X11 socket / `PrivateTmp` namespace mismatch (`Can't open display :99`):**
   `praxi-xvfb.service`, `praxi-desktop.service`, `praxi.service`, and
   `praxi-node.service` must share the Xvfb mount namespace via
@@ -421,8 +426,8 @@ prefer `praxi.slice` `memory.current`/`memory.peak` and summed `PSS`.
   probe joins the same namespace and slice.
 - **D-Bus / AT-SPI2 missing (`org.a11y.Bus` or `xfconf` errors):** Verify
   `DBUS_SESSION_BUS_ADDRESS=unix:path=/var/lib/praxi/.dbus-session` is present
-  in `/etc/praxi/praxi.env` and the socket `/var/lib/praxi/.dbus-session`
-  exists (`sudo systemctl status praxi-desktop.service`).
+  in `/etc/praxi/praxi.env` and the mode `0600` socket
+  `/var/lib/praxi/.dbus-session` exists (`sudo systemctl status praxi-desktop.service`).
 - **XTEST / RANDR missing:** Confirm `praxi-xvfb.service` runs with
   `+extension RANDR +extension XTEST` and `xdpyinfo -display :99` (inside the
   service namespace) lists both extensions.
