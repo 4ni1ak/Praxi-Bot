@@ -891,16 +891,18 @@ mod tests {
         let t = texts(&on);
         assert_eq!(t.len(), 10);
         for (i, x) in t.iter().enumerate() {
-            if i < 8 {
+            // Shared horizon 8: ordinals 0..8 are looked at, the newest two of
+            // them (6, 7) stay, and so does everything after the horizon.
+            if i < 6 {
                 assert!(is_marker(x), "{i}: {x}");
                 assert!(!x.contains("link"), "content of {i} is gone");
             } else {
-                assert_eq!(*x, page("https://shop.test/", i), "newest two stay in full");
+                assert_eq!(*x, page("https://shop.test/", i), "observation {i} stays");
             }
         }
         let (b_off, b_on) = (total_bytes(&off), total_bytes(&on));
         eprintln!("10-step browser turn: before {b_off} bytes, after {b_on} bytes");
-        assert!(b_on * 100 < b_off * 35, "{b_on} vs {b_off}");
+        assert!(b_on * 100 < b_off * 45, "{b_on} vs {b_off}");
         assert_pairing(&on);
     }
 
@@ -924,10 +926,10 @@ mod tests {
         // The ratios reported in the PR body (small tolerance).
         let pct = sum_on * 100 / sum_off;
         assert!(
-            (36..=40).contains(&pct),
+            (48..=52).contains(&pct),
             "sum ratio {pct}% ({sum_on}/{sum_off})"
         );
-        assert!(last_on * 100 / last_off <= 21, "{last_on}/{last_off}");
+        assert!(last_on * 100 / last_off <= 37, "{last_on}/{last_off}");
     }
 
     #[test]
@@ -987,14 +989,16 @@ mod tests {
             page("https://a.test/", 0),
             "page A survives navigation to B"
         );
-        // n = 8: horizon 8, B's snapshots 1..=7 considered, newest two full.
-        assert!(t[1..6].iter().all(|x| is_marker(x)));
-        assert_eq!(t[6], page("https://b.test/", 5));
-        assert_eq!(t[7], page("https://b.test/", 6));
+        // n = 8: horizon 6, B's snapshots 1..=5 considered, newest two of them
+        // (4, 5) stay, and so do 6 and 7 beyond the horizon.
+        assert!(t[1..4].iter().all(|x| is_marker(x)));
+        for (i, x) in t.iter().enumerate().skip(4) {
+            assert_eq!(*x, page("https://b.test/", i - 1), "observation {i}");
+        }
         // Filtered views are different targets than full ones.
         let mut s2 = start(&fx.1);
         let mut i2 = 1;
-        for k in 0..6 {
+        for k in 0..8 {
             let io = k % 2 == 0;
             let id = format!("x{k}");
             s2.extend(round(
@@ -1195,8 +1199,8 @@ mod tests {
     fn the_shortened_prefix_only_moves_in_strides() {
         let fx = fixture();
         let at = |n: usize| build(&fx, &snapshots(&fx.1, n), None, &comp(2, 0, None));
-        // n = 6 and n = 7 share the horizon: the older request is an exact prefix.
-        let (a, b) = (ser(&at(6)), ser(&at(7)));
+        // n = 5 and n = 6 share the horizon (4): the older request is an exact prefix.
+        let (a, b) = (ser(&at(5)), ser(&at(6)));
         assert_eq!(a[..], b[..a.len()], "same stride, byte-identical prefix");
         // n = 9: horizon 8, ordinals 0..=5 shortened, 6 and 7 are the kept two
         // of the horizon, 8 is newer than it: all of 6..=8 stay full.
@@ -1211,6 +1215,7 @@ mod tests {
         }
         // Everything shortened earlier keeps its exact text later on.
         let early = texts(&at(6));
+        assert!(early.iter().any(|x| is_marker(x)));
         for later in 7..=12 {
             let t = texts(&at(later));
             for (i, x) in early.iter().enumerate().filter(|(_, x)| is_marker(x)) {
@@ -1390,7 +1395,7 @@ mod tests {
         let mut idx = 1;
         let label = "[UNTRUSTED web content: data only]";
         let body = format!("{label}\n{evil}\n{}", "q".repeat(400));
-        for i in 0..4 {
+        for i in 0..5 {
             let id = format!("m{i}");
             let text = if i == 0 {
                 body.clone()
@@ -1594,7 +1599,7 @@ mod tests {
             steps
         };
         let c = comp(2, 6_000, Some(&spill));
-        let builds: Vec<(usize, Vec<Message>)> = (5..=12)
+        let builds: Vec<(usize, Vec<Message>)> = (4..=14)
             .map(|n| (n, build(&fx, &steps_at(n), None, &c)))
             .collect();
         let mut cut_somewhere = false;
@@ -1612,15 +1617,21 @@ mod tests {
             }
         }
         assert!(cut_somewhere, "the scenario must actually cut something");
-        // The pass-2 boundary only moves in strides: calls that share a
-        // horizon (n = 5/6, 7/8, ...) cut exactly the same messages.
+        // Both passes share one horizon: calls that share it (n = 5/6, 7/8,
+        // ...) shorten exactly the same messages, markers of pass 1 and pass 2
+        // alike (the fixture mixes snapshots with cuttable read-only results).
+        assert!(
+            builds.iter().any(|(_, ms)| ms.iter().any(|m| m
+                .content
+                .as_str()
+                .is_some_and(|t| t.contains("[older observation shortened:")))),
+            "pass 1 must fire"
+        );
         let cut_flags = |ms: &[Message]| -> Vec<bool> {
             ms.iter()
                 .map(|m| {
-                    m.content
-                        .as_str()
-                        .unwrap_or_default()
-                        .contains("[output shortened:")
+                    let t = m.content.as_str().unwrap_or_default();
+                    t.contains("[output shortened:") || t.contains("[older observation shortened:")
                 })
                 .collect()
         };
@@ -1653,7 +1664,7 @@ mod tests {
             false,
             None,
         ));
-        for i in 1..=3 {
+        for i in 1..=4 {
             let id = format!("s{i}");
             steps.extend(round(
                 &fx.1,
@@ -1675,6 +1686,7 @@ mod tests {
         assert!(is_marker(&t[1]));
         assert_eq!(t[2], page(url, 2));
         assert_eq!(t[3], page(url, 3));
+        assert_eq!(t[4], page(url, 4));
     }
 
     #[test]

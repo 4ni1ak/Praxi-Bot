@@ -2,11 +2,9 @@
 //! that is sent to the model (stored steps, audit log and taint records are
 //! never touched).
 //!
-//! Two passes. Each only looks at model steps below a stride-aligned horizon
-//! (pass 1: n rounded down to a multiple of the stride; pass 2: n minus one
-//! rounded down, so the newest step is never cut). The shortened prefix thus
-//! changes only when a stride completes, and a shortened text never changes
-//! again.
+//! Two passes that share ONE stride-aligned horizon (see `horizon`): only
+//! model steps below it may be shortened, so the shortened prefix changes
+//! only when a stride completes and a shortened text never changes again.
 //!
 //! 1. *Superseded observations*: only FULL observations of the SAME target
 //!    supersede each other (`browser_open` / `browser_snapshot` of one URL,
@@ -332,8 +330,16 @@ pub(crate) fn compact(out: &mut [Message], metas: &mut [ToolMeta], n_model: usiz
     }
 }
 
+/// The single horizon of both passes: model steps below it may be shortened.
+/// It is one step below `n_model` rounded down to a stride, so the newest
+/// step is never touched and the shortened prefix of BOTH passes changes only
+/// when a stride completes (one prompt-cache break per stride, not per call).
+fn horizon(n_model: usize) -> usize {
+    n_model.saturating_sub(1) / COMPACT_STRIDE * COMPACT_STRIDE
+}
+
 fn pass_superseded(out: &mut [Message], metas: &mut [ToolMeta], n_model: usize, keep: usize) {
-    let horizon = n_model / COMPACT_STRIDE * COMPACT_STRIDE;
+    let horizon = horizon(n_model);
     let mut groups: Vec<((ObservationScope, String), Vec<usize>)> = Vec::new();
     for (i, m) in metas.iter().enumerate() {
         let (Some(scope), Some(key)) = (m.scope, m.key.clone()) else {
@@ -365,9 +371,8 @@ fn pass_superseded(out: &mut [Message], metas: &mut [ToolMeta], n_model: usize, 
 }
 
 fn pass_budget(out: &mut [Message], metas: &mut [ToolMeta], n_model: usize, c: &Compaction) {
-    // Same stride horizon as pass 1, and never the newest model step: a
-    // function of the stride, so it moves only in strides.
-    let limit = n_model.saturating_sub(1) / COMPACT_STRIDE * COMPACT_STRIDE;
+    // The one horizon both passes share: it moves only in strides.
+    let limit = horizon(n_model);
     // The decision looks only at the messages below that horizon, measured
     // without pass-1 savings: the prefix only grows with the limit, so the
     // cut set is the same for every call of one stride and only ever grows.

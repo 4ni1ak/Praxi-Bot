@@ -5411,12 +5411,14 @@ async fn multi_step_browser_turn_compacts_what_the_model_sees_not_what_is_stored
         .iter()
         .filter(|m| m.contains("[older observation shortened:"))
         .count();
-    assert_eq!(shortened, 8, "{last:?}");
-    assert_eq!(last[8], page);
-    assert_eq!(last[9], page);
+    // Horizon 8: observations 0..8 are looked at, the newest two of them stay.
+    assert_eq!(shortened, 6, "{last:?}");
+    for item in &last[6..] {
+        assert_eq!(*item, page);
+    }
 
-    // Same stride (n = 8 and n = 9 both have horizon 8): byte-identical prefix.
-    let (a, b) = (fake.request(8), fake.request(9));
+    // Same stride (n = 7 and n = 8 both have horizon 6): byte-identical prefix.
+    let (a, b) = (fake.request(7), fake.request(8));
     for (x, y) in a.messages.iter().zip(&b.messages) {
         assert_eq!(
             serde_json::to_string(x).unwrap(),

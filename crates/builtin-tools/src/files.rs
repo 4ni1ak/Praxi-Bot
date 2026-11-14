@@ -5128,6 +5128,36 @@ mod tests {
         }
     }
 
+    /// Same as the test below, but with allowed roots and a run id: the
+    /// confined spill-exemption branch must not touch the filesystem before
+    /// the text and drive checks either.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn confined_live_remote_drive_letter_is_refused_without_network_io() {
+        let _serial = crate::test_serial::WINDOWS_SHELL_TESTS.lock().await;
+        let letter = win_fs::unused_drive_letter().expect("an unused drive letter");
+        let target = r"\Device\Mup\192.0.2.1\share";
+        win_fs::define_dos_device(letter, target, false).unwrap();
+        let _guard = RemoveDos(letter, target);
+        let (d, w, _t) = setup();
+        let root = w.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let t = tools_bounded(d.path(), std::slice::from_ref(&root), &[]);
+        let c = ctx();
+        let path = format!(r"{letter}:\file.txt");
+        let started = std::time::Instant::now();
+        let err = get(&t, "fs_read")
+            .call(&c, json!({"path": path}))
+            .await
+            .unwrap_err();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn live_remote_drive_letter_is_refused_without_network_io() {
