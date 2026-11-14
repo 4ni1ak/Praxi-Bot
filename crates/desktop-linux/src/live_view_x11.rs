@@ -1536,7 +1536,7 @@ mod linux_x11 {
     struct RealX11Input {
         conn: RustConnection,
         root: u32,
-        conn_lost: bool,
+        conn_lost: std::sync::atomic::AtomicBool,
     }
 
     impl RealX11Input {
@@ -1547,27 +1547,29 @@ mod linux_x11 {
             Ok(Self {
                 conn,
                 root,
-                conn_lost: false,
+                conn_lost: std::sync::atomic::AtomicBool::new(false),
             })
         }
 
         fn map_conn_err<T>(
-            &mut self,
+            &self,
             res: Result<T, x11rb::errors::ConnectionError>,
         ) -> Result<T, ViewError> {
             res.map_err(|_| {
-                self.conn_lost = true;
+                self.conn_lost
+                    .store(true, std::sync::atomic::Ordering::Release);
                 ViewError::Unavailable
             })
         }
 
         fn map_reply_err<T>(
-            &mut self,
+            &self,
             res: Result<T, x11rb::errors::ReplyError>,
         ) -> Result<T, ViewError> {
             res.map_err(|err| {
                 if matches!(err, x11rb::errors::ReplyError::ConnectionError(_)) {
-                    self.conn_lost = true;
+                    self.conn_lost
+                        .store(true, std::sync::atomic::Ordering::Release);
                 }
                 ViewError::Unavailable
             })
@@ -1587,10 +1589,8 @@ mod linux_x11 {
             let min_kc = setup.min_keycode;
             let max_kc = setup.max_keycode;
             let count = max_kc.saturating_sub(min_kc).saturating_add(1);
-            let cookie = self.conn.get_keyboard_mapping(min_kc, count);
-            let cookie = self.map_conn_err(cookie)?;
-            let rep = cookie.reply();
-            let rep = self.map_reply_err(rep)?;
+            let cookie = self.map_conn_err(self.conn.get_keyboard_mapping(min_kc, count))?;
+            let rep = self.map_reply_err(cookie.reply())?;
             Ok(X11KeymapSnapshot {
                 min_keycode: min_kc,
                 max_keycode: max_kc,
@@ -1600,28 +1600,31 @@ mod linux_x11 {
         }
 
         fn bind_scratch_keycode(&mut self, keycode: u8, keysym: u32) -> Result<(), ViewError> {
-            let cookie = self
-                .conn
-                .change_keyboard_mapping(1, keycode, 2, &[keysym, keysym]);
-            let _ = self.map_conn_err(cookie)?;
-            let sync_res = self.conn.sync();
-            self.map_reply_err(sync_res)
+            let _ = self.map_conn_err(self.conn.change_keyboard_mapping(
+                1,
+                keycode,
+                2,
+                &[keysym, keysym],
+            ))?;
+            self.map_reply_err(self.conn.sync())
         }
 
         fn unbind_scratch_keycode(&mut self, keycode: u8) -> Result<(), ViewError> {
-            let cookie = self.conn.change_keyboard_mapping(1, keycode, 2, &[0, 0]);
-            let _ = self.map_conn_err(cookie)?;
-            let sync_res = self.conn.sync();
-            self.map_reply_err(sync_res)
+            let _ = self.map_conn_err(self.conn.change_keyboard_mapping(1, keycode, 2, &[0, 0]))?;
+            self.map_reply_err(self.conn.sync())
         }
 
         fn motion(&mut self, x: i16, y: i16) -> Result<(), ViewError> {
-            let cookie =
-                self.conn
-                    .xtest_fake_input(MOTION_NOTIFY_EVENT, 0, CURRENT_TIME, NONE, x, y, 0);
-            let _ = self.map_conn_err(cookie)?;
-            let sync_res = self.conn.sync();
-            self.map_reply_err(sync_res)
+            let _ = self.map_conn_err(self.conn.xtest_fake_input(
+                MOTION_NOTIFY_EVENT,
+                0,
+                CURRENT_TIME,
+                NONE,
+                x,
+                y,
+                0,
+            ))?;
+            self.map_reply_err(self.conn.sync())
         }
 
         fn button(&mut self, button: u8, press: bool) -> Result<(), ViewError> {
@@ -1630,12 +1633,16 @@ mod linux_x11 {
             } else {
                 BUTTON_RELEASE_EVENT
             };
-            let cookie = self
-                .conn
-                .xtest_fake_input(ev, button, CURRENT_TIME, self.root, 0, 0, 0);
-            let _ = self.map_conn_err(cookie)?;
-            let sync_res = self.conn.sync();
-            self.map_reply_err(sync_res)
+            let _ = self.map_conn_err(self.conn.xtest_fake_input(
+                ev,
+                button,
+                CURRENT_TIME,
+                self.root,
+                0,
+                0,
+                0,
+            ))?;
+            self.map_reply_err(self.conn.sync())
         }
 
         fn key(&mut self, keycode: u8, press: bool) -> Result<(), ViewError> {
@@ -1644,19 +1651,21 @@ mod linux_x11 {
             } else {
                 KEY_RELEASE_EVENT
             };
-            let cookie = self
-                .conn
-                .xtest_fake_input(ev, keycode, CURRENT_TIME, self.root, 0, 0, 0);
-            let _ = self.map_conn_err(cookie)?;
-            let sync_res = self.conn.sync();
-            self.map_reply_err(sync_res)
+            let _ = self.map_conn_err(self.conn.xtest_fake_input(
+                ev,
+                keycode,
+                CURRENT_TIME,
+                self.root,
+                0,
+                0,
+                0,
+            ))?;
+            self.map_reply_err(self.conn.sync())
         }
 
         fn root_rect(&mut self) -> Result<Option<PixelRect>, ViewError> {
-            let cookie = self.conn.get_geometry(self.root);
-            let cookie = self.map_conn_err(cookie)?;
-            let geom = cookie.reply();
-            let geom = self.map_reply_err(geom)?;
+            let cookie = self.map_conn_err(self.conn.get_geometry(self.root))?;
+            let geom = self.map_reply_err(cookie.reply())?;
             Ok(Some(PixelRect {
                 x: 0,
                 y: 0,
@@ -1666,7 +1675,7 @@ mod linux_x11 {
         }
 
         fn is_connection_lost(&self) -> bool {
-            self.conn_lost
+            self.conn_lost.load(std::sync::atomic::Ordering::Acquire)
         }
     }
 
