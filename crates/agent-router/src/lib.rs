@@ -6,9 +6,12 @@
 //! Currently implemented: the K0-K3 [`ladder`] (rules, intent cache, BM25+embeddings,
 //! classifier), BM25 tool discovery ([`discovery::ToolIndex`]) and the
 //! model-facing tool surface ([`surface::ToolSurface`]) that switches between
-//! direct tools and `find_tool` / `get_tool_details` / `use_tool` meta-tools.
+//! direct tools and `find_tool` / `get_tool_details` / `use_tool` meta-tools,
+//! and the [`decider`]: a cheap decision model with typed, validated answers
+//! that saves main-model calls and tokens.
 
 mod bm25;
+pub mod decider;
 pub mod discovery;
 pub mod ladder;
 pub mod lexical;
