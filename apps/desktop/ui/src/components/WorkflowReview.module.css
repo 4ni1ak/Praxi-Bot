@@ -1,0 +1,11 @@
+.root { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: var(--space-3); padding: var(--space-6); overflow: auto; color: var(--color-text); }
+.parameter { display: flex; flex-direction: column; gap: var(--space-2); border: var(--size-border) solid var(--color-border); border-radius: var(--radius-sm); }
+.head, .actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.actions { justify-content: flex-end; }
+.root h2, .root h3, .root p { margin: var(--space-0); }
+.root label { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--font-size-sm); }
+.root input, .root textarea { padding: var(--space-2); border: var(--size-border) solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-elevated); color: var(--color-text); font: inherit; }
+.root input[type="checkbox"] { margin-right: var(--space-2); }
+.root input:focus-visible, .root textarea:focus-visible { outline: var(--size-border) solid var(--color-focus); outline-offset: var(--space-1); }
+.steps { margin: var(--space-0); padding-left: var(--space-6); }
+.steps pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--font-size-sm); padding: var(--space-3); border: var(--size-border) solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-elevated); }

@@ -30,6 +30,11 @@ import type {
   PolicyInput,
   ProvidersDto,
   RememberResponse,
+  WorkflowProposal,
+  WorkflowDefinition,
+  SaveWorkflow,
+  RunWorkflow,
+  WorkflowRun,
   Run,
   Schedule,
   ScheduleInput,
@@ -175,6 +180,24 @@ export class ApiClient {
 
   listRuns(): Promise<Run[]> {
     return this.request("GET", "/runs");
+  }
+  proposeWorkflow(runId: string): Promise<WorkflowProposal> {
+    return this.request("POST", `/runs/${encodeURIComponent(runId)}/workflow-proposal`);
+  }
+  listWorkflows(): Promise<WorkflowDefinition[]> {
+    return this.request("GET", "/workflows");
+  }
+  getWorkflow(name: string): Promise<WorkflowDefinition> {
+    return this.request("GET", `/workflows/${encodeURIComponent(name)}`);
+  }
+  saveWorkflow(input: SaveWorkflow): Promise<WorkflowDefinition> {
+    return this.request("POST", "/workflows", { body: input });
+  }
+  deleteWorkflow(name: string): Promise<void> {
+    return this.request("DELETE", `/workflows/${encodeURIComponent(name)}`);
+  }
+  runWorkflow(name: string, input: RunWorkflow): Promise<WorkflowRun> {
+    return this.request("POST", `/workflows/${encodeURIComponent(name)}/run`, { body: input });
   }
   cancelRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/cancel`);

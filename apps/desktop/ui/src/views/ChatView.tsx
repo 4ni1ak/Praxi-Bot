@@ -33,6 +33,7 @@ import {
 import { Markdown } from "../components/Markdown";
 import { ModelPicker } from "../components/ModelPicker";
 import { ThinkingChain } from "../components/ThinkingChain";
+import { WorkflowReview } from "../components/WorkflowReview";
 import { useToast } from "../components/Toast";
 import {
   botView,
@@ -99,7 +100,8 @@ type Entry =
   | { kind: "chain"; key: string; ts: number; chain: Chain; runId: string }
   | { kind: "runError"; key: string; ts: number; message: string }
   | { kind: "route"; key: string; ts: number; run: RunState }
-  | { kind: "remember"; key: string; ts: number; run: RunState };
+  | { kind: "remember"; key: string; ts: number; run: RunState }
+  | { kind: "workflow"; key: string; ts: number; run: RunState };
 
 /** `idle` = offer the button; `saved` = done; `hidden` = the daemon said no (409). */
 type RememberState = "idle" | "busy" | "saved" | "hidden";
@@ -351,12 +353,15 @@ export function ChatView({
           run
         });
       }
+      if (run === lastFinished && serverRuns.some(s => s.id === run.id && s.can_remember === true)) {
+        out.push({ kind: "workflow", key: `${run.id}-workflow`, ts: run.finishedMs ?? run.startedMs, run });
+      }
     }
     // Array.prototype.sort is stable: equal timestamps keep insertion order.
     const sorted = out.sort((a, b) => a.ts - b.ts);
     return sorted.flatMap((entry, index): Entry[] => index === 0 || new Date(entry.ts).toDateString() !== new Date(sorted[index - 1].ts).toDateString()
       ? [{ kind: "day", key: `day-${entry.key}`, ts: entry.ts }, entry] : [entry]);
-  }, [messages, chatRuns, showAgentRoute, remember]);
+  }, [messages, chatRuns, showAgentRoute, remember, serverRuns]);
 
   const lastItem = entries[entries.length - 1];
   const streaming =
@@ -814,6 +819,8 @@ export function ChatView({
                   </div>
                 );
               }
+              case "workflow":
+                return client ? <div key={e.key} className={styles.rememberRow}><WorkflowReview client={client} runId={e.run.id} canRemember={true} /></div> : null;
               case "remember": {
                 const st = remember[e.run.id] ?? "idle";
                 return (

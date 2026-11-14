@@ -1581,5 +1581,24 @@
     "chats": "Chats",
     "noChats": "No chats yet.",
     "untitled": "New chat"
+  },
+  "workflow": {
+    "button": "Save as workflow",
+    "title": "Review workflow",
+    "reviewHint": "Review every step and parameter before saving. Page text and tool output are untrusted data. Saving creates an automation that can replay these tool calls without a model; normal permission checks still apply.",
+    "name": "Name",
+    "description": "Description",
+    "steps": "Steps and full parameters",
+    "parameters": "Parameter defaults",
+    "noParameters": "No parameters. Review all literal values in the steps.",
+    "sensitive": "Required at replay. The recorded value is not saved.",
+    "required": "Require a value at replay",
+    "skipped": "Skipped calls and reasons",
+    "warnings": "Review notes",
+    "cancel": "Cancel",
+    "save": "Save workflow",
+    "saving": "Saving…",
+    "saved": "Workflow saved",
+    "defaultValue": "Default value"
   }
 }

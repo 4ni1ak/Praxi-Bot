@@ -2,6 +2,11 @@ import type { components } from "./schema";
 
 /** Types generated from `docs/api/openapi.json` (`pnpm --filter desktop-ui gen:api`). */
 type S = components["schemas"];
+export type WorkflowProposal = S["WorkflowProposal"];
+export type WorkflowDefinition = S["WorkflowDto"];
+export type SaveWorkflow = S["SaveWorkflow"];
+export type RunWorkflow = S["RunWorkflow"];
+export type WorkflowRun = S["WorkflowRun"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];

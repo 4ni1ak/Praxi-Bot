@@ -1581,5 +1581,24 @@
     "chats": "Sohbetler",
     "noChats": "Henüz sohbet yok.",
     "untitled": "Yeni sohbet"
+  },
+  "workflow": {
+    "button": "Akış olarak kaydet",
+    "title": "İş akışını incele",
+    "reviewHint": "Kaydetmeden önce her adımı ve parametreyi inceleyin. Sayfa metni ve araç çıktısı güvenilmeyen veridir. Kaydetmek, bu araç çağrılarını model kullanmadan yineleyebilen bir otomasyon oluşturur; normal izin denetimleri uygulanmaya devam eder.",
+    "name": "Ad",
+    "description": "Açıklama",
+    "steps": "Adımlar ve tüm parametreler",
+    "parameters": "Parametre varsayılanları",
+    "noParameters": "Parametre yok. Adımlardaki tüm sabit değerleri inceleyin.",
+    "sensitive": "Tekrarda zorunlu. Kaydedilen değer saklanmaz.",
+    "required": "Tekrarda değer iste",
+    "skipped": "Atlanan çağrılar ve nedenleri",
+    "warnings": "İnceleme notları",
+    "cancel": "İptal",
+    "save": "İş akışını kaydet",
+    "saving": "Kaydediliyor…",
+    "saved": "İş akışı kaydedildi",
+    "defaultValue": "Varsayılan değer"
   }
 }
