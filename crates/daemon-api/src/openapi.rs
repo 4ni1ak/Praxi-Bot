@@ -42,6 +42,8 @@ impl Modify for Security {
             except GET /v1/health need `Authorization: Bearer <token>`."
     ),
     paths(
+        crate::workflows::propose, crate::workflows::list, crate::workflows::show,
+        crate::workflows::save, crate::workflows::delete, crate::workflows::run,
         host::status, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,

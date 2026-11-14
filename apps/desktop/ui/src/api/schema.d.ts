@@ -914,6 +914,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{id}/workflow-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["propose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schedules": {
         parameters: {
             query?: never;
@@ -1212,6 +1228,54 @@ export interface paths {
          *     `202` once accepted (the run goes on in the background).
          */
         post: operations["webhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list"];
+        put?: never;
+        post: operations["save"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["show"];
+        put?: never;
+        post?: never;
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["run"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2545,6 +2609,26 @@ export interface components {
              */
             updated_at_ms: number;
         };
+        RunWorkflow: {
+            /** Format: uuid */
+            chat_id: string;
+            /**
+             * @description Values containing double quotes are rejected: the existing K0 command
+             *     parser cannot preserve them. Other whitespace and backslashes are data.
+             */
+            params?: {
+                [key: string]: string;
+            };
+        };
+        SaveWorkflow: {
+            description: string;
+            name: string;
+            params: components["schemas"]["WorkflowParam"][];
+            /** Format: uuid */
+            run_id: string;
+            /** @description The complete reviewed steps, which must equal the rebuilt proposal. */
+            steps: unknown[];
+        };
         /**
          * @description What happened to a schedule (see [`ScheduleChanged`]).
          * @enum {string}
@@ -2720,6 +2804,10 @@ export interface components {
         SetSecret: {
             /** @description The secret value.  Write-only: no route returns it. */
             value: string;
+        };
+        SkippedCall: {
+            reason: string;
+            tool: string;
         };
         SourceRect: {
             /** Format: int32 */
@@ -2935,6 +3023,32 @@ export interface components {
             query: string;
             /** @description Number of search results returned. */
             result_count: number;
+        };
+        /** @description Complete step data is intentional: commands and parameters must be reviewable. */
+        WorkflowDto: {
+            description: string;
+            name: string;
+            params: components["schemas"]["WorkflowParam"][];
+            steps: unknown[];
+        };
+        WorkflowParam: {
+            default?: string | null;
+            description: string;
+            name: string;
+            type: string;
+        };
+        WorkflowProposal: {
+            /** @description These defaults must remain absent, including after user edits. */
+            required_params: string[];
+            /** Format: uuid */
+            run_id: string;
+            skipped: components["schemas"]["SkippedCall"][];
+            warnings: string[];
+            workflow: components["schemas"]["WorkflowDto"];
+        };
+        WorkflowRun: {
+            /** Format: uuid */
+            run_id: string;
         };
     };
     responses: never;
@@ -4844,6 +4958,43 @@ export interface operations {
             };
         };
     };
+    propose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowProposal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_schedules: {
         parameters: {
             query?: never;
@@ -5550,6 +5701,169 @@ export interface operations {
             };
             /** @description the scheduler is not running */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"][];
+                };
+            };
+        };
+    };
+    save: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveWorkflow"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    show: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunWorkflow"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRun"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

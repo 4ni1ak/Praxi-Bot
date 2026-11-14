@@ -34,6 +34,7 @@ mod schedule_tools;
 mod sse;
 pub mod web;
 mod web_routes;
+mod workflows;
 
 #[cfg(test)]
 mod schedule_tools_tests;
@@ -727,6 +728,7 @@ fn api_routes() -> Router<AppState> {
     use routes as r;
     use web_routes as w;
     Router::new()
+        .merge(workflows::router())
         .route("/v1/host", get(host::status))
         .route("/v1/host/invite", post(host::invite))
         .route(

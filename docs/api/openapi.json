@@ -2759,6 +2759,62 @@
         ]
       }
     },
+    "/v1/runs/{id}/workflow-proposal": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "propose",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowProposal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/schedules": {
       "get": {
         "tags": [
@@ -3791,6 +3847,243 @@
             }
           }
         }
+      }
+    },
+    "/v1/workflows": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "save",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveWorkflow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/workflows/{name}": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "show",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/workflows/{name}/run": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "run",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunWorkflow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     }
   },
@@ -7254,6 +7547,63 @@
           }
         }
       },
+      "RunWorkflow": {
+        "type": "object",
+        "required": [
+          "chat_id"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "params": {
+            "type": "object",
+            "description": "Values containing double quotes are rejected: the existing K0 command\nparser cannot preserve them. Other whitespace and backslashes are data.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveWorkflow": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "name",
+          "description",
+          "params",
+          "steps"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowParam"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "steps": {
+            "type": "array",
+            "items": {},
+            "description": "The complete reviewed steps, which must equal the rebuilt proposal."
+          }
+        },
+        "additionalProperties": false
+      },
       "ScheduleChangeKind": {
         "type": "string",
         "description": "What happened to a schedule (see [`ScheduleChanged`]).",
@@ -7612,6 +7962,21 @@
           "value": {
             "type": "string",
             "description": "The secret value.  Write-only: no route returns it."
+          }
+        }
+      },
+      "SkippedCall": {
+        "type": "object",
+        "required": [
+          "tool",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
           }
         }
       },
@@ -8144,6 +8509,109 @@
             "type": "integer",
             "description": "Number of search results returned.",
             "minimum": 0
+          }
+        }
+      },
+      "WorkflowDto": {
+        "type": "object",
+        "description": "Complete step data is intentional: commands and parameters must be reviewable.",
+        "required": [
+          "name",
+          "description",
+          "params",
+          "steps"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowParam"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {}
+          }
+        }
+      },
+      "WorkflowParam": {
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "description"
+        ],
+        "properties": {
+          "default": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkflowProposal": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "workflow",
+          "skipped",
+          "warnings",
+          "required_params"
+        ],
+        "properties": {
+          "required_params": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "These defaults must remain absent, including after user edits."
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedCall"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/WorkflowDto"
+          }
+        }
+      },
+      "WorkflowRun": {
+        "type": "object",
+        "required": [
+          "run_id"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       }
