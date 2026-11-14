@@ -47,8 +47,11 @@ import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
 import { BOT_COLORS, botView } from "./lib/botProfile";
 import { getAutostart, setAutostart } from "./lib/providers";
+import { PausedControlBanner } from "./components/PausedControlBanner";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
+import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
+import { LiveViewer } from "./views/LiveViewer";
 import { appearanceFromQuery } from "./lib/appearance";
 import { createDebounced } from "./lib/debounce";
 import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
@@ -118,6 +121,7 @@ function AppShell() {
     refreshBots,
     retry
   } = useDaemon();
+  const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   const [controlState, setControlState] = useState<ControlSnapshot>(
@@ -134,7 +138,13 @@ function AppShell() {
   const { servers: appServers } = useMcp(true);
   const [helpOpen, setHelpOpen] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(() => {
+    if (!isMockMode() || typeof window === "undefined") {
+      return false;
+    }
+    const q = new URLSearchParams(window.location.search);
+    return q.get("lv") === "panel" || q.get("panel") === "1";
+  });
   const viewportWidth = useViewportWidth();
   const chipRef = useRef<HTMLButtonElement | null>(null);
   // Remember the column widths (after a pause, so a drag writes once).
@@ -281,6 +291,11 @@ function AppShell() {
       const activeHotkey = controlState.stopHotkey || settings.stopHotkey;
       if (matchesHotkeyEvent(event, activeHotkey)) {
         event.preventDefault();
+        // Plain Stop stays independent: the daemon-wide override latch is only
+        // used while a screen takeover is held (never on key repeat).
+        if (!event.repeat) {
+          void overrideStop({ onlyIfControlled: true });
+        }
         void stopBotRun().then(setControlState);
       }
     };
@@ -289,7 +304,7 @@ function AppShell() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey]);
+  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, overrideStop]);
 
   // Native title bar on / off (Tauri window decorations; no-op in a browser).
   useEffect(() => {
@@ -419,7 +434,16 @@ function AppShell() {
   const search = searchPlan(layout.rail, railWidth, botSearch !== null);
   const searchButtonRef = useRef<HTMLButtonElement | null>(null);
   const closeSearch = useCallback(() => setBotSearch(null), []);
+  // A dialog opened by a shortcut sits above the Search popover: close the popover instead of leaving it beneath.
+  const dialogOpen = settingsOpen !== null || appsOpen || newBotOpen || helpOpen;
+  useEffect(() => {
+    if (dialogOpen) setBotSearch(null);
+  }, [dialogOpen]);
   const mini = isMiniRail(railWidth);
+
+  useEffect(() => {
+    setThumbnailDemand(panelVisible, selectedBot?.id ?? null);
+  }, [panelVisible, selectedBot?.id, setThumbnailDemand]);
   const togglePanel = () => setPanelOpen((open) => !open);
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
@@ -461,7 +485,10 @@ function AppShell() {
           <Button
             variant="danger"
             size="sm"
-            onClick={() => void stopBotRun().then(setControlState)}
+            onClick={() => {
+              void overrideStop({ onlyIfControlled: true });
+              void stopBotRun().then(setControlState);
+            }}
           >
             {t("widget.stop")}
           </Button>
@@ -491,6 +518,13 @@ function AppShell() {
             }}
           >
             {isHumanDriving ? t("widget.giveBack") : t("widget.takeTheWheel")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openViewer()}
+          >
+            {t("liveView.expand")}
           </Button>
         </div>
       </div>
@@ -636,6 +670,7 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
+        <PausedControlBanner />
         {route.kind === "onboarding" ? (
           <OnboardingView
             settings={settings}
@@ -833,6 +868,7 @@ function AppShell() {
           handleOpenOnboarding(false);
         }}
       />
+      <LiveViewer />
     </SidebarLayout>
   );
 }
@@ -841,8 +877,10 @@ export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
-        <ControlBridgeHost />
-        <AppShell />
+        <LiveViewProvider>
+          <ControlBridgeHost />
+          <AppShell />
+        </LiveViewProvider>
       </DaemonProvider>
     </ToastProvider>
   );
