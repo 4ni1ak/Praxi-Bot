@@ -658,6 +658,12 @@ fn validate_path(sh: &Shared, raw: &str, follow: Follow) -> Result<PathBuf, Tool
     Ok(opened)
 }
 
+/// Pure, text-only `path` inside `dir` test: no filesystem access at all.
+fn lexical_under(path: &Path, dir: &Path) -> bool {
+    let (p, d) = (norm_parts(path), norm_parts(dir));
+    !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+}
+
 /// True when `path` is inside `dir` (component-wise, widened like
 /// `in_checkpoint_store`).
 fn under_dir(path: &Path, dir: &Path) -> bool {
@@ -674,17 +680,21 @@ fn under_dir(path: &Path, dir: &Path) -> bool {
 /// Links must stay inside that directory and the credential/protected-file
 /// rules still apply.
 fn validate_read_path(sh: &Shared, raw: &str, run: &str) -> Result<PathBuf, ToolError> {
+    // Every cheap refusal of `validate_path` (drive confinement, roots,
+    // credentials) must run before any filesystem metadata call, so the
+    // exemption is decided on the text of the path alone first.
+    if sh.allowed_roots.is_empty() || run.is_empty() || run.contains(['/', '\\', '.']) {
+        return validate_path(sh, raw, Follow::Content);
+    }
     let run_dir = sh.spill_dir.join(run);
-    let in_run = !run.is_empty()
-        && !run.contains(['/', '\\', '.'])
-        && lexical_absolute(raw).is_ok_and(|l| under_dir(&l, &run_dir));
-    if sh.allowed_roots.is_empty() || !in_run {
+    let syntactically_in_run = lexical_absolute(raw).is_ok_and(|l| lexical_under(&l, &run_dir));
+    if !syntactically_in_run {
         return validate_path(sh, raw, Follow::Content);
     }
     if sh.roots_unresolved {
         return Err(denied(ROOT_UNRESOLVED_MSG));
     }
-    let lexical = lexical_absolute(raw)?;
+    let lexical = confine_drive(&lexical_absolute(raw)?)?;
     let ctx = ResolveCtx {
         follow: Follow::Content,
         roots: &[],
@@ -4156,6 +4166,22 @@ mod tests {
             matches!(err, ToolError::PermissionDenied(_)),
             "a grant is exact: {err}"
         );
+    }
+
+    #[test]
+    fn the_spill_exemption_is_decided_without_touching_the_filesystem() {
+        // Neither path exists anywhere: a pure text test must still answer.
+        let dir = Path::new("Z:/no/such/data/spill/run-1");
+        assert!(lexical_under(
+            Path::new("Z:/no/such/data/spill/run-1/c.txt"),
+            dir
+        ));
+        assert!(!lexical_under(
+            Path::new("Z:/no/such/data/spill/run-2/c.txt"),
+            dir
+        ));
+        assert!(!lexical_under(Path::new("Q:/other/file.txt"), dir));
+        assert!(!lexical_under(Path::new("Z:/no/such/data/spill"), dir));
     }
 
     #[tokio::test]

@@ -1612,6 +1612,28 @@ mod tests {
             }
         }
         assert!(cut_somewhere, "the scenario must actually cut something");
+        // The pass-2 boundary only moves in strides: calls that share a
+        // horizon (n = 5/6, 7/8, ...) cut exactly the same messages.
+        let cut_flags = |ms: &[Message]| -> Vec<bool> {
+            ms.iter()
+                .map(|m| {
+                    m.content
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("[output shortened:")
+                })
+                .collect()
+        };
+        for pair in builds.windows(2) {
+            let ((n_a, early), (n_b, later)) = (&pair[0], &pair[1]);
+            if (n_a - 1) / COMPACT_STRIDE == (n_b - 1) / COMPACT_STRIDE {
+                assert_eq!(
+                    cut_flags(early)[..],
+                    cut_flags(later)[..early.len()],
+                    "n={n_a} vs n={n_b}"
+                );
+            }
+        }
     }
 
     #[test]

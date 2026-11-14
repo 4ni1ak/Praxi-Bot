@@ -662,9 +662,9 @@ impl TurnExecutor {
             })
         })
         .filter(|_| {
-            specs
-                .iter()
-                .any(|s| s.name == "skill_read" || s.name == agent_router::USE_TOOL)
+            specs.iter().any(|s| s.name == "skill_read")
+                || (ctx.profile.tool_visible("skill_read")
+                    && specs.iter().any(|s| s.name == agent_router::USE_TOOL))
         });
         ((!block.is_empty()).then_some(block), note)
     }

@@ -2,8 +2,11 @@
 //! that is sent to the model (stored steps, audit log and taint records are
 //! never touched).
 //!
-//! Two passes, both only looking at model steps below the stride-aligned
-//! horizon, so a shortened text never changes again once it is there:
+//! Two passes. Each only looks at model steps below a stride-aligned horizon
+//! (pass 1: n rounded down to a multiple of the stride; pass 2: n minus one
+//! rounded down, so the newest step is never cut). The shortened prefix thus
+//! changes only when a stride completes, and a shortened text never changes
+//! again.
 //!
 //! 1. *Superseded observations*: only FULL observations of the SAME target
 //!    supersede each other (`browser_open` / `browser_snapshot` of one URL,
@@ -362,12 +365,24 @@ fn pass_superseded(out: &mut [Message], metas: &mut [ToolMeta], n_model: usize, 
 }
 
 fn pass_budget(out: &mut [Message], metas: &mut [ToolMeta], n_model: usize, c: &Compaction) {
-    // Same horizon rule as pass 1, and never the newest model step.
-    let limit = (n_model / COMPACT_STRIDE * COMPACT_STRIDE).min(n_model.saturating_sub(1));
-    // Size without pass-1 savings: grows with the turn, so the cut set only
-    // ever grows and a result that was cut stays cut.
-    let mut raw: usize =
-        out.iter().map(message_bytes).sum::<usize>() + metas.iter().map(|m| m.saved).sum::<usize>();
+    // Same stride horizon as pass 1, and never the newest model step: a
+    // function of the stride, so it moves only in strides.
+    let limit = n_model.saturating_sub(1) / COMPACT_STRIDE * COMPACT_STRIDE;
+    // The decision looks only at the messages below that horizon, measured
+    // without pass-1 savings: the prefix only grows with the limit, so the
+    // cut set is the same for every call of one stride and only ever grows.
+    let prefix = metas
+        .iter()
+        .filter(|m| m.ordinal < limit)
+        .map(|m| m.msg_idx + 1)
+        .max()
+        .unwrap_or(0);
+    let mut raw: usize = out[..prefix].iter().map(message_bytes).sum::<usize>()
+        + metas
+            .iter()
+            .filter(|m| m.msg_idx < prefix)
+            .map(|m| m.saved)
+            .sum::<usize>();
     let mut plan: Vec<(usize, String, Option<PathBuf>)> = Vec::new();
     for (i, m) in metas.iter().enumerate() {
         if raw <= c.soft_bytes {
@@ -462,8 +477,15 @@ pub(crate) fn sweep_spill(data_dir: &std::path::Path, max_age: std::time::Durati
             .metadata()
             .and_then(|m| m.modified())
             .is_ok_and(|t| now.duration_since(t).unwrap_or_default() >= max_age);
-        if old && e.path().is_dir() {
+        if !old {
+            continue;
+        }
+        // Run directories, and the loose files self-spilling tools leave
+        // directly under `spill/`.
+        if e.path().is_dir() {
             let _ = std::fs::remove_dir_all(e.path());
+        } else {
+            let _ = std::fs::remove_file(e.path());
         }
     }
 }
