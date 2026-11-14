@@ -568,3 +568,36 @@ async fn bot_create_always_asks_and_is_never_a_standing_grant() {
     .await;
     assert_eq!(grants.json().as_array().map_or(0, Vec::len), 0);
 }
+
+/// Card item 5: can a bot with file or shell tools read the daemon token and
+/// call the API directly, bypassing the approvals above? The file tools refuse
+/// the real token file; `shell_run` is stopped only by the never-list, which
+/// is damping (a runtime-assembled path is not caught): see the PR notes.
+#[tokio::test]
+async fn the_daemon_token_file_is_protected_from_the_file_tools_and_named_in_the_never_list() {
+    use tool_registry::{Tool as _, ToolContext, ToolError};
+
+    let dir = tempfile::tempdir().unwrap();
+    let info = crate::auth::load_or_create_token(dir.path()).unwrap();
+    let path = crate::auth::token_path(dir.path());
+    assert!(path.exists());
+    let ctx = ToolContext::default();
+    for tool in builtin_tools::files::tools(dir.path()) {
+        if tool.spec().name != "fs_read" {
+            continue;
+        }
+        let err = tool
+            .call(&ctx, json!({"path": path}))
+            .await
+            .expect_err("a bot must not read the daemon token");
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+        assert!(!err.to_string().contains(&info.token));
+    }
+    let never = permission_engine::NeverList::default_list();
+    for cmd in [
+        format!("cat {}", path.display()),
+        format!("type {}", path.display()),
+    ] {
+        assert!(never.matches(&cmd), "{cmd}");
+    }
+}

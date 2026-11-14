@@ -1,4 +1,5 @@
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Bot } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { ApiClient } from "../api/client";
@@ -331,6 +332,19 @@ export function BotPermissionsFields({
           </label>
         ))}
       </div>
+      <label className={styles.appItem} data-testid="bot-manage-bots">
+        <input
+          type="checkbox"
+          className={styles.appCheck}
+          checked={draft.canManageBots}
+          onChange={(e) => patch({ canManageBots: e.target.checked })}
+        />
+        <Bot size={18} aria-hidden="true" />
+        <span className={styles.presetText}>
+          <span className={styles.appName}>{t("botForm.manageBots")}</span>
+          <span className={formStyles.hint}>{t("botForm.manageBotsHint")}</span>
+        </span>
+      </label>
       {draft.preset === "custom" ? (
         <div className={styles.categories}>
           {PERMISSION_CATEGORIES.map((c: PermissionCategoryName) => (

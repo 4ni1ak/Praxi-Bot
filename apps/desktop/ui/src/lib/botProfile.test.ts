@@ -384,3 +384,28 @@ test("onboarding Step 4 preview shape matches configFromDraft stored shape", () 
     "Onboarding Step 4 BotAvatar preview must pass explicit shape matching configFromDraft"
   );
 });
+
+test("the Can create bots switch round-trips through tools.manage_bots and keeps tool filters", () => {
+  const bot = policyBot();
+  (bot.config as Record<string, unknown>).tools = { allow: ["fs_read"], exclude: ["shell_run"] };
+  const d = draftFromBot(bot);
+  assert.equal(d.canManageBots, false);
+  d.canManageBots = true;
+  const on = configFromDraft(d, bot);
+  assert.deepEqual(on.tools, { allow: ["fs_read"], exclude: ["shell_run"], manage_bots: true });
+  const again = draftFromBot({ ...bot, config: on });
+  assert.equal(again.canManageBots, true);
+  again.canManageBots = false;
+  assert.deepEqual(configFromDraft(again, { ...bot, config: on }).tools, {
+    allow: ["fs_read"],
+    exclude: ["shell_run"]
+  });
+});
+
+test("a bot that never had tools gets no tools section until the switch is on", () => {
+  const bot = policyBot();
+  const d = draftFromBot(bot);
+  assert.equal("tools" in configFromDraft(d, bot), false);
+  d.canManageBots = true;
+  assert.deepEqual(configFromDraft(d, bot).tools, { manage_bots: true });
+});

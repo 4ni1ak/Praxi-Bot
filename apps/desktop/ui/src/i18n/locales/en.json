@@ -318,6 +318,26 @@
           "read_only": "read-only"
         },
         "note": "This approval covers only this change; it is asked every time."
+      },
+      "bot": {
+        "title": {
+          "create": "Create a new bot?",
+          "update": "Change this bot?",
+          "delete": "Delete this bot?"
+        },
+        "persona": "Persona ({{count}} characters, shown in full):",
+        "model": "Model",
+        "planner": "Planner",
+        "classifier": "Classifier",
+        "permissions": "Permissions",
+        "tools": "Tools",
+        "allToolsOfCaller": "all tools this bot can use",
+        "except": "except {{list}}",
+        "changes": "What changes",
+        "empty": "(not set)",
+        "profile": "Complete profile",
+        "ceiling": "A bot can never give another bot more than it has itself. This approval covers only this change; it is asked every time.",
+        "deleteNote": "This bot and its settings are removed. It cannot be deleted while it has chats."
       }
     },
     "question": {
@@ -641,6 +661,8 @@
     "executorRequired": "The executor model is required.",
     "fallbackPlaceholder": "provider/model, provider/model",
     "permissions": "Permissions",
+    "manageBots": "Can create bots",
+    "manageBotsHint": "Lets this bot create and manage other bots. It can never give them more than it has itself, and you approve every change in full.",
     "preset": {
       "read-only": {
         "name": "Read-only",

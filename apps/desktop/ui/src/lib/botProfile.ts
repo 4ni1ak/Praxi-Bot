@@ -47,6 +47,8 @@ export interface BotDraft {
   categories: Record<PermissionCategoryName, PermissionLevel>;
   computer: "local";
   browser: "local";
+  /** "Can create bots": exposes the `bot_*` tools (each change still asks you). */
+  canManageBots: boolean;
 }
 
 export const BOT_COLORS = CHARACTER_COLORS;
@@ -182,7 +184,8 @@ export function draftFromBot(bot?: Bot): BotDraft {
     preset,
     categories,
     computer: "local",
-    browser: "local"
+    browser: "local",
+    canManageBots: obj(cfg.tools).manage_bots === true
   };
 }
 
@@ -263,11 +266,22 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
     }
   }
 
+  // `tools.manage_bots` is the only key the form owns inside `tools`; the allow /
+  // exclude filters stay as they were.
+  const tools: Json = { ...obj(old.tools) };
+  if (draft.canManageBots) {
+    tools.manage_bots = true;
+  } else {
+    delete tools.manage_bots;
+  }
+  const hasTools = Object.keys(tools).length > 0 || old.tools !== undefined;
+
   return {
     ...old,
     bot: botSection,
     models,
     ...(permissions === undefined ? {} : { permissions }),
+    ...(hasTools ? { tools } : {}),
     runtime: {
       ...obj(old.runtime),
       computer: draft.computer,

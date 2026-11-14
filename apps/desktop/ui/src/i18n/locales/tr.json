@@ -318,6 +318,26 @@
           "read_only": "salt okunur"
         },
         "note": "Bu onay yalnızca bu değişikliği kapsar; her seferinde sorulur."
+      },
+      "bot": {
+        "title": {
+          "create": "Yeni bot oluşturulsun mu?",
+          "update": "Bu bot değiştirilsin mi?",
+          "delete": "Bu bot silinsin mi?"
+        },
+        "persona": "Kişilik ({{count}} karakter, tamamı gösteriliyor):",
+        "model": "Model",
+        "planner": "Planlayıcı",
+        "classifier": "Sınıflandırıcı",
+        "permissions": "İzinler",
+        "tools": "Araçlar",
+        "allToolsOfCaller": "bu botun kullanabildiği tüm araçlar",
+        "except": "şunlar hariç: {{list}}",
+        "changes": "Neler değişiyor",
+        "empty": "(ayarlı değil)",
+        "profile": "Profilin tamamı",
+        "ceiling": "Bir bot, başka bir bota kendisinde olandan fazlasını veremez. Bu onay yalnızca bu değişikliği kapsar; her seferinde sorulur.",
+        "deleteNote": "Bu bot ve ayarları silinir. Sohbeti olan bir bot silinemez."
       }
     },
     "question": {
@@ -641,6 +661,8 @@
     "executorRequired": "Yürütücü model gerekli.",
     "fallbackPlaceholder": "sağlayıcı/model, sağlayıcı/model",
     "permissions": "İzinler",
+    "manageBots": "Bot oluşturabilir",
+    "manageBotsHint": "Bu botun başka botlar oluşturmasına ve yönetmesine izin verir. Onlara kendisinde olandan fazlasını veremez ve her değişikliği tamamen görüp siz onaylarsınız.",
     "preset": {
       "read-only": {
         "name": "Salt okunur",

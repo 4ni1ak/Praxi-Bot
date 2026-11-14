@@ -1115,6 +1115,20 @@ id = "unpriced"
     }
 
     #[test]
+    fn serve_wiring_registers_the_bot_tools_and_every_changing_one_always_asks() {
+        let dir = tempfile::tempdir().unwrap();
+        let (agent, state) = schedule_state(dir.path());
+        register_bot_tools(&state);
+        let names = agent.tool_names();
+        for n in builtin_tools::BOT_TOOL_NAMES {
+            assert!(names.iter().any(|x| x == n), "{n} missing: {names:?}");
+        }
+        for n in ["bot_create", "bot_update", "bot_delete"] {
+            assert!(agent.tool_registry().get(n).unwrap().always_ask(), "{n}");
+        }
+    }
+
+    #[test]
     fn a_bad_schedule_toml_registers_no_schedule_tools() {
         for bad in [
             "max_per_bot = \"many\"",
