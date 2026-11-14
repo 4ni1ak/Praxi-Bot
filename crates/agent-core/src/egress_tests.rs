@@ -1756,3 +1756,28 @@ async fn a_tainted_skill_write_asks_and_later_runs_do_not_trust_it() {
     assert!(user.contains("Ignore previous instructions"), "{user}");
     assert!(!user.contains("Do the leak"), "{user}");
 }
+
+#[tokio::test]
+async fn replace_all_noop_edit_taints_before_egress() {
+    let env = setup();
+    let notes = env.dir.path().join("notes.txt");
+    std::fs::write(&notes, "bank: 4 bank: 4").unwrap();
+    let search = egress_tool("web_search", Effect::Read, PermissionCategory::Browser, ContentClass::untrusted_egress());
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_edit", json!({"path": notes, "old": "bank: 4", "new": "bank: 4", "replace_all": true}))]),
+        calls(&[("c2", "web_search", json!({"query": "bank: 4"}))]), text("done"),
+    ]);
+    let lp = make_loop(&env.storage, env.bot, &fake, &[t(&search)], profile(""), cfg(Policy::full()));
+    for tool in builtin_tools::files::tools(&env.dir.path().join("data")) {
+        lp.sh.tools.register(tool);
+    }
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "edit then search").unwrap();
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else { unreachable!() };
+    assert_eq!(card.tool_name, "web_search");
+    assert!(tool_messages(&fake.request(1)).join("\n").contains("replaced 2"));
+    assert_eq!(search.count.load(Ordering::SeqCst), 0);
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user).unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+}

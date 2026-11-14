@@ -20,11 +20,11 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         // Questions, todos, schedule lifecycle, a local write, or a listing
         // of the bot's own bookkeeping. A write does not bring content in:
         // the model already had the bytes, and the result is not a private read.
-        // `fs_edit`'s error does not say whether or how often the old text
-        // occurs, so a failed edit is not a probe of the file.
         "ask_user" | "todo_write" | "schedule_pause" | "schedule_delete" | "fs_write"
-        | "fs_edit" | "fs_move" | "fs_delete" | "checkpoint_list" | "checkpoint_restore"
+        | "fs_move" | "fs_delete" | "checkpoint_list" | "checkpoint_restore"
         | "schedule_list" => ContentClass::none(),
+        // Editing reads old content and reports match counts, including no-op edits.
+        "fs_edit" => ContentClass::private_read(),
         // Observation, including a click or a scroll. Those pick an on-screen
         // target and cannot carry bytes off the machine. A drag can drop a
         // file or a selection onto an upload. Typing, keys, fill, launch, and

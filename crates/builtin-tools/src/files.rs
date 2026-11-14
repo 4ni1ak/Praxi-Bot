@@ -2413,12 +2413,11 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
     validate_mutation(sh, &i.path, &p)?;
     let text = read_text(&p)?;
     let n = text.matches(&i.old).count();
-    // One message for a miss and for several matches. The count would tell a
-    // tainted run whether a secret is in the file, and how often.
-    if n == 0 || (n > 1 && !i.replace_all) {
-        return Err(exec_err(
-            "edit failed: the old text must match exactly once; read the file and include more surrounding context, or set replace_all",
-        ));
+    if n == 0 {
+        return Err(exec_err("edit failed: old text not found"));
+    }
+    if n > 1 && !i.replace_all {
+        return Err(exec_err(format!("edit failed: old text matches {n} times; include more context or set replace_all")));
     }
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     let updated = text.replace(&i.old, &i.new);
@@ -3491,9 +3490,9 @@ mod tests {
             .call(&c, json!({"path": file, "old": "zzz", "new": "y"}))
             .await
             .unwrap_err();
-        assert_eq!(err.to_string(), missed.to_string());
-        assert!(!err.to_string().contains('2'));
-        assert!(!err.to_string().contains("not found"));
+        assert!(err.to_string().contains("matches 2 times"));
+        assert!(missed.to_string().contains("not found"));
+        assert!(get(&t, "fs_edit").spec().content.reads_private);
         get(&t, "fs_edit")
             .call(
                 &c,

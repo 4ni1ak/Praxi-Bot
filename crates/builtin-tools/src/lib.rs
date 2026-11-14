@@ -285,7 +285,6 @@ mod tests {
         }
         for name in [
             "fs_write",
-            "fs_edit",
             "fs_move",
             "fs_delete",
             "checkpoint_list",
