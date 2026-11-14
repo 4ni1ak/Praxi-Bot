@@ -333,10 +333,63 @@ struct MailInput {
     mail: OutgoingMail,
 }
 
+fn attachment_line(item: &Value) -> (String, u64) {
+    let (name, path) = match item {
+        Value::String(text) => (file_name(text), Some(text.as_str())),
+        Value::Object(map) => {
+            let path = map.get("path").and_then(Value::as_str);
+            let name = map
+                .get("filename")
+                .and_then(Value::as_str)
+                .or_else(|| map.get("name").and_then(Value::as_str))
+                .map(str::to_owned)
+                .or_else(|| path.map(file_name))
+                .unwrap_or_else(|| "attachment".to_owned());
+            (name, path)
+        }
+        _ => ("attachment".to_owned(), None),
+    };
+    let bytes = path
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map_or(0, |meta| meta.len());
+    (name, bytes)
+}
+
+fn file_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_owned())
+}
+
 #[async_trait]
 impl Tool for EmailTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn egress_extra(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
+        if !matches!(self.kind, Kind::Draft | Kind::Send) {
+            return None;
+        }
+        let mut lines = Vec::new();
+        if input.get("account").and_then(Value::as_str).is_none()
+            && let Ok(name) = self.conn.scoped(ctx.bot_id.as_deref()).resolve_name(None)
+        {
+            lines.push(format!("account: {name} (default)"));
+        }
+        if let Some(items) = input.get("attachments").and_then(Value::as_array) {
+            for item in items {
+                let (name, bytes) = attachment_line(item);
+                lines.push(format!("attachment: {name}, {bytes} bytes"));
+            }
+        }
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
     }
 
     /// Hidden from a bot that has no usable account (none bound to it and no

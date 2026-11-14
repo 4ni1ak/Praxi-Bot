@@ -342,6 +342,7 @@ impl TurnExecutor {
     /// Prepend the recalled-memory block to the first user message (never to
     /// the system prompt, so the prompt cache stays valid).
     fn with_recall(&self, ctx: &RunCtx, text: &str) -> String {
+        let text = self.prepend_untrusted_skills(ctx, text.to_owned());
         let Some(m) = self
             .sh
             .cfg
@@ -349,11 +350,11 @@ impl TurnExecutor {
             .as_ref()
             .filter(|m| m.enabled && ctx.parent_run_id.is_none())
         else {
-            return text.to_owned();
+            return text;
         };
         match m
             .store
-            .recall(ctx.user_id, ctx.bot_id, text, m.recall_budget_tokens)
+            .recall(ctx.user_id, ctx.bot_id, &text, m.recall_budget_tokens)
         {
             Ok(mems) => {
                 if !mems.is_empty() {
@@ -367,11 +368,31 @@ impl TurnExecutor {
                 }
                 memory_store::prepend_to_user_message(
                     &memory_store::render_recall_block(&mems),
-                    text,
+                    &text,
                 )
             }
-            Err(_) => text.to_owned(),
+            Err(_) => text,
         }
+    }
+
+    /// Untrusted skill names and descriptions go on the user message, the same
+    /// place untrusted memory does. The system-prompt skills block stays
+    /// trusted-only.
+    fn prepend_untrusted_skills(&self, ctx: &RunCtx, text: String) -> String {
+        let Some(index) = self.sh.skills.get() else {
+            return text;
+        };
+        let block = index
+            .untrusted_block_for_bot(Some(&ctx.bot_id.to_string()))
+            .unwrap_or_default();
+        if block.is_empty() {
+            return text;
+        }
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::declared(true, false, false),
+            "untrusted skill",
+        );
+        memory_store::prepend_to_user_message(&block, &text)
     }
 
     fn is_read(&self, ctx: &RunCtx, hints: &[String], name: &str, args: &str) -> bool {
@@ -920,6 +941,14 @@ impl TurnExecutor {
                         is_error: true,
                     },
                 }
+            } else if let Err(message) =
+                self.sh
+                    .refuse_unshowable_egress(&ctx, &resolved.name, &resolved.input, None, false)
+            {
+                Slot::Done {
+                    text: user_denied(Some(message)),
+                    is_error: true,
+                }
             } else {
                 Slot::Run {
                     tool,
@@ -1075,6 +1104,7 @@ impl TurnExecutor {
             run_id: run.id.to_string(),
             max_inline_bytes: g.spill_threshold_bytes,
             bot_id: Some(run.bot_id.to_string()),
+            content_tainted: ctx.taint.lock().exposure.is_tainted(),
         };
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.

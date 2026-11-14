@@ -271,6 +271,7 @@ mod tests {
             "desktop_type",
             "desktop_set_value",
             "desktop_key",
+            "desktop_drag",
             "browser_tabs",
         ] {
             assert!(
@@ -278,12 +279,7 @@ mod tests {
                 "{name} sends data off the machine"
             );
         }
-        for name in [
-            "desktop_click",
-            "desktop_scroll",
-            "desktop_drag",
-            "browser_scroll",
-        ] {
+        for name in ["desktop_click", "desktop_scroll", "browser_scroll"] {
             let class = crate::util::classify(name).unwrap();
             assert!(!class.egress, "{name} cannot carry data off the machine");
         }

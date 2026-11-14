@@ -567,6 +567,25 @@ impl Tool for WebTool {
         &self.spec
     }
 
+    fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
+        if !matches!(self.kind, Kind::Search) {
+            return None;
+        }
+        if input
+            .get("backend")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.is_empty())
+        {
+            return None;
+        }
+        let names = self.shared.search.backend_names();
+        let first = names.first().copied().unwrap_or("none");
+        Some(format!(
+            "backend: {first} (default chain: {})",
+            names.join(" -> ")
+        ))
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         match self.kind {
             Kind::Search => self.search(input).await,

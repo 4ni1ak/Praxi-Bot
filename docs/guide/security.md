@@ -59,20 +59,32 @@ except what a bot sends on your behalf when you approve it.
 in front of the model (a file, a mailbox, a page, a screenshot, an MCP result,
 a remote tool description, recalled memory, a workflow report), any tool that
 can send data off the machine asks, even when that tool is a read and even when
-you have a standing grant for it. That includes desktop actions that type, click,
-or launch something, browser scrolling and tab changes, and mailbox reads,
-searches, and mark-read: those calls send the model's arguments to another
-machine. A search that can only reach the search provider you configured stays
-prompt-free after untrusted content, until the run has also read something
-private. Later turns of the same chat stay gated while a message that still
-carries that content is in the prompt. The only way to skip this ask is an
-explicit per-bot setting, "allow sending data after this bot has read something",
-which you turn on in the bot form. An empty tool allow list is not a bypass.
-Deny rules and the floors in item 3 still win. A run that has not read anything
-is unchanged, and existing grants still apply to it. Approving one send does not
-create a standing grant. The card lists every recipient and every field that
-will be sent. Email attachments are covered by `email_read`; there is no
-separate attachment tool.
+you have a standing grant for it. Typing, dragging, launching a program, and
+changing browser tabs ask. A bare click or a scroll does not: those do not
+carry bytes. Mailbox reads, searches, and mark-read ask, because those calls
+send the model's arguments to another machine. Saving or publishing a skill
+after such a read asks too, and the skill is stored as untrusted data: later
+runs see its name and description in the user message, not as trusted
+instructions in the system prompt. A search that can only reach the search
+provider you configured stays prompt-free after untrusted content, until the
+run has also read something private. That prompt-free path still allows emoji
+variation selectors, ZWJ, ZWNJ, LRM/RLM/ALM, and CR. Later turns of the same
+chat stay gated while a message that still carries that content is in the
+prompt. The only way to skip this ask is an explicit per-bot setting, "allow
+sending data after this bot has read something", which you turn on in the bot
+form. That waiver skips the ask. It does not allow characters that cannot be
+shown: hidden tags, bidi overrides and isolates, invisible operators,
+private-use characters, and U+FFFC are refused even then. The card shows the
+outgoing text in full, with non-printing characters revealed as `<U+XXXX>`,
+line and character counts, and collapsed runs of blank lines. A payload over
+8 KB is refused so nothing can hide below a fold. An empty tool allow list is
+not a bypass. Deny rules and the floors in item 3 still win. A run that has
+not read anything is unchanged, and existing grants still apply to it.
+Approving one send does not create a standing grant. The card lists every
+recipient and every field that will be sent, including a default browser
+profile, the search backend, and a default mail account. Email attachments
+are covered by `email_read`; there is no separate attachment tool. When a
+call does carry an attachment list, the card shows each name and size.
 
 ## What it does not protect you from
 

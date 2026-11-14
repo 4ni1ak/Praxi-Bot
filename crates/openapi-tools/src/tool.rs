@@ -570,6 +570,12 @@ impl Tool for OpenApiTool {
         &self.spec
     }
 
+    fn egress_host(&self, _input: &Value) -> Option<String> {
+        Url::parse(&self.shared.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let rb = self.build(input)?;
         let mut redactor = Redactor::new();

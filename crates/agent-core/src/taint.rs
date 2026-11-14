@@ -9,6 +9,8 @@
 //! facts. It does not look at the tool list the model can see right now, and
 //! it does not look at the bytes the tool returned.
 
+use std::fmt::Write as _;
+
 use permission_engine::ContentExposure;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -146,18 +148,49 @@ impl ContentTaint {
 
 /// Drop control and invisible characters and cap the length. Done when the
 /// label is recorded, so a later card cannot grow a model-chosen sentence.
+///
+/// A path longer than the cap keeps its file name (the tail) and an ellipsis.
+/// Cutting the head would hide `id_rsa` behind a long harmless prefix.
 fn sanitize_label(label: &str) -> String {
-    let mut out = String::new();
+    let mut cleaned = String::new();
     for c in label.trim().chars() {
         if c.is_control() || protocol::approval_text::is_hidden(c) {
             continue;
         }
-        out.push(c);
-        if out.chars().count() >= MAX_LABEL_CHARS {
-            break;
+        cleaned.push(c);
+    }
+    let cleaned = cleaned.trim();
+    if cleaned.chars().count() <= MAX_LABEL_CHARS {
+        return cleaned.to_owned();
+    }
+    let tail = path_tail(cleaned);
+    let ellipsis = '\u{2026}';
+    let tail_len = tail.chars().count();
+    if tail_len + 1 >= MAX_LABEL_CHARS {
+        let keep = MAX_LABEL_CHARS - 1;
+        let skip = tail_len - keep;
+        let end: String = tail.chars().skip(skip).collect();
+        return format!("{ellipsis}{end}");
+    }
+    let head_len = MAX_LABEL_CHARS - tail_len - 1;
+    let head: String = cleaned.chars().take(head_len).collect();
+    format!("{head}{ellipsis}{tail}")
+}
+
+/// The last path segment, including its separator, so a trimmed label still
+/// shows the file name rather than a directory prefix.
+fn path_tail(label: &str) -> String {
+    let mut cut = 0usize;
+    for (i, b) in label.bytes().enumerate() {
+        if b == b'/' || b == b'\\' {
+            cut = i;
         }
     }
-    out.trim().to_owned()
+    if cut == 0 || cut + 1 >= label.len() || !label.is_char_boundary(cut) {
+        label.to_owned()
+    } else {
+        label[cut..].to_owned()
+    }
 }
 
 /// Fold one persisted step into `taint`.
@@ -176,6 +209,12 @@ pub(crate) fn observe_history_step(
             let text = input["text"].as_str().unwrap_or_default();
             let recalled = text.contains("<recalled_memory>");
             let untrusted = text.contains("<untrusted_memory_data>");
+            if text.contains("<untrusted_skill_data>") {
+                taint.note(
+                    ContentClass::declared(true, false, false),
+                    "untrusted skill",
+                );
+            }
             if recalled || untrusted {
                 taint.note(ContentClass::declared(untrusted, true, false), "memory");
             }
@@ -284,6 +323,9 @@ pub(crate) fn egress_payload(name: &str, input: &Value) -> (String, String, &'st
     if let Some(server) = name.strip_prefix("mcp:") {
         let server = server.split('/').next().unwrap_or("mcp").to_owned();
         return (server, render_fields(input), "body");
+    }
+    if name == "skill_write" || name == "skill_publish" {
+        return ("this bot's skills".to_owned(), skill_payload(input), "body");
     }
     // Every field is in the text. A per-tool projection drops a field the
     // next schema change adds, and that field can be what leaves the machine.
@@ -513,13 +555,37 @@ fn host_of_url(url: &str) -> String {
     // in the footer while the request went to evil.example. A backslash, or a
     // URL the parser rejects, is not given a host name at all.
     if url.contains('\\') {
-        return "unparseable URL".to_owned();
+        return "unparseable URL (contains a backslash)".to_owned();
     }
     url::Url::parse(url)
         .ok()
         .and_then(|parsed| parsed.host_str().map(str::to_owned))
         .filter(|host| !host.is_empty())
         .unwrap_or_else(|| "unparseable URL".to_owned())
+}
+
+/// Name, description and body of a skill write, then every input field.
+///
+/// `skill_publish` has no body in the call. The tool appends the stored skill
+/// before the card is shown. A field the schema adds later is still printed.
+fn skill_payload(input: &Value) -> String {
+    let mut lines = Vec::new();
+    if let Some(content) = input.get("content").and_then(Value::as_str)
+        && let Ok(skill) = skills::parse_skill(content, skills::Source::Bot, None)
+    {
+        lines.push(format!("name: {}", skill.name));
+        lines.push(format!("description: {}", skill.description));
+        lines.push("body:".to_owned());
+        lines.push(skill.body);
+    }
+    let fields = render_transmitted(input);
+    if !fields.is_empty() {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(fields);
+    }
+    lines.join("\n")
 }
 
 /// A click names an on-screen target. `prompt_text` is typed into the page,
@@ -537,15 +603,138 @@ pub(crate) fn call_can_egress(name: &str, class: ContentClass, input: &Value) ->
     true
 }
 
-/// Any string [`protocol::approval_text::scrub`] would shorten. The card must
-/// not be offered for that input: what the user would see is not what is sent.
+/// Any string [`protocol::approval_text::scrub`] would shorten.
+#[cfg(test)]
 pub(crate) fn input_hides_characters(value: &Value) -> bool {
+    input_matches(value, protocol::approval_text::hides_characters)
+}
+
+/// A character that must not be sent, in a string or in an object key.
+pub(crate) fn input_forbids_egress(value: &Value) -> bool {
+    input_matches(value, |text| {
+        text.chars()
+            .any(protocol::approval_text::is_forbidden_egress_char)
+    })
+}
+
+/// A character that needs a card to be visible. Prompt-free egress is refused
+/// when this is true, because nothing would show the `<U+XXXX>` marker.
+/// Emoji variation selectors, ZWJ, ZWNJ, LRM/RLM/ALM and CR are allowed.
+pub(crate) fn input_needs_a_card_to_show(value: &Value) -> bool {
+    input_matches(value, |text| {
+        text.chars().any(|c| {
+            protocol::approval_text::is_revealed_egress_char(c)
+                && !protocol::approval_text::is_prompt_free_text_char(c)
+        })
+    })
+}
+
+fn input_matches(value: &Value, text_matches: impl Fn(&str) -> bool + Copy) -> bool {
     match value {
-        Value::String(text) => protocol::approval_text::hides_characters(text),
-        Value::Array(items) => items.iter().any(input_hides_characters),
-        Value::Object(map) => map.values().any(input_hides_characters),
+        Value::String(text) => text_matches(text),
+        Value::Array(items) => items.iter().any(|item| input_matches(item, text_matches)),
+        Value::Object(map) => map
+            .iter()
+            .any(|(key, item)| text_matches(key) || input_matches(item, text_matches)),
         _ => false,
     }
+}
+
+/// Largest outgoing text the card will show. Longer text is refused so a
+/// secret cannot sit below the fold of a scrolled card.
+pub(crate) const MAX_EGRESS_PAYLOAD_BYTES: usize = 8 * 1024;
+
+/// The payload the card stores: hidden characters revealed, blank-line runs
+/// collapsed, with the original size counted separately.
+pub(crate) struct ShownPayload {
+    pub text: String,
+    pub lines: usize,
+    pub chars: usize,
+    pub hidden: usize,
+}
+
+/// Reveal and collapse `raw` for the card.
+///
+/// # Errors
+/// The text is longer than [`MAX_EGRESS_PAYLOAD_BYTES`].
+pub(crate) fn present_payload(raw: &str) -> Result<ShownPayload, String> {
+    if raw.len() > MAX_EGRESS_PAYLOAD_BYTES {
+        return Err(format!(
+            "the outgoing text is {} bytes, above the {MAX_EGRESS_PAYLOAD_BYTES} byte limit that can be shown in full; shorten it and ask again",
+            raw.len()
+        ));
+    }
+    let chars = raw.chars().count();
+    let lines = if raw.is_empty() {
+        0
+    } else {
+        raw.matches('\n').count() + 1
+    };
+    let hidden = raw
+        .chars()
+        .filter(|c| protocol::approval_text::is_revealed_egress_char(*c))
+        .count();
+    let revealed = protocol::approval_text::reveal_hidden(raw, true);
+    Ok(ShownPayload {
+        text: collapse_card_whitespace(&revealed),
+        lines,
+        chars,
+        hidden,
+    })
+}
+
+/// Collapse runs of blank lines and trailing whitespace so they cannot bury
+/// the rest of the payload. The marker states how many were removed.
+fn collapse_card_whitespace(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    let mut started = false;
+    while i < lines.len() {
+        let trail = trailing_ascii_ws(lines[i]);
+        let body = &lines[i][..lines[i].len() - trail];
+        if body.is_empty() {
+            let start = i;
+            i += 1;
+            while i < lines.len() && trailing_ascii_ws(lines[i]) == lines[i].len() {
+                i += 1;
+            }
+            let n = i - start;
+            // `split` yields one empty slot after a trailing newline. That is
+            // not a blank line the sender used to bury text.
+            if n == 1 && i == lines.len() {
+                continue;
+            }
+            if started {
+                out.push('\n');
+            }
+            if n >= 2 {
+                let _ = write!(out, "[… {n} blank lines …]");
+            }
+            started = true;
+            continue;
+        }
+        if started {
+            out.push('\n');
+        }
+        out.push_str(body);
+        if trail >= 2 {
+            let _ = write!(out, " [… {trail} trailing whitespace …]");
+        } else if trail == 1 {
+            out.push(' ');
+        }
+        started = true;
+        i += 1;
+    }
+    out
+}
+
+/// Byte length of trailing U+0020 / U+0009. Other spaces are already revealed.
+fn trailing_ascii_ws(line: &str) -> usize {
+    line.bytes()
+        .rev()
+        .take_while(|b| *b == b' ' || *b == b'\t')
+        .count()
 }
 
 fn domain_of_addr(addr: &str) -> String {
@@ -553,15 +742,68 @@ fn domain_of_addr(addr: &str) -> String {
     let addr = addr
         .rfind('<')
         .map_or(addr, |i| addr[i + 1..].trim_end_matches('>').trim());
-    addr.split('@')
-        .nth(1)
-        .filter(|d| !d.is_empty())
-        .unwrap_or("unknown")
-        .to_owned()
+    mailbox_domain(addr).unwrap_or_else(|| "unparseable address".to_owned())
+}
+
+/// Domain of one mailbox. A quoted local part may contain `@`; the domain is
+/// the part after the closing quote. Anything else with more than one `@`,
+/// or no `@`, is not a domain.
+fn mailbox_domain(addr: &str) -> Option<String> {
+    let domain = if let Some(rest) = addr.strip_prefix('"') {
+        let mut end = None;
+        let mut escaped = false;
+        for (i, c) in rest.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match c {
+                '\\' => escaped = true,
+                '"' => {
+                    end = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let end = end?;
+        if end == 0 {
+            return None;
+        }
+        rest[end + '"'.len_utf8()..].strip_prefix('@')?
+    } else {
+        if addr.contains('"') {
+            return None;
+        }
+        let (local, domain) = addr.split_once('@')?;
+        if local.is_empty() || local.contains('@') || domain.contains('@') {
+            return None;
+        }
+        domain
+    };
+    if domain.is_empty()
+        || domain.contains([' ', '\t', '"', '<', '>', ',', ';'])
+        || domain.starts_with('.')
+    {
+        return None;
+    }
+    Some(domain.to_owned())
 }
 
 /// JSON merged onto an approval card when a tainted run calls an egress tool.
+///
+/// The payload is the revealed, collapsed text every renderer shows. Counts
+/// describe the text that would actually be sent.
+#[cfg(test)]
 pub(crate) fn egress_details(taint: &ContentTaint, name: &str, input: &Value) -> Option<Value> {
+    let mut value = egress_record(taint, name, input)?;
+    finalize_egress_record(&mut value).ok()?;
+    Some(value)
+}
+
+/// Card before the payload is revealed. Callers that add tool-injected lines
+/// do that, then [`finalize_egress_record`].
+pub(crate) fn egress_record(taint: &ContentTaint, name: &str, input: &Value) -> Option<Value> {
     if !taint.exposure.is_tainted() {
         return None;
     }
@@ -585,6 +827,73 @@ pub(crate) fn egress_details(taint: &ContentTaint, name: &str, input: &Value) ->
         "payload": payload,
         "payload_kind": payload_kind,
     }))
+}
+
+/// Replace `payload` with the text the user can see, and record its real size.
+///
+/// # Errors
+/// The payload is longer than [`MAX_EGRESS_PAYLOAD_BYTES`].
+pub(crate) fn finalize_egress_record(value: &mut Value) -> Result<(), String> {
+    let raw = value
+        .get("payload")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let shown = present_payload(&raw)?;
+    let Some(obj) = value.as_object_mut() else {
+        return Ok(());
+    };
+    obj.insert("payload".to_owned(), json!(shown.text));
+    obj.insert("payload_lines".to_owned(), json!(shown.lines));
+    obj.insert("payload_chars".to_owned(), json!(shown.chars));
+    obj.insert("hidden_chars".to_owned(), json!(shown.hidden));
+    Ok(())
+}
+
+/// Point the card at `host` and rewrite the reason line to match.
+pub(crate) fn set_egress_host(value: &mut Value, host: &str) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let sources = obj
+        .get("read")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "untrusted or private content".to_owned());
+    obj.insert("host".to_owned(), json!(host));
+    obj.insert(
+        "reason".to_owned(),
+        json!(format!(
+            "this run read {sources} and now wants to send data to {host}"
+        )),
+    );
+}
+
+/// Append daemon-written lines (a default profile, a search backend, a skill
+/// body) to the raw payload, before it is revealed.
+pub(crate) fn append_payload(value: &mut Value, extra: &str) {
+    if extra.is_empty() {
+        return;
+    }
+    let mut payload = value
+        .get("payload")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    if !payload.is_empty() && !payload.ends_with('\n') {
+        payload.push('\n');
+    }
+    payload.push_str(extra);
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("payload".to_owned(), json!(payload));
+    }
 }
 
 /// Keep a tool's own card (schedule, and anything else with a `kind`) and put
@@ -616,7 +925,10 @@ mod card_tests {
     };
     use secret_store::SecretStore;
     use serde_json::{Value, json};
-    use tool_registry::{ContentClass, ToolRegistry};
+    use tool_registry::{
+        ContentClass, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError,
+        ToolOutput, ToolRegistry, ToolSpec,
+    };
 
     use super::{ContentTaint, egress_payload};
 
@@ -644,7 +956,10 @@ mod card_tests {
             "web_extract",
             &json!({"url": "https://evil.example\\@trusted.example/x"}),
         );
-        assert_eq!(host, "unparseable URL");
+        assert!(
+            host.contains("backslash"),
+            "a backslash must say why the host was refused: {host}"
+        );
         assert!(payload.contains("evil.example"), "{payload}");
         assert!(payload.contains("trusted.example"), "{payload}");
         let (host, _, _) =
@@ -699,6 +1014,69 @@ mod card_tests {
         );
         assert!(capped.sources()[0].chars().count() <= 120);
         assert!(!capped.sources()[1].contains('\u{1b}'));
+
+        let mut deep = ContentTaint::default();
+        let path = format!("file {}/id_rsa", "d".repeat(200));
+        deep.note(ContentClass::private_read(), &path);
+        let shown = &deep.sources()[0];
+        assert!(shown.chars().count() <= 120, "{shown}");
+        assert!(shown.contains("id_rsa"), "{shown}");
+        assert!(shown.contains('\u{2026}'), "{shown}");
+    }
+
+    #[test]
+    fn a_quoted_local_part_does_not_rename_the_mail_domain() {
+        let (host, _, _) = egress_payload(
+            "email_send",
+            &json!({
+                "to": "\"a@trusted.example\"@evil.example",
+                "subject": "s",
+                "body": "b"
+            }),
+        );
+        assert_eq!(host, "evil.example");
+        let (host, _, _) = egress_payload(
+            "email_send",
+            &json!({"to": "Ann <\"a@trusted.example\"@evil.example>", "subject": "s", "body": "b"}),
+        );
+        assert_eq!(host, "evil.example");
+        let (host, _, _) = egress_payload(
+            "email_send",
+            &json!({"to": "not-an-address", "subject": "s", "body": "b"}),
+        );
+        assert!(host.contains("unparseable"), "{host}");
+    }
+
+    #[test]
+    fn the_card_reveals_odd_characters_and_collapses_blank_runs() {
+        let mut taint = ContentTaint::default();
+        taint.note(ContentClass::private_read(), "file notes.txt");
+        let query = format!("weather{}\n\n\nsecret", '\u{00A0}');
+        let card = super::egress_details(&taint, "web_search", &json!({"query": query})).unwrap();
+        let payload = card["payload"].as_str().unwrap();
+        assert!(payload.contains("<U+00A0>"), "{payload}");
+        assert!(!payload.contains('\u{00A0}'), "{payload}");
+        assert!(payload.contains("secret"), "{payload}");
+        assert!(payload.contains("blank lines"), "{payload}");
+        assert_eq!(card["hidden_chars"], 1);
+        assert!(card["payload_chars"].as_u64().unwrap() > 10);
+        assert!(super::present_payload(&"x".repeat(super::MAX_EGRESS_PAYLOAD_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn hidden_characters_in_keys_and_nested_values_are_seen() {
+        let nested = json!({"outer": {"in ner": ["a", {"k": format!("x{}", '\u{E0041}')}]}});
+        assert!(super::input_hides_characters(&nested));
+        assert!(super::input_forbids_egress(&nested));
+        let mut map = serde_json::Map::new();
+        map.insert(format!("q{}", '\u{202E}'), json!("weather"));
+        assert!(super::input_forbids_egress(&Value::Object(map)));
+        let space = json!({"query": format!("a{}", '\u{3000}')});
+        assert!(!super::input_forbids_egress(&space));
+        assert!(super::input_needs_a_card_to_show(&space));
+        let emoji = json!({"query": format!("ok{}", '\u{FE0F}')});
+        assert!(!super::input_forbids_egress(&emoji));
+        assert!(!super::input_needs_a_card_to_show(&emoji));
     }
 
     struct AllowAll;
@@ -756,6 +1134,8 @@ mod card_tests {
         cfg.web = Some(builtin_tools::web_tools::WebToolsConfig::default());
         let store = Arc::new(secret_store::MemoryStore::new());
         store.set("email/test", "password").unwrap();
+        let copied = Arc::clone(&store);
+        let secrets: Arc<dyn secret_store::SecretStore> = copied;
         let account = builtin_tools::connector_email::AccountConfig {
             name: "test".to_string(),
             address: "user@example.com".to_string(),
@@ -779,14 +1159,80 @@ mod card_tests {
             inbox_id: None,
         };
         cfg.email = Some(Arc::new(
-            builtin_tools::connector_email::EmailConnector::new(vec![account], store).unwrap(),
+            builtin_tools::connector_email::EmailConnector::new(
+                vec![account],
+                Arc::clone(&secrets),
+            )
+            .unwrap(),
         ));
         let _ = builtin_tools::register_builtin_tools(&registry, cfg);
         let host: Arc<dyn ScheduleHost> = Arc::new(NoSched);
         for tool in builtin_tools::schedule::tools(&host) {
             registry.register(tool);
         }
+        register_extra_tools(dir.path(), &registry, &secrets);
+        assert_every_schema_field(&registry);
+        assert_injected_defaults(dir.path(), &registry);
+    }
 
+    fn register_extra_tools(
+        dir: &std::path::Path,
+        registry: &ToolRegistry,
+        secrets: &Arc<dyn secret_store::SecretStore>,
+    ) {
+        doc_tools::register(registry, &doc_tools::DocToolsConfig::default());
+        let _ = dev_tools::register(
+            registry,
+            &dev_tools::DevToolsConfig::new(vec![dir.to_path_buf()]),
+        );
+        let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(dir));
+        for tool in skills::tools(&index) {
+            registry.register(tool);
+        }
+        let spec = "\
+openapi: 3.0.0
+info: {title: t, version: '1'}
+servers: [{url: 'https://api.example.com'}]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+      responses: {'200': {description: ok}}
+";
+        let (api, imported) = openapi_tools::import_tools(
+            spec,
+            &openapi_tools::ImportOptions::default(),
+            &openapi_tools::OpenApiConfig::new(Arc::clone(secrets)),
+        )
+        .unwrap();
+        assert_eq!(api.base_url, "https://api.example.com");
+        for tool in imported {
+            registry.register(tool);
+        }
+        for (name, category) in [
+            ("mcp:srv/echo", PermissionCategory::Fs),
+            ("cli:echo", PermissionCategory::Shell),
+        ] {
+            registry.register(Arc::new(SchemaFixture {
+                spec: ToolSpec {
+                    name: name.into(),
+                    description: "fixture".into(),
+                    input_schema: json!({"type":"object","properties":{
+                        "hidden_arg":{"type":"string"},
+                        "prompt":{"type":"string"}
+                    }}),
+                    effect: Effect::Write,
+                    category,
+                    platforms: vec![Platform::All],
+                    content: ContentClass::all(),
+                },
+            }));
+        }
+    }
+
+    fn assert_every_schema_field(registry: &ToolRegistry) {
         let mut checked = 0usize;
         let mut saw_browser_open = false;
         for spec in registry.list() {
@@ -825,5 +1271,83 @@ mod card_tests {
         }
         assert!(saw_browser_open, "browser_open was not in the audited set");
         assert!(checked > 8, "only {checked} egress tools were audited");
+    }
+
+    fn assert_injected_defaults(dir: &std::path::Path, registry: &ToolRegistry) {
+        let ctx = ToolContext::default();
+        let open = registry.get("browser_open").unwrap();
+        let profile = open
+            .egress_extra(&ctx, &json!({"url": "https://example.com"}))
+            .unwrap();
+        assert!(
+            profile.contains("persistent per-bot profile") && profile.contains("may be logged in"),
+            "{profile}"
+        );
+        let isolated = open
+            .egress_extra(
+                &ctx,
+                &json!({"url": "https://example.com", "profile": "isolated"}),
+            )
+            .unwrap();
+        assert!(isolated.contains("temporary, not logged in"), "{isolated}");
+        let search = registry.get("web_search").unwrap();
+        let backend = search
+            .egress_extra(&ctx, &json!({"query": "weather"}))
+            .unwrap();
+        assert!(backend.contains("default chain:"), "{backend}");
+        assert!(!backend.to_ascii_lowercase().contains("key"), "{backend}");
+        let mail = registry.get("email_send").unwrap();
+        let account = mail
+            .egress_extra(
+                &ctx,
+                &json!({"to": ["a@b.co"], "subject": "s", "body": "b"}),
+            )
+            .unwrap();
+        assert!(account.contains("account: test (default)"), "{account}");
+        let note = dir.join("note.txt");
+        std::fs::write(&note, "abcd").unwrap();
+        let attached = mail
+            .egress_extra(
+                &ctx,
+                &json!({
+                    "to": ["a@b.co"],
+                    "subject": "s",
+                    "body": "b",
+                    "attachments": [{"path": note, "filename": "note.txt"}]
+                }),
+            )
+            .unwrap();
+        assert!(
+            attached.contains("attachment: note.txt, 4 bytes"),
+            "{attached}"
+        );
+        let api_tool = registry.get("listPets").unwrap();
+        assert_eq!(
+            api_tool.egress_host(&json!({})).as_deref(),
+            Some("api.example.com")
+        );
+        let mut tainted = ContentTaint::default();
+        tainted.note(ContentClass::private_read(), "file notes.txt");
+        let mut card = super::egress_record(&tainted, "listPets", &json!({"q": "x"})).unwrap();
+        super::set_egress_host(&mut card, "api.example.com");
+        assert_eq!(card["host"], "api.example.com");
+        assert!(
+            card["reason"].as_str().unwrap().contains("api.example.com"),
+            "{card}"
+        );
+    }
+
+    struct SchemaFixture {
+        spec: ToolSpec,
+    }
+
+    #[async_trait]
+    impl Tool for SchemaFixture {
+        fn spec(&self) -> &ToolSpec {
+            &self.spec
+        }
+        async fn call(&self, _: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::text("ok"))
+        }
     }
 }

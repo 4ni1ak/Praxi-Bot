@@ -157,8 +157,8 @@ impl Shared {
         let exposure = ctx.taint.lock().exposure;
         // `web_search` can only reach the configured search provider. Every
         // other egress tool, including fetch, can be aimed at an arbitrary host.
-        // A click, scroll, or drag does not carry bytes; `browser_click` does
-        // only when `prompt_text` is set.
+        // A click or a scroll does not carry bytes; a drag can, and
+        // `browser_click` does when `prompt_text` is set.
         let must_ask = egress_must_ask(
             exposure,
             taint::call_can_egress(name, class, input),
@@ -217,9 +217,13 @@ impl Shared {
         self.tools.get(name).is_some_and(|t| t.always_ask())
     }
 
-    /// Egress card for a tainted run. `None` when the run is clean or the tool
-    /// cannot send data off the machine. Attached even when the ask came from
-    /// `always_ask` or a floor, so the card still names the read and the host.
+    /// Egress card for a tainted run. `None` when the run is clean, the tool
+    /// cannot send data off the machine, or the payload is too large to show
+    /// in full. Attached even when the ask came from `always_ask` or a floor,
+    /// so the card still names the read and the host.
+    ///
+    /// The payload is the revealed text. Tool-injected defaults (the browser
+    /// profile, the search backend, a skill body) are part of that text.
     fn egress_card(&self, ctx: &RunCtx, name: &str, input: &Value) -> Option<Value> {
         let class = self
             .tools
@@ -228,8 +232,54 @@ impl Shared {
         if !taint::call_can_egress(name, class, input) {
             return None;
         }
-        let taint = ctx.taint.lock();
-        taint::egress_details(&taint, name, input)
+        let mut details = {
+            let taint = ctx.taint.lock();
+            taint::egress_record(&taint, name, input)?
+        };
+        let tctx = tool_registry::ToolContext {
+            run_id: ctx.run_id.to_string(),
+            bot_id: Some(ctx.bot_id.to_string()),
+            content_tainted: ctx.taint.lock().exposure.is_tainted(),
+            ..tool_registry::ToolContext::default()
+        };
+        if let Some(tool) = self.tools.get(name) {
+            if let Some(host) = tool.egress_host(input) {
+                taint::set_egress_host(&mut details, &host);
+            }
+            if let Some(extra) = tool.egress_extra(&tctx, input) {
+                taint::append_payload(&mut details, &extra);
+            }
+        }
+        taint::finalize_egress_record(&mut details).ok()?;
+        Some(details)
+    }
+
+    /// Raw outgoing text, including tool-injected lines, before it is revealed.
+    fn transmitted_text(&self, ctx: &RunCtx, name: &str, input: &Value) -> String {
+        let mut details = {
+            let taint = ctx.taint.lock();
+            match taint::egress_record(&taint, name, input) {
+                Some(details) => details,
+                None => return String::new(),
+            }
+        };
+        let tctx = tool_registry::ToolContext {
+            run_id: ctx.run_id.to_string(),
+            bot_id: Some(ctx.bot_id.to_string()),
+            ..tool_registry::ToolContext::default()
+        };
+        if let Some(extra) = self
+            .tools
+            .get(name)
+            .and_then(|tool| tool.egress_extra(&tctx, input))
+        {
+            taint::append_payload(&mut details, &extra);
+        }
+        details
+            .get("payload")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
     }
 
     fn closed_guard(
@@ -517,20 +567,61 @@ impl Shared {
         )
     }
 
-    /// An egress card is the text the user is asked to approve. Hidden
-    /// characters would be revealed on the card and still present in the
-    /// bytes that run, so the two would not match. Refuse instead of sending
-    /// a different string than the one that was shown.
-    fn refuse_unshowable_egress(
+    /// Refuse egress the user cannot safely approve.
+    ///
+    /// Characters that are never legitimate (tags, bidi overrides, invisible
+    /// operators, private-use, U+FFFC, other controls) are refused whether or
+    /// not a card is shown. Characters that real text uses (emoji variation
+    /// selectors, ZWJ, ZWNJ, LRM/RLM, CR) are revealed on the card and may be
+    /// approved. A prompt-free send has no card, so those same characters are
+    /// refused unless they are in the small set that is ordinary in emoji and
+    /// in Arabic, Hebrew, Persian, or Hindi. A payload over 8 KiB is refused
+    /// when a card would otherwise scroll it out of sight.
+    ///
+    /// `showing_card` is true on the approval path. The allow path (a search
+    /// after untrusted content only, or the bot's egress waiver) passes false.
+    pub(crate) fn refuse_unshowable_egress(
         &self,
         ctx: &RunCtx,
         name: &str,
         input: &Value,
         token: Option<&str>,
+        showing_card: bool,
     ) -> Result<(), String> {
-        if self.egress_card(ctx, name, input).is_none() || !taint::input_hides_characters(input) {
+        let class = self
+            .tools
+            .get(name)
+            .map_or_else(ContentClass::unspecified, |t| t.spec().content);
+        if !taint::call_can_egress(name, class, input) || !ctx.taint.lock().exposure.is_tainted() {
             return Ok(());
         }
+        let message = if taint::input_forbids_egress(input) {
+            Some(
+                "the outgoing text contains characters that cannot be sent (hidden tags, direction overrides, private-use or similar); remove them and ask again"
+                    .to_owned(),
+            )
+        } else if showing_card {
+            let text = self.transmitted_text(ctx, name, input);
+            if text.len() > taint::MAX_EGRESS_PAYLOAD_BYTES {
+                Some(format!(
+                    "the outgoing text is {} bytes, above the {} byte limit that can be shown in full; shorten it and ask again",
+                    text.len(),
+                    taint::MAX_EGRESS_PAYLOAD_BYTES
+                ))
+            } else {
+                None
+            }
+        } else if taint::input_needs_a_card_to_show(input) {
+            Some(
+                "the outgoing text contains characters that would not be visible, and this call is not shown for approval; remove them and ask again"
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+        let Some(message) = message else {
+            return Ok(());
+        };
         if let Some(tool) = self.tools.get(name) {
             let tctx = tool_registry::ToolContext {
                 run_id: ctx.run_id.to_string(),
@@ -539,10 +630,7 @@ impl Shared {
             };
             tool.approval_closed(&tctx, input, token);
         }
-        Err(
-            "the outgoing text contains hidden or control characters, so it cannot be shown exactly as it would be sent; remove them and ask again"
-                .into(),
-        )
+        Err(message)
     }
 
     /// Park the run in `WaitingApproval` until `approve` / `deny` is called.
@@ -568,7 +656,7 @@ impl Shared {
         if let Some(o) = details.as_mut().and_then(Value::as_object_mut) {
             o.remove("approval_ref");
         }
-        self.refuse_unshowable_egress(ctx, name, input, token.as_deref())
+        self.refuse_unshowable_egress(ctx, name, input, token.as_deref(), true)
             .map_err(Some)?;
         if let Some(extra) = self.egress_card(ctx, name, input) {
             taint::merge_egress(&mut details, extra);
@@ -1005,6 +1093,19 @@ pub(crate) struct LoopGate {
 
 #[async_trait]
 impl ToolGate for LoopGate {
+    fn content_tainted(&self, run_id: &str) -> bool {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return false;
+        };
+        let Some(sh) = self.sh.upgrade() else {
+            return false;
+        };
+        sh.runs
+            .lock()
+            .get(&protocol::RunId(id))
+            .is_some_and(|ctx| ctx.taint.lock().exposure.is_tainted())
+    }
+
     async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
         let sh = self.sh.upgrade().ok_or("agent loop is gone")?;
         let run_id = req
@@ -1022,7 +1123,9 @@ impl ToolGate for LoopGate {
             return Err(format!("unknown tool: {}", req.tool));
         }
         let result = match sh.decide(&ctx, &req.tool, req.effect, req.category, &req.input) {
-            Decision::Allow => Ok(()),
+            Decision::Allow => {
+                sh.refuse_unshowable_egress(&ctx, &req.tool, &req.input, None, false)
+            }
             Decision::Deny => Err(format!(
                 "permission denied: {} is not allowed by policy",
                 req.tool

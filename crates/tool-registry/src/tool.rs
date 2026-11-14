@@ -83,6 +83,9 @@ pub struct ToolContext {
     /// MCP servers with a `bots` allowlist refuse a call whose id is missing
     /// or not listed. `None` here is not "every bot".
     pub bot_id: Option<String>,
+    /// The run has already read untrusted or private content. A skill saved
+    /// from this call is stored as untrusted data, not as a trusted instruction.
+    pub content_tainted: bool,
 }
 
 impl Default for ToolContext {
@@ -91,6 +94,7 @@ impl Default for ToolContext {
             run_id: String::new(),
             max_inline_bytes: 1024 * 1024, // 1 MiB
             bot_id: None,
+            content_tainted: false,
         }
     }
 }
@@ -154,6 +158,21 @@ pub trait Tool: Send + Sync {
     /// outright deny is stricter. For tools that delegate future authority.
     fn always_ask(&self) -> bool {
         false
+    }
+
+    /// Host the call actually contacts when the input does not name one.
+    ///
+    /// `OpenAPI` tools use this so the card footer shows the API host, not the
+    /// operation name. `None` leaves the card's own host text.
+    fn egress_host(&self, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Lines the tool itself adds to the outgoing text: a default browser
+    /// profile, the search backend that will be used, a skill body that is
+    /// not in the arguments. Empty when the input already shows everything.
+    fn egress_extra(&self, _ctx: &ToolContext, _input: &Value) -> Option<String> {
+        None
     }
 }
 

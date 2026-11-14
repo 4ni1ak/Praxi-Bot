@@ -547,6 +547,7 @@ mod tests {
             run_id: "r".into(),
             max_inline_bytes: 1000,
             bot_id: None,
+            content_tainted: false,
         };
         let out = t
             .call(

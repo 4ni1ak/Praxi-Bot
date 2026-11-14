@@ -20,26 +20,28 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         // Questions, todos, schedule lifecycle, a local write, or a listing
         // of the bot's own bookkeeping. A write does not bring content in:
         // the model already had the bytes, and the result is not a private read.
+        // `fs_edit`'s error does not say whether or how often the old text
+        // occurs, so a failed edit is not a probe of the file.
         "ask_user" | "todo_write" | "schedule_pause" | "schedule_delete" | "fs_write"
         | "fs_edit" | "fs_move" | "fs_delete" | "checkpoint_list" | "checkpoint_restore"
         | "schedule_list" => ContentClass::none(),
-        // Observation, including a click, scroll, or drag. Those pick an
-        // on-screen target and cannot carry bytes off the machine. Typing,
-        // keys, fill, launch, and `browser_click`'s `prompt_text` can; the
-        // gate treats a click that includes `prompt_text` as egress.
+        // Observation, including a click or a scroll. Those pick an on-screen
+        // target and cannot carry bytes off the machine. A drag can drop a
+        // file or a selection onto an upload. Typing, keys, fill, launch, and
+        // `browser_click`'s `prompt_text` can too; the gate treats a click
+        // that includes `prompt_text` as egress.
         "fs_read" | "fs_list" | "fs_search" | "browser_snapshot" | "browser_screenshot"
         | "browser_wait" | "desktop_list_apps" | "desktop_get_state" | "desktop_click"
-        | "desktop_scroll" | "desktop_drag" | "browser_scroll" => ContentClass::untrusted_private(),
-        // A shell, a script, browser navigation and input, or a desktop
-        // mutation that types, replaces a value, presses a key, or launches
-        // a program can read and can send data off the machine. Tab changes
-        // stay here: a page can turn them into network requests. The desktop
-        // control gate is about who owns the computer, not about egress.
+        | "desktop_scroll" | "browser_scroll" => ContentClass::untrusted_private(),
+        // A shell, a script, browser navigation and input, a drag, or a
+        // desktop mutation that types, replaces a value, presses a key, or
+        // launches a program can read and can send data off the machine. Tab
+        // changes stay here: a page can turn them into network requests. The
+        // desktop control gate is about who owns the computer, not about egress.
         "shell_run" | "script_run" | "browser_open" | "browser_back" | "browser_click"
         | "browser_fill" | "browser_select" | "browser_press" | "browser_eval" | "browser_tabs"
-        | "desktop_launch" | "desktop_type" | "desktop_set_value" | "desktop_key" => {
-            ContentClass::all()
-        }
+        | "desktop_launch" | "desktop_type" | "desktop_set_value" | "desktop_key"
+        | "desktop_drag" => ContentClass::all(),
         "schedule_create" | "schedule_update" | "schedule_resume" => ContentClass::egress(),
         _ => return None,
     })
@@ -157,6 +159,7 @@ mod tests {
             run_id: String::new(),
             max_inline_bytes: 1001,
             bot_id: None,
+            content_tainted: false,
         };
         let text = "é".repeat(2000);
         let out = finish_text(&ctx, dir.path(), text.clone());
@@ -190,6 +193,7 @@ mod tests {
                     run_id: String::new(),
                     max_inline_bytes: max,
                     bot_id: None,
+                    content_tainted: false,
                 };
                 let out = finish_text(&ctx, dir.path(), text.clone());
                 assert!(out.spill.is_some());
@@ -209,6 +213,7 @@ mod tests {
             run_id: String::new(),
             max_inline_bytes: 100,
             bot_id: None,
+            content_tainted: false,
         };
         let out = finish_text(&ctx, &blocker.join("sub"), "é".repeat(500));
         assert!(out.spill.is_none());

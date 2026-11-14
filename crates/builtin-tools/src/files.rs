@@ -2466,13 +2466,12 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
     let p = validate_path(sh, &i.path, Follow::Content)?;
     let text = read_text(&p)?;
     let n = text.matches(&i.old).count();
-    if n == 0 {
-        return Err(exec_err("old text not found; read the file again"));
-    }
-    if n > 1 && !i.replace_all {
-        return Err(exec_err(format!(
-            "old text matches {n} times; add more context or set replace_all"
-        )));
+    // One message for a miss and for several matches. The count would tell a
+    // tainted run whether a secret is in the file, and how often.
+    if n == 0 || (n > 1 && !i.replace_all) {
+        return Err(exec_err(
+            "edit failed: the old text must match exactly once; read the file and include more surrounding context, or set replace_all",
+        ));
     }
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     let updated = text.replace(&i.old, &i.new);
@@ -2695,6 +2694,7 @@ mod tests {
             run_id: "run-1".into(),
             max_inline_bytes: 1 << 20,
             bot_id: None,
+            content_tainted: false,
         }
     }
 
@@ -3537,7 +3537,13 @@ mod tests {
             .call(&c, json!({"path": file, "old": "x", "new": "y"}))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("2 times"));
+        let missed = get(&t, "fs_edit")
+            .call(&c, json!({"path": file, "old": "zzz", "new": "y"}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), missed.to_string());
+        assert!(!err.to_string().contains('2'));
+        assert!(!err.to_string().contains("not found"));
         get(&t, "fs_edit")
             .call(
                 &c,
@@ -3546,11 +3552,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "y y");
-        let err = get(&t, "fs_edit")
-            .call(&c, json!({"path": file, "old": "zzz", "new": "y"}))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]

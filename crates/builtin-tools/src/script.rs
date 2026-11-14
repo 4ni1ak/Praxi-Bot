@@ -58,6 +58,14 @@ pub trait ToolGate: Send + Sync {
     /// # Errors
     /// A human-readable denial reason.
     async fn authorize(&self, req: &GateRequest) -> Result<(), String>;
+
+    /// Whether `run_id` has already read untrusted or private content.
+    ///
+    /// Skill writes use this to store the skill as untrusted data. The default
+    /// is false: a gate that does not track taint does not mark skills.
+    fn content_tainted(&self, _run_id: &str) -> bool {
+        false
+    }
 }
 
 /// Non-interactive [`ToolGate`] backed by [`PermissionResolver`]: `Allow` passes,
@@ -223,6 +231,7 @@ impl ScriptHost for GateHost {
             run_id: self.run_id.clone(),
             max_inline_bytes: self.max_inline_bytes,
             bot_id: self.bot_id.clone(),
+            content_tainted: self.gate.content_tainted(&self.run_id),
         };
         let out = if let Some(action) = &self.action {
             crate::control::scope_action(action.clone(), tool.call(&ctx, input)).await

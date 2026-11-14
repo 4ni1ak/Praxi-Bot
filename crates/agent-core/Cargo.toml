@@ -43,6 +43,9 @@ workflow-replay = { path = "../workflow-replay", version = "0.1.0" }
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+doc-tools = { path = "../doc-tools", version = "0.1.0" }
+dev-tools = { path = "../dev-tools", version = "0.1.0" }
+openapi-tools = { path = "../openapi-tools", version = "0.1.0" }
 
 [[bin]]
 name = "agent-cli-fixture"
