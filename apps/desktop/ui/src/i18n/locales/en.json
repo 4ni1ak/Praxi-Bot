@@ -323,10 +323,11 @@
         "host": "Destination: {{host}}",
         "read": "This run read: {{list}}",
         "payload": {
-          "query": "Outgoing query (scroll to read all of it):",
-          "url": "Outgoing URL (scroll to read all of it):",
-          "body": "Outgoing data (scroll to read all of it):"
-        }
+          "query": "Outgoing query (shown in full):",
+          "url": "Outgoing URL (shown in full):",
+          "body": "Outgoing data (shown in full):"
+        },
+        "size": "{{lines}} lines, {{chars}} characters, {{hidden}} non-printing characters shown as <U+XXXX>"
       }
     },
     "question": {

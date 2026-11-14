@@ -82,11 +82,17 @@ test("an egress card keeps the full payload, including beside a schedule", () =>
     read: ["file notes.txt"],
     host: "configured-search-provider",
     payload,
-    payload_kind: "query"
+    payload_kind: "query",
+    payload_lines: 4,
+    payload_chars: 3000,
+    hidden_chars: 0
   });
   assert.ok(d);
   assert.equal(d.payload, payload);
   assert.equal(d.payloadKind, "query");
+  assert.equal(d.payloadLines, 4);
+  assert.equal(d.payloadChars, 3000);
+  assert.equal(d.hiddenChars, 0);
   assert.deepEqual(d.read, ["file notes.txt"]);
   const nested = egressDetails({
     kind: "schedule",

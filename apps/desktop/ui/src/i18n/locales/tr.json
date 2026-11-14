@@ -323,10 +323,11 @@
         "host": "Hedef: {{host}}",
         "read": "Bu çalışma şunu okudu: {{list}}",
         "payload": {
-          "query": "Giden sorgu (tamamını okumak için kaydırın):",
-          "url": "Giden adres (tamamını okumak için kaydırın):",
-          "body": "Giden veri (tamamını okumak için kaydırın):"
-        }
+          "query": "Giden sorgu (tamamı gösterilir):",
+          "url": "Giden adres (tamamı gösterilir):",
+          "body": "Giden veri (tamamı gösterilir):"
+        },
+        "size": "{{lines}} satır, {{chars}} karakter, {{hidden}} yazdırılmayan karakter <U+XXXX> olarak gösterilir"
       }
     },
     "question": {

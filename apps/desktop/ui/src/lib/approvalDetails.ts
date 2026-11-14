@@ -91,6 +91,12 @@ export interface EgressApprovalDetails {
   host: string;
   payload: string;
   payloadKind: string;
+  /** Lines in the text that would be sent. Absent on older events. */
+  payloadLines?: number;
+  /** Characters in the text that would be sent. Absent on older events. */
+  payloadChars?: number;
+  /** Non-printing characters shown in the payload as `<U+XXXX>`. */
+  hiddenChars?: number;
 }
 
 /** Parse an egress card, including one nested beside a schedule card. */
@@ -108,8 +114,15 @@ export function egressDetails(details: unknown): EgressApprovalDetails | null {
     read: strings(raw.read),
     host: typeof raw.host === "string" ? raw.host : "",
     payload: typeof raw.payload === "string" ? raw.payload : "",
-    payloadKind: typeof raw.payload_kind === "string" ? raw.payload_kind : "body"
+    payloadKind: typeof raw.payload_kind === "string" ? raw.payload_kind : "body",
+    payloadLines: count(raw.payload_lines),
+    payloadChars: count(raw.payload_chars),
+    hiddenChars: count(raw.hidden_chars)
   };
+}
+
+function count(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /** `2026-11-13T10:30:00+03:00` as `Fri 13 Nov, 10:30` in the offset it carries. */

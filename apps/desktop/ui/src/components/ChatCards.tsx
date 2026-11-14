@@ -256,7 +256,16 @@ function EgressApprovalBody({ d }: { d: EgressApprovalDetails }) {
         </p>
       ) : null}
       <span className={styles.bodyLabel}>{t(`chat.approval.egress.payload.${kind}`)}</span>
-      <pre className={styles.code} tabIndex={0}>
+      {d.payloadLines != null && d.payloadChars != null ? (
+        <p className={styles.bodyLabel}>
+          {t("chat.approval.egress.size", {
+            lines: d.payloadLines,
+            chars: d.payloadChars,
+            hidden: d.hiddenChars ?? 0
+          })}
+        </p>
+      ) : null}
+      <pre className={styles.egressCode} tabIndex={0}>
         {d.payload}
       </pre>
     </div>
