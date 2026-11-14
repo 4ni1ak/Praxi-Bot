@@ -1428,8 +1428,8 @@ async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert(
         .set_times(fs::FileTimes::new().set_modified(older))
         .unwrap();
     database(source.path(), true);
-    let user: UserId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
-    let bot: BotId = "00000000-0000-0000-0000-000000000002".parse().unwrap();
+    let user = UserId("00000000-0000-0000-0000-000000000001".parse().unwrap());
+    let bot = BotId("00000000-0000-0000-0000-000000000002".parse().unwrap());
     let storage = Arc::new(storage::Storage::open(source.path()).unwrap());
     for scope in [
         format!("host:{a}"),

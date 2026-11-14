@@ -952,15 +952,10 @@ impl Shared {
         persisted: Option<&Run>,
     ) -> RunComputer {
         let provider = self.computer_provider.read().clone();
-        if persisted.is_some_and(|run| {
-            run.computer_target.is_none()
-                || run.computer_node.as_deref().is_some_and(|id| {
-                    id == computer_target::LEGACY_LOCAL_COMPUTER_ID || id.ends_with(":local")
-                })
-        }) {
-            return Self::unavailable_computer(
-                "Cannot resume legacy run: original computer identity is unknown; start a new run",
-            );
+        if let Some(reason) =
+            persisted.and_then(|run| Self::persisted_computer_error(run, provider.as_deref()))
+        {
+            return Self::unavailable_computer(reason);
         }
         if let Some(run) = persisted
             && let Some(label) = run.computer_target.as_deref()
@@ -1032,15 +1027,6 @@ impl Shared {
                 rc.browser_headless = rc.browser.then_some(true);
                 return rc;
             }
-            if matches!(label, ComputerLabel::Host | ComputerLabel::Browser)
-                && provider.as_ref().is_some_and(|p| {
-                    run.computer_node.as_deref() != Some(p.local_node().id.as_str())
-                })
-            {
-                return Self::unavailable_computer(
-                    "Cannot resume: local computer identity changed or state was imported; start a new run",
-                );
-            }
             let target = match label {
                 ComputerLabel::Host => ComputerTarget::Host,
                 ComputerLabel::Browser => ComputerTarget::Browser,
@@ -1063,6 +1049,30 @@ impl Shared {
             return rc;
         }
         self.resolve_fallback_computer(profile)
+    }
+
+    fn persisted_computer_error(
+        run: &Run,
+        provider: Option<&dyn ComputerProvider>,
+    ) -> Option<&'static str> {
+        if run.computer_target.is_none()
+            || run.computer_node.as_deref().is_some_and(|id| {
+                id == computer_target::LEGACY_LOCAL_COMPUTER_ID || id.ends_with(":local")
+            })
+        {
+            return Some(
+                "Cannot resume legacy run: original computer identity is unknown; start a new run",
+            );
+        }
+        if matches!(run.computer_target.as_deref(), Some("host" | "browser"))
+            && provider
+                .is_some_and(|p| run.computer_node.as_deref() != Some(p.local_node().id.as_str()))
+        {
+            return Some(
+                "Cannot resume: local computer identity changed or state was imported; start a new run",
+            );
+        }
+        None
     }
 
     fn unavailable_computer(reason: &str) -> RunComputer {
