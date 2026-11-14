@@ -673,6 +673,44 @@
       }
     },
     {
+      "description": "The user restored a file checkpoint of this run.",
+      "type": "object",
+      "required": [
+        "checkpoint_id",
+        "restored",
+        "run_id",
+        "safety_checkpoint_id",
+        "type"
+      ],
+      "properties": {
+        "checkpoint_id": {
+          "description": "Restored checkpoint id, or `\"all\"` when undoing the whole run.",
+          "type": "string"
+        },
+        "restored": {
+          "description": "Paths restored (in restore order).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "run_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "safety_checkpoint_id": {
+          "description": "Safety snapshot created of the overwritten state before restoring.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "checkpoint_restored"
+          ]
+        }
+      }
+    },
+    {
       "description": "A non-fatal error occurred during the run.",
       "type": "object",
       "required": [

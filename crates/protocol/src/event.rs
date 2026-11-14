@@ -279,6 +279,20 @@ pub struct RunError {
     pub recoverable: bool,
 }
 
+// ── File checkpoints ──────────────────────────────────────────────────────────
+
+/// The user restored a file checkpoint of this run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointRestored {
+    pub run_id: RunId,
+    /// Restored checkpoint id, or `"all"` when undoing the whole run.
+    pub checkpoint_id: String,
+    /// Safety snapshot created of the overwritten state before restoring.
+    pub safety_checkpoint_id: String,
+    /// Paths restored (in restore order).
+    pub restored: Vec<String>,
+}
+
 // ── Top-level event enum ──────────────────────────────────────────────────────
 
 /// All events that can appear in the client event stream.
@@ -303,6 +317,7 @@ pub enum Event {
     ControlRequested(ControlRequested),
     SubagentStarted(SubagentStarted),
     SubagentFinished(SubagentFinished),
+    CheckpointRestored(CheckpointRestored),
     Error(RunError),
 }
 

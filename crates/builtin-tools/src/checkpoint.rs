@@ -5,12 +5,19 @@
 //! to its state at checkpoint time (paths that did not exist are removed) and
 //! first takes a checkpoint of the current state so a restore can be undone.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use similar::{ChangeTag, TextDiff};
+
+/// Maximum file payload size (in bytes) eligible for inline UTF-8 diffing.
+pub const MAX_DIFF_FILE_BYTES: u64 = 256 * 1024;
+/// Maximum combined before+after text bytes diffed across a single run.
+pub const MAX_DIFF_RUN_BYTES: u64 = 2 * 1024 * 1024;
 
 /// One path recorded in a checkpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +38,117 @@ pub struct CheckpointEntry {
     pub sha256: Option<String>,
     /// Original tool-input path when this entry names its effective target.
     #[serde(default)]
+    pub via_link_of: Option<String>,
+    /// Whether the path existed immediately after the checkpointed tool finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_existed: Option<bool>,
+    /// Payload size recorded immediately after the checkpointed tool finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_size: Option<u64>,
+    /// SHA-256 digest recorded immediately after the checkpointed tool finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_sha256: Option<String>,
+}
+
+/// High-level classification of a run's net change to a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeKind {
+    /// Path did not exist before the run and exists after.
+    Created,
+    /// Path existed before and after the run.
+    Modified,
+    /// Path existed before the run and was deleted by it.
+    Deleted,
+    /// Path was moved from `moved_from` to `path`.
+    Moved,
+}
+
+/// Reason a unified text diff was omitted from [`FileChange`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffOmittedReason {
+    /// File contains NUL bytes or invalid UTF-8.
+    Binary,
+    /// Before or after payload exceeds [`MAX_DIFF_FILE_BYTES`].
+    TooLarge,
+    /// Run exceeded the [`MAX_DIFF_RUN_BYTES`] total diff budget.
+    RunBudgetExceeded,
+    /// Target is a directory.
+    Directory,
+    /// Target is a symlink or reparse point.
+    Symlink,
+}
+
+/// Unified text diff between pre-run and post-run file contents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnifiedDiff {
+    /// Standard unified diff text (`--- before`, `+++ after`, hunks).
+    pub unified: String,
+    /// Number of `+` lines across all hunks.
+    pub added_lines: usize,
+    /// Number of `-` lines across all hunks.
+    pub removed_lines: usize,
+    /// Number of hunks emitted.
+    pub hunks: usize,
+}
+
+/// Net file change produced by a run for UI/API review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct FileChange {
+    /// Destination/target path on disk.
+    pub path: String,
+    /// Original source path when `kind == ChangeKind::Moved`.
+    pub moved_from: Option<String>,
+    /// Tool operation of the earliest checkpoint for this path.
+    pub op: String,
+    /// Earliest checkpoint id that restores pre-run state for this change.
+    pub checkpoint_id: String,
+    /// Whether `path` existed immediately before the run touched it.
+    pub existed: bool,
+    /// Net change classification.
+    pub kind: ChangeKind,
+    /// Pre-change payload size in bytes (when known).
+    pub before_size: Option<u64>,
+    /// Post-change payload size in bytes (when known).
+    pub after_size: Option<u64>,
+    /// Unified text diff when eligible (`text: None` otherwise).
+    pub text: Option<UnifiedDiff>,
+    /// Reason `text` is `None` when omitted intentionally.
+    pub diff_omitted_reason: Option<DiffOmittedReason>,
+    /// Whether current on-disk state matches the run's last recorded after-state.
+    pub current_matches_after: bool,
+    /// Original tool-input symlink path when this change modified a link target.
+    pub via_link_of: Option<String>,
+    /// Whether the target is/was a directory.
+    pub is_dir: bool,
+    /// Whether the target is/was a symlink or reparse point.
+    pub is_link: bool,
+}
+
+/// What restoring a checkpoint or run will do to a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreAction {
+    /// Restore backed-up bytes or directory/link state.
+    Restore,
+    /// Delete a path that did not exist before the run.
+    Delete,
+    /// Keep an unchanged pass-through link intact.
+    Keep,
+}
+
+/// Per-path dry-run preview of restoring a checkpoint or run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestorePreviewEntry {
+    /// Target path that restore will inspect or modify.
+    pub path: String,
+    /// Whether current on-disk bytes still match the run's last recorded after-state.
+    pub current_matches_after: bool,
+    /// Planned restore action on this path.
+    pub action: RestoreAction,
+    /// Original symlink path if accessed via link.
     pub via_link_of: Option<String>,
 }
 
@@ -58,6 +176,7 @@ pub struct Checkpoint {
 /// Checkpoint storage rooted at `<data_dir>/checkpoints`.
 #[derive(Debug, Clone)]
 pub struct CheckpointStore {
+    data_dir: PathBuf,
     root: PathBuf,
 }
 
@@ -1317,6 +1436,7 @@ impl CheckpointStore {
     #[must_use]
     pub fn new(data_dir: &Path) -> Self {
         Self {
+            data_dir: data_dir.to_path_buf(),
             root: data_dir.join("checkpoints"),
         }
     }
@@ -1339,6 +1459,17 @@ impl CheckpointStore {
     /// Snapshot original input topology together with the effective write
     /// target already approved by the file-tool resolver.
     pub(crate) fn create_for_tool(
+        &self,
+        run_id: &str,
+        op: &str,
+        paths: &[(&Path, &Path)],
+    ) -> io::Result<String> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            self.create_for_tool_inner(run_id, op, paths)
+        })
+    }
+
+    fn create_for_tool_inner(
         &self,
         run_id: &str,
         op: &str,
@@ -1407,6 +1538,9 @@ impl CheckpointStore {
                 size: integrity.as_ref().map(|(size, _)| *size),
                 sha256: integrity.map(|(_, hash)| hash),
                 via_link_of: source.via_link_of.clone(),
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             });
         }
         let link_json = if links.is_empty() {
@@ -1540,6 +1674,17 @@ impl CheckpointStore {
         before_entry: impl Fn(usize) -> io::Result<()>,
         apply_link: impl Fn(&Path, &Path, bool) -> LinkRestore,
     ) -> io::Result<(Vec<String>, String, Vec<String>)> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            self.restore_using_inner(id, before_entry, apply_link)
+        })
+    }
+
+    fn restore_using_inner(
+        &self,
+        id: &str,
+        before_entry: impl Fn(usize) -> io::Result<()>,
+        apply_link: impl Fn(&Path, &Path, bool) -> LinkRestore,
+    ) -> io::Result<(Vec<String>, String, Vec<String>)> {
         let (dir, cp) = self.find(id)?;
         let links = read_links(&dir)?;
         // Reject forged relative paths before any join, stat or mutation.
@@ -1626,6 +1771,652 @@ impl CheckpointStore {
         }
         Ok((restored, safety, warnings))
     }
+
+    /// Return `true` when checkpoint `id` exists and belongs to `run_id`.
+    ///
+    /// # Errors
+    /// I/O errors reading the checkpoint directory or manifest (returns `Ok(false)` when missing).
+    pub fn checkpoint_belongs_to_run(&self, id: &str, run_id: &str) -> io::Result<bool> {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Ok(false);
+        }
+        let expected_dir = self.root.join(sanitize(run_id)).join(id);
+        let manifest = expected_dir.join("manifest.json");
+        let bytes = match fs::read(manifest) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(err),
+        };
+        let cp = serde_json::from_slice::<Checkpoint>(&bytes).map_err(io::Error::other)?;
+        Ok(cp.id == id && cp.run_id == run_id)
+    }
+
+    /// Record post-tool existence, size, and SHA-256 on each entry of checkpoint `id`.
+    ///
+    /// # Errors
+    /// Unknown checkpoint id or I/O errors hashing targets or rewriting `manifest.json`.
+    pub fn record_after(&self, id: &str) -> io::Result<()> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            let (dir, mut cp) = self.find(id)?;
+            for entry in &mut cp.entries {
+                let state = current_state_digest(Path::new(&entry.path))?;
+                entry.after_existed = Some(state.existed);
+                entry.after_size = state.size;
+                entry.after_sha256 = state.sha256;
+            }
+            let json = serde_json::to_vec_pretty(&cp).map_err(io::Error::other)?;
+            fs::write(dir.join("manifest.json"), json)?;
+            Ok(())
+        })
+    }
+
+    /// Summarize net file changes produced by `run_id`, collapsed by path.
+    ///
+    /// Ignores `pre-restore:*` safety checkpoints. Computes UTF-8 unified diffs
+    /// within [`MAX_DIFF_FILE_BYTES`] per file and [`MAX_DIFF_RUN_BYTES`] per run.
+    ///
+    /// # Errors
+    /// I/O or policy validation errors while reading manifests or payloads.
+    pub fn changes_for_run(&self, run_id: &str) -> io::Result<Vec<FileChange>> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            let cps = self.list_user_checkpoints(run_id)?;
+            let run_root = self.root.join(sanitize(run_id));
+            let mut order: Vec<String> = Vec::new();
+            let mut acc: HashMap<String, CollapsedEntry> = HashMap::new();
+
+            for cp in cps {
+                let dir = run_root.join(&cp.id);
+                let links = read_links(&dir)?;
+                let active = active_entries(&cp);
+                if cp.op == "fs_move" && active.len() == 2 {
+                    fold_move_entries(
+                        &mut order, &mut acc, &dir, &cp, &links, active[0], active[1],
+                    );
+                    continue;
+                }
+                for entry in active {
+                    fold_single_entry(&mut order, &mut acc, &dir, &cp, &links, entry);
+                }
+            }
+
+            let mut used_run_bytes: u64 = 0;
+            let mut out = Vec::with_capacity(order.len());
+            for key in order {
+                if let Some(item) = acc.remove(&key) {
+                    out.push(build_file_change(item, &mut used_run_bytes)?);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Preview what restoring checkpoint `id` would do and whether any touched
+    /// path changed on disk since the run's last change to it.
+    ///
+    /// # Errors
+    /// Unknown checkpoint id or I/O/policy errors checking current paths.
+    pub fn restore_preview(&self, id: &str) -> io::Result<Vec<RestorePreviewEntry>> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            let (dir, cp) = self.find(id)?;
+            let links = read_links(&dir)?;
+            let last_by_path = self.last_entry_by_path(&cp.run_id)?;
+            let mut out = Vec::with_capacity(cp.entries.len());
+            for entry in &cp.entries {
+                let last = last_by_path.get(&entry.path).unwrap_or(entry);
+                out.push(RestorePreviewEntry {
+                    path: entry.path.clone(),
+                    current_matches_after: matches_recorded_after(last)?,
+                    action: checkpoint_action(entry, &links),
+                    via_link_of: entry.via_link_of.clone(),
+                });
+            }
+            Ok(out)
+        })
+    }
+
+    /// Preview undoing all user-tool checkpoints in `run_id`.
+    ///
+    /// # Errors
+    /// I/O or policy errors checking current paths.
+    pub fn restore_run_preview(&self, run_id: &str) -> io::Result<Vec<RestorePreviewEntry>> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            let cps = self.list_user_checkpoints(run_id)?;
+            let run_root = self.root.join(sanitize(run_id));
+            let mut order: Vec<String> = Vec::new();
+            let mut first_action: HashMap<String, (RestoreAction, Option<String>)> = HashMap::new();
+            let mut last_entry: HashMap<String, CheckpointEntry> = HashMap::new();
+
+            for cp in cps {
+                let dir = run_root.join(&cp.id);
+                let links = read_links(&dir)?;
+                for entry in cp.entries {
+                    let key = entry.path.clone();
+                    if !first_action.contains_key(&key) {
+                        order.push(key.clone());
+                        let action = checkpoint_action(&entry, &links);
+                        first_action.insert(key.clone(), (action, entry.via_link_of.clone()));
+                    }
+                    last_entry.insert(key, entry);
+                }
+            }
+
+            let mut out = Vec::with_capacity(order.len());
+            for path in order {
+                if let (Some((action, via_link_of)), Some(last)) =
+                    (first_action.remove(&path), last_entry.get(&path))
+                {
+                    out.push(RestorePreviewEntry {
+                        path,
+                        current_matches_after: matches_recorded_after(last)?,
+                        action,
+                        via_link_of,
+                    });
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Undo all user-tool checkpoints in `run_id` in reverse chronological order.
+    ///
+    /// Returns `(restored_paths, safety_checkpoint_ids, warnings)`.
+    ///
+    /// # Errors
+    /// Validation, safety-snapshot, or restore I/O errors.
+    pub fn restore_run(&self, run_id: &str) -> io::Result<(Vec<String>, Vec<String>, Vec<String>)> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            let cps = self.list_user_checkpoints(run_id)?;
+            if cps.is_empty() {
+                return Ok((Vec::new(), Vec::new(), Vec::new()));
+            }
+            let run_root = self.root.join(sanitize(run_id));
+            for cp in &cps {
+                let dir = run_root.join(&cp.id);
+                let links = read_links(&dir)?;
+                for entry in &cp.entries {
+                    if let Some(rel) = &entry.backup {
+                        crate::files::plain_store_components(rel)?;
+                    }
+                    crate::files::vet_checkpoint_write(Path::new(&entry.path))?;
+                }
+                for link in &links {
+                    crate::files::plain_store_components(&link.rel)?;
+                }
+                validate_payloads(&dir, cp, &links)?;
+            }
+
+            let mut seen_paths = HashSet::new();
+            let mut restored_paths = Vec::new();
+            let mut safety_ids = Vec::new();
+            let mut all_warnings = Vec::new();
+            for cp in cps.iter().rev() {
+                let (paths, safety, warnings) = self.restore_with_warnings(&cp.id)?;
+                for p in paths {
+                    if seen_paths.insert(p.clone()) {
+                        restored_paths.push(p);
+                    }
+                }
+                safety_ids.push(safety);
+                all_warnings.extend(warnings);
+            }
+            Ok((restored_paths, safety_ids, all_warnings))
+        })
+    }
+
+    fn list_user_checkpoints(&self, run_id: &str) -> io::Result<Vec<Checkpoint>> {
+        let mut cps = self.list(run_id)?;
+        cps.retain(|cp| !cp.op.starts_with("pre-restore:"));
+        Ok(cps)
+    }
+
+    fn last_entry_by_path(&self, run_id: &str) -> io::Result<HashMap<String, CheckpointEntry>> {
+        let cps = self.list_user_checkpoints(run_id)?;
+        let mut map = HashMap::new();
+        for cp in cps {
+            for entry in cp.entries {
+                map.insert(entry.path.clone(), entry);
+            }
+        }
+        Ok(map)
+    }
+}
+
+struct DiskState {
+    existed: bool,
+    is_link: bool,
+    size: Option<u64>,
+    sha256: Option<String>,
+}
+
+fn current_state_digest(path: &Path) -> io::Result<DiskState> {
+    crate::files::vet_checkpoint_path(path)?;
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Ok(DiskState {
+                existed: false,
+                is_link: false,
+                size: None,
+                sha256: None,
+            });
+        }
+        Err(err) => return Err(err),
+    };
+    if is_link(&meta) || is_reparse(&meta) {
+        let target = fs::read_link(path)?;
+        let mut hash = PayloadSha256::new();
+        hash.update(b"praxi-checkpoint-link\0");
+        hash.update(&[u8::from(meta.is_dir())]);
+        hash.update(target.as_os_str().as_encoded_bytes());
+        return Ok(DiskState {
+            existed: true,
+            is_link: true,
+            size: Some(target.as_os_str().as_encoded_bytes().len() as u64),
+            sha256: Some(hash.finish()),
+        });
+    }
+    let (size, sha256) = payload_digest(path)?;
+    Ok(DiskState {
+        existed: true,
+        is_link: false,
+        size: Some(size),
+        sha256: Some(sha256),
+    })
+}
+
+fn matches_recorded_after(entry: &CheckpointEntry) -> io::Result<bool> {
+    let Some(after_existed) = entry.after_existed else {
+        return Ok(false);
+    };
+    let state = match current_state_digest(Path::new(&entry.path)) {
+        Ok(state) => state,
+        Err(err) if err.kind() != io::ErrorKind::PermissionDenied => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    if state.existed != after_existed {
+        return Ok(false);
+    }
+    if !after_existed {
+        return Ok(true);
+    }
+    let _ = state.is_link;
+    Ok(state.size == entry.after_size
+        && state.sha256.is_some()
+        && state.sha256 == entry.after_sha256)
+}
+
+fn checkpoint_action(entry: &CheckpointEntry, links: &[LinkRecord]) -> RestoreAction {
+    let target = Path::new(&entry.path);
+    if root_link(entry, links).is_some_and(|link| unchanged_link(target, link)) {
+        RestoreAction::Keep
+    } else if entry.existed {
+        RestoreAction::Restore
+    } else {
+        RestoreAction::Delete
+    }
+}
+
+fn active_entries(cp: &Checkpoint) -> Vec<&CheckpointEntry> {
+    let link_targets: HashSet<&str> = cp
+        .entries
+        .iter()
+        .filter_map(|e| e.via_link_of.as_deref())
+        .collect();
+    cp.entries
+        .iter()
+        .filter(|e| {
+            !(e.via_link_of.is_none()
+                && link_targets.contains(e.path.as_str())
+                && e.existed
+                && e.after_existed == Some(true))
+        })
+        .collect()
+}
+
+struct CollapsedEntry {
+    path: String,
+    moved_from: Option<String>,
+    op: String,
+    checkpoint_id: String,
+    existed: bool,
+    before_dir: PathBuf,
+    before_links: Vec<LinkRecord>,
+    before_entry: CheckpointEntry,
+    latest_entry: CheckpointEntry,
+    extra_after_checks: Vec<CheckpointEntry>,
+    is_moved: bool,
+}
+
+fn fold_move_entries(
+    order: &mut Vec<String>,
+    acc: &mut HashMap<String, CollapsedEntry>,
+    dir: &Path,
+    cp: &Checkpoint,
+    links: &[LinkRecord],
+    src: &CheckpointEntry,
+    dst: &CheckpointEntry,
+) {
+    let prev_src = acc.remove(&src.path);
+    let moved_from = prev_src
+        .as_ref()
+        .and_then(|p| p.moved_from.clone())
+        .unwrap_or_else(|| src.path.clone());
+    let before_dir = prev_src
+        .as_ref()
+        .map_or_else(|| dir.to_path_buf(), |p| p.before_dir.clone());
+    let before_links = prev_src
+        .as_ref()
+        .map_or_else(|| links.to_vec(), |p| p.before_links.clone());
+    let before_entry = prev_src
+        .as_ref()
+        .map_or_else(|| src.clone(), |p| p.before_entry.clone());
+    let mut extra_after_checks = prev_src
+        .as_ref()
+        .map(|p| p.extra_after_checks.clone())
+        .unwrap_or_default();
+    extra_after_checks.push(src.clone());
+
+    if !acc.contains_key(&dst.path) {
+        order.push(dst.path.clone());
+    }
+    acc.insert(
+        dst.path.clone(),
+        CollapsedEntry {
+            path: dst.path.clone(),
+            moved_from: Some(moved_from),
+            op: prev_src
+                .as_ref()
+                .map_or_else(|| cp.op.clone(), |p| p.op.clone()),
+            checkpoint_id: prev_src
+                .as_ref()
+                .map_or_else(|| cp.id.clone(), |p| p.checkpoint_id.clone()),
+            existed: dst.existed,
+            before_dir,
+            before_links,
+            before_entry,
+            latest_entry: dst.clone(),
+            extra_after_checks,
+            is_moved: true,
+        },
+    );
+}
+
+fn fold_single_entry(
+    order: &mut Vec<String>,
+    acc: &mut HashMap<String, CollapsedEntry>,
+    dir: &Path,
+    cp: &Checkpoint,
+    links: &[LinkRecord],
+    entry: &CheckpointEntry,
+) {
+    if let Some(existing) = acc.get_mut(&entry.path) {
+        existing.latest_entry = entry.clone();
+        return;
+    }
+    order.push(entry.path.clone());
+    acc.insert(
+        entry.path.clone(),
+        CollapsedEntry {
+            path: entry.path.clone(),
+            moved_from: None,
+            op: cp.op.clone(),
+            checkpoint_id: cp.id.clone(),
+            existed: entry.existed,
+            before_dir: dir.to_path_buf(),
+            before_links: links.to_vec(),
+            before_entry: entry.clone(),
+            latest_entry: entry.clone(),
+            extra_after_checks: Vec::new(),
+            is_moved: false,
+        },
+    );
+}
+
+enum ReadBounded {
+    Missing,
+    Dir,
+    Link,
+    TooLarge,
+    Bytes(Vec<u8>),
+}
+
+fn read_bounded_bytes(path: &Path, limit: u64) -> io::Result<ReadBounded> {
+    crate::files::vet_checkpoint_path(path)?;
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(ReadBounded::Missing),
+        Err(err) => return Err(err),
+    };
+    if is_link(&meta) || is_reparse(&meta) {
+        return Ok(ReadBounded::Link);
+    }
+    if meta.is_dir() {
+        return Ok(ReadBounded::Dir);
+    }
+    if !meta.is_file() {
+        return Ok(ReadBounded::Missing);
+    }
+    if meta.len() > limit {
+        return Ok(ReadBounded::TooLarge);
+    }
+    let file = fs::File::open(path)?;
+    let mut buf = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
+    file.take(limit + 1).read_to_end(&mut buf)?;
+    if (buf.len() as u64) > limit {
+        return Ok(ReadBounded::TooLarge);
+    }
+    Ok(ReadBounded::Bytes(buf))
+}
+
+fn read_before_bytes(
+    dir: &Path,
+    entry: &CheckpointEntry,
+    links: &[LinkRecord],
+) -> io::Result<ReadBounded> {
+    if !entry.existed {
+        return Ok(ReadBounded::Missing);
+    }
+    if entry.is_dir {
+        return Ok(ReadBounded::Dir);
+    }
+    if root_link(entry, links).is_some() {
+        return Ok(ReadBounded::Link);
+    }
+    if entry.size.is_some_and(|s| s > MAX_DIFF_FILE_BYTES) {
+        return Ok(ReadBounded::TooLarge);
+    }
+    let Some(rel) = &entry.backup else {
+        return Ok(ReadBounded::Missing);
+    };
+    crate::files::plain_store_components(rel)?;
+    read_bounded_bytes(&dir.join(rel), MAX_DIFF_FILE_BYTES)
+}
+
+fn read_after_bytes(
+    entry: &CheckpointEntry,
+    current_matches: bool,
+) -> io::Result<Option<ReadBounded>> {
+    if entry.after_existed == Some(false) {
+        return Ok(Some(ReadBounded::Missing));
+    }
+    if entry.is_dir {
+        return Ok(Some(ReadBounded::Dir));
+    }
+    if !current_matches {
+        return Ok(None);
+    }
+    if entry.after_size.is_some_and(|s| s > MAX_DIFF_FILE_BYTES) {
+        return Ok(Some(ReadBounded::TooLarge));
+    }
+    Ok(Some(read_bounded_bytes(
+        Path::new(&entry.path),
+        MAX_DIFF_FILE_BYTES,
+    )?))
+}
+
+fn build_file_change(item: CollapsedEntry, used_run_bytes: &mut u64) -> io::Result<FileChange> {
+    let mut current_matches_after = matches_recorded_after(&item.latest_entry)?;
+    for extra in &item.extra_after_checks {
+        if !matches_recorded_after(extra)? {
+            current_matches_after = false;
+        }
+    }
+
+    let kind = if item.is_moved {
+        ChangeKind::Moved
+    } else if !item.before_entry.existed {
+        if item.latest_entry.after_existed == Some(false) {
+            ChangeKind::Deleted
+        } else {
+            ChangeKind::Created
+        }
+    } else if item.latest_entry.after_existed == Some(false)
+        || (item.latest_entry.after_existed.is_none() && item.op == "fs_delete")
+    {
+        ChangeKind::Deleted
+    } else {
+        ChangeKind::Modified
+    };
+
+    let before_size = if item.before_entry.existed {
+        item.before_entry.size
+    } else {
+        None
+    };
+    let after_size = if item.latest_entry.after_existed == Some(false) {
+        None
+    } else {
+        item.latest_entry.after_size
+    };
+
+    let before_read = read_before_bytes(&item.before_dir, &item.before_entry, &item.before_links)?;
+    let after_read = read_after_bytes(&item.latest_entry, current_matches_after)?;
+
+    let is_dir = item.before_entry.is_dir
+        || item.latest_entry.is_dir
+        || matches!(before_read, ReadBounded::Dir)
+        || matches!(after_read, Some(ReadBounded::Dir));
+    let disk_is_link =
+        fs::symlink_metadata(&item.path).is_ok_and(|m| is_link(&m) || is_reparse(&m));
+    let is_link_flag = root_link(&item.before_entry, &item.before_links).is_some()
+        || matches!(before_read, ReadBounded::Link)
+        || matches!(after_read, Some(ReadBounded::Link))
+        || disk_is_link;
+
+    let (text, diff_omitted_reason) = compute_diff(
+        &item,
+        before_read,
+        after_read,
+        is_dir,
+        is_link_flag,
+        used_run_bytes,
+    );
+
+    let via_link_of = item
+        .latest_entry
+        .via_link_of
+        .or(item.before_entry.via_link_of);
+
+    Ok(FileChange {
+        path: item.path,
+        moved_from: item.moved_from,
+        op: item.op,
+        checkpoint_id: item.checkpoint_id,
+        existed: item.existed,
+        kind,
+        before_size,
+        after_size,
+        text,
+        diff_omitted_reason,
+        current_matches_after,
+        via_link_of,
+        is_dir,
+        is_link: is_link_flag,
+    })
+}
+
+fn compute_diff(
+    item: &CollapsedEntry,
+    before_read: ReadBounded,
+    after_read: Option<ReadBounded>,
+    is_dir: bool,
+    is_link_flag: bool,
+    used_run_bytes: &mut u64,
+) -> (Option<UnifiedDiff>, Option<DiffOmittedReason>) {
+    if is_dir {
+        return (None, Some(DiffOmittedReason::Directory));
+    }
+    if is_link_flag {
+        return (None, Some(DiffOmittedReason::Symlink));
+    }
+    let Some(after_r) = after_read else {
+        return (None, None);
+    };
+    if matches!(before_read, ReadBounded::TooLarge) || matches!(after_r, ReadBounded::TooLarge) {
+        return (None, Some(DiffOmittedReason::TooLarge));
+    }
+
+    let before_bytes = match before_read {
+        ReadBounded::Bytes(b) => b,
+        ReadBounded::Missing => Vec::new(),
+        ReadBounded::Dir => return (None, Some(DiffOmittedReason::Directory)),
+        ReadBounded::Link => return (None, Some(DiffOmittedReason::Symlink)),
+        ReadBounded::TooLarge => return (None, Some(DiffOmittedReason::TooLarge)),
+    };
+    let after_bytes = match after_r {
+        ReadBounded::Bytes(b) => b,
+        ReadBounded::Missing => Vec::new(),
+        ReadBounded::Dir => return (None, Some(DiffOmittedReason::Directory)),
+        ReadBounded::Link => return (None, Some(DiffOmittedReason::Symlink)),
+        ReadBounded::TooLarge => return (None, Some(DiffOmittedReason::TooLarge)),
+    };
+
+    if before_bytes.contains(&0) || after_bytes.contains(&0) {
+        return (None, Some(DiffOmittedReason::Binary));
+    }
+    let (Ok(before_str), Ok(after_str)) = (
+        std::str::from_utf8(&before_bytes),
+        std::str::from_utf8(&after_bytes),
+    ) else {
+        return (None, Some(DiffOmittedReason::Binary));
+    };
+
+    if before_str == after_str {
+        return (None, None);
+    }
+
+    let needed = (before_bytes.len() + after_bytes.len()) as u64;
+    if used_run_bytes.saturating_add(needed) > MAX_DIFF_RUN_BYTES {
+        return (None, Some(DiffOmittedReason::RunBudgetExceeded));
+    }
+    *used_run_bytes = used_run_bytes.saturating_add(needed);
+
+    let diff = TextDiff::from_lines(before_str, after_str);
+    let mut added_lines = 0;
+    let mut removed_lines = 0;
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Insert => added_lines += 1,
+            ChangeTag::Delete => removed_lines += 1,
+            ChangeTag::Equal => {}
+        }
+    }
+    let before_label = item.moved_from.as_deref().unwrap_or(item.path.as_str());
+    let mut unified_builder = diff.unified_diff();
+    unified_builder
+        .context_radius(3)
+        .header(before_label, &item.path);
+    let hunks = unified_builder.iter_hunks().count();
+    let unified = unified_builder.to_string();
+    (
+        Some(UnifiedDiff {
+            unified,
+            added_lines,
+            removed_lines,
+            hunks,
+        }),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -2556,5 +3347,245 @@ mod tests {
             .create("run", "fs_write", &[work.path().join("a.txt").as_path()])
             .unwrap();
         assert_eq!(store.list("run").unwrap()[0].id, id);
+    }
+
+    #[test]
+    fn changes_for_run_collapses_edits_deletes_moves_and_ignores_safety() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+
+        let created = work.path().join("new.txt");
+        let edited = work.path().join("edit.txt");
+        let deleted = work.path().join("gone.txt");
+        let move_src = work.path().join("old_name.txt");
+        let move_dst = work.path().join("new_name.txt");
+
+        fs::write(&edited, "line1\nline2\n").unwrap();
+        fs::write(&deleted, "bye\n").unwrap();
+        fs::write(&move_src, "moved payload\n").unwrap();
+
+        let cp1 = store.create("run-1", "fs_write", &[&created]).unwrap();
+        fs::write(&created, "hello\nworld\n").unwrap();
+        store.record_after(&cp1).unwrap();
+
+        let cp2 = store.create("run-1", "fs_edit", &[&created]).unwrap();
+        fs::write(&created, "hello\nupdated\n").unwrap();
+        store.record_after(&cp2).unwrap();
+
+        let cp3 = store.create("run-1", "fs_edit", &[&edited]).unwrap();
+        fs::write(&edited, "line1\nline2 changed\n").unwrap();
+        store.record_after(&cp3).unwrap();
+
+        let cp4 = store.create("run-1", "fs_delete", &[&deleted]).unwrap();
+        fs::remove_file(&deleted).unwrap();
+        store.record_after(&cp4).unwrap();
+
+        let cp5 = store
+            .create("run-1", "fs_move", &[&move_src, &move_dst])
+            .unwrap();
+        fs::rename(&move_src, &move_dst).unwrap();
+        store.record_after(&cp5).unwrap();
+
+        // Safety checkpoints created by restoring should not appear in changes_for_run.
+        let cp_safety = store
+            .create("run-1", &format!("pre-restore:{cp3}"), &[&edited])
+            .unwrap();
+        store.record_after(&cp_safety).unwrap();
+
+        let changes = store.changes_for_run("run-1").unwrap();
+        assert_eq!(changes.len(), 4);
+
+        let canonical_str = |p: &Path| canonical_entry(p).unwrap().display().to_string();
+
+        let c_new = changes
+            .iter()
+            .find(|c| c.path == canonical_str(&created))
+            .unwrap();
+        assert_eq!(c_new.kind, ChangeKind::Created);
+        assert!(!c_new.existed);
+        assert_eq!(c_new.checkpoint_id, cp1);
+        assert_eq!(c_new.before_size, None);
+        assert_eq!(c_new.after_size, Some(14));
+        assert!(c_new.current_matches_after);
+        let diff = c_new.text.as_ref().unwrap();
+        assert_eq!(diff.added_lines, 2);
+        assert_eq!(diff.removed_lines, 0);
+        assert!(diff.unified.contains("+updated"));
+
+        let c_edit = changes
+            .iter()
+            .find(|c| c.path == canonical_str(&edited))
+            .unwrap();
+        assert_eq!(c_edit.kind, ChangeKind::Modified);
+        assert!(c_edit.existed);
+        assert!(c_edit.text.as_ref().unwrap().unified.contains("-line2"));
+        assert!(
+            c_edit
+                .text
+                .as_ref()
+                .unwrap()
+                .unified
+                .contains("+line2 changed")
+        );
+
+        let c_del = changes
+            .iter()
+            .find(|c| c.path == canonical_str(&deleted))
+            .unwrap();
+        assert_eq!(c_del.kind, ChangeKind::Deleted);
+        assert_eq!(c_del.after_size, None);
+        assert_eq!(c_del.text.as_ref().unwrap().removed_lines, 1);
+
+        let c_mv = changes
+            .iter()
+            .find(|c| c.path == canonical_str(&move_dst))
+            .unwrap();
+        assert_eq!(c_mv.kind, ChangeKind::Moved);
+        assert_eq!(
+            c_mv.moved_from.as_deref(),
+            Some(canonical_str(&move_src).as_str())
+        );
+        assert!(c_mv.current_matches_after);
+    }
+
+    #[test]
+    fn changes_for_run_omits_binary_oversize_dir_and_run_budget_diffs() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+
+        let bin = work.path().join("blob.bin");
+        let big = work.path().join("big.txt");
+        let folder = work.path().join("subdir");
+        fs::create_dir(&folder).unwrap();
+
+        let bin_cp = store.create("run-cap", "fs_write", &[&bin]).unwrap();
+        fs::write(&bin, [0u8, 1, 2, 0xff]).unwrap();
+        store.record_after(&bin_cp).unwrap();
+
+        let large_cp = store.create("run-cap", "fs_write", &[&big]).unwrap();
+        let oversized = vec![b'a'; usize::try_from(MAX_DIFF_FILE_BYTES).unwrap() + 10];
+        fs::write(&big, &oversized).unwrap();
+        store.record_after(&large_cp).unwrap();
+
+        let folder_cp = store.create("run-cap", "fs_delete", &[&folder]).unwrap();
+        fs::remove_dir(&folder).unwrap();
+        store.record_after(&folder_cp).unwrap();
+
+        // Exceed the 2 MiB per-run diff budget using multiple 250 KiB files.
+        let chunk = "x".repeat(250 * 1024);
+        for idx in 0..10 {
+            let p = work.path().join(format!("part-{idx}.txt"));
+            let cp = store.create("run-cap", "fs_write", &[&p]).unwrap();
+            fs::write(&p, &chunk).unwrap();
+            store.record_after(&cp).unwrap();
+        }
+
+        let canonical_str = |p: &Path| canonical_entry(p).unwrap().display().to_string();
+        let changes = store.changes_for_run("run-cap").unwrap();
+        let bin_change = changes
+            .iter()
+            .find(|c| c.path == canonical_str(&bin))
+            .unwrap();
+        assert!(bin_change.text.is_none());
+        assert_eq!(
+            bin_change.diff_omitted_reason,
+            Some(DiffOmittedReason::Binary)
+        );
+        assert_eq!(bin_change.after_size, Some(4));
+
+        let large_change = changes
+            .iter()
+            .find(|c| c.path == canonical_str(&big))
+            .unwrap();
+        assert!(large_change.text.is_none());
+        assert_eq!(
+            large_change.diff_omitted_reason,
+            Some(DiffOmittedReason::TooLarge)
+        );
+
+        let folder_change = changes
+            .iter()
+            .find(|c| c.path == canonical_str(&folder))
+            .unwrap();
+        assert!(folder_change.is_dir);
+        assert!(folder_change.text.is_none());
+        assert_eq!(
+            folder_change.diff_omitted_reason,
+            Some(DiffOmittedReason::Directory)
+        );
+
+        let budget_omitted = changes
+            .iter()
+            .filter(|c| c.diff_omitted_reason == Some(DiffOmittedReason::RunBudgetExceeded))
+            .count();
+        assert!(
+            budget_omitted >= 2,
+            "expected at least 2 files to hit run diff budget"
+        );
+    }
+
+    #[test]
+    fn restore_preview_detects_post_run_edits_and_restore_run_reverses_chronology() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+
+        let file = work.path().join("doc.txt");
+        let cp1 = store.create("run-rev", "fs_write", &[&file]).unwrap();
+        fs::write(&file, "v1").unwrap();
+        store.record_after(&cp1).unwrap();
+
+        let cp2 = store.create("run-rev", "fs_edit", &[&file]).unwrap();
+        fs::write(&file, "v2").unwrap();
+        store.record_after(&cp2).unwrap();
+
+        assert!(store.checkpoint_belongs_to_run(&cp1, "run-rev").unwrap());
+        assert!(!store.checkpoint_belongs_to_run(&cp1, "other-run").unwrap());
+
+        // Restoring cp1 checks against the run's last change (cp2 == "v2").
+        let preview = store.restore_preview(&cp1).unwrap();
+        assert_eq!(preview.len(), 1);
+        assert!(preview[0].current_matches_after);
+        assert_eq!(preview[0].action, RestoreAction::Delete);
+
+        // External user edit after the run makes current_matches_after false.
+        fs::write(&file, "user edit").unwrap();
+        let preview_dirty = store.restore_preview(&cp1).unwrap();
+        assert!(!preview_dirty[0].current_matches_after);
+
+        let run_preview = store.restore_run_preview("run-rev").unwrap();
+        assert_eq!(run_preview.len(), 1);
+        assert!(!run_preview[0].current_matches_after);
+        assert_eq!(run_preview[0].action, RestoreAction::Delete);
+
+        let expected_path = canonical_entry(&file).unwrap().display().to_string();
+        // restore_run applies cp2 ("v1") then cp1 (deletes file).
+        let (restored, safety_ids, _warnings) = store.restore_run("run-rev").unwrap();
+        assert!(!file.exists());
+        assert_eq!(restored, vec![expected_path]);
+        assert_eq!(safety_ids.len(), 2);
+        // The first safety snapshot captured the user's pre-undo content ("user edit").
+        store.restore(&safety_ids[0]).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "user edit");
+    }
+
+    #[test]
+    fn legacy_checkpoint_without_after_metadata_requires_confirmation() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+
+        let file = work.path().join("legacy.txt");
+        fs::write(&file, "before").unwrap();
+        let cp = store.create("run-legacy", "fs_write", &[&file]).unwrap();
+        fs::write(&file, "after").unwrap();
+        // Intentionally skip store.record_after(&cp) to simulate a card-133 manifest.
+
+        let preview = store.restore_preview(&cp).unwrap();
+        assert_eq!(preview.len(), 1);
+        assert!(!preview[0].current_matches_after);
+        assert_eq!(preview[0].action, RestoreAction::Restore);
     }
 }

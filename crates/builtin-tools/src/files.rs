@@ -1356,6 +1356,32 @@ fn current_gate() -> Option<CpGate> {
     CP_GATE.with(|slot| slot.borrow().clone())
 }
 
+struct RestoreGate(Option<CpGate>);
+
+impl Drop for RestoreGate {
+    fn drop(&mut self) {
+        CP_GATE.with(|slot| *slot.borrow_mut() = self.0.take());
+    }
+}
+
+/// Provide at least `data_dir` to checkpoint policy checks when callers invoke
+/// [`CheckpointStore`] directly outside a tool invocation.
+pub(crate) fn with_data_dir_gate<T>(data_dir: &Path, f: impl FnOnce() -> T) -> T {
+    if current_gate().is_some() {
+        return f();
+    }
+    let prev = CP_GATE.with(|slot| {
+        slot.borrow_mut().replace(CpGate {
+            data_dir: data_dir.to_path_buf(),
+            roots: Vec::new(),
+            grants: Vec::new(),
+            roots_unresolved: false,
+        })
+    });
+    let _restore = RestoreGate(prev);
+    f()
+}
+
 fn tool_to_io(err: ToolError) -> io::Error {
     match err {
         ToolError::PermissionDenied(m) => io::Error::new(io::ErrorKind::PermissionDenied, m),
@@ -2443,6 +2469,12 @@ impl Shared {
             Ok((id, note))
         })
     }
+
+    fn record_checkpoint_after(&self, id: &str) {
+        with_checkpoint_gate(self, || {
+            let _ = self.checkpoints.record_after(id);
+        });
+    }
 }
 
 fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
@@ -2452,6 +2484,7 @@ fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
         fs::create_dir_all(parent).map_err(|e| exec_err(format!("create dirs: {e}")))?;
     }
     fs::write(&p, i.content.as_bytes()).map_err(|e| exec_err(format!("write {}: {e}", i.path)))?;
+    sh.record_checkpoint_after(&cp);
     Ok(format!(
         "wrote {} bytes to {} (checkpoint {cp}){note}",
         i.content.len(),
@@ -2477,6 +2510,7 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     let updated = text.replace(&i.old, &i.new);
     fs::write(&p, updated).map_err(|e| exec_err(format!("write {}: {e}", i.path)))?;
+    sh.record_checkpoint_after(&cp);
     Ok(format!(
         "replaced {n} occurrence(s) in {} (checkpoint {cp}){note}",
         i.path
@@ -2535,6 +2569,7 @@ fn do_move_with(
         }
         let warnings = relocate_safely(sh, &from, &to, rename, i.overwrite)
             .map_err(|err| io_to_tool(&err, "move failed"))?;
+        sh.record_checkpoint_after(&cp);
         let mut result = format!("moved {} to {} (checkpoint {cp}){note}", i.from, i.to);
         for warning in warnings {
             let _ = write!(result, "\nwarning: {warning}");
@@ -2568,6 +2603,7 @@ fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> 
     let (cp, note) = sh.checkpoint(run, "fs_delete", &[(Path::new(&i.path), &p)])?;
     remove_tree_skip_protected(&p, &sh.data_dir, &sh.grants)
         .map_err(|e| io_to_tool(&e, "delete failed"))?;
+    sh.record_checkpoint_after(&cp);
     Ok(format!("deleted {} (checkpoint {cp}){note}", i.path))
 }
 
@@ -4299,6 +4335,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
@@ -4441,6 +4480,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
@@ -4515,6 +4557,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
@@ -4618,6 +4663,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
