@@ -9,9 +9,10 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
-import { fileURLToPath, URL } from 'node:url';
+import { fileURLToPath, URL, URLSearchParams } from 'node:url';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { setTimeout as delay } from 'node:timers/promises';
+import { validateProbe } from '../src/lib/layoutProbeCheck.ts';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
@@ -50,35 +51,17 @@ const selected = !only ? cases
   : /^[\d,]+$/.test(only) ? only.split(',').map((i) => cases[Number(i)]).filter(Boolean)
   : cases.filter((c) => c.name.includes(only));
 
-const EPS = 0.5;
-/** Same invariants as the pure model, applied to measured rects. */
-function violations(p, open) {
-  const out = [];
-  const vw = p.viewport.width;
-  const boxes = { rail: p.rail, main: p.main, panel: open ? p.panel : null, panelInner: open ? p.panelInner : null };
-  for (const [k, b] of Object.entries(boxes)) {
-    if (b && (b.left < -EPS || b.right > vw + EPS)) out.push(`${k} outside viewport (${b.left}..${b.right} of ${vw})`);
-  }
-  if (p.document.scrollWidth > p.document.clientWidth + EPS) out.push(`document scrolls horizontally (${p.document.scrollWidth} > ${p.document.clientWidth})`);
-  if (p.main && p.rail && p.rail.right > p.main.left + EPS) out.push('rail overlaps main');
-  if (open && p.panel && p.main && p.main.right > p.panel.left + EPS) out.push('main overlaps panel');
-  if (p.main && vw >= 900 && p.main.width < 320 - EPS) out.push(`main ${p.main.width.toFixed(1)} < 320`);
-  if (p.main && p.main.width < 280 - EPS) out.push(`main ${p.main.width.toFixed(1)} < 280`);
-  if (open && p.panel) {
-    const pad = p.float === 'on' ? 12 : 0;
-    if (Math.abs(p.panel.right - (vw - pad)) > EPS) out.push(`panel.right ${p.panel.right} != ${vw - pad}`);
-    if (p.panelInner && p.panelInner.right > p.panelContentRight + EPS) {
-      out.push(`panelInner.right ${p.panelInner.right} > panel content right ${p.panelContentRight} (clipped ${(p.panelInner.right - p.panelContentRight).toFixed(1)}px)`);
-    }
-    if (p.panelRightMostDescendant && p.panelRightMostDescendant.right > p.panelContentRight + EPS) {
-      out.push(`panel descendant <${p.panelRightMostDescendant.tag}> right ${p.panelRightMostDescendant.right} > ${p.panelContentRight}`);
-    }
-    if (p.panelInnerScroll && p.panelInnerScroll.scrollWidth > p.panelInnerScroll.clientWidth + EPS) {
-      out.push(`panelInner scrolls horizontally (${p.panelInnerScroll.scrollWidth} > ${p.panelInnerScroll.clientWidth})`);
-    }
-  }
-  return out;
-}
+/** What each case asks for, derived from its query (validated against what the probe measured). */
+const expectOf = (c) => {
+  const q = new URLSearchParams(c.query);
+  return {
+    open: q.get('panel') === '1',
+    theme: q.get('theme') ?? undefined,
+    style: q.get('style') ?? undefined,
+    corners: q.get('corners') ?? undefined,
+    backdrop: q.get('backdrop') ? 'on' : 'off'
+  };
+};
 
 const killTree = (pid) => {
   if (!pid) return;
@@ -120,21 +103,22 @@ try {
     let out = '';
     for (let attempt = 0; attempt < 4 && !out.includes('layout-probe'); attempt++) {
       out = await run(chrome, ['--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
-      '--force-device-scale-factor=1', `--window-size=${c.width},900`, `--virtual-time-budget=${process.env.VTB ?? 20000}`,
+      '--force-device-scale-factor=1', `--window-size=${c.width},900`, `--virtual-time-budget=${process.env.VTB ?? 30000}`,
       `--user-data-dir=${join(tmp, `profile-${i}-${attempt}`)}`, '--dump-dom', `http://127.0.0.1:${port}/?mock=1&probe=layout&${c.query}`],
       { stdio: ['ignore', 'pipe', args.includes('--debug') ? 'inherit' : 'ignore'], timeout: CASE_TIMEOUT });
     }
     const m = /<script id="layout-probe" type="application\/json">([\s\S]*?)<\/script>/.exec(out);
-    if (!m && args.includes('--debug')) process.stdout.write(`DOM[${out.length}] probe=${out.includes("layout-probe")} pr=${/data-probe="[^"]*"/.exec(out)?.[0]} err=${/data-probe-error="[^"]*"/.exec(out)?.[0]} shell=${out.includes("data-shell-part")}
-`);
-    if (!m) { process.stdout.write(`FAIL ${c.name}: no probe output (timeout or crash)\n`); failed++; continue; }
+    if (!m) { process.stdout.write(`FAIL ${c.name}: no probe output (timeout or crash)
+`); failed++; continue; }
     const p = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
-    const open = !c.name.includes('closed');
-    const v = violations(p, open);
+    const expect = expectOf(c);
+    const v = validateProbe(p, expect);
+    const open = expect.open;
     const clip = open && p.panelInner ? p.panelInner.right - p.panelContentRight : 0;
     narrowest = Math.min(narrowest, p.main ? p.main.width : Infinity);
     const f = (b) => (b ? `${b.left.toFixed(1)}..${b.right.toFixed(1)}(w${b.width.toFixed(1)})` : '-');
-    process.stdout.write(`${v.length ? 'FAIL' : 'ok  '} ${c.name} vp=${p.viewport.width} float=${p.float} rail=${f(p.rail)} main=${f(p.main)} panel=${f(p.panel)} borders=${JSON.stringify(p.panelBorders)} inner=${f(p.panelInner)} contentRight=${p.panelContentRight} clip=${clip.toFixed(1)} doc=${p.document.scrollWidth}/${p.document.clientWidth}\n`);
+    process.stdout.write(`${v.length ? 'FAIL' : 'ok  '} ${c.name} vp=${p.viewport?.width} float=${p.float} rail=${f(p.rail)} main=${f(p.main)} panel=${f(p.panel)} borders=${JSON.stringify(p.panelBorders)} inner=${f(p.panelInner)} contentRight=${p.panelContentRight} clip=${clip.toFixed(1)} doc=${p.document?.scrollWidth}/${p.document?.clientWidth}${p.error ? ` error=${p.error}` : ''}
+`);
     for (const line of v) process.stdout.write(`       - ${line}\n`);
     if (v.length) failed++;
   }
