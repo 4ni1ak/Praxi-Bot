@@ -158,11 +158,12 @@ fn watch_peers_with_config(
                     if !net.device(&event.peer).is_some_and(|d| matches!(d.role, Role::Host | Role::Desktop)) { continue; }
                     let Some(state) = weak.upgrade() else { break; };
                     if event.event.kind == "host_conflict" {
-                        if let Some(info) = event.leader
-                            && let Err(e) = state
-                                .leader()
-                                .observe_conflict(&event.peer.to_string(), info)
-                                .await
+                        // Ignore event.leader: this frame echoes the receiver.
+                        // observe_conflict reads the sender's heartbeat cache.
+                        if let Err(e) = state
+                            .leader()
+                            .observe_conflict(&peer_network::key_to_string(&event.peer))
+                            .await
                         {
                             eprintln!("host conflict: {e}");
                         }
@@ -174,8 +175,8 @@ fn watch_peers_with_config(
                         let conflict = local.state == daemon_api::host::HostState::Active && info.state == LeaderState::Active && info.epoch == local.epoch;
                         if let Err(e) = state.leader().observe(&event.peer.to_string(), info).await { eprintln!("host leadership: {e}"); }
                         if conflict {
-                            // Explicitly notify the other side even after our advertised state
-                            // became standby; otherwise it could miss our final active heartbeat.
+                            // Echo the heartbeat we just applied. The receiver ignores
+                            // this field and reads our state from its heartbeat cache.
                             let message = peer_network::proto::Event { leader: Some(info), kind: "host_conflict".into(), ts_ms: u64::try_from(storage::now_ms()).unwrap_or(0), data: json!({"reason":"equal_epoch"}) };
                             let _ = tokio::time::timeout(Duration::from_secs(2), async {
                                 let conn = net.connect(&event.peer, peer_network::ALPN_EVENTS).await?;
@@ -371,5 +372,113 @@ mod tests {
         assert_eq!(desktop.devices()[0].role, Role::Host);
         net.shutdown().await;
         desktop.shutdown().await;
+    }
+
+    async fn push_event(
+        from: &PeerNetwork,
+        to: &PeerNetwork,
+        leader: Option<peer_network::LeaderInfo>,
+        kind: &str,
+    ) {
+        let message = peer_network::proto::Event {
+            leader,
+            kind: kind.into(),
+            ts_ms: 1,
+            data: json!({}),
+        };
+        let conn = tokio::time::timeout(
+            Duration::from_secs(3),
+            from.connect(&to.id(), peer_network::ALPN_EVENTS),
+        )
+        .await
+        .expect("event connect")
+        .unwrap();
+        let mut send = conn.open_uni().await.unwrap();
+        peer_network::proto::write_frame(
+            &mut send,
+            &serde_json::to_vec(&message).unwrap(),
+            peer_network::proto::MAX_FRAME,
+        )
+        .await
+        .unwrap();
+        let _ = send.finish();
+        let _ = send.stopped().await;
+    }
+
+    #[tokio::test]
+    async fn host_conflict_ignores_echoed_leader_and_uses_sender_heartbeat_cache() {
+        // Production puts the receiver's own heartbeat into `leader`. These
+        // cases disagree with the sender cache, so trusting the frame fails.
+        for (cached, echoed, demote) in [
+            (LeaderState::Standby, LeaderState::Active, false),
+            (LeaderState::Active, LeaderState::Standby, true),
+        ] {
+            let a_dir = tempfile::tempdir().unwrap();
+            let b_dir = tempfile::tempdir().unwrap();
+            let (a, a_net) = daemon(a_dir.path(), 4).await;
+            let (b, b_net) = daemon(b_dir.path(), 4).await;
+            let invite = a_net.create_invite(Role::Desktop).await;
+            b_net
+                .pair(&PairTicket::parse(&invite.ticket).unwrap())
+                .await
+                .unwrap();
+            let cached_info = peer_network::LeaderInfo {
+                epoch: 4,
+                state: cached,
+            };
+            a_net.set_leader_info(Some(cached_info));
+            push_event(&a_net, &b_net, Some(cached_info), "heartbeat").await;
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while b_net.peer_leader(&a_net.id()) != Some(cached_info) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("sender heartbeat cached");
+            // Let that frame finish with no watcher subscribed.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut events = b.leader().subscribe();
+            watch_peers_with_config(
+                &b,
+                b_net.clone(),
+                HeartbeatConfig {
+                    interval: Duration::from_secs(60),
+                    initial_backoff: Duration::from_secs(60),
+                    max_backoff: Duration::from_secs(60),
+                    connect_timeout: Duration::from_secs(2),
+                },
+            );
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            push_event(
+                &a_net,
+                &b_net,
+                Some(peer_network::LeaderInfo {
+                    epoch: 4,
+                    state: echoed,
+                }),
+                "host_conflict",
+            )
+            .await;
+            if demote {
+                tokio::time::timeout(Duration::from_secs(3), async {
+                    while b.leader().config().state != HostState::Standby {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("cached active sender demotes");
+            } else {
+                let changed = tokio::time::timeout(Duration::from_millis(800), events.recv()).await;
+                assert!(
+                    changed.is_err(),
+                    "echoed leader must not demote when the sender cache is {cached:?}"
+                );
+                assert_eq!(b.leader().config().state, HostState::Active);
+            }
+            a.shutdown_token().cancel();
+            b.shutdown_token().cancel();
+            a_net.shutdown().await;
+            b_net.shutdown().await;
+        }
     }
 }

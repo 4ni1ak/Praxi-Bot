@@ -3511,3 +3511,71 @@ async fn telegram_409_clears_on_second_poll_without_stopping_channel() {
     assert_eq!(channel.status(), crate::ChannelStatus::Running);
     channel.shutdown().await;
 }
+
+#[test]
+fn conflict_recovery_delay_is_exponential_and_capped() {
+    let config = TelegramConfig::with_in_memory_token("token");
+    assert!(config.conflict_recovery_base >= Duration::from_secs(30));
+    assert!(config.conflict_recovery_max >= Duration::from_secs(5 * 60));
+    assert!(config.conflict_recovery_max <= Duration::from_secs(10 * 60));
+    let mut previous = Duration::ZERO;
+    for step in 1..=12 {
+        let delay = crate::bridge::conflict_recovery_delay(
+            step,
+            config.conflict_recovery_base,
+            config.conflict_recovery_max,
+        );
+        assert!(delay >= config.conflict_recovery_base);
+        assert!(delay <= config.conflict_recovery_max);
+        assert!(delay >= previous);
+        assert!(!delay.is_zero());
+        previous = delay;
+    }
+    assert_eq!(previous, config.conflict_recovery_max);
+    assert_eq!(
+        crate::bridge::conflict_recovery_delay(1, Duration::ZERO, Duration::from_secs(1)),
+        Duration::from_secs(30)
+    );
+}
+
+#[tokio::test]
+async fn telegram_409_resumes_after_capped_backoff_once_conflict_clears() {
+    let server = MockServer::start().await;
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counter = polls.clone();
+    Mock::given(method("POST"))
+        .and(path(format!("/bot{TEST_BOT_TOKEN}/getUpdates")))
+        .respond_with(move |_: &wiremock::Request| {
+            if counter.fetch_add(1, Ordering::SeqCst) < 4 {
+                ResponseTemplate::new(409).set_body_json(json!({"ok":false,"error_code":409}))
+            } else {
+                ResponseTemplate::new(200).set_body_json(json!({"ok":true,"result":[]}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let conflicts = Arc::new(AtomicUsize::new(0));
+    let mut config = TelegramConfig::with_in_memory_token(TEST_BOT_TOKEN)
+        .with_api_base_url(server.uri())
+        .with_poll_backoff(Duration::from_millis(1))
+        .with_poll_timeout_secs(0);
+    config.conflict_backoff = Duration::from_millis(1);
+    config.conflict_recovery_base = Duration::from_millis(15);
+    config.conflict_recovery_max = Duration::from_millis(60);
+    let seen = conflicts.clone();
+    config.on_conflict = Some(Arc::new(move || {
+        seen.fetch_add(1, Ordering::SeqCst);
+    }));
+    let channel = TelegramChannel::start(config, Arc::new(FakeDaemon::new(vec![]))).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while channel.status() != crate::ChannelStatus::Running || polls.load(Ordering::SeqCst) < 5
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("polling resumes after the conflict clears");
+    assert_eq!(conflicts.load(Ordering::SeqCst), 1);
+    assert!(polls.load(Ordering::SeqCst) >= 5);
+    channel.shutdown().await;
+}

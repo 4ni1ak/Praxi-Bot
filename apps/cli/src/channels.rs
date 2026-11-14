@@ -197,9 +197,14 @@ impl ChannelControl for TelegramRuntime {
         let mut channel = self.channel.lock();
         if channel
             .as_ref()
-            .is_none_or(|c| c.status() != channel_telegram::ChannelStatus::Running)
-            && let Some(config) = &self.config
+            .is_some_and(|c| c.status() == channel_telegram::ChannelStatus::Running)
         {
+            return;
+        }
+        if let Some(existing) = channel.as_ref() {
+            existing.stop();
+        }
+        if let Some(config) = &self.config {
             match TelegramChannel::start(config.clone(), self.client.clone()) {
                 Ok(c) => *channel = Some(c),
                 Err(e) => eprintln!("warning: telegram channel not started: {e}"),

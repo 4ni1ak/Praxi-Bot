@@ -20,6 +20,9 @@ use utoipa::ToSchema;
 
 use crate::{ApiError, AppState, WeakAppState, routes::ApiJson};
 
+/// How long startup waits for a paired desktop or host heartbeat.
+const PEER_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Epochs stay representable in TOML and bounded even for compromised peers.
 /// At the ceiling, explicit force reuses the ceiling; equal owners still stop both.
 pub const EPOCH_CEILING: u64 = 1_000_000_000;
@@ -187,6 +190,7 @@ struct LeaderInner {
     network: Mutex<Option<PeerNetwork>>,
     invites: Mutex<std::collections::VecDeque<std::time::Instant>>,
     events: tokio::sync::broadcast::Sender<HostEvent>,
+    peer_check_timeout: Mutex<Duration>,
 }
 
 impl LeaderControl {
@@ -201,6 +205,7 @@ impl LeaderControl {
             network: Mutex::new(None),
             invites: Mutex::default(),
             events: tokio::sync::broadcast::channel(64).0,
+            peer_check_timeout: Mutex::new(PEER_CHECK_TIMEOUT),
         }))
     }
     #[must_use]
@@ -251,6 +256,12 @@ impl LeaderControl {
         );
         net.set_leader_info(Some(config.wire()));
         *self.0.network.lock() = Some(net);
+    }
+
+    /// Shorten the startup peer check. Production uses [`PEER_CHECK_TIMEOUT`].
+    #[cfg(test)]
+    pub(crate) fn set_peer_check_timeout(&self, timeout: Duration) {
+        *self.0.peer_check_timeout.lock() = timeout;
     }
 
     /// Release the endpoint during daemon shutdown (its API handler owns router state).
@@ -383,15 +394,18 @@ impl LeaderControl {
         !self.0.verifying.load(Ordering::SeqCst) && self.config().runs_components()
     }
 
-    /// Start after a bounded (10 second) check of paired daemon heartbeats.
+    /// Start after a bounded check of paired daemon heartbeats.
     /// Unreachable peers cannot establish ownership; after the deadline the
     /// persisted owner starts, with the residual partition risk documented.
+    /// A failed audit or save during a demotion is logged. Startup continues
+    /// in that demoted state and does not open components.
     /// # Errors
     /// Returns an unavailable daemon or errors opening the schedule store.
     pub async fn start(&self) -> Result<(), ApiError> {
         let _startup = self.0.startup.lock().await;
         if self.0.verifying.load(Ordering::SeqCst) {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            let timeout = *self.0.peer_check_timeout.lock();
+            let deadline = tokio::time::Instant::now() + timeout;
             loop {
                 let mut complete = true;
                 if let Some(net) = self.network() {
@@ -404,7 +418,13 @@ impl LeaderControl {
                             if let Some(info) = net.peer_leader(&key) {
                                 // Apply the verdict ourselves before opening admission;
                                 // the watcher may not yet have consumed its event.
-                                self.observe(&device.id, info).await?;
+                                // Persistence can fail after the safe demotion is
+                                // already in memory. Do not abort startup for that.
+                                if let Err(error) = self.observe(&device.id, info).await {
+                                    eprintln!(
+                                        "host leadership: startup peer check failed; continuing in the current ownership state: {error}"
+                                    );
+                                }
                             } else {
                                 complete = false;
                             }
@@ -505,6 +525,9 @@ impl LeaderControl {
                 "host.activate",
                 &serde_json::json!({"next":next,"phase":"requested","no_change":true}),
             )?;
+            // A Telegram 409 leaves the channel in conflict without giving up
+            // ownership. Restart that channel; do not bump the epoch.
+            self.restart_conflicted_channels();
             return Ok(next);
         }
         next.epoch = highest.saturating_add(1).min(EPOCH_CEILING);
@@ -515,6 +538,20 @@ impl LeaderControl {
             next.mode = HostMode::Standalone;
         }
         self.apply(next, actor, "host.activate").await
+    }
+
+    fn restart_conflicted_channels(&self) {
+        let Some(state) = self.0.state.upgrade() else {
+            return;
+        };
+        if !self.components_allowed() {
+            return;
+        }
+        for channel in state.channels() {
+            if channel.info().status.as_deref() == Some("conflict") {
+                channel.start();
+            }
+        }
     }
 
     /// Apply authenticated daemon heartbeat metadata. There is no automatic takeover.
@@ -548,22 +585,38 @@ impl LeaderControl {
     }
 
     /// Apply a conflict notification only for two active, equal-epoch owners.
-    /// The caller must authenticate the sender as a Desktop or Host first.
+    /// The sender's state comes from the authenticated heartbeat cache. The
+    /// conflict frame echoes the receiver's own metadata and is not trusted.
     /// # Errors
     /// Returns ownership persistence or component shutdown errors.
-    pub async fn observe_conflict(&self, peer: &str, info: LeaderInfo) -> Result<(), ApiError> {
+    pub async fn observe_conflict(&self, peer: &str) -> Result<(), ApiError> {
         let _transition = self.0.transition.lock().await;
-        let mut next = self.config();
-        if next.state != HostState::Active
-            || info.state != LeaderState::Active
-            || info.epoch != next.epoch
-            || !acceptable_peer_epoch(next.epoch, info.epoch)
+        let Some(net) = self.network() else {
+            return Ok(());
+        };
+        let Ok(key) = peer_network::key_from_string(peer) else {
+            return Ok(());
+        };
+        if !net
+            .device(&key)
+            .is_some_and(|device| matches!(device.role, Role::Desktop | Role::Host))
         {
             return Ok(());
         }
-        next.state = HostState::Standby;
-        next.leader = Some(peer.into());
-        self.apply(next, &format!("peer:{peer}"), "host.conflict")
+        let Some(info) = net.peer_leader(&key) else {
+            return Ok(());
+        };
+        let mut local = self.config();
+        if local.state != HostState::Active
+            || info.state != LeaderState::Active
+            || info.epoch != local.epoch
+            || !acceptable_peer_epoch(local.epoch, info.epoch)
+        {
+            return Ok(());
+        }
+        local.state = HostState::Standby;
+        local.leader = Some(peer.into());
+        self.apply(local, &format!("peer:{peer}"), "host.conflict")
             .await?;
         self.emit_conflict("equal_epoch", Some(peer.into()));
         Ok(())
@@ -715,14 +768,20 @@ pub(crate) async fn invite(
     peer: Option<Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<HostInviteInput>,
 ) -> Result<Json<HostInvite>, ApiError> {
+    // A phone that can mint another phone invite leaves a foothold that
+    // survives revocation of the stolen device. The ADR creates phone
+    // invites from the desktop ("Telefon ekle"), not from a phone.
     if peer
         .as_ref()
         .is_some_and(|p| p.role != crate::PeerRole::Desktop)
-        && !matches!(input.role, InviteRole::Phone)
     {
-        return Err(ApiError::forbidden(
-            "only a local user or desktop may invite privileged devices",
-        ));
+        let reason = "only a local user or desktop may invite devices";
+        s.leader().audit(
+            &actor(peer.as_ref()),
+            "host.invite",
+            &serde_json::json!({"role": input.role, "phase": "denied", "reason": reason}),
+        )?;
+        return Err(ApiError::forbidden(reason));
     }
     let net = s
         .leader()
@@ -776,7 +835,13 @@ pub(crate) async fn revoke(
         .is_some_and(|p| p.role == crate::PeerRole::Phone)
         && net.device(&key).is_some_and(|d| d.role != Role::Phone)
     {
-        return Err(ApiError::forbidden("phones may revoke only phone devices"));
+        let reason = "phones may revoke only phone devices";
+        s.leader().audit(
+            &actor(peer.as_ref()),
+            "host.revoke",
+            &serde_json::json!({"target": key.to_string(), "phase": "denied", "reason": reason}),
+        )?;
+        return Err(ApiError::forbidden(reason));
     }
     s.leader().audit(
         &actor(peer.as_ref()),

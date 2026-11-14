@@ -1,7 +1,9 @@
 //! Ownership persistence, runtime gating and authenticated host routes.
 use super::*;
 use crate::host::{HostConfig, HostEvent, HostMode, HostState};
-use peer_network::{LeaderInfo, LeaderState, PeerConfig, PeerNetwork, RelayConfig};
+use peer_network::{
+    HeartbeatConfig, LeaderInfo, LeaderState, PeerConfig, PeerNetwork, RelayConfig,
+};
 
 #[test]
 fn ownership_roundtrip_defaults_and_validation() {
@@ -533,10 +535,10 @@ async fn phone_request(t: &T, method: Method, path: &str, body: Option<Value>) -
 }
 
 #[tokio::test]
-async fn phone_cannot_mint_privileged_invites() {
+async fn phone_cannot_mint_any_invite() {
     let t = setup();
     let net = attach_network(&t).await;
-    for role in ["desktop", "host", "node"] {
+    for role in ["desktop", "host", "node", "phone"] {
         assert_eq!(
             phone_request(
                 &t,
@@ -545,9 +547,43 @@ async fn phone_cannot_mint_privileged_invites() {
                 Some(json!({"role":role}))
             )
             .await,
-            StatusCode::FORBIDDEN
+            StatusCode::FORBIDDEN,
+            "{role}"
         );
     }
+    let desktop = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/host/invite")
+        .header("content-type", "application/json")
+        .extension(crate::PeerIdentity {
+            key: "desktop-key".into(),
+            role: crate::PeerRole::Desktop,
+        })
+        .body(Body::from(json!({"role":"host"}).to_string()))
+        .unwrap();
+    assert_eq!(
+        crate::peer_router(t.state.clone())
+            .oneshot(desktop)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(net.devices().len(), 0);
+    net.shutdown().await;
+}
+
+#[tokio::test]
+async fn denied_invite_and_revoke_attempts_are_audited() {
+    let t = setup();
+    let other = setup();
+    let net = attach_network(&t).await;
+    let other_net = attach_network_as(&other, peer_network::Role::Desktop).await;
+    let invite = net.create_invite(peer_network::Role::Desktop).await;
+    other_net
+        .pair(&peer_network::PairTicket::parse(&invite.ticket).unwrap())
+        .await
+        .unwrap();
     assert_eq!(
         phone_request(
             &t,
@@ -556,9 +592,29 @@ async fn phone_cannot_mint_privileged_invites() {
             Some(json!({"role":"phone"}))
         )
         .await,
-        StatusCode::OK
+        StatusCode::FORBIDDEN
     );
+    assert_eq!(
+        phone_request(
+            &t,
+            Method::DELETE,
+            &format!("/v1/host/devices/{}", other_net.id()),
+            None
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert!(net.device(&other_net.id()).is_some());
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    for action in ["host.invite", "host.revoke"] {
+        let row = audit.iter().find(|entry| entry.action == action).unwrap();
+        assert_eq!(row.actor, "phone:phone-key");
+        assert_eq!(row.detail["detail"]["phase"], "denied");
+        assert!(!row.detail.to_string().contains(&invite.ticket));
+        assert!(!row.detail.to_string().contains(&invite.code));
+    }
     net.shutdown().await;
+    other_net.shutdown().await;
 }
 
 #[tokio::test]
@@ -683,49 +739,98 @@ async fn malicious_peer_epoch_is_rejected_and_force_recovers_from_ceiling() {
     t.state.stop_components().await;
 }
 
-#[tokio::test]
-async fn conflict_notifications_require_active_sender_and_active_local_owner() {
-    let peer_dir = tempfile::tempdir().unwrap();
-    let peer = peer_network::identity::load_or_create_secret_key(&peer_dir.path().join("peer.key"))
-        .unwrap()
-        .public()
-        .to_string();
-    for local in [HostState::Fresh, HostState::Standby, HostState::Active] {
-        for remote in [
-            LeaderState::Fresh,
-            LeaderState::Standby,
-            LeaderState::Active,
-        ] {
-            let t = setup_with(|data| {
-                HostConfig {
-                    mode: HostMode::Host,
-                    state: local,
-                    epoch: 3,
-                    ..Default::default()
-                }
-                .save(data)
-                .unwrap();
-            });
-            t.state
-                .leader()
-                .observe_conflict(
-                    &peer,
-                    LeaderInfo {
-                        epoch: 3,
-                        state: remote,
-                    },
-                )
-                .await
-                .unwrap();
-            assert_eq!(
-                t.state.leader().config().state,
-                if local == HostState::Active && remote == LeaderState::Active {
-                    HostState::Standby
-                } else {
-                    local
-                }
-            );
+async fn cache_sender_heartbeat(local: &PeerNetwork, remote: &PeerNetwork, info: LeaderInfo) {
+    remote.set_leader_info(Some(info));
+    let task = remote.spawn_heartbeat(
+        local.id(),
+        HeartbeatConfig {
+            interval: Duration::from_millis(20),
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_millis(40),
+            connect_timeout: Duration::from_secs(2),
+        },
+        Arc::new(|_| {}),
+    );
+    let sender = remote.id();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while local.peer_leader(&sender) != Some(info) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    })
+    .await
+    .expect("authenticated heartbeat cached");
+    task.abort();
+}
+
+#[tokio::test]
+async fn conflict_notifications_follow_the_authenticated_heartbeat_cache() {
+    for (local, remote, epoch, expect) in [
+        (
+            HostState::Active,
+            LeaderState::Active,
+            3,
+            HostState::Standby,
+        ),
+        (
+            HostState::Active,
+            LeaderState::Standby,
+            3,
+            HostState::Active,
+        ),
+        (HostState::Active, LeaderState::Fresh, 3, HostState::Active),
+        (HostState::Active, LeaderState::Active, 4, HostState::Active),
+        (
+            HostState::Standby,
+            LeaderState::Active,
+            3,
+            HostState::Standby,
+        ),
+        (HostState::Fresh, LeaderState::Active, 3, HostState::Fresh),
+    ] {
+        let t = setup_with(|data| {
+            HostConfig {
+                mode: if local == HostState::Fresh {
+                    HostMode::Host
+                } else {
+                    HostMode::Standalone
+                },
+                state: local,
+                epoch: 3,
+                ..Default::default()
+            }
+            .save(data)
+            .unwrap();
+        });
+        let other = setup();
+        let net = attach_network(&t).await;
+        let other_net = attach_network(&other).await;
+        let invite = net.create_invite(peer_network::Role::Desktop).await;
+        other_net
+            .pair(&peer_network::PairTicket::parse(&invite.ticket).unwrap())
+            .await
+            .unwrap();
+        cache_sender_heartbeat(
+            &net,
+            &other_net,
+            LeaderInfo {
+                epoch,
+                state: remote,
+            },
+        )
+        .await;
+        t.state
+            .leader()
+            .observe_conflict(&peer_network::key_to_string(&other_net.id()))
+            .await
+            .unwrap();
+        assert_eq!(
+            t.state.leader().config().state,
+            expect,
+            "{local:?} {remote:?} {epoch}"
+        );
+        net.shutdown().await;
+        other_net.shutdown().await;
+        t.state.stop_components().await;
     }
 }
 
@@ -872,4 +977,158 @@ async fn failed_activation_has_durable_standby_before_rollback() {
         HostState::Standby
     );
     assert_eq!(t.state.leader().config().state, HostState::Standby);
+}
+
+struct StatusChannel {
+    starts: std::sync::atomic::AtomicUsize,
+    status: std::sync::Mutex<Option<String>>,
+}
+#[async_trait]
+impl crate::ChannelControl for StatusChannel {
+    fn start(&self) {
+        self.starts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.status.lock().unwrap() = Some("running".into());
+    }
+    async fn stop(&self) {}
+    fn info(&self) -> crate::dto::ChannelDto {
+        let status = self.status.lock().unwrap().clone();
+        crate::dto::ChannelDto {
+            id: "telegram".into(),
+            configured: true,
+            enabled: true,
+            running: status.as_deref() == Some("running"),
+            paired_users: 0,
+            status,
+        }
+    }
+    fn create_pair_code(&self) -> Result<crate::dto::PairCodeDto, String> {
+        Err("unused".into())
+    }
+}
+
+#[tokio::test]
+async fn activate_without_force_restarts_only_a_conflicted_channel() {
+    let t = setup();
+    let conflict = Arc::new(StatusChannel {
+        starts: std::sync::atomic::AtomicUsize::new(0),
+        status: std::sync::Mutex::new(Some("conflict".into())),
+    });
+    let idle = Arc::new(ChannelCounter(std::sync::atomic::AtomicBool::new(false)));
+    t.state.add_channel(conflict.clone());
+    t.state.add_channel(idle.clone());
+    let epoch = t.state.leader().config().epoch;
+    t.state.leader().activate(false).await.unwrap();
+    assert_eq!(t.state.leader().config().epoch, epoch);
+    assert_eq!(conflict.starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(conflict.status.lock().unwrap().as_deref(), Some("running"));
+    assert!(!idle.0.load(std::sync::atomic::Ordering::SeqCst));
+    t.state.leader().activate(false).await.unwrap();
+    assert_eq!(conflict.starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(t.state.leader().config().epoch, epoch);
+}
+
+#[tokio::test]
+async fn offline_desktop_peer_starts_after_boot_check_deadline() {
+    let t = setup();
+    let other = setup();
+    let net = attach_network(&t).await;
+    let other_net = attach_network(&other).await;
+    let invite = net.create_invite(peer_network::Role::Desktop).await;
+    other_net
+        .pair(&peer_network::PairTicket::parse(&invite.ticket).unwrap())
+        .await
+        .unwrap();
+    other_net.shutdown().await;
+    t.state.leader().set_network(net.clone());
+    t.state
+        .leader()
+        .set_peer_check_timeout(Duration::from_millis(200));
+    let channel = Arc::new(ChannelCounter(std::sync::atomic::AtomicBool::new(false)));
+    t.state.add_channel(channel.clone());
+    let started = tokio::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(3), t.state.leader().start())
+        .await
+        .expect("deadline must end the peer check")
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert!(elapsed >= Duration::from_millis(150), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    assert_eq!(t.state.leader().config().state, HostState::Active);
+    assert!(channel.0.load(std::sync::atomic::Ordering::SeqCst));
+    net.shutdown().await;
+}
+
+async fn paired_higher_owner(t: &T) -> (PeerNetwork, PeerNetwork) {
+    let other = setup();
+    let net = attach_network(t).await;
+    let other_net = attach_network(&other).await;
+    let invite = net.create_invite(peer_network::Role::Desktop).await;
+    other_net
+        .pair(&peer_network::PairTicket::parse(&invite.ticket).unwrap())
+        .await
+        .unwrap();
+    cache_sender_heartbeat(
+        &net,
+        &other_net,
+        LeaderInfo {
+            epoch: 9,
+            state: LeaderState::Active,
+        },
+    )
+    .await;
+    t.state.leader().set_network(net.clone());
+    (net, other_net)
+}
+
+#[tokio::test]
+async fn failed_demotion_audit_does_not_abort_startup() {
+    let t = setup();
+    let (net, other_net) = paired_higher_owner(&t).await;
+    let db = rusqlite::Connection::open(t._dir.path().join("bot.db")).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_host_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END;")
+        .unwrap();
+    let channel = Arc::new(ChannelCounter(std::sync::atomic::AtomicBool::new(false)));
+    t.state.add_channel(channel.clone());
+    t.state.leader().start().await.unwrap();
+    assert_eq!(t.state.leader().config().state, HostState::Standby);
+    assert_eq!(t.state.leader().config().epoch, 9);
+    assert_eq!(
+        HostConfig::load(t._dir.path()).unwrap().state,
+        HostState::Standby
+    );
+    assert!(
+        t.state
+            .storage()
+            .list_audit(t.state.user_id())
+            .unwrap()
+            .iter()
+            .all(|row| row.action != "host.observe")
+    );
+    assert!(!channel.0.load(std::sync::atomic::Ordering::SeqCst));
+    net.shutdown().await;
+    other_net.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_demotion_save_does_not_abort_startup() {
+    let t = setup();
+    let (net, other_net) = paired_higher_owner(&t).await;
+    let path = t._dir.path().join("host.toml");
+    if path.exists() {
+        std::fs::remove_file(&path).unwrap();
+    }
+    std::fs::create_dir(&path).unwrap();
+    let channel = Arc::new(ChannelCounter(std::sync::atomic::AtomicBool::new(false)));
+    t.state.add_channel(channel.clone());
+    t.state.leader().start().await.unwrap();
+    assert!(
+        path.is_dir(),
+        "a failed save must leave the demotion unpersisted"
+    );
+    assert_eq!(t.state.leader().config().state, HostState::Standby);
+    assert_eq!(t.state.leader().config().epoch, 9);
+    assert!(!channel.0.load(std::sync::atomic::Ordering::SeqCst));
+    net.shutdown().await;
+    other_net.shutdown().await;
 }
