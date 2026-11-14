@@ -53,7 +53,7 @@ export const MUTATIONS: Mutation[] = [
   {
     name: "extra rule overriding the open panel in a media query",
     css: (css) => `${css}\n@media (min-width: 1px) { ${OPEN_RULE} width: 10px; } }\n`,
-    expect: /at-rules/
+    expect: /at-rule .*Sidebar\.module\.css:\d+|Sidebar\.module\.css:\d+ :: at-rule/
   },
   {
     name: "unreviewed selector overriding .panelInner geometry",
@@ -68,6 +68,6 @@ export const MUTATIONS: Mutation[] = [
   {
     name: "rail grows back at once when the panel starts closing",
     options: { railPolicy: "immediate" },
-    expect: /closing progress=.*\(transition\): main [\d.]+px < (280|MAIN_MIN)/
+    expect: /closing t=\d+ms progress=.*\(transition\): main [\d.]+px < (280|MAIN_MIN)/
   }
 ];

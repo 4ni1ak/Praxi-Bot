@@ -4,7 +4,7 @@
  * (`shellLayout.ts`) and the border / padding numbers read from the CSS (`shellContract.ts`).
  * `checkMatrix` asserts the layout invariants over the whole width x rail x panel x style grid.
  */
-import { FLOAT_GAP, FLOAT_PAD, fitRail, MAIN_MIN, panelMax, PANEL_MIN, PANEL_SETTLE_MS } from "./shellLayout.ts";
+import { FLOAT_GAP, FLOAT_PAD, fitRail, MAIN_MIN, panelMax, PANEL_MIN, reserveActive, reserveDelayMs } from "./shellLayout.ts";
 import type { ShellModel, StateKey } from "./shellContract.ts";
 
 export interface Box {
@@ -106,11 +106,13 @@ export interface MatrixResult {
 const EPS = 0.01;
 
 export interface MatrixOptions {
-  /** `settled`: the rail keeps the open geometry until the panel has finished closing (the app). `immediate`: the pre-review behaviour. */
+  /** `settled`: the rail keeps the open geometry until the reserve delay has passed (the app). `immediate`: the pre-review behaviour. */
   railPolicy?: "settled" | "immediate";
+  /** Override of the reserve delay (ms); default: derived from the contract's slide token exactly like the hook does. */
+  reserveDelay?: (slideMs: number) => number;
 }
 
-/** Progress steps sampled along the panel's slide (width and margin are linear in progress, so the ends are the worst case). */
+/** Fractions of the slide sampled (width and margin are linear in progress, so the ends are the worst case). */
 const SLIDE = [0, 0.25, 0.5, 0.75, 1];
 
 export function checkMatrix(model: ShellModel, fns: ShellFns = APP_FNS, options: MatrixOptions = {}): MatrixResult {
@@ -160,15 +162,22 @@ export function checkMatrix(model: ShellModel, fns: ShellFns = APP_FNS, options:
             }
           }
           if (!open) continue;
-          // Transition frames, both directions, against the reserved (settled) rail geometry.
-          for (const direction of ["closing", "opening"] as const) {
-            for (const progress of SLIDE) {
-              const closing = direction === "closing";
-              const reserve = closing ? policy === "settled" : true;
-              const cell = `vw=${vw} rail=${rail} panel=${panelCase} float=${float ? "on" : "off"} ${direction} progress=${progress} (transition)`;
-              const g = shellBoxes({ vw, rail, panel: panelCase, panelOpen: !closing, float, progress, reserve }, model, fns);
-              common(cell, g, vw, pad, progress > 0);
-            }
+          // Transition frames, both directions.  Closing: time since the close started decides, via the
+          // same `reserveActive` the hook uses, whether the rail still reserves the open panel.
+          const slide = model.slideMs;
+          const delay = policy === "immediate" ? 0 : (options.reserveDelay ?? ((ms: number) => reserveDelayMs(ms, false)))(slide);
+          const times = [...new Set([...SLIDE.map((f) => f * slide), Math.min(slide, Math.max(0, delay)), Math.min(slide, Math.max(0, delay - 1))])];
+          for (const t of times) {
+            const progress = Math.max(0, 1 - t / slide);
+            const reserve = reserveActive(false, t, delay);
+            const cell = `vw=${vw} rail=${rail} panel=${panelCase} float=${float ? "on" : "off"} closing t=${t}ms progress=${progress.toFixed(2)} (transition)`;
+            const g = shellBoxes({ vw, rail, panel: panelCase, panelOpen: false, float, progress, reserve }, model, fns);
+            common(cell, g, vw, pad, progress > 0);
+          }
+          for (const progress of SLIDE) {
+            const cell = `vw=${vw} rail=${rail} panel=${panelCase} float=${float ? "on" : "off"} opening progress=${progress} (transition)`;
+            const g = shellBoxes({ vw, rail, panel: panelCase, panelOpen: true, float, progress, reserve: true }, model, fns);
+            common(cell, g, vw, pad, progress > 0);
           }
         }
       }
@@ -187,6 +196,6 @@ export interface LayoutReport extends MatrixResult {
 
 /** Contract rules + the whole matrix, for the sources and clamp functions given. */
 export function evaluateShell(src: CssSources, fns: ShellFns = APP_FNS, options: MatrixOptions = {}): LayoutReport {
-  const { model, failures } = readShellContract(src, { floatPad: FLOAT_PAD, floatGap: FLOAT_GAP, settleMs: PANEL_SETTLE_MS });
+  const { model, failures } = readShellContract(src, { floatPad: FLOAT_PAD, floatGap: FLOAT_GAP });
   return { ...checkMatrix(model, fns, options), contractFailures: failures };
 }

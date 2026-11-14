@@ -76,11 +76,33 @@ export function panelMax(viewportWidth: number, rail = 0, float = false): number
 }
 
 /**
- * The panel's width/margin transition lasts `--motion-duration-slow` (450 ms).  The rail keeps the
- * geometry of the OPEN panel for this long after the panel starts closing, so the chat column never
- * drops below `MAIN_MIN` at any frame of the transition (checked against tokens.css by check:layout).
+ * The panel's width/margin transition lasts `--motion-duration-slow`.  The rail keeps the geometry
+ * of the OPEN panel for that long (plus a small margin) after the panel starts closing, so the chat
+ * column never drops below `MAIN_MIN` at any frame of the transition.  The delay is derived from
+ * the same token the CSS transition uses, so the two cannot drift (checked by check:layout).
  */
-export const PANEL_SETTLE_MS = 500;
+export const RESERVE_MARGIN_MS = 50;
+/** Used only when the token cannot be read at run time. */
+export const RESERVE_FALLBACK_MS = 500;
+
+/** Parse a CSS `<time>` (`450ms`, `0.45s`) into milliseconds; undefined for anything else. */
+export function parseDurationMs(text: string | undefined): number | undefined {
+  const m = /^\s*(\d*\.?\d+)\s*(ms|s)\s*$/i.exec(text ?? "");
+  if (!m) return undefined;
+  const ms = Number(m[1]) * (m[2].toLowerCase() === "s" ? 1000 : 1);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** How long after closing starts the rail still reserves the open panel (0: no transition, no delay). */
+export function reserveDelayMs(slideMs: number | undefined, reducedMotion: boolean): number {
+  if (reducedMotion || slideMs === 0) return 0;
+  return slideMs === undefined ? RESERVE_FALLBACK_MS : slideMs + RESERVE_MARGIN_MS;
+}
+
+/** Whether the panel is still reserved `msSinceClose` after it started closing. */
+export function reserveActive(open: boolean, msSinceClose: number, delayMs: number): boolean {
+  return open || msSinceClose < delayMs;
+}
 
 /** Room the rail may take next to the panel while the chat keeps `MAIN_MIN`. */
 export function railRoom(viewportWidth: number, panelWidth: number, float: boolean, panelOpen: boolean): number {

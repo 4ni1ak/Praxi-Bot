@@ -82,5 +82,5 @@ test("the rail reserve keeps the chat above its minimum at every frame of the cl
   assert.deepEqual(settled.violations, []);
   const immediate = evaluateShell(sources, APP_FNS, { railPolicy: "immediate" });
   // Review numbers: 760 px, float, stored rail 440, panel 260: the chat is squeezed while the panel still slides.
-  assert.ok(immediate.violations.some((v) => /vw=760 rail=440 panel=260 float=on closing progress=1 \(transition\): main 4\d(\.\d+)?px/.test(v)));
+  assert.ok(immediate.violations.some((v) => /vw=760 rail=440 panel=260 float=on closing t=0ms progress=1\.00 \(transition\): main 4\d(\.\d+)?px/.test(v)));
 });

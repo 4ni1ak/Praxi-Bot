@@ -33,7 +33,7 @@ test("rail keyboard steps start from the displayed width; Search uses the plan",
   assert.match(app, /onStep=\{\(dir\) => setRail\(railAfterStep\(layout\.rail, railWidth, dir, fitStored\)\)\}/);
   assert.match(app, /const search = searchPlan\(layout\.rail, railWidth, botSearch !== null\);/);
   assert.match(app, /if \(search\.expandStored\) setRail\(RAIL_MIN\); setBotSearch\(search\.open \? "" : null\);/);
-  assert.match(app, /botSearch !== null && \(!mini \|\| search\.popover\)/);
+  assert.match(app, /\{search\.popover \? \(/);
 });
 
 test("the stored rail width is only read where the fit or an explicit resize needs it", () => {
@@ -53,9 +53,24 @@ test("the stored rail width is only read where the fit or an explicit resize nee
   assert.doesNotMatch(rest, /layout\.rail/, "every other use of layout.rail would render or step the stored (unfitted) width");
 });
 
+test("Search in a fitted mini rail goes through the shared Popover, not an in-rail absolute input", () => {
+  assert.match(app, /import \{ Popover \} from "\.\/components\/Popover";/);
+  assert.match(app, /<button ref=\{searchButtonRef\} /);
+  assert.match(app, /<Popover open=\{botSearch !== null\} anchor=\{searchButtonRef\} onClose=\{closeSearch\}/);
+  assert.match(app, /const closeSearch = useCallback\(\(\) => setBotSearch\(null\), \[\]\);/);
+  assert.match(app, /\{botSearch !== null && !mini \? <input/);
+  const css = read("../App.module.css");
+  assert.doesNotMatch(css, /\.botSearchPopover\s*\{[^}]*position:\s*absolute/);
+});
+
 test("the hooks exist and keep their contract", () => {
   const reserve = read("../state/usePanelReserve.ts");
-  assert.match(reserve, /PANEL_SETTLE_MS/);
+  assert.match(reserve, /createPanelReserve\(/);
+  assert.match(reserve, /reserveDelayMs\(slide, reduced\)/);
+  assert.match(reserve, /parseDurationMs\(getComputedStyle\(document\.documentElement\)\.getPropertyValue\("--motion-duration-slow"\)\)/);
+  assert.match(reserve, /prefers-reduced-motion: reduce/);
+  assert.match(reserve, /ctl\.current\?\.update\(open\);/);
+  assert.match(reserve, /ctl\.current\?\.dispose\(\)/);
   assert.match(reserve, /return open \|\| settling;/);
   const viewport = read("../state/useViewportWidth.ts");
   assert.match(viewport, /dataset\.windowResizing = "true"/);

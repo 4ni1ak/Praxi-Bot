@@ -1,3 +1,5 @@
+import { parseDurationMs } from "./shellLayout.ts";
+
 /**
  * CSS contract of the v6 shell (card 233): a conservative reader for the rules of
  * `Sidebar.module.css` / `tokens.css` / `global.css` / `theme.ts` that decide the shell's
@@ -34,6 +36,8 @@ export interface ShellModel {
   /** Gap between neighbouring columns in the floating row, px. */
   floatGap: number;
   states: Record<StateKey, PanelState>;
+  /** The panel's slide duration in ms (`--motion-duration-slow`), parsed with units. */
+  slideMs: number;
   /** Inner column width for `--panel-w` = panelW in the given panel state. */
   innerWidth: (panelW: number, state: StateKey) => number;
 }
@@ -85,7 +89,8 @@ const SUPPORTED = new Set([
   "border-right-style", "box-sizing", "overflow", "position", "display", "--panel-edge"
 ]);
 
-const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+/** Comments become blanks of the same length (newlines kept), so line numbers stay true. */
+const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "));
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
 export interface Rule {
@@ -292,11 +297,11 @@ class Evaluator {
 
 /**
  * Read the contract.  `expect` carries the single-source numbers the TypeScript side exports
- * (`FLOAT_PAD`, `FLOAT_GAP`, `PANEL_SETTLE_MS`).
+ * (`FLOAT_PAD`, `FLOAT_GAP`).
  */
 export function readShellContract(
   src: CssSources,
-  expect: { floatPad: number; floatGap: number; settleMs?: number }
+  expect: { floatPad: number; floatGap: number }
 ): ContractReport {
   const failures: string[] = [];
   const fail = (file: string, rule: string, expected: string, got: string | undefined) =>
@@ -305,9 +310,27 @@ export function readShellContract(
   const vars = rootVars(src.tokensCss);
   const ev = new Evaluator(vars, (m) => failures.push(`${FILE.sidebar} :: ${m}`), "border");
 
-  // 1. Reject what the reader cannot follow: at-rules around contracted selectors.
-  if (/@(media|container|supports|layer|scope)\b/.test(stripComments(src.sidebarCss))) {
-    fail(FILE.sidebar, "at-rules (@media/@container/@supports/@layer)", "none: conditional overrides of the shell rules are not modelled", "an at-rule block");
+  // 1. Reject what the reader cannot follow: at-rule blocks that contain contracted selectors.
+  //    Unrelated at-rules (a footer @media, keyframes) are fine.
+  const clean = stripComments(src.sidebarCss);
+  for (const m of clean.matchAll(/@(media|container|supports|layer|scope)\b[^{;]*\{/g)) {
+    let depth = 1;
+    let end = m.index + m[0].length;
+    for (; end < clean.length && depth > 0; end++) {
+      if (clean[end] === "{") depth++;
+      if (clean[end] === "}") depth--;
+    }
+    const block = clean.slice(m.index + m[0].length, end);
+    const hit = CONTRACTED.exec(block);
+    if (hit) {
+      const line = clean.slice(0, m.index).split("\n").length;
+      fail(
+        `${FILE.sidebar}:${line}`,
+        `at-rule "${norm(m[0].slice(0, -1))}" contains a rule for the contracted shell selector ${hit[0]}`,
+        "shell rules outside conditional at-rules (conditional overrides are not modelled): move the rule out of the at-rule, or extend shellContract.ts to model it",
+        "an at-rule block"
+      );
+    }
   }
   // 2. Every geometry declaration on a contracted class sits in a reviewed selector, once, supported, no !important.
   const seen = new Map<string, number>();
@@ -432,16 +455,23 @@ export function readShellContract(
     return ev.len(innerExpr, local) ?? Number.NaN;
   };
 
-  // Transition: the settle window must cover the panel's slide (--motion-duration-slow).
+  // Transition: the rail's reserve is derived from this token; it must parse (ms or s) and drive the panel's slide.
   const slow = vars.get("--motion-duration-slow");
-  const slowMs = slow === undefined ? undefined : Number.parseFloat(slow);
-  if (expect.settleMs !== undefined && (slowMs === undefined || Number.isNaN(slowMs) || slowMs > expect.settleMs)) {
-    fail(FILE.tokens, "--motion-duration-slow", `<= ${expect.settleMs}ms (PANEL_SETTLE_MS)`, slow);
+  const slideMs = parseDurationMs(slow);
+  if (slideMs === undefined) fail(FILE.tokens, "--motion-duration-slow", "a <time> in ms or s (the reserve is derived from it)", slow);
+  const transition = ev.last(pick([".panel"]), "transition") ?? "";
+  for (const prop of ["width", "margin"]) {
+    if (!new RegExp(`(^|,)\\s*${prop}\\s+var\\(--motion-duration-slow\\)`).test(transition)) {
+      fail(FILE.sidebar, `.panel transition ${prop}`, `${prop} var(--motion-duration-slow) (the duration the rail reserve follows)`, transition);
+    }
+  }
+  if (!/@media \(prefers-reduced-motion: reduce\)\s*\{[^}]*transition:\s*none\s*!important/.test(stripComments(src.globalCss))) {
+    fail(FILE.global, "prefers-reduced-motion", "transition: none !important (the rail restores without delay)", undefined);
   }
   const resizing = rules.find((r) => r.selector === ":global(:root[data-window-resizing]) .panel");
   if (!resizing || resizing.decls.get("transition") !== "none") {
     fail(FILE.sidebar, ":global(:root[data-window-resizing]) .panel transition", "none (window resizes move the panel and the fitted rail together)", resizing?.decls.get("transition"));
   }
 
-  return { failures, model: { floatPad: pad ?? expect.floatPad, floatGap: gap ?? expect.floatGap, states, innerWidth } };
+  return { failures, model: { floatPad: pad ?? expect.floatPad, floatGap: gap ?? expect.floatGap, states, slideMs: slideMs ?? Number.NaN, innerWidth } };
 }
