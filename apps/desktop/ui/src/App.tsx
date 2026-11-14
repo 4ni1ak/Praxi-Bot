@@ -23,6 +23,9 @@ import { PRODUCT_CONFIG } from "./config/product";
 import {
   isMiniRail,
   loadShellLayout,
+  fitRail,
+  FLOAT_PAD,
+  isFloatShell,
   panelMax,
   panelWidthFromPointer,
   railTier,
@@ -46,7 +49,7 @@ import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
 import { appearanceFromQuery } from "./lib/appearance";
 import { createDebounced } from "./lib/debounce";
-import { CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
+import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
 import { Backdrop, sceneColors } from "./components/Backdrop";
 import { useApplyAppearance } from "./state/useApplyAppearance";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
@@ -152,7 +155,7 @@ function AppShell() {
   }, []);
   const setRail = useCallback((rail: number) => setLayout((l) => (l.rail === rail ? l : { ...l, rail })), []);
   const setPanelWidth = useCallback((panel: number) => setLayout((l) => (l.panel === panel ? l : { ...l, panel })), []);
-  const gridPad = () => (document.documentElement.dataset.float === "on" ? 12 : 0);
+  const gridPad = () => (document.documentElement.dataset.float === "on" ? FLOAT_PAD : 0);
   useEffect(() => {
     let mounted = true;
     void loadSettings().then(async (loaded) => {
@@ -407,10 +410,12 @@ function AppShell() {
   };
   const openNeeds = () => setRoute({ kind: "needs" });
 
-  const mini = isMiniRail(layout.rail);
   const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot" || (route.kind === "botForm" && Boolean(route.botId)));
   const panelVisible = panelOpen && botInView;
-  const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail));
+  const float = isFloatShell(settings.uiStyle, backdropIsActive(settings.backdrop, settings.backgroundUrl));
+  const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
+  const railWidth = fitRail(viewportWidth, layout.rail, panelWidth, float, panelVisible);
+  const mini = isMiniRail(railWidth);
   const togglePanel = () => setPanelOpen((open) => !open);
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
@@ -490,7 +495,7 @@ function AppShell() {
 
   return (
     <SidebarLayout
-      style={{ "--size-sidebar-width": `${layout.rail}px` } as CSSProperties}
+      style={{ "--size-sidebar-width": `${railWidth}px` } as CSSProperties}
       backdrop={
         settings.backdrop !== NO_BACKDROP && settings.backdrop !== CUSTOM_BACKDROP ? (
           <Backdrop
@@ -518,9 +523,9 @@ function AppShell() {
             label={t("shell.panelGrip")}
             value={panelWidth}
             min={PANEL_MIN}
-            max={panelMax(viewportWidth, layout.rail)}
-            onDrag={(x) => setPanelWidth(panelWidthFromPointer(x, window.innerWidth, gridPad(), layout.rail))}
-            onStep={(dir) => setPanelWidth(stepPanel(panelWidth, dir === -1 ? 1 : -1, window.innerWidth, layout.rail))}
+            max={panelMax(viewportWidth, layout.rail, float)}
+            onDrag={(x) => setPanelWidth(panelWidthFromPointer(x, window.innerWidth, gridPad(), layout.rail, float))}
+            onStep={(dir) => setPanelWidth(stepPanel(panelWidth, dir === -1 ? 1 : -1, window.innerWidth, layout.rail, float))}
           />
           {selectedBot && panelBotView ? (
             <BotPanel
@@ -540,11 +545,11 @@ function AppShell() {
         </SidePanel>
       }
       sidebar={
-        <Sidebar className={[styles.rail, mini ? styles.railMini : ""].filter(Boolean).join(" ")} data-rail-tier={railTier(layout.rail)}>
+        <Sidebar className={[styles.rail, mini ? styles.railMini : ""].filter(Boolean).join(" ")} data-rail-tier={railTier(railWidth)}>
           <ResizeGrip
             side="end"
             label={t("shell.railGrip")}
-            value={layout.rail}
+            value={railWidth}
             min={RAIL_MINI}
             max={RAIL_MAX}
             onDrag={(x) => setRail(railWidthFromPointer(x, gridPad()))}

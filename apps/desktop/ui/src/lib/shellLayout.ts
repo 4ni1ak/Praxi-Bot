@@ -50,16 +50,57 @@ export function railWidthFromPointer(x: number, pad = 0): number {
 /** The chat keeps at least this much room next to the rail and the panel. */
 export const MAIN_MIN = 320;
 
+/** Floating shell (glass style or a backdrop): outer padding and the gap between columns, px. */
+export const FLOAT_PAD = 12;
+export const FLOAT_GAP = 12;
+
+/** The shell floats in the glass style or over a backdrop (mirrors `applyTheme`'s `data-float`). */
+export function isFloatShell(style: string, backdropActive: boolean): boolean {
+  return style === "glass" || backdropActive;
+}
+
+/**
+ * Horizontal room the floating chrome takes from the columns: the outer padding on both sides
+ * and one gap per neighbouring pair.  A closed panel pulls its gap back with a negative margin.
+ */
+export function shellChrome(float: boolean, panelOpen = true): number {
+  if (!float) return 0;
+  return FLOAT_PAD * 2 + FLOAT_GAP * (panelOpen ? 2 : 1);
+}
+
 /** Largest panel width the window allows, leaving the chat `MAIN_MIN` next to the rail. */
-export function panelMax(viewportWidth: number, rail = 0): number {
+export function panelMax(viewportWidth: number, rail = 0, float = false): number {
   const byShare = Math.round(viewportWidth * PANEL_MAX_FRACTION);
-  return Math.max(PANEL_MIN, Math.min(byShare, viewportWidth - rail - MAIN_MIN));
+  const byRoom = viewportWidth - shellChrome(float) - rail - MAIN_MIN;
+  return Math.max(PANEL_MIN, Math.min(byShare, byRoom));
+}
+
+/**
+ * Rail width that fits next to the panel: the panel clamp wins, so a rail that would squeeze the
+ * chat below `MAIN_MIN` is narrowed, and snaps to icons when it would drop below `RAIL_MIN`.
+ */
+export function fitRail(
+  viewportWidth: number,
+  rail: number,
+  panelWidth: number,
+  float: boolean,
+  panelOpen: boolean
+): number {
+  const room = viewportWidth - shellChrome(float, panelOpen) - (panelOpen ? panelWidth : 0) - MAIN_MIN;
+  if (rail <= room) return rail;
+  return room >= RAIL_MIN ? room : RAIL_MINI;
 }
 
 /** Panel width for a pointer at `x`, measured from the window's right edge. */
-export function panelWidthFromPointer(x: number, viewportWidth: number, pad = 0, rail = 0): number {
+export function panelWidthFromPointer(
+  x: number,
+  viewportWidth: number,
+  pad = 0,
+  rail = 0,
+  float = false
+): number {
   const w = viewportWidth - x - pad;
-  return Math.round(Math.min(panelMax(viewportWidth, rail), Math.max(PANEL_MIN, w)));
+  return Math.round(Math.min(panelMax(viewportWidth, rail, float), Math.max(PANEL_MIN, w)));
 }
 
 /** Keyboard step on the rail grip: -1 narrows (snapping to icons), +1 widens. */
@@ -69,8 +110,14 @@ export function stepRail(width: number, dir: -1 | 1): number {
 }
 
 /** Keyboard step on the panel grip: +1 widens, -1 narrows. */
-export function stepPanel(width: number, dir: -1 | 1, viewportWidth: number, rail = 0): number {
-  return Math.round(Math.min(panelMax(viewportWidth, rail), Math.max(PANEL_MIN, width + dir * 16)));
+export function stepPanel(
+  width: number,
+  dir: -1 | 1,
+  viewportWidth: number,
+  rail = 0,
+  float = false
+): number {
+  return Math.round(Math.min(panelMax(viewportWidth, rail, float), Math.max(PANEL_MIN, width + dir * 16)));
 }
 
 /** Coerce stored values: unknown shapes fall back to the defaults, numbers are clamped. */

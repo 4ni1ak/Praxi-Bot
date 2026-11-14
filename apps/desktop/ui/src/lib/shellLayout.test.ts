@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  FLOAT_GAP,
+  FLOAT_PAD,
+  fitRail,
+  isFloatShell,
+  MAIN_MIN,
   normalizeShellLayout,
   panelMax,
   panelWidthFromPointer,
   railTier,
   railWidthFromPointer,
+  RAIL_MIN,
   RAIL_MINI,
   stepPanel,
   stepRail
@@ -65,4 +71,33 @@ test("the panel leaves the chat room next to a wide rail", () => {
   assert.equal(panelMax(1400, 264), 816);
   assert.equal(panelWidthFromPointer(0, 1200, 0, 264), 616);
   assert.equal(stepPanel(616, 1, 1200, 264), 616);
+});
+
+test("the float chrome (padding and gaps) is subtracted so the chat keeps MAIN_MIN", () => {
+  assert.equal(FLOAT_PAD, 12);
+  assert.equal(FLOAT_GAP, 12);
+  // Not floating: unchanged by the new argument.
+  assert.equal(panelMax(1400, 264), 816);
+  assert.equal(panelMax(1400, 264, false), 816);
+  // Floating: 2 x 12 padding + 2 x 12 gaps = 48px less room for the panel.
+  assert.equal(panelMax(1400, 264, true), 768);
+  const vw = 1100;
+  const panel = panelMax(vw, 264, true);
+  assert.ok(vw - 48 - 264 - panel >= MAIN_MIN, "chat column keeps MAIN_MIN next to rail and panel");
+  assert.equal(panelWidthFromPointer(0, 1400, 12, 264, true), 768);
+  assert.equal(stepPanel(760, 1, 1400, 264, true), 768);
+});
+
+test("a rail that would squeeze the chat is narrowed, then snaps to icons", () => {
+  assert.equal(isFloatShell("glass", false), true);
+  assert.equal(isFloatShell("solid", true), true);
+  assert.equal(isFloatShell("line", false), false);
+  assert.equal(fitRail(1400, 264, 320, true, true), 264);
+  assert.equal(fitRail(900, 440, 260, true, true), 900 - 48 - 260 - MAIN_MIN);
+  assert.ok(fitRail(900, 440, 260, true, true) >= RAIL_MIN);
+  assert.equal(fitRail(760, 264, 260, true, true), RAIL_MINI);
+  assert.equal(fitRail(760, 264, 260, false, true), RAIL_MINI);
+  // Closed panel: only the rail and the chat share the row.
+  assert.equal(fitRail(760, 264, 260, true, false), 264);
+  assert.equal(fitRail(760, 440, 260, true, false), 760 - 36 - MAIN_MIN);
 });
