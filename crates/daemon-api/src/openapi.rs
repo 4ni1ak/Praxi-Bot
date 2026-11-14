@@ -9,7 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    dto, email, email_routes, error, host, live_view, mcp, mcp_routes, routes, sse, web, web_routes,
+    dto, email, email_routes, error, host, live_view, mcp, mcp_routes, routes, skills, sse, web,
+    web_routes,
 };
 
 struct Security;
@@ -60,6 +61,9 @@ impl Modify for Security {
         routes::get_bot,
         routes::list_grants,
         routes::revoke_grant,
+        skills::list_skills,
+        skills::get_bot_skills,
+        skills::put_bot_skills,
         routes::update_bot,
         routes::delete_bot,
         routes::list_chats,
@@ -139,6 +143,10 @@ impl Modify for Security {
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
+        skills::SkillScope, skills::SkillIssueScope, skills::SkillRequiresDto, skills::SkillHubInfoDto,
+        skills::CatalogSkillDto, skills::SkillIssueDto, skills::SkillsCatalogDto,
+        skills::SkillAssignmentModeDto, skills::AssignedSkillState, skills::AssignedSkillDto,
+        skills::AvailableSkillDto, skills::OwnSkillDto, skills::BotSkillsDto, skills::PutBotSkillsInput,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
@@ -146,7 +154,8 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web")
+        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"),
+        (name = "skills")
     )
 )]
 pub struct ApiDoc;

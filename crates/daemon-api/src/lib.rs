@@ -31,6 +31,7 @@ pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;
 mod schedule_tools;
+pub mod skills;
 mod sse;
 pub mod web;
 mod web_routes;
@@ -67,6 +68,7 @@ pub use mcp::{McpControl, McpControlError};
 pub use openapi::openapi_json;
 pub use policy::{PolicyLoadError, load_policy, validate_policy};
 pub use schedule_tools::{ScheduleLimits, load_schedule_limits};
+pub use skills::SkillAssignments;
 pub use web::{WebControl, WebControlError};
 
 /// Default TCP port of `bot serve`.
@@ -177,6 +179,10 @@ struct Inner {
     email_tests: Arc<tokio::sync::Semaphore>,
     /// Web search settings management (see [`AppState::set_web`]).
     web: OnceLock<Arc<dyn WebControl>>,
+    /// Skill catalog index (see [`AppState::set_skills`]).
+    skills: OnceLock<::skills::SkillIndex>,
+    /// Per-bot skill assignment source (see [`AppState::set_skill_assignments`]).
+    skill_assignments: OnceLock<Arc<skills::SkillAssignments>>,
     /// Bounds concurrent web search probes (see `web_routes`).
     web_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
@@ -313,6 +319,8 @@ impl AppState {
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
+            skills: OnceLock::new(),
+            skill_assignments: OnceLock::new(),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
@@ -357,6 +365,32 @@ impl AppState {
     /// before [`serve`]; a second call is ignored).
     pub fn set_web(&self, web: Arc<dyn WebControl>) {
         let _ = self.0.web.set(web);
+    }
+
+    /// Enable `/v1/skills` and `/v1/bots/{id}/skills` over `index` (call once,
+    /// before [`serve`]; a second call is ignored).
+    pub fn set_skills(&self, index: ::skills::SkillIndex) {
+        let _ = self.0.skills.set(index);
+    }
+
+    /// Register the shared [`SkillAssignments`] source used by `AgentLoop` so
+    /// assignment updates invalidate cached per-bot skill views immediately.
+    pub fn set_skill_assignments(&self, assignments: Arc<skills::SkillAssignments>) {
+        let _ = self.0.skill_assignments.set(assignments);
+    }
+
+    pub(crate) fn skills_index(&self) -> Result<::skills::SkillIndex, ApiError> {
+        self.0
+            .skills
+            .get()
+            .cloned()
+            .ok_or_else(|| ApiError::unavailable("skills are not available in this daemon"))
+    }
+
+    pub(crate) fn bump_skill_assignments(&self) {
+        if let Some(assignments) = self.0.skill_assignments.get() {
+            assignments.bump();
+        }
     }
 
     /// Enable `POST /v1/secrets/{name}` (write-only) over `store` (call once;
@@ -761,6 +795,11 @@ fn api_routes() -> Router<AppState> {
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )
+        .route(
+            "/v1/bots/{id}/skills",
+            get(skills::get_bot_skills).put(skills::put_bot_skills),
+        )
+        .route("/v1/skills", get(skills::list_skills))
         .route(
             "/v1/bots/{id}",
             get(r::get_bot).put(r::update_bot).delete(r::delete_bot),

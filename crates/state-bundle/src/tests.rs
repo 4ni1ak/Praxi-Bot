@@ -948,6 +948,60 @@ async fn imported_system_messages_are_neutralised_unless_they_are_genuine_contro
 }
 
 #[tokio::test]
+async fn bot_skill_assignment_round_trips_and_rejects_malformed_names() {
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), true);
+    let st = storage::Storage::open(source.path()).unwrap();
+    let bots = st.list_bots(st.list_users().unwrap()[0].id).unwrap();
+    let bot_id = bots[0].id;
+    st.set_bot_skill_assignment(
+        bot_id,
+        storage::SkillAssignmentMode::Selected,
+        &["alpha".into(), "beta-2".into()],
+    )
+    .unwrap();
+    drop(st);
+
+    let bytes = bundle(source.path()).await;
+    let target = tempfile::tempdir().unwrap();
+    import(
+        target.path(),
+        &MemoryStore::new(),
+        bytes.as_slice(),
+        ImportOptions::default(),
+    )
+    .await
+    .unwrap();
+    let imported = storage::Storage::open(target.path()).unwrap();
+    let row = imported
+        .get_bot_skill_assignment(bot_id)
+        .unwrap()
+        .expect("assignment preserved across export/import");
+    assert_eq!(row.mode, storage::SkillAssignmentMode::Selected);
+    assert_eq!(row.names, vec!["alpha", "beta-2"]);
+
+    // Malformed skill names in bot_skill_assignment must be rejected on import.
+    for bad_names in [r#"["../escape"]"#, r#"["UpperCase"]"#, r#""not-an-array""#] {
+        let bad_src = tempfile::tempdir().unwrap();
+        database(bad_src.path(), true);
+        let conn = Connection::open(bad_src.path().join("bot.db")).unwrap();
+        conn.execute(
+            "INSERT INTO bot_skill_assignment (bot_id, mode, names_json, updated_at_ms) \
+             VALUES ('00000000-0000-0000-0000-000000000002', 'selected', ?1, 1)",
+            [bad_names],
+        )
+        .unwrap();
+        drop(conn);
+        let bad_bytes = bundle(bad_src.path()).await;
+        let err = rejected(&bad_bytes, ImportOptions::default()).await;
+        assert!(
+            matches!(err, ImportError::InvalidDatabase { ref db, .. } if db == "bot.db"),
+            "expected InvalidDatabase for `{bad_names}`, got {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn future_versions_schema_disagreement_and_missing_records_rejected() {
     let dir = tempfile::tempdir().unwrap();
     database(dir.path(), false);

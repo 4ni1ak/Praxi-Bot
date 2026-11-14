@@ -208,6 +208,7 @@ pub fn build_agent_with_redactor(
     build_agent_with_live_views(storage, providers, data_dir, desktop, redactor, None)
 }
 
+#[cfg(test)]
 pub fn build_agent_with_live_views(
     storage: &Arc<Storage>,
     providers: Providers,
@@ -215,6 +216,28 @@ pub fn build_agent_with_live_views(
     desktop: Option<Arc<dyn DesktopBackend>>,
     redactor: SharedRedactor,
     view_registry: Option<Arc<live_view::TargetRegistry>>,
+) -> AgentLoop {
+    let assignments = Arc::new(daemon_api::SkillAssignments::new(Arc::clone(storage)));
+    let skills = load_skills(data_dir).with_assignments(assignments);
+    build_agent_with_skills(
+        storage,
+        providers,
+        data_dir,
+        desktop,
+        redactor,
+        view_registry,
+        skills,
+    )
+}
+
+fn build_agent_with_skills(
+    storage: &Arc<Storage>,
+    providers: Providers,
+    data_dir: &Path,
+    desktop: Option<Arc<dyn DesktopBackend>>,
+    redactor: SharedRedactor,
+    view_registry: Option<Arc<live_view::TargetRegistry>>,
+    skills: SkillIndex,
 ) -> AgentLoop {
     // Placeholder: `with_builtin_tools` replaces it with the loop's own gate.
     let gate = ResolverGate::new(
@@ -246,7 +269,7 @@ pub fn build_agent_with_live_views(
     )
     .with_builtin_tools(tools)
     .with_subagents()
-    .with_skills(load_skills(data_dir))
+    .with_skills(skills)
     .with_workflows(
         WorkflowStore::new(data_dir),
         Handles {
@@ -822,13 +845,17 @@ pub fn serve(
         }) as Arc<dyn SecretStore>
     });
     let views = Arc::new(live_view::TargetRegistry::default());
-    let agent = build_agent_with_live_views(
+    let skill_assignments = Arc::new(daemon_api::SkillAssignments::new(Arc::clone(&storage)));
+    let skill_index = load_skills(data_dir)
+        .with_assignments(Arc::clone(&skill_assignments) as Arc<dyn skills::AssignmentSource>);
+    let agent = build_agent_with_skills(
         &storage,
         providers,
         data_dir,
         desktop,
         redactor.clone(),
         Some(Arc::clone(&views)),
+        skill_index.clone(),
     );
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
@@ -845,6 +872,8 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent, storage, cfg, views)?;
+    state.set_skills(skill_index);
+    state.set_skill_assignments(skill_assignments);
     register_schedule_tools(data_dir, &state);
     if let Some(host) = host {
         state.set_provider_host(host);
