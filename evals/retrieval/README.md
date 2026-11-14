@@ -44,10 +44,23 @@ corpus, 54 chunks, 11 positive queries and one separate no-match query. Both
 quality tests and the full-request comparison passed. Generated UUIDs affect BPE
 counts, so these are observed samples, not exact golden token counts.
 
+Quality and result cost use **two separate retrieval configurations**. The
+quality pass requests `top_k=5`, a 2,000-estimated-token budget and a 32,768-byte
+ceiling, then deduplicates source identities before computing these metrics:
+
 | Measurement | Lexical | Deterministic hybrid |
 | --- | ---: | ---: |
 | Source-deduplicated Recall@5 | 1.000 | 1.000 |
 | MRR over positive queries | 1.000 | 1.000 |
+
+The cost pass uses the shipped defaults: `top_k=5`, 600 estimated tokens and
+8,192 bytes. It checks that every positive query retains at least one expected
+source and that the complete serialized result saves more than 75% of the
+whole-corpus tokens. It does not recompute full Recall/MRR or assert that every
+expected source survives this tighter budget, including the two-source query.
+
+| Default-budget cost measurement | Lexical | Deterministic hybrid |
+| --- | ---: | ---: |
 | Mean complete-result `cl100k_base` tokens | 704 | 707 |
 | Maximum complete-result `cl100k_base` tokens | 930 | 970 |
 | Same whole-corpus stuffing baseline | 4,816 | 4,816 |
