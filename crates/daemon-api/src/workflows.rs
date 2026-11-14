@@ -181,6 +181,13 @@ fn recording(s: &AppState, id: RunId) -> Result<ReviewedRecording, ApiError> {
             "incomplete workflow: a mutating call was dropped or failed",
         ));
     }
+    // Confirmations are checked per provenance index and shown per step; a
+    // mismatch would attach a user's acknowledgement to a different step.
+    if provenance.len() != recording.workflow.steps.len() {
+        return Err(ApiError::conflict(
+            "recorded steps and their provenance do not align",
+        ));
+    }
     recording.workflow.source = Some(workflow_replay::format::WorkflowSource {
         run_id: id.to_string(),
         bot_id: run.bot_id.to_string(),

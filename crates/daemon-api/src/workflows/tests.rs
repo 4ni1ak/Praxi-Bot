@@ -58,14 +58,16 @@ impl ChatProvider for Provider {
 struct TestTool {
     spec: ToolSpec,
     calls: Arc<AtomicUsize>,
+    inputs: Arc<parking_lot::Mutex<Vec<Value>>>,
 }
 #[async_trait]
 impl Tool for TestTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
     }
-    async fn call(&self, _: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
+    async fn call(&self, _: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inputs.lock().push(input);
         Ok(ToolOutput::text(if self.spec.name == "browser_snapshot" {
             r#"# Shop (https://example.test/cart)
   [e1] textbox "Search"
@@ -83,12 +85,14 @@ struct Env {
     dir: tempfile::TempDir,
     provider: Arc<Provider>,
     calls: Arc<AtomicUsize>,
+    inputs: Arc<parking_lot::Mutex<Vec<Value>>>,
 }
 fn setup() -> Env {
     let dir = tempfile::tempdir().unwrap();
     let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
     let registry = ToolRegistry::new();
     let calls = Arc::new(AtomicUsize::new(0));
+    let inputs = Arc::new(parking_lot::Mutex::new(Vec::new()));
     for (name, effect) in [
         ("mutate", Effect::Write),
         ("browser_fill", Effect::Write),
@@ -107,6 +111,7 @@ fn setup() -> Env {
                 platforms: vec![Platform::All],
             },
             calls: calls.clone(),
+            inputs: inputs.clone(),
         }));
     }
     let provider = Arc::new(Provider {
@@ -162,6 +167,7 @@ fn setup() -> Env {
         dir,
         provider,
         calls,
+        inputs,
     }
 }
 
@@ -453,6 +459,7 @@ async fn runtime_secrets_never_reach_history_steps_journal_or_provider() {
         "short values cannot be safely registered by the shared redactor"
     );
     let approvals = approve_replays(&env);
+    env.inputs.lock().clear();
     let (status, body) = request(&env, Method::POST, "/v1/workflows/password/run",
         Some(json!({"chat_id":env.chat.0,"params":{"recorded_secret_1":"reviewed value=\"with spaces\"\\and\nnewlines"}})), true).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
@@ -469,6 +476,12 @@ async fn runtime_secrets_never_reach_history_steps_journal_or_provider() {
     approvals.abort();
     env.state.agent().flush_journal();
     let secret = "reviewed value=\"with spaces\"\\and\nnewlines";
+    // The value travels out of band but must still reach the replayed tool.
+    assert_eq!(
+        env.inputs.lock().as_slice(),
+        [json!({"password": secret})],
+        "human replay must hand the runtime value to the tool"
+    );
     let steps = env.state.storage().list_steps(replay).unwrap();
     assert!(!format!("{steps:?}").contains("reviewed value="));
     let messages = env.state.storage().list_messages(env.chat).unwrap();
