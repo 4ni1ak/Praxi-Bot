@@ -575,7 +575,7 @@ async fn bot_create_always_asks_and_is_never_a_standing_grant() {
 /// is damping (a runtime-assembled path is not caught): see the PR notes.
 #[tokio::test]
 async fn the_daemon_token_file_is_protected_from_the_file_tools_and_named_in_the_never_list() {
-    use tool_registry::{Tool as _, ToolContext, ToolError};
+    use tool_registry::{ToolContext, ToolError};
 
     let dir = tempfile::tempdir().unwrap();
     let info = crate::auth::load_or_create_token(dir.path()).unwrap();
