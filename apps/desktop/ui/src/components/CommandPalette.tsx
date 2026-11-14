@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { rank } from "../lib/fuzzy";
 import { layerStack } from "../lib/modalStack";
@@ -98,14 +99,16 @@ export function CommandPalette({
     } else if (e.key === "Enter") {
       e.preventDefault();
       choose(active);
-    } else if (e.key === "Escape") {
+    } else if (e.key === "Escape" && layerStack.isTop(seqRef.current)) {
       e.preventDefault();
       e.stopPropagation();
       onClose();
     }
   };
 
-  return (
+  // Portaled to <body>: a Modal makes #root inert, and a palette inside it
+  // would paint above the modal (z-index 60) yet could not take focus or keys.
+  return createPortal(
     <div
       className={styles.backdrop}
       onMouseDown={(e) => {
@@ -171,6 +174,7 @@ export function CommandPalette({
         </ul>
         <div className={styles.footer}>{t("palette.hint")}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
