@@ -248,15 +248,31 @@ async fn stop_command_cancels_the_run_that_carries_it() {
     let (run, state) = turn(&lp, env.chat, "/stop").await;
     assert_eq!(state, RunState::Cancelled);
     assert_eq!(script.n("fake/m"), 0, "no model call");
-    let d = decided(&drain(&mut rx));
+    let events = drain(&mut rx);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::ToolCallRequested(_))),
+        "no tool call"
+    );
+    let d = decided(&events);
     assert_eq!(d.len(), 1);
     assert_eq!(d[0].level, "K0");
     assert_eq!(d[0].route["kind"], "command");
     assert_eq!(d[0].route["name"], "stop");
-    // The decision is the audit record of the first step.
-    let first = &env.storage.list_steps(run).unwrap()[0];
-    assert_eq!(first.input["route"]["level"], "K0");
-    assert_eq!(first.input["route"]["route"]["name"], "stop");
+    // The route cancels during planning. No new step may be started after
+    // that request; its decision remains durable in the event journal.
+    assert_eq!(env.storage.list_steps(run).unwrap().len(), 0);
+    let journal: Vec<_> = storage::read_event_log(env.dir.path(), run)
+        .unwrap()
+        .into_iter()
+        .map(|envelope| envelope.event)
+        .collect();
+    let logged = decided(&journal);
+    assert_eq!(logged.len(), 1);
+    assert_eq!(logged[0].level, "K0");
+    assert_eq!(logged[0].route["kind"], "command");
+    assert_eq!(logged[0].route["name"], "stop");
 }
 
 #[tokio::test]
@@ -718,7 +734,7 @@ async fn skill_hint_lists_the_skill_first() {
 
 // ---------- budget, switches, embedder ----------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_slow_ladder_never_blocks_the_turn_beyond_its_budget() {
     let env = setup();
     let t = Arc::new(tool("t_a", Effect::Read, "a"));
@@ -727,7 +743,8 @@ async fn a_slow_ladder_never_blocks_the_turn_beyond_its_budget() {
         ("fake/m", vec![Rep::Text("answered")]),
     ]);
     let mut config = cfg(Policy::full());
-    config.router_budget = Duration::from_millis(60);
+    let budget = Duration::from_millis(60);
+    config.router_budget = budget;
     config.ladder.k3_timeout = Duration::from_secs(30);
     let lp = loop_with(
         &env,
@@ -737,10 +754,14 @@ async fn a_slow_ladder_never_blocks_the_turn_beyond_its_budget() {
         config,
     );
     let mut rx = lp.subscribe();
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let (_, state) = turn(&lp, env.chat, "frobnicate the gizmo").await;
     assert_eq!(state, RunState::Succeeded);
-    assert!(started.elapsed() < Duration::from_secs(5));
+    // Wall time includes filesystem/journal work and runner contention. The
+    // virtual clock advances only while waiting for the hanging classifier;
+    // without the outer router budget it reaches K3's 30-second deadline.
+    let elapsed = started.elapsed();
+    assert!(elapsed >= budget && elapsed <= budget + Duration::from_millis(1));
     let d = decided(&drain(&mut rx));
     assert_eq!(d[0].level, "K4");
     assert_eq!(d[0].route["kind"], "agent");
