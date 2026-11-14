@@ -29,8 +29,10 @@ import {
 } from "../lib/liveViewStage";
 import {
   canSendLiveInput,
+  foreignTakeoverOwner,
   isControlBusy,
   isActivelyOwningTakeover,
+  needsPauseRecovery,
   summarizeTarget
 } from "../lib/liveViewState";
 import { viewerKeyAction } from "../lib/liveViewLayers";
@@ -277,12 +279,8 @@ export function LiveViewer() {
 
   const targetSummary = selectedTarget ? summarizeTarget(selectedTarget) : null;
   const isReleasing = state.pendingRequest?.kind === "release";
-  const otherOwner =
-    state.takeover &&
-    state.ownedTakeoverId !== state.takeover.id &&
-    (state.takeover.state === "active" || state.takeover.state === "acquiring")
-      ? state.takeover.owner
-      : null;
+  const otherOwner = foreignTakeoverOwner(state);
+  const pauseRecovery = needsPauseRecovery(state, controlState);
 
   const tone = state.disconnected || state.streamStale
     ? "paused"
@@ -684,7 +682,7 @@ export function LiveViewer() {
               {t("liveView.states.acquiring")}
             </Button>
           </>
-        ) : state.viewState === "paused" && recoveryPrompt ? (
+        ) : state.viewState === "paused" && recoveryPrompt && pauseRecovery ? (
           <>
             <span className={styles.dockStatus}>
               {t(`liveView.reasons.${recoveryPrompt.reason}`, {
@@ -716,7 +714,7 @@ export function LiveViewer() {
           <>
             <span className={styles.dockStatus}>
               {state.disconnected
-                ? t("liveView.reasons.disconnected")
+                ? t("liveView.connectionLost")
                 : otherOwner
                   ? t("liveView.otherOwner", { owner: otherOwner })
                   : selectedTarget && targetSummary?.available

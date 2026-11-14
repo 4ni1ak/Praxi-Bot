@@ -1,5 +1,8 @@
 import type { ControlStateDto, ReleaseRequest } from "../api/types.ts";
-import { releaseConfirmedBy } from "./liveViewState.ts";
+import {
+  releaseConfirmedBy,
+  snapshotPausedTakeoverId
+} from "./liveViewState.ts";
 
 export interface ReleaseDeps {
   /** `POST /v1/control/release` (through the control bridge when one exists). */
@@ -71,4 +74,41 @@ export async function runRelease(
     message: "release not confirmed by daemon state",
     dto: fresh ?? response
   };
+}
+
+export type ClearPauseOutcome =
+  | { kind: "cleared"; dto: ControlStateDto }
+  | { kind: "aborted"; fresh: ControlStateDto }
+  | { kind: "failed"; code: string; message: string };
+
+/**
+ * Clear a paused latch (`POST /v1/control/recover`) only if the takeover the
+ * user saw is STILL paused and ours: the daemon's recover does not check the
+ * caller against the owner and would interrupt a takeover a peer has taken in
+ * the meantime. `expectedId` is the paused takeover id shown on screen (null for
+ * the latch-only button, which cannot be verified against an id).
+ */
+export async function runClearPause(
+  deps: {
+    getControlState(): Promise<ControlStateDto>;
+    recover(): Promise<ControlStateDto>;
+  },
+  expectedId: string | null
+): Promise<ClearPauseOutcome> {
+  if (expectedId !== null) {
+    let fresh: ControlStateDto;
+    try {
+      fresh = await deps.getControlState();
+    } catch (err) {
+      return { kind: "failed", ...describeError(err, "recover_failed") };
+    }
+    if (snapshotPausedTakeoverId(fresh) !== expectedId) {
+      return { kind: "aborted", fresh };
+    }
+  }
+  try {
+    return { kind: "cleared", dto: await deps.recover() };
+  } catch (err) {
+    return { kind: "failed", ...describeError(err, "recover_failed") };
+  }
 }

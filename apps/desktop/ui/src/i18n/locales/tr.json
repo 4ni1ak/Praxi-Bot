@@ -1672,7 +1672,9 @@
       "release_failed": "Kontrol geri verilemedi. Bot duraklatılmış kalır; Bitirdim'i yeniden deneyin.",
       "release_unconfirmed": "Daemon devralmanızı hâlâ etkin gösteriyor. Bitirdim'i yeniden deneyin.",
       "takeover_failed": "Kontrol devralınamadı. Tekrar deneyin.",
-      "recover_failed": "Kontrol kurtarılamadı. Tekrar deneyin."
+      "recover_failed": "Kontrol kurtarılamadı. Tekrar deneyin.",
+      "pause_changed": "Duraklatma bu arada değişti (kontrolü başkası almış olabilir). Kaldırmadan önce ekranı kontrol edin.",
+      "release_interrupted": "Bitirdim tamamlanmadan devralma kesildi, bu yüzden geri verme tamamlanmadı. Botun devam etmesi için duraklatmayı kaldırın veya kontrolü yeniden alın."
     },
     "reconnecting": "Ekran akışına yeniden bağlanılıyor…",
     "releaseOnClose": "Kapatmak önce kontrolü bota geri verir.",
@@ -1681,6 +1683,7 @@
       "title": "Bot duraklatıldı, sizi bekliyor",
       "body": "Bir ekran devralma botu duraklatılmış bıraktı. Devam etmesi için duraklatmayı kaldırın veya kontrolü yeniden almak için ekranı açın."
     },
-    "openScreen": "Ekranı aç"
+    "openScreen": "Ekranı aç",
+    "connectionLost": "Ekran bağlantısı koptu. Yeniden bağlanılıyor…"
   }
 }

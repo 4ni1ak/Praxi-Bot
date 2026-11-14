@@ -186,3 +186,20 @@ test("the command palette is portaled to body and only the topmost layer handles
   const popover = read("../components/Popover.tsx");
   assert.match(popover, /createPortal\(/, "popovers are portaled too");
 });
+
+// ---- fourth review ----
+
+test("every client polls the control snapshot (not only the Tauri bridge) and feeds the banner", () => {
+  assert.match(context, /getControlState\(\)\s*\.then\(ingestControlSnapshot\)/);
+  assert.match(context, /CONTROL_POLL_MS/);
+  const poll = context.slice(context.indexOf("CONTROL_POLL_MS);") - 400, context.indexOf("CONTROL_POLL_MS);") + 40);
+  assert.doesNotMatch(poll, /isTauriRuntime/);
+});
+
+test("Clear pause goes through the verifying runClearPause and the dock uses the same helper as the banner", () => {
+  assert.match(context, /await runClearPause\(/);
+  assert.match(viewer, /needsPauseRecovery\(state, controlState\)/);
+  assert.match(viewer, /recoveryPrompt && pauseRecovery/);
+  assert.match(viewer, /foreignTakeoverOwner\(state\)/);
+  assert.match(viewer, /liveView\.connectionLost/);
+});

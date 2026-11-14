@@ -449,7 +449,16 @@ export function applyControlStateDto(
     pendingRelease !== null && (takeoverGone || journalDone || interrupted);
   const settled = {
     pendingRequest: releaseSettled ? null : state.pendingRequest,
-    lastError: releaseSettled ? null : state.lastError,
+    // A hand-back overtaken by an interruption (expired lease, Stop, restart) did
+    // not complete: say so instead of silently dropping Retry.
+    lastError: releaseSettled
+      ? interrupted && !takeoverGone && !journalDone
+        ? {
+            code: "release_interrupted",
+            message: "takeover interrupted before the hand-back finished"
+          }
+        : null
+      : state.lastError,
     lastReleasedTakeoverId:
       takeoverGone && pendingRelease
         ? pendingRelease.takeoverId
@@ -504,8 +513,13 @@ export function applyControlStateDto(
     t.id === ownedId &&
     (!state.session || t.session_id === state.session.session_id);
   // Someone else's live takeover is a watch state for us, never "you are in control".
+  const ours = ownedId === t.id || (t.id !== NIL_UUID && t.id !== "");
   const foreignLive =
-    !weOwnIt && (t.state === "active" || t.state === "acquiring");
+    !weOwnIt &&
+    (t.state === "active" ||
+      t.state === "acquiring" ||
+      // another actor's paused takeover (redacted nil id) is theirs to clear
+      (t.state === "paused" && !ours));
   // The snapshot may only lower input access; the status stream raises it.
   const inputAllowed =
     weOwnIt &&
@@ -630,9 +644,16 @@ export function buildSessionHeartbeat(
   if (state.disconnected || state.streamStale) {
     return {};
   }
-  // A pending hand-back never renews the input lease.
-  if (state.pendingRequest?.kind === "release") {
-    return {};
+  // A pending hand-back keeps renewing the lease only while the daemon still
+  // reports that takeover `active` (the POST may not have been applied yet, and
+  // a lapse would pause it as Expired). Once the snapshot shows it suspended,
+  // paused or gone, the empty heartbeat is right.
+  const pending = state.pendingRequest;
+  if (pending?.kind === "release") {
+    const t = state.takeover;
+    return t && t.id === pending.takeoverId && t.state === "active"
+      ? { takeover_id: pending.takeoverId, control_epoch: pending.controlEpoch }
+      : {};
   }
   if (isActivelyOwningTakeover(state) && state.ownedTakeoverId !== null) {
     return {
@@ -904,16 +925,48 @@ export interface PauseRecovery {
  * viewer, the right panel and the native run state: while this is non-null the
  * bot is paused behind the user and a control must stay on screen.
  */
+/** Id of a paused takeover that is OURS in a daemon snapshot (others are redacted to nil). */
+export function snapshotPausedTakeoverId(
+  control: ControlStateDto | null
+): string | null {
+  const t = control?.takeover;
+  return t && t.state === "paused" && t.id !== NIL_UUID && t.id !== ""
+    ? t.id
+    : null;
+}
+
+/** Owner label of a takeover that is not ours (live, or paused with a redacted id). */
+export function foreignTakeoverOwner(
+  state: LiveViewControllerState
+): string | null {
+  const t = state.takeover;
+  if (!t || t.id === state.ownedTakeoverId) {
+    return null;
+  }
+  if (t.state === "paused") {
+    return t.id === NIL_UUID || t.id === "" ? t.owner : null;
+  }
+  return t.state === "active" || t.state === "acquiring" ? t.owner : null;
+}
+
 export function needsPauseRecovery(
   state: LiveViewControllerState,
   control: ControlStateDto | null
 ): PauseRecovery | null {
-  const t = control ? control.takeover : state.takeover;
-  if (!t || t.state !== "paused") {
-    return null;
+  const snap = control ? control : state.takeover ? { takeover: state.takeover } : null;
+  const id = snapshotPausedTakeoverId(snap as ControlStateDto | null);
+  if (id !== null) {
+    return { takeoverId: id, reason: snap?.takeover?.reason ?? null };
   }
-  const ours =
-    (t.id !== NIL_UUID && t.id !== "") ||
-    (state.ownedTakeoverId !== null && state.ownedTakeoverId === t.id);
-  return ours ? { takeoverId: t.id, reason: t.reason ?? null } : null;
+  // A locally mirrored owned pause (stream drop) counts until a snapshot says
+  // otherwise, so a missed `control_state_changed` cannot hide the control.
+  const owned = state.ownedTakeoverId;
+  if (
+    owned !== null &&
+    state.viewState === "paused" &&
+    (control === null || control.takeover?.id === owned)
+  ) {
+    return { takeoverId: owned, reason: state.reason };
+  }
+  return null;
 }

@@ -621,3 +621,124 @@ test("an unverifiable reacquire leaves a clear-pause path; restart is a clear-pa
   const restarted = applyControlStateDto(owning(), pausedDto("restart"));
   assert.notEqual(describeRecoveryPrompt(restarted, null)?.mode, "reacquire");
 });
+
+// ---- fourth review ----------------------------------------------------------
+
+import { foreignTakeoverOwner, snapshotPausedTakeoverId } from "./liveViewState.ts";
+import { runClearPause } from "./liveViewRelease.ts";
+
+const NIL = "00000000-0000-0000-0000-000000000000";
+
+test("a missed control_state_changed cannot hide the banner: the polled snapshot or the local mirror shows it", () => {
+  // the snapshot ingested by the poll (key changed) shows our paused takeover
+  let st = applyStreamDisconnected(owning());
+  const polled = pausedDto("disconnected");
+  st = applyControlStateDto(st, polled);
+  assert.ok(needsPauseRecovery(st, polled));
+
+  // the event was missed and the last snapshot still says active: the locally
+  // mirrored pause alone needs the banner
+  const mirrored = applyStreamDisconnected(owning());
+  assert.equal(mirrored.viewState, "paused");
+  assert.ok(needsPauseRecovery(mirrored, dto(takeover())), "stale active snapshot");
+  assert.ok(needsPauseRecovery(mirrored, null));
+  // ... until a snapshot says otherwise
+  assert.equal(needsPauseRecovery(mirrored, dto(null)), null);
+});
+
+test("another actor's paused takeover: no Clear pause anywhere, owner named, watch dock", () => {
+  let st = applySessionCreated(createInitialLiveViewState(target), target, session);
+  const foreign = pausedDto("disconnected", {
+    id: NIL,
+    session_id: NIL,
+    owner: "peer:phone",
+    control_epoch: 0
+  });
+  st = applyControlStateDto(st, foreign);
+  assert.equal(st.viewState, "watch", "not the paused dock");
+  assert.equal(needsPauseRecovery(st, foreign), null, "banner, panel and dock hide Clear pause");
+  assert.equal(describeRecoveryPrompt(st, foreign), null);
+  assert.equal(foreignTakeoverOwner(st), "peer:phone");
+  assert.equal(snapshotPausedTakeoverId(foreign), null);
+  // our own paused takeover (real id) names no foreign owner
+  const mine = applyControlStateDto(owning(), pausedDto("disconnected"));
+  assert.equal(foreignTakeoverOwner(mine), null);
+});
+
+test("Clear pause re-reads state and aborts when the takeover changed within the poll window", async () => {
+  const calls: string[] = [];
+  const mk = (fresh: ControlStateDto | Error) => ({
+    getControlState: async () => {
+      calls.push("get");
+      if (fresh instanceof Error) {
+        throw fresh;
+      }
+      return fresh;
+    },
+    recover: async () => {
+      calls.push("recover");
+      return dto(null);
+    }
+  });
+  // a peer took active control since the banner was drawn
+  const stale = await runClearPause(mk(dto(takeover({ id: NIL, owner: "peer:p" }))), "to-1");
+  assert.equal(stale.kind, "aborted");
+  assert.deepEqual(calls, ["get"], "recover never posted");
+
+  // a different paused takeover
+  calls.length = 0;
+  const other = await runClearPause(mk(pausedDto("disconnected", { id: "to-9" })), "to-1");
+  assert.equal(other.kind, "aborted");
+  assert.ok(!calls.includes("recover"));
+
+  // unreadable state: fail closed
+  calls.length = 0;
+  const down = await runClearPause(mk(new Error("down")), "to-1");
+  assert.equal(down.kind, "failed");
+  assert.ok(!calls.includes("recover"));
+
+  // same takeover still paused: cleared
+  calls.length = 0;
+  const ok = await runClearPause(mk(pausedDto("disconnected")), "to-1");
+  assert.equal(ok.kind, "cleared");
+  assert.deepEqual(calls, ["get", "recover"]);
+});
+
+test("heartbeat keeps the lease while the pending release's takeover is still active, drops it once paused or gone", () => {
+  const releasing = applyReleaseStarted(owning(), "req-1", null);
+  const active = applyControlStateDto(releasing, dto(takeover()));
+  assert.deepEqual(buildSessionHeartbeat(active), {
+    takeover_id: "to-1",
+    control_epoch: 5
+  });
+  // POST not yet applied, no snapshot yet: state.takeover unknown -> still no id
+  // (nothing to renew against); the first snapshot decides
+  const suspended = applyControlStateDto(releasing, pausedDto(null));
+  assert.deepEqual(buildSessionHeartbeat(suspended), {}, "suspend pause");
+  const gone = applyControlStateDto(releasing, dto(null));
+  assert.deepEqual(buildSessionHeartbeat(gone), {}, "gone");
+});
+
+test("Expired during a pending release keeps a visible way forward", () => {
+  const pending = applyReleaseFailed(
+    applyReleaseStarted(owning(), "req-1", null),
+    "release_failed",
+    "lost"
+  );
+  const expired = applyControlStateDto(pending, pausedDto("expired"));
+  assert.equal(expired.pendingRequest, null, "a dead retry is dropped...");
+  assert.equal(expired.lastError?.code, "release_interrupted", "...but not silently");
+  assert.ok(needsPauseRecovery(expired, pausedDto("expired")), "Clear pause stays offered");
+});
+
+test("the connection-lost string does not claim the bot is paused; the paused dock keeps the long sentence", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  for (const l of ["en", "tr"]) {
+    const j = JSON.parse(
+      readFileSync(fileURLToPath(new URL(`../i18n/locales/${l}.json`, import.meta.url)), "utf8")
+    );
+    assert.doesNotMatch(j.liveView.connectionLost, /paus|duraklat/i, l);
+    assert.match(j.liveView.reasons.disconnected, /paus|duraklat/i, l);
+  }
+});

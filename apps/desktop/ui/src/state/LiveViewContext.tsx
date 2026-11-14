@@ -44,13 +44,14 @@ import {
   describeRecoveryPrompt,
   isActivelyOwningTakeover,
   isControlBusy,
+  needsPauseRecovery,
   pickDefaultTarget,
   planViewerClose,
   type RecoveryPrompt,
   shouldOverrideOnStop,
   type LiveViewControllerState
 } from "../lib/liveViewState.ts";
-import { runRelease } from "../lib/liveViewRelease.ts";
+import { runClearPause, runRelease } from "../lib/liveViewRelease.ts";
 import { runReconnectLoop } from "../lib/liveViewReconnect.ts";
 import {
   consumeLiveViewStream,
@@ -66,6 +67,7 @@ import {
 import { useDaemon } from "./DaemonContext.tsx";
 
 const SESSION_HEARTBEAT_MS = 5000;
+const CONTROL_POLL_MS = 5000;
 const STALE_CHECK_MS = 2000;
 const FEEDBACK_THROTTLE_MS = 500;
 const OVERLAY_ACTION_TTL_MS = 1400;
@@ -280,6 +282,21 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       }
     });
   }, [client, onDaemonEvent, refreshTargets, setControlState, updateState]);
+
+  // `control_state_changed` is not replayed: re-read the snapshot on an interval
+  // for every client (the Tauri bridge polls too; this covers plain browsers).
+  useEffect(() => {
+    if (!client) {
+      return undefined;
+    }
+    const id = window.setInterval(() => {
+      void client
+        .getControlState()
+        .then(ingestControlSnapshot)
+        .catch(() => undefined);
+    }, CONTROL_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [client, ingestControlSnapshot]);
 
   useEffect(() => {
     if (client && (viewerOpen || thumbDemand.active)) {
@@ -789,18 +806,38 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     if (!client) {
       return;
     }
-    try {
-      const dto = await client.recoverControl();
-      setControlState(dto);
-      registry.syncControlState(dto);
-      updateState((prev) => applyControlStateDto(prev, dto));
+    // Re-read first and abort unless the paused takeover the user saw is still
+    // paused and ours (a peer may have taken control within the poll window).
+    const shown = needsPauseRecovery(stateRef.current, controlStateRef.current);
+    const outcome = await runClearPause(
+      {
+        getControlState: () => client.getControlState(),
+        recover: () => client.recoverControl()
+      },
+      shown ? shown.takeoverId : null
+    );
+    if (outcome.kind === "cleared") {
+      setControlState(outcome.dto);
+      registry.syncControlState(outcome.dto);
+      updateState((prev) => applyControlStateDto(prev, outcome.dto));
       void refreshTargets();
-    } catch (err) {
-      const code = err instanceof ApiError ? err.code : "recover_failed";
-      const message = err instanceof Error ? err.message : String(err);
-      updateState((prev) => applyTakeoverFailed(prev, code, message));
+      return;
     }
-  }, [client, refreshTargets, registry, setControlState, updateState]);
+    if (outcome.kind === "aborted") {
+      ingestControlSnapshot(outcome.fresh);
+      updateState((prev) =>
+        applyTakeoverFailed(
+          prev,
+          "pause_changed",
+          "the paused takeover changed; not cleared"
+        )
+      );
+      return;
+    }
+    updateState((prev) =>
+      applyTakeoverFailed(prev, outcome.code, outcome.message)
+    );
+  }, [client, ingestControlSnapshot, refreshTargets, registry, setControlState, updateState]);
 
   // Reacquire a takeover the stream drop paused. Every other paused case
   // (local Stop, restart, revoked, ...) is a clear-pause: the daemon cannot

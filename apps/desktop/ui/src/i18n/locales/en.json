@@ -1672,7 +1672,9 @@
       "release_failed": "Could not hand control back. The bot stays paused; retry Bitirdim.",
       "release_unconfirmed": "The daemon still reports your takeover as active. Retry Bitirdim.",
       "takeover_failed": "Could not take control. Try again.",
-      "recover_failed": "Could not recover control. Try again."
+      "recover_failed": "Could not recover control. Try again.",
+      "pause_changed": "The pause changed in the meantime (someone else may have taken control). Check the screen before clearing it.",
+      "release_interrupted": "The takeover was interrupted before Bitirdim finished, so the hand-back did not complete. Clear the pause to let the bot continue, or reacquire control."
     },
     "reconnecting": "Reconnecting to the screen stream…",
     "releaseOnClose": "Closing hands control back to the bot first.",
@@ -1681,6 +1683,7 @@
       "title": "Bot paused, waiting for you",
       "body": "A screen takeover left the bot paused. Clear the pause to let it continue, or open the screen to reacquire control."
     },
-    "openScreen": "Open screen"
+    "openScreen": "Open screen",
+    "connectionLost": "Connection to the screen lost. Reconnecting…"
   }
 }

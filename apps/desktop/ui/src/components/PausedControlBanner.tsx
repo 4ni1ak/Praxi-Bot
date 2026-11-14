@@ -25,6 +25,13 @@ export function PausedControlBanner() {
         <span className={styles.text}>
           <strong>{t("liveView.pausedBanner.title")}</strong>
           <span>{t("liveView.pausedBanner.body")}</span>
+          {state.lastError ? (
+            <span role="alert" data-testid="paused-banner-error">
+              {t(`liveView.errors.${state.lastError.code}`, {
+                defaultValue: t("liveView.errors.generic")
+              })}
+            </span>
+          ) : null}
         </span>
         <span className={styles.actions}>
           <Button
