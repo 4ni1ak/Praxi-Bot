@@ -45,7 +45,7 @@ jobs:
 
       - name: Check explicit-artifact local embeddings
         if: success() || failure()
-        run: cargo clippy -p daemon-api -p cli --all-targets --features local-embeddings -- -D warnings
+        run: cargo clippy -p memory-store -p provider-catalog -p daemon-api -p cli --all-targets --features local-embeddings -- -D warnings
 
       - name: Test local embedding build without downloads
         if: success() || failure()
