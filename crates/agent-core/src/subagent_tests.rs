@@ -931,6 +931,83 @@ body
     assert!(!sys.contains("learned-by-b"), "{sys}");
 }
 
+#[tokio::test]
+async fn selected_bot_system_prompt_excludes_unassigned_skills() {
+    struct StaticAssignment {
+        bot: String,
+        allowed: &'static str,
+    }
+    impl skills::AssignmentSource for StaticAssignment {
+        fn assignment(&self, bot_id: &str) -> Result<Option<skills::Assignment>, String> {
+            if bot_id == self.bot {
+                Ok(Some(skills::Assignment {
+                    mode: skills::AssignmentMode::Selected,
+                    names: std::iter::once(self.allowed.to_owned()).collect(),
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        fn generation(&self) -> u64 {
+            1
+        }
+    }
+
+    let env = setup();
+    for (name, desc) in [
+        ("assigned-skill", "Allowed for this bot"),
+        ("unassigned-skill", "Hidden from this bot"),
+    ] {
+        let dir = env.dir.path().join("skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {desc}\n---\nbody\n"),
+        )
+        .unwrap();
+    }
+    let bot_dir = env
+        .dir
+        .path()
+        .join("bots")
+        .join(env.bot.to_string())
+        .join("skills")
+        .join("bot-learned");
+    std::fs::create_dir_all(&bot_dir).unwrap();
+    std::fs::write(
+        bot_dir.join("SKILL.md"),
+        "---\nname: bot-learned\ndescription: Own skill\n---\nbody\n",
+    )
+    .unwrap();
+
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(StaticAssignment {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+    let brain = Brain::new(|_| say("ok"));
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let sys = system_of(&brain.requests()[0]);
+    assert!(
+        sys.contains("- assigned-skill: Allowed for this bot"),
+        "{sys}"
+    );
+    assert!(sys.contains("- bot-learned: Own skill"), "{sys}");
+    assert!(!sys.contains("unassigned-skill"), "{sys}");
+    assert!(!sys.contains("custom-dropdowns"), "{sys}");
+}
+
 // ---------- catalog prices ----------
 
 fn priced(input: f64, output: f64) -> ModelInfo {
