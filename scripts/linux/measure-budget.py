@@ -373,7 +373,7 @@ def collect_tick(
 ) -> dict[str, Any]:
     meminfo = read_meminfo(proc_root)
     vmstat = read_vmstat(proc_root)
-    all_procs, vanished, pss_any = read_all_processes(proc_root)
+    all_procs, vanished, _ = read_all_processes(proc_root)
 
     cg_data: dict[str, Any] = {}
     slice_pids: set[int] = set()
@@ -419,8 +419,11 @@ def collect_tick(
             other_host_procs.append(p)
 
     sum_rss = sum(p["rss_bytes"] for p in praxi_procs.values())
+    praxi_proc_count = len(praxi_procs)
     pss_vals = [p["pss_bytes"] for p in praxi_procs.values() if p["pss_bytes"] is not None]
-    sum_pss = sum(pss_vals) if (pss_vals and len(pss_vals) == len(praxi_procs)) else (sum(pss_vals) if pss_vals else None)
+    pss_complete = praxi_proc_count > 0 and len(pss_vals) == praxi_proc_count
+    sum_pss = sum(pss_vals) if pss_complete else None
+    pss_incomplete_procs = praxi_proc_count - len(pss_vals)
 
     other_host_procs.sort(key=lambda x: x["rss_bytes"], reverse=True)
     top_other = [
@@ -433,9 +436,12 @@ def collect_tick(
         "vmstat": vmstat,
         "cgroups": cg_data,
         "praxi_procs": praxi_procs,
+        "praxi_proc_count": praxi_proc_count,
         "sum_praxi_rss_bytes": sum_rss,
         "sum_praxi_pss_bytes": sum_pss,
-        "pss_available": pss_any,
+        "pss_available": pss_complete,
+        "pss_complete": pss_complete,
+        "pss_incomplete_procs": pss_incomplete_procs,
         "vanished_pids": vanished,
         "escaped_slice_pids": escaped_slice_pids,
         "top_other_services": top_other,
@@ -548,7 +554,7 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
         obs_max = max(cur_vals) if cur_vals else None
         cg_peak = max(peak_vals) if peak_vals else None
-        effective_peak = cg_peak if cg_peak is not None else obs_max
+        effective_peak = obs_max if obs_max is not None else cg_peak
 
         ev_first = first_u.get("memory_events", {})
         ev_last = last_u.get("memory_events", {})
@@ -633,18 +639,22 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             }
         )
 
+    has_praxi_procs = any(t["praxi_proc_count"] > 0 for t in ticks)
+    pss_incomplete_events = sum(1 for t in ticks if t["pss_incomplete_procs"] > 0)
+    pss_complete_all = has_praxi_procs and pss_incomplete_events == 0
     sum_rss_series = [t["sum_praxi_rss_bytes"] for t in ticks]
     sum_pss_series = [t["sum_praxi_pss_bytes"] for t in ticks if t["sum_praxi_pss_bytes"] is not None]
     sum_rss_max = max(sum_rss_series) if sum_rss_series else 0
-    sum_pss_max = max(sum_pss_series) if sum_pss_series else None
+    sum_pss_max = max(sum_pss_series) if (sum_pss_series and pss_complete_all) else None
 
-    # Determine Praxi process-tree peak in bytes (prefer cgroup slice peak -> slice max -> sum PSS -> sum RSS)
+    # Determine Praxi process-tree peak in bytes (prefer window max of memory.current -> memory.peak fallback -> sum PSS -> sum RSS)
     slice_cg = cgroups_summary.get("praxi.slice", {})
-    if slice_cg.get("exists") and slice_cg.get("effective_peak"):
+    if slice_cg.get("exists") and slice_cg.get("memory_current_max"):
+        praxi_tree_peak_bytes = slice_cg["memory_current_max"]["bytes"]
+        praxi_tree_peak_source = "praxi.slice/memory.current_max"
+    elif slice_cg.get("exists") and slice_cg.get("effective_peak"):
         praxi_tree_peak_bytes = slice_cg["effective_peak"]["bytes"]
-        praxi_tree_peak_source = (
-            "praxi.slice/memory.peak" if slice_cg.get("memory_peak_available") else "praxi.slice/memory.current_max"
-        )
+        praxi_tree_peak_source = "praxi.slice/memory.peak"
     elif sum_pss_max is not None:
         praxi_tree_peak_bytes = sum_pss_max
         praxi_tree_peak_source = "sum_proc_pss_max"
@@ -749,6 +759,8 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "samples_truncated": samples_truncated,
             "vanished_pid_events": total_vanished,
             "pss_available": any(t["pss_available"] for t in ticks),
+            "pss_complete": pss_complete_all,
+            "pss_incomplete_events": pss_incomplete_events,
         },
         "host_memory": {
             "mem_total": fmt_bytes(mem_total),
@@ -765,6 +777,7 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "praxi_tree": {
             "effective_peak": fmt_bytes(praxi_tree_peak_bytes),
             "effective_peak_source": praxi_tree_peak_source,
+            "lifetime_cgroup_memory_peak": slice_cg.get("memory_peak"),
             "sum_process_rss_max": fmt_bytes(sum_rss_max),
             "sum_process_pss_max": fmt_bytes(sum_pss_max),
             "display_and_session_peak": fmt_bytes(session_bytes),
@@ -811,7 +824,8 @@ def format_text(report: dict[str, Any]) -> str:
         f"Sampling : interval={samp['interval_s']}s elapsed={samp['elapsed_s']}s "
         f"samples={samp['sample_count']} stored={samp['stored_samples']} "
         f"truncated={samp['samples_truncated']} vanished_pids={samp['vanished_pid_events']} "
-        f"pss_available={samp['pss_available']}",
+        f"pss_available={samp['pss_available']} pss_complete={samp['pss_complete']} "
+        f"pss_incomplete_events={samp['pss_incomplete_events']}",
         "",
         "Host Memory & Swap:",
         f"  MemTotal        : {fb(hm['mem_total'])}",
@@ -822,6 +836,7 @@ def format_text(report: dict[str, Any]) -> str:
         "",
         "Praxi Process Tree:",
         f"  Effective peak  : {fb(pt['effective_peak'])} [source: {pt['effective_peak_source']}]",
+        f"  Lifetime cg peak: {fb(pt['lifetime_cgroup_memory_peak'])} [praxi.slice/memory.peak watermark]",
         f"  Display+Session : {fb(pt['display_and_session_peak'])}",
         f"  Summed RSS max  : {fb(pt['sum_process_rss_max'])} (NOTE: double-counts shared pages)",
         f"  Summed PSS max  : {fb(pt['sum_process_pss_max'])}",
@@ -835,8 +850,9 @@ def format_text(report: dict[str, Any]) -> str:
             lines.append(f"  {unit}: absent")
             continue
         lines.append(
-            f"  {unit}: cur={fb(cg['memory_current_last'])} peak={fb(cg['effective_peak'])} "
-            f"peak_avail={cg['memory_peak_available']} high={cg['memory_high']} max={cg['memory_max']} "
+            f"  {unit}: cur={fb(cg['memory_current_last'])} window_peak={fb(cg['effective_peak'])} "
+            f"lifetime_peak={fb(cg['memory_peak'])} peak_avail={cg['memory_peak_available']} "
+            f"high={cg['memory_high']} max={cg['memory_max']} "
             f"cpu_1core={cg['cpu_pct_of_one_core']}% pids={len(cg['pids_last'])}"
         )
 

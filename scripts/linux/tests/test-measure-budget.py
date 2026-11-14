@@ -167,11 +167,17 @@ class MeasureBudgetTests(unittest.TestCase):
             self.assertEqual({p["starttime"] for p in p200s}, {1000, 5000})
             # Cgroup CPU delta: (150000 - 100000) usec over 1.0s = 5.0%
             self.assertEqual(data["praxi_tree"]["cpu_pct_of_one_core"], 5.0)
-            # Unit conversion check: 400 MiB = 419,430,400 bytes = 0.419 GB dec
+            self.assertTrue(data["sampling"]["pss_complete"])
+            self.assertEqual(data["sampling"]["pss_incomplete_events"], 0)
+            # Window max of memory.current is 350 MiB; lifetime memory.peak watermark is 400 MiB
             eff = data["praxi_tree"]["effective_peak"]
-            self.assertEqual(eff["bytes"], 400 * MIB)
-            self.assertEqual(eff["mib"], 400.0)
-            self.assertEqual(eff["gb_decimal"], 0.419)
+            self.assertEqual(eff["bytes"], 350 * MIB)
+            self.assertEqual(eff["mib"], 350.0)
+            self.assertEqual(data["praxi_tree"]["effective_peak_source"], "praxi.slice/memory.current_max")
+            life = data["praxi_tree"]["lifetime_cgroup_memory_peak"]
+            self.assertEqual(life["bytes"], 400 * MIB)
+            self.assertEqual(life["mib"], 400.0)
+            self.assertEqual(life["gb_decimal"], 0.419)
             self.assertTrue(any("double-counts" in c for c in data["caveats"]))
 
     def test_missing_pss_and_missing_memory_peak_fallback_and_bounded_samples(self) -> None:
@@ -218,6 +224,51 @@ class MeasureBudgetTests(unittest.TestCase):
             data = json.loads(res.stdout)
             self.assertFalse(data["budget"]["passed"])
             self.assertGreaterEqual(len(data["budget"]["violations"]), 2)
+
+    def test_window_peak_ignores_stale_lifetime_memory_peak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fix = Path(tmp)
+            (fix / "meta.json").write_text(json.dumps({"praxi_uid": 999}), encoding="utf-8")
+            write_meminfo_vmstat(fix / "proc", 6 * 1024 * 1024, 5 * 1024 * 1024)
+            write_proc_entry(fix / "proc", 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000)
+            # Lifetime memory.peak is 2.6 GB from an earlier run, while current window is 350 MiB
+            write_cgroup(fix / "cgroup", "/praxi.slice", 350 * MIB, 2_600_000_000, 10_000, [10])
+
+            res = self.run_cli(
+                "--fixture-dir", str(fix),
+                "--check-budget",
+                "--format", "json",
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            data = json.loads(res.stdout)
+            self.assertTrue(data["budget"]["passed"])
+            self.assertEqual(data["praxi_tree"]["effective_peak"]["bytes"], 350 * MIB)
+            self.assertEqual(data["praxi_tree"]["effective_peak_source"], "praxi.slice/memory.current_max")
+            self.assertEqual(data["praxi_tree"]["lifetime_cgroup_memory_peak"]["bytes"], 2_600_000_000)
+
+    def test_partial_pss_leaves_sum_null_and_falls_back_to_rss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fix = Path(tmp)
+            (fix / "meta.json").write_text(json.dumps({"praxi_uid": 999, "unit_cgroups": {}}), encoding="utf-8")
+            write_meminfo_vmstat(fix / "proc", 6 * 1024 * 1024, 3 * 1024 * 1024)
+            # bot has readable PSS, chrome is missing smaps_rollup and exceeds 2.5 GB RSS
+            write_proc_entry(fix / "proc", 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000)
+            write_proc_entry(fix / "proc", 20, "chrome", 10, 999, 20, 0, 11, 2_600_000, None)
+            (fix / "cgroup").mkdir(parents=True, exist_ok=True)
+
+            res = self.run_cli(
+                "--fixture-dir", str(fix),
+                "--check-budget",
+                "--format", "json",
+            )
+            self.assertEqual(res.returncode, 2, res.stdout)
+            data = json.loads(res.stdout)
+            self.assertFalse(data["sampling"]["pss_available"])
+            self.assertFalse(data["sampling"]["pss_complete"])
+            self.assertEqual(data["sampling"]["pss_incomplete_events"], 1)
+            self.assertIsNone(data["praxi_tree"]["sum_process_pss_max"])
+            self.assertIn("sum_proc_rss_max", data["praxi_tree"]["effective_peak_source"])
+            self.assertFalse(data["budget"]["passed"])
 
 
 if __name__ == "__main__":
