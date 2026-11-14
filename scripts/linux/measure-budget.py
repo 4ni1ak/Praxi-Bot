@@ -169,29 +169,32 @@ def read_vmstat(proc_root: Path) -> dict[str, int]:
     }
 
 
-def read_cgroup_dir(cg_dir: Path) -> dict[str, Any]:
+def parse_proc_cgroup_v2(text: str | None) -> str | None:
+    """Return the cgroup v2 path from /proc/<pid>/cgroup (0::<path>), if present."""
+    if not text:
+        return None
+    for line in text.splitlines():
+        if line.startswith("0::"):
+            return line[3:].strip()
+    return None
+
+
+def try_reset_memory_peak(cg_dir: Path) -> bool:
+    """Reset cgroup v2 memory.peak when supported and writable (Linux 6.12+ as root)."""
+    peak_file = cg_dir / "memory.peak"
+    if not peak_file.is_file():
+        return False
+    try:
+        with peak_file.open("w", encoding="utf-8") as fh:
+            fh.write("0\n")
+        return True
+    except OSError:
+        return False
+
+
+def read_cgroup_pids(cg_dir: Path) -> list[int]:
     if not cg_dir.exists():
-        return {"exists": False}
-
-    def read_int_or_max(name: str) -> int | str | None:
-        raw = read_text(cg_dir / name)
-        if raw is None:
-            return None
-        s = raw.strip()
-        if s == "max":
-            return "max"
-        try:
-            return int(s)
-        except ValueError:
-            return None
-
-    mem_cur = read_int_or_max("memory.current")
-    mem_peak = read_int_or_max("memory.peak")
-    mem_high = read_int_or_max("memory.high")
-    mem_max = read_int_or_max("memory.max")
-    events = parse_plain_kv(read_text(cg_dir / "memory.events"))
-    cpu_stat = parse_plain_kv(read_text(cg_dir / "cpu.stat"))
-
+        return []
     pids: list[int] = []
     seen_pids: set[int] = set()
     procs_files = [cg_dir / "cgroup.procs"]
@@ -215,6 +218,33 @@ def read_cgroup_dir(cg_dir: Path) -> dict[str, Any]:
                         pids.append(pid_val)
                 except ValueError:
                     continue
+    return pids
+
+
+def read_cgroup_dir(cg_dir: Path) -> dict[str, Any]:
+    if not cg_dir.exists():
+        return {"exists": False}
+
+    def read_int_or_max(name: str) -> int | str | None:
+        raw = read_text(cg_dir / name)
+        if raw is None:
+            return None
+        s = raw.strip()
+        if s == "max":
+            return "max"
+        try:
+            return int(s)
+        except ValueError:
+            return None
+
+    mem_cur = read_int_or_max("memory.current")
+    mem_peak = read_int_or_max("memory.peak")
+    mem_high = read_int_or_max("memory.high")
+    mem_max = read_int_or_max("memory.max")
+    events = parse_plain_kv(read_text(cg_dir / "memory.events"))
+    cpu_stat = parse_plain_kv(read_text(cg_dir / "cpu.stat"))
+
+    pids = read_cgroup_pids(cg_dir)
 
     return {
         "exists": True,
@@ -306,6 +336,7 @@ def read_all_processes(proc_root: Path) -> tuple[dict[tuple[int, int], dict[str,
         pss = smaps_kv.get("Pss")
         if pss is not None:
             pss_any = True
+        cg_v2_path = parse_proc_cgroup_v2(read_text(entry / "cgroup"))
 
         key = (parsed["pid"], parsed["starttime"])
         procs[key] = {
@@ -322,6 +353,7 @@ def read_all_processes(proc_root: Path) -> tuple[dict[tuple[int, int], dict[str,
             "pss_anon_bytes": smaps_kv.get("Pss_Anon"),
             "pss_file_bytes": smaps_kv.get("Pss_File"),
             "pss_shmem_bytes": smaps_kv.get("Pss_Shmem"),
+            "cgroup_path": cg_v2_path,
         }
     return procs, vanished, pss_any
 
@@ -365,6 +397,41 @@ def detect_os_pretty() -> str:
     return platform.platform()
 
 
+def is_praxi_helper_proc(p: dict[str, Any]) -> bool:
+    """Identify Praxi binaries/units even when run under a non-praxi UID (e.g. root self-update/doctor)."""
+    if p["comm"] in ("bot", "bot-node", "praxi"):
+        return True
+    cg_path = p.get("cgroup_path") or ""
+    return "/praxi-" in cg_path or cg_path.endswith("/praxi.service")
+
+
+def pid_confirmed_outside_slice(
+    proc_root: Path,
+    slice_cg_path: Path | None,
+    slice_rel: str,
+    pid: int,
+    initial_cg_path: str | None,
+) -> bool:
+    """Re-verify candidate escape to avoid /proc vs cgroup.procs read races."""
+    # If /proc/<pid>/cgroup already shows it inside praxi.slice, not an escape.
+    norm_slice = "/" + slice_rel.strip("/") if slice_rel else "/praxi.slice"
+    if initial_cg_path and (initial_cg_path == norm_slice or initial_cg_path.startswith(norm_slice + "/")):
+        return False
+    # Re-check /proc/<pid>/stat and /proc/<pid>/cgroup (live mode only; fixtures may omit cgroup file).
+    stat_now = read_text(proc_root / str(pid) / "stat")
+    if stat_now is None:
+        return False
+    cg_now = parse_proc_cgroup_v2(read_text(proc_root / str(pid) / "cgroup"))
+    if cg_now is not None:
+        if cg_now == norm_slice or cg_now.startswith(norm_slice + "/"):
+            return False
+        return True
+    if slice_cg_path is not None and slice_cg_path.exists():
+        if pid in read_cgroup_pids(slice_cg_path):
+            return False
+    return True
+
+
 def collect_tick(
     proc_root: Path,
     cgroup_root: Path,
@@ -377,44 +444,68 @@ def collect_tick(
 
     cg_data: dict[str, Any] = {}
     slice_pids: set[int] = set()
+    slice_exists = False
+    slice_cg_path: Path | None = None
+    slice_rel = "praxi.slice"
     for unit, cg_rel in unit_cgroups.items():
         rel = cg_rel.lstrip("/")
         cg_path = cgroup_root / rel if rel else cgroup_root
         info = read_cgroup_dir(cg_path)
         cg_data[unit] = info
-        if unit == "praxi.slice" and info.get("exists"):
-            slice_pids.update(info.get("pids", []))
+        if unit == "praxi.slice":
+            slice_rel = rel or "praxi.slice"
+            slice_cg_path = cg_path
+            if info.get("exists"):
+                slice_exists = True
+                slice_pids.update(info.get("pids", []))
 
     # Identify Praxi processes: inside praxi.slice OR owned by praxi UID (if known)
-    # OR matching unit cgroup PIDs + descendants.
+    # OR matching unit cgroup PIDs OR other-UID Praxi helpers + their descendants.
     unit_pids: set[int] = set(slice_pids)
     for info in cg_data.values():
         if info.get("exists"):
             unit_pids.update(info.get("pids", []))
 
-    # Expand descendants in case fixture/system lacks slice PIDs for a unit
+    seed_praxi_pids: set[int] = set(unit_pids)
+    for p in all_procs.values():
+        if (praxi_uid is not None and p["uid"] == praxi_uid) or is_praxi_helper_proc(p):
+            seed_praxi_pids.add(p["pid"])
+
+    # Expand descendants of all Praxi processes/units
     changed = True
     while changed:
         changed = False
         for p in all_procs.values():
-            if p["pid"] not in unit_pids and p["ppid"] in unit_pids:
-                unit_pids.add(p["pid"])
+            if p["pid"] not in seed_praxi_pids and p["ppid"] in seed_praxi_pids:
+                seed_praxi_pids.add(p["pid"])
                 changed = True
 
     praxi_procs: dict[tuple[int, int], dict[str, Any]] = {}
     escaped_slice_pids: list[dict[str, Any]] = []
+    escaped_mem_bytes = 0
     other_host_procs: list[dict[str, Any]] = []
 
     for key, p in all_procs.items():
         in_praxi_uid = praxi_uid is not None and p["uid"] == praxi_uid
-        in_unit_tree = p["pid"] in unit_pids
-        if in_praxi_uid or in_unit_tree:
-            in_slice = (p["pid"] in slice_pids) if slice_pids else None
+        in_praxi_tree = p["pid"] in seed_praxi_pids
+        if in_praxi_uid or in_praxi_tree:
+            in_slice = (p["pid"] in slice_pids) if slice_exists else False
             proc_copy = dict(p)
-            proc_copy["in_praxi_slice"] = in_slice
+            if not in_slice and p["pid"] not in slice_pids:
+                is_escaped = pid_confirmed_outside_slice(
+                    proc_root,
+                    slice_cg_path,
+                    slice_rel,
+                    p["pid"],
+                    p.get("cgroup_path"),
+                )
+                if not is_escaped:
+                    in_slice = True
+            proc_copy["in_praxi_slice"] = in_slice if slice_exists else None
             praxi_procs[key] = proc_copy
-            if slice_pids and in_praxi_uid and p["pid"] not in slice_pids:
-                escaped_slice_pids.append({"pid": p["pid"], "comm": p["comm"]})
+            if not in_slice:
+                escaped_slice_pids.append({"pid": p["pid"], "uid": p["uid"], "comm": p["comm"]})
+                escaped_mem_bytes += p["pss_bytes"] if p["pss_bytes"] is not None else p["rss_bytes"]
         else:
             other_host_procs.append(p)
 
@@ -444,6 +535,7 @@ def collect_tick(
         "pss_incomplete_procs": pss_incomplete_procs,
         "vanished_pids": vanished,
         "escaped_slice_pids": escaped_slice_pids,
+        "escaped_memory_bytes": escaped_mem_bytes,
         "top_other_services": top_other,
     }
 
@@ -499,13 +591,21 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
     ticks: list[dict[str, Any]] = []
     timestamps: list[float] = []
+    reset_units: dict[str, bool] = {}
 
     if fixture_dir:
+        slice_peak_reset = bool(meta.get("memory_peak_reset", False))
+        reset_units["praxi.slice"] = slice_peak_reset
         for idx, (p_root, c_root, t_elapsed) in enumerate(tick_dirs):
             t_val = float(t_elapsed) if t_elapsed is not None else idx * args.interval
             timestamps.append(t_val)
             ticks.append(collect_tick(p_root, c_root, unit_cgroups, praxi_uid))
     else:
+        for unit, cg_rel in unit_cgroups.items():
+            rel = cg_rel.lstrip("/")
+            cg_path = Path(args.cgroup_root) / rel if rel else Path(args.cgroup_root)
+            reset_units[unit] = try_reset_memory_peak(cg_path) if cg_path.is_dir() else False
+        slice_peak_reset = reset_units.get("praxi.slice", False)
         start_mono = time.monotonic()
         end_mono = start_mono + max(0.0, args.duration)
         while True:
@@ -554,7 +654,11 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
         obs_max = max(cur_vals) if cur_vals else None
         cg_peak = max(peak_vals) if peak_vals else None
-        effective_peak = obs_max if obs_max is not None else cg_peak
+        unit_reset = reset_units.get(unit, False)
+        if unit_reset and cg_peak is not None:
+            effective_peak = max(obs_max or 0, cg_peak)
+        else:
+            effective_peak = obs_max if obs_max is not None else cg_peak
 
         ev_first = first_u.get("memory_events", {})
         ev_last = last_u.get("memory_events", {})
@@ -581,6 +685,7 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "memory_current_max": fmt_bytes(obs_max),
             "memory_peak": fmt_bytes(cg_peak),
             "memory_peak_available": cg_peak is not None,
+            "memory_peak_reset": unit_reset,
             "effective_peak": fmt_bytes(effective_peak),
             "memory_high": last_u.get("memory_high"),
             "memory_max": last_u.get("memory_max"),
@@ -647,13 +752,26 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     sum_rss_max = max(sum_rss_series) if sum_rss_series else 0
     sum_pss_max = max(sum_pss_series) if (sum_pss_series and pss_complete_all) else None
 
-    # Determine Praxi process-tree peak in bytes (prefer window max of memory.current -> memory.peak fallback -> sum PSS -> sum RSS)
+    escaped_mem_peak_bytes = max((t["escaped_memory_bytes"] for t in ticks), default=0)
+
+    # Determine Praxi process-tree peak in bytes:
+    # - When memory.peak was reset at start of window, prefer max(memory.current_max, memory.peak)
+    #   so sub-interval spikes are never missed.
+    # - Otherwise use window max of memory.current -> memory.peak fallback -> sum PSS -> sum RSS.
+    # - Add any escaped Praxi process memory when using praxi.slice cgroup counters.
     slice_cg = cgroups_summary.get("praxi.slice", {})
-    if slice_cg.get("exists") and slice_cg.get("memory_current_max"):
-        praxi_tree_peak_bytes = slice_cg["memory_current_max"]["bytes"]
+    slice_observed = bool(slice_cg.get("exists"))
+    slice_lifetime_peak = slice_cg["memory_peak"]["bytes"] if slice_cg.get("memory_peak") else None
+    peak_inconclusive = False
+    if slice_observed and slice_peak_reset and slice_lifetime_peak is not None:
+        cur_max = slice_cg["memory_current_max"]["bytes"] if slice_cg.get("memory_current_max") else 0
+        praxi_tree_peak_bytes = max(cur_max, slice_lifetime_peak) + escaped_mem_peak_bytes
+        praxi_tree_peak_source = "praxi.slice/memory.peak (window reset)"
+    elif slice_observed and slice_cg.get("memory_current_max"):
+        praxi_tree_peak_bytes = slice_cg["memory_current_max"]["bytes"] + escaped_mem_peak_bytes
         praxi_tree_peak_source = "praxi.slice/memory.current_max"
-    elif slice_cg.get("exists") and slice_cg.get("effective_peak"):
-        praxi_tree_peak_bytes = slice_cg["effective_peak"]["bytes"]
+    elif slice_observed and slice_cg.get("effective_peak"):
+        praxi_tree_peak_bytes = slice_cg["effective_peak"]["bytes"] + escaped_mem_peak_bytes
         praxi_tree_peak_source = "praxi.slice/memory.peak"
     elif sum_pss_max is not None:
         praxi_tree_peak_bytes = sum_pss_max
@@ -661,6 +779,8 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     else:
         praxi_tree_peak_bytes = sum_rss_max
         praxi_tree_peak_source = "sum_proc_rss_max (double-counts shared pages)"
+    if escaped_mem_peak_bytes > 0 and slice_observed:
+        praxi_tree_peak_source += " + escaped_procs"
 
     # Determine Praxi CPU % (prefer cgroup slice cpu.stat -> summed process CPU)
     if slice_cg.get("exists") and slice_cg.get("cpu_pct_of_one_core") is not None:
@@ -699,10 +819,10 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         session_bytes = (xvfb_cur["bytes"] if xvfb_cur else 0) + (desk_cur["bytes"] if desk_cur else 0)
 
     escaped_union: list[dict[str, Any]] = []
-    seen_escaped: set[tuple[int, str]] = set()
+    seen_escaped: set[tuple[int, int | None, str]] = set()
     for tick in ticks:
         for item in tick["escaped_slice_pids"]:
-            k = (item["pid"], item["comm"])
+            k = (item["pid"], item.get("uid"), item["comm"])
             if k not in seen_escaped:
                 seen_escaped.add(k)
                 escaped_union.append(item)
@@ -712,9 +832,24 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
     # Budget evaluation
     violations: list[str] = []
+    if not slice_observed:
+        violations.append("praxi.slice cgroup was not observed (cannot verify containment or memory budget)")
+    if not has_praxi_procs:
+        violations.append("no Praxi processes observed (services may be stopped)")
     if praxi_tree_peak_bytes > args.budget_tree_bytes:
         violations.append(
             f"praxi_tree_peak_bytes ({praxi_tree_peak_bytes}) > budget ({args.budget_tree_bytes})"
+        )
+    if (
+        slice_observed
+        and not slice_peak_reset
+        and slice_lifetime_peak is not None
+        and slice_lifetime_peak > args.budget_tree_bytes
+    ):
+        peak_inconclusive = True
+        violations.append(
+            f"praxi.slice lifetime memory.peak ({slice_lifetime_peak}) > budget ({args.budget_tree_bytes}) "
+            "and memory.peak could not be reset for this window (inconclusive: cannot rule out sub-interval spike)"
         )
     if host_used_peak is not None and host_used_peak > args.budget_host_bytes:
         violations.append(
@@ -733,7 +868,7 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             violations.append(
                 f"praxi_cpu_pct ({praxi_cpu_pct}%) > budget ({args.budget_idle_cpu_pct}%)"
             )
-    if args.require_slice_containment and escaped_union:
+    if escaped_union:
         violations.append(f"processes escaped praxi.slice: {escaped_union}")
 
     budget_passed = len(violations) == 0
@@ -778,11 +913,14 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "effective_peak": fmt_bytes(praxi_tree_peak_bytes),
             "effective_peak_source": praxi_tree_peak_source,
             "lifetime_cgroup_memory_peak": slice_cg.get("memory_peak"),
+            "memory_peak_reset": slice_peak_reset,
+            "slice_memory_events_delta": slice_cg.get("memory_events_delta"),
             "sum_process_rss_max": fmt_bytes(sum_rss_max),
             "sum_process_pss_max": fmt_bytes(sum_pss_max),
             "display_and_session_peak": fmt_bytes(session_bytes),
             "cpu_pct_of_one_core": praxi_cpu_pct,
             "escaped_slice_pids": escaped_union,
+            "escaped_memory_peak": fmt_bytes(escaped_mem_peak_bytes),
         },
         "cgroups": cgroups_summary,
         "processes": processes_summary,
@@ -793,6 +931,7 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "host_limit": fmt_bytes(args.budget_host_bytes),
             "session_limit_mib": args.budget_session_mib,
             "idle_cpu_limit_pct": args.budget_idle_cpu_pct,
+            "inconclusive": peak_inconclusive,
             "passed": budget_passed,
             "violations": violations,
         },
@@ -836,12 +975,12 @@ def format_text(report: dict[str, Any]) -> str:
         "",
         "Praxi Process Tree:",
         f"  Effective peak  : {fb(pt['effective_peak'])} [source: {pt['effective_peak_source']}]",
-        f"  Lifetime cg peak: {fb(pt['lifetime_cgroup_memory_peak'])} [praxi.slice/memory.peak watermark]",
+        f"  Lifetime cg peak: {fb(pt['lifetime_cgroup_memory_peak'])} [praxi.slice/memory.peak watermark, reset={pt.get('memory_peak_reset')}]",
         f"  Display+Session : {fb(pt['display_and_session_peak'])}",
         f"  Summed RSS max  : {fb(pt['sum_process_rss_max'])} (NOTE: double-counts shared pages)",
         f"  Summed PSS max  : {fb(pt['sum_process_pss_max'])}",
         f"  CPU (1-core %)  : {pt['cpu_pct_of_one_core']}",
-        f"  Escaped slice   : {pt['escaped_slice_pids']}",
+        f"  Escaped slice   : {pt['escaped_slice_pids']} (extra_mem={fb(pt.get('escaped_memory_peak'))})",
         "",
         "Systemd Cgroups:",
     ]
@@ -849,10 +988,12 @@ def format_text(report: dict[str, Any]) -> str:
         if not cg.get("exists"):
             lines.append(f"  {unit}: absent")
             continue
+        evd = cg.get("memory_events_delta", {})
         lines.append(
             f"  {unit}: cur={fb(cg['memory_current_last'])} window_peak={fb(cg['effective_peak'])} "
             f"lifetime_peak={fb(cg['memory_peak'])} peak_avail={cg['memory_peak_available']} "
             f"high={cg['memory_high']} max={cg['memory_max']} "
+            f"events_delta(high={evd.get('high', 0)},max={evd.get('max', 0)},oom_kill={evd.get('oom_kill', 0)}) "
             f"cpu_1core={cg['cpu_pct_of_one_core']}% pids={len(cg['pids_last'])}"
         )
 
@@ -870,7 +1011,7 @@ def format_text(report: dict[str, Any]) -> str:
         lines.append(f"  pid={p['pid']} uid={p['uid']} comm={p['comm']} rss={round(p['rss_bytes'] / MIB, 2)} MiB")
 
     lines.append("")
-    lines.append(f"Budget Result: {'PASS' if b['passed'] else 'FAIL'}")
+    lines.append(f"Budget Result: {'FAIL (INCONCLUSIVE)' if b.get('inconclusive') else ('PASS' if b['passed'] else 'FAIL')}")
     for v in b["violations"]:
         lines.append(f"  VIOLATION: {v}")
     lines.append("Caveats:")
@@ -895,7 +1036,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--budget-host-bytes", type=int, default=6_000_000_000, help="Host used peak limit in bytes (default: 6.0 GB)")
     p.add_argument("--budget-session-mib", type=int, default=None, help="Optional display+session peak limit in MiB")
     p.add_argument("--budget-idle-cpu-pct", type=float, default=None, help="Optional idle CPU limit (% of one core)")
-    p.add_argument("--require-slice-containment", action="store_true", help="Fail budget check if praxi UID processes exist outside praxi.slice")
+    p.add_argument("--require-slice-containment", action="store_true", help="Compatibility flag (slice containment is always enforced by --check-budget)")
     p.add_argument("--check-budget", action="store_true", help="Exit nonzero (2) if any budget is exceeded")
     p.add_argument("--format", choices=("text", "json", "both"), default="text", help="Stdout format")
     p.add_argument("--json-out", default=None, help="Write JSON report to file path")

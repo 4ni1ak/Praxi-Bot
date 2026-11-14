@@ -27,6 +27,7 @@ def write_proc_entry(
     rss_kib: int,
     pss_kib: int | None,
     cmdline_secret: str = "https://secret.example.invalid/token=XYZ123",
+    cgroup_v2: str | None = None,
 ) -> None:
     pdir = proc_root / str(pid)
     pdir.mkdir(parents=True, exist_ok=True)
@@ -43,6 +44,8 @@ def write_proc_entry(
             f"Rss:\t{rss_kib} kB\nPss:\t{pss_kib} kB\nPss_Anon:\t{pss_kib // 2} kB\nPss_File:\t{pss_kib // 2} kB\nPss_Shmem:\t0 kB\n",
             encoding="utf-8",
         )
+    if cgroup_v2 is not None:
+        (pdir / "cgroup").write_text(f"0::{cgroup_v2}\n", encoding="utf-8")
     # Plant a secret in cmdline & environ to assert measure-budget NEVER reads or outputs them
     (pdir / "cmdline").write_text(f"{comm}\0{cmdline_secret}\0", encoding="utf-8")
     (pdir / "environ").write_text(f"BOT_SECRETS_PASSPHRASE=SUPERSECRET\0", encoding="utf-8")
@@ -81,6 +84,8 @@ def write_cgroup(
     usage_usec: int,
     pids: list[int],
     oom_kill: int = 0,
+    high_events: int = 0,
+    max_events: int = 0,
 ) -> None:
     d = cg_root / rel.lstrip("/")
     d.mkdir(parents=True, exist_ok=True)
@@ -89,7 +94,10 @@ def write_cgroup(
         (d / "memory.peak").write_text(f"{mem_peak}\n", encoding="utf-8")
     (d / "memory.high").write_text(f"{3 * GIB}\n", encoding="utf-8")
     (d / "memory.max").write_text(f"{4 * GIB}\n", encoding="utf-8")
-    (d / "memory.events").write_text(f"high 0\nmax 0\noom 0\noom_kill {oom_kill}\noom_group_kill 0\n", encoding="utf-8")
+    (d / "memory.events").write_text(
+        f"high {high_events}\nmax {max_events}\noom 0\noom_kill {oom_kill}\noom_group_kill 0\n",
+        encoding="utf-8",
+    )
     (d / "cpu.stat").write_text(f"usage_usec {usage_usec}\nuser_usec {usage_usec}\nsystem_usec 0\nnr_throttled 0\nthrottled_usec 0\n", encoding="utf-8")
     (d / "cgroup.procs").write_text("\n".join(str(p) for p in pids) + ("\n" if pids else ""), encoding="utf-8")
 
@@ -225,13 +233,46 @@ class MeasureBudgetTests(unittest.TestCase):
             self.assertFalse(data["budget"]["passed"])
             self.assertGreaterEqual(len(data["budget"]["violations"]), 2)
 
-    def test_window_peak_ignores_stale_lifetime_memory_peak(self) -> None:
+    def test_reset_memory_peak_catches_subinterval_spike_and_passes_clean_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fix = Path(tmp)
-            (fix / "meta.json").write_text(json.dumps({"praxi_uid": 999}), encoding="utf-8")
+            (fix / "meta.json").write_text(
+                json.dumps({"praxi_uid": 999, "memory_peak_reset": True}),
+                encoding="utf-8",
+            )
             write_meminfo_vmstat(fix / "proc", 6 * 1024 * 1024, 5 * 1024 * 1024)
             write_proc_entry(fix / "proc", 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000)
-            # Lifetime memory.peak is 2.6 GB from an earlier run, while current window is 350 MiB
+            # Clean window with reset memory.peak within budget
+            write_cgroup(fix / "cgroup", "/praxi.slice", 350 * MIB, 380 * MIB, 10_000, [10])
+            res_ok = self.run_cli("--fixture-dir", str(fix), "--check-budget", "--format", "json")
+            self.assertEqual(res_ok.returncode, 0, res_ok.stdout + res_ok.stderr)
+            data_ok = json.loads(res_ok.stdout)
+            self.assertTrue(data_ok["budget"]["passed"])
+            self.assertEqual(data_ok["praxi_tree"]["effective_peak"]["bytes"], 380 * MIB)
+            self.assertEqual(
+                data_ok["praxi_tree"]["effective_peak_source"],
+                "praxi.slice/memory.peak (window reset)",
+            )
+
+            # Sub-interval spike above 2.5 GB between 0.5s samples must FAIL
+            write_cgroup(fix / "cgroup", "/praxi.slice", 350 * MIB, 2_600_000_000, 10_000, [10])
+            res_spike = self.run_cli("--fixture-dir", str(fix), "--check-budget", "--format", "json")
+            self.assertEqual(res_spike.returncode, 2, res_spike.stdout)
+            data_spike = json.loads(res_spike.stdout)
+            self.assertFalse(data_spike["budget"]["passed"])
+            self.assertFalse(data_spike["budget"]["inconclusive"])
+            self.assertEqual(data_spike["praxi_tree"]["effective_peak"]["bytes"], 2_600_000_000)
+
+    def test_unreset_lifetime_peak_over_budget_fails_inconclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fix = Path(tmp)
+            (fix / "meta.json").write_text(
+                json.dumps({"praxi_uid": 999, "memory_peak_reset": False}),
+                encoding="utf-8",
+            )
+            write_meminfo_vmstat(fix / "proc", 6 * 1024 * 1024, 5 * 1024 * 1024)
+            write_proc_entry(fix / "proc", 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000)
+            # Lifetime memory.peak is 2.6 GB while sampled memory.current is 350 MiB and reset was unavailable
             write_cgroup(fix / "cgroup", "/praxi.slice", 350 * MIB, 2_600_000_000, 10_000, [10])
 
             res = self.run_cli(
@@ -239,12 +280,91 @@ class MeasureBudgetTests(unittest.TestCase):
                 "--check-budget",
                 "--format", "json",
             )
+            self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+            data = json.loads(res.stdout)
+            self.assertFalse(data["budget"]["passed"])
+            self.assertTrue(data["budget"]["inconclusive"])
+            self.assertTrue(any("inconclusive" in v for v in data["budget"]["violations"]))
+
+            res_txt = self.run_cli("--fixture-dir", str(fix), "--check-budget", "--format", "text")
+            self.assertEqual(res_txt.returncode, 2)
+            self.assertIn("FAIL (INCONCLUSIVE)", res_txt.stdout)
+
+    def test_absent_slice_and_zero_processes_fails_check_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fix = Path(tmp)
+            (fix / "meta.json").write_text(json.dumps({"praxi_uid": 999}), encoding="utf-8")
+            write_meminfo_vmstat(fix / "proc", 6 * 1024 * 1024, 5 * 1024 * 1024)
+            (fix / "cgroup").mkdir(parents=True, exist_ok=True)
+
+            res = self.run_cli("--fixture-dir", str(fix), "--check-budget", "--format", "json")
+            self.assertEqual(res.returncode, 2, res.stdout)
+            data = json.loads(res.stdout)
+            self.assertFalse(data["budget"]["passed"])
+            violations = " ".join(data["budget"]["violations"])
+            self.assertIn("praxi.slice cgroup was not observed", violations)
+            self.assertIn("no Praxi processes observed", violations)
+
+    def test_escaped_praxi_and_other_uid_helpers_fail_and_count_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fix = Path(tmp)
+            (fix / "meta.json").write_text(
+                json.dumps({"praxi_uid": 999, "memory_peak_reset": True}),
+                encoding="utf-8",
+            )
+            write_meminfo_vmstat(fix / "proc", 6 * 1024 * 1024, 3 * 1024 * 1024)
+            # Pid 10 inside praxi.slice (slice current 2.45 GB, under 2.5 GB by itself)
+            write_proc_entry(fix / "proc", 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000, cgroup_v2="/praxi.slice/praxi.service")
+            # Escaped praxi-uid process (pid 20, 100 MiB) and escaped root-uid helper (pid 30, 50 MiB)
+            write_proc_entry(fix / "proc", 20, "chrome", 1, 999, 10, 0, 11, 120_000, 100_000, cgroup_v2="/user.slice/user-1000.slice")
+            write_proc_entry(fix / "proc", 30, "bot", 1, 0, 5, 0, 12, 60_000, 50_000, cgroup_v2="/system.slice/praxi-doctor-1.service")
+            write_cgroup(fix / "cgroup", "/praxi.slice", 2_450_000_000, 2_450_000_000, 10_000, [10])
+
+            # Note: --require-slice-containment is NOT passed; --check-budget alone must fail!
+            res = self.run_cli("--fixture-dir", str(fix), "--check-budget", "--format", "json")
+            self.assertEqual(res.returncode, 2, res.stdout)
+            data = json.loads(res.stdout)
+            self.assertFalse(data["budget"]["passed"])
+            escaped_pids = {item["pid"] for item in data["praxi_tree"]["escaped_slice_pids"]}
+            self.assertEqual(escaped_pids, {20, 30})
+            self.assertEqual(data["praxi_tree"]["escaped_memory_peak"]["bytes"], (100_000 + 50_000) * 1024)
+            self.assertGreater(data["praxi_tree"]["effective_peak"]["bytes"], 2_500_000_000)
+            self.assertTrue(any("escaped praxi.slice" in v for v in data["budget"]["violations"]))
+
+    def test_race_proc_cgroup_in_slice_not_false_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fix = Path(tmp)
+            (fix / "meta.json").write_text(
+                json.dumps({"praxi_uid": 999, "memory_peak_reset": True}),
+                encoding="utf-8",
+            )
+            write_meminfo_vmstat(fix / "proc", 6 * 1024 * 1024, 5 * 1024 * 1024)
+            write_proc_entry(fix / "proc", 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000, cgroup_v2="/praxi.slice/praxi.service")
+            # Pid 40 appeared in /proc after cgroup.procs read, but /proc/40/cgroup shows /praxi.slice
+            write_proc_entry(fix / "proc", 40, "chrome", 10, 999, 5, 0, 11, 20_000, 15_000, cgroup_v2="/praxi.slice/praxi.service")
+            write_cgroup(fix / "cgroup", "/praxi.slice", 300 * MIB, 300 * MIB, 10_000, [10])
+
+            res = self.run_cli("--fixture-dir", str(fix), "--check-budget", "--format", "json")
             self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
             data = json.loads(res.stdout)
             self.assertTrue(data["budget"]["passed"])
-            self.assertEqual(data["praxi_tree"]["effective_peak"]["bytes"], 350 * MIB)
-            self.assertEqual(data["praxi_tree"]["effective_peak_source"], "praxi.slice/memory.current_max")
-            self.assertEqual(data["praxi_tree"]["lifetime_cgroup_memory_peak"]["bytes"], 2_600_000_000)
+            self.assertEqual(data["praxi_tree"]["escaped_slice_pids"], [])
+
+    def test_memory_events_high_max_deltas_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fix = Path(tmp)
+            (fix / "meta.json").write_text(json.dumps({"praxi_uid": 999}), encoding="utf-8")
+            for idx, (h_ev, m_ev) in enumerate(((1, 0), (4, 2))):
+                t = fix / "samples" / f"tick_{idx:03d}"
+                (t / "tick.json").parent.mkdir(parents=True, exist_ok=True)
+                (t / "tick.json").write_text(json.dumps({"elapsed_s": idx * 0.5}), encoding="utf-8")
+                write_meminfo_vmstat(t / "proc", 6 * 1024 * 1024, 5 * 1024 * 1024)
+                write_proc_entry(t / "proc", 10, "bot", 1, 999, 10 + idx, 0, 10, 50_000, 40_000)
+                write_cgroup(t / "cgroup", "/praxi.slice", 300 * MIB, 300 * MIB, 10_000 * (idx + 1), [10], high_events=h_ev, max_events=m_ev)
+
+            res = self.run_cli("--fixture-dir", str(fix), "--check-budget", "--format", "both")
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            self.assertIn("events_delta(high=3,max=2,oom_kill=0)", res.stdout)
 
     def test_partial_pss_leaves_sum_null_and_falls_back_to_rss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

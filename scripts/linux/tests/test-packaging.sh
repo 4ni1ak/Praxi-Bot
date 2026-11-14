@@ -11,8 +11,9 @@ SETUP_SH="${REPO_ROOT}/scripts/linux/setup-headless.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TMP_ROOT}"' EXIT
 
+exec 3>&2
 pass() { printf 'PASS: %s\n' "$*"; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'FAIL: %s\n' "$*" >&3; exit 1; }
 
 assert_file_contains() {
   local file="$1" pattern="$2" msg="${3:-}"
@@ -28,34 +29,38 @@ assert_file_not_contains() {
 
 run_timed() {
   local rc=0
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 30s "$@" || rc=$?
-    if [[ "${rc}" -eq 124 || "${rc}" -eq 137 ]]; then
-      fail "command timed out (rc=${rc}): $*"
-    fi
-    return "${rc}"
-  else
-    "$@"
+  command -v timeout >/dev/null 2>&1 || fail "timeout command is required for test-packaging.sh"
+  timeout -k 5s --foreground 30s "$@" || rc=$?
+  if [[ "${rc}" -eq 124 || "${rc}" -eq 137 ]]; then
+    fail "command timed out (rc=${rc}): $*"
+  fi
+  return "${rc}"
+}
+run_ok() {
+  local logfile="$1"; shift
+  if ! run_timed "$@" > "${logfile}" 2>&1; then
+    cat "${logfile}" >&3
+    fail "command failed: $*"
   fi
 }
 
 # 1. Syntax & lint checks
-bash -n "${INSTALL_SH}" "${SETUP_SH}" "$0"
+run_timed bash -n "${INSTALL_SH}" "${SETUP_SH}" "$0"
 pass "bash -n syntax checks"
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -x "${INSTALL_SH}" "${SETUP_SH}" "$0"
+  run_timed shellcheck -x "${INSTALL_SH}" "${SETUP_SH}" "$0"
   pass "shellcheck -x clean"
 else
   echo "SKIP: shellcheck not installed"
 fi
 
 # 2. Dry-run & CLI validation checks
-"${SETUP_SH}" --dry-run --user --display :98 --screen 1280x800x24 > "${TMP_ROOT}/dry-user.log"
+run_timed "${SETUP_SH}" --dry-run --user --display :98 --screen 1280x800x24 > "${TMP_ROOT}/dry-user.log"
 assert_file_contains "${TMP_ROOT}/dry-user.log" "mode=user session=xfce without_desktop=0 display=:98 screen=1280x800x24"
-"${SETUP_SH}" --dry-run --system --display :99 --screen 1280x800x24 > "${TMP_ROOT}/dry-sys.log"
+run_timed "${SETUP_SH}" --dry-run --system --display :99 --screen 1280x800x24 > "${TMP_ROOT}/dry-sys.log"
 assert_file_contains "${TMP_ROOT}/dry-sys.log" "CPUQuota=100%, MemoryHigh=3G, MemoryMax=4G"
 
-if "${SETUP_SH}" --dry-run --vnc > "${TMP_ROOT}/vnc.log" 2>&1; then
+if run_timed "${SETUP_SH}" --dry-run --vnc > "${TMP_ROOT}/vnc.log" 2>&1; then
   fail "--vnc should be rejected"
 fi
 assert_file_contains "${TMP_ROOT}/vnc.log" "disabled by security policy"
@@ -87,8 +92,24 @@ sha256sum "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" > "${RELEASE_DIR}/praxi-lin
 printf 'fixture-sigstore\n' > "${RELEASE_DIR}/praxi-linux.sigstore.json"
 
 # Fake system tools
-cat > "${FAKE_BIN}/uname" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim() {
+  local name="$1"
+  local var_name
+  var_name="_PRAXI_FAKE_$(printf '%s' "${name}" | tr '[:lower:]-' '[:upper:]_')_DEPTH"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '_d="${%s:-0}"\n' "${var_name}"
+    printf 'if [[ "${_d}" -ge 4 ]]; then\n'
+    printf '  echo "ERROR: fake %s recursion guard triggered (depth=${_d})" >&2\n' "${name}"
+    printf '  exit 99\n'
+    printf 'fi\n'
+    printf 'export %s=$((_d + 1))\n' "${var_name}"
+    cat
+  } > "${FAKE_BIN}/${name}"
+  chmod +x "${FAKE_BIN}/${name}"
+}
+
+write_fake_shim uname <<'EOF'
 case "${1:-}" in
   -s) echo "Linux" ;;
   -m) echo "x86_64" ;;
@@ -97,14 +118,7 @@ esac
 EOF
 REAL_ID="$(command -v id)"
 [[ -x "${REAL_ID}" ]] || fail "could not resolve real id binary"
-cat > "${FAKE_BIN}/id" <<EOF
-#!/usr/bin/env bash
-depth="\${_PRAXI_FAKE_ID_DEPTH:-0}"
-if [[ "\${depth}" -ge 4 ]]; then
-  echo "ERROR: fake id recursion guard triggered (depth=\${depth})" >&2
-  exit 99
-fi
-export _PRAXI_FAKE_ID_DEPTH=\$((depth + 1))
+write_fake_shim id <<EOF
 if [[ "\${1:-}" == "-u" && "\${2:-}" == "praxi" ]]; then
   [[ -f "\${SANDBOX_STATE}/user_created" ]] && { echo "999"; exit 0; }
   exit 1
@@ -119,56 +133,93 @@ if [[ "\${1:-}" == "-u" && -z "\${2:-}" ]]; then
 fi
 exec "${REAL_ID}" "\$@"
 EOF
-cat > "${FAKE_BIN}/useradd" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim useradd <<'EOF'
 touch "${SANDBOX_STATE}/user_created"
 EOF
-cat > "${FAKE_BIN}/chown" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim chown <<'EOF'
+printf 'chown %s\n' "$*" >> "${SANDBOX_STATE}/perms.log"
 exit 0
 EOF
-cat > "${FAKE_BIN}/install" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim install <<'EOF'
 dir_mode=0
+owner=""
+group=""
+mode=""
 args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d) dir_mode=1; shift ;;
-    -o|-g|-m) shift 2 ;;
+    -o) owner="$2"; shift 2 ;;
+    -g) group="$2"; shift 2 ;;
+    -m) mode="$2"; shift 2 ;;
     *) args+=("$1"); shift ;;
   esac
 done
 if [[ "${dir_mode}" -eq 1 ]]; then
   mkdir -p "${args[@]}"
+  if [[ -n "${mode}" ]]; then
+    chmod "${mode}" "${args[@]}"
+  fi
+  printf 'install -d owner=%s group=%s mode=%s %s\n' "${owner}" "${group}" "${mode}" "${args[*]}" >> "${SANDBOX_STATE}/perms.log"
 else
   cp -f "${args[0]}" "${args[1]}"
+  if [[ -n "${mode}" ]]; then
+    chmod "${mode}" "${args[1]}"
+  fi
+  printf 'install owner=%s group=%s mode=%s %s\n' "${owner}" "${group}" "${mode}" "${args[1]}" >> "${SANDBOX_STATE}/perms.log"
 fi
 EOF
-cat > "${FAKE_BIN}/gh" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim gh <<'EOF'
 if [[ "${1:-}" == "--version" ]]; then
   echo "gh version 2.82.0"
   exit 0
 fi
 exit 0
 EOF
-cat > "${FAKE_BIN}/systemctl" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim systemctl <<'EOF'
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/systemctl.log"
-case "${1:-}" in
-  is-active) exit 1 ;;
+if [[ "${1:-}" == "--version" ]]; then
+  echo "systemd ${FAKE_SYSTEMD_VERSION:-255} (255.4-1ubuntu8.18)"
+  exit 0
+fi
+verb=""
+unit=""
+for a in "$@"; do
+  case "${a}" in
+    --user|--quiet|--now) continue ;;
+    *)
+      if [[ -z "${verb}" ]]; then
+        verb="${a}"
+      else
+        unit="${a}"
+      fi
+      ;;
+  esac
+done
+case "${verb}" in
+  is-active)
+    if [[ -n "${unit}" && " ${FAKE_ACTIVE_UNITS:-} " == *" ${unit} "* ]]; then
+      exit 0
+    fi
+    exit 1
+    ;;
   is-enabled) exit 0 ;;
   cat) exit 1 ;;
+  start|restart)
+    if [[ -n "${FAKE_FAIL_START_UNIT:-}" && "${unit}" == "${FAKE_FAIL_START_UNIT}" && -f "${FAKE_FAIL_ONCE_FLAG:-/nonexistent}" ]]; then
+      rm -f "${FAKE_FAIL_ONCE_FLAG}"
+      exit 1
+    fi
+    exit 0
+    ;;
   *) exit 0 ;;
 esac
 EOF
-cat > "${FAKE_BIN}/apt-get" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim apt-get <<'EOF'
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/apt.log"
 exit 0
 EOF
-cat > "${FAKE_BIN}/apt-cache" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim apt-cache <<'EOF'
 if [[ "${1:-}" == "policy" ]]; then
   pkg="${2:-}"
   if [[ "${pkg}" == "chromium" || "${pkg}" == "chromium-browser" ]]; then
@@ -178,33 +229,39 @@ if [[ "${1:-}" == "policy" ]]; then
   fi
 fi
 EOF
-cat > "${FAKE_BIN}/curl" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim curl <<'EOF'
 out=""
+url=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
-    *) shift ;;
+    --connect-timeout|--max-time|--noproxy) shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
   esac
 done
 if [[ -n "${out}" ]]; then
   printf 'fake-download\n' > "${out}"
+elif [[ "${url}" == *"/v1/health"* ]]; then
+  printf '{"status":"ok","version":"0.1.0"}\n'
 fi
 EOF
-cat > "${FAKE_BIN}/Xvfb" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim journalctl <<'EOF'
 exit 0
 EOF
-cat > "${FAKE_BIN}/apparmor_parser" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim Xvfb <<'EOF'
 exit 0
 EOF
-cat > "${FAKE_BIN}/dpkg" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim xdpyinfo <<'EOF'
+exit 0
+EOF
+write_fake_shim apparmor_parser <<'EOF'
+exit 0
+EOF
+write_fake_shim dpkg <<'EOF'
 echo "amd64"
 EOF
-cat > "${FAKE_BIN}/xauth" <<'EOF'
-#!/usr/bin/env bash
+write_fake_shim xauth <<'EOF'
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/xauth.log"
 file=""
 if [[ "${1:-}" == "-f" ]]; then
@@ -276,8 +333,18 @@ if run_timed bash "${SB_INSTALL}" --offline --with-desktop-session --skip-packag
 fi
 pass "install-linux option conflicts rejected"
 
+# 4b. Verify FAKE_BIN recursion guard trips immediately instead of fork-bombing
+if _PRAXI_FAKE_ID_DEPTH=4 "${FAKE_BIN}/id" -u >/dev/null 2>&1; then
+  fail "fake id recursion guard did not trigger at depth=4"
+fi
+rc=0
+_PRAXI_FAKE_SYSTEMCTL_DEPTH=4 "${FAKE_BIN}/systemctl" is-active praxi.service >/dev/null 2>&1 || rc=$?
+[[ "${rc}" -eq 99 ]] || fail "expected exit 99 from recursion guard, got ${rc}"
+pass "FAKE_BIN recursion guard prevents runaway recursion"
+
 # 5. Legacy bare-Xvfb (origin/main without -auth / xdpyinfo) preserved on no-flag upgrade,
-#    and existing praxi.env gets BOT_MAX_COMPUTER_RUNS / BOT_BROWSER_IDLE_SECONDS defaults
+#    praxi.env omits active limit overrides by default and preserves user overrides,
+#    and missing Xvfb/xauth/xdpyinfo aborts pre-flight before stopping active services.
 cat > "${SANDBOX}/etc/praxi/praxi.env" <<EOF
 BOT_DATA_DIR=${SANDBOX}/var/lib/praxi
 BOT_PORT=47821
@@ -303,6 +370,39 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+# 5a. Pre-flight check fails BEFORE stopping active services when xdpyinfo is missing
+PREFLIGHT_BIN="${TMP_ROOT}/preflight-bin"
+NO_X_HOST="${TMP_ROOT}/no-x-host"
+rm -rf "${PREFLIGHT_BIN}" "${NO_X_HOST}"
+mkdir -p "${PREFLIGHT_BIN}" "${NO_X_HOST}"
+python3 -c '
+import os, sys
+dst = sys.argv[1]
+for d in ("/usr/bin", "/bin"):
+    if not os.path.isdir(d):
+        continue
+    for name in os.listdir(d):
+        if name == "xdpyinfo":
+            continue
+        p = os.path.join(dst, name)
+        if not os.path.exists(p):
+            os.symlink(os.path.join(d, name), p)
+' "${NO_X_HOST}"
+for b in "${FAKE_BIN}"/*; do
+  [[ "$(basename "${b}")" == "xdpyinfo" ]] && continue
+  ln -sf "${b}" "${PREFLIGHT_BIN}/$(basename "${b}")"
+done
+: > "${SANDBOX_STATE}/systemctl.log"
+if PATH="${PREFLIGHT_BIN}:${NO_X_HOST}" FAKE_ACTIVE_UNITS="praxi-xvfb.service praxi.service" \
+  run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop --skip-packages --no-start > "${TMP_ROOT}/preflight-fail.log" 2>&1; then
+  fail "expected pre-flight check to fail when xdpyinfo is missing"
+fi
+assert_file_contains "${TMP_ROOT}/preflight-fail.log" "xdpyinfo"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "stop praxi"
+pass "pre-flight check fails before stopping active services when xdpyinfo is missing"
+
+# 5b. No-flag legacy upgrade preserves bare Xvfb unit, emits warning, and does not inject limit overrides
 run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --skip-packages --no-start > "${TMP_ROOT}/legacy-upgrade.log" 2>&1
 [[ -f "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" ]] || fail "bare Xvfb unit lost on upgrade"
@@ -310,8 +410,35 @@ run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-lin
 assert_file_not_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "praxi-wait-x11.sh"
 assert_file_not_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "-auth"
 assert_file_not_contains "${SANDBOX}/etc/praxi/praxi.env" "XAUTHORITY="
-assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_MAX_COMPUTER_RUNS=1"
-assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_BROWSER_IDLE_SECONDS=120"
+assert_file_not_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_MAX_COMPUTER_RUNS="
+assert_file_not_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_BROWSER_IDLE_SECONDS="
+assert_file_contains "${TMP_ROOT}/legacy-upgrade.log" "keeping legacy praxi-xvfb.service without -auth"
+
+# Preserve existing user overrides in praxi.env across upgrade
+printf 'BOT_MAX_COMPUTER_RUNS=3\nBOT_BROWSER_IDLE_SECONDS=300\n' >> "${SANDBOX}/etc/praxi/praxi.env"
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --skip-packages --no-start > "${TMP_ROOT}/override-upgrade.log" 2>&1
+assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_MAX_COMPUTER_RUNS=3"
+assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_BROWSER_IDLE_SECONDS=300"
+sed -i '/^BOT_MAX_COMPUTER_RUNS=/d;/^BOT_BROWSER_IDLE_SECONDS=/d' "${SANDBOX}/etc/praxi/praxi.env"
+
+# 5c. Failed upgrade mid-flight rolls back VERSION, units, env, and restarts previously active services
+printf 'v0.0.9-prev\n' > "${SANDBOX}/opt/praxi/VERSION"
+touch "${TMP_ROOT}/fail-once"
+: > "${SANDBOX_STATE}/systemctl.log"
+if FAKE_ACTIVE_UNITS="praxi-xvfb.service praxi.service" \
+  FAKE_FAIL_START_UNIT="praxi.service" \
+  FAKE_FAIL_ONCE_FLAG="${TMP_ROOT}/fail-once" \
+  run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --skip-packages > "${TMP_ROOT}/rollback-upgrade.log" 2>&1; then
+  fail "expected failed startup during upgrade to exit non-zero and trigger rollback"
+fi
+assert_file_contains "${TMP_ROOT}/rollback-upgrade.log" "rolling back to previous working installation"
+assert_file_contains "${SANDBOX}/opt/praxi/VERSION" "v0.0.9-prev"
+assert_file_not_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "-auth"
+assert_file_contains "${SANDBOX_STATE}/systemctl.log" "start praxi-xvfb.service"
+assert_file_contains "${SANDBOX_STATE}/systemctl.log" "start praxi.service"
+pass "failed upgrade rolls back VERSION, units, env, and restarts prior services"
 
 # Explicit --with-desktop installs x11-utils + xauth and writes new -auth + readiness ExecStartPost
 : > "${SANDBOX_STATE}/apt.log"
@@ -324,6 +451,8 @@ fi
 printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04 LTS (Fixture)"\n' > "${SANDBOX}/etc/os-release"
 assert_file_contains "${SANDBOX_STATE}/apt.log" "x11-utils"
 assert_file_contains "${SANDBOX_STATE}/apt.log" "xauth"
+assert_file_not_contains "${SANDBOX_STATE}/apt.log" "xfce4-terminal"
+assert_file_not_contains "${SANDBOX_STATE}/apt.log" "thunar"
 assert_file_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "praxi-wait-x11.sh"
 assert_file_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "Upholds=praxi.service"
 [[ ! -f "${SANDBOX}/etc/systemd/system/praxi-desktop.service" ]] || fail "bare Xvfb should not install praxi-desktop.service"
@@ -368,28 +497,43 @@ assert_file_contains "${DESK_FILE}" "BindsTo=praxi-xvfb.service"
 assert_file_contains "${DESK_FILE}" "PartOf=praxi-xvfb.service"
 assert_file_contains "${DESK_FILE}" "JoinsNamespaceOf=praxi-xvfb.service"
 assert_file_contains "${DESK_FILE}" "Restart=always"
+assert_file_contains "${DESK_FILE}" "StartLimitIntervalSec=60"
+assert_file_contains "${DESK_FILE}" "StartLimitBurst=5"
+assert_file_contains "${DESK_FILE}" "Environment=PRAXI_ENABLE_SESSION_APPS=0"
 assert_file_contains "${DESK_FILE}" "KillMode=control-group"
 assert_file_not_contains "${DESK_FILE}" "praxi.env"
 awk '/^\[Service\]/{in_svc=1} /^\[/{if(!/^\[Service\]/)in_svc=0} in_svc && /^JoinsNamespaceOf=/{exit 1}' "${DESK_FILE}" || fail "JoinsNamespaceOf must be in [Unit], not [Service]"
 
 assert_file_contains "${DROPIN_FILE}" "BindsTo=praxi-xvfb.service"
-assert_file_contains "${DROPIN_FILE}" "Requires=praxi-desktop.service"
+assert_file_contains "${DROPIN_FILE}" "Wants=praxi-desktop.service"
+assert_file_not_contains "${DROPIN_FILE}" "Requires=praxi-desktop.service"
 assert_file_contains "${DROPIN_FILE}" "After=praxi-xvfb.service praxi-desktop.service"
 assert_file_contains "${DROPIN_FILE}" "JoinsNamespaceOf=praxi-xvfb.service"
 
 assert_file_contains "${ENV_FILE}" "DISPLAY=:99"
 assert_file_contains "${ENV_FILE}" "XAUTHORITY=${SANDBOX}/var/lib/praxi/.Xauthority"
 assert_file_contains "${ENV_FILE}" "DBUS_SESSION_BUS_ADDRESS=unix:path=${SANDBOX}/var/lib/praxi/.dbus-session"
-assert_file_contains "${ENV_FILE}" "BOT_MAX_COMPUTER_RUNS=1"
-assert_file_contains "${ENV_FILE}" "BOT_BROWSER_IDLE_SECONDS=120"
+if grep -q '^BOT_MAX_COMPUTER_RUNS=' "${ENV_FILE}"; then
+  fail "fresh praxi.env should leave BOT_MAX_COMPUTER_RUNS commented for daemon RAM auto-sizing"
+fi
+if grep -q '^BOT_BROWSER_IDLE_SECONDS=' "${ENV_FILE}"; then
+  fail "fresh praxi.env should leave BOT_BROWSER_IDLE_SECONDS commented for daemon default"
+fi
 
 assert_file_contains "${NODE_ENV}" "DISPLAY=:99"
 assert_file_contains "${NODE_ENV}" "DBUS_SESSION_BUS_ADDRESS=unix:path=${SANDBOX}/var/lib/praxi/.dbus-session"
 assert_file_not_contains "${NODE_ENV}" "BOT_SECRETS_PASSPHRASE"
 
+# Verify real file modes & directory ownership/mode logs
+[[ "$(stat -c '%a' "${ENV_FILE}")" == "640" ]] || fail "expected 0640 on ${ENV_FILE}"
+[[ "$(stat -c '%a' "${NODE_ENV}")" == "640" ]] || fail "expected 0640 on ${NODE_ENV}"
+assert_file_contains "${SANDBOX_STATE}/perms.log" "install -d owner=praxi group=praxi mode=0750 ${SANDBOX}/var/lib/praxi"
+assert_file_contains "${SANDBOX_STATE}/perms.log" "install -d owner=root group=praxi mode=0750 ${SANDBOX}/etc/praxi"
+
 assert_file_contains "${SESSION_EXEC}" "xfwm4 --compositor=off"
 assert_file_contains "${SESSION_EXEC}" "xfce4-screensaver.desktop"
 assert_file_contains "${SESSION_EXEC}" "xfce4-power-manager.desktop"
+assert_file_contains "${SESSION_EXEC}" "xfce4-terminal.desktop"
 assert_file_contains "${SESSION_EXEC}" "use_compositing"
 # shellcheck disable=SC2016
 assert_file_contains "${SESSION_EXEC}" 'chmod 0600 "${DBUS_SOCKET}"'
@@ -398,17 +542,124 @@ assert_file_contains "${SESSION_EXEC}" "xfce4-panel exited"
 assert_file_not_contains "${SESSION_EXEC}" "openbox"
 assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "Slice=praxi.slice"
 
-# Verify praxi-xauth-init.sh reuses existing cookie on subsequent starts
+# Verify praxi-xauth-init.sh reuses existing cookie on subsequent starts and preserves 0600 mode
 : > "${SANDBOX_STATE}/xauth.log"
 TEST_XAUTH="${TMP_ROOT}/test.Xauthority"
-bash "${XAUTH_EXEC}" :99 "${TEST_XAUTH}"
+run_timed bash "${XAUTH_EXEC}" :99 "${TEST_XAUTH}"
+[[ "$(stat -c '%a' "${TEST_XAUTH}")" == "600" ]] || fail "expected 0600 on ${TEST_XAUTH}"
 first_content="$(cat "${TEST_XAUTH}")"
-bash "${XAUTH_EXEC}" :99 "${TEST_XAUTH}"
+run_timed bash "${XAUTH_EXEC}" :99 "${TEST_XAUTH}"
 second_content="$(cat "${TEST_XAUTH}")"
 [[ "${first_content}" == "${second_content}" ]] || fail "praxi-xauth-init.sh regenerated cookie instead of reusing existing"
 add_calls="$(grep -c ' add :99 ' "${SANDBOX_STATE}/xauth.log" || true)"
 [[ "${add_calls}" -eq 1 ]] || fail "expected exactly 1 xauth add call across two starts, got ${add_calls}"
-pass "explicit --with-desktop-session generates secure Xfce/Xvfb/slice topology and reuses xauth cookie"
+pass "explicit --with-desktop-session generates secure Xfce/Xvfb/slice topology, modes, and xauth reuse"
+
+# 6b. Verify systemd-analyze on generated praxi.slice when available (before --without-desktop removes it)
+if command -v systemd-analyze >/dev/null 2>&1; then
+  run_timed systemd-analyze verify "${SLICE_FILE}"
+  pass "systemd-analyze verify ${SLICE_FILE} clean"
+else
+  echo "SKIP: systemd-analyze not available on this platform"
+fi
+
+# 6c. Behavioral execution of praxi-xfce-session.sh (dbus socket 0600, Hidden=true app overrides, xfdesktop restart, xfwm4 fatal exit)
+SESSION_TEST_DIR="${TMP_ROOT}/session-behavior"
+SESSION_BIN="${SESSION_TEST_DIR}/bin"
+SESSION_HOME="${SESSION_TEST_DIR}/home"
+mkdir -p "${SESSION_BIN}" "${SESSION_HOME}"
+cat > "${SESSION_BIN}/dbus-daemon" <<'EOF'
+#!/usr/bin/env bash
+sock=""
+for a in "$@"; do
+  case "${a}" in
+    --address=unix:path=*) sock="${a#--address=unix:path=}" ;;
+  esac
+done
+python3 -c '
+import os, socket, sys, time
+p = sys.argv[1]
+if os.path.exists(p): os.unlink(p)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(p)
+s.listen(1)
+time.sleep(20)
+' "${sock}"
+EOF
+cat > "${SESSION_BIN}/xfdesktop" <<EOF
+#!/usr/bin/env bash
+printf 'start\n' >> "${SESSION_TEST_DIR}/xfdesktop.log"
+if [[ ! -f "${SESSION_TEST_DIR}/xfdesktop.once" ]]; then
+  touch "${SESSION_TEST_DIR}/xfdesktop.once"
+  sleep 0.2
+  exit 1
+fi
+exec sleep 20
+EOF
+cat > "${SESSION_BIN}/xfce4-panel" <<'EOF'
+#!/usr/bin/env bash
+exec sleep 20
+EOF
+for noop_cmd in dbus-update-activation-environment gsettings gdbus xfconf-query xset update-desktop-database; do
+  cat > "${SESSION_BIN}/${noop_cmd}" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+done
+cat > "${SESSION_BIN}/xfsettingsd" <<'EOF'
+#!/usr/bin/env bash
+exec sleep 20
+EOF
+cat > "${SESSION_BIN}/xfwm4" <<EOF
+#!/usr/bin/env bash
+for _ in \$(seq 1 30); do
+  if [[ "\$(wc -l < "${SESSION_TEST_DIR}/xfdesktop.log" 2>/dev/null || echo 0)" -ge 2 ]] && [[ -S "${SESSION_HOME}/.dbus-session" ]]; then
+    stat -c '%a' "${SESSION_HOME}/.dbus-session" > "${SESSION_TEST_DIR}/dbus.mode"
+    exit 1
+  fi
+  sleep 0.2
+done
+exit 0
+EOF
+chmod +x "${SESSION_BIN}"/*
+if PATH="${SESSION_BIN}:${PATH}" HOME="${SESSION_HOME}" \
+  DISPLAY=:99 XAUTHORITY="${TEST_XAUTH}" PRAXI_ENABLE_SESSION_APPS=0 \
+  XDG_CONFIG_HOME="${SESSION_HOME}/.config" XDG_DATA_HOME="${SESSION_HOME}/.local/share" XDG_CACHE_HOME="${SESSION_HOME}/.cache" \
+  run_timed bash "${SESSION_EXEC}" > "${SESSION_TEST_DIR}/run.log" 2>&1; then
+  fail "praxi-xfce-session.sh should exit non-zero when xfwm4 dies"
+fi
+assert_file_contains "${SESSION_TEST_DIR}/run.log" "warning: xfdesktop exited"
+assert_file_contains "${SESSION_TEST_DIR}/run.log" "error: xfwm4 exited"
+[[ "$(cat "${SESSION_TEST_DIR}/dbus.mode" 2>/dev/null)" == "600" ]] || fail "dbus socket was not 0600"
+assert_file_contains "${SESSION_HOME}/.local/share/applications/xfce4-terminal.desktop" "Hidden=true"
+assert_file_contains "${SESSION_HOME}/.local/share/applications/thunar.desktop" "Hidden=true"
+pass "praxi-xfce-session.sh hides terminal/thunar, sets dbus 0600, restarts xfdesktop, exits on xfwm4 death"
+
+# 6d. --with-session-apps installs terminal/thunar and sets PRAXI_ENABLE_SESSION_APPS=1, --without-session-apps reverts to 0
+: > "${SANDBOX_STATE}/apt.log"
+printf 'ID=debian\nVERSION_ID="12"\nPRETTY_NAME="Debian 12 (Fixture)"\n' > "${SANDBOX}/etc/os-release"
+FAKE_CHROMIUM_CANDIDATE="120.0-1" run_ok "${TMP_ROOT}/session-apps-on.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --with-session-apps --no-start
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04 LTS (Fixture)"\n' > "${SANDBOX}/etc/os-release"
+assert_file_contains "${TMP_ROOT}/session-apps-on.log" "bypassing the daemon shell permission engine"
+assert_file_contains "${SANDBOX_STATE}/apt.log" "xfce4-terminal"
+assert_file_contains "${SANDBOX_STATE}/apt.log" "thunar"
+assert_file_contains "${DESK_FILE}" "Environment=PRAXI_ENABLE_SESSION_APPS=1"
+run_ok "${TMP_ROOT}/session-apps-off.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --without-session-apps --skip-packages --no-start
+assert_file_contains "${DESK_FILE}" "Environment=PRAXI_ENABLE_SESSION_APPS=0"
+pass "--with-session-apps / --without-session-apps toggles terminal/thunar packages and PRAXI_ENABLE_SESSION_APPS"
+
+# 6e. systemd < 249 omits Upholds= with warning
+FAKE_SYSTEMD_VERSION=239 run_ok "${TMP_ROOT}/old-systemd.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages --no-start
+assert_file_contains "${TMP_ROOT}/old-systemd.log" "omitting Upholds="
+assert_file_not_contains "${XVFB_FILE}" "Upholds="
+# Restore systemd >= 249 unit state for subsequent checks
+run_ok "${TMP_ROOT}/new-systemd.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages --no-start
+assert_file_contains "${XVFB_FILE}" "Upholds=praxi-desktop.service praxi.service"
+pass "systemd < 249 cleanly omits Upholds= while >= 249 emits it"
 
 # 7. Re-run idempotence preserves desktop session + geometry (both no-flag and explicit --with-desktop-session)
 run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
@@ -462,44 +713,78 @@ pass "setup-headless --user creates private Xfce session on :98"
 # 9d. System mode on :99 preserves :98 user unit & wants symlink, then removes :99 user unit via disable --now
 : > "${SANDBOX_STATE}/apt.log"
 : > "${SANDBOX_STATE}/systemctl.log"
-FAKE_UID=0 HOME="${SANDBOX}/home/tester" run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --no-start > "${TMP_ROOT}/sys-setup-preserve98.log" 2>&1
+FAKE_ACTIVE_UNITS="praxi-headless-desktop.service" FAKE_UID=0 HOME="${SANDBOX}/home/tester" \
+  run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --no-start > "${TMP_ROOT}/sys-setup-preserve98.log" 2>&1
 [[ -f "${USER_UNIT}" && -L "${USER_WANTS}" && -e "${USER_WANTS}" ]] || fail "setup-headless --system on :99 should preserve :98 user unit and wants symlink"
 assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "disable --now praxi-headless-desktop.service"
 
-printf 'Environment="DISPLAY=:99"\n' > "${USER_UNIT}"
+# 9e. A.6: user unit referencing an ExecStart= wrapper script containing DISPLAY=":99" (even without DISPLAY in unit file)
+cat > "${USER_SESSION}" <<'EOF'
+#!/usr/bin/env bash
+export DISPLAY=":99"
+EOF
+cat > "${USER_UNIT}" <<EOF
+[Service]
+ExecStart=${USER_SESSION}
+EOF
 : > "${SANDBOX_STATE}/systemctl.log"
-FAKE_UID=0 HOME="${SANDBOX}/home/tester" run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --skip-packages --no-start > "${TMP_ROOT}/sys-setup.log" 2>&1
+FAKE_ACTIVE_UNITS="praxi-headless-desktop.service" FAKE_UID=0 HOME="${SANDBOX}/home/tester" \
+  run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --skip-packages --no-start > "${TMP_ROOT}/sys-setup.log" 2>&1
 [[ -f "${DESK_FILE}" ]] || fail "setup-headless --system did not create praxi-desktop.service"
-[[ ! -f "${USER_UNIT}" && ! -L "${USER_WANTS}" && ! -e "${USER_WANTS}" ]] || fail "setup-headless --system did not remove conflicting :99 user unit and wants symlink"
+[[ ! -f "${USER_UNIT}" && ! -L "${USER_WANTS}" && ! -e "${USER_WANTS}" ]] || fail "setup-headless --system did not remove conflicting :99 user unit (ExecStart script) and wants symlink"
 assert_file_contains "${SANDBOX_STATE}/systemctl.log" "--user disable --now praxi-headless-desktop.service"
 assert_file_contains "${SANDBOX_STATE}/apt.log" "xfwm4 xfce4-panel xfdesktop4"
+assert_file_not_contains "${SANDBOX_STATE}/apt.log" "xfce4-terminal"
+assert_file_not_contains "${SANDBOX_STATE}/apt.log" "thunar"
 assert_file_not_contains "${SANDBOX_STATE}/apt.log" "chromium-browser"
 assert_file_not_contains "${SANDBOX_STATE}/apt.log" "x11vnc"
 assert_file_not_contains "${SANDBOX_STATE}/apt.log" "cups"
 
-# Also verify install-linux.sh cleans conflicting :99 user unit while preserving :98
-printf 'Environment="DISPLAY=:99"\n' > "${USER_UNIT}"
+# Also verify install-linux.sh cleans conflicting :99 user unit (ExecStart script) while preserving :98
+cat > "${USER_UNIT}" <<EOF
+[Service]
+ExecStart=${USER_SESSION}
+EOF
 ln -sf "${USER_UNIT}" "${USER_WANTS}"
 : > "${SANDBOX_STATE}/systemctl.log"
-HOME="${SANDBOX}/home/tester" run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+FAKE_ACTIVE_UNITS="praxi-headless-desktop.service" HOME="${SANDBOX}/home/tester" \
+  run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --with-desktop-session --skip-packages --no-start > "${TMP_ROOT}/install-clean-user.log" 2>&1
 [[ ! -f "${USER_UNIT}" && ! -L "${USER_WANTS}" && ! -e "${USER_WANTS}" ]] || fail "install-linux.sh did not remove conflicting :99 user unit"
 assert_file_contains "${SANDBOX_STATE}/systemctl.log" "--user disable --now praxi-headless-desktop.service"
-pass "setup-headless --system and install-linux reconcile :99 via systemctl --user disable --now without touching :98"
+pass "setup-headless --system and install-linux reconcile :99 (including ExecStart scripts) without touching :98"
 
-# 10. Explicit --without-desktop removes both units and DISPLAY
+# 9f. Parity check between install-linux.sh and setup-headless.sh --system unit/helper templates (Nit 10)
+PARITY_INST="${TMP_ROOT}/parity-install"
+mkdir -p "${PARITY_INST}"
+cp -f "${SLICE_FILE}" "${XVFB_FILE}" "${DESK_FILE}" "${DROPIN_FILE}" \
+  "${SESSION_EXEC}" "${XAUTH_EXEC}" "${SANDBOX}/opt/praxi/libexec/praxi-wait-x11.sh" "${PARITY_INST}/"
+FAKE_UID=0 run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --skip-packages --no-start > "${TMP_ROOT}/parity-setup.log" 2>&1
+for rel in praxi.slice praxi-xvfb.service praxi-desktop.service desktop.conf \
+  praxi-xfce-session.sh praxi-xauth-init.sh praxi-wait-x11.sh; do
+  case "${rel}" in
+    desktop.conf) rhs="${DROPIN_FILE}" ;;
+    praxi-xfce-session.sh|praxi-xauth-init.sh|praxi-wait-x11.sh) rhs="${SANDBOX}/opt/praxi/libexec/${rel}" ;;
+    *) rhs="${SANDBOX}/etc/systemd/system/${rel}" ;;
+  esac
+  diff -u "${PARITY_INST}/${rel}" "${rhs}" || fail "template drift between install-linux.sh and setup-headless.sh in ${rel}"
+done
+pass "install-linux.sh and setup-headless.sh --system generate identical units and helper scripts"
+
+# 10. Explicit --without-desktop removes units, praxi.slice, Slice= lines, DISPLAY, and XAUTHORITY (Nit 9)
 run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --without-desktop --skip-packages --no-start > "${TMP_ROOT}/nodesk.log" 2>&1
-[[ ! -f "${DESK_FILE}" && ! -f "${XVFB_FILE}" ]] || fail "--without-desktop did not remove desktop units"
+[[ ! -f "${DESK_FILE}" && ! -f "${XVFB_FILE}" && ! -f "${SLICE_FILE}" ]] || fail "--without-desktop did not remove desktop units and praxi.slice"
+assert_file_not_contains "${SVC_FILE}" "Slice=praxi.slice"
+assert_file_not_contains "${NODE_FILE}" "Slice=praxi.slice"
 assert_file_not_contains "${ENV_FILE}" "DISPLAY="
 assert_file_not_contains "${ENV_FILE}" "XAUTHORITY="
-pass "--without-desktop removes Xvfb and desktop session cleanly"
+pass "--without-desktop removes Xvfb, desktop session, praxi.slice, and Slice= cleanly"
 
-# 11. systemd-analyze verify check (only when systemd-analyze exists on host)
+# 11. systemd-analyze verify check on remaining service unit when available
 if command -v systemd-analyze >/dev/null 2>&1; then
-  # Recreate units in sandbox and verify unit syntax (ignoring missing non-root binary paths in sandbox)
-  echo "INFO: systemd-analyze found; checking slice/unit syntax"
-  systemd-analyze verify "${SLICE_FILE}" 2>&1 || true
+  echo "INFO: systemd-analyze found; checking remaining service unit syntax"
+  run_timed systemd-analyze verify "${SVC_FILE}" 2>&1 || true
 else
   echo "SKIP: systemd-analyze not available on this platform (run on Linux target VM)"
 fi
