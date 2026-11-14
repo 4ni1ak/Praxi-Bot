@@ -62,8 +62,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(tmp.path()));
         let bot = root.for_bot(Some("a")).unwrap();
-        bot.write_versioned("x", "---\nname: x\ndescription: d\n---\nbody\t", None, true)
-            .unwrap();
+        bot.write_versioned(
+            "x",
+            "---\nname: x\ndescription: d\n---\nbody\tend",
+            None,
+            true,
+        )
+        .unwrap();
         let review = bot.review_for_trust("x").unwrap();
         let mut out = Vec::new();
         run(
