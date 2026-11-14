@@ -889,16 +889,26 @@ fn native_cli_authority_roots() -> Vec<PathBuf> {
             roots.push(PathBuf::from(root));
         }
     }
-    roots
+    // Normalize syntax here; under_daemon_data widens and resolves the root
+    // at the point of comparison, including aliases created after startup.
+    let mut roots: Vec<_> = roots
         .into_iter()
-        .map(|root| canonical_data_dir(&root))
-        .collect()
+        .filter_map(|root| lexical_absolute(&root.to_string_lossy()).ok())
+        .collect();
+    roots.sort();
+    roots.dedup();
+    roots
 }
 
 fn under_native_cli_authority(path: &Path) -> bool {
+    let path = widen_for_compare(path);
+    let parts: Vec<_> = norm_parts(&path)
+        .iter()
+        .map(|s| canonical_name(s))
+        .collect();
     native_cli_authority_roots()
         .iter()
-        .any(|root| under_daemon_data(path, root).is_some())
+        .any(|root| under_authority_parts(&parts, root).is_some())
 }
 
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
@@ -933,18 +943,43 @@ fn under_data_sensitive(path: &Path, data_dir: &Path) -> bool {
 
 fn under_daemon_data(path: &Path, data_dir: &Path) -> Option<Vec<String>> {
     let path = widen_for_compare(path);
-    let data_dir = widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
     let p: Vec<_> = norm_parts(&path)
         .iter()
         .map(|s| canonical_name(s))
         .collect();
-    let relative = |root: &Path| {
-        let d: Vec<_> = norm_parts(root).iter().map(|s| canonical_name(s)).collect();
-        (p.len() >= d.len() && p[..d.len()] == d[..]).then(|| p[d.len()..].to_vec())
+    under_authority_parts(&p, data_dir)
+}
+
+fn under_authority_parts(p: &[String], data_dir: &Path) -> Option<Vec<String>> {
+    let parts = |root: &Path| {
+        norm_parts(root)
+            .iter()
+            .map(|s| canonical_name(s))
+            .collect::<Vec<_>>()
     };
+    let relative =
+        |d: &[String]| (p.len() >= d.len() && p[..d.len()] == *d).then(|| p[d.len()..].to_vec());
     // Keep the configured spelling protected as well as its referent: deleting
     // the configured link would let a later writer replace it with a plain dir.
-    relative(&data_dir).or_else(|| authority_referent(&data_dir).and_then(|root| relative(&root)))
+    let configured = parts(data_dir);
+    if let Some(relative) = relative(&configured) {
+        return Some(relative);
+    }
+    if let Some(referent) = authority_referent(data_dir) {
+        let referent = parts(&referent);
+        if let Some(relative) = relative(&referent) {
+            return Some(relative);
+        }
+        if configured == referent {
+            // The configured path already is its canonical spelling. Avoid
+            // walking all its ancestors again for every directory-tree entry.
+            return None;
+        }
+    }
+    // A junction object's long name can differ from both its configured 8.3
+    // spelling and its referent. Keep that third spelling protected too.
+    let widened = canonical_data_dir(data_dir);
+    relative(&parts(&widened))
 }
 
 /// Follow only the trusted, host-configured data root, never a tool's path.
@@ -3398,6 +3433,8 @@ mod tests {
             canonical_data_dir(&short).display(),
             long.display()
         );
+        assert!(under_daemon_data(&long, &short).is_some());
+        assert!(under_daemon_data(&real.join("skills/x/SKILL.md"), &short).is_some());
     }
 
     #[test]
