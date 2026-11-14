@@ -46,12 +46,14 @@ use tool_registry::{Tool, ToolRegistry};
 pub use browser::{BrowserDriver, BrowserSettings, CdpDriver, Wait};
 pub use checkpoint::{
     ChangeKind, Checkpoint, CheckpointEntry, CheckpointStore, DiffOmittedReason, FileChange,
-    MAX_DIFF_FILE_BYTES, MAX_DIFF_RUN_BYTES, RestoreAction, RestorePreviewEntry, UnifiedDiff,
+    MAX_DIFF_FILE_BYTES, MAX_DIFF_RUN_BYTES, RestoreAction, RestorePreviewEntry, RestoreReport,
+    UnifiedDiff,
 };
 pub use control::{
     ActionPermit, ControlRequest, DesktopControlGate, OBSERVATION_DISCARDED, PermitValidator,
 };
 pub use desktop::{DesktopSettings, SharedOcr};
+pub use files::{try_with_exclusive_file_access, with_checkpoint_access};
 pub use meta::{META_TOOL_NAMES, QUESTION_CARD_KIND, TODO_LIST_KIND, TodoItem, TodoStatus};
 pub use schedule::{
     PreviousSchedule, SCHEDULE_TOOL_NAMES, ScheduleCaller, ScheduleChange, ScheduleHost,

@@ -34,6 +34,40 @@ use tool_registry::{
 use crate::checkpoint::CheckpointStore;
 use crate::util::{exec_err, finish_text, parse, spec};
 
+// Host restores exclude daemon file mutations from preview through commit.
+// Readers remain available; external applications are checked via after-hashes.
+type MutationLocks = std::collections::HashMap<PathBuf, std::sync::Weak<parking_lot::RwLock<()>>>;
+static FILE_MUTATIONS: std::sync::OnceLock<parking_lot::Mutex<MutationLocks>> =
+    std::sync::OnceLock::new();
+
+fn file_mutations(data_dir: &Path) -> Arc<parking_lot::RwLock<()>> {
+    let mut locks = FILE_MUTATIONS
+        .get_or_init(parking_lot::Mutex::default)
+        .lock();
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    locks
+        .entry(canonical_data_dir(data_dir))
+        .or_default()
+        .upgrade()
+        .unwrap_or_else(|| {
+            let lock = Arc::new(parking_lot::RwLock::new(()));
+            locks.insert(canonical_data_dir(data_dir), Arc::downgrade(&lock));
+            lock
+        })
+}
+
+/// Run a host restore while excluding mutating file tools.
+///
+/// # Errors
+/// Another file operation is in flight.
+pub fn try_with_exclusive_file_access<T>(data_dir: &Path, f: impl FnOnce() -> T) -> io::Result<T> {
+    let lock = file_mutations(data_dir);
+    let _guard = lock.try_write().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::WouldBlock, "a file operation is in progress")
+    })?;
+    Ok(f())
+}
+
 const MAX_LIST: usize = 500;
 const MAX_MATCHES: usize = 200;
 const MAX_SEARCH_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -1382,6 +1416,27 @@ pub(crate) fn with_data_dir_gate<T>(data_dir: &Path, f: impl FnOnce() -> T) -> T
     f()
 }
 
+/// Install the same normalized policy used by the file tools for a host action.
+pub fn with_checkpoint_access<T>(
+    data_dir: &Path,
+    roots: &[PathBuf],
+    grants: &[PathBuf],
+    f: impl FnOnce() -> T,
+) -> T {
+    let (roots, roots_unresolved) = prepare_roots(roots, &DriveCache::new())
+        .map_or_else(|()| (Vec::new(), true), |roots| (roots, false));
+    let prev = CP_GATE.with(|slot| {
+        slot.borrow_mut().replace(CpGate {
+            data_dir: canonical_data_dir(data_dir),
+            roots,
+            grants: prepare_grants(grants),
+            roots_unresolved,
+        })
+    });
+    let _restore = RestoreGate(prev);
+    f()
+}
+
 fn tool_to_io(err: ToolError) -> io::Error {
     match err {
         ToolError::PermissionDenied(m) => io::Error::new(io::ErrorKind::PermissionDenied, m),
@@ -2470,21 +2525,26 @@ impl Shared {
         })
     }
 
-    fn record_checkpoint_after(&self, id: &str) {
+    fn record_checkpoint_after(&self, id: &str) -> Result<(), ToolError> {
         with_checkpoint_gate(self, || {
-            let _ = self.checkpoints.record_after(id);
-        });
+            self.checkpoints.record_after(id).map_err(|err| {
+                tracing::warn!(checkpoint_id = id, error = %err, "post-change checkpoint capture failed");
+                exec_err(format!("file operation completed, but after-state capture failed: {err}; checkpoint {id} keeps the previous state; restore requires explicit overwrite confirmation"))
+            })
+        })
     }
 }
 
 fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Write)?;
     let (cp, note) = sh.checkpoint(run, "fs_write", &[(Path::new(&i.path), &p)])?;
     if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| exec_err(format!("create dirs: {e}")))?;
     }
     fs::write(&p, i.content.as_bytes()).map_err(|e| exec_err(format!("write {}: {e}", i.path)))?;
-    sh.record_checkpoint_after(&cp);
+    sh.record_checkpoint_after(&cp)?;
     Ok(format!(
         "wrote {} bytes to {} (checkpoint {cp}){note}",
         i.content.len(),
@@ -2493,6 +2553,8 @@ fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
 }
 
 fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     if i.old.is_empty() {
         return Err(ToolError::InvalidInput("old must not be empty".into()));
     }
@@ -2510,7 +2572,7 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     let updated = text.replace(&i.old, &i.new);
     fs::write(&p, updated).map_err(|e| exec_err(format!("write {}: {e}", i.path)))?;
-    sh.record_checkpoint_after(&cp);
+    sh.record_checkpoint_after(&cp)?;
     Ok(format!(
         "replaced {n} occurrence(s) in {} (checkpoint {cp}){note}",
         i.path
@@ -2536,6 +2598,8 @@ fn do_move_with(
     i: &MoveIn,
     rename: impl Fn(&Path, &Path) -> io::Result<()>,
 ) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let mut saved = None;
     let result = (|| {
         let from = validate_path(sh, &i.from, Follow::Entry)?;
@@ -2569,7 +2633,7 @@ fn do_move_with(
         }
         let warnings = relocate_safely(sh, &from, &to, rename, i.overwrite)
             .map_err(|err| io_to_tool(&err, "move failed"))?;
-        sh.record_checkpoint_after(&cp);
+        sh.record_checkpoint_after(&cp)?;
         let mut result = format!("moved {} to {} (checkpoint {cp}){note}", i.from, i.to);
         for warning in warnings {
             let _ = write!(result, "\nwarning: {warning}");
@@ -2592,6 +2656,8 @@ fn do_move_with(
 }
 
 fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Entry)?;
     let meta = fs::symlink_metadata(&p).map_err(|e| exec_err(format!("{}: {e}", i.path)))?;
     if meta.is_dir() && !meta.file_type().is_symlink() && !i.recursive {
@@ -2603,7 +2669,7 @@ fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> 
     let (cp, note) = sh.checkpoint(run, "fs_delete", &[(Path::new(&i.path), &p)])?;
     remove_tree_skip_protected(&p, &sh.data_dir, &sh.grants)
         .map_err(|e| io_to_tool(&e, "delete failed"))?;
-    sh.record_checkpoint_after(&cp);
+    sh.record_checkpoint_after(&cp)?;
     Ok(format!("deleted {} (checkpoint {cp}){note}", i.path))
 }
 
@@ -2627,6 +2693,8 @@ fn do_cp_list(sh: &Shared, run: &str) -> Result<String, ToolError> {
 }
 
 fn do_cp_restore(sh: &Shared, id: &str) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let (paths, safety, warnings) = with_checkpoint_gate(sh, || {
         sh.checkpoints
             .restore_with_warnings(id)
@@ -4272,6 +4340,58 @@ mod tests {
             );
         }
         let _ = d;
+    }
+
+    #[test]
+    fn host_restore_excludes_mutating_tool_steps_until_commit() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let target = work.path().join("f.txt");
+        fs::write(&target, "current").unwrap();
+        let sh = shared_with(data.path(), Vec::new());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = try_with_exclusive_file_access(data.path(), || {
+            let path = target.display().to_string();
+            let worker = std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                let result = do_write(
+                    &sh,
+                    "run",
+                    &WriteIn {
+                        path,
+                        content: "next run".into(),
+                    },
+                );
+                done_tx.send(result).unwrap();
+            });
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap();
+            assert!(
+                done_rx
+                    .recv_timeout(std::time::Duration::from_millis(50))
+                    .is_err()
+            );
+            assert_eq!(fs::read_to_string(&target).unwrap(), "current");
+            worker
+        })
+        .unwrap();
+        worker.join().unwrap();
+        done_rx.recv().unwrap().unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "next run");
+    }
+
+    #[test]
+    fn record_checkpoint_after_reports_failure_after_mutation() {
+        let data = tempfile::tempdir().unwrap();
+        let sh = shared_with(data.path(), Vec::new());
+        let error = sh
+            .record_checkpoint_after("cp-missing")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("file operation completed"));
+        assert!(error.contains("explicit overwrite confirmation"));
     }
 
     fn shared_with(data: &Path, grants: Vec<PathBuf>) -> Shared {
