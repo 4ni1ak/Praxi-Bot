@@ -33,6 +33,8 @@
 #   --port <port>        Daemon port on 127.0.0.1 (default: 47821)
 #   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
 #   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
+#   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar (runs as praxi with read access to praxi.env)
+#   --without-session-apps  Hide/omit xfce4-terminal and thunar from the desktop session menu
 #   --without-desktop-session  Remove praxi-desktop.service and session bus env (keeps praxi-xvfb unless --without-desktop)
 #   --desktop-session <none|xfce>  Explicit desktop session selector (xfce or none)
 #   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
@@ -77,6 +79,9 @@ KEEP_DESKTOP=0
 WITH_DESKTOP_SESSION=0
 WITHOUT_DESKTOP_SESSION=0
 KEEP_DESKTOP_SESSION=0
+WITH_SESSION_APPS=0
+WITHOUT_SESSION_APPS=0
+KEEP_SESSION_APPS=0
 DESKTOP_SESSION_ARG=""
 DISPLAY_NUM=":99"
 SCREEN_SPEC="1920x1080x24"
@@ -133,6 +138,9 @@ Options:
   --port <port>        Daemon port on 127.0.0.1 (default: 47821; kept on re-install unless given)
   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
+  --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar
+                       (security note: menu apps run as praxi and can read praxi.env / data dir)
+  --without-session-apps  Hide/omit xfce4-terminal and thunar from the desktop session menu
   --without-desktop-session  Remove praxi-desktop.service and session bus env (keeps praxi-xvfb unless --without-desktop)
   --desktop-session <none|xfce>  Explicit desktop session selector (xfce or none)
   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
@@ -199,6 +207,8 @@ while [[ $# -gt 0 ]]; do
     --port) need_arg "$@"; PORT="$2"; PORT_SET=1; shift 2 ;;
     --with-desktop) WITH_DESKTOP=1; shift ;;
     --with-desktop-session) WITH_DESKTOP_SESSION=1; WITH_DESKTOP=1; shift ;;
+    --with-session-apps) WITH_SESSION_APPS=1; shift ;;
+    --without-session-apps) WITHOUT_SESSION_APPS=1; shift ;;
     --without-desktop-session) WITHOUT_DESKTOP_SESSION=1; shift ;;
     --desktop-session)
       need_arg "$@"
@@ -234,6 +244,8 @@ fi
 [[ "${PURGE}" -eq 0 || "${UNINSTALL}" -eq 1 ]] || die "--purge only makes sense with --uninstall"
 [[ "${WITH_DESKTOP}" -eq 0 || "${WITHOUT_DESKTOP}" -eq 0 ]] || die "--with-desktop/--with-desktop-session and --without-desktop cannot be used together"
 [[ "${WITH_DESKTOP_SESSION}" -eq 0 || "${WITHOUT_DESKTOP_SESSION}" -eq 0 ]] || die "--with-desktop-session and --without-desktop-session cannot be used together"
+[[ "${WITH_SESSION_APPS}" -eq 0 || "${WITHOUT_SESSION_APPS}" -eq 0 ]] || die "--with-session-apps and --without-session-apps cannot be used together"
+[[ "${WITHOUT_DESKTOP_SESSION}" -eq 0 || "${WITH_SESSION_APPS}" -eq 0 ]] || die "--with-session-apps cannot be combined with --without-desktop-session"
 [[ "${WITHOUT_DESKTOP}" -eq 0 || "${DISPLAY_SET}" -eq 0 ]] || die "--display cannot be combined with --without-desktop"
 [[ "${WITHOUT_DESKTOP}" -eq 0 || "${SCREEN_SET}" -eq 0 ]] || die "--screen cannot be combined with --without-desktop"
 
@@ -271,6 +283,30 @@ if [[ "${WITH_DESKTOP_SESSION}" -eq 0 && "${WITHOUT_DESKTOP_SESSION}" -eq 0 && -
   KEEP_DESKTOP_SESSION=1
   KEEP_DESKTOP=1
   log "keeping existing praxi-desktop.service (pass --without-desktop-session to remove desktop session)"
+  if grep -q '^Environment=PRAXI_ENABLE_SESSION_APPS=1$' "${UNIT_DIR}/praxi-desktop.service" 2>/dev/null; then
+    KEEP_SESSION_APPS=1
+  fi
+fi
+DESKTOP_ACTIVE=0
+DESKTOP_SESSION_ACTIVE=0
+SESSION_APPS_ACTIVE=0
+if [[ "${WITH_DESKTOP}" -eq 1 || "${KEEP_DESKTOP}" -eq 1 ]] && [[ "${WITHOUT_DESKTOP}" -eq 0 ]]; then
+  DESKTOP_ACTIVE=1
+fi
+if [[ "${WITH_DESKTOP_SESSION}" -eq 1 || "${KEEP_DESKTOP_SESSION}" -eq 1 ]] && [[ "${WITHOUT_DESKTOP_SESSION}" -eq 0 ]]; then
+  DESKTOP_SESSION_ACTIVE=1
+  DESKTOP_ACTIVE=1
+fi
+if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
+  if [[ "${WITH_SESSION_APPS}" -eq 1 || "${KEEP_SESSION_APPS}" -eq 1 ]] && [[ "${WITHOUT_SESSION_APPS}" -eq 0 ]]; then
+    SESSION_APPS_ACTIVE=1
+  fi
+fi
+if [[ "${WITH_SESSION_APPS}" -eq 1 && "${DESKTOP_SESSION_ACTIVE}" -eq 0 ]]; then
+  die "--with-session-apps requires --with-desktop-session (or an existing praxi-desktop.service)"
+fi
+if [[ "${SESSION_APPS_ACTIVE}" -eq 1 ]]; then
+  warn "--with-session-apps enabled: xfce4-terminal and thunar run as '${SVC_USER}' and can read ${ENV_FILE} and ${DATA_DIR}, bypassing the daemon shell permission engine"
 fi
 REWRITE_XVFB_CMD=0
 if [[ "${WITH_DESKTOP}" -eq 1 || ( "${KEEP_DESKTOP}" -eq 1 && ( "${DISPLAY_SET}" -eq 1 || "${SCREEN_SET}" -eq 1 ) ) ]]; then
@@ -387,14 +423,18 @@ install_packages() {
   fi
   if [[ "${WITH_DESKTOP_SESSION}" -eq 1 ]]; then
     pkgs_apt+=(dbus dbus-x11 xfwm4 xfce4-panel xfdesktop4 xfconf xfce4-settings
-      xfce4-terminal thunar desktop-file-utils x11-xserver-utils xdg-utils)
+      desktop-file-utils x11-xserver-utils xdg-utils)
     pkgs_dnf+=(dbus-daemon dbus-x11 xfwm4 xfce4-panel xfdesktop xfconf xfce4-settings
-      xfce4-terminal thunar desktop-file-utils xdg-utils xdpyinfo xset)
+      desktop-file-utils xdg-utils xdpyinfo xset)
+  fi
+  if [[ "${SESSION_APPS_ACTIVE}" -eq 1 ]]; then
+    pkgs_apt+=(xfce4-terminal thunar)
+    pkgs_dnf+=(xfce4-terminal thunar)
   fi
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    if [[ "${WITH_DESKTOP_SESSION}" -eq 1 ]]; then
+    if [[ "${WITH_DESKTOP_SESSION}" -eq 1 || "${SESSION_APPS_ACTIVE}" -eq 1 ]]; then
       local pkg missing_pkgs=()
       for pkg in "${pkgs_apt[@]}"; do
         if ! apt_candidate "${pkg}"; then
@@ -481,7 +521,74 @@ fi
 [[ -z "${EXPECTED_SHA}" || "${EXPECTED_SHA}" =~ ^[0-9a-f]{64}$ ]] || die "invalid --sha256"
 
 WORK="$(umask 077; mktemp -d)"
-trap 'rm -rf "${WORK:?}"' EXIT
+PACKAGES_PHASE=0
+UPGRADE_STOPPED=0
+BACKUP_CREATED=0
+INSTALL_SUCCEEDED=0
+WAS_ACTIVE_NODE=0
+WAS_ACTIVE_XVFB=0
+WAS_ACTIVE_DESKTOP=0
+WAS_ACTIVE_PRAXI=0
+
+restore_backup() {
+  local b c u
+  rm -rf "${PREFIX:?}"
+  if [[ -d "${WORK}/backup/prefix" ]]; then
+    cp -a "${WORK}/backup/prefix" "${PREFIX}"
+  fi
+  for b in praxi praxi-node; do
+    rm -f "/usr/local/bin/${b}"
+    if [[ -e "${WORK}/backup/localbin/${b}" ]]; then
+      cp -a "${WORK}/backup/localbin/${b}" "/usr/local/bin/${b}"
+    fi
+  done
+  for c in "$(basename "${ENV_FILE}")" "$(basename "${NODE_ENV_FILE}")"; do
+    rm -f "${CONF_DIR}/${c}"
+    if [[ -e "${WORK}/backup/conf/${c}" ]]; then
+      cp -a "${WORK}/backup/conf/${c}" "${CONF_DIR}/${c}"
+    fi
+  done
+  for u in "${SLICE_NAME}" praxi.service praxi-node.service praxi-xvfb.service praxi-desktop.service \
+    praxi.service.d praxi-node.service.d praxi-desktop.service.d praxi-xvfb.service.d; do
+    rm -rf "${UNIT_DIR:?}/${u:?}"
+    if [[ -e "${WORK}/backup/units/${u}" ]]; then
+      cp -a "${WORK}/backup/units/${u}" "${UNIT_DIR}/${u}"
+    fi
+  done
+}
+
+on_exit() {
+  local exit_rc=$?
+  set +e
+  if [[ "${INSTALL_SUCCEEDED:-0}" -eq 0 && "${UPGRADE_STOPPED:-0}" -eq 1 && "${BACKUP_CREATED:-0}" -eq 1 ]]; then
+    printf '[praxi-install] error: installation failed after stopping services; rolling back to previous working installation\n' >&2
+    restore_backup
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    local restart_err=0
+    if [[ "${WAS_ACTIVE_XVFB:-0}" -eq 1 ]]; then
+      systemctl start praxi-xvfb.service || restart_err=1
+    fi
+    if [[ "${WAS_ACTIVE_DESKTOP:-0}" -eq 1 ]]; then
+      systemctl start praxi-desktop.service || restart_err=1
+    fi
+    if [[ "${WAS_ACTIVE_PRAXI:-0}" -eq 1 ]]; then
+      systemctl start praxi.service || restart_err=1
+    fi
+    if [[ "${WAS_ACTIVE_NODE:-0}" -eq 1 ]]; then
+      systemctl start praxi-node.service || restart_err=1
+    fi
+    if [[ "${restart_err}" -ne 0 ]]; then
+      printf '[praxi-install] warning: rollback restored previous files, but one or more previously active services failed to restart\n' >&2
+    else
+      printf '[praxi-install] rollback complete; previously active services restarted\n' >&2
+    fi
+  elif [[ "${INSTALL_SUCCEEDED:-0}" -eq 0 && "${PACKAGES_PHASE:-0}" -eq 1 ]]; then
+    disable_print_services || true
+  fi
+  rm -rf "${WORK:?}"
+  exit "${exit_rc}"
+}
+trap on_exit EXIT
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 
 download_release_asset() {
@@ -555,11 +662,40 @@ SRC="${WORK}/x/praxi-linux-${ARCH}"
 if [[ "${SKIP_PACKAGES}" -eq 0 ]]; then
   log "installing OS packages"
   # Also retain private-download cleanup when package installation fails.
-  trap 'disable_print_services || true; rm -rf "${WORK:?}"' EXIT
+  PACKAGES_PHASE=1
   install_packages
-  trap 'rm -rf "${WORK:?}"' EXIT
+  PACKAGES_PHASE=0
 fi
 disable_print_services
+
+XVFB_HAS_AUTH=0
+if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
+  if [[ "${REWRITE_XVFB_CMD}" -eq 1 || "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
+    XVFB_HAS_AUTH=1
+  elif [[ -f "${UNIT_DIR}/praxi-xvfb.service" ]] && grep -Eq '^ExecStart=.*([[:space:]]|^)-auth([[:space:]]|$)' "${UNIT_DIR}/praxi-xvfb.service"; then
+    XVFB_HAS_AUTH=1
+  fi
+fi
+
+# Pre-flight helper check BEFORE stopping any active services so --skip-packages
+# with missing Xvfb/xauth/xdpyinfo fails safely without leaving the daemon down.
+if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
+  if [[ "${REWRITE_XVFB_CMD}" -eq 1 ]]; then
+    for req_cmd in Xvfb xauth xdpyinfo; do
+      command -v "${req_cmd}" >/dev/null 2>&1 || die "${req_cmd} not found (install desktop prerequisites or drop --skip-packages)"
+    done
+  elif [[ "${XVFB_HAS_AUTH}" -eq 0 ]]; then
+    warn "keeping legacy praxi-xvfb.service without -auth; Xvfb on Linux listens on an abstract unix socket reachable by local accounts (pass --with-desktop or --with-desktop-session to enable private Xauthority)"
+  fi
+fi
+
+SYSTEMD_VER="$(systemctl --version 2>/dev/null | awk 'NR==1 {print $2}' | sed 's/[^0-9].*//')"
+SYSTEMD_HAS_UPHOLDS=0
+if [[ "${SYSTEMD_VER}" =~ ^[0-9]+$ ]] && (( SYSTEMD_VER >= 249 )); then
+  SYSTEMD_HAS_UPHOLDS=1
+elif [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
+  warn "systemd version '${SYSTEMD_VER:-unknown}' (< 249) does not support Upholds=; omitting Upholds= from praxi-xvfb.service (Xvfb crash auto-recovery of dependents disabled)"
+fi
 
 BROWSER_BIN=""
 for browser in /opt/praxi-browser/chrome /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do
@@ -587,14 +723,52 @@ install -d -m 0750 -o "${SVC_USER}" -g "${SVC_USER}" "${DATA_DIR}"
 install -d -m 0750 -o root -g "${SVC_USER}" "${CONF_DIR}"
 
 # ----------------------------------------------------------------- binaries
-NODE_WAS_ACTIVE=0
+mkdir -p "${WORK}/backup/units" "${WORK}/backup/conf" "${WORK}/backup/localbin"
+if [[ -d "${PREFIX}" ]]; then
+  cp -a "${PREFIX}" "${WORK}/backup/prefix"
+fi
+for b in praxi praxi-node; do
+  if [[ -e "/usr/local/bin/${b}" ]]; then
+    cp -a "/usr/local/bin/${b}" "${WORK}/backup/localbin/${b}"
+  fi
+done
+for c in "${ENV_FILE}" "${NODE_ENV_FILE}"; do
+  if [[ -e "${c}" ]]; then
+    cp -a "${c}" "${WORK}/backup/conf/"
+  fi
+done
+for u in "${SLICE_NAME}" praxi.service praxi-node.service praxi-xvfb.service praxi-desktop.service \
+  praxi.service.d praxi-node.service.d praxi-desktop.service.d praxi-xvfb.service.d; do
+  if [[ -e "${UNIT_DIR}/${u}" ]]; then
+    cp -a "${UNIT_DIR}/${u}" "${WORK}/backup/units/"
+  fi
+done
+BACKUP_CREATED=1
+
 if systemctl is-active --quiet praxi-node.service 2>/dev/null; then
-  NODE_WAS_ACTIVE=1
+  WAS_ACTIVE_NODE=1
+fi
+if systemctl is-active --quiet praxi-xvfb.service 2>/dev/null; then
+  WAS_ACTIVE_XVFB=1
+fi
+if systemctl is-active --quiet praxi-desktop.service 2>/dev/null; then
+  WAS_ACTIVE_DESKTOP=1
+fi
+if systemctl is-active --quiet praxi.service 2>/dev/null; then
+  WAS_ACTIVE_PRAXI=1
+fi
+NODE_WAS_ACTIVE="${WAS_ACTIVE_NODE}"
+UPGRADE_STOPPED=1
+
+if [[ "${WAS_ACTIVE_NODE}" -eq 1 ]]; then
   systemctl stop praxi-node.service
 fi
 # Stop praxi-xvfb.service first when active so Upholds= does not restart praxi.service mid-install.
-if systemctl is-active --quiet praxi-xvfb.service 2>/dev/null; then
+if [[ "${WAS_ACTIVE_XVFB}" -eq 1 ]]; then
   systemctl stop praxi-xvfb.service
+fi
+if systemctl is-active --quiet praxi-desktop.service 2>/dev/null; then
+  systemctl stop praxi-desktop.service
 fi
 if systemctl is-active --quiet praxi.service 2>/dev/null; then
   systemctl stop praxi.service
@@ -611,7 +785,9 @@ log "installed to ${PREFIX} ($(cat "${PREFIX}/VERSION" 2>/dev/null || echo unkno
 # praxi-node must source praxi-node.env so it does not receive the daemon passphrase.
 write_wrapper() { # <command name> <binary name> <env file>
   local cmd="$1" bin="$2" envf="$3" property doctor_properties=""
-  doctor_properties+=" --property=Slice=${SLICE_NAME:-praxi.slice}"
+  if [[ "${DESKTOP_ACTIVE:-0}" -eq 1 ]]; then
+    doctor_properties+=" --property=Slice=${SLICE_NAME:-praxi.slice}"
+  fi
   while IFS= read -r property; do
     doctor_properties+=" --property=${property}"
   done <<< "${HARDENING}"
@@ -650,13 +826,6 @@ set_env_kv() { # <file> <key> <value>
   printf '%s=%s\n' "${key}" "${val}" >> "${file}"
 }
 
-ensure_env_default() { # <file> <key> <value>
-  local file="$1" key="$2" val="$3"
-  if ! grep -q "^${key}=" "${file}"; then
-    printf '%s=%s\n' "${key}" "${val}" >> "${file}"
-  fi
-}
-
 remove_env_key() { # <file> <key>
   local file="$1" key="$2"
   sed -i "/^${key}=/d" "${file}"
@@ -675,8 +844,9 @@ if [[ ! -f "${ENV_FILE}" ]]; then
       echo "BOT_SECRETS_BACKEND=file"
       echo "BOT_SECRETS_PASSPHRASE=${PASSPHRASE}"
       echo "HOME=${DATA_DIR}"
-      echo "BOT_MAX_COMPUTER_RUNS=1"
-      echo "BOT_BROWSER_IDLE_SECONDS=120"
+      echo "# Optional overrides (daemon defaults come from ${DATA_DIR}/host.toml [limits] or RAM-based defaults: idle=120s, runs=1 <8GiB / 2 >=8GiB):"
+      echo "# BOT_MAX_COMPUTER_RUNS=1"
+      echo "# BOT_BROWSER_IDLE_SECONDS=120"
     } > "${ENV_FILE}"
   )
 else
@@ -688,27 +858,6 @@ else
     [[ "${PORT}" =~ ^[0-9]+$ && "${PORT}" -ge 1 && "${PORT}" -le 65535 ]] || die "invalid BOT_PORT in ${ENV_FILE}"
   else
     echo "BOT_PORT=${PORT}" >> "${ENV_FILE}"
-  fi
-  ensure_env_default "${ENV_FILE}" BOT_MAX_COMPUTER_RUNS 1
-  ensure_env_default "${ENV_FILE}" BOT_BROWSER_IDLE_SECONDS 120
-fi
-
-DESKTOP_ACTIVE=0
-DESKTOP_SESSION_ACTIVE=0
-if [[ "${WITH_DESKTOP}" -eq 1 || "${KEEP_DESKTOP}" -eq 1 ]] && [[ "${WITHOUT_DESKTOP}" -eq 0 ]]; then
-  DESKTOP_ACTIVE=1
-fi
-if [[ "${WITH_DESKTOP_SESSION}" -eq 1 || "${KEEP_DESKTOP_SESSION}" -eq 1 ]] && [[ "${WITHOUT_DESKTOP_SESSION}" -eq 0 ]]; then
-  DESKTOP_SESSION_ACTIVE=1
-  DESKTOP_ACTIVE=1
-fi
-
-XVFB_HAS_AUTH=0
-if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
-  if [[ "${REWRITE_XVFB_CMD}" -eq 1 || "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
-    XVFB_HAS_AUTH=1
-  elif [[ -f "${UNIT_DIR}/praxi-xvfb.service" ]] && grep -Eq '^ExecStart=.*([[:space:]]|^)-auth([[:space:]]|$)' "${UNIT_DIR}/praxi-xvfb.service"; then
-    XVFB_HAS_AUTH=1
   fi
 fi
 
@@ -798,7 +947,10 @@ SystemCallArchitectures=native
 UMask=0077"
 # Not set on purpose: MemoryDenyWriteExecute and RestrictNamespaces (Chromium needs them).
 
-cat > "${UNIT_DIR}/${SLICE_NAME}" <<UNIT
+SLICE_LINE=""
+if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
+  SLICE_LINE="Slice=${SLICE_NAME}"
+  cat > "${UNIT_DIR}/${SLICE_NAME}" <<UNIT
 [Unit]
 Description=Praxi-Bot resource containment slice
 
@@ -810,6 +962,10 @@ CPUQuota=100%
 MemoryHigh=3G
 MemoryMax=4G
 UNIT
+elif [[ "${WITHOUT_DESKTOP}" -eq 1 && -f "${UNIT_DIR}/${SLICE_NAME}" ]]; then
+  systemctl disable --now "${SLICE_NAME}" >/dev/null 2>&1 || true
+  rm -f "${UNIT_DIR}/${SLICE_NAME}"
+fi
 
 cat > "${UNIT_DIR}/praxi.service" <<UNIT
 [Unit]
@@ -819,8 +975,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Slice=${SLICE_NAME}
-User=${SVC_USER}
+${SLICE_LINE:+${SLICE_LINE}
+}User=${SVC_USER}
 Group=${SVC_USER}
 WorkingDirectory=${DATA_DIR}
 EnvironmentFile=${ENV_FILE}
@@ -843,8 +999,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Slice=${SLICE_NAME}
-User=${SVC_USER}
+${SLICE_LINE:+${SLICE_LINE}
+}User=${SVC_USER}
 Group=${SVC_USER}
 WorkingDirectory=${DATA_DIR}
 EnvironmentFile=${NODE_ENV_FILE}
@@ -1074,14 +1230,32 @@ Categories=Network;WebBrowser;
 StartupNotify=true
 DESKTOP
 fi
-if [[ ! -f "${XDG_CONFIG_HOME}/xfce4/helpers.rc" ]]; then
-  {
-    echo "TerminalEmulator=xfce4-terminal"
-    echo "FileManager=thunar"
-    if [[ -n "${browser_bin}" ]]; then
-      echo "WebBrowser=praxi-browser"
+if [[ "${PRAXI_ENABLE_SESSION_APPS:-0}" == "1" ]]; then
+  for app_desktop in xfce4-terminal.desktop thunar.desktop; do
+    if [[ -f "${XDG_DATA_HOME}/applications/${app_desktop}" ]] && grep -q '^Hidden=true$' "${XDG_DATA_HOME}/applications/${app_desktop}"; then
+      rm -f "${XDG_DATA_HOME}/applications/${app_desktop}"
     fi
-  } > "${XDG_CONFIG_HOME}/xfce4/helpers.rc"
+  done
+  if [[ ! -f "${XDG_CONFIG_HOME}/xfce4/helpers.rc" ]]; then
+    {
+      echo "TerminalEmulator=xfce4-terminal"
+      echo "FileManager=thunar"
+      if [[ -n "${browser_bin}" ]]; then
+        echo "WebBrowser=praxi-browser"
+      fi
+    } > "${XDG_CONFIG_HOME}/xfce4/helpers.rc"
+  fi
+else
+  for app_desktop in xfce4-terminal.desktop thunar.desktop; do
+    cat > "${XDG_DATA_HOME}/applications/${app_desktop}" <<'APP_HIDE'
+[Desktop Entry]
+Type=Application
+Hidden=true
+APP_HIDE
+  done
+  if [[ ! -f "${XDG_CONFIG_HOME}/xfce4/helpers.rc" ]] && [[ -n "${browser_bin}" ]]; then
+    echo "WebBrowser=praxi-browser" > "${XDG_CONFIG_HOME}/xfce4/helpers.rc"
+  fi
 fi
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "${XDG_DATA_HOME}/applications" >/dev/null 2>&1 || true
@@ -1215,9 +1389,12 @@ run_user_systemctl() {
   local current_user
   current_user="$(id -un 2>/dev/null || true)"
   if [[ -z "${uname}" || "${uname}" == "${current_user}" || "${EUID:-$(id -u)}" -ne 0 ]]; then
-    env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1 || true
+    env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1
   elif command -v runuser >/dev/null 2>&1; then
-    runuser -u "${uname}" -- env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1 || true
+    runuser -u "${uname}" -- env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1
+  else
+    warn "runuser not available; cannot run systemctl --user for ${uname}"
+    return 1
   fi
 }
 
@@ -1226,20 +1403,40 @@ cleanup_user_unit_for_home() {
   [[ -n "${uhome}" ]] || return 0
   local uunit="${uhome}/.config/systemd/user/praxi-headless-desktop.service"
   local uvnc="${uhome}/.config/systemd/user/praxi-headless-vnc.service"
-  local uid=""
+  local uid="" match_display=0 exec_script=""
   if [[ -n "${uname}" ]]; then
     uid="$(id -u "${uname}" 2>/dev/null || true)"
   fi
   if [[ -f "${uvnc}" ]]; then
-    [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-vnc.service
+    if [[ -n "${uid}" ]]; then
+      run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-vnc.service || warn "could not stop/disable ${uvnc} via systemctl --user"
+    fi
     rm -f "${uvnc}" "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-vnc.service"
-    [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" daemon-reload
+    [[ -n "${uid}" ]] && { run_user_systemctl "${uname}" "${uid}" daemon-reload || true; }
   fi
-  if [[ -f "${uunit}" ]] && grep -Eq "DISPLAY=${DISPLAY_NUM}([\"\'[:space:]]|$)" "${uunit}" 2>/dev/null; then
+  if [[ -f "${uunit}" ]]; then
+    if grep -Eq "DISPLAY=([\"\']?)${DISPLAY_NUM}([\"\'[:space:]]|$)" "${uunit}" 2>/dev/null; then
+      match_display=1
+    else
+      exec_script="$(awk -F= '/^ExecStart=/ {sub(/^[[:space:]]*/, "", $2); split($2, a, /[[:space:]]+/); print a[1]; exit}' "${uunit}" 2>/dev/null || true)"
+      if [[ -n "${exec_script}" && -f "${exec_script}" ]] && grep -Eq "DISPLAY=([\"\']?)${DISPLAY_NUM}([\"\'[:space:]]|$)" "${exec_script}" 2>/dev/null; then
+        match_display=1
+      fi
+    fi
+  fi
+  if [[ "${match_display}" -eq 1 ]]; then
     log "stopping, disabling, and removing conflicting user-level unit ${uunit} for ${DISPLAY_NUM}"
-    [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-desktop.service
+    if [[ -n "${uid}" ]]; then
+      if run_user_systemctl "${uname}" "${uid}" is-active --quiet praxi-headless-desktop.service; then
+        if ! run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-desktop.service; then
+          warn "could not stop active user unit praxi-headless-desktop.service for ${uname} via systemctl --user"
+        fi
+      else
+        run_user_systemctl "${uname}" "${uid}" disable praxi-headless-desktop.service || true
+      fi
+    fi
     rm -f "${uunit}" "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-desktop.service"
-    [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" daemon-reload
+    [[ -n "${uid}" ]] && { run_user_systemctl "${uname}" "${uid}" daemon-reload || true; }
   fi
 }
 
@@ -1263,11 +1460,13 @@ write_desktop_dropins() {
   for svc in praxi praxi-node; do
     install -d "${UNIT_DIR}/${svc}.service.d"
     # Share the private /tmp (X11 socket) with the display service.
+    # Use Wants= for praxi-desktop.service so a desktop-session failure does
+    # not block the always-on daemon.
     if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
       cat > "${UNIT_DIR}/${svc}.service.d/desktop.conf" <<UNIT
 [Unit]
 BindsTo=praxi-xvfb.service
-Requires=praxi-desktop.service
+Wants=praxi-desktop.service
 After=praxi-xvfb.service praxi-desktop.service
 JoinsNamespaceOf=praxi-xvfb.service
 UNIT
@@ -1302,11 +1501,13 @@ read_existing_xvfb_exec() {
 }
 
 write_xvfb_unit() {
-  local xvfb_bin upholds_line xauth_env_line exec_block="" line
-  if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
-    upholds_line="Upholds=praxi-desktop.service praxi.service"
-  else
-    upholds_line="Upholds=praxi.service"
+  local xvfb_bin upholds_line="" xauth_env_line exec_block="" line
+  if [[ "${SYSTEMD_HAS_UPHOLDS}" -eq 1 ]]; then
+    if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
+      upholds_line="Upholds=praxi-desktop.service praxi.service"
+    else
+      upholds_line="Upholds=praxi.service"
+    fi
   fi
   if [[ "${XVFB_HAS_AUTH}" -eq 1 ]]; then
     xauth_env_line="Environment=XAUTHORITY=${XAUTH_FILE}"
@@ -1330,8 +1531,8 @@ ExecStartPost=${LIBEXEC_DIR}/praxi-wait-x11.sh ${DISPLAY_NUM} ${XAUTH_FILE}"
   cat > "${UNIT_DIR}/praxi-xvfb.service" <<UNIT
 [Unit]
 Description=Praxi virtual display (Xvfb ${DISPLAY_NUM})
-${upholds_line}
-
+${upholds_line:+${upholds_line}
+}
 [Service]
 Type=simple
 Slice=${SLICE_NAME}
@@ -1360,6 +1561,8 @@ BindsTo=praxi-xvfb.service
 After=praxi-xvfb.service
 PartOf=praxi-xvfb.service
 JoinsNamespaceOf=praxi-xvfb.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -1382,6 +1585,7 @@ Environment=GTK_MODULES=gail:atk-bridge
 Environment=QT_ACCESSIBILITY=1
 Environment=QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
 Environment=GNOME_ACCESSIBILITY=1
+Environment=PRAXI_ENABLE_SESSION_APPS=${SESSION_APPS_ACTIVE}
 ${BROWSER_BIN:+Environment=BOT_BROWSER_PATH=${BROWSER_BIN}}
 ExecStart=${LIBEXEC_DIR}/praxi-xfce-session.sh
 ExecStartPost=${LIBEXEC_DIR}/praxi-wait-desktop.sh ${DBUS_SOCKET}
@@ -1433,35 +1637,39 @@ START_FAILED=0
 if [[ "${NO_START}" -eq 0 ]]; then
   if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
     systemctl restart praxi-xvfb.service || START_FAILED=1
-  fi
-  if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
-    systemctl restart praxi-desktop.service || START_FAILED=1
-  fi
-  systemctl restart praxi.service || START_FAILED=1
-  ready=0
-  consecutive=0
-  for ((attempt=0; attempt<30; attempt++)); do
-    if systemctl is-active --quiet praxi.service && \
-      health="$(curl -fsS --noproxy '*' --connect-timeout 1 --max-time 2 "http://127.0.0.1:${PORT}/v1/health")" && \
-      [[ "${health}" =~ \"status\"[[:space:]]*:[[:space:]]*\"(ok|setup_required)\" ]] && \
-      [[ "${health}" == *'"version"'* ]]; then
-      consecutive=$((consecutive + 1))
-      if [[ "${consecutive}" -ge 2 ]]; then ready=1; break; fi
-    else
-      consecutive=0
+    if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
+      systemctl start praxi-desktop.service || START_FAILED=1
     fi
-    sleep 1
-  done
-  [[ "${ready}" -eq 1 ]] || START_FAILED=1
-  if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
-    systemctl is-active --quiet praxi-xvfb.service || START_FAILED=1
+    systemctl start praxi.service || START_FAILED=1
+  else
+    systemctl restart praxi.service || START_FAILED=1
   fi
-  if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
-    systemctl is-active --quiet praxi-desktop.service || START_FAILED=1
-  fi
-  if [[ "${NODE_WAS_ACTIVE}" -eq 1 ]]; then
-    systemctl restart praxi-node.service || START_FAILED=1
-    systemctl is-active --quiet praxi-node.service || START_FAILED=1
+  if [[ "${START_FAILED}" -eq 0 ]]; then
+    ready=0
+    consecutive=0
+    for ((attempt=0; attempt<30; attempt++)); do
+      if systemctl is-active --quiet praxi.service && \
+        health="$(curl -fsS --noproxy '*' --connect-timeout 1 --max-time 2 "http://127.0.0.1:${PORT}/v1/health")" && \
+        [[ "${health}" =~ \"status\"[[:space:]]*:[[:space:]]*\"(ok|setup_required)\" ]] && \
+        [[ "${health}" == *'"version"'* ]]; then
+        consecutive=$((consecutive + 1))
+        if [[ "${consecutive}" -ge 2 ]]; then ready=1; break; fi
+      else
+        consecutive=0
+      fi
+      sleep 1
+    done
+    [[ "${ready}" -eq 1 ]] || START_FAILED=1
+    if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
+      systemctl is-active --quiet praxi-xvfb.service || START_FAILED=1
+    fi
+    if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
+      systemctl is-active --quiet praxi-desktop.service || START_FAILED=1
+    fi
+    if [[ "${NODE_WAS_ACTIVE}" -eq 1 ]]; then
+      systemctl restart praxi-node.service || START_FAILED=1
+      systemctl is-active --quiet praxi-node.service || START_FAILED=1
+    fi
   fi
   if [[ "${START_FAILED}" -ne 0 ]]; then
     journalctl -u praxi -u praxi-node -u praxi-desktop -u praxi-xvfb -n 50 --no-pager >&2
@@ -1471,6 +1679,7 @@ if [[ "${NO_START}" -eq 0 ]]; then
 else
   log "files installed and units enabled; startup/readiness skipped (--no-start)"
 fi
+INSTALL_SUCCEEDED=1
 
 # ------------------------------------------------------------ next steps
 cat <<EOF

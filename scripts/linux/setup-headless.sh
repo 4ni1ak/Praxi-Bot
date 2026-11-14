@@ -18,6 +18,8 @@
 #   --system                   Configure system-wide praxi desktop units (requires root)
 #   --user                     Configure user-level dev session (default)
 #   --session <xfce|none>      Desktop session type (default: xfce; 'none' removes session in --system mode)
+#   --with-session-apps        Also install/expose xfce4-terminal and thunar (runs as praxi with read access to praxi.env)
+#   --without-session-apps     Hide/omit xfce4-terminal and thunar from the desktop session menu
 #   --without-desktop-session  Alias for --session none (--system mode)
 #   --without-desktop          Remove praxi-desktop.service and praxi-xvfb.service (--system mode)
 #   --display <:N>             X11 display number for Xvfb (default: :99)
@@ -33,6 +35,10 @@ set -euo pipefail
 MODE="user"
 SESSION_MODE="xfce"
 WITHOUT_DESKTOP=0
+WITH_SESSION_APPS=0
+WITHOUT_SESSION_APPS=0
+KEEP_SESSION_APPS=0
+SESSION_APPS_ACTIVE=0
 DISPLAY_NUM=":99"
 SCREEN_SPEC="1280x800x24"
 SKIP_PACKAGES=0
@@ -57,7 +63,7 @@ die() { printf '[praxi-headless] error: %s\n' "$*" >&2; exit 1; }
 need_arg() { [[ $# -ge 2 && -n "$2" ]] || die "$1 requires a value"; }
 
 usage() {
-  sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -80,6 +86,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --without-desktop-session)
       SESSION_MODE="none"
+      shift
+      ;;
+    --with-session-apps)
+      WITH_SESSION_APPS=1
+      shift
+      ;;
+    --without-session-apps)
+      WITHOUT_SESSION_APPS=1
       shift
       ;;
     --without-desktop)
@@ -129,6 +143,22 @@ done
 
 [[ "${DISPLAY_NUM}" =~ ^:[0-9]+$ ]] || die "invalid --display '${DISPLAY_NUM}' (expected :N)"
 [[ "${SCREEN_SPEC}" =~ ^[0-9]+x[0-9]+x[0-9]+$ ]] || die "invalid --screen '${SCREEN_SPEC}' (expected WxHxD)"
+[[ "${WITH_SESSION_APPS}" -eq 0 || "${WITHOUT_SESSION_APPS}" -eq 0 ]] || die "--with-session-apps and --without-session-apps cannot be used together"
+[[ "${SESSION_MODE}" == "xfce" || "${WITH_SESSION_APPS}" -eq 0 ]] || die "--with-session-apps requires --session xfce"
+
+if [[ "${MODE}" == "system" && "${WITH_SESSION_APPS}" -eq 0 && "${WITHOUT_SESSION_APPS}" -eq 0 && -f "${UNIT_DIR}/praxi-desktop.service" ]]; then
+  if grep -q '^Environment=PRAXI_ENABLE_SESSION_APPS=1$' "${UNIT_DIR}/praxi-desktop.service" 2>/dev/null; then
+    KEEP_SESSION_APPS=1
+  fi
+fi
+if [[ "${SESSION_MODE}" == "xfce" ]]; then
+  if [[ "${WITH_SESSION_APPS}" -eq 1 || "${KEEP_SESSION_APPS}" -eq 1 ]] && [[ "${WITHOUT_SESSION_APPS}" -eq 0 ]]; then
+    SESSION_APPS_ACTIVE=1
+  fi
+fi
+if [[ "${SESSION_APPS_ACTIVE}" -eq 1 && "${MODE}" == "system" ]]; then
+  warn "--with-session-apps enabled: xfce4-terminal and thunar run as '${SVC_USER}' and can read ${ENV_FILE} and ${DATA_DIR}, bypassing the daemon shell permission engine"
+fi
 
 if [[ "${DRY_RUN}" -eq 0 && "$(uname -s)" != "Linux" ]]; then
   die "setup-headless.sh must be run on a Linux host (or pass --dry-run)"
@@ -182,13 +212,6 @@ set_env_kv() {
   printf '%s=%s\n' "${key}" "${val}" >> "${file}"
 }
 
-ensure_env_default() {
-  local file="$1" key="$2" val="$3"
-  if ! grep -q "^${key}=" "${file}"; then
-    printf '%s=%s\n' "${key}" "${val}" >> "${file}"
-  fi
-}
-
 remove_env_key() {
   local file="$1" key="$2"
   sed -i "/^${key}=/d" "${file}"
@@ -227,10 +250,11 @@ install_desktop_packages() {
         xfdesktop4
         xfconf
         xfce4-settings
-        xfce4-terminal
-        thunar
         desktop-file-utils
       )
+      if [[ "${SESSION_APPS_ACTIVE}" -eq 1 ]]; then
+        pkgs_apt+=(xfce4-terminal thunar)
+      fi
     fi
     if [[ "${MODE}" == "user" ]]; then
       pkgs_apt+=(dbus-user-session)
@@ -275,7 +299,10 @@ install_desktop_packages() {
   elif command -v dnf >/dev/null 2>&1 && [[ "${MODE}" == "system" ]]; then
     local pkgs_dnf=(xorg-x11-server-Xvfb xauth dbus-daemon dbus-x11 at-spi2-core xdpyinfo xset xdg-utils liberation-fonts)
     if [[ "${need_xfce}" -eq 1 ]]; then
-      pkgs_dnf+=(xfwm4 xfce4-panel xfdesktop xfconf xfce4-settings xfce4-terminal thunar desktop-file-utils)
+      pkgs_dnf+=(xfwm4 xfce4-panel xfdesktop xfconf xfce4-settings desktop-file-utils)
+      if [[ "${SESSION_APPS_ACTIVE}" -eq 1 ]]; then
+        pkgs_dnf+=(xfce4-terminal thunar)
+      fi
     fi
     dnf install -y --setopt=install_weak_deps=False "${pkgs_dnf[@]}"
   else
@@ -295,6 +322,7 @@ if [[ -s "${xauth_file}" ]] && xauth -f "${xauth_file}" list "${disp}" 2>/dev/nu
   chmod 0600 "${xauth_file}"
   exit 0
 fi
+cookie=""
 if command -v mcookie >/dev/null 2>&1; then
   cookie="$(mcookie)"
 else
@@ -378,6 +406,7 @@ mkdir -p \
   "${XDG_DATA_HOME}/applications" \
   "${XDG_CACHE_HOME}"
 
+# Disable lock/power/printer/keyring/network-tray autostarts unconditionally.
 for desktop_name in \
   xfce4-screensaver.desktop \
   light-locker.desktop \
@@ -399,6 +428,8 @@ Hidden=true
 AUTOSTART
 done
 
+# Seed minimal Xfce configuration without clobbering later user tweaks,
+# except compositing stays disabled below via --compositor=off + xfconf-query.
 xfconf_dir="${XDG_CONFIG_HOME}/xfce4/xfconf/xfce-perchannel-xml"
 if [[ ! -f "${xfconf_dir}/xfwm4.xml" ]]; then
   cat > "${xfconf_dir}/xfwm4.xml" <<'XML'
@@ -479,6 +510,8 @@ if [[ ! -f "${xfconf_dir}/xfce4-desktop.xml" ]]; then
 XML
 fi
 
+# Register a manual browser menu launcher when a non-snap browser is installed.
+# Never autostarted; opened only on explicit human menu action.
 browser_bin=""
 for candidate in "${BOT_BROWSER_PATH:-}" "${PRAXI_BROWSER_PATH:-}" /opt/praxi-browser/chrome /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do
   [[ -n "${candidate}" && -x "${candidate}" ]] || continue
@@ -501,14 +534,32 @@ Categories=Network;WebBrowser;
 StartupNotify=true
 DESKTOP
 fi
-if [[ ! -f "${XDG_CONFIG_HOME}/xfce4/helpers.rc" ]]; then
-  {
-    echo "TerminalEmulator=xfce4-terminal"
-    echo "FileManager=thunar"
-    if [[ -n "${browser_bin}" ]]; then
-      echo "WebBrowser=praxi-browser"
+if [[ "${PRAXI_ENABLE_SESSION_APPS:-0}" == "1" ]]; then
+  for app_desktop in xfce4-terminal.desktop thunar.desktop; do
+    if [[ -f "${XDG_DATA_HOME}/applications/${app_desktop}" ]] && grep -q '^Hidden=true$' "${XDG_DATA_HOME}/applications/${app_desktop}"; then
+      rm -f "${XDG_DATA_HOME}/applications/${app_desktop}"
     fi
-  } > "${XDG_CONFIG_HOME}/xfce4/helpers.rc"
+  done
+  if [[ ! -f "${XDG_CONFIG_HOME}/xfce4/helpers.rc" ]]; then
+    {
+      echo "TerminalEmulator=xfce4-terminal"
+      echo "FileManager=thunar"
+      if [[ -n "${browser_bin}" ]]; then
+        echo "WebBrowser=praxi-browser"
+      fi
+    } > "${XDG_CONFIG_HOME}/xfce4/helpers.rc"
+  fi
+else
+  for app_desktop in xfce4-terminal.desktop thunar.desktop; do
+    cat > "${XDG_DATA_HOME}/applications/${app_desktop}" <<'APP_HIDE'
+[Desktop Entry]
+Type=Application
+Hidden=true
+APP_HIDE
+  done
+  if [[ ! -f "${XDG_CONFIG_HOME}/xfce4/helpers.rc" ]] && [[ -n "${browser_bin}" ]]; then
+    echo "WebBrowser=praxi-browser" > "${XDG_CONFIG_HOME}/xfce4/helpers.rc"
+  fi
 fi
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "${XDG_DATA_HOME}/applications" >/dev/null 2>&1 || true
@@ -648,6 +699,12 @@ if [[ "${SKIP_PACKAGES}" -eq 0 ]]; then
   install_desktop_packages
 fi
 
+if [[ "${WITHOUT_DESKTOP}" -eq 0 ]]; then
+  for req_cmd in Xvfb xauth xdpyinfo; do
+    command -v "${req_cmd}" >/dev/null 2>&1 || die "${req_cmd} not found (install desktop prerequisites or drop --skip-packages)"
+  done
+fi
+
 # ------------------------------------------------------------------ system mode
 if [[ "${MODE}" == "system" ]]; then
   if ! id -u "${SVC_USER}" >/dev/null 2>&1; then
@@ -663,9 +720,12 @@ if [[ "${MODE}" == "system" ]]; then
     local current_user
     current_user="$(id -un 2>/dev/null || true)"
     if [[ -z "${uname}" || "${uname}" == "${current_user}" || "${EUID:-$(id -u)}" -ne 0 ]]; then
-      env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1 || true
+      env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1
     elif command -v runuser >/dev/null 2>&1; then
-      runuser -u "${uname}" -- env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1 || true
+      runuser -u "${uname}" -- env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1
+    else
+      warn "runuser not available; cannot run systemctl --user for ${uname}"
+      return 1
     fi
   }
 
@@ -675,20 +735,40 @@ if [[ "${MODE}" == "system" ]]; then
     [[ -n "${uhome}" ]] || return 0
     local uunit="${uhome}/.config/systemd/user/praxi-headless-desktop.service"
     local uvnc="${uhome}/.config/systemd/user/praxi-headless-vnc.service"
-    local uid=""
+    local uid="" match_display=0 exec_script=""
     if [[ -n "${uname}" ]]; then
       uid="$(id -u "${uname}" 2>/dev/null || true)"
     fi
     if [[ -f "${uvnc}" ]]; then
-      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-vnc.service
+      if [[ -n "${uid}" ]]; then
+        run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-vnc.service || warn "could not stop/disable ${uvnc} via systemctl --user"
+      fi
       rm -f "${uvnc}" "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-vnc.service"
-      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" daemon-reload
+      [[ -n "${uid}" ]] && { run_user_systemctl "${uname}" "${uid}" daemon-reload || true; }
     fi
-    if [[ -f "${uunit}" ]] && grep -Eq "DISPLAY=${DISPLAY_NUM}([\"\'[:space:]]|$)" "${uunit}" 2>/dev/null; then
+    if [[ -f "${uunit}" ]]; then
+      if grep -Eq "DISPLAY=([\"\']?)${DISPLAY_NUM}([\"\'[:space:]]|$)" "${uunit}" 2>/dev/null; then
+        match_display=1
+      else
+        exec_script="$(awk -F= '/^ExecStart=/ {sub(/^[[:space:]]*/, "", $2); split($2, a, /[[:space:]]+/); print a[1]; exit}' "${uunit}" 2>/dev/null || true)"
+        if [[ -n "${exec_script}" && -f "${exec_script}" ]] && grep -Eq "DISPLAY=([\"\']?)${DISPLAY_NUM}([\"\'[:space:]]|$)" "${exec_script}" 2>/dev/null; then
+          match_display=1
+        fi
+      fi
+    fi
+    if [[ "${match_display}" -eq 1 ]]; then
       log "stopping, disabling, and removing conflicting user-level unit ${uunit} for ${DISPLAY_NUM}"
-      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-desktop.service
+      if [[ -n "${uid}" ]]; then
+        if run_user_systemctl "${uname}" "${uid}" is-active --quiet praxi-headless-desktop.service; then
+          if ! run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-desktop.service; then
+            warn "could not stop active user unit praxi-headless-desktop.service for ${uname} via systemctl --user"
+          fi
+        else
+          run_user_systemctl "${uname}" "${uid}" disable praxi-headless-desktop.service || true
+        fi
+      fi
       rm -f "${uunit}" "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-desktop.service"
-      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" daemon-reload
+      [[ -n "${uid}" ]] && { run_user_systemctl "${uname}" "${uid}" daemon-reload || true; }
     fi
   }
   if [[ "${WITHOUT_DESKTOP}" -eq 0 ]]; then
@@ -722,24 +802,23 @@ LockPersonality=true
 SystemCallArchitectures=native
 UMask=0077"
 
-  cat > "${UNIT_DIR}/${SLICE_NAME}" <<UNIT
-[Unit]
-Description=Praxi-Bot resource containment slice
-
-[Slice]
-CPUAccounting=true
-MemoryAccounting=true
-TasksAccounting=true
-CPUQuota=100%
-MemoryHigh=3G
-MemoryMax=4G
-UNIT
+# Not set on purpose: MemoryDenyWriteExecute and RestrictNamespaces (Chromium needs them).
 
   if [[ "${WITHOUT_DESKTOP}" -eq 1 ]]; then
-    log "removing praxi-desktop.service and praxi-xvfb.service"
+    log "removing praxi-desktop.service, praxi-xvfb.service, and ${SLICE_NAME}"
     systemctl disable --now praxi-xvfb.service praxi-desktop.service >/dev/null 2>&1 || true
     rm -f "${UNIT_DIR}/praxi-desktop.service" "${UNIT_DIR}/praxi-xvfb.service"
     rm -f "${UNIT_DIR}/praxi.service.d/desktop.conf" "${UNIT_DIR}/praxi-node.service.d/desktop.conf"
+    for svc in praxi praxi-node; do
+      if [[ -f "${UNIT_DIR}/${svc}.service" ]]; then
+        sed -i "/^Slice=${SLICE_NAME}$/d" "${UNIT_DIR}/${svc}.service"
+      fi
+    done
+    if [[ -f /usr/local/bin/praxi ]]; then
+      sed -i "s|--property=Slice=${SLICE_NAME} ||g" /usr/local/bin/praxi
+    fi
+    systemctl disable --now "${SLICE_NAME}" >/dev/null 2>&1 || true
+    rm -f "${UNIT_DIR}/${SLICE_NAME}"
     if [[ -f "${ENV_FILE}" ]]; then
       for k in DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE NO_AT_BRIDGE GTK_MODULES QT_ACCESSIBILITY QT_LINUX_ACCESSIBILITY_ALWAYS_ON GNOME_ACCESSIBILITY; do
         remove_env_key "${ENV_FILE}" "${k}"
@@ -758,6 +837,19 @@ UNIT
     exit 0
   fi
 
+  cat > "${UNIT_DIR}/${SLICE_NAME}" <<UNIT
+[Unit]
+Description=Praxi-Bot resource containment slice
+
+[Slice]
+CPUAccounting=true
+MemoryAccounting=true
+TasksAccounting=true
+CPUQuota=100%
+MemoryHigh=3G
+MemoryMax=4G
+UNIT
+
   xvfb_bin="$(command -v Xvfb || true)"
   [[ -n "${xvfb_bin}" ]] || die "Xvfb not found (install it or drop --skip-packages)"
   browser_bin="$(find_non_snap_browser || true)"
@@ -768,23 +860,27 @@ UNIT
   write_wait_desktop_helper "${LIBEXEC_DIR}/praxi-wait-desktop.sh"
   write_xfce_session_script "${LIBEXEC_DIR}/praxi-xfce-session.sh"
 
-  upholds_units=()
-  if [[ "${SESSION_MODE}" == "xfce" ]]; then
-    upholds_units+=(praxi-desktop.service)
-  fi
-  if [[ -f "${UNIT_DIR}/praxi.service" ]]; then
-    upholds_units+=(praxi.service)
+  SYSTEMD_VER="$(systemctl --version 2>/dev/null | awk 'NR==1 {print $2}' | sed 's/[^0-9].*//')"
+  SYSTEMD_HAS_UPHOLDS=0
+  if [[ "${SYSTEMD_VER}" =~ ^[0-9]+$ ]] && (( SYSTEMD_VER >= 249 )); then
+    SYSTEMD_HAS_UPHOLDS=1
+  else
+    warn "systemd version '${SYSTEMD_VER:-unknown}' (< 249) does not support Upholds=; omitting Upholds= from praxi-xvfb.service"
   fi
   upholds_line=""
-  if [[ "${#upholds_units[@]}" -gt 0 ]]; then
-    upholds_line="Upholds=${upholds_units[*]}"
+  if [[ "${SYSTEMD_HAS_UPHOLDS}" -eq 1 ]]; then
+    if [[ "${SESSION_MODE}" == "xfce" ]]; then
+      upholds_line="Upholds=praxi-desktop.service praxi.service"
+    else
+      upholds_line="Upholds=praxi.service"
+    fi
   fi
 
   cat > "${UNIT_DIR}/praxi-xvfb.service" <<UNIT
 [Unit]
 Description=Praxi virtual display (Xvfb ${DISPLAY_NUM})
-${upholds_line}
-
+${upholds_line:+${upholds_line}
+}
 [Service]
 Type=simple
 Slice=${SLICE_NAME}
@@ -794,6 +890,7 @@ WorkingDirectory=${DATA_DIR}
 Environment=HOME=${DATA_DIR}
 Environment=DISPLAY=${DISPLAY_NUM}
 Environment=XAUTHORITY=${XAUTH_FILE}
+# '!' bypasses User/Group only, preserving PrivateTmp for this root helper.
 ExecStartPre=!/usr/bin/install -d -o root -g root -m 1777 /tmp/.X11-unix
 ExecStartPre=${LIBEXEC_DIR}/praxi-xauth-init.sh ${DISPLAY_NUM} ${XAUTH_FILE}
 ExecStart=${xvfb_bin} ${DISPLAY_NUM} -screen 0 ${SCREEN_SPEC} -auth ${XAUTH_FILE} -nolisten tcp +extension RANDR +extension XTEST
@@ -815,6 +912,8 @@ BindsTo=praxi-xvfb.service
 After=praxi-xvfb.service
 PartOf=praxi-xvfb.service
 JoinsNamespaceOf=praxi-xvfb.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -837,6 +936,7 @@ Environment=GTK_MODULES=gail:atk-bridge
 Environment=QT_ACCESSIBILITY=1
 Environment=QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
 Environment=GNOME_ACCESSIBILITY=1
+Environment=PRAXI_ENABLE_SESSION_APPS=${SESSION_APPS_ACTIVE}
 ${browser_bin:+Environment=BOT_BROWSER_PATH=${browser_bin}}
 ExecStart=${LIBEXEC_DIR}/praxi-xfce-session.sh
 ExecStartPost=${LIBEXEC_DIR}/praxi-wait-desktop.sh ${DBUS_SOCKET}
@@ -865,11 +965,14 @@ UNIT
       fi
     fi
     install -d "${UNIT_DIR}/${svc}.service.d"
+    # Share the private /tmp (X11 socket) with the display service.
+    # Use Wants= for praxi-desktop.service so a desktop-session failure does
+    # not block the always-on daemon.
     if [[ "${SESSION_MODE}" == "xfce" ]]; then
       cat > "${UNIT_DIR}/${svc}.service.d/desktop.conf" <<UNIT
 [Unit]
 BindsTo=praxi-xvfb.service
-Requires=praxi-desktop.service
+Wants=praxi-desktop.service
 After=praxi-xvfb.service praxi-desktop.service
 JoinsNamespaceOf=praxi-xvfb.service
 UNIT
@@ -884,8 +987,6 @@ UNIT
   done
 
   if [[ -f "${ENV_FILE}" ]]; then
-    ensure_env_default "${ENV_FILE}" BOT_MAX_COMPUTER_RUNS 1
-    ensure_env_default "${ENV_FILE}" BOT_BROWSER_IDLE_SECONDS 120
     set_env_kv "${ENV_FILE}" DISPLAY "${DISPLAY_NUM}"
     set_env_kv "${ENV_FILE}" XAUTHORITY "${XAUTH_FILE}"
     if [[ "${SESSION_MODE}" == "xfce" ]]; then
@@ -941,11 +1042,11 @@ UNIT
 
   if [[ "${NO_START}" -eq 0 ]]; then
     systemctl restart praxi-xvfb.service
-    if [[ "${SESSION_MODE}" == "xfce" ]]; then
-      systemctl restart praxi-desktop.service
+    if [[ "${SESSION_MODE}" == "xfce" ]] && ! systemctl is-active --quiet praxi-desktop.service 2>/dev/null; then
+      systemctl start praxi-desktop.service
     fi
-    if systemctl is-enabled --quiet praxi.service 2>/dev/null; then
-      systemctl restart praxi.service
+    if systemctl is-enabled --quiet praxi.service 2>/dev/null && ! systemctl is-active --quiet praxi.service 2>/dev/null; then
+      systemctl start praxi.service
     fi
     if systemctl is-active --quiet praxi-node.service 2>/dev/null; then
       systemctl restart praxi-node.service
@@ -987,6 +1088,7 @@ set -euo pipefail
 export DISPLAY="${DISPLAY_NUM}"
 export XAUTHORITY="${USER_XAUTH}"
 export PRAXI_DBUS_SOCKET="${USER_DBUS}"
+export PRAXI_ENABLE_SESSION_APPS="${SESSION_APPS_ACTIVE}"
 export HOME="${HOME}"
 
 XVFB_PID=""
