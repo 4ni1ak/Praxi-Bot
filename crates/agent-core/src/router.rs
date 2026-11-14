@@ -65,14 +65,46 @@ pub(crate) struct BotLadder {
     fingerprint: Mutex<Option<u64>>,
 }
 
+/// Values held only in memory; intentionally has no Debug/Serialize implementation.
+pub(crate) struct HumanReplay {
+    pub bot: BotId,
+    pub run: Option<RunId>,
+    pub name: String,
+    pub params: BTreeMap<String, String>,
+}
+
 /// Ladders per bot and the workflow wiring.
 #[derive(Default)]
 pub(crate) struct Router {
     pub(crate) ladders: Mutex<HashMap<BotId, Arc<BotLadder>>>,
     pub workflows: OnceLock<WorkflowWiring>,
+    pub human_replays: Mutex<HashMap<String, HumanReplay>>,
+    pub tainted_runs: Mutex<std::collections::HashSet<RunId>>,
 }
 
 impl Router {
+    fn take_human_params(
+        &self,
+        run: &Run,
+        name: &str,
+        params: &mut serde_json::Map<String, Value>,
+    ) -> Result<bool, ExecError> {
+        let Some(ticket) = params.remove("__human_replay") else {
+            return Ok(false);
+        };
+        let replay = ticket
+            .as_str()
+            .and_then(|ticket| self.human_replays.lock().remove(ticket))
+            .filter(|r| r.bot == run.bot_id && r.run == Some(run.id) && r.name == name)
+            .ok_or_else(|| xe("human replay values unavailable; start again"))?;
+        *params = replay
+            .params
+            .into_iter()
+            .map(|(k, v)| (k, Value::String(v)))
+            .collect();
+        Ok(true)
+    }
+
     /// Forget every ladder (providers reloaded: embedder / classifier changed).
     pub fn reset(&self) {
         self.ladders.lock().clear();
@@ -241,6 +273,14 @@ pub(crate) fn routed_final_text(last: &RunStep) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn workflow_failure(name: &str, level: &str, why: &str) -> Value {
+    json!({
+        "completed": false, "workflow": name, "level": level,
+        "note": "The saved workflow could not be replayed.",
+        "summary": format!("The saved workflow could not be replayed: {why}"),
+    })
+}
+
 fn route_json(decision: &Decision) -> Value {
     serde_json::to_value(&decision.route).unwrap_or(Value::Null)
 }
@@ -256,6 +296,29 @@ fn level_name(l: Level) -> &'static str {
 }
 
 impl Shared {
+    /// Stable hook for PR #46: source taint is monotonic for this run, including
+    /// calls after a model-facing workflow handover. Denies/floors win first.
+    pub(crate) fn decide(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        effect: tool_registry::Effect,
+        category: protocol::PermissionCategory,
+        input: &Value,
+    ) -> permission_engine::Decision {
+        if workflow_replay::replay::source_tainted() {
+            self.router.tainted_runs.lock().insert(ctx.run_id);
+        }
+        let decision = self.decide_untainted(ctx, name, effect, category, input);
+        if decision == permission_engine::Decision::Allow
+            && self.router.tainted_runs.lock().contains(&ctx.run_id)
+        {
+            permission_engine::Decision::ask()
+        } else {
+            decision
+        }
+    }
+
     /// The bot's ladder (built on first use); `None` when its router is off.
     pub(crate) fn ladder_for(&self, bot: BotId, profile: &BotProfile) -> Option<Arc<BotLadder>> {
         if !profile.router.enabled {
@@ -294,12 +357,22 @@ impl Shared {
     pub(crate) fn router_candidates(&self, profile: &BotProfile, bot: BotId) -> Vec<Candidate> {
         let mut out = Vec::new();
         if let Some(w) = self.router.workflows.get()
-            && let Ok(entries) = w.store.list()
+            && let Ok(store) = w.store.for_bot(&bot.to_string())
+            && let Ok(entries) = store.list()
         {
             for e in entries {
-                let Ok(wf) = w.store.get(&e.name) else {
+                let Ok(wf) = store.get(&e.name) else {
                     continue;
                 };
+                // Runtime values are accepted only by the explicit human entry.
+                // Excluding these candidates also closes K1/K2/K3 fuzzy replay.
+                if wf
+                    .params
+                    .iter()
+                    .any(|p| p.name.starts_with("recorded_secret_"))
+                {
+                    continue;
+                }
                 let version = wf.to_toml().map_or_else(
                     |_| e.updated_at_ms.to_string(),
                     |t| format!("{:016x}", fnv(t.as_bytes())),
@@ -674,27 +747,50 @@ impl TurnExecutor {
         let ctx = self.sh.ctx(run)?;
         let name = step.input["name"].as_str().unwrap_or_default().to_owned();
         let level = step.input["level"].as_str().unwrap_or("K0").to_owned();
-        let params: serde_json::Map<String, Value> = step.input["params"]
+        let mut params: serde_json::Map<String, Value> = step.input["params"]
             .as_object()
             .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
-        let fail = |why: String| {
-            json!({
-                "completed": false,
-                "workflow": name,
-                "level": level,
-                "note": "The saved workflow could not be replayed.",
-                "summary": format!("The saved workflow could not be replayed: {why}"),
-            })
-        };
+        let human = self.sh.router.take_human_params(run, &name, &mut params)?;
+        let fail = |why: String| workflow_failure(&name, &level, &why);
         let Some(w) = self.sh.router.workflows.get() else {
-            return Ok(fail("workflows are not available".into()));
+            return if human {
+                Err(xe("workflows are not available"))
+            } else {
+                Ok(fail("workflows are not available".into()))
+            };
         };
-        let wf = match w.store.get(&name) {
+        let store = w
+            .store
+            .for_bot(&run.bot_id.to_string())
+            .map_err(|_| xe("invalid bot scope"))?;
+        let wf = match store.get(&name) {
             Ok(wf) => wf,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => {
+                return if human {
+                    Err(xe("workflow unavailable"))
+                } else {
+                    Ok(fail(e.to_string()))
+                };
+            }
         };
+        if !human
+            && wf
+                .params
+                .iter()
+                .any(|p| p.name.starts_with("recorded_secret_"))
+        {
+            return Err(xe("runtime parameters require the human replay endpoint"));
+        }
+        if wf
+            .source
+            .as_ref()
+            .is_some_and(|s| s.bot_id != run.bot_id.to_string())
+        {
+            return Err(xe("workflow belongs to another bot"));
+        }
         let mut opts = w.opts.clone();
+        opts.bot_id = Some(run.bot_id.to_string());
         opts.run_id = run.id.to_string();
         let gate = LoopGate {
             sh: Arc::downgrade(&self.sh),
@@ -704,8 +800,19 @@ impl TurnExecutor {
             .await
         {
             Ok(r) => r,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => {
+                return if human {
+                    Err(xe("human replay failed"))
+                } else {
+                    Ok(fail(e.to_string()))
+                };
+            }
         };
+        if human && !report.is_completed() {
+            return Err(xe(
+                "human replay stopped; review state before starting again",
+            ));
+        }
         let summary = summarize(&report);
         if report.is_completed() {
             self.sh.emit(

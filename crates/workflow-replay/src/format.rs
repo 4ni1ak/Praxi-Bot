@@ -445,6 +445,20 @@ pub enum SuccessCheck {
     },
 }
 
+/// Server-derived origin of a reviewed recording. Never supplied by the model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowSource {
+    /// Persisted source run.
+    pub run_id: String,
+    /// Bot allowed to discover and replay this recording.
+    pub bot_id: String,
+    /// Conservative mark: the source run consumed external/private tool output.
+    /// PR #46 must inherit this mark into its per-run egress taint state.
+    pub untrusted_content: bool,
+    /// One origin per saved step: `user_request` or `run_content_or_model`.
+    pub step_origins: Vec<String>,
+}
+
 /// A recorded, parameterised, replayable task.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Workflow {
@@ -464,6 +478,9 @@ pub struct Workflow {
     /// Steps, in order.
     #[serde(default)]
     pub steps: Vec<Step>,
+    /// Recording provenance; absent only for manually authored legacy files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<WorkflowSource>,
     /// Checked after the last step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub success_check: Option<SuccessCheck>,
@@ -495,6 +512,7 @@ impl Workflow {
             params: Vec::new(),
             steps: Vec::new(),
             success_check: None,
+            source: None,
         }
     }
 

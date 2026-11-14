@@ -118,7 +118,7 @@ pub(crate) fn grant_target(detail: &Value) -> Option<GrantTarget> {
 
 impl Shared {
     /// Resolve policy + grants for one call.
-    pub(crate) fn decide(
+    pub(crate) fn decide_untainted(
         &self,
         ctx: &RunCtx,
         name: &str,

@@ -36,11 +36,19 @@ pub const MAX_WORKFLOW_DEPTH: usize = 4;
 tokio::task_local! {
     /// Names of the workflows currently being replayed on this task chain.
     static WORKFLOW_STACK: Vec<String>;
+    static SOURCE_TAINTED: bool;
 }
 
 /// Workflows currently being replayed (outermost first) on this task.
 pub(crate) fn active_workflows() -> Vec<String> {
     WORKFLOW_STACK.try_with(Clone::clone).unwrap_or_default()
+}
+
+/// Whether the active replay inherited untrusted/private source content.
+/// Agent permission gates must inherit this into their own run taint state.
+#[must_use]
+pub fn source_tainted() -> bool {
+    SOURCE_TAINTED.try_with(|v| *v).unwrap_or(false)
 }
 
 /// Receives replay events.
@@ -383,8 +391,12 @@ impl Replayer {
             .into());
         }
         stack.push(wf.name.clone());
-        WORKFLOW_STACK
-            .scope(stack, self.replay_inner(wf, params, gate))
+        let tainted = source_tainted() || wf.source.as_ref().is_some_and(|s| s.untrusted_content);
+        SOURCE_TAINTED
+            .scope(
+                tainted,
+                WORKFLOW_STACK.scope(stack, self.replay_inner(wf, params, gate)),
+            )
             .await
     }
 
