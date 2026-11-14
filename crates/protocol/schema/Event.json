@@ -687,6 +687,11 @@
           "description": "Restored checkpoint id, or `\"all\"` when undoing the whole run.",
           "type": "string"
         },
+        "partial": {
+          "description": "Restore attempt failed; inspect warnings and safety snapshots.",
+          "default": false,
+          "type": "boolean"
+        },
         "restored": {
           "description": "Paths restored (in restore order).",
           "type": "array",

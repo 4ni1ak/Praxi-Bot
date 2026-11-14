@@ -1635,7 +1635,7 @@ export interface components {
          * @description Why inline text diffing was omitted for a changed path.
          * @enum {string}
          */
-        DiffOmittedReasonDto: "binary" | "too_large" | "run_budget_exceeded" | "directory" | "symlink";
+        DiffOmittedReasonDto: "binary" | "too_large" | "run_budget_exceeded" | "directory" | "symlink" | "not_accessible" | "line_endings";
         /** @description A bot's permission picture (`GET /v1/bots/{id}`). */
         EffectivePolicyDto: {
             /**
@@ -1847,10 +1847,13 @@ export interface components {
         };
         /** @description One collapsed file change recorded during a run. */
         FileChangeDto: {
+            accessible: boolean;
             /** Format: int64 */
             after_size?: number | null;
             /** Format: int64 */
             before_size?: number | null;
+            /** Format: uuid */
+            changed_by_run?: string | null;
             checkpoint_id: string;
             current_matches_after: boolean;
             diff_omitted_reason?: null | components["schemas"]["DiffOmittedReasonDto"];
@@ -2591,7 +2594,10 @@ export interface components {
         };
         /** @description Per-path dry-run entry for a checkpoint or whole-run restore. */
         RestorePreviewEntryDto: {
+            accessible: boolean;
             action: components["schemas"]["RestoreActionDto"];
+            /** Format: uuid */
+            changed_by_run?: string | null;
             current_matches_after: boolean;
             path: string;
             via_link_of?: string | null;
@@ -2604,7 +2610,9 @@ export interface components {
         RestoreResponseDto: {
             checkpoint_id: string;
             covered: string[];
+            error?: string | null;
             not_covered: string[];
+            partial: boolean;
             restored: string[];
             /** Format: uuid */
             run_id: string;
@@ -2620,6 +2628,7 @@ export interface components {
         RunChangesDto: {
             changes: components["schemas"]["FileChangeDto"][];
             covered: string[];
+            next_offset?: number | null;
             not_covered: string[];
             /** Format: uuid */
             run_id: string;
@@ -4904,7 +4913,12 @@ export interface operations {
     };
     get_run_changes: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description File offset */
+                offset?: number;
+                /** @description Page size, maximum 100 */
+                limit?: number;
+            };
             header?: never;
             path: {
                 /** @description Run id */

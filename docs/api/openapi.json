@@ -2660,6 +2660,26 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "File offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, maximum 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         ],
         "responses": {
@@ -4821,7 +4841,9 @@
           "too_large",
           "run_budget_exceeded",
           "directory",
-          "symlink"
+          "symlink",
+          "not_accessible",
+          "line_endings"
         ]
       },
       "EffectivePolicyDto": {
@@ -5298,6 +5320,7 @@
         "type": "object",
         "description": "One collapsed file change recorded during a run.",
         "required": [
+          "accessible",
           "path",
           "op",
           "checkpoint_id",
@@ -5308,6 +5331,9 @@
           "is_link"
         ],
         "properties": {
+          "accessible": {
+            "type": "boolean"
+          },
           "after_size": {
             "type": [
               "integer",
@@ -5323,6 +5349,13 @@
             ],
             "format": "int64",
             "minimum": 0
+          },
+          "changed_by_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "checkpoint_id": {
             "type": "string"
@@ -7513,13 +7546,24 @@
         "type": "object",
         "description": "Per-path dry-run entry for a checkpoint or whole-run restore.",
         "required": [
+          "accessible",
           "path",
           "current_matches_after",
           "action"
         ],
         "properties": {
+          "accessible": {
+            "type": "boolean"
+          },
           "action": {
             "$ref": "#/components/schemas/RestoreActionDto"
+          },
+          "changed_by_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "current_matches_after": {
             "type": "boolean"
@@ -7548,6 +7592,7 @@
         "type": "object",
         "description": "Response for `POST /v1/runs/{id}/changes/{cp}/restore`.",
         "required": [
+          "partial",
           "run_id",
           "checkpoint_id",
           "safety_checkpoint_ids",
@@ -7566,11 +7611,20 @@
               "type": "string"
             }
           },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "not_covered": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "partial": {
+            "type": "boolean"
           },
           "restored": {
             "type": "array",
@@ -7630,6 +7684,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
           },
           "not_covered": {
             "type": "array",
