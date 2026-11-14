@@ -19,6 +19,7 @@ import type {
   WebSearchTestInput,
   GlobalEnvelope
 } from "./types.ts";
+import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeSourceChange } from "./types.ts";
 
 import { isMockMode, MOCK_BASE_URL } from "./mockMode.ts";
 export { isMockMode, MOCK_BASE_URL };
@@ -279,6 +280,8 @@ function serverFromConfig(c: McpServerConfig, category = "other"): McpServer {
  * the UI and its tests exercise the real request paths.
  */
 export class MockApiClient extends ApiClient {
+  private readonly knowledgeSources = new Map<string, KnowledgeSource[]>();
+  private readonly knowledgeSettings = new Map<string, KnowledgeSettings>();
   readonly servers: McpServer[];
   readonly providersDto: ProvidersDto = structuredClone(PROVIDERS);
   readonly detectedProvidersList: DetectedProviderDto[] = structuredClone(DETECTED_PROVIDERS);
@@ -380,6 +383,59 @@ export class MockApiClient extends ApiClient {
     await Promise.resolve();
     const ok = (v: unknown) => v as T;
     const seg = path.split("/").filter(Boolean).map(decodeURIComponent);
+    if (seg[0] === "bots" && seg[2] === "knowledge") {
+      if (!this.bots.some((bot) => bot.id === seg[1])) throw new ApiError(404, "not_found", "bot");
+      const bot = seg[1];
+      const sources = this.knowledgeSources.get(bot) ?? [];
+      const settings = this.knowledgeSettings.get(bot) ?? { auto_retrieve: false, embedding: null, local_embeddings_available: false };
+      if (seg[3] === "email-captures" && method === "GET") return ok([]);
+      if (seg[3] === "settings") {
+        if (method === "GET") return ok(settings);
+        const input = opts.body as KnowledgeSettingsInput;
+        const embedding = input.embedding;
+        const next: KnowledgeSettings = { auto_retrieve: input.auto_retrieve, local_embeddings_available: false, embedding: embedding ? {
+          provider_id: embedding.provider_id, model: embedding.model, dimensions: embedding.dimensions,
+          request_dimensions: embedding.request_dimensions ?? false,
+          endpoint: "https://embedding.example.invalid", profile_fingerprint: "a".repeat(64),
+          query_remote: embedding.query_remote ?? false,
+          requests_per_minute: embedding.requests_per_minute, requests_per_day: embedding.requests_per_day,
+          local_artifacts: embedding.local_artifacts ?? null
+        } : null };
+        this.knowledgeSettings.set(bot, next);
+        return ok(next);
+      }
+      if (seg[3] === "sources") {
+        if (method === "GET") return ok(structuredClone(sources));
+        if (method === "POST" && !seg[4]) {
+          const input = opts.body as KnowledgeSourceInput;
+          const source: KnowledgeSource = { id: crypto.randomUUID(), kind: input.kind, label: input.label,
+            locator: input.path ?? input.url ?? `saved:${input.kind}`, enabled: true, revision: 1,
+            remote_profile_fingerprint: null, documents: 1, chunks: 1, updated_ms: Date.now() };
+          sources.push(source); this.knowledgeSources.set(bot, sources);
+          return ok({ source, indexing: { processed: 1, unchanged: 0, removed: 0, next_cursor: null } });
+        }
+        const source = sources.find((item) => item.id === seg[4]);
+        if (!source) throw new ApiError(404, "not_found", "source");
+        const input = opts.body as KnowledgeSourceChange;
+        if (source.revision !== input.expected_revision) throw new ApiError(409, "conflict", "source changed");
+        if (method === "DELETE") { this.knowledgeSources.set(bot, sources.filter((item) => item !== source)); return ok(undefined); }
+        if (seg[5] === "reindex") return ok({ source, indexing: { processed: 1, unchanged: 1, removed: 0, next_cursor: null } });
+        if (seg[5] === "embed") {
+          if (settings.embedding?.provider_id === "local-onnx") return ok({ status: "failed", embedded_chunks: 0, cache_hits: 0, remaining_chunks: 1, next_attempt_ms: null, failure_code: "local_embeddings_unavailable" });
+          return ok({ status: source.remote_profile_fingerprint ? "complete" : "awaiting_consent", embedded_chunks: source.remote_profile_fingerprint ? 1 : 0, cache_hits: 0, remaining_chunks: source.remote_profile_fingerprint ? 0 : 1, next_attempt_ms: null, failure_code: null });
+        }
+        if (input.action === "grant_remote") {
+          if (!source.enabled || input.profile_fingerprint !== settings.embedding?.profile_fingerprint) throw new ApiError(409, "conflict", "review the profile");
+          source.remote_profile_fingerprint = input.profile_fingerprint;
+        }
+        if (input.action === "revoke_remote") source.remote_profile_fingerprint = null;
+        if (input.action === "disable") { source.enabled = false; source.remote_profile_fingerprint = null; }
+        if (input.action === "enable") source.enabled = true;
+        if (input.action === "rename" && input.label) source.label = input.label;
+        source.revision += 1;
+        return ok(structuredClone(source));
+      }
+    }
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
         return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });

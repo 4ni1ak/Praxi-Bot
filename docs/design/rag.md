@@ -35,8 +35,10 @@ Other existing building blocks:
 | API/UI | `rememberRun` saves a reusable workflow; no semantic-memory CRUD or knowledge settings | Bot-scoped sources/settings/search/indexing UI and generated API client |
 
 PDF extraction has no OCR dependency: scanned/image-only PDFs can produce no
-text. Citations for transformed PDF/DOCX/HTML refer to the extracted document
-and say so; they must not invent original PDF page numbers or Word line numbers.
+text. File citations use a `#extracted-text` locator and line ranges within the
+indexed, extracted/redacted text, including Markdown and code. The live secret
+redactor can replace multiline spans, so these ranges must not be presented as
+original filesystem, PDF page or Word line numbers.
 
 ## Boundaries and storage
 
@@ -73,6 +75,11 @@ migrations, including triggers, foreign keys, indexes and FTS shadow tables.
 Validation rejects additional or altered schema objects before import resets
 source authority; an imported trigger cannot restore consent or suppress deletion.
 Data and SQLite page layout may differ without changing the supported schema.
+State-bundle import also attests the complete migrated `bot.db` schema before
+sanitizing settings. This import-only check retains the canonical audit triggers
+and rejects additional or altered objects, including a dormant trigger that
+could restore an imported embedding configuration later. Ordinary runtime
+storage initialization is unchanged.
 
 ## Source acquisition, incremental work and limits
 
@@ -85,6 +92,16 @@ a validated HTTP(S) locator; they do not crawl or refresh that URL. A conversati
 snapshot requires owner **and** bot/chat equality. Email snapshots come from an
 authorized read by this bot and are rechecked against the account's current
 binding. Account rebind/delete invalidates related sources.
+
+The email selector only offers a successful, persisted `email_read` result with
+an explicit account argument from an owned run of this same bot. Failed or
+spilled results are excluded, the matching call/result is bounded before it is
+copied from storage, and indexing rechecks current account ownership. A
+conversation snapshot accepts at most 2,000 messages and 1 MiB of text; an
+incomplete oversized conversation is refused. All source metadata and document
+text are treated as private, untrusted data. Known credential files are refused;
+credential-shaped text and the daemon's currently registered exact secret values
+are redacted before indexing or embedding.
 
 Markdown chunking preserves heading ancestry, paragraphs, fenced code and table
 headers. Large blocks split on complete lines where possible; pathological long
@@ -104,10 +121,43 @@ Removed files are pruned only after a complete successful scan; a partial scan
 must not delete unseen documents. Files larger than the limit are reported as
 skipped/errors instead of being silently truncated into a complete-looking index.
 
+The shipped file adapter admits at most 4 MiB of input bytes and 1 MiB of
+extracted text per document. Folder discovery is bounded by 4,096 directory
+entries and a depth of 24; a single indexing page handles at most 32 files.
+Hidden entries, dependency/build directories and known credential files are
+excluded. An opened file must be regular, have one hard link and remain within
+the byte limit. On Unix it is opened without blocking before type validation,
+so replacement with a FIFO cannot leave an indexing worker waiting for a writer.
+
+PDF knowledge ingestion uses a deliberately conservative subset, independently
+of the interactive `pdf_extract` tool:
+
+| Admission | Knowledge source limit |
+| --- | --- |
+| Decoded stream / page extraction stream | 1 MiB per stream |
+| Stream markers and pages | 64 each; marker counting is conservative |
+| Retained object accounting | 16 MiB, 25,000 nodes, nesting depth 64 |
+| Cross-reference entries | 25,000 declared entries before allocation |
+| Compressed object work | 64 MiB of decoded-length × member-count accounting |
+| Fonts | 32 per page |
+| Unicode character maps | 4,096 mappings per document, at most 8 UTF-16 code units per destination |
+| Character-map decoding / scanning | 4 MiB / 8 MiB aggregate work |
+
+Encrypted PDFs and indirect stream-length references are refused before parsing,
+including escaped PDF names and comment-separated references. Compressed object
+headers are checked before expansion, and Unicode map ranges are counted before
+the library builds its reverse map. These checks prevent small files from
+bypassing the output limit through stream/object or character-map expansion.
+Uncommon or complex PDFs may need a simplified export. The parser remains
+in-process: these are input, retained-object and work admission limits, not an
+OS-enforced RSS/CPU ceiling or a claim about transient allocator overhead.
+
 CPU-heavy parsing/indexing runs off async executor threads with a shared bounded
 worker permit. The permit stays with blocking work if its awaiting request is
 cancelled. This avoids releasing capacity while a parser is still running.
 Lexical search admits two concurrent blocking operations; indexing admits one.
+An occupied indexing slot returns a busy response instead of accumulating an
+unbounded queue of parser tasks.
 No GPU, remote vector server, daemon-managed model download or telemetry is
 required. These bounds are design constraints, not a benchmark claim for the
 owner's ARM host; real throughput remains to be measured there.
@@ -236,6 +286,12 @@ The live secret redactor refreshes once before each outbound batch.
 Source/settings mutations and bounded dispatch share an authority lock. A
 management request reports busy while a previous dispatch is in flight; after
 revocation succeeds, later dispatch cannot use its old settings snapshot.
+The lock is shared by daemon instances using the same canonical data directory;
+independent data directories do not block each other. Generic bot updates retain
+the current knowledge settings, so a stale settings form cannot restore a revoked
+grant. Disabling/changing embedding settings immediately evicts its cached
+service. Bot deletion evicts the service and removes only that bot's scoped
+knowledge database and SQLite sidecars before committing owner-row deletion.
 Automatic continuation preserves durable retry limits. Only an explicit owner
 retry resets a source's failed-job state; it never refunds account reservations
 or clears provider cooldowns.
@@ -257,6 +313,15 @@ rolling limits avoid assuming a provider's midnight boundary. The actual
 [Gemini limits](https://ai.google.dev/gemini-api/docs/rate-limits) are project-scoped
 and vary by account/model. A local ledger cannot coordinate unrelated machines
 using the same external account; provider 429s remain authoritative.
+The source settings UI uses conservative input units: each item in a batch counts
+toward the configured minute/day budget. Provider aliases with the same saved
+`SecretRef` share a default quota group; environment-only credentials use the
+provider identity. Separate saved credentials can still belong to the same
+upstream project, so the local grouping does not discover or replace provider
+project limits. The owner can enter embedding model IDs manually; the chat model
+picker's results are not used as an embedding-capability test. Gemini settings
+accept the explicit supported 001, 2 and 2-preview identifiers, with no inferred
+task format for an unknown model family.
 
 The optional local path uses explicitly supplied model/tokenizer artifacts with
 the existing permissively licensed fastembed/ONNX stack, where supported. It
@@ -287,12 +352,31 @@ expired/reused approvals or changed source revisions fail. Capability-scoped
 no-replace publication prevents traversal and accidental overwrite. Imported
 frontmatter does not grant trust or write authority.
 
+Atomic publication is implemented for Linux and Windows. Linux uses an unnamed
+staging inode, requiring an `O_TMPFILE`-capable filesystem and accessible
+`/proc/self/fd`. Windows also publishes from the held source and directory
+handles, pins the staged file against concurrent writes/deletion, and requires a
+local filesystem supporting hard links. Unsupported filesystems
+or publication failures reject the write instead of falling back to a mutable
+staging pathname. The bot tool advertises only these two supported platforms;
+human editing and explicitly selected brain reads remain ordinary Markdown use.
+The final publication holds a source-revision transaction and rechecks the
+approved brain directory identity immediately before linking the new file.
+A directory replaced while publication waits for that transaction cannot retarget
+the approved note. Pending records are bounded, expire after five minutes, and
+contain at most 64 KiB of rendered Markdown; the approval card shows those exact
+bytes and their hash.
+
 State bundles explicitly snapshot nested knowledge databases using SQLite's
 backup API and validate scope/schema/foreign keys/index consistency before
 installation. WAL and SHM files are not ordinary bundle blobs. Import disables
-external source bindings, clears remote document/query consent and automatic
-retrieval, and requires reauthorization on the destination. Pending approvals
-and in-flight jobs are not transferable authority. The host quota ledger is
+all source bindings, clears document consent and automatic retrieval, and clears
+the complete embedding configuration, both remote and local. Imported settings
+cannot select an endpoint, model, native runtime/artifact path, quota group or
+query consent. The owner must select settings through the dedicated destination
+API/UI and then authorize sources and query egress separately. Content and
+labels remain available for review. Pending approvals and in-flight jobs are
+not transferable authority. The host quota ledger is
 runtime state: it is excluded and an existing destination ledger must not be
 rolled back by import. Shared Markdown files transfer as data and are only
 indexed by bots that explicitly attach the brain.

@@ -16,7 +16,7 @@ use crate::email::{
 
 const SECRET: &str = "hunter2-app-password-XYZ";
 
-struct FakeEmail {
+pub(super) struct FakeEmail {
     accounts: Mutex<Vec<EmailAccountDto>>,
     /// Passwords the "secret store" holds, by account name.
     passwords: Mutex<Vec<(String, String)>>,
@@ -157,7 +157,7 @@ fn report(imap: EmailProbeStatus, smtp: EmailProbeStatus) -> EmailTestReport {
     }
 }
 
-fn with_email() -> (T, Arc<FakeEmail>) {
+pub(super) fn with_email() -> (T, Arc<FakeEmail>) {
     let t = setup();
     let fake = FakeEmail::new();
     t.state.set_email(fake.clone());

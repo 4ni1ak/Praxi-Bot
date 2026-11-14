@@ -1,4 +1,5 @@
 import type { Connection } from "./connection";
+import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress } from "./types";
 import type {
   AcceptedResponse,
   Approval,
@@ -63,6 +64,40 @@ type Query = Record<string, string | number | null | undefined>;
  * shapes come from the generated OpenAPI types (see `types.ts`).
  */
 export class ApiClient {
+  listKnowledgeEmailCaptures(bot: string): Promise<KnowledgeEmailCapture[]> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/email-captures`);
+  }
+  listKnowledgeSources(bot: string): Promise<KnowledgeSource[]> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/sources`);
+  }
+
+  createKnowledgeSource(bot: string, body: KnowledgeSourceInput): Promise<KnowledgeMutation> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/sources`, { body });
+  }
+
+  updateKnowledgeSource(bot: string, source: string, body: KnowledgeSourceChange): Promise<KnowledgeSource> {
+    return this.request("PUT", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}`, { body });
+  }
+
+  deleteKnowledgeSource(bot: string, source: string, expectedRevision: number): Promise<void> {
+    return this.request("DELETE", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}`, { body: { expected_revision: expectedRevision } });
+  }
+
+  reindexKnowledgeSource(bot: string, source: string, expectedRevision: number, cursor?: string): Promise<KnowledgeMutation> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}/reindex`, { body: { expected_revision: expectedRevision, cursor: cursor ?? null } });
+  }
+
+  embedKnowledgeSource(bot: string, source: string, expectedRevision: number, resetRetry = false): Promise<KnowledgeEmbeddingProgress> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}/embed`, { body: { expected_revision: expectedRevision, reset_retry: resetRetry } });
+  }
+
+  getKnowledgeSettings(bot: string): Promise<KnowledgeSettings> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/settings`);
+  }
+
+  updateKnowledgeSettings(bot: string, body: KnowledgeSettingsInput): Promise<KnowledgeSettings> {
+    return this.request("PUT", `/bots/${encodeURIComponent(bot)}/knowledge/settings`, { body });
+  }
   readonly baseUrl: string;
   private readonly token: string;
 

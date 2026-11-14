@@ -21,7 +21,9 @@ pub mod error;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
 pub mod host;
+mod knowledge;
 pub mod knowledge_runtime;
+mod knowledge_settings;
 pub mod live_view;
 pub mod mcp;
 mod mcp_routes;
@@ -761,6 +763,30 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/view/privileges/{peer_key}", put(v::set_privileges))
         .route("/v1/openapi.json", get(openapi::serve_openapi))
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
+        .route(
+            "/v1/bots/{bot}/knowledge/sources",
+            get(knowledge::list_sources).post(knowledge::create_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}",
+            put(knowledge::update_source).delete(knowledge::delete_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}/reindex",
+            post(knowledge::reindex_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}/embed",
+            post(knowledge::embed_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/settings",
+            get(knowledge_settings::get_settings).put(knowledge_settings::put_settings),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/email-captures",
+            get(knowledge::email_captures),
+        )
         .route(
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),

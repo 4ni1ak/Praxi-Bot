@@ -282,6 +282,11 @@ pub(crate) async fn create_bot(
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, config) = resolve_bot(input)?;
+    if config.get("knowledge").is_some() {
+        return Err(ApiError::bad_request(
+            "configure knowledge through the bot knowledge settings endpoint",
+        ));
+    }
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -360,8 +365,16 @@ pub(crate) async fn update_bot(
     Path(bid): Path<String>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
+    let _knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
     let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
-    let (name, config) = resolve_bot(input)?;
+    let (name, mut config) = resolve_bot(input)?;
+    // Generic profile saves may contain stale snapshots. Only the dedicated
+    // knowledge endpoint may update retrieval configuration or query grants.
+    if let Some(current) = bot.config.get("knowledge") {
+        config["knowledge"] = current.clone();
+    } else if let Some(object) = config.as_object_mut() {
+        object.remove("knowledge");
+    }
     s.storage().update_bot(bot.id, &name, &config)?;
     bot.name = name;
     bot.config = config;
@@ -377,10 +390,17 @@ pub(crate) async fn delete_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    let _knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
     s.storage()
-        .delete_bot(bot.id)
-        .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+        .delete_bot_with_cleanup(bot.id, || {
+            crate::knowledge::remove_bot_index(&s, &bot).map_err(storage::StorageError::Io)
+        })
+        .map_err(|_| {
+            ApiError::conflict(
+                "bot still has chats or runs, or its knowledge files could not be removed",
+            )
+        })?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.

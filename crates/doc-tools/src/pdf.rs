@@ -93,10 +93,52 @@ pub(crate) fn detect_tables(text: &str) -> Vec<Vec<Vec<String>>> {
 pub fn run(cfg: &DocToolsConfig, input: Value) -> Result<Reply, ToolError> {
     let i: In = parse(input)?;
     let bytes = read_limited(cfg, &i.path)?;
-    let doc = lopdf::Document::load_mem(&bytes)
-        .map_err(|e| exec(format!("cannot parse PDF {}: {e}", i.path)))?;
+    extract(cfg, &i, &bytes, false)
+}
+
+pub(crate) fn from_bytes(
+    cfg: &DocToolsConfig,
+    label: &str,
+    bytes: &[u8],
+) -> Result<Reply, ToolError> {
+    let input = serde_json::json!({"path": label, "max_chars": cfg.max_preview_chars});
+    extract(cfg, &parse(input)?, bytes, true)
+}
+
+fn extract(cfg: &DocToolsConfig, i: &In, bytes: &[u8], source: bool) -> Result<Reply, ToolError> {
+    let decoded_limit = if source {
+        crate::pdf_budget::DECODED_STREAM_BYTES
+    } else {
+        usize::try_from(cfg.max_input_bytes.saturating_mul(4).min(64 * 1024 * 1024))
+            .unwrap_or(64 * 1024 * 1024)
+    };
+    let options = lopdf::LoadOptions {
+        max_decompressed_size: Some(decoded_limit),
+        ..lopdf::LoadOptions::default()
+    };
+    let doc = if source {
+        crate::pdf_budget::load(bytes)?
+    } else {
+        lopdf::Document::load_mem_with_options(bytes, options)
+            .map_err(|e| exec(format!("cannot parse PDF {}: {e}", i.path)))?
+    };
     if doc.is_encrypted() {
         return Err(exec(format!("{} is encrypted; decrypt it first", i.path)));
+    }
+    if source {
+        crate::pdf_cmap::validate_document(&doc)?;
+        for page in doc.get_pages().values() {
+            if doc
+                .get_page_fonts(*page)
+                .map_err(|_| exec("invalid PDF source font resources"))?
+                .len()
+                > 32
+            {
+                return Err(exec(
+                    "PDF source exceeds the font budget; export a simplified PDF",
+                ));
+            }
+        }
     }
     let all: Vec<u32> = doc.get_pages().keys().copied().collect();
     let total_pages = all.len();
@@ -118,7 +160,7 @@ pub fn run(cfg: &DocToolsConfig, input: Value) -> Result<Reply, ToolError> {
     let mut pages_json = Vec::new();
     let mut md = format!("# {} ({total_pages} pages)\n", i.path);
     for n in wanted {
-        let (text, extract_err) = match doc.extract_text(&[n]) {
+        let (text, extract_err) = match doc.extract_text_with_limit(&[n], decoded_limit) {
             Ok(t) => (t, None),
             Err(e) => (String::new(), Some(e.to_string())),
         };
@@ -169,6 +211,19 @@ pub fn run(cfg: &DocToolsConfig, input: Value) -> Result<Reply, ToolError> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn authorized_pdf_bytes_do_not_reopen_the_display_label() {
+        let bytes = make_pdf(&[&["Original authorized PDF bytes"]]);
+        let reply = crate::extract_bytes(
+            &DocToolsConfig::default(),
+            "pdf",
+            "missing-display-label.pdf",
+            &bytes,
+        )
+        .unwrap();
+        assert!(reply.markdown.contains("Original authorized PDF bytes"));
+    }
     use lopdf::content::{Content, Operation};
     use lopdf::{Document, Object, Stream, dictionary};
 

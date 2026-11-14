@@ -56,6 +56,103 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{bot}/knowledge/email-captures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent successful, explicitly scoped mailbox reads available to this bot. */
+        get: operations["email_captures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_settings"];
+        put: operations["put_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_sources"];
+        put?: never;
+        post: operations["create_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_source"];
+        post?: never;
+        delete: operations["delete_source"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["embed_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reindex_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}": {
         parameters: {
             query?: never;
@@ -2027,6 +2124,168 @@ export interface components {
         InviteRole: "desktop" | "phone" | "node" | "host";
         /** @enum {string} */
         KeyPhase: "down" | "up";
+        /** @description An explicit operator-selected artifact. Files are hash-verified before load. */
+        KnowledgeArtifact: {
+            path: string;
+            sha256: string;
+        };
+        KnowledgeEmailCapture: {
+            account: string;
+            /** Format: int64 */
+            created_ms: number;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            tool_call_id: string;
+        };
+        KnowledgeEmbed: {
+            /** Format: int64 */
+            expected_revision: number;
+            /**
+             * @description True only for an explicit user retry. Continuation batches keep retries,
+             *     provider cooldowns and the shared quota ledger intact.
+             */
+            reset_retry?: boolean;
+        };
+        KnowledgeEmbeddingDto: {
+            dimensions: number;
+            endpoint: string;
+            local_artifacts?: null | components["schemas"]["KnowledgeLocalArtifacts"];
+            model: string;
+            profile_fingerprint: string;
+            provider_id: string;
+            query_remote: boolean;
+            request_dimensions: boolean;
+            /** Format: int32 */
+            requests_per_day: number;
+            /** Format: int32 */
+            requests_per_minute: number;
+        };
+        KnowledgeEmbeddingInput: {
+            /** @description Exact profile previously displayed to the user; required for query egress. */
+            consent_profile_fingerprint?: string | null;
+            dimensions: number;
+            local_artifacts?: null | components["schemas"]["KnowledgeLocalArtifacts"];
+            model: string;
+            provider_id: string;
+            /** @description Separate explicit permission to send retrieval queries to this provider. */
+            query_remote?: boolean;
+            request_dimensions?: boolean;
+            /** Format: int32 */
+            requests_per_day: number;
+            /** Format: int32 */
+            requests_per_minute: number;
+        };
+        /**
+         * @description Progress of one bounded embedding batch. The queue resumes from hashes and
+         *     source revisions already committed; no provider response body is exposed.
+         */
+        KnowledgeEmbeddingProgress: {
+            cache_hits: number;
+            embedded_chunks: number;
+            failure_code?: string | null;
+            /** Format: int64 */
+            next_attempt_ms?: number | null;
+            remaining_chunks: number;
+            status: components["schemas"]["KnowledgeEmbeddingStatus"];
+        };
+        /** @enum {string} */
+        KnowledgeEmbeddingStatus: "progress" | "complete" | "awaiting_consent" | "deferred" | "cancelled" | "failed";
+        /** @description A bounded indexing page. Replay starts from hashes already committed. */
+        KnowledgeIndexStatus: {
+            next_cursor?: string | null;
+            processed: number;
+            removed: number;
+            unchanged: number;
+        };
+        /** @description Complete offline E5 bundle, including the explicitly selected native runtime. */
+        KnowledgeLocalArtifacts: {
+            config: components["schemas"]["KnowledgeArtifact"];
+            model: components["schemas"]["KnowledgeArtifact"];
+            runtime: components["schemas"]["KnowledgeArtifact"];
+            special_tokens_map: components["schemas"]["KnowledgeArtifact"];
+            tokenizer: components["schemas"]["KnowledgeArtifact"];
+            tokenizer_config: components["schemas"]["KnowledgeArtifact"];
+        };
+        KnowledgeMutation: {
+            indexing: components["schemas"]["KnowledgeIndexStatus"];
+            source: components["schemas"]["KnowledgeSourceDto"];
+        };
+        KnowledgeReindex: {
+            /** @description Last relative file from the previous page; omitted starts a new scan. */
+            cursor?: string | null;
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        KnowledgeRevision: {
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        KnowledgeSettingsDto: {
+            auto_retrieve: boolean;
+            embedding?: null | components["schemas"]["KnowledgeEmbeddingDto"];
+            local_embeddings_available: boolean;
+        };
+        KnowledgeSettingsInput: {
+            auto_retrieve: boolean;
+            embedding?: null | components["schemas"]["KnowledgeEmbeddingInput"];
+        };
+        /** @enum {string} */
+        KnowledgeSourceAction: "enable" | "disable" | "grant_remote" | "revoke_remote" | "rename";
+        KnowledgeSourceChange: {
+            action: components["schemas"]["KnowledgeSourceAction"];
+            /** Format: int64 */
+            expected_revision: number;
+            label?: string | null;
+            /**
+             * @description Required for a grant: the exact destination/model fingerprint displayed
+             *     to the user. A concurrently changed provider cannot inherit the click.
+             */
+            profile_fingerprint?: string | null;
+        };
+        /** @description Source metadata; source bodies and credentials are never listed. */
+        KnowledgeSourceDto: {
+            chunks: number;
+            documents: number;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["KnowledgeSourceKind"];
+            label: string;
+            locator: string;
+            remote_profile_fingerprint?: string | null;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            updated_ms: number;
+        };
+        /** @description A user-selected source. Body fields cannot choose an owner, trust or consent. */
+        KnowledgeSourceInput: {
+            /** @description Must equal the explicit account in the recorded `email_read` arguments. */
+            account?: string | null;
+            /** Format: uuid */
+            chat_id?: string | null;
+            /** @description Saved text/HTML or a note; never interpreted as a source URL to fetch. */
+            content?: string | null;
+            html?: boolean;
+            kind: components["schemas"]["KnowledgeSourceKind"];
+            label: string;
+            /** @description Absolute path on the daemon host, for a file or folder only. */
+            path?: string | null;
+            /**
+             * Format: uuid
+             * @description Email sources use a successful recorded `email_read` in this bot's run.
+             */
+            run_id?: string | null;
+            /** Format: uuid */
+            tool_call_id?: string | null;
+            url?: string | null;
+        };
+        /**
+         * @description Source kinds accepted by user management; every kind remains untrusted data.
+         * @enum {string}
+         */
+        KnowledgeSourceKind: "file" | "folder" | "saved_web" | "conversation" | "email" | "note" | "shared_brain";
         /** @description `GET /v1/events/latest`. */
         LatestCursor: {
             /**
@@ -3061,6 +3320,293 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    email_captures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEmailCapture"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettingsDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSettingsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettingsDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_sources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourceDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSourceInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeMutation"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSourceChange"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourceDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeRevision"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    embed_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeEmbed"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEmbeddingProgress"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reindex_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeReindex"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeMutation"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

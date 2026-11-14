@@ -151,6 +151,7 @@ pub(crate) async fn update_email_account(
     Path(name): Path<String>,
     ApiJson(mut patch): ApiJson<serde_json::Value>,
 ) -> Result<Json<EmailAccountDto>, ApiError> {
+    let _knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
     let control = email(&s)?;
     if let Some(obj) = patch.as_object_mut() {
         match obj.get("password") {
@@ -181,6 +182,7 @@ pub(crate) async fn update_email_account(
         .get("bot")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
+    crate::knowledge::revoke_email_sources(&s, &name)?;
     let updated = control.update(&name, patch).await?;
     if let Some(bot) = bound
         && let Err(e) = canonical_bot(&s, &bot)
@@ -221,6 +223,8 @@ pub(crate) async fn delete_email_account(
     Path(name): Path<String>,
     Query(q): Query<DeleteAccountQuery>,
 ) -> Result<StatusCode, ApiError> {
+    let _knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
+    crate::knowledge::revoke_email_sources(&s, &name)?;
     email(&s)?.remove_account(&name, q.delete_inbox).await?;
     Ok(StatusCode::NO_CONTENT)
 }

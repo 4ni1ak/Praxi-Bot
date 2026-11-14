@@ -44,6 +44,8 @@ mod csv_tools;
 mod docx;
 mod json_query;
 mod pdf;
+mod pdf_budget;
+mod pdf_cmap;
 mod xlsx;
 
 use std::sync::Arc;
@@ -56,6 +58,32 @@ use tool_registry::{
 };
 
 pub use common::Reply;
+
+/// Extract an already-authorized PDF or DOCX snapshot without reopening a path.
+/// The caller owns path authorization and supplies a display label, never an
+/// instruction. Both input and rendered output are bounded by `cfg`.
+///
+/// # Errors
+/// Rejects unsupported formats, oversized input and malformed documents.
+pub fn extract_bytes(
+    cfg: &DocToolsConfig,
+    extension: &str,
+    label: &str,
+    bytes: &[u8],
+) -> Result<Reply, ToolError> {
+    if bytes.len() as u64 > cfg.max_input_bytes {
+        return Err(ToolError::InvalidInput(
+            "document exceeds input limit".into(),
+        ));
+    }
+    match extension {
+        "pdf" => pdf::from_bytes(cfg, label, bytes),
+        "docx" => docx::read_bytes(cfg, label, bytes),
+        _ => Err(ToolError::InvalidInput(
+            "unsupported document format".into(),
+        )),
+    }
+}
 
 /// Limits applied by every doc tool.
 #[derive(Debug, Clone)]

@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// Recursively included roots (profiles in both legacy and current layouts).
-pub const INCLUDED_DIRECTORIES: &[&str] = &["bots", "profiles", "skills", "workflows"];
+pub const INCLUDED_DIRECTORIES: &[&str] = &["bots", "profiles", "skills", "workflows", "brain"];
 /// Included files. Schedules actually live in a separate SQLite database.
 pub const INCLUDED_FILES: &[&str] = &[
     "bot.db",
@@ -48,14 +48,15 @@ const METADATA_CAP: u64 = 8 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 
 fn excluded(path: &str) -> bool {
-    path.split('/').any(|part| {
-        EXCLUSIONS.iter().any(|pattern| {
-            let part = part.to_ascii_lowercase();
-            pattern
-                .strip_suffix('*')
-                .map_or_else(|| part == *pattern, |prefix| part.starts_with(prefix))
+    crate::knowledge::excluded(path)
+        || path.split('/').any(|part| {
+            EXCLUSIONS.iter().any(|pattern| {
+                let part = part.to_ascii_lowercase();
+                pattern
+                    .strip_suffix('*')
+                    .map_or_else(|| part == *pattern, |prefix| part.starts_with(prefix))
+            })
         })
-    })
 }
 
 pub(crate) fn safe_path(path: &str) -> Result<()> {
@@ -165,8 +166,13 @@ pub(crate) async fn write_files(
             continue;
         }
         let mut source = data_dir.join(&path);
-        if matches!(path.as_str(), "bot.db" | "schedules.db" | "memory.db") {
+        if matches!(path.as_str(), "bot.db" | "schedules.db" | "memory.db")
+            || crate::knowledge::bot_from_path(&path).is_some()
+        {
             let snapshot = snapshots.path().join(&path);
+            if let Some(parent) = snapshot.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             backup(&source, &snapshot)?;
             source = snapshot;
             let version = storage::migrate::current_version(&rusqlite::Connection::open(&source)?)?;
