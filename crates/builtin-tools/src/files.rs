@@ -854,96 +854,39 @@ fn widen_for_compare(path: &Path) -> PathBuf {
     }
 }
 
+/// The daemon directory is an authority boundary, not an extensible denylist.
+/// Only inert output stores may be read by file tools. All other current and
+/// future locations (including the root itself) are protected by default.
 fn under_data_sensitive(path: &Path, data_dir: &Path) -> bool {
+    under_daemon_data(path, data_dir).is_some_and(|rel| {
+        !rel.first().is_some_and(|name| {
+            matches!(name.as_str(), "checkpoints" | "files" | "spill" | "screenshots" | "logs")
+        })
+    })
+}
+
+fn under_daemon_data(path: &Path, data_dir: &Path) -> Option<Vec<String>> {
     let path = widen_for_compare(path);
     let data_dir = widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
-    let p = norm_parts(&path);
-    let d = norm_parts(&data_dir);
-    if p.len() <= d.len() || p[..d.len()] != d[..] {
-        return false;
-    }
-    // Windows resolves a trailing dot or space and `:stream` / `::$DATA` to the
-    // same file, so names are compared canonically (on every platform: a
-    // lexical match is cheap and conservative).
-    let rel: Vec<String> = p[d.len()..]
-        .iter()
-        .map(|part| canonical_name(part))
-        .collect();
-    let Some(base) = rel.last().map(String::as_str) else {
-        return false;
-    };
-    // Directly under the data dir only: these names are ordinary elsewhere.
-    base == "devices.json"
-        || base == "peer-node"
-        || rel.iter().any(|s| s == "vault" || s == "secrets")
-        || rel
-            .first()
-            .is_some_and(|first| DAEMON_STATE_DIRS.contains(&first.as_str()))
-        || (rel.len() == 1 && daemon_state_name(base))
+    let p: Vec<_> = norm_parts(&path).iter().map(|s| canonical_name(s)).collect();
+    let d: Vec<_> = norm_parts(&data_dir).iter().map(|s| canonical_name(s)).collect();
+    (p.len() >= d.len() && p[..d.len()] == d[..]).then(|| p[d.len()..].to_vec())
 }
 
-/// Compare-form of one path component: no `:stream` suffix, no trailing dots or
-/// spaces, lower case.
 fn canonical_name(part: &str) -> String {
-    let base = part.split(':').next().unwrap_or(part);
-    base.trim_end_matches([' ', '.']).to_ascii_lowercase()
+    part.split(':').next().unwrap_or(part).trim_end_matches([' ', '.']).to_ascii_lowercase()
 }
 
-/// Directories under the data dir whose contents grant authority or are the
-/// daemon's own records, so the bot's file tools never touch them:
-/// `peer` (pairing keys and device list), `bots` and `profiles` (bot profiles
-/// and their policies), `runs` (the event logs the UI and replay trust).
-/// Deliberately NOT protected, with the reason: `skills` and `workflows`
-/// (the bot authors them on purpose), `checkpoints` (the file tools' own undo
-/// store), `files`, `spill` and `screenshots` (bot output), logs (no authority).
-const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
-
-/// The daemon's own state files directly under the data dir, each one a file
-/// that grants authority or forges history if tampered with:
-/// - `bot.db`, `schedules.db`, `memory.db` (+ `-wal`/`-shm`/`-journal`):
-///   chats, approvals, audit, schedules that run unattended, memory.
-/// - `control-latch.json` (the takeover latch and its release journal) and
-///   `policy.json` (the global permission policy).
-/// - `host.toml` (leader/epoch), `config.toml` (peer networking), `mcp.toml`
-///   (servers the daemon launches), `providers.toml` (where model traffic
-///   goes), `web.toml` (web tool limits).
-/// - `telegram_state.json` and `telegram-inbox.jsonl` (which chats may command
-///   the bot, and what they sent).
-/// - `email.toml` (mail server targets and secret references: tampering would
-///   redirect a stored password) and `email-secret-cleanup.json` (pending
-///   secret deletions after an account change).
-/// - `schedule.toml` (limits for bot-created schedules).
-/// - the atomic-write temp files (`.tmp*`) of any of them.
-///
-/// Deliberately NOT listed: `skills.lock.json` / `skills-usage.json` (counters
-/// and a lockfile for bot-writable skills; no authority) and logs.
-fn daemon_state_name(base: &str) -> bool {
-    const DATABASES: [&str; 3] = ["bot.db", "schedules.db", "memory.db"];
-    const FILES: [&str; 12] = [
-        "control-latch.json",
-        "policy.json",
-        "host.toml",
-        "config.toml",
-        "mcp.toml",
-        "providers.toml",
-        "web.toml",
-        "telegram_state.json",
-        "telegram-inbox.jsonl",
-        "email.toml",
-        "email-secret-cleanup.json",
-        "schedule.toml",
-    ];
-    DATABASES.iter().any(|s| {
-        base == *s
-            || base
-                .strip_prefix(s)
-                .is_some_and(|rest| matches!(rest, "-wal" | "-shm" | "-journal"))
-    }) || FILES.iter().any(|s| {
-        base == *s
-            || base
-                .strip_prefix(s)
-                .is_some_and(|rest| matches!(rest, ".tmp" | ".bak"))
-    }) || base.starts_with(".tmp")
+/// Even an exact credential grant cannot authorize changing daemon behaviour.
+/// Output is readable, but only its owning daemon subsystem writes it.
+fn validate_mutation(sh: &Shared, raw: &str, resolved: &Path) -> Result<(), ToolError> {
+    let lexical = lexical_absolute(raw)?;
+    if under_daemon_data(&lexical, &sh.data_dir).is_some()
+        || under_daemon_data(resolved, &sh.data_dir).is_some()
+    {
+        return Err(denied("file tools cannot modify the daemon data directory; use the owning tool or user interface"));
+    }
+    Ok(())
 }
 
 /// A protected path is readable only when that path itself is granted.
@@ -956,7 +899,8 @@ fn credential_blocked(sh: &Shared, lexical: &Path, resolved: &Path) -> bool {
 }
 
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
-    is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path))
+    under_data_sensitive(path, data_dir)
+        || (is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path)))
 }
 
 /// Exact path, or the same file under its 8.3 and long names.
@@ -1573,7 +1517,8 @@ pub(crate) fn vet_checkpoint_write(path: &Path) -> io::Result<()> {
     if !policy.roots.is_empty() && !roots_contain(&policy.roots, &opened) {
         return Err(deny_io(ROOT_MSG));
     }
-    if protected_paths(&[&lexical, &resolved, &opened], &policy) {
+    if [&lexical, &resolved, &opened].iter().any(|p| under_daemon_data(p, &policy.data_dir).is_some())
+        || protected_paths(&[&lexical, &resolved, &opened], &policy) {
         return Err(deny_io(GRANT_MSG));
     }
     Ok(())
@@ -2447,6 +2392,7 @@ impl Shared {
 
 fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
     let p = validate_path(sh, &i.path, Follow::Write)?;
+    validate_mutation(sh, &i.path, &p)?;
     let (cp, note) = sh.checkpoint(run, "fs_write", &[(Path::new(&i.path), &p)])?;
     if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| exec_err(format!("create dirs: {e}")))?;
@@ -2464,6 +2410,7 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
         return Err(ToolError::InvalidInput("old must not be empty".into()));
     }
     let p = validate_path(sh, &i.path, Follow::Content)?;
+    validate_mutation(sh, &i.path, &p)?;
     let text = read_text(&p)?;
     let n = text.matches(&i.old).count();
     // One message for a miss and for several matches. The count would tell a
@@ -2505,6 +2452,8 @@ fn do_move_with(
     let result = (|| {
         let from = validate_path(sh, &i.from, Follow::Entry)?;
         let to = validate_path(sh, &i.to, Follow::Place)?;
+        validate_mutation(sh, &i.from, &from)?;
+        validate_mutation(sh, &i.to, &to)?;
         // Cheap preflight first: a rejected move must not copy the
         // destination into a checkpoint or leave an empty receipt behind.
         if fs::symlink_metadata(&from).is_err() {
@@ -2557,6 +2506,7 @@ fn do_move_with(
 
 fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> {
     let p = validate_path(sh, &i.path, Follow::Entry)?;
+    validate_mutation(sh, &i.path, &p)?;
     let meta = fs::symlink_metadata(&p).map_err(|e| exec_err(format!("{}: {e}", i.path)))?;
     if meta.is_dir() && !meta.file_type().is_symlink() && !i.recursive {
         return Err(exec_err(format!(
@@ -3838,6 +3788,59 @@ mod tests {
         }
     }
 
+    /// Inventory of stores later consumed as authority. The future-store case
+    /// asserts default denial so adding a new store does not require this list
+    /// to keep the boundary secure.
+    #[tokio::test]
+    async fn all_trusted_locations_reject_file_mutations_even_with_exact_grants() {
+        let (d, w, _) = setup();
+        let mut c = ctx();
+        c.content_tainted = true;
+        for relative in [
+            "skills/x/SKILL.md", "skills/x/.praxi-untrusted", "skills.lock.json",
+            "skills-usage.json", "workflows/morning.toml", "bots/a/profile.toml",
+            "bots/a/skills/x/SKILL.md", "profiles/a.toml", "persona.md",
+            "bot.db", "memory.db", "schedules.db", "schedule.toml",
+            "mcp.toml", "cli-settings.json", "plugins/x/config.toml",
+            "providers.toml", "web.toml", "email.toml", "config.toml",
+            "policy.json", "host.toml", "control-latch.json", "peer/devices.json",
+            "telegram_state.json", "telegram-inbox.jsonl", "channels.toml",
+            "runs/history.json", "notes/instructions.md", "browsers/a/Preferences",
+            "checkpoints/forged.json", "future-trusted-store/instructions",
+        ] {
+            let file = d.path().join(relative);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, "original").unwrap();
+            let t = tools_bounded(d.path(), &[], std::slice::from_ref(&file));
+            let source = w.path().join("source.txt");
+            fs::write(&source, "replacement").unwrap();
+            for (name, input) in [
+                ("fs_write", json!({"path": file, "content": "forged"})),
+                ("fs_edit", json!({"path": file, "old": "original", "new": "forged"})),
+                ("fs_move", json!({"from": source, "to": file, "overwrite": true})),
+                ("fs_move", json!({"from": file, "to": source, "overwrite": true})),
+                ("fs_delete", json!({"path": file})),
+            ] {
+                let error = get(&t, name).call(&c, input).await.unwrap_err();
+                assert!(matches!(error, ToolError::PermissionDenied(_)), "{relative} {name}: {error}");
+                assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_into_a_trusted_store_cannot_launder_file_writes() {
+        let (d, w, t) = setup();
+        let skills = d.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        let link = w.path().join("alias");
+        std::os::unix::fs::symlink(&skills, &link).unwrap();
+        let error = get(&t, "fs_write").call(&ctx(), json!({"path": link.join("SKILL.md"), "content": "forged"})).await.unwrap_err();
+        assert!(matches!(error, ToolError::PermissionDenied(_)), "{error}");
+        assert!(!skills.join("SKILL.md").exists());
+    }
+
     #[tokio::test]
     async fn daemon_state_files_in_the_data_dir_are_protected_for_read_and_write() {
         let (d, w, t) = setup();
@@ -3905,10 +3908,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_state_directories_are_protected_but_bot_authored_ones_are_not() {
+    async fn daemon_state_directories_default_to_protected() {
         let (d, _w, t) = setup();
         let c = ctx();
-        for dir in ["peer", "bots", "profiles", "runs"] {
+        for dir in ["peer", "bots", "profiles", "runs", "skills", "workflows", "future-trusted-store"] {
             let file = d.path().join(dir).join("x.toml");
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, "secret").unwrap();
@@ -3929,8 +3932,8 @@ mod tests {
                 "{dir}: {err}"
             );
         }
-        // Bot-authored by design (skills, workflows) or bot output: ordinary.
-        for dir in ["skills", "workflows", "screenshots", "files"] {
+        // Inert output stays readable.
+        for dir in ["screenshots", "files", "spill", "logs"] {
             let file = d.path().join(dir).join("note.txt");
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, "ok").unwrap();
@@ -3962,7 +3965,7 @@ mod tests {
                 "{spelled:?} must resolve to a protected name"
             );
         }
-        assert!(!is_protected(
+        assert!(is_protected(
             &d.path().join("data.").join("notes.txt:stream"),
             &data
         ));
@@ -3993,7 +3996,7 @@ mod tests {
             &d.path().join("bots. ").join("a.toml"),
             d.path()
         ));
-        assert!(!is_protected(&d.path().join("notes.txt."), d.path()));
+        assert!(is_protected(&d.path().join("notes.txt."), d.path()));
     }
 
     #[tokio::test]
