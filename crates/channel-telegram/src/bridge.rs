@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use protocol::{BotId, ChatId, Envelope, Event, RunId, ToolCallId};
 use secret_store::{MemoryStore, Redactor, SecretRef, SecretStore};
 use serde_json::Value;
-use tokio::sync::{Mutex as AsyncMutex, Notify};
+use tokio::sync::{Mutex as AsyncMutex, Notify, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -64,11 +64,27 @@ const MAX_INCOMING_CHARS: usize = 8192;
 /// Maximum number of outstanding approval/question tokens remembered.
 const MAX_PENDING_PROMPTS: usize = 1024;
 
-/// Backoff after `409 Conflict` (another poller or a webhook is active).
-const CONFLICT_BACKOFF: Duration = Duration::from_secs(15);
-
 /// Upper bound of the exponential error backoff.
 const MAX_ERROR_BACKOFF: Duration = Duration::from_secs(30);
+
+/// First wait after the fast 409 retries, then doubled until the cap.
+const CONFLICT_RECOVERY_BASE: Duration = Duration::from_secs(30);
+/// Slow conflict retries never poll more often than this.
+const CONFLICT_RECOVERY_MAX: Duration = Duration::from_secs(5 * 60);
+
+/// Exponential delay for polling again after a terminal Telegram 409.
+/// `step` is 1 for the first slow attempt. Zero bases are rejected so a
+/// misconfigured channel cannot tight-loop.
+pub(crate) fn conflict_recovery_delay(step: u32, base: Duration, cap: Duration) -> Duration {
+    let base = if base.is_zero() {
+        CONFLICT_RECOVERY_BASE
+    } else {
+        base
+    };
+    let cap = cap.max(base);
+    let shift = step.saturating_sub(1).min(16);
+    base.saturating_mul(1u32 << shift).min(cap)
+}
 
 /// A continuously ready SSE stream must yield back to inbound polling.
 const MAX_DRAIN_EVENTS: usize = 32;
@@ -78,19 +94,21 @@ const MAX_INBOX_PER_PASS: usize = 32;
 
 /// Delay before the next poll after `err` (the `failures`-th consecutive failure).
 pub(crate) fn poll_error_delay(err: &TelegramError, failures: u32, base: Duration) -> Duration {
-    match err {
-        TelegramError::RateLimited { retry_after_secs } => {
-            Duration::from_secs((*retry_after_secs).clamp(1, 120))
-        }
-        TelegramError::TelegramApi {
-            error_code: Some(409),
-            ..
-        } => CONFLICT_BACKOFF,
-        _ => {
-            let shift = failures.saturating_sub(1).min(16);
-            base.saturating_mul(1u32 << shift).min(MAX_ERROR_BACKOFF)
-        }
+    if let TelegramError::RateLimited { retry_after_secs } = err {
+        Duration::from_secs((*retry_after_secs).clamp(1, 120))
+    } else {
+        let shift = failures.saturating_sub(1).min(16);
+        base.saturating_mul(1u32 << shift).min(MAX_ERROR_BACKOFF)
     }
+}
+
+/// Current bridge lifecycle. Conflict keeps polling on a slow backoff until
+/// `getUpdates` succeeds, or until the channel is restarted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelStatus {
+    Running,
+    Stopped,
+    Conflict,
 }
 
 /// Configuration for [`TelegramChannel`].
@@ -98,6 +116,14 @@ pub(crate) fn poll_error_delay(err: &TelegramError, failures: u32, base: Duratio
 pub struct TelegramConfig {
     /// Secret store holding the Telegram bot token and other secrets to redact.
     pub secret_store: Arc<dyn SecretStore>,
+    /// Called once when polling stops due to Telegram 409.
+    pub on_conflict: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Delay between the three bounded retries for overlapping long polls.
+    pub conflict_backoff: Duration,
+    /// First delay after those retries, before the next `getUpdates`.
+    pub conflict_recovery_base: Duration,
+    /// Cap for [`conflict_recovery_base`](Self::conflict_recovery_base). Several minutes.
+    pub conflict_recovery_max: Duration,
     /// Secret reference pointing to the bot token inside `secret_store`.
     pub bot_token_secret: SecretRef,
     /// Base URL for the Telegram Bot API (defaults to `https://api.telegram.org`).
@@ -141,6 +167,10 @@ impl TelegramConfig {
     pub fn new(secret_store: Arc<dyn SecretStore>) -> Self {
         Self {
             secret_store,
+            on_conflict: None,
+            conflict_backoff: Duration::from_secs(15),
+            conflict_recovery_base: CONFLICT_RECOVERY_BASE,
+            conflict_recovery_max: CONFLICT_RECOVERY_MAX,
             bot_token_secret: SecretRef::new(TELEGRAM_BOT_TOKEN_SECRET)
                 .expect("default telegram secret name is valid"),
             api_base_url: DEFAULT_TELEGRAM_API_URL.to_owned(),
@@ -328,6 +358,7 @@ struct Inner {
     /// Key identifying the bot the persisted polling offset belongs to.
     offset_key: String,
     cancel: CancellationToken,
+    status: watch::Sender<ChannelStatus>,
     /// Wakes the run loop when a run stream was added.
     wake: Notify,
 }
@@ -488,6 +519,7 @@ impl TelegramChannel {
             once_only_approvals: Mutex::new(HashSet::new()),
             offset_key,
             cancel: CancellationToken::new(),
+            status: watch::channel(ChannelStatus::Stopped).0,
             wake: Notify::new(),
         });
 
@@ -503,6 +535,7 @@ impl TelegramChannel {
     /// Returns an error if resolving the bot token or opening the state store fails.
     pub fn start(config: TelegramConfig, api_client: Arc<dyn DaemonClient>) -> Result<Self> {
         let channel = Self::new(config, api_client)?;
+        channel.set_status(ChannelStatus::Running);
         let worker = channel.clone();
         let handle = tokio::spawn(async move {
             worker.run_loop().await;
@@ -560,14 +593,33 @@ impl TelegramChannel {
         }
     }
 
+    /// Current polling status, including an ownership conflict that is still retrying.
+    #[must_use]
+    pub fn status(&self) -> ChannelStatus {
+        *self.inner.status.borrow()
+    }
+
+    fn set_status(&self, next: ChannelStatus) {
+        let current = *self.inner.status.borrow();
+        if current != next {
+            // `send` drops the value when nobody is subscribed yet. Startup
+            // sets Running before the poll task subscribes.
+            self.inner.status.send_replace(next);
+        }
+    }
+
     /// Signal the background polling loop to stop.
     pub fn stop(&self) {
         self.inner.cancel.cancel();
+        let current = *self.inner.status.borrow();
+        if current != ChannelStatus::Conflict {
+            self.set_status(ChannelStatus::Stopped);
+        }
     }
 
     /// Stop the background polling loop and wait for it to exit.
     pub async fn shutdown(&self) {
-        self.inner.cancel.cancel();
+        self.stop();
         let handle = self.task.lock().take();
         if let Some(h) = handle {
             let _ = h.await;
@@ -637,6 +689,7 @@ impl TelegramChannel {
     async fn poll_loop(&self) {
         let base = self.inner.config.poll_backoff;
         let mut failures = 0u32;
+        let mut conflicts = 0u32;
         let mut delay = Duration::ZERO;
         loop {
             tokio::select! {
@@ -656,13 +709,58 @@ impl TelegramChannel {
             };
             match result {
                 Ok(count) => {
+                    self.set_status(ChannelStatus::Running);
                     failures = 0;
+                    conflicts = 0;
                     delay = if count == 0 { base } else { Duration::ZERO };
+                }
+                Err(TelegramError::Conflict) => {
+                    conflicts += 1;
+                    if conflicts <= 3 {
+                        delay = self.inner.config.conflict_backoff;
+                        continue;
+                    }
+                    let entered = *self.inner.status.borrow() != ChannelStatus::Conflict;
+                    self.set_status(ChannelStatus::Conflict);
+                    if entered {
+                        if let Some(callback) = &self.inner.config.on_conflict {
+                            callback();
+                        }
+                        self.report_error(&TelegramError::Conflict);
+                    }
+                    delay = conflict_recovery_delay(
+                        conflicts.saturating_sub(3),
+                        self.inner.config.conflict_recovery_base,
+                        self.inner.config.conflict_recovery_max,
+                    );
                 }
                 Err(error) => {
                     self.report_error(&error);
                     failures = failures.saturating_add(1);
                     delay = poll_error_delay(&error, failures, base);
+                }
+            }
+        }
+    }
+
+    async fn wait_out_conflict(
+        cancel: &CancellationToken,
+        status: &mut watch::Receiver<ChannelStatus>,
+    ) -> bool {
+        loop {
+            if cancel.is_cancelled() {
+                return false;
+            }
+            if *status.borrow_and_update() != ChannelStatus::Conflict {
+                return true;
+            }
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => return false,
+                result = status.changed() => {
+                    if result.is_err() {
+                        return false;
+                    }
                 }
             }
         }
@@ -674,7 +772,11 @@ impl TelegramChannel {
         } else {
             &self.inner.inbox_wake
         };
+        let mut status = self.inner.status.subscribe();
         loop {
+            if !Self::wait_out_conflict(&self.inner.cancel, &mut status).await {
+                return;
+            }
             let result = tokio::select! {
                 biased;
                 () = self.inner.cancel.cancelled() => return,
@@ -770,7 +872,11 @@ impl TelegramChannel {
     async fn drain_loop(&self) {
         let base = self.inner.config.poll_backoff;
         let mut interval = base;
+        let mut status = self.inner.status.subscribe();
         loop {
+            if !Self::wait_out_conflict(&self.inner.cancel, &mut status).await {
+                return;
+            }
             let needs_drain = {
                 let rt = self.inner.runtime.lock();
                 !rt.active_runs.is_empty() || !rt.queued.is_empty()
