@@ -555,7 +555,9 @@ fn run() -> Result<()> {
 
     // Daemon commands (no secret store needed, except `serve` with real providers).
     match command {
-        Command::Skills { action } => return skills_cmd::run(&data_dir, action, &mut std::io::stdout()),
+        Command::Skills { action } => {
+            return skills_cmd::run(&data_dir, action, &mut std::io::stdout());
+        }
         Command::Serve { .. } => return run_serve(&cli, command, &data_dir),
         Command::Doctor(c) => return run_doctor(&cli, c, &data_dir),
         Command::SelfUpdate(args) => return update::run(args),

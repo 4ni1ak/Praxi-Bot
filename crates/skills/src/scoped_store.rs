@@ -337,10 +337,19 @@ pub(crate) fn publish(
             "`{name}` is a built-in skill; publishing it would replace the built-in skill for all bots.              Rename the skill, or call skill_publish with replace: true to replace the built-in skill for all bots"
         ));
     }
-    publish_with(bot, shared, name, replace, |staged| {
-        if untrusted { fs::write(staged.join(crate::index::UNTRUSTED_MARKER), b"untrusted\n")?; }
-        Ok(())
-    }, |from, to| fs::rename(from, to))
+    publish_with(
+        bot,
+        shared,
+        name,
+        replace,
+        |staged| {
+            if untrusted {
+                fs::write(staged.join(crate::index::UNTRUSTED_MARKER), b"untrusted\n")?;
+            }
+            Ok(())
+        },
+        |from, to| fs::rename(from, to),
+    )
 }
 
 fn publish_with(
@@ -447,21 +456,34 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path()));
         let bot = root.for_bot(Some("a")).unwrap();
-        bot.write("x", "---\nname: x\ndescription: d\n---\nbody").unwrap();
+        bot.write("x", "---\nname: x\ndescription: d\n---\nbody")
+            .unwrap();
         let original = bot.publish("x", false).unwrap();
         let before = fs::read(original.join(SKILL_FILE)).unwrap();
         let shared = tmp.path().join("skills");
-        let err = publish_with(bot.write_dir().unwrap(), &shared, "x", true,
+        let err = publish_with(
+            bot.write_dir().unwrap(),
+            &shared,
+            "x",
+            true,
             |_| Err(std::io::ErrorKind::PermissionDenied.into()),
-            |_, _| panic!("must not commit after a marking failure")).unwrap_err();
+            |_, _| panic!("must not commit after a marking failure"),
+        )
+        .unwrap_err();
         assert!(err.contains("mark staged"));
         assert_eq!(fs::read(original.join(SKILL_FILE)).unwrap(), before);
-        let path = publish_with(bot.write_dir().unwrap(), &shared, "x", true,
+        let path = publish_with(
+            bot.write_dir().unwrap(),
+            &shared,
+            "x",
+            true,
             |staged| fs::write(staged.join(crate::index::UNTRUSTED_MARKER), b"untrusted\n"),
             |staged, target| {
                 assert!(staged.join(crate::index::UNTRUSTED_MARKER).is_file());
                 fs::rename(staged, target)
-            }).unwrap();
+            },
+        )
+        .unwrap();
         assert!(path.join(crate::index::UNTRUSTED_MARKER).is_file());
         let published = bot.publish_with_trust("x", true, true).unwrap();
         assert!(published.join(crate::index::UNTRUSTED_MARKER).is_file());

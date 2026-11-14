@@ -679,8 +679,14 @@ fn collapse_card_whitespace(text: &str) -> String {
             if started {
                 out.push('\n');
             }
-            let spaces = lines[start..i].iter().map(|line| line.bytes().filter(|b| *b == b' ').count()).sum::<usize>();
-            let tabs = lines[start..i].iter().map(|line| line.bytes().filter(|b| *b == b'\t').count()).sum::<usize>();
+            let spaces = lines[start..i]
+                .iter()
+                .map(|line| line.bytes().filter(|b| *b == b' ').count())
+                .sum::<usize>();
+            let tabs = lines[start..i]
+                .iter()
+                .map(|line| line.bytes().filter(|b| *b == b'\t').count())
+                .sum::<usize>();
             let _ = write!(out, "[… {n} blank lines: {spaces} spaces, {tabs} tabs …]");
             started = true;
             continue;
@@ -690,9 +696,15 @@ fn collapse_card_whitespace(text: &str) -> String {
         }
         out.push_str(body);
         if trail > 0 {
-            let spaces = lines[i][body.len()..].bytes().filter(|b| *b == b' ').count();
+            let spaces = lines[i][body.len()..]
+                .bytes()
+                .filter(|b| *b == b' ')
+                .count();
             let tabs = trail - spaces;
-            let _ = write!(out, " [… trailing whitespace: {spaces} spaces, {tabs} tabs …]");
+            let _ = write!(
+                out,
+                " [… trailing whitespace: {spaces} spaces, {tabs} tabs …]"
+            );
         }
         started = true;
         i += 1;
@@ -816,7 +828,10 @@ pub(crate) fn finalize_egress_record(value: &mut Value) {
     obj.insert("payload_chars".to_owned(), json!(shown.chars));
     obj.insert("hidden_chars".to_owned(), json!(shown.hidden));
     obj.insert("payload_bytes".to_owned(), json!(raw.len()));
-    obj.insert("review_full_payload".to_owned(), json!(raw.len() > FULL_REVIEW_PAYLOAD_BYTES));
+    obj.insert(
+        "review_full_payload".to_owned(),
+        json!(raw.len() > FULL_REVIEW_PAYLOAD_BYTES),
+    );
 }
 
 /// Point the card at `host` and rewrite the reason line to match.
@@ -904,7 +919,8 @@ mod card_tests {
     #[test]
     fn skill_write_card_shows_the_verbatim_document_only_once() {
         let content = "---\nname: x\ndescription: d\n---\nUNIQUE_BODY\n";
-        let (_, payload, _) = egress_payload("skill_write", &json!({"name": "x", "content": content}));
+        let (_, payload, _) =
+            egress_payload("skill_write", &json!({"name": "x", "content": content}));
         assert!(payload.contains(content));
         assert_eq!(payload.matches("UNIQUE_BODY").count(), 1);
     }
@@ -912,12 +928,32 @@ mod card_tests {
     #[test]
     fn mixed_blank_and_trailing_whitespace_reports_each_character_kind() {
         let shown = super::present_payload("hello\t\n \t \t\nbye \t\t\n\t");
-        assert!(shown.text.contains("trailing whitespace: 0 spaces, 1 tabs"), "{}", shown.text);
-        assert!(shown.text.contains("1 blank lines: 2 spaces, 2 tabs"), "{}", shown.text);
-        assert!(shown.text.contains("trailing whitespace: 1 spaces, 2 tabs"), "{}", shown.text);
-        assert!(shown.text.ends_with("1 blank lines: 0 spaces, 1 tabs …]"), "{}", shown.text);
+        assert!(
+            shown.text.contains("trailing whitespace: 0 spaces, 1 tabs"),
+            "{}",
+            shown.text
+        );
+        assert!(
+            shown.text.contains("1 blank lines: 2 spaces, 2 tabs"),
+            "{}",
+            shown.text
+        );
+        assert!(
+            shown.text.contains("trailing whitespace: 1 spaces, 2 tabs"),
+            "{}",
+            shown.text
+        );
+        assert!(
+            shown.text.ends_with("1 blank lines: 0 spaces, 1 tabs …]"),
+            "{}",
+            shown.text
+        );
         let buried = super::present_payload(&format!("hello\n{}\nbye", " \t".repeat(2000)));
-        assert!(buried.text.contains("2000 spaces, 2000 tabs"), "{}", buried.text);
+        assert!(
+            buried.text.contains("2000 spaces, 2000 tabs"),
+            "{}",
+            buried.text
+        );
         assert!(buried.text.contains("bye"));
     }
 
@@ -1049,7 +1085,6 @@ mod card_tests {
         assert!(payload.contains("blank lines"), "{payload}");
         assert_eq!(card["hidden_chars"], 1);
         assert!(card["payload_chars"].as_u64().unwrap() > 10);
-
     }
 
     #[test]

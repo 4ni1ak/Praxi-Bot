@@ -217,6 +217,48 @@ impl AgentLoop {
         self.sh.tools.clone()
     }
 
+    /// Audit outgoing card coverage against the registry actually assembled by
+    /// the host, including optional and dynamically registered tools.
+    /// # Errors
+    /// Names the first schema field omitted by its outgoing payload renderer.
+    pub fn audit_egress_card_schemas(&self) -> std::result::Result<Vec<String>, String> {
+        let mut audited = Vec::new();
+        for spec in self
+            .sh
+            .tools
+            .list()
+            .into_iter()
+            .filter(|s| s.content.egress)
+        {
+            let Some(properties) = spec
+                .input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+            else {
+                continue;
+            };
+            let input = serde_json::Value::Object(
+                properties
+                    .keys()
+                    .map(|key| {
+                        (
+                            key.clone(),
+                            serde_json::Value::String(format!("SNTNL_{key}_END")),
+                        )
+                    })
+                    .collect(),
+            );
+            let (_, payload, _) = crate::taint::egress_payload(&spec.name, &input);
+            for key in properties.keys() {
+                if !payload.contains(&format!("SNTNL_{key}_END")) {
+                    return Err(format!("{} omits outgoing schema field {key}", spec.name));
+                }
+            }
+            audited.push(spec.name);
+        }
+        Ok(audited)
+    }
+
     /// The loop's providers (cheap clone).
     #[must_use]
     pub fn providers(&self) -> Providers {

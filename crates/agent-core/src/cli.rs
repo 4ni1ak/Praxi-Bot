@@ -337,26 +337,53 @@ mod tests {
         use crate::tests::{until, with_class};
         use tool_registry::{ContentClass, PermissionCategory};
         let env = setup();
-        let search = Arc::new(with_class("web_search", Effect::Read, PermissionCategory::Browser,
-            ContentClass::untrusted_egress(), "sent"));
+        let search = Arc::new(with_class(
+            "web_search",
+            Effect::Read,
+            PermissionCategory::Browser,
+            ContentClass::untrusted_egress(),
+            "sent",
+        ));
         let registry = ToolRegistry::new();
         registry.register(search.clone());
-        let lp = crate::AgentLoop::new(env.storage.clone(), registry,
-            crate::Providers::single(Arc::new(UnusedHttp)), cfg(Policy::full()));
+        let lp = crate::AgentLoop::new(
+            env.storage.clone(),
+            registry,
+            crate::Providers::single(Arc::new(UnusedHttp)),
+            cfg(Policy::full()),
+        );
         lp.add_profile(env.bot, profile(""));
         let id = lp.run_turn(env.chat, "hi").unwrap();
         lp.wait(id).await.unwrap();
         let run = env.storage.get_run(id).unwrap().unwrap();
-        lp.sh.ctx(&run).unwrap().taint.lock().note(ContentClass::private_read(), "file");
-        let host = Host { sh: lp.sh.clone(), run, approved: parking_lot::Mutex::new(Vec::new()), executed: parking_lot::Mutex::new(Vec::new()) };
+        lp.sh
+            .ctx(&run)
+            .unwrap()
+            .taint
+            .lock()
+            .note(ContentClass::private_read(), "file");
+        let host = Host {
+            sh: lp.sh.clone(),
+            run,
+            approved: parking_lot::Mutex::new(Vec::new()),
+            executed: parking_lot::Mutex::new(Vec::new()),
+        };
         let input = json!({"query": "French\u{a0}text\u{feff}"});
         let mut rx = lp.subscribe();
         let (approved, ()) = tokio::join!(host.approve("web_search", input.clone()), async {
             let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
-            let Event::ApprovalNeeded(card) = event else { unreachable!() };
+            let Event::ApprovalNeeded(card) = event else {
+                unreachable!()
+            };
             assert_eq!(card.input, input);
-            assert!(card.details.unwrap()["payload"].as_str().unwrap().contains("<U+00A0>"));
-            lp.approve(card.call_id, crate::ApprovalScope::Once, env.user).unwrap();
+            assert!(
+                card.details.unwrap()["payload"]
+                    .as_str()
+                    .unwrap()
+                    .contains("<U+00A0>")
+            );
+            lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+                .unwrap();
         });
         assert!(approved);
         let reply = host.call("web_search", input.clone()).await;

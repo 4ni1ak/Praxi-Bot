@@ -60,12 +60,12 @@ in front of the model (a file, a mailbox, a page, a screenshot, an MCP result,
 a remote tool description, recalled memory, a workflow report), any tool that
 can send data off the machine asks, even when that tool is a read and even when
 you have a standing grant for it. Typing, dragging, launching a program, and
-changing browser tabs ask. A bare click or a scroll does not: those do not
-carry bytes. Mailbox reads, searches, and mark-read ask, because those calls
+changing browser tabs ask. Bare clicks and scrolls remain prompt-free; native
+file pickers are a known upload risk (see below). Mailbox reads, searches, and mark-read ask, because those calls
 send the model's arguments to another machine. Saving or publishing a skill
 after such a read asks too, and the skill is stored as untrusted data: later
-runs see its name and description in the user message, not as trusted
-instructions in the system prompt. A search that can only reach the search
+runs see it only when they call `skill_list` or `skill_read`; it stays out of
+automatic prompts and router suggestions. A search that can only reach the search
 provider you configured stays prompt-free after untrusted content, until the
 run has also read something private. That prompt-free path still allows emoji
 variation selectors, ZWJ, ZWNJ, LRM/RLM/ALM, and CR. Later turns of the same
@@ -76,8 +76,10 @@ form. That waiver skips the ask. It does not allow characters that cannot be
 shown: hidden tags, bidi overrides and isolates, invisible operators,
 private-use characters, and U+FFFC are refused even then. The card shows the
 outgoing text in full, with non-printing characters revealed as `<U+XXXX>`,
-line and character counts, and collapsed runs of blank lines. A payload over
-8 KB is refused so nothing can hide below a fold. An empty tool allow list is
+line and character counts, and counts of spaces and tabs in every collapsed
+blank or trailing whitespace run. Above 8 KB, the desktop requires opening
+the full payload and reaching its end before approval. CLI and Telegram print
+the complete text before offering approval. An empty tool allow list is
 not a bypass. Deny rules and the floors in item 3 still win. A run that has
 not read anything is unchanged, and existing grants still apply to it.
 Approving one send does not create a standing grant. The card lists every
@@ -216,3 +218,20 @@ JSON-quoted whitespace and a fingerprint. After reviewing it, run
 `bot skills trust <name> --bot-id <id> --reviewed <fingerprint>`.
 Omit `--bot-id` for a shared skill. A changed file invalidates the fingerprint;
 review it again. These commands are user actions, never model tools.
+
+
+File tools cannot modify anything under the daemon data directory, even with
+an exact file grant. Existing path resolution checks also apply to move
+endpoints, symlink targets, and checkpoint restore destinations. Inert output
+stores (`files`, `spill`, `screenshots`, `logs`, and the daemon-owned checkpoint
+blobs) remain readable; all other stores default to protected. Skills and
+workflows must use their owning tools. Saved workflows are treated as untrusted
+private input before replay, including legacy files without a trust proof.
+
+Known remaining display channels include prompt-free search joiners and
+formatting characters, homoglyphs and normalization variants, and literal text
+that resembles a revealed marker. Native file-picker uploads driven entirely
+by clicks also remain a limitation: arbitrary page JavaScript can open a picker
+from any click, and no portable dialog identity or intercepted chooser is
+currently wired into the approval gate. The click/scroll exception should not
+be treated as an upload sandbox.

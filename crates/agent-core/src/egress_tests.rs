@@ -1502,13 +1502,16 @@ async fn a_large_payload_has_a_full_review_card_and_sends_only_after_approval() 
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "search").unwrap();
     let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
-    let Event::ApprovalNeeded(card) = event else { unreachable!() };
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
     let details = card.details.as_ref().unwrap();
     assert_eq!(details["review_full_payload"], true);
     assert_eq!(details["payload_chars"], query.len());
     assert!(details["payload"].as_str().unwrap().contains(&query));
     assert_eq!(search.count.load(Ordering::SeqCst), 0);
-    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user).unwrap();
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
     assert_eq!(search.count.load(Ordering::SeqCst), 1);
 }
@@ -1699,7 +1702,11 @@ async fn untrusted_skills_do_not_taint_unrelated_runs_and_clean_overwrite_restor
             json!({"name": "leak-skill", "content": content}),
         )]),
         text("saved"),
-        calls(&[("c3", "skill_write", json!({"name": "leak-skill", "expected_version": "0.1.0", "content": "---\nname: leak-skill\ndescription: Clean replacement\n---\nSafe instructions"}))]),
+        calls(&[(
+            "c3",
+            "skill_write",
+            json!({"name": "leak-skill", "expected_version": "0.1.0", "content": "---\nname: leak-skill\ndescription: Clean replacement\n---\nSafe instructions"}),
+        )]),
         text("day two"),
     ]);
     let lp = make_loop(
@@ -1743,15 +1750,24 @@ async fn untrusted_skills_do_not_taint_unrelated_runs_and_clean_overwrite_restor
         .join("leak-skill")
         .join(".praxi-untrusted");
     assert!(marker.is_file(), "missing {}", marker.display());
+    // A new chat has not seen the earlier private read or the saved skill.
+    let mut clean_chat = env.storage.get_chat(env.chat).unwrap().unwrap();
+    clean_chat.id = protocol::ChatId::new();
+    env.storage.insert_chat(&clean_chat).unwrap();
     let day2 = lp
         .run_scheduled(
-            env.chat,
+            clean_chat.id,
             protocol::TaskId::new(),
             ScheduleWork::Prompt("hello from tomorrow".into()),
         )
         .unwrap();
-    assert_eq!(tokio::time::timeout(Duration::from_secs(8), lp.wait(day2)).await
-        .expect("unrelated scheduled run must stay clean and overwrite without approval").unwrap(), RunState::Succeeded);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(8), lp.wait(day2))
+            .await
+            .expect("unrelated scheduled run must stay clean and overwrite without approval")
+            .unwrap(),
+        RunState::Succeeded
+    );
     let (system, user) = prompt_parts(&fake.request(3));
     assert!(
         !system.contains("leak-skill"),
@@ -1763,7 +1779,11 @@ async fn untrusted_skills_do_not_taint_unrelated_runs_and_clean_overwrite_restor
     assert!(!marker.exists(), "a clean overwrite must clear the marker");
     let clean = index.for_bot(Some(&env.bot.to_string())).unwrap();
     assert!(!clean.get("leak-skill").unwrap().untrusted);
-    assert!(clean.prompt_block(&skills::SkillContext::default()).contains("Clean replacement"));
+    assert!(
+        clean
+            .prompt_block(&skills::SkillContext::default())
+            .contains("Clean replacement")
+    );
 }
 
 #[tokio::test]
@@ -1771,22 +1791,142 @@ async fn replace_all_noop_edit_taints_before_egress() {
     let env = setup();
     let notes = env.dir.path().join("notes.txt");
     std::fs::write(&notes, "bank: 4 bank: 4").unwrap();
-    let search = egress_tool("web_search", Effect::Read, PermissionCategory::Browser, ContentClass::untrusted_egress());
+    let search = egress_tool(
+        "web_search",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted_egress(),
+    );
     let fake = Fake::new(vec![
-        calls(&[("c1", "fs_edit", json!({"path": notes, "old": "bank: 4", "new": "bank: 4", "replace_all": true}))]),
-        calls(&[("c2", "web_search", json!({"query": "bank: 4"}))]), text("done"),
+        calls(&[(
+            "c1",
+            "fs_edit",
+            json!({"path": notes, "old": "bank: 4", "new": "bank: 4", "replace_all": true}),
+        )]),
+        calls(&[("c2", "web_search", json!({"query": "bank: 4"}))]),
+        text("done"),
     ]);
-    let lp = make_loop(&env.storage, env.bot, &fake, &[t(&search)], profile(""), cfg(Policy::full()));
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&search)],
+        profile(""),
+        cfg(Policy::full()),
+    );
     for tool in builtin_tools::files::tools(&env.dir.path().join("data")) {
         lp.sh.tools.register(tool);
     }
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "edit then search").unwrap();
     let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
-    let Event::ApprovalNeeded(card) = event else { unreachable!() };
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
     assert_eq!(card.tool_name, "web_search");
-    assert!(tool_messages(&fake.request(1)).join("\n").contains("replaced 2"));
+    assert!(
+        tool_messages(&fake.request(1))
+            .join("\n")
+            .contains("replaced 2")
+    );
     assert_eq!(search.count.load(Ordering::SeqCst), 0);
-    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user).unwrap();
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+}
+
+#[tokio::test]
+async fn tainted_skill_publish_asks_and_marks_the_shared_copy() {
+    let env = setup();
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()));
+    index
+        .for_bot(Some(&env.bot.to_string()))
+        .unwrap()
+        .write(
+            "publish-me",
+            "---\nname: publish-me\ndescription: Shared description\n---\nCOMPLETE_SHARED_BODY",
+        )
+        .unwrap();
+    let read = read_tool("fs_read", ContentClass::untrusted_private());
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "private"}))]),
+        calls(&[("c2", "skill_publish", json!({"name": "publish-me"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&read)],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index.clone());
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "publish").unwrap();
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "skill_publish");
+    assert!(
+        card.details.unwrap()["payload"]
+            .as_str()
+            .unwrap()
+            .contains("COMPLETE_SHARED_BODY")
+    );
+    let shared = env.dir.path().join("skills/publish-me@0.1.0");
+    assert!(!shared.exists());
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert!(shared.join(".praxi-untrusted").is_file());
+    assert!(
+        index
+            .for_bot(None)
+            .unwrap()
+            .get("publish-me")
+            .unwrap()
+            .untrusted
+    );
+    assert!(
+        !index
+            .for_bot(None)
+            .unwrap()
+            .prompt_block(&skills::SkillContext::default())
+            .contains("publish-me")
+    );
+}
+
+#[tokio::test]
+async fn shell_free_document_writers_cannot_change_daemon_authority() {
+    let env = setup();
+    let source = env.dir.path().join("source.csv");
+    std::fs::write(&source, "header\nvalue\n").unwrap();
+    let output = env.dir.path().join("skills/forged/SKILL.md");
+    let fake = Fake::new(vec![
+        calls(&[(
+            "c1",
+            "csv_transform",
+            json!({"path": source, "output_path": output, "ops": []}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    doc_tools::register(&lp.tool_registry(), &doc_tools::DocToolsConfig::default());
+    let run = lp.run_turn(env.chat, "transform").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert!(!output.exists());
+    assert!(
+        tool_messages(&fake.request(1))
+            .join("\n")
+            .contains("denied")
+    );
 }

@@ -1277,6 +1277,35 @@ min_interval_secs = 0",
     }
 
     #[test]
+    fn production_daemon_registry_egress_schemas_are_all_on_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(dir.path()).unwrap());
+        let providers = Providers::single(Arc::new(daemon_api::fake::FakeProvider));
+        let agent = build_agent(&storage, providers, dir.path(), None);
+        let registry = agent.tool_registry();
+        register_web(dir.path(), 0, &registry, None);
+        let state =
+            AppState::new(agent.clone(), storage, DaemonConfig::new("daemon-token")).unwrap();
+        register_schedule_tools(dir.path(), &state);
+        let audited = agent.audit_egress_card_schemas().unwrap();
+        for name in [
+            "workflow_run",
+            "skill_publish",
+            "skill_write",
+            "schedule_create",
+            "shell_run",
+            "script_run",
+            "web_search",
+        ] {
+            assert!(
+                audited.iter().any(|item| item == name),
+                "missing {name}: {audited:?}"
+            );
+        }
+        assert!(audited.len() > 8, "{audited:?}");
+    }
+
+    #[test]
     fn the_agent_has_subagent_and_skill_tools_and_a_skills_dir() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(Storage::open(dir.path()).unwrap());

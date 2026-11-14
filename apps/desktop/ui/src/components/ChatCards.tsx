@@ -250,7 +250,8 @@ function EgressApprovalBody({ d, onReviewed }: {
   onReviewed: (payload: string) => void;
 }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
+  const [expandedPayload, setExpandedPayload] = useState<string | null>(null);
+  const expanded = expandedPayload === d.payload;
   const view = useRef<HTMLPreElement>(null);
   useEffect(() => {
     if (view.current && payloadReviewComplete(expanded, view.current)) onReviewed(d.payload);
@@ -277,7 +278,7 @@ function EgressApprovalBody({ d, onReviewed }: {
       {d.reviewFullPayload ? (
         <>
           <p className={styles.bodyLabel}>{t("chat.approval.egress.large", { bytes: d.payloadBytes ?? 0 })}</p>
-          <Button size="sm" variant="secondary" onClick={() => setExpanded(true)}>
+          <Button size="sm" variant="secondary" onClick={() => setExpandedPayload(d.payload)}>
             {t("chat.approval.egress.reviewFull")}
           </Button>
         </>

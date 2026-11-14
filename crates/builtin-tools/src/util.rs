@@ -21,8 +21,9 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         // of the bot's own bookkeeping. A write does not bring content in:
         // the model already had the bytes, and the result is not a private read.
         "ask_user" | "todo_write" | "schedule_pause" | "schedule_delete" | "fs_write"
-        | "fs_move" | "fs_delete" | "checkpoint_list" | "checkpoint_restore"
-        | "schedule_list" => ContentClass::none(),
+        | "fs_move" | "fs_delete" | "checkpoint_list" | "checkpoint_restore" | "schedule_list" => {
+            ContentClass::none()
+        }
         // Editing reads old content and reports match counts, including no-op edits.
         "fs_edit" => ContentClass::private_read(),
         // Observation, including a click or a scroll. Those pick an on-screen

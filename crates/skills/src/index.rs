@@ -679,7 +679,10 @@ impl SkillIndex {
     /// Unknown/bundled skill, unsafe path, non-text file, or I/O error.
     pub fn review_for_trust(&self, name: &str) -> Result<SkillReview, String> {
         self.reload();
-        let dir = self.get(name).and_then(|s| s.dir).ok_or("skill has no on-disk directory")?;
+        let dir = self
+            .get(name)
+            .and_then(|s| s.dir)
+            .ok_or("skill has no on-disk directory")?;
         let scope = dir.parent().ok_or("skill has no scope")?;
         let _guard = ScopeLock::acquire(scope)?;
         review_dir(&dir)
@@ -690,14 +693,17 @@ impl SkillIndex {
     /// Review is stale, skill is unsafe/missing, or marker removal fails.
     pub fn trust_reviewed(&self, name: &str, fingerprint: &str) -> Result<(), String> {
         self.reload();
-        let dir = self.get(name).and_then(|s| s.dir).ok_or("skill has no on-disk directory")?;
+        let dir = self
+            .get(name)
+            .and_then(|s| s.dir)
+            .ok_or("skill has no on-disk directory")?;
         let scope = dir.parent().ok_or("skill has no scope")?;
-        let _guard = ScopeLock::acquire(scope)?;
+        let guard = ScopeLock::acquire(scope)?;
         if review_dir(&dir)?.fingerprint != fingerprint {
             return Err("skill changed since review; review the full skill again".into());
         }
         set_untrusted_marker(&dir.join(SKILL_FILE), false)?;
-        drop(_guard);
+        drop(guard);
         self.reload();
         Ok(())
     }
@@ -715,7 +721,12 @@ impl SkillIndex {
     /// Publish with the caller's exposure recorded before the shared copy is visible.
     /// # Errors
     /// Same path, conflict and I/O errors as [`Self::publish`].
-    pub fn publish_with_trust(&self, name: &str, replace: bool, untrusted: bool) -> Result<PathBuf, String> {
+    pub fn publish_with_trust(
+        &self,
+        name: &str,
+        replace: bool,
+        untrusted: bool,
+    ) -> Result<PathBuf, String> {
         self.check_bound_scope()?;
         let bot = self
             .write_dir()
@@ -726,7 +737,8 @@ impl SkillIndex {
             .user
             .as_deref()
             .ok_or("no shared skills directory is configured")?;
-        let path = scoped_store::publish(bot, shared, name, replace, &self.bundled_names(), untrusted)?;
+        let path =
+            scoped_store::publish(bot, shared, name, replace, &self.bundled_names(), untrusted)?;
         self.reload();
         Ok(path)
     }
@@ -745,9 +757,14 @@ fn review_dir(dir: &Path) -> Result<SkillReview, String> {
     use crate::hub::util::{hash_files, walk};
     let files = walk(dir).map_err(|e| e.to_string())?;
     let fingerprint = hash_files(&files).map_err(|e| e.to_string())?;
-    let files = files.iter().map(|file| {
-        fs::read_to_string(&file.path).map(|text| (file.rel.clone(), text)).map_err(|e| e.to_string())
-    }).collect::<Result<_, _>>()?;
+    let files = files
+        .iter()
+        .map(|file| {
+            fs::read_to_string(&file.path)
+                .map(|text| (file.rel.clone(), text))
+                .map_err(|e| e.to_string())
+        })
+        .collect::<Result<_, _>>()?;
     Ok(SkillReview { fingerprint, files })
 }
 
