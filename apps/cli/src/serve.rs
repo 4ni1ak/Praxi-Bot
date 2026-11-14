@@ -912,13 +912,14 @@ pub fn serve(
             local_id.clone(),
         ));
         agent.set_computer_provider(Arc::clone(&computer) as Arc<dyn agent_core::ComputerProvider>);
-        if crate::computer::legacy_local_owned(
-            crate::computer::identity_key_mtime_ms(data_dir),
-            agent.oldest_legacy_local_computer_ms(),
-        ) && let Err(err) = agent.migrate_legacy_local_computer(&local_id)
-        {
-            eprintln!("warning: could not migrate legacy local computer ids: {err}");
-        }
+        let paired_computers = peer.as_ref().map_or_else(Vec::new, |net| {
+            net.devices()
+                .into_iter()
+                .filter(crate::computer::is_remote_desktop_candidate)
+                .map(|device| device.id)
+                .collect()
+        });
+        agent.reconcile_computer_identity(&local_id, &paired_computers)?;
         agent.reconcile_waiting_for_pc_runs()?;
         // A revoked pairing loses screen privileges, live sessions and takeover
         // within a couple of seconds, wherever the revoke happened.

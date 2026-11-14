@@ -319,33 +319,7 @@ impl CachedRemote {
     }
 }
 
-/// This install created the legacy `local` computer rows when its identity
-/// key already existed at the time those rows were written. A key created
-/// later (a server that imported `bot.db`) must not adopt them.
-pub(crate) fn legacy_local_owned(
-    identity_created_ms: Option<i64>,
-    oldest_legacy_ms: Option<i64>,
-) -> bool {
-    match (identity_created_ms, oldest_legacy_ms) {
-        (Some(created), Some(legacy)) => created <= legacy,
-        _ => false,
-    }
-}
-
-/// Identity-key fingerprint for this daemon. Peer networking and a disabled
-/// peer stack share `peer/identity.key`, which the state bundle excludes.
-pub(crate) fn identity_key_mtime_ms(data_dir: &std::path::Path) -> Option<i64> {
-    let modified = std::fs::metadata(data_dir.join("peer").join("identity.key"))
-        .ok()?
-        .modified()
-        .ok()?;
-    let millis = modified
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_millis();
-    i64::try_from(millis).ok()
-}
-
+/// Public endpoint key for this daemon. The state bundle excludes the identity key.
 pub(crate) fn machine_computer_id(data_dir: &std::path::Path, net: Option<&PeerNetwork>) -> String {
     if let Some(net) = net {
         return key_to_string(&net.id());
@@ -358,13 +332,13 @@ pub(crate) fn machine_computer_id(data_dir: &std::path::Path, net: Option<&PeerN
                 "warning: cannot read the daemon identity key ({err}); local computer grants will not match a previous machine"
             );
             // Not the legacy constant, and not a fingerprint, so imported
-            // `local` grants are not rewritten onto this process.
+            // computer grants cannot match this process.
             "unbound-machine".into()
         }
     }
 }
 
-fn is_remote_desktop_candidate(d: &Device) -> bool {
+pub(crate) fn is_remote_desktop_candidate(d: &Device) -> bool {
     let has_desktop_cap = d.capabilities.iter().any(|c| c == "desktop");
     match d.role {
         // Companion desktop app pairs with Role::Desktop; allow empty legacy caps too.
@@ -985,17 +959,5 @@ mod tests {
             (10..=15).contains(&MONITOR_CONNECT_TIMEOUT.as_secs()),
             "monitor budget must stay in the 10-15s relay window"
         );
-    }
-
-    #[test]
-    fn legacy_local_owner_requires_the_identity_to_predate_the_grant() {
-        assert!(legacy_local_owned(Some(10), Some(20)));
-        assert!(legacy_local_owned(Some(20), Some(20)));
-        assert!(
-            !legacy_local_owned(Some(30), Some(20)),
-            "a key created after the grant belongs to another machine"
-        );
-        assert!(!legacy_local_owned(None, Some(20)));
-        assert!(!legacy_local_owned(Some(10), None));
     }
 }

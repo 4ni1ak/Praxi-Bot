@@ -952,8 +952,15 @@ impl Shared {
         persisted: Option<&Run>,
     ) -> RunComputer {
         let provider = self.computer_provider.read().clone();
-        if persisted.is_some_and(|run| run.computer_target.is_none()) {
-            return self.legacy_local_computer(provider.as_deref());
+        if persisted.is_some_and(|run| {
+            run.computer_target.is_none()
+                || run.computer_node.as_deref().is_some_and(|id| {
+                    id == computer_target::LEGACY_LOCAL_COMPUTER_ID || id.ends_with(":local")
+                })
+        }) {
+            return Self::unavailable_computer(
+                "Cannot resume legacy run: original computer identity is unknown; start a new run",
+            );
         }
         if let Some(run) = persisted
             && let Some(label) = run.computer_target.as_deref()
@@ -1025,6 +1032,15 @@ impl Shared {
                 rc.browser_headless = rc.browser.then_some(true);
                 return rc;
             }
+            if matches!(label, ComputerLabel::Host | ComputerLabel::Browser)
+                && provider.as_ref().is_some_and(|p| {
+                    run.computer_node.as_deref() != Some(p.local_node().id.as_str())
+                })
+            {
+                return Self::unavailable_computer(
+                    "Cannot resume: local computer identity changed or state was imported; start a new run",
+                );
+            }
             let target = match label {
                 ComputerLabel::Host => ComputerTarget::Host,
                 ComputerLabel::Browser => ComputerTarget::Browser,
@@ -1049,49 +1065,11 @@ impl Shared {
         self.resolve_fallback_computer(profile)
     }
 
-    /// A paused run from before computer targets existed only ever used this
-    /// daemon's own computer. Do not re-resolve `auto` onto a paired PC.
-    fn legacy_local_computer(&self, provider: Option<&dyn ComputerProvider>) -> RunComputer {
-        if let Some(provider) = provider {
-            let desktop = provider.local();
-            let label = if provider.is_host() {
-                ComputerLabel::Host
-            } else {
-                ComputerLabel::Pc
-            };
-            let browser = provider.browser_available();
-            let browser_headless =
-                browser.then(|| !(label == ComputerLabel::Host && provider.has_display()));
-            let desktop_available = desktop.is_some();
-            return RunComputer {
-                node: Some(provider.local_node()),
-                unavailable_reason: None,
-                label,
-                desktop,
-                desktop_available,
-                browser,
-                browser_headless,
-                wait_for_pc: false,
-                notice: None,
-            };
-        }
-        let desktop = self.static_desktop.read().clone();
-        let desktop_available = desktop.is_some();
-        let browser = self.browser_tools_registered();
-        RunComputer {
-            node: Some(computer_target::ComputerNode {
-                id: computer_target::LEGACY_LOCAL_COMPUTER_ID.into(),
-                name: "Local computer".into(),
-            }),
-            unavailable_reason: None,
-            label: ComputerLabel::Pc,
-            desktop,
-            desktop_available,
-            browser,
-            browser_headless: browser.then_some(true),
-            wait_for_pc: false,
-            notice: None,
-        }
+    fn unavailable_computer(reason: &str) -> RunComputer {
+        let mut rc = Self::offline_pc(None);
+        rc.wait_for_pc = false;
+        rc.unavailable_reason = Some(reason.into());
+        rc
     }
 
     fn offline_pc(node: Option<computer_target::ComputerNode>) -> RunComputer {

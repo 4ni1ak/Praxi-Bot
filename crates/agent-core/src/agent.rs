@@ -32,7 +32,7 @@ use crate::shared::{
     STEP_TOOLS, ScheduleWork, Shared, StreamItem, Verdict, initiator_of, kind_for,
     kind_for_schedule,
 };
-use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REBOUND, AUDIT_GRANT_REVOKED};
+use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
 type Result<T> = std::result::Result<T, LoopError>;
 
@@ -579,94 +579,79 @@ impl AgentLoop {
             .map_err(|_| LoopError::NoPendingApproval(call_id))
     }
 
-    /// Oldest legacy `kind:local` grant or run on this database, if any.
-    #[must_use]
-    pub fn oldest_legacy_local_computer_ms(&self) -> Option<i64> {
-        let grant_ms = self
-            .sh
-            .grants
-            .lock()
-            .always
-            .iter()
-            .filter(|g| {
-                g.computer
-                    .as_deref()
-                    .is_some_and(|scope| legacy_local_kind(scope).is_some())
-            })
-            .map(|g| g.granted_at_ms)
-            .min();
-        let run_ms = self.sh.storage.oldest_legacy_local_run_ms().ok().flatten();
-        match (grant_ms, run_ms) {
-            (Some(grant), Some(run)) => Some(grant.min(run)),
-            (Some(grant), None) => Some(grant),
-            (None, Some(run)) => Some(run),
-            (None, None) => None,
-        }
-    }
-
-    /// Rewrite legacy `host:local` / `pc:local` / `browser:local` scopes to
-    /// `machine_id` on this install. `machine_id` must be the daemon identity
-    /// fingerprint. A different machine must not call this.
+    /// Reconcile portable computer state against this daemon and its paired desktops.
+    /// Persist the public local identity so a regenerated key produces a one-time audit notice.
     ///
     /// # Errors
-    /// Fails if the audit row or the run update cannot be written.
-    pub fn migrate_legacy_local_computer(&self, machine_id: &str) -> Result<usize> {
-        if machine_id.len() != 64 || !machine_id.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Ok(0);
-        }
-        let changes: Vec<(BotId, GrantTarget, String, String)> = self
-            .sh
-            .grants
-            .lock()
-            .always
-            .iter()
-            .filter_map(|g| {
-                let scope = g.computer.as_deref()?;
-                let kind = legacy_local_kind(scope)?;
-                Some((
-                    g.bot_id,
-                    g.target.clone(),
-                    scope.to_owned(),
-                    format!("{kind}:{machine_id}"),
-                ))
+    /// Fails on storage errors. Call before starting the scheduler or resuming runs.
+    pub fn reconcile_computer_identity(&self, local_id: &str, paired_ids: &[String]) -> Result<()> {
+        let valid_scope = |scope: &str| {
+            scope.split_once(':').is_some_and(|(kind, id)| {
+                id == local_id || (kind == "pc" && paired_ids.iter().any(|paired| paired == id))
             })
-            .collect();
-        let mut n = 0usize;
-        for (bot_id, target, from, to) in &changes {
-            let Some(bot) = self.sh.storage.get_bot(*bot_id)? else {
+        };
+        let orphaned: Vec<_> = {
+            let mut grants = self.sh.grants.lock();
+            grants
+                .always
+                .iter_mut()
+                .filter_map(|grant| {
+                    if !grant.inert
+                        && grant
+                            .computer
+                            .as_deref()
+                            .is_some_and(|scope| !valid_scope(scope))
+                    {
+                        grant.inert = true;
+                        Some(grant.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        for grant in orphaned {
+            let Some(bot) = self.sh.storage.get_bot(grant.bot_id)? else {
                 continue;
             };
-            let mut detail = match target {
-                GrantTarget::Tool(name) => {
-                    serde_json::json!({ "bot_id": bot_id.to_string(), "tool": name })
-                }
-                GrantTarget::Category(category) => {
-                    serde_json::json!({ "bot_id": bot_id.to_string(), "category": category })
-                }
-            };
-            detail["from"] = serde_json::json!(from);
-            detail["to"] = serde_json::json!(to);
+            let mut detail = grant_detail(&grant);
+            detail["reason"] = serde_json::json!(
+                "computer identity no longer belongs to this daemon or a paired desktop; approve again"
+            );
             self.sh.storage.append_audit(
                 bot.user_id,
                 None,
                 "system",
-                AUDIT_GRANT_REBOUND,
+                AUDIT_GRANT_INERT,
                 &detail,
             )?;
-            n += 1;
         }
-        if !changes.is_empty() {
-            let mut grants = self.sh.grants.lock();
-            for grant in &mut grants.always {
-                if let Some(scope) = grant.computer.as_deref()
-                    && let Some(kind) = legacy_local_kind(scope)
-                {
-                    grant.computer = Some(format!("{kind}:{machine_id}"));
-                }
+        record_computer_identity(&self.sh.storage, local_id)?;
+        for run in self
+            .sh
+            .storage
+            .list_runs_by_state(RunState::Paused.as_str())?
+        {
+            // A never-bound initial PC wait may still select its first paired PC.
+            let invalid = match (run.computer_target.as_deref(), run.computer_node.as_deref()) {
+                (None, _) | (_, Some("local")) => true,
+                (Some(kind), Some(id)) => !valid_scope(&format!("{kind}:{id}")),
+                _ => false,
+            };
+            if invalid {
+                let reason = "Cannot resume: stored computer identity is unknown or no longer belongs to this daemon or a paired desktop (identity changed or state imported); start a new run";
+                self.cancel_wait_pc_timer(run.id);
+                self.rt.fail_paused(run.id, reason)?;
+                self.sh.storage.append_audit(
+                    run.user_id,
+                    Some(run.id),
+                    "system",
+                    "run.computer_identity_unavailable",
+                    &serde_json::json!({ "reason": reason }),
+                )?;
             }
         }
-        n += usize::try_from(self.sh.storage.rebind_legacy_local_nodes(machine_id)?).unwrap_or(0);
-        Ok(n)
+        Ok(())
     }
 
     /// The persisted "always allow" rules of a bot.
@@ -1613,6 +1598,29 @@ impl AgentLoop {
     }
 }
 
+fn record_computer_identity(storage: &Storage, local_id: &str) -> Result<()> {
+    for user in storage.list_users()? {
+        let previous = storage
+            .list_audit(user.id)?
+            .into_iter()
+            .rev()
+            .find(|e| e.action == "computer.identity")
+            .and_then(|e| e.detail["computer"].as_str().map(str::to_owned));
+        if previous.as_deref() != Some(local_id) {
+            storage.append_audit(user.id, None, "system", "computer.identity",
+                    &serde_json::json!({
+                        "computer": local_id, "previous": previous,
+                        "reason": if previous.is_some() {
+                            "Local computer identity changed; orphaned grants are inert and paused runs cannot resume"
+                        } else {
+                            "Local computer identity recorded"
+                        },
+                    }))?;
+        }
+    }
+    Ok(())
+}
+
 fn load_grants(storage: &Storage) -> Grants {
     let mut grants = Grants::default();
     let mut inert_audited = HashSet::new();
@@ -1620,7 +1628,7 @@ fn load_grants(storage: &Storage) -> Grants {
         for e in storage.list_audit(user.id).unwrap_or_default() {
             if !matches!(
                 e.action.as_str(),
-                AUDIT_GRANT_ALWAYS | AUDIT_GRANT_REVOKED | AUDIT_GRANT_INERT | AUDIT_GRANT_REBOUND
+                AUDIT_GRANT_ALWAYS | AUDIT_GRANT_REVOKED | AUDIT_GRANT_INERT
             ) {
                 continue;
             }
@@ -1631,21 +1639,6 @@ fn load_grants(storage: &Storage) -> Grants {
             let (Some(bot_id), Some(target)) = (bot, grant_target(&e.detail)) else {
                 continue;
             };
-            if e.action == AUDIT_GRANT_REBOUND {
-                let from = e.detail["from"].as_str();
-                let to = e.detail["to"].as_str().map(str::to_owned);
-                if let Some(from) = from {
-                    for g in &mut grants.always {
-                        if g.bot_id == bot_id
-                            && g.target == target
-                            && g.computer.as_deref() == Some(from)
-                        {
-                            g.computer.clone_from(&to);
-                        }
-                    }
-                }
-                continue;
-            }
             if e.action == AUDIT_GRANT_INERT {
                 inert_audited.insert((
                     bot_id,
@@ -1681,44 +1674,28 @@ fn load_grants(storage: &Storage) -> Grants {
     }
     let mut pending_inert = Vec::new();
     for g in &mut grants.always {
-        if legacy_unscoped_computer(g) {
+        if legacy_unscoped_computer(g)
+            || g.computer
+                .as_deref()
+                .is_some_and(|scope| scope.ends_with(":local"))
+        {
             g.inert = true;
-            let key = (g.bot_id, g.target.clone(), None);
+            let key = (g.bot_id, g.target.clone(), g.computer.clone());
             if inert_audited.insert(key) {
-                pending_inert.push((g.bot_id, g.target.clone()));
+                pending_inert.push(g.clone());
             }
         }
     }
-    for (bot_id, target) in pending_inert {
-        let Ok(Some(bot)) = storage.get_bot(bot_id) else {
+    for grant in pending_inert {
+        let Ok(Some(bot)) = storage.get_bot(grant.bot_id) else {
             continue;
         };
-        let mut detail = match &target {
-            GrantTarget::Tool(name) => serde_json::json!({
-                "bot_id": bot_id.to_string(),
-                "tool": name,
-            }),
-            GrantTarget::Category(category) => serde_json::json!({
-                "bot_id": bot_id.to_string(),
-                "category": category,
-            }),
-        };
-        detail["computer"] = serde_json::Value::Null;
+        let mut detail = grant_detail(&grant);
         detail["reason"] =
-            serde_json::json!("unscoped desktop/browser grant cannot apply to a computer");
+            serde_json::json!("legacy desktop/browser grant has no verifiable computer identity");
         let _ = storage.append_audit(bot.user_id, None, "system", AUDIT_GRANT_INERT, &detail);
     }
     grants
-}
-
-fn legacy_local_kind(scope: &str) -> Option<&str> {
-    let (kind, id) = scope.split_once(':')?;
-    if id == computer_target::LEGACY_LOCAL_COMPUTER_ID && matches!(kind, "pc" | "host" | "browser")
-    {
-        Some(kind)
-    } else {
-        None
-    }
 }
 
 fn legacy_unscoped_computer(g: &Grant) -> bool {

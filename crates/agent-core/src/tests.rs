@@ -5504,6 +5504,13 @@ impl computer_target::ComputerProvider for MockComputerProvider {
         self.local.read().clone()
     }
 
+    fn local_node(&self) -> computer_target::ComputerNode {
+        computer_target::ComputerNode {
+            id: MACHINE_A.into(),
+            name: "Local computer".into(),
+        }
+    }
+
     fn pc(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
         self.pc.read().clone()
     }
@@ -6488,7 +6495,7 @@ async fn explicit_host_without_display_fails_before_model() {
 }
 
 #[tokio::test]
-async fn pre_058_paused_run_migrates_and_resumes_from_null_target() {
+async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
     let env = setup();
     let fake = Fake::new(vec![text("after upgrade")]);
     let lp = make_loop(
@@ -6551,17 +6558,15 @@ async fn pre_058_paused_run_migrates_and_resumes_from_null_target() {
     );
     lp.recover().unwrap();
     lp.resume(run).unwrap();
-    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
-    assert_eq!(
-        storage
-            .get_run(run)
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Failed);
+    let row = storage.get_run(run).unwrap().unwrap();
+    assert_eq!(row.computer_target, None);
+    assert!(
+        row.error
             .unwrap()
-            .unwrap()
-            .computer_target
-            .as_deref(),
-        Some("pc"),
-        "a pre-058 run with no stored target binds to this daemon, not the profile"
+            .contains("original computer identity is unknown")
     );
+    assert_eq!(fake.n_requests(), 0);
 }
 
 #[tokio::test]
@@ -6740,62 +6745,141 @@ async fn local_computer_grant_does_not_match_on_another_machine() {
 }
 
 #[tokio::test]
-async fn legacy_host_local_grant_rebinds_to_this_machine_only() {
+async fn identity_change_marks_orphaned_grants_once_and_fails_paused_local_pc() {
+    let env = setup();
     let fake = Fake::new(vec![]);
-    let migrated = setup();
-    seed_desktop_grant(&migrated, Some("host:local"));
-    let lp_m = make_loop(
-        &migrated.storage,
-        migrated.bot,
+    for scope in [
+        format!("host:{MACHINE_A}"),
+        format!("pc:{MACHINE_A}"),
+        format!("browser:{MACHINE_A}"),
+        "pc:paired-offline".into(),
+    ] {
+        seed_desktop_grant(&env, Some(&scope));
+    }
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
         &fake,
         &[],
-        profile("[runtime]\ncomputer = \"host\"\n"),
+        profile(""),
         cfg(Policy::full()),
     );
-    assert_eq!(
-        lp_m.list_grants(migrated.bot)[0].computer.as_deref(),
-        Some("host:local")
-    );
-    assert_eq!(lp_m.migrate_legacy_local_computer(MACHINE_A).unwrap(), 1);
-    let reloaded = make_loop(
-        &migrated.storage,
-        migrated.bot,
-        &fake,
-        &[],
-        profile("[runtime]\ncomputer = \"host\"\n"),
-        cfg(Policy::full()),
-    );
-    let scope_a = format!("host:{MACHINE_A}");
-    let scope_b = format!("host:{MACHINE_B}");
-    assert!(reloaded.sh.grants.lock().covers(
-        migrated.bot,
-        "desktop_write",
-        PermissionCategory::Desktop,
-        Some(&scope_a),
-    ));
-    assert!(!reloaded.sh.grants.lock().covers(
-        migrated.bot,
-        "desktop_write",
-        PermissionCategory::Desktop,
-        Some(&scope_b),
-    ));
+    lp.reconcile_computer_identity(MACHINE_A, &["paired-offline".into()])
+        .unwrap();
+    assert!(lp.list_grants(env.bot).iter().all(|g| !g.inert));
+    let old = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    let remote = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    for (run, node) in [(old, MACHINE_A), (remote, "paired-offline")] {
+        env.storage
+            .bind_run_computer(run, "pc", Some(node), Some("PC"))
+            .unwrap();
+        lp.rt
+            .pause_queued(run, Some(computer_target::WAIT_FOR_PC_REASON))
+            .unwrap();
+    }
+    for _ in 0..2 {
+        let reloaded = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        reloaded
+            .reconcile_computer_identity(MACHINE_B, &["paired-offline".into()])
+            .unwrap();
+        let grants = reloaded.list_grants(env.bot);
+        assert_eq!(grants.iter().filter(|g| g.inert).count(), 3);
+        assert!(
+            !grants
+                .iter()
+                .find(|g| g.computer.as_deref() == Some("pc:paired-offline"))
+                .unwrap()
+                .inert
+        );
+        assert!(!reloaded.sh.grants.lock().covers(
+            env.bot,
+            "desktop_write",
+            PermissionCategory::Desktop,
+            Some(&format!("pc:{MACHINE_A}"))
+        ));
+        let row = env.storage.get_run(old).unwrap().unwrap();
+        assert_eq!(row.state, "failed");
+        assert!(
+            row.error
+                .unwrap()
+                .contains("identity changed or state imported")
+        );
+        assert_eq!(
+            env.storage.get_run(remote).unwrap().unwrap().state,
+            "paused"
+        );
+        let audits = env.storage.list_audit(env.user).unwrap();
+        assert_eq!(
+            audits.iter().filter(|e| e.action == "grant.inert").count(),
+            3
+        );
+        assert_eq!(
+            audits
+                .iter()
+                .filter(|e| e.action == "computer.identity")
+                .count(),
+            2
+        );
+        assert_eq!(
+            audits
+                .iter()
+                .filter(|e| e.action == "run.computer_identity_unavailable")
+                .count(),
+            1
+        );
+    }
+}
 
-    let foreign = setup();
-    seed_desktop_grant(&foreign, Some("host:local"));
-    let lp_f = make_loop(
-        &foreign.storage,
-        foreign.bot,
-        &fake,
-        &[],
-        profile("[runtime]\ncomputer = \"host\"\n"),
-        cfg(Policy::full()),
-    );
-    assert!(!lp_f.sh.grants.lock().covers(
-        foreign.bot,
-        "desktop_write",
-        PermissionCategory::Desktop,
-        Some(&scope_b),
-    ));
+#[tokio::test]
+async fn legacy_local_grants_are_inert_and_audited_once() {
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    for kind in ["host", "pc", "browser"] {
+        seed_desktop_grant(&env, Some(&format!("{kind}:local")));
+    }
+    for _ in 0..2 {
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        let listed = lp.list_grants(env.bot);
+        assert_eq!(listed.len(), 3);
+        assert!(listed.iter().all(|g| g.inert));
+        for scope in ["host:local", "pc:local", "browser:local"] {
+            assert!(!lp.sh.grants.lock().covers(
+                env.bot,
+                "desktop_write",
+                PermissionCategory::Desktop,
+                Some(scope),
+            ));
+        }
+        assert_eq!(
+            env.storage
+                .list_audit(env.user)
+                .unwrap()
+                .iter()
+                .filter(|e| e.action == "grant.inert")
+                .count(),
+            3
+        );
+    }
 }
 
 #[tokio::test]
@@ -6923,7 +7007,7 @@ async fn auto_emits_when_it_leaves_an_unreachable_paired_pc() {
 }
 
 #[tokio::test]
-async fn pre_058_paused_run_resumes_on_the_local_computer() {
+async fn legacy_paused_run_never_adopts_this_daemons_computer() {
     let env = setup();
     let fake = Fake::new(vec![text("stayed local")]);
     let lp = make_loop(
@@ -6940,30 +7024,26 @@ async fn pre_058_paused_run_resumes_on_the_local_computer() {
         Some("pc-online"),
         false,
     ));
-    let run = lp
-        .rt
-        .create_run(env.user, env.bot, Some(env.chat), "turn")
-        .unwrap();
-    env.storage
-        .insert_message(&storage::Message {
-            id: uuid::Uuid::now_v7(),
-            user_id: env.user,
-            chat_id: env.chat,
-            run_id: Some(run),
-            role: "user".into(),
-            content: "continue".into(),
-            created_at_ms: now_ms(),
-        })
-        .unwrap();
-    lp.rt.pause_queued(run, None).unwrap();
-    assert_eq!(
-        env.storage.get_run(run).unwrap().unwrap().computer_target,
-        None
-    );
-    lp.resume(run).unwrap();
-    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
-    let row = env.storage.get_run(run).unwrap().unwrap();
-    assert_eq!(row.computer_target.as_deref(), Some("host"));
-    assert_eq!(row.computer_node.as_deref(), Some(MACHINE_A));
-    assert_ne!(row.computer_node.as_deref(), Some("pc-online"));
+    for node in [None, Some("local"), Some("pc:local")] {
+        let run = lp
+            .rt
+            .create_run(env.user, env.bot, Some(env.chat), "turn")
+            .unwrap();
+        if let Some(node) = node {
+            env.storage
+                .bind_run_computer(run, "pc", Some(node), Some("Local computer"))
+                .unwrap();
+        }
+        lp.rt.pause_queued(run, None).unwrap();
+        lp.resume(run).unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Failed);
+        let row = env.storage.get_run(run).unwrap().unwrap();
+        assert_eq!(row.computer_node.as_deref(), node);
+        assert!(
+            row.error
+                .unwrap()
+                .contains("original computer identity is unknown")
+        );
+    }
+    assert_eq!(fake.n_requests(), 0);
 }
