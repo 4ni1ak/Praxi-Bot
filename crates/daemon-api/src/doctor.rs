@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime};
 use provider_catalog::{
     Auth, Catalog, ProviderConfig, ProviderEntry, ProviderSettings, config_path,
 };
-use secret_store::{Redactor, SecretStore};
+use secret_store::SecretStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use utoipa::ToSchema;
@@ -221,17 +221,93 @@ pub fn check_host(data_dir: &Path) -> Check {
     }
 }
 
+/// One paired device as the running daemon sees it (the data of
+/// `GET /v1/host`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkPeer {
+    /// Full peer key.
+    pub key: String,
+    /// Pairing role (`desktop`, `phone`, `node`, `host`).
+    pub role: String,
+    /// Connected right now.
+    pub connected: bool,
+    /// Seconds since the device was last heard from (`None` = never).
+    pub last_seen_secs: Option<u64>,
+}
+
+/// Live peer state the link check looks at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkRuntime {
+    /// Not available here (`bot doctor` without the daemon's live state).
+    Unknown,
+    /// The daemon runs without peer networking.
+    NetworkDisabled,
+    /// The daemon's paired devices with their live connection state.
+    Network(Vec<LinkPeer>),
+}
+
+fn ago(secs: Option<u64>) -> String {
+    match secs {
+        None => "never seen".into(),
+        Some(s) if s < 120 => format!("last seen {s} s ago"),
+        Some(s) if s < 7200 => format!("last seen {} min ago", s / 60),
+        Some(s) => format!("last seen {} h ago", s / 3600),
+    }
+}
+
+const NOT_VERIFIED_HINT: &str =
+    "open Settings > Diagnostics while the daemon runs, or run `bot host status`";
+const NETWORK_OFF_HINT: &str = "start the daemon with peer networking enabled (`bot serve --peer`), or switch back to standalone";
+
+/// `peer link` of the always-on host: its endpoint must run.
+fn host_link(config: &crate::host::HostConfig, live: &LinkRuntime) -> Check {
+    const ID: &str = "peer_link";
+    const N: &str = "peer link";
+    let role = format!(
+        "this machine is the always-on host (state {:?}, epoch {})",
+        config.state, config.epoch
+    );
+    match live {
+        LinkRuntime::Unknown => Check::warn(
+            ID,
+            N,
+            format!("{role}; live peer connections not verified"),
+            NOT_VERIFIED_HINT,
+        ),
+        LinkRuntime::NetworkDisabled => Check::fail(
+            ID,
+            N,
+            format!("{role}, but peer networking is off: no device can reach it"),
+            NETWORK_OFF_HINT,
+        ),
+        LinkRuntime::Network(peers) => {
+            let connected = peers.iter().filter(|p| p.connected).count();
+            Check::ok(
+                ID,
+                N,
+                format!(
+                    "{role}; {} paired device(s), {connected} connected",
+                    peers.len()
+                ),
+            )
+        }
+    }
+}
+
 /// `peer link`: the host / client pairing this installation is configured
-/// for.  Skipped when it runs on its own.
+/// for, checked against the daemon's live connection state.  Configured but
+/// not connected is a finding; without live state the link is reported as not
+/// verified (never as healthy).  Skipped when it runs on its own.
 #[must_use]
-pub fn check_peer_link(data_dir: &Path) -> Check {
+pub fn check_peer_link(data_dir: &Path, live: &LinkRuntime) -> Check {
     use crate::host::{HostMode, HostState};
     const ID: &str = "peer_link";
     const N: &str = "peer link";
     let Ok(config) = crate::host::HostConfig::load(data_dir) else {
         return Check::skipped(ID, N, "host.toml is invalid; see the host ownership check");
     };
-    let leader = config.leader.as_deref().map(short_key);
+    let leader_key = config.leader.clone();
+    let leader = leader_key.as_deref().map(short_key);
     match (config.mode, leader) {
         (HostMode::Standalone, None) => {
             Check::skipped(ID, N, "no peer or host link configured (optional)")
@@ -239,23 +315,50 @@ pub fn check_peer_link(data_dir: &Path) -> Check {
         (HostMode::Standalone, Some(l)) => {
             Check::ok(ID, N, format!("standalone; last known leader {l}"))
         }
-        (HostMode::Host, _) => Check::ok(
-            ID,
-            N,
-            format!(
-                "this machine is the always-on host (state {:?}, epoch {})",
-                config.state, config.epoch
-            ),
-        ),
+        (HostMode::Host, _) => host_link(&config, live),
         (HostMode::Client, Some(l)) => {
-            if config.state == HostState::Standby {
-                Check::ok(
+            let standby = if config.state == HostState::Standby {
+                " (this machine is standby)"
+            } else {
+                ""
+            };
+            match live {
+                LinkRuntime::Unknown => Check::warn(
                     ID,
                     N,
-                    format!("client of host {l} (this machine is standby)"),
-                )
-            } else {
-                Check::ok(ID, N, format!("client of host {l}"))
+                    format!("configured as client of host {l}{standby}; connection not verified"),
+                    NOT_VERIFIED_HINT,
+                ),
+                LinkRuntime::NetworkDisabled => Check::fail(
+                    ID,
+                    N,
+                    format!("configured as client of host {l}, but peer networking is off"),
+                    NETWORK_OFF_HINT,
+                ),
+                LinkRuntime::Network(peers) => {
+                    match peers.iter().find(|p| Some(&p.key) == leader_key.as_ref()) {
+                        None => Check::fail(
+                            ID,
+                            N,
+                            format!(
+                                "configured as client of host {l}, but that host is no longer paired"
+                            ),
+                            "pair this device with the host again from the host's Settings",
+                        ),
+                        Some(p) if p.connected => {
+                            Check::ok(ID, N, format!("connected to host {l}{standby}"))
+                        }
+                        Some(p) => Check::fail(
+                            ID,
+                            N,
+                            format!(
+                                "configured as client of host {l}, but not connected ({})",
+                                ago(p.last_seen_secs)
+                            ),
+                            "check that the host (VPS) is running and online, then run Diagnostics again",
+                        ),
+                    }
+                }
             }
         }
         (HostMode::Client, None) => Check::warn(
@@ -277,6 +380,49 @@ fn short_key(key: &str) -> String {
     }
 }
 
+/// An unpredictable probe file name: `prefix`, 32 hex digits, `suffix`.
+fn probe_name(prefix: &str, suffix: &str) -> String {
+    format!("{prefix}{}{suffix}", uuid::Uuid::now_v7().simple())
+}
+
+/// [`exclusive_probe_with`] without an extra step.
+pub(crate) fn exclusive_probe(dir: &Path, name: &str, payload: &[u8]) -> std::io::Result<Vec<u8>> {
+    exclusive_probe_with(dir, name, payload, || Ok(()))
+}
+
+/// Create `dir/name` exclusively, write `payload`, run `between`, read the
+/// file back and delete it.
+///
+/// The file is created with `create_new` (`O_CREAT | O_EXCL` /
+/// `CREATE_NEW`): an existing file or symlink of that name is never opened,
+/// truncated or followed, and the call then fails without touching it.  Only a
+/// file this call created is deleted, also when a later step fails.
+pub(crate) fn exclusive_probe_with(
+    dir: &Path,
+    name: &str,
+    payload: &[u8],
+    between: impl FnOnce() -> std::io::Result<()>,
+) -> std::io::Result<Vec<u8>> {
+    use std::io::Write as _;
+    let path = dir.join(name);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    // From here on the file is ours: always remove it.
+    let result = (|| {
+        (&file).write_all(payload)?;
+        (&file).flush()?;
+        drop(file);
+        between()?;
+        std::fs::read(&path)
+    })();
+    let removed = std::fs::remove_file(&path);
+    let back = result?;
+    removed?;
+    Ok(back)
+}
+
 /// `data dir`: exists and is writable.  Offers [`Repair::CreateDataDir`] when
 /// it is missing.
 #[must_use]
@@ -292,9 +438,8 @@ pub fn check_data_dir(dir: &Path) -> Check {
         )
         .repair(Repair::CreateDataDir);
     }
-    let probe = dir.join(format!(".doctor-probe-{}", std::process::id()));
-    match std::fs::write(&probe, b"ok").and_then(|()| std::fs::remove_file(&probe)) {
-        Ok(()) => Check::ok(ID, N, format!("{} (writable)", dir.display())),
+    match exclusive_probe(dir, &probe_name(".doctor-probe-", ""), b"ok") {
+        Ok(_) => Check::ok(ID, N, format!("{} (writable)", dir.display())),
         Err(e) => Check::fail(
             ID,
             N,
@@ -314,21 +459,22 @@ pub fn check_unicode_path(dir: &Path) -> Check {
     if !dir.is_dir() {
         return Check::skipped(ID, N, "data dir does not exist yet");
     }
-    let name = format!("{}-{UNICODE_PROBE_NAME}", std::process::id());
-    let path = dir.join(&name);
+    let name = probe_name("", &format!("-{UNICODE_PROBE_NAME}"));
     let payload = "Praxi tanılama: ğüşiöç İĞÜŞÖÇ";
-    let result = (|| -> std::io::Result<bool> {
-        std::fs::write(&path, payload)?;
-        let back = std::fs::read_to_string(&path)?;
-        let listed = std::fs::read_dir(dir)?
+    let mut listed = false;
+    let result = exclusive_probe_with(dir, &name, payload.as_bytes(), || {
+        listed = std::fs::read_dir(dir)?
             .filter_map(Result::ok)
             .any(|e| e.file_name().to_str() == Some(name.as_str()));
-        std::fs::remove_file(&path)?;
-        if back != payload {
-            return Err(std::io::Error::other("content changed on read-back"));
+        Ok(())
+    })
+    .and_then(|back| {
+        if back == payload.as_bytes() {
+            Ok(listed)
+        } else {
+            Err(std::io::Error::other("content changed on read-back"))
         }
-        Ok(listed)
-    })();
+    });
     match result {
         Ok(true) => Check::ok(ID, N, "non-ASCII file names work in the data dir"),
         // Readable by name, but listed in another form (e.g. Unicode
@@ -339,15 +485,12 @@ pub fn check_unicode_path(dir: &Path) -> Check {
             "non-ASCII file names work, but the folder lists them in a different form",
             "harmless for the bot; keep file names ASCII if another tool cannot find them",
         ),
-        Err(e) => {
-            let _ = std::fs::remove_file(&path);
-            Check::fail(
-                ID,
-                N,
-                format!("non-ASCII file name probe failed: {e}"),
-                "move the data dir to a folder on an NTFS/ext4/APFS disk, or set BOT_DATA_DIR to an ASCII-only path",
-            )
-        }
+        Err(e) => Check::fail(
+            ID,
+            N,
+            format!("non-ASCII file name probe failed: {e}"),
+            "move the data dir to a folder on an NTFS/ext4/APFS disk, or set BOT_DATA_DIR to an ASCII-only path",
+        ),
     }
 }
 
@@ -444,12 +587,14 @@ pub fn check_providers(inp: &ProviderInputs<'_>) -> Check {
         );
     }
     let mut problems = Vec::new();
+    let mut unverified = Vec::new();
     let mut notes = Vec::new();
     for p in &enabled {
         if p.cli.is_some() {
             match cli_state(&p.id, inp.detected) {
-                Ok(note) => notes.push(note),
-                Err(problem) => problems.push(problem),
+                CliState::Ready(note) => notes.push(note),
+                CliState::Unverified(note) => unverified.push(note),
+                CliState::Problem(problem) => problems.push(problem),
             }
             continue;
         }
@@ -489,11 +634,19 @@ pub fn check_providers(inp: &ProviderInputs<'_>) -> Check {
     }
     let detail = notes
         .iter()
+        .chain(unverified.iter())
         .chain(problems.iter())
         .cloned()
         .collect::<Vec<_>>()
         .join("; ");
-    if problems.is_empty() {
+    if problems.is_empty() && !unverified.is_empty() {
+        Check::warn(
+            ID,
+            N,
+            detail,
+            "the coding CLI sign-in could not be confirmed: run Diagnostics again, or open a terminal and sign in to the CLI once (e.g. `claude`, `codex login`)",
+        )
+    } else if problems.is_empty() {
         let c = Check::ok(ID, N, detail);
         if inp.online.is_some() {
             c
@@ -510,27 +663,47 @@ pub fn check_providers(inp: &ProviderInputs<'_>) -> Check {
     }
 }
 
+/// What the detection result says about an enabled `cli:<engine>` provider.
+#[derive(Debug, PartialEq, Eq)]
+enum CliState {
+    /// Installed, runnable and affirmatively signed in.
+    Ready(String),
+    /// Not known to work: detection did not answer, or the sign-in state
+    /// could not be read.  Reported as a warning, never as ready.
+    Unverified(String),
+    /// Known to be broken.
+    Problem(String),
+}
+
 /// State of an enabled `cli:<engine>` provider from the detection result.
-fn cli_state(
-    provider_id: &str,
-    detected: Option<&[cli_provider::DetectedCli]>,
-) -> Result<String, String> {
+fn cli_state(provider_id: &str, detected: Option<&[cli_provider::DetectedCli]>) -> CliState {
+    use cli_provider::AuthState;
     let engine = provider_id.strip_prefix("cli:").unwrap_or(provider_id);
     let Some(detected) = detected else {
-        return Ok(format!("{provider_id}: configured (CLI not probed)"));
+        return CliState::Unverified(format!(
+            "{provider_id}: configured, but the CLI was not checked (detection did not answer)"
+        ));
     };
     match detected.iter().find(|d| d.id == engine) {
-        Some(d) if !d.installed => Err(format!("{provider_id}: CLI is not installed")),
-        Some(d) if d.auth == cli_provider::AuthState::SignedOut => Err(format!(
+        Some(d) if !d.installed => {
+            CliState::Problem(format!("{provider_id}: CLI is not installed"))
+        }
+        Some(d) if d.auth == AuthState::SignedOut => CliState::Problem(format!(
             "{provider_id}: CLI is installed but signed out; sign in with `{}`",
             sign_in_command(engine)
         )),
-        Some(d) if !d.runnable => Err(format!(
+        Some(d) if !d.runnable => CliState::Problem(format!(
             "{provider_id}: CLI cannot run turns ({})",
             d.detail.as_deref().unwrap_or("not runnable")
         )),
-        Some(_) => Ok(format!("{provider_id}: CLI ready")),
-        None => Err(format!("{provider_id}: unknown coding CLI")),
+        Some(d) if d.auth == AuthState::SignedIn => {
+            CliState::Ready(format!("{provider_id}: CLI ready"))
+        }
+        Some(_) => CliState::Unverified(format!(
+            "{provider_id}: CLI installed, but its sign-in could not be verified; if turns fail, sign in with `{}`",
+            sign_in_command(engine)
+        )),
+        None => CliState::Problem(format!("{provider_id}: unknown coding CLI")),
     }
 }
 
@@ -549,7 +722,12 @@ pub fn check_cli_accounts(detected: Option<&[cli_provider::DetectedCli]>) -> Che
     const ID: &str = "cli_accounts";
     const N: &str = "cli accounts";
     let Some(detected) = detected else {
-        return Check::skipped(ID, N, "coding CLI detection did not answer in time");
+        return Check::warn(
+            ID,
+            N,
+            "coding CLI detection did not answer in time; CLI sign-ins were not verified",
+            "run Diagnostics again; if it keeps timing out, run `bot doctor` in a terminal",
+        );
     };
     let installed: Vec<_> = detected.iter().filter(|d| d.installed).collect();
     if installed.is_empty() {
@@ -557,11 +735,15 @@ pub fn check_cli_accounts(detected: Option<&[cli_provider::DetectedCli]>) -> Che
     }
     let mut ready = Vec::new();
     let mut signed_out = Vec::new();
+    let mut unverified = Vec::new();
     let mut other = Vec::new();
     for d in installed {
         match d.auth {
             cli_provider::AuthState::SignedOut => signed_out.push(d.display_name.clone()),
-            _ if d.runnable => ready.push(d.display_name.clone()),
+            cli_provider::AuthState::SignedIn if d.runnable => ready.push(d.display_name.clone()),
+            cli_provider::AuthState::Unknown if d.runnable => {
+                unverified.push(d.display_name.clone());
+            }
             _ => other.push(d.display_name.clone()),
         }
     }
@@ -572,12 +754,22 @@ pub fn check_cli_accounts(detected: Option<&[cli_provider::DetectedCli]>) -> Che
     if !signed_out.is_empty() {
         parts.push(format!("signed out: {}", signed_out.join(", ")));
     }
+    if !unverified.is_empty() {
+        parts.push(format!("sign-in not verified: {}", unverified.join(", ")));
+    }
     if !other.is_empty() {
         parts.push(format!("detected only: {}", other.join(", ")));
     }
     let detail = parts.join("; ");
-    if signed_out.is_empty() {
+    if signed_out.is_empty() && unverified.is_empty() {
         Check::ok(ID, N, detail)
+    } else if signed_out.is_empty() {
+        Check::warn(
+            ID,
+            N,
+            detail,
+            "the CLI did not report whether it is signed in: open a terminal, run it once and sign in if asked (e.g. `claude`, `codex login`)",
+        )
     } else {
         Check::warn(
             ID,
@@ -979,6 +1171,34 @@ fn replace_ci(hay: &str, needle: &str, with: &str) -> String {
     out
 }
 
+/// [`replace_ci`], but only where `needle` is not part of a longer word.
+fn replace_ci_word(hay: &str, needle: &str, with: &str) -> String {
+    if needle.is_empty() {
+        return hay.to_owned();
+    }
+    let mut out = String::with_capacity(hay.len());
+    let mut rest = hay;
+    let mut prev: Option<char> = None;
+    while let Some(c) = rest.chars().next() {
+        if !prev.is_some_and(char::is_alphanumeric)
+            && let Some(len) = ci_prefix(rest, needle)
+            && !rest[len..]
+                .chars()
+                .next()
+                .is_some_and(char::is_alphanumeric)
+        {
+            out.push_str(with);
+            prev = needle.chars().next_back();
+            rest = &rest[len..];
+            continue;
+        }
+        out.push(c);
+        prev = Some(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
 /// Whether `c` can be part of an e-mail local part or domain.
 fn email_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | '+' | '%')
@@ -1020,13 +1240,28 @@ pub fn mask_emails(s: &str) -> String {
     out
 }
 
-/// Mask runs of 24+ `[A-Za-z0-9_-]` characters (keys, tokens) as `[redacted]`.
+/// Whether `c` belongs to a token-like run (keys, tokens, their URL-encoded,
+/// base64 or percent-escaped forms).
+fn token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '=' | '%')
+}
+
+/// Whether `run` holds a percent-escape (`%2F`, `%3d`, ...).
+fn has_percent_escape(run: &str) -> bool {
+    run.as_bytes()
+        .windows(3)
+        .any(|w| w[0] == b'%' && w[1].is_ascii_hexdigit() && w[2].is_ascii_hexdigit())
+}
+
+/// Mask token-like runs as `[redacted]`: 24+ characters of
+/// `[A-Za-z0-9_+=%-]`, or 12+ of them when the run contains a percent-escape
+/// (a URL-encoded value).
 #[must_use]
 pub fn mask_long_tokens(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut run = String::new();
     let flush = |run: &mut String, out: &mut String| {
-        if run.len() >= 24 {
+        if run.len() >= 24 || (run.len() >= 12 && has_percent_escape(run)) {
             out.push_str("[redacted]");
         } else {
             out.push_str(run);
@@ -1034,7 +1269,7 @@ pub fn mask_long_tokens(s: &str) -> String {
         run.clear();
     };
     for ch in s.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+        if token_char(ch) {
             run.push(ch);
         } else {
             flush(&mut run, &mut out);
@@ -1045,23 +1280,283 @@ pub fn mask_long_tokens(s: &str) -> String {
     out
 }
 
-/// Redact text that leaves the machine: the home directory becomes `~`
-/// (both slash styles, any letter case), then the secret [`Redactor`] runs
-/// (known secret values and key shapes), then e-mail addresses and any
-/// remaining token-like run are masked.
+/// Words that mark the value after them as a credential.
+const SECRET_WORDS: &[&str] = &[
+    "key",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "passphrase",
+    "auth",
+    "bearer",
+    "credential",
+    "cookie",
+    "session",
+    "pwd",
+];
+
+/// Mask the value of `name = value`, `name: value` and `Bearer value` when the
+/// name looks like a credential (`api_key`, `token`, `password`, ...).
+/// Quoted values are masked up to their closing quote.
 #[must_use]
-pub fn redact_report(text: &str, redactor: Option<&Redactor>, home: Option<&str>) -> String {
-    let mut s = text.to_owned();
-    if let Some(home) = home.filter(|h| h.len() > 3) {
-        let home = home.trim_end_matches(['/', '\\']);
-        s = replace_ci(&s, home, "~");
-        s = replace_ci(&s, &home.replace('\\', "/"), "~");
-        s = replace_ci(&s, &home.replace('/', "\\"), "~");
+pub fn mask_secret_assignments(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let mut pos = 0;
+    while pos < chars.len() {
+        let ch = chars[pos];
+        if ch.is_alphanumeric() || matches!(ch, '_' | '-' | '.') {
+            word.push(ch);
+            out.push(ch);
+            pos += 1;
+            continue;
+        }
+        let lower = word.to_lowercase();
+        word.clear();
+        let secretish = SECRET_WORDS.iter().any(|w| lower.contains(w));
+        // `name = value` / `name: value` / `Bearer value`.
+        let mut val = pos;
+        while val < chars.len() && chars[val] == ' ' {
+            val += 1;
+        }
+        let assign = val < chars.len() && matches!(chars[val], '=' | ':');
+        let bearer = lower == "bearer" && ch == ' ';
+        if !(secretish && (assign || bearer)) {
+            out.push(ch);
+            pos += 1;
+            continue;
+        }
+        if assign {
+            val += 1;
+            while val < chars.len() && chars[val] == ' ' {
+                val += 1;
+            }
+            // `Authorization: Bearer <value>`: the scheme stays, the value goes.
+            for scheme in ["bearer ", "basic "] {
+                let ahead: String = chars[val..].iter().take(scheme.len()).collect();
+                if ahead.eq_ignore_ascii_case(scheme) {
+                    val += scheme.len();
+                    while val < chars.len() && chars[val] == ' ' {
+                        val += 1;
+                    }
+                }
+            }
+        }
+        // Copy up to the value, then skip the value.
+        out.extend(&chars[pos..val]);
+        let mut end = val;
+        match chars.get(end) {
+            Some(&quote @ ('"' | '\'')) => {
+                end += 1;
+                while end < chars.len() && chars[end] != quote && chars[end] != '\n' {
+                    end += 1;
+                }
+                out.push(quote);
+                out.push_str("[redacted]");
+                if end < chars.len() && chars[end] == quote {
+                    out.push(quote);
+                    end += 1;
+                }
+            }
+            Some(_) => {
+                while end < chars.len()
+                    && !chars[end].is_whitespace()
+                    && !matches!(chars[end], ',' | ';' | ')' | ']' | '}' | '|' | '`')
+                {
+                    end += 1;
+                }
+                if end > val {
+                    out.push_str("[redacted]");
+                }
+            }
+            None => {}
+        }
+        pos = end;
     }
-    if let Some(r) = redactor {
-        s = r.redact(&s);
+    out
+}
+
+fn loopback_host(host: &str) -> bool {
+    let h = host.trim_start_matches('[');
+    h.eq_ignore_ascii_case("localhost")
+        || h.starts_with("127.")
+        || h.starts_with("::1")
+        || h.starts_with("0.0.0.0")
+}
+
+/// Mask what a URL tells about its owner: credentials (`user:pass@`), the
+/// host (unless loopback) and the whole query string.  The scheme and path
+/// stay, so the report still says which kind of endpoint failed.
+#[must_use]
+pub fn mask_urls(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find("://") {
+        let has_scheme = rest[..pos]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric());
+        out.push_str(&rest[..pos + 3]);
+        let after = &rest[pos + 3..];
+        let end = after
+            .find(|c: char| {
+                c.is_whitespace() || matches!(c, '"' | '\'' | '`' | '<' | '>' | '|' | ')')
+            })
+            .unwrap_or(after.len());
+        let url = &after[..end];
+        rest = &after[end..];
+        if !has_scheme {
+            // `://` without a scheme: not a URL, copy as is.
+            out.push_str(url);
+            continue;
+        }
+        let auth_end = url.find(['/', '?', '#']).unwrap_or(url.len());
+        let authority = &url[..auth_end];
+        let (had_userinfo, host_port) = match authority.rsplit_once('@') {
+            Some((_, h)) => (true, h),
+            None => (false, authority),
+        };
+        let host = host_port
+            .rsplit_once(':')
+            .filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit()))
+            .map_or(host_port, |(h, _)| h);
+        if had_userinfo {
+            out.push_str("[redacted]@");
+        }
+        if loopback_host(host) {
+            out.push_str(host_port);
+        } else {
+            out.push_str("[host]");
+        }
+        let tail = &url[auth_end..];
+        match tail.find('?') {
+            Some(q) => {
+                out.push_str(&tail[..q]);
+                out.push_str("?[redacted]");
+            }
+            None => out.push_str(tail),
+        }
     }
-    mask_long_tokens(&mask_emails(&s))
+    out.push_str(rest);
+    out
+}
+
+/// Drop the source excerpt a parse error quotes (`3 | key = "..."` and the
+/// `|  ^` marker lines): it is arbitrary config text.  The location line and
+/// the message stay.
+#[must_use]
+pub fn strip_source_excerpts(s: &str) -> String {
+    s.lines()
+        .filter(|l| {
+            let t = l
+                .trim_start()
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .trim_start();
+            !t.starts_with('|')
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Shortened peer keys (`abcdef12…`) as `[peer]`.
+fn mask_short_keys(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut run = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() {
+            run.push(ch);
+            continue;
+        }
+        if ch == '\u{2026}' && run.len() == 8 {
+            out.push_str("[peer]");
+        } else {
+            out.push_str(&run);
+            out.push(ch);
+        }
+        run.clear();
+    }
+    out.push_str(&run);
+    out
+}
+
+/// The identifying names of this machine and account (user name, host
+/// name), from the environment, with their placeholders.  Names shorter than
+/// 3 characters are left alone (too likely to hit ordinary words).
+#[must_use]
+pub fn machine_identities() -> Vec<(String, &'static str)> {
+    let mut v: Vec<(String, &'static str)> = Vec::new();
+    for (var, label) in [
+        ("USERNAME", "[user]"),
+        ("USER", "[user]"),
+        ("LOGNAME", "[user]"),
+        ("COMPUTERNAME", "[host]"),
+        ("HOSTNAME", "[host]"),
+    ] {
+        if let Ok(value) = std::env::var(var)
+            && value.chars().count() >= 3
+            && !v.iter().any(|(x, _)| x.eq_ignore_ascii_case(&value))
+        {
+            v.push((value, label));
+        }
+    }
+    v
+}
+
+/// How text is scrubbed before it leaves the machine (see [`redact_report`]).
+#[derive(Default)]
+pub struct Scrub<'a> {
+    /// The daemon's secret redactor: known secret values and their encoded
+    /// forms.
+    pub secrets: Option<&'a dyn Fn(&str) -> String>,
+    /// Home directory (becomes `~`).
+    pub home: Option<&'a str>,
+    /// User / host names and their placeholders (see [`machine_identities`]).
+    pub identities: Vec<(String, &'static str)>,
+}
+
+impl Scrub<'_> {
+    /// Scrub one piece of text (see [`redact_report`]).
+    #[must_use]
+    pub fn text(&self, text: &str) -> String {
+        // Known secrets first, on the untouched text, so no later rewrite can
+        // split a literal value.
+        let mut s = match self.secrets {
+            Some(r) => r(text),
+            None => text.to_owned(),
+        };
+        s = strip_source_excerpts(&s);
+        if let Some(home) = self.home.filter(|h| h.len() > 3) {
+            let home = home.trim_end_matches(['/', '\\']);
+            s = replace_ci(&s, home, "~");
+            s = replace_ci(&s, &home.replace('\\', "/"), "~");
+            s = replace_ci(&s, &home.replace('/', "\\"), "~");
+        }
+        s = mask_urls(&s);
+        s = mask_secret_assignments(&s);
+        s = mask_emails(&s);
+        for (name, label) in &self.identities {
+            s = replace_ci_word(&s, name, label);
+        }
+        s = mask_short_keys(&s);
+        let s = mask_long_tokens(&s);
+        match self.secrets {
+            Some(r) => r(&s),
+            None => s,
+        }
+    }
+}
+
+/// Redact text that leaves the machine: known secrets (and their encoded
+/// forms) are masked first, then the source excerpts of parse errors are
+/// dropped, the home directory becomes `~`, and URL credentials, hosts and
+/// queries, credential assignments (`api_key = ...`), e-mail addresses, the
+/// user and host names, shortened peer keys and any remaining token-like run
+/// are masked.
+#[must_use]
+pub fn redact_report(text: &str, scrub: &Scrub<'_>) -> String {
+    scrub.text(text)
 }
 
 // ---------------------------------------------------------------- report
@@ -1103,17 +1598,26 @@ pub struct ReportInfo {
     pub config_files: Vec<String>,
 }
 
-/// A Markdown support report.  Run [`redact_report`] over the result before
-/// it leaves the process (the daemon route does).
+/// A Markdown support report.  Each value is scrubbed with `scrub` before it
+/// is escaped; run [`redact_report`] over the result too before it leaves the
+/// process (the daemon route does).
 #[must_use]
-pub fn report_markdown(info: &ReportInfo, checks: &[Check]) -> String {
+pub fn report_markdown(info: &ReportInfo, checks: &[Check], scrub: &Scrub<'_>) -> String {
     use std::fmt::Write as _;
+    // Every value is scrubbed before Markdown escaping: escaping rewrites `|`
+    // and newlines, which would defeat literal secret matching.
     let mut s = String::new();
     let _ = writeln!(s, "# Praxi diagnostics report\n");
     let _ = writeln!(s, "- Version: {}", info.version);
     let _ = writeln!(s, "- API: {}", info.api_version);
     let _ = writeln!(s, "- Platform: {}", info.platform);
-    let _ = writeln!(s, "- Data dir: `{}`", info.data_dir.display());
+    let _ = writeln!(
+        s,
+        "- Data dir: `{}`",
+        scrub
+            .text(&info.data_dir.display().to_string())
+            .replace('`', "'")
+    );
     let files = if info.config_files.is_empty() {
         "(none)".to_owned()
     } else {
@@ -1132,7 +1636,7 @@ pub fn report_markdown(info: &ReportInfo, checks: &[Check]) -> String {
     let _ = writeln!(s, "## Checks\n");
     let _ = writeln!(s, "| Status | Check | Detail |");
     let _ = writeln!(s, "| --- | --- | --- |");
-    let cell = |t: &str| t.replace('|', "\\|").replace(['\n', '\r'], " ");
+    let cell = |t: &str| scrub.text(t).replace('|', "\\|").replace(['\n', '\r'], " ");
     for c in checks {
         let mut detail = cell(&c.detail);
         if let (Some(h), Status::Warn | Status::Fail) = (&c.hint, c.status) {

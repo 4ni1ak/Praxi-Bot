@@ -764,15 +764,21 @@ pub async fn run_daemon(
 }
 
 /// What `GET /v1/doctor` learns from `bot serve`: the desktop backend's
-/// capabilities.  Browsers are launched per run by the browser tools, so there
-/// is no shared session to restart (the repair stays unavailable).
+/// capabilities and the production secret redactor (for the support report).
+/// Browsers are launched per run by the browser tools, so there is no shared
+/// session to restart (the repair stays unavailable).
 struct ServeDoctorHost {
     desktop: Option<desktop_api::Capabilities>,
+    redactor: SharedRedactor,
 }
 
 impl daemon_api::DoctorHost for ServeDoctorHost {
     fn desktop(&self) -> Option<desktop_api::Capabilities> {
         self.desktop.clone()
+    }
+
+    fn redactor(&self) -> Option<SharedRedactor> {
+        Some(self.redactor.clone())
     }
 }
 
@@ -862,6 +868,7 @@ pub fn serve(
     register_schedule_tools(data_dir, &state);
     state.set_doctor_host(Arc::new(ServeDoctorHost {
         desktop: desktop_caps,
+        redactor: redactor.clone(),
     }));
     if let Some(host) = host {
         state.set_provider_host(host);

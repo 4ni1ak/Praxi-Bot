@@ -55,6 +55,7 @@ rustix = { version = "1", default-features = false, features = ["fs", "process",
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true
+base64.workspace = true
 rusqlite.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 http-body-util = "0.1"

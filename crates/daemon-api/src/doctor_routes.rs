@@ -4,14 +4,24 @@
 //! The checks run concurrently on blocking threads, each under a 3 s budget,
 //! all under a 10 s deadline; a check that does not answer in time is reported
 //! as a warning instead of holding the request.  Coding CLIs are detected once
-//! per request (through the daemon's cached detector) and the result is shared
-//! by every check that needs it.
+//! per request (through the daemon's cached detector, on a blocking thread:
+//! detection touches the file system) and the result is shared by every check
+//! that needs it.
+//!
+//! One diagnostics run at a time: the run's permit is shared by every blocking
+//! job it started and is released only when the last of them has really
+//! ended, so a check stuck on a dead mount or keyring makes later requests get
+//! `429` instead of piling up more stuck threads.  The support report has an
+//! end-to-end deadline.
+//!
+//! Every route here is host-local: the peer router refuses `/v1/doctor*` to
+//! every paired device role (see `crate::peer`).
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
@@ -19,13 +29,20 @@ use tokio::time::Instant;
 use utoipa::ToSchema;
 
 use crate::AppState;
-use crate::doctor::{self, CapabilityStatus, Check, Repair};
+use crate::doctor::{self, CapabilityStatus, Check, LinkPeer, LinkRuntime, Repair};
 use crate::error::{ApiError, ErrorBody};
+use crate::live_view::Actor;
 
 /// Budget of one check.
 pub(crate) const CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 /// Budget of a whole `GET /v1/doctor`.
 pub(crate) const OVERALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Budget of a whole `GET /v1/doctor/report` (checks plus redaction).
+pub(crate) const REPORT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The single diagnostics slot, shared by a run and every blocking job it
+/// started (released when the last holder drops it).
+pub(crate) type RunPermit = Arc<tokio::sync::OwnedSemaphorePermit>;
 
 /// What the embedder adds to the diagnostics (call
 /// [`AppState::set_doctor_host`] once).
@@ -48,6 +65,15 @@ pub trait DoctorHost: Send + Sync {
     /// Why it could not be restarted.
     async fn restart_browser(&self) -> Result<String, String> {
         Err("restarting the browser is not supported by this daemon".into())
+    }
+
+    /// The daemon's live secret redactor (stored secrets, the API token, the
+    /// vault passphrase and credential environment variables, each with its
+    /// encoded forms).  The support report uses it; without one the report
+    /// builds an equivalent from the secret store and fails closed when the
+    /// store cannot be read.
+    fn redactor(&self) -> Option<agent_core::SharedRedactor> {
+        None
     }
 }
 
@@ -77,20 +103,30 @@ pub(crate) type Job = (
 );
 
 /// Run `jobs` concurrently: each gets `per`, all of them end by `deadline`.
-/// Results keep the order of `jobs`.
-pub(crate) async fn run_jobs(jobs: Vec<Job>, per: Duration, deadline: Instant) -> Vec<Check> {
+/// Results keep the order of `jobs`.  Every job holds a clone of `permit`
+/// until it really ends, also after its result was given up on.
+pub(crate) async fn run_jobs(
+    jobs: Vec<Job>,
+    per: Duration,
+    deadline: Instant,
+    permit: &RunPermit,
+) -> Vec<Check> {
     let handles: Vec<_> = jobs
         .into_iter()
         .map(|(id, title, f)| {
             let until = (Instant::now() + per).min(deadline);
-            let task = tokio::task::spawn_blocking(f);
+            let hold = Arc::clone(permit);
+            let task = tokio::task::spawn_blocking(move || {
+                let _hold = hold;
+                f()
+            });
             (id, title, until, task)
         })
         .collect();
     let mut out = Vec::with_capacity(handles.len());
     for (id, title, until, task) in handles {
         // A blocking thread cannot be cancelled: a late check finishes in the
-        // background and its result is dropped.
+        // background (still holding the permit) and its result is dropped.
         out.push(match tokio::time::timeout_at(until, task).await {
             Ok(Ok(c)) => c,
             Ok(Err(e)) => Check::warn(
@@ -108,6 +144,49 @@ pub(crate) async fn run_jobs(jobs: Vec<Job>, per: Duration, deadline: Instant) -
         });
     }
     out
+}
+
+/// Run the future `make()` returns on a blocking thread (it may do
+/// synchronous I/O before it yields, which must not stall an async worker)
+/// and wait for it until `until`.  The thread holds `permit` until it ends.
+/// `None` when it did not answer in time or panicked.
+pub(crate) async fn on_blocking_pool<T, Fut>(
+    make: impl FnOnce() -> Fut + Send + 'static,
+    until: Instant,
+    permit: &RunPermit,
+) -> Option<T>
+where
+    Fut: std::future::Future<Output = T>,
+    T: Send + 'static,
+{
+    let handle = tokio::runtime::Handle::current();
+    let hold = Arc::clone(permit);
+    let task = tokio::task::spawn_blocking(move || {
+        let _hold = hold;
+        handle.block_on(make())
+    });
+    tokio::time::timeout_at(until, task).await.ok()?.ok()
+}
+
+/// The daemon's live pairing / connection state (what `GET /v1/host` shows).
+fn link_runtime(s: &AppState) -> LinkRuntime {
+    let Some(net) = s.leader().network() else {
+        return LinkRuntime::NetworkDisabled;
+    };
+    LinkRuntime::Network(
+        net.devices()
+            .into_iter()
+            .filter_map(|d| {
+                let key = peer_network::key_from_string(&d.id).ok()?;
+                Some(LinkPeer {
+                    connected: net.is_connected(&key),
+                    last_seen_secs: net.last_seen(&key).map(|t| t.elapsed().as_secs()),
+                    key: d.id,
+                    role: d.role.to_string(),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn capabilities(desktop: Option<&desktop_api::Capabilities>) -> Vec<CapabilityStatus> {
@@ -130,19 +209,18 @@ fn capabilities(desktop: Option<&desktop_api::Capabilities>) -> Vec<CapabilitySt
     ]
 }
 
-/// All daemon-side checks.
+/// All daemon-side checks, ending by `deadline`.
 #[allow(clippy::too_many_lines)] // The check table of the daemon, in display order.
-pub(crate) async fn run_checks(s: &AppState) -> Vec<Check> {
+pub(crate) async fn run_checks(s: &AppState, deadline: Instant, permit: &RunPermit) -> Vec<Check> {
     let start = Instant::now();
-    let deadline = start + OVERALL_TIMEOUT;
     // One CLI detection per request (the detector caches it for 60 s).
     let detector = s.detector();
-    let detected = tokio::time::timeout_at(
+    let detected = on_blocking_pool(
+        move || async move { detector.detect(false).await },
         (start + CHECK_TIMEOUT).min(deadline),
-        detector.detect(false),
+        permit,
     )
     .await
-    .ok()
     .map(Arc::new);
     let data_dir = s.data_dir();
     let has_catalog = s.provider_host().is_some();
@@ -178,11 +256,11 @@ pub(crate) async fn run_checks(s: &AppState) -> Vec<Check> {
         "host ownership",
         Box::new(move || doctor::check_host(&d)),
     );
-    let d = data_dir.clone();
+    let (d, app) = (data_dir.clone(), s.clone());
     add(
         "peer_link",
         "peer link",
-        Box::new(move || doctor::check_peer_link(&d)),
+        Box::new(move || doctor::check_peer_link(&d, &link_runtime(&app))),
     );
     let d = data_dir.clone();
     add(
@@ -304,7 +382,7 @@ pub(crate) async fn run_checks(s: &AppState) -> Vec<Check> {
         "clock",
         Box::new(move || doctor::check_clock(SystemTime::now(), doctor::newest_mtime(&d))),
     );
-    run_jobs(jobs, CHECK_TIMEOUT, deadline).await
+    run_jobs(jobs, CHECK_TIMEOUT, deadline, permit).await
 }
 
 /// Run the read-only diagnostics.
@@ -312,41 +390,70 @@ pub(crate) async fn run_checks(s: &AppState) -> Vec<Check> {
     responses((status = 200, body = DoctorReport), (status = 401, body = ErrorBody),
               (status = 429, body = ErrorBody, description = "a diagnostics run is already in progress")))]
 pub(crate) async fn get_doctor(State(s): State<AppState>) -> Result<Json<DoctorReport>, ApiError> {
-    let _permit = s.doctor_permit()?;
-    let checks = run_checks(&s).await;
+    let permit = Arc::new(s.doctor_permit()?);
+    let checks = run_checks(&s, Instant::now() + OVERALL_TIMEOUT, &permit).await;
     Ok(Json(DoctorReport {
         ok: checks.iter().all(|c| c.status != doctor::Status::Fail),
         checks,
     }))
 }
 
-/// Run one allow-listed repair.  The request is the user's click in Settings
-/// (bots have no API token); every attempt is audit-logged.
+/// Run one allow-listed repair.  The request is the local user's click in
+/// Settings (bots have no API token; paired peers are refused by the peer
+/// router).  An attributed `doctor.repair_requested` audit record is written
+/// before anything runs (no record, no repair), and `doctor.repair` records
+/// the outcome.
 #[utoipa::path(post, path = "/v1/doctor/repair/{id}", tag = "doctor", security(("bearer" = [])),
     params(("id" = String, Path, description = "Repair id: create_data_dir, reload_providers or restart_browser")),
     responses((status = 200, body = RepairResult), (status = 401, body = ErrorBody),
+              (status = 403, body = ErrorBody, description = "not the local user"),
               (status = 404, body = ErrorBody, description = "not an allow-listed repair"),
               (status = 409, body = ErrorBody, description = "this daemon cannot run that repair"),
-              (status = 422, body = ErrorBody, description = "the repair ran and failed")))]
+              (status = 422, body = ErrorBody, description = "the repair ran and failed"),
+              (status = 500, body = ErrorBody, description = "the audit record could not be written; nothing ran")))]
 pub(crate) async fn repair(
     State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
 ) -> Result<Json<RepairResult>, ApiError> {
     let Some(repair) = Repair::parse(&id) else {
         return Err(ApiError::not_found(format!("repair {id}")));
     };
-    let outcome = run_repair(&s, repair).await;
-    let (ok, detail) = match &outcome {
-        Ok(d) => (true, d.clone()),
-        Err(e) => (false, e.to_string()),
-    };
-    let audit = s.storage().append_audit(
-        s.user_id(),
-        None,
-        "user",
-        "doctor.repair",
-        &serde_json::json!({ "repair": repair.id(), "ok": ok, "detail": detail }),
-    );
+    // Defence in depth: the peer router already refuses `/v1/doctor*`.
+    if !actor.local {
+        return Err(ApiError::forbidden(
+            "repairs are run by the local user from this computer's Settings",
+        ));
+    }
+    let who = actor.key;
+    s.storage()
+        .append_audit(
+            s.user_id(),
+            None,
+            &who,
+            "doctor.repair_requested",
+            &serde_json::json!({ "repair": repair.id() }),
+        )
+        .map_err(ApiError::internal)?;
+    // Run detached from the request: a client that hangs up mid-repair must
+    // not skip the outcome record.
+    let app = s.clone();
+    let task = tokio::spawn(async move {
+        let outcome = run_repair(&app, repair).await;
+        let (ok, detail) = match &outcome {
+            Ok(d) => (true, d.clone()),
+            Err(e) => (false, e.to_string()),
+        };
+        let audit = app.storage().append_audit(
+            app.user_id(),
+            None,
+            &who,
+            "doctor.repair",
+            &serde_json::json!({ "repair": repair.id(), "ok": ok, "detail": detail }),
+        );
+        (outcome, audit)
+    });
+    let (outcome, audit) = task.await.map_err(ApiError::internal)?;
     audit.map_err(ApiError::internal)?;
     outcome.map(|detail| Json(RepairResult { repair, detail }))
 }
@@ -390,27 +497,60 @@ async fn run_repair(s: &AppState, repair: Repair) -> Result<String, ApiError> {
 
 /// A redacted Markdown support report: versions, platform, check results and
 /// config file names (never contents).  The home directory becomes `~`;
-/// stored secrets, the API token, key-shaped strings and e-mail addresses are
-/// masked.
+/// secrets known to the daemon (and their encoded forms), the API token,
+/// key-shaped strings, credentials in URLs and assignments, host names, user
+/// names and e-mail addresses are masked.  Ends within 15 s.
 #[utoipa::path(get, path = "/v1/doctor/report", tag = "doctor", security(("bearer" = [])),
     responses((status = 200, description = "Markdown report", content_type = "text/markdown", body = String),
-              (status = 401, body = ErrorBody), (status = 429, body = ErrorBody)))]
+              (status = 401, body = ErrorBody), (status = 429, body = ErrorBody),
+              (status = 503, body = ErrorBody, description = "safe redaction unavailable or the report did not finish in time")))]
 pub(crate) async fn report(State(s): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let _permit = s.doctor_permit()?;
-    let text = build_report(&s, doctor::home_dir()).await?;
+    let permit = Arc::new(s.doctor_permit()?);
+    let deadline = Instant::now() + REPORT_TIMEOUT;
+    let text = build_report(&s, doctor::home_dir(), deadline, &permit).await?;
     Ok((
         [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
         text,
     ))
 }
 
-/// The redacted report text, with `home` replaced by `~`.
-pub(crate) async fn build_report(s: &AppState, home: Option<String>) -> Result<String, ApiError> {
-    let checks = run_checks(s).await;
+/// The redacted report text, with `home` replaced by `~`, ending by
+/// `deadline`.
+pub(crate) async fn build_report(
+    s: &AppState,
+    home: Option<String>,
+    deadline: Instant,
+    permit: &RunPermit,
+) -> Result<String, ApiError> {
+    let checks = run_checks(s, deadline.min(Instant::now() + OVERALL_TIMEOUT), permit).await;
     let dir = s.data_dir();
+    let production = s.doctor_host().and_then(|h| h.redactor());
     let store = s.secret_store();
     let token = s.token().to_owned();
-    tokio::task::spawn_blocking(move || {
+    let hold = Arc::clone(permit);
+    let task = tokio::task::spawn_blocking(move || {
+        let _hold = hold;
+        let redactor = if let Some(r) = production {
+            r
+        } else {
+            // No live redactor from the embedder: build one from the same
+            // store, with encoded variants.  Fail closed when the store
+            // cannot be read.
+            let r = agent_core::SharedRedactor::default();
+            r.refresh_from_store(store.as_deref(), &[token])
+                .map_err(|e| {
+                    ApiError::unavailable(format!(
+                        "secret redaction is unavailable ({e}); no report was produced"
+                    ))
+                })?;
+            r
+        };
+        let redact = |t: &str| redactor.redact(t);
+        let scrub = doctor::Scrub {
+            secrets: Some(&redact),
+            home: home.as_deref(),
+            identities: doctor::machine_identities(),
+        };
         let info = doctor::ReportInfo {
             version: env!("CARGO_PKG_VERSION").into(),
             api_version: crate::API_VERSION.into(),
@@ -418,16 +558,29 @@ pub(crate) async fn build_report(s: &AppState, home: Option<String>) -> Result<S
             config_files: doctor::present_config_files(&dir),
             data_dir: dir,
         };
-        let mut redactor = store
-            .and_then(|st| secret_store::Redactor::from_store(st.as_ref()).ok())
-            .unwrap_or_default();
-        redactor.add_secret(&token);
-        doctor::redact_report(
-            &doctor::report_markdown(&info, &checks),
-            Some(&redactor),
-            home.as_deref(),
-        )
-    })
-    .await
-    .map_err(ApiError::internal)
+        let markdown = doctor::report_markdown(&info, &checks, &scrub);
+        // Once more over the whole text (secrets, encodings, token shapes);
+        // user / host names were already masked in every value, and the fixed
+        // template must stay readable.
+        let text = doctor::redact_report(
+            &markdown,
+            &doctor::Scrub {
+                identities: vec![],
+                ..scrub
+            },
+        );
+        if redactor.contains_secret(&text) {
+            return Err(ApiError::unavailable(
+                "the report still matched a known secret after redaction; it was withheld",
+            ));
+        }
+        Ok(text)
+    });
+    match tokio::time::timeout_at(deadline, task).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(e)) => Err(ApiError::internal(e)),
+        Err(_) => Err(ApiError::unavailable(
+            "the support report did not finish in time; try again in a moment",
+        )),
+    }
 }

@@ -1128,7 +1128,7 @@
         "tags": [
           "doctor"
         ],
-        "summary": "Run one allow-listed repair.  The request is the user's click in Settings\n(bots have no API token); every attempt is audit-logged.",
+        "summary": "Run one allow-listed repair.  The request is the local user's click in\nSettings (bots have no API token; paired peers are refused by the peer\nrouter).  An attributed `doctor.repair_requested` audit record is written\nbefore anything runs (no record, no repair), and `doctor.repair` records\nthe outcome.",
         "operationId": "repair",
         "parameters": [
           {
@@ -1154,6 +1154,16 @@
           },
           "401": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local user",
             "content": {
               "application/json": {
                 "schema": {
@@ -1191,6 +1201,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "the audit record could not be written; nothing ran",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1205,7 +1225,7 @@
         "tags": [
           "doctor"
         ],
-        "summary": "A redacted Markdown support report: versions, platform, check results and\nconfig file names (never contents).  The home directory becomes `~`;\nstored secrets, the API token, key-shaped strings and e-mail addresses are\nmasked.",
+        "summary": "A redacted Markdown support report: versions, platform, check results and\nconfig file names (never contents).  The home directory becomes `~`;\nsecrets known to the daemon (and their encoded forms), the API token,\nkey-shaped strings, credentials in URLs and assignments, host names, user\nnames and e-mail addresses are masked.  Ends within 15 s.",
         "operationId": "report",
         "responses": {
           "200": {
@@ -1230,6 +1250,16 @@
           },
           "429": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "safe redaction unavailable or the report did not finish in time",
             "content": {
               "application/json": {
                 "schema": {

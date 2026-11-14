@@ -82,7 +82,7 @@ pub fn run_checks(env: &DoctorEnv<'_>) -> Vec<Check> {
         check_telegram(env),
         core::check_unicode_path(env.data_dir),
         core::check_cli_accounts(detected),
-        core::check_peer_link(env.data_dir),
+        core::check_peer_link(env.data_dir, &core::LinkRuntime::Unknown),
         core::check_desktop_automation(std::env::consts::OS, env.desktop.as_ref()),
         core::check_clock(std::time::SystemTime::now(), core::newest_mtime(env.data_dir)),
     ]
@@ -560,7 +560,15 @@ fn check_telegram(env: &DoctorEnv<'_>) -> Check {
 /// key or token (24+ characters of `[A-Za-z0-9_-]`).
 #[must_use]
 pub fn redact(s: &str) -> String {
-    core::redact_report(s, None, core::home_dir().as_deref())
+    let home = core::home_dir();
+    core::redact_report(
+        s,
+        &core::Scrub {
+            secrets: None,
+            home: home.as_deref(),
+            identities: core::machine_identities(),
+        },
+    )
 }
 
 /// A redacted diagnostic bundle: versions, OS, check results and provider

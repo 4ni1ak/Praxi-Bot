@@ -325,8 +325,11 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run one allow-listed repair.  The request is the user's click in Settings
-         *     (bots have no API token); every attempt is audit-logged.
+         * Run one allow-listed repair.  The request is the local user's click in
+         *     Settings (bots have no API token; paired peers are refused by the peer
+         *     router).  An attributed `doctor.repair_requested` audit record is written
+         *     before anything runs (no record, no repair), and `doctor.repair` records
+         *     the outcome.
          */
         post: operations["repair"];
         delete?: never;
@@ -345,8 +348,9 @@ export interface paths {
         /**
          * A redacted Markdown support report: versions, platform, check results and
          *     config file names (never contents).  The home directory becomes `~`;
-         *     stored secrets, the API token, key-shaped strings and e-mail addresses are
-         *     masked.
+         *     secrets known to the daemon (and their encoded forms), the API token,
+         *     key-shaped strings, credentials in URLs and assignments, host names, user
+         *     names and e-mail addresses are masked.  Ends within 15 s.
          */
         get: operations["report"];
         put?: never;
@@ -3822,6 +3826,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description not the local user */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description not an allow-listed repair */
             404: {
                 headers: {
@@ -3842,6 +3855,15 @@ export interface operations {
             };
             /** @description the repair ran and failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the audit record could not be written; nothing ran */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3878,6 +3900,15 @@ export interface operations {
                 };
             };
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description safe redaction unavailable or the report did not finish in time */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

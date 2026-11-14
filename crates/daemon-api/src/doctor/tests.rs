@@ -122,6 +122,64 @@ fn unicode_probe_passes_in_a_non_ascii_temp_dir_and_cleans_up() {
 }
 
 #[test]
+fn probes_never_touch_an_existing_file_of_the_same_name() {
+    let d = tempfile::tempdir().unwrap();
+    let victim = d.path().join("providers.toml");
+    std::fs::write(&victim, "keep me").unwrap();
+    // The probe name is taken: the probe fails, the file is neither
+    // truncated nor deleted.
+    let err = exclusive_probe(d.path(), "providers.toml", b"ok").unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "{err}");
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+    // A failing step after creation removes only the probe it created.
+    let err = exclusive_probe_with(d.path(), "mine.txt", b"ok", || {
+        Err(std::io::Error::other("injected"))
+    })
+    .unwrap_err();
+    assert_eq!(err.to_string(), "injected");
+    assert!(!d.path().join("mine.txt").exists());
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+}
+
+#[cfg(unix)]
+#[test]
+fn probes_never_follow_a_symlink() {
+    let d = tempfile::tempdir().unwrap();
+    let target = d.path().join("providers.toml");
+    std::fs::write(&target, "keep me").unwrap();
+    let link = d.path().join("probe-link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(exclusive_probe(d.path(), "probe-link", b"ok").is_err());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep me");
+    assert!(link.symlink_metadata().is_ok(), "the symlink was deleted");
+    // A dangling link is not followed into a new file either.
+    let dangling = d.path().join("dangling");
+    std::os::unix::fs::symlink(d.path().join("created-through-link"), &dangling).unwrap();
+    assert!(exclusive_probe(d.path(), "dangling", b"ok").is_err());
+    assert!(!d.path().join("created-through-link").exists());
+}
+
+#[test]
+fn probe_names_are_unpredictable_and_concurrent_probes_do_not_collide() {
+    let d = tempfile::tempdir().unwrap();
+    let a = probe_name("p-", "");
+    let b = probe_name("p-", "");
+    assert_ne!(a, b);
+    assert!(!a.contains(&std::process::id().to_string()) || a.len() > 34);
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| (check_data_dir(d.path()), check_unicode_path(d.path()))))
+            .collect();
+        for r in runs {
+            let (dd, uni) = r.join().unwrap();
+            assert_eq!(dd.status, Status::Ok, "{}", dd.detail);
+            assert_eq!(uni.status, Status::Ok, "{}", uni.detail);
+        }
+    });
+    assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0);
+}
+
+#[test]
 fn clock_check_flags_impossible_and_backwards_clocks() {
     let floor = SystemTime::UNIX_EPOCH + Duration::from_secs(CLOCK_FLOOR_SECS);
     let now = floor + Duration::from_secs(365 * 24 * 3600);
@@ -220,24 +278,94 @@ fn desktop_automation_is_neutral_off_windows() {
 #[test]
 fn peer_link_reflects_host_toml() {
     let d = tempfile::tempdir().unwrap();
-    assert_eq!(check_peer_link(d.path()).status, Status::Skipped);
+    let net = LinkRuntime::Network(vec![]);
+    assert_eq!(check_peer_link(d.path(), &net).status, Status::Skipped);
     std::fs::write(d.path().join("host.toml"), "mode = \"host\"\n").unwrap();
-    assert_eq!(check_peer_link(d.path()).status, Status::Ok);
+    assert_eq!(check_peer_link(d.path(), &net).status, Status::Ok);
     std::fs::write(
         d.path().join("host.toml"),
         "mode = \"client\"\nstate = \"standby\"\n",
     )
     .unwrap();
-    assert_eq!(check_peer_link(d.path()).status, Status::Warn);
+    assert_eq!(check_peer_link(d.path(), &net).status, Status::Warn);
     std::fs::write(d.path().join("host.toml"), "mode = \"client\"\n").unwrap();
-    assert_eq!(check_peer_link(d.path()).status, Status::Skipped);
+    assert_eq!(check_peer_link(d.path(), &net).status, Status::Skipped);
     assert_eq!(check_host(d.path()).status, Status::Fail);
+}
+
+const LEADER: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+fn link_peer(key: &str, connected: bool, last_seen_secs: Option<u64>) -> LinkPeer {
+    LinkPeer {
+        key: key.into(),
+        role: "host".into(),
+        connected,
+        last_seen_secs,
+    }
+}
+
+#[test]
+fn peer_link_distinguishes_configured_from_connected() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("host.toml"),
+        format!("mode = \"client\"\nstate = \"standby\"\nleader = \"{LEADER}\"\n"),
+    )
+    .unwrap();
+    let run = |live: LinkRuntime| check_peer_link(d.path(), &live);
+    // Connected: the only healthy client state.
+    let c = run(LinkRuntime::Network(vec![link_peer(LEADER, true, Some(1))]));
+    assert_eq!(c.status, Status::Ok, "{}", c.detail);
+    assert!(c.detail.starts_with("connected to host"), "{}", c.detail);
+    // Paired but the host (VPS) is offline.
+    let c = run(LinkRuntime::Network(vec![link_peer(
+        LEADER,
+        false,
+        Some(600),
+    )]));
+    assert_eq!(c.status, Status::Fail, "{}", c.detail);
+    assert!(
+        c.detail.contains("not connected (last seen 10 min ago)"),
+        "{}",
+        c.detail
+    );
+    assert!(c.hint.is_some());
+    // Revoked: the leader is no longer among the paired devices.
+    let c = run(LinkRuntime::Network(vec![link_peer(
+        "other",
+        true,
+        Some(1),
+    )]));
+    assert_eq!(c.status, Status::Fail);
+    assert!(c.detail.contains("no longer paired"), "{}", c.detail);
+    // Peer networking off in the daemon.
+    let c = run(LinkRuntime::NetworkDisabled);
+    assert_eq!(c.status, Status::Fail);
+    assert!(c.detail.contains("peer networking is off"), "{}", c.detail);
+    // No live state (CLI): not verified, never ok.
+    let c = run(LinkRuntime::Unknown);
+    assert_eq!(c.status, Status::Warn);
+    assert!(c.detail.contains("not verified"), "{}", c.detail);
+
+    // Host mode needs a running endpoint too.
+    std::fs::write(d.path().join("host.toml"), "mode = \"host\"\n").unwrap();
+    assert_eq!(run(LinkRuntime::NetworkDisabled).status, Status::Fail);
+    assert_eq!(run(LinkRuntime::Unknown).status, Status::Warn);
+    let c = run(LinkRuntime::Network(vec![
+        link_peer("a", true, Some(1)),
+        link_peer("b", false, None),
+    ]));
+    assert_eq!(c.status, Status::Ok);
+    assert!(
+        c.detail.ends_with("2 paired device(s), 1 connected"),
+        "{}",
+        c.detail
+    );
 }
 
 #[test]
 fn cli_accounts_from_one_detection_result() {
     use cli_provider::AuthState::{SignedIn, SignedOut, Unknown};
-    assert_eq!(check_cli_accounts(None).status, Status::Skipped);
     assert_eq!(
         check_cli_accounts(Some(&[cli("claude", false, Unknown, false)])).status,
         Status::Skipped
@@ -251,6 +379,22 @@ fn cli_accounts_from_one_detection_result() {
     let c = check_cli_accounts(Some(&[cli("claude", true, SignedOut, true)]));
     assert_eq!(c.status, Status::Warn);
     assert!(c.detail.contains("signed out: CLAUDE"));
+}
+
+#[test]
+fn unknown_or_unprobed_cli_sign_in_is_a_warning_not_ready() {
+    use cli_provider::AuthState::Unknown;
+    // Detection did not answer: not verified, with what to do.
+    let c = check_cli_accounts(None);
+    assert_eq!(c.status, Status::Warn);
+    assert!(c.detail.contains("not verified"), "{}", c.detail);
+    assert!(c.hint.is_some());
+    // Installed and runnable, but the auth output could not be read.
+    let c = check_cli_accounts(Some(&[cli("claude", true, Unknown, true)]));
+    assert_eq!(c.status, Status::Warn, "{}", c.detail);
+    assert_eq!(c.detail, "sign-in not verified: CLAUDE");
+    assert!(!c.detail.contains("ready"), "{}", c.detail);
+    assert!(c.hint.as_deref().unwrap().contains("sign in"));
 }
 
 fn write_providers(dir: &Path, settings: Vec<ProviderSettings>) {
@@ -294,7 +438,21 @@ fn cli_provider_needs_a_signed_in_cli_not_an_api_key() {
     assert!(c.detail.contains("signed out"), "{}", c.detail);
     let c = run(Some(&[cli("claude", false, SignedOut, false)]));
     assert!(c.detail.contains("not installed"), "{}", c.detail);
-    assert_eq!(run(None).status, Status::Ok);
+    // Not probed (detection timed out): a warning saying so, never ready.
+    let c = run(None);
+    assert_eq!(c.status, Status::Warn, "{}", c.detail);
+    assert!(c.detail.contains("CLI was not checked"), "{}", c.detail);
+    assert!(!c.detail.contains("CLI ready"), "{}", c.detail);
+    // Runnable, sign-in state unknown: a warning naming the sign-in command.
+    let c = run(Some(&[cli(
+        "claude",
+        true,
+        cli_provider::AuthState::Unknown,
+        true,
+    )]));
+    assert_eq!(c.status, Status::Warn, "{}", c.detail);
+    assert!(c.detail.contains("could not be verified"), "{}", c.detail);
+    assert!(!c.detail.contains("CLI ready"), "{}", c.detail);
 }
 
 #[test]
@@ -313,10 +471,19 @@ fn providers_on_disk_but_not_loaded_offer_a_reload() {
     assert_eq!(c.repair, None);
 }
 
+fn scrub_with<'a>(secrets: &'a dyn Fn(&str) -> String, home: Option<&'a str>) -> Scrub<'a> {
+    Scrub {
+        secrets: Some(secrets),
+        home,
+        identities: vec![],
+    }
+}
+
 #[test]
 fn redaction_masks_home_secrets_emails_and_tokens() {
-    let mut r = Redactor::new();
-    r.add_secret("hunter2-correct-horse");
+    let r = agent_core::SharedRedactor::default();
+    r.register("hunter2-correct-horse");
+    let redact = |t: &str| r.redact(t);
     let home = r"C:\Users\Emre Öcel";
     let text = format!(
         "path C:\\Users\\Emre Öcel\\AppData\\praxi and c:/users/emre öcel/x; \
@@ -324,7 +491,7 @@ fn redaction_masks_home_secrets_emails_and_tokens() {
          mail emre.ocel+bot@example.co.uk. token {} short-id",
         "z".repeat(40)
     );
-    let out = redact_report(&text, Some(&r), Some(home));
+    let out = redact_report(&text, &scrub_with(&redact, Some(home)));
     assert!(out.contains("path ~\\AppData\\praxi"), "{out}");
     for leaked in [
         "Emre",
@@ -345,6 +512,136 @@ fn redaction_masks_home_secrets_emails_and_tokens() {
     assert_eq!(mask_emails("@x.org and x@.org"), "@x.org and x@.org");
 }
 
+/// A secret with URL-special characters, as the review planted it.
+const SPECIAL: &str = "tok/en+value?with=sym&bols-1234";
+
+#[test]
+fn encoded_forms_of_a_known_secret_are_masked() {
+    use base64::Engine as _;
+    let r = agent_core::SharedRedactor::default();
+    r.register(SPECIAL);
+    let redact = |t: &str| r.redact(t);
+    let scrub = scrub_with(&redact, None);
+    let url = "tok%2Fen%2Bvalue%3Fwith%3Dsym%26bols-1234";
+    let b64 = base64::engine::general_purpose::STANDARD.encode(SPECIAL);
+    let b64url = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(SPECIAL);
+    let json = serde_json::to_string(&format!("{SPECIAL}\"")).unwrap();
+    for (form, text) in [
+        ("literal", format!("value {SPECIAL} end")),
+        ("url-encoded", format!("value {url} end")),
+        ("base64", format!("value {b64} end")),
+        ("base64url", format!("value {b64url} end")),
+        ("json-escaped", format!("value {json} end")),
+    ] {
+        let out = scrub.text(&text);
+        for piece in ["tok/en", "tok%2F", "sym&bols", "sym%26bols", "bols-1234"] {
+            assert!(!out.contains(piece), "{form}: {piece} leaked: {out}");
+        }
+        assert!(!out.contains(&b64[4..20]), "{form}: base64 leaked: {out}");
+        assert!(
+            out.contains("value ") && out.ends_with(" end"),
+            "{form}: {out}"
+        );
+    }
+}
+
+#[test]
+fn unknown_secrets_are_masked_by_pattern() {
+    // No known secrets at all: the patterns alone must catch these.
+    let scrub = Scrub::default();
+    // Lower-case percent escapes are not among the registered variants.
+    let out = scrub.text("bad value tok%2fen%2bvalue%3fwith in line");
+    assert!(!out.contains("tok%2f"), "{out}");
+    // URL credentials, a non-loopback host and the query string.
+    let out = scrub.text(
+        "custom.vps: https://alice:s3cr3t-pass@my-vps.example.net:8443/v1/models?api_key=abc123&x=1 failed",
+    );
+    for leaked in ["alice", "s3cr3t", "my-vps", "example.net", "abc123"] {
+        assert!(!out.contains(leaked), "{leaked} leaked: {out}");
+    }
+    assert!(
+        out.contains("https://[redacted]@[host]/v1/models?[redacted] failed"),
+        "{out}"
+    );
+    // Loopback stays readable.
+    let out = scrub.text("not running on http://127.0.0.1:7878/v1/health");
+    assert!(out.contains("http://127.0.0.1:7878/v1/health"), "{out}");
+    // Credential assignments in any quoting.
+    for text in [
+        "api_key = \"short-pass1\" here",
+        "password: hunter22 here",
+        "Authorization: Bearer abc.def here",
+        "auth_token='q w e' here",
+    ] {
+        let out = scrub.text(text);
+        for leaked in ["short-pass1", "hunter22", "abc.def", "q w e"] {
+            assert!(
+                !out.contains(leaked),
+                "{leaked} leaked from {text:?}: {out}"
+            );
+        }
+        assert!(out.ends_with(" here"), "{out}");
+    }
+}
+
+#[test]
+fn parse_errors_lose_their_quoted_config_lines() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        config_path(d.path()),
+        "[[providers]]\nid = \"alpha\"\nnote = owner-text-xyz private.host.example\n",
+    )
+    .unwrap();
+    let c = check_config(d.path());
+    assert_eq!(c.status, Status::Fail);
+    let out = Scrub::default().text(&c.detail);
+    assert!(!out.contains("owner-text-xyz"), "{out}");
+    assert!(!out.contains("private.host"), "{out}");
+    assert!(out.contains("line 3"), "location kept: {out}");
+}
+
+#[test]
+fn user_host_names_and_peer_keys_are_masked() {
+    let scrub = Scrub {
+        secrets: None,
+        home: None,
+        identities: vec![("alice".into(), "[user]"), ("DESKTOP-K7Q".into(), "[host]")],
+    };
+    let out =
+        scrub.text(r"data D:\alice\bot on desktop-k7q; malice stays; client of host abcdef01… ok");
+    assert_eq!(
+        out,
+        r"data D:\[user]\bot on [host]; malice stays; client of host [peer] ok"
+    );
+}
+
+#[test]
+fn secrets_with_markdown_characters_are_masked_before_escaping() {
+    let r = agent_core::SharedRedactor::default();
+    r.register("pipe|secret\nline-2x");
+    let redact = |t: &str| r.redact(t);
+    let scrub = scrub_with(&redact, None);
+    let info = ReportInfo {
+        version: "1".into(),
+        api_version: "1".into(),
+        platform: "x".into(),
+        data_dir: PathBuf::from("/data"),
+        config_files: vec![],
+    };
+    let md = report_markdown(
+        &info,
+        &[Check::fail(
+            "x",
+            "x",
+            "got pipe|secret\nline-2x back",
+            "fix",
+        )],
+        &scrub,
+    );
+    assert!(!md.contains("pipe"), "{md}");
+    assert!(!md.contains("line-2x"), "{md}");
+}
+
 #[test]
 fn report_lists_checks_and_config_names_only() {
     let d = tempfile::tempdir().unwrap();
@@ -363,6 +660,7 @@ fn report_lists_checks_and_config_names_only() {
             Check::fail("x", "x | y", "bad\nline", "fix it"),
             Check::skipped("s", "s", "n/a"),
         ],
+        &Scrub::default(),
     );
     assert!(md.contains("- Config files: providers.toml\n"), "{md}");
     assert!(!md.contains("inside") && !md.contains("api-token"), "{md}");
