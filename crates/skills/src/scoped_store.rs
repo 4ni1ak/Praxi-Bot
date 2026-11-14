@@ -487,6 +487,22 @@ mod tests {
         assert!(path.join(crate::index::UNTRUSTED_MARKER).is_file());
         let published = bot.publish_with_trust("x", true, true).unwrap();
         assert!(published.join(crate::index::UNTRUSTED_MARKER).is_file());
+        bot.write_versioned(
+            "x",
+            "---\nname: x\ndescription: d\n---\nuntrusted source",
+            Some("0.1.0"),
+            true,
+        )
+        .unwrap();
+        let published = bot.publish_with_trust("x", true, false).unwrap();
+        assert!(published.join(crate::index::UNTRUSTED_MARKER).is_file());
+        assert!(
+            bot.write_dir()
+                .unwrap()
+                .join("x")
+                .join(crate::index::UNTRUSTED_MARKER)
+                .is_file()
+        );
     }
 
     #[test]
