@@ -844,7 +844,10 @@ pub fn serve(
         }) as Arc<dyn SecretStore>
     });
     let views = Arc::new(live_view::TargetRegistry::default());
-    let dynamic_desktop = crate::peer::is_enabled(data_dir, *host_mode, *peer_enabled)?;
+    let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
+    let effective_peer_enabled =
+        peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
+    let dynamic_desktop = effective_peer_enabled;
     let local_desktop = desktop.clone();
     let agent = build_agent_inner(
         &storage,
@@ -893,11 +896,10 @@ pub fn serve(
                 }
             })
         };
-        let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
         let peer = crate::peer::start_server(
             data_dir,
             host_is_host,
-            *peer_enabled || *host_mode,
+            effective_peer_enabled,
             state.clone(),
         )
         .await?;
@@ -1052,12 +1054,30 @@ pub fn serve(
     })
 }
 
+fn peer_enabled_for_startup(
+    data_dir: &Path,
+    host_is_host: bool,
+    peer_enabled: bool,
+    host_mode: bool,
+) -> Result<bool> {
+    crate::peer::is_enabled(data_dir, host_is_host, peer_enabled || host_mode)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::email_host::register_email;
     use provider_catalog::ProviderConfig;
     use secret_store::MemoryStore;
+
+    #[test]
+    fn host_flag_enables_dynamic_desktop_even_when_peer_config_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "[peer]\nenabled = false\n").unwrap();
+        assert!(peer_enabled_for_startup(dir.path(), true, false, true).unwrap());
+        assert!(!peer_enabled_for_startup(dir.path(), true, false, false).unwrap());
+        assert!(peer_enabled_for_startup(dir.path(), false, true, false).unwrap());
+    }
 
     const PRICED: &str = r#"
 id = "t"
