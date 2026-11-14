@@ -126,6 +126,7 @@ export function WidgetWindow() {
   const bot = controlState.bot ?? {
     botId: "atlas",
     botName: "Atlas",
+    botShape: undefined,
     botColor: undefined,
     botInitials: "AT",
     botAvatar: undefined
@@ -181,10 +182,10 @@ export function WidgetWindow() {
           aria-label={t("widget.dragHandleAria")}
         >
           <div className={styles.botIdentity}>
-            <BotAvatar bot={{ id: bot.botId, name: bot.botName, avatar: bot.botAvatar, color: bot.botColor }} size="md" state={controlState.mode === "paused" ? "waiting-approval" : controlState.mode === "idle" ? "idle" : "working"} />
+            <BotAvatar bot={{ id: bot.botId, name: bot.botName, shape: bot.botShape, avatar: bot.botAvatar, color: bot.botColor }} size="md" state={controlState.mode === "paused" ? "waiting-approval" : controlState.mode === "idle" ? "idle" : "working"} />
             <div className={styles.botTextMeta}>
               <span className={styles.botName}>{bot.botName}</span>
-              <span className={styles.hotkeyHint}>
+              <span className={styles.hotkeyHint} title={t("settings.hotkey.description")}>
                 {t("widget.hotkeyHint", { hotkey: controlState.stopHotkey })}
               </span>
             </div>

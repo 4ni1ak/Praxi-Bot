@@ -8,7 +8,9 @@ use axum::Json;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-use crate::{dto, email, email_routes, error, live_view, mcp, mcp_routes, routes, sse};
+use crate::{
+    dto, email, email_routes, error, host, live_view, mcp, mcp_routes, routes, sse, web, web_routes,
+};
 
 struct Security;
 
@@ -40,6 +42,7 @@ impl Modify for Security {
             except GET /v1/health need `Authorization: Bearer <token>`."
     ),
     paths(
+        host::status, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
         live_view::create_session,
@@ -108,6 +111,9 @@ impl Modify for Security {
         email_routes::delete_email_account,
         email_routes::test_email_account,
         email_routes::test_email_draft,
+        web_routes::get_web_search,
+        web_routes::update_web_search,
+        web_routes::test_web_search,
         events_doc,
     ),
     components(schemas(
@@ -129,6 +135,10 @@ impl Modify for Security {
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,
+        web::WebSearchConfigDto, web::WebSearchConfigInput, web::WebSearchTestInput,
+        web::WebSearchTestReport,
+        host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
+        host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
@@ -136,11 +146,13 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "mcp"), (name = "secrets"), (name = "email")
+        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web")
     )
 )]
 pub struct ApiDoc;
 
+/// Host notifications: `host_state_changed` carries `HostConfig`, `host_conflict` carries
+/// `HostConflict` (reason, peer, epoch, notification). These live refetch hints have no cursor.
 /// Documentation stub for the SSE route (the handler lives in `sse.rs`).
 ///
 /// Server-sent events; each `data:` is a `protocol::Envelope` JSON object, the

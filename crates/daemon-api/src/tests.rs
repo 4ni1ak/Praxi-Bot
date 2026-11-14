@@ -23,8 +23,10 @@ use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
 mod email;
+mod host;
 mod mcp;
 mod schedules;
+mod web;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -942,6 +944,7 @@ impl crate::ChannelControl for FakeChannel {
             enabled: true,
             running: self.running,
             paired_users: 2,
+            status: None,
         }
     }
     fn create_pair_code(&self) -> Result<crate::dto::PairCodeDto, String> {
