@@ -300,3 +300,32 @@ test("KeyForwarder: a text key sends no key up; an up never precedes a forwarded
   f.reset();
   assert.deepEqual(f.up(keyEv("KeyB", "b"), false), []);
 });
+
+test("dead keys send no physical key (the composed text commits later); chords keep code + typed key", () => {
+  assert.deepEqual(classifyKeyDown(keyEv("Quote", "Dead"), false), []);
+  const f = new KeyForwarder();
+  assert.deepEqual(f.down(keyEv("Quote", "Dead"), false), []);
+  assert.deepEqual(f.up(keyEv("Quote", "Dead"), false), []);
+
+  // Ctrl+Turkish-s on Semicolon: a key event with the physical code, the typed
+  // key and the modifier (text cannot express a chord)
+  const chord = classifyKeyDown(keyEv("Semicolon", "ş", { ctrlKey: true }), false);
+  assert.deepEqual(chord, [
+    {
+      type: "key",
+      phase: "down",
+      code: "Semicolon",
+      key: "ş",
+      location: 0,
+      repeat: false,
+      modifiers: ["ctrl"]
+    }
+  ]);
+
+  // auto-repeat: key events carry `repeat`, repeated characters repeat as text
+  const rep = classifyKeyDown(keyEv("KeyA", "a", { repeat: true }), false);
+  assert.equal(rep[0].type === "key" && rep[0].repeat, true);
+  assert.deepEqual(classifyKeyDown(keyEv("Semicolon", "ş", { repeat: true }), false), [
+    { type: "text", text: "ş" }
+  ]);
+});

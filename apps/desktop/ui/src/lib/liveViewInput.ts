@@ -308,11 +308,32 @@ function isSinglePrintable(key: string): boolean {
   return key.length > 0 && Array.from(key).length === 1;
 }
 
+/**
+ * Representation rules (the wire contract only fixes the fields: `code` is
+ * allow-listed, `key` is free text up to 64 bytes, `text` is committed text):
+ * - plain typing whose character differs from the US layout for that physical
+ *   key, and AltGr combinations, go as `text` (layout independent);
+ * - Ctrl/Alt/Meta chords go as `key` events with the physical `code`, the typed
+ *   character in `key` and the modifiers. Text cannot express a chord. A backend
+ *   injecting by `code` therefore sees the physical key, one injecting by `key`
+ *   sees the typed character; modified non-US keys are best effort by design;
+ * - dead keys and IME composition send nothing until the composed text commits;
+ * - auto-repeat is forwarded as it happens (`repeat` on key events, one text
+ *   event per repeated character).
+ */
 export function classifyKeyDown(
   e: KeyLikeEvent,
   composing: boolean
 ): InputEvent[] {
-  if (composing || e.isComposing || e.key === "Process" || e.keyCode === 229) {
+  // A dead key (`key: "Dead"`) only starts a composition: the composed character
+  // arrives on `compositionend` as text, so the physical key must not go out too.
+  if (
+    composing ||
+    e.isComposing ||
+    e.key === "Process" ||
+    e.key === "Dead" ||
+    e.keyCode === 229
+  ) {
     return [];
   }
   const printable = isSinglePrintable(e.key);

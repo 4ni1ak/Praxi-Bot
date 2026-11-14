@@ -23,6 +23,7 @@ import {
   buildSessionHeartbeat,
   canSendLiveInput,
   computeWantSession,
+  controlSnapshotKey,
   createInitialLiveViewState,
   isControlBusy,
   planViewerClose,
@@ -428,7 +429,7 @@ test("closing the viewer while in control hands control back first", () => {
   assert.equal(planViewerClose(owning()), "release_first");
   assert.equal(
     planViewerClose(applyReleaseStarted(owning(), "req-1", null)),
-    "wait"
+    "dismiss"
   );
 });
 
@@ -478,5 +479,41 @@ test("global Stop calls the daemon override only while a takeover is held or in 
     shouldOverrideOnStop(watching, dto(takeover({ state: "paused" }))),
     false,
     "already paused: nothing to latch"
+  );
+});
+
+test("dismissing the viewer with a failed hand-back keeps ownership and the retry request id", () => {
+  let st = applyReleaseStarted(owning(), "req-keep", "login_completed");
+  st = applyReleaseFailed(st, "release_failed", "daemon unreachable");
+  assert.equal(planViewerClose(st), "dismiss", "never traps the user");
+  assert.equal(st.ownedTakeoverId, "to-1");
+  assert.equal(st.pendingRequest?.kind, "release");
+  assert.equal(buildReleasePayload(st, "ignored", null)?.request_id, "req-keep");
+  assert.equal(isControlBusy(st), true, "panel keeps Bitirdim / Retry");
+});
+
+test("Stop reads the newest control snapshot, not stale local state", () => {
+  const watching = applySessionCreated(
+    createInitialLiveViewState(target),
+    target,
+    session
+  );
+  const stale = { ...watching, takeover: takeover({ owner: "peer:p", id: "x" }) };
+  assert.equal(shouldOverrideOnStop(stale, dto(null)), false);
+  assert.equal(
+    shouldOverrideOnStop(watching, dto(takeover({ id: "nil", owner: "peer:p" }))),
+    true,
+    "a takeover only the bridge re-read is overridden"
+  );
+  assert.equal(shouldOverrideOnStop(stale, null), true, "fallback before any snapshot");
+});
+
+test("controlSnapshotKey ignores countdown noise but sees takeover changes", () => {
+  const a = dto(takeover({ input_expires_in_ms: 10_000 }));
+  const b = dto(takeover({ input_expires_in_ms: 4_000 }));
+  assert.equal(controlSnapshotKey(a), controlSnapshotKey(b));
+  assert.notEqual(
+    controlSnapshotKey(a),
+    controlSnapshotKey(dto(takeover({ state: "paused", reason: "disconnected" })))
   );
 });

@@ -172,12 +172,23 @@ export function applySessionCreated(
   session: SessionInfo
 ): LiveViewControllerState {
   const sameTarget = state.target?.target_id === target.target_id;
+  // A paused takeover of ours survives a new session: the user must reacquire
+  // (or recover) it; "Watching + Take control" would only 409.
+  const keepPaused =
+    sameTarget &&
+    state.ownedTakeoverId !== null &&
+    state.viewState === "paused" &&
+    !target.unavailable_reason;
   return {
     ...state,
     target,
     session,
-    viewState: target.unavailable_reason ? "unavailable" : "watch",
-    reason: target.unavailable_reason ?? null,
+    viewState: target.unavailable_reason
+      ? "unavailable"
+      : keepPaused
+        ? "paused"
+        : "watch",
+    reason: target.unavailable_reason ?? (keepPaused ? state.reason : null),
     effectiveProfile: session.effective_profile,
     inputAllowed: false,
     statusInputAllowed: false,
@@ -333,6 +344,23 @@ export function applyStatusRecord(
   const ownerMatches =
     state.ownedTakeoverId !== null &&
     (state.takeover === null || state.takeover.id === state.ownedTakeoverId);
+  // A watch status of a session that does not own the (paused) takeover must not
+  // erase the pause: only fresh control state can end it.
+  if (
+    status.state === "watch" &&
+    state.ownedTakeoverId !== null &&
+    state.viewState === "paused"
+  ) {
+    return {
+      ...state,
+      effectiveProfile: status.effective_profile,
+      statusInputAllowed: false,
+      inputAllowed: false,
+      disconnected: false,
+      streamStale: false,
+      lastActivityAtMs: nowMs
+    };
+  }
   const inputAllowed =
     status.state === "active" &&
     status.input_allowed &&
@@ -494,11 +522,18 @@ export function applyControlStateDto(
 export function applyStreamDisconnected(
   state: LiveViewControllerState
 ): LiveViewControllerState {
+  // The daemon pauses the takeover of a session whose stream ends (reason
+  // `disconnected`); mirror that locally so the dock offers Reacquire at once.
+  const wasOwning =
+    isActivelyOwningTakeover(state) &&
+    (state.viewState === "active" || state.viewState === "acquiring");
   return {
     ...state,
     disconnected: true,
     inputAllowed: false,
-    statusInputAllowed: false
+    statusInputAllowed: false,
+    viewState: wasOwning ? "paused" : state.viewState,
+    reason: wasOwning ? "disconnected" : state.reason
   };
 }
 
@@ -774,7 +809,11 @@ export function shouldOverrideOnStop(
   if (isActivelyOwningTakeover(state)) {
     return true;
   }
-  const t = control?.takeover ?? state.takeover;
+  // One source of truth: the newest control snapshot (kept fresh by the bridge's
+  // poll); local state is only a fallback before any snapshot exists. A paused
+  // takeover needs no override (already stopped): leaving that latch is the
+  // viewer's Reacquire / Clear pause, never Stop.
+  const t = control ? control.takeover : state.takeover;
   return Boolean(t && (t.state === "active" || t.state === "acquiring"));
 }
 
@@ -811,16 +850,28 @@ export function computeWantSession(a: {
   );
 }
 
-export type ViewerClosePlan = "close" | "release_first" | "wait";
+export type ViewerClosePlan = "close" | "release_first" | "dismiss";
 
 /**
  * What closing the viewer must do: hand control back first while owning it
- * (a hidden screen must not leave the bot paused), wait while a hand-back is
- * already pending, otherwise just close.
+ * (a hidden screen must not leave the bot paused), dismiss locally while a
+ * hand-back is pending, otherwise just close.
  */
 export function planViewerClose(state: LiveViewControllerState): ViewerClosePlan {
+  // A pending hand-back (failed, or daemon unreachable) must never trap the user:
+  // dismiss only hides the viewer, ownership and the retry request id stay.
   if (state.pendingRequest?.kind === "release") {
-    return "wait";
+    return "dismiss";
   }
   return isActivelyOwningTakeover(state) ? "release_first" : "close";
+}
+
+/** Fields of a control snapshot that matter for state; ignores countdown noise. */
+export function controlSnapshotKey(dto: ControlStateDto): string {
+  const t = dto.takeover;
+  return JSON.stringify([
+    dto.latched,
+    dto.mode,
+    t ? [t.id, t.state, t.reason ?? null, t.owner, t.target_id, t.session_id, t.control_epoch] : null
+  ]);
 }
