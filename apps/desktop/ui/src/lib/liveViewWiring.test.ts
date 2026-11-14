@@ -148,3 +148,41 @@ test("Modal uses the ref-counted inert tracker and the palette is a layer", () =
   assert.match(palette, /layerStack\.add\(seq\)/);
   assert.match(palette, /e\.stopPropagation\(\)/);
 });
+
+// ---- third review ----
+
+const banner = read("../components/PausedControlBanner.tsx");
+const panelBlock = read("../components/BotComputerBlock.tsx");
+
+test("a persistent paused-control banner is mounted outside the run banner and offers clear-pause", () => {
+  assert.match(app, /<PausedControlBanner \/>/);
+  const at = app.indexOf("<PausedControlBanner />");
+  const before = app.slice(Math.max(0, at - 120), at);
+  assert.doesNotMatch(before, /isRunActive/, "not tied to the native run state Stop resets");
+  assert.match(banner, /needsPauseRecovery\(/);
+  assert.match(banner, /clearPause\(\)/);
+  assert.match(banner, /openViewer\(\)/);
+  assert.doesNotMatch(banner, /controlState\.mode|isRunActive/);
+});
+
+test("the panel computer block and the viewer dock both carry reacquire and clear-pause while paused", () => {
+  assert.match(panelBlock, /needsPauseRecovery\(/);
+  assert.match(panelBlock, /bot-computer-reacquire/);
+  assert.match(panelBlock, /bot-computer-clear-pause/);
+  assert.match(viewer, /live-view-clear-pause/);
+  assert.doesNotMatch(viewer, /recoverAction/, "no 'recover & resume' label");
+});
+
+test("every non-reacquire paused case clears the latch through POST /control/recover", () => {
+  assert.match(context, /prompt\.mode !== "reacquire"\) \{\s*await clearPause\(\)/);
+  assert.match(context, /client\.recoverControl\(\)/);
+  assert.doesNotMatch(context, /recover: true/, "no takeover-with-recover path any more");
+});
+
+test("the command palette is portaled to body and only the topmost layer handles Escape", () => {
+  assert.match(palette, /createPortal\(/);
+  assert.match(palette, /document\.body/);
+  assert.match(palette, /layerStack\.isTop\(seqRef\.current\)/);
+  const popover = read("../components/Popover.tsx");
+  assert.match(popover, /createPortal\(/, "popovers are portaled too");
+});

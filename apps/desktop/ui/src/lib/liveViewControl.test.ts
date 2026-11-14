@@ -26,6 +26,8 @@ import {
   controlSnapshotKey,
   createInitialLiveViewState,
   isControlBusy,
+  needsPauseRecovery,
+  describeRecoveryPrompt,
   planViewerClose,
   reconnectDelayMs,
   releaseConfirmedBy,
@@ -33,6 +35,7 @@ import {
   type LiveViewControllerState
 } from "./liveViewState.ts";
 import { applyReleaseConfirmed } from "./liveViewState.ts";
+import { createModalStack } from "./modalStack.ts";
 import { runRelease } from "./liveViewRelease.ts";
 import type { FrameHeader, StatusHeader } from "./liveViewWire.ts";
 
@@ -516,4 +519,105 @@ test("controlSnapshotKey ignores countdown noise but sees takeover changes", () 
     controlSnapshotKey(a),
     controlSnapshotKey(dto(takeover({ state: "paused", reason: "disconnected" })))
   );
+});
+
+// ---- third review ----------------------------------------------------------
+
+const pausedDto = (reason: TakeoverInfo["reason"], over: Partial<TakeoverInfo> = {}) =>
+  dto(takeover({ state: "paused", reason, ...over }));
+
+test("a paused owned takeover keeps a recover control with viewer, panel and Stop out of the picture", () => {
+  // stream drop while owning -> paused/disconnected, then the daemon snapshot
+  let st = applyStreamDisconnected(owning());
+  const snapshot = pausedDto("disconnected");
+  st = applyControlStateDto(st, snapshot);
+  assert.equal(st.viewState, "paused");
+  // needsPauseRecovery depends only on state + snapshot: not on the viewer,
+  // the panel (wantSession) or the native run mode that Stop sets to idle
+  const need = needsPauseRecovery(st, snapshot);
+  assert.equal(need?.takeoverId, "to-1");
+  assert.equal(need?.reason, "disconnected");
+  assert.equal(shouldOverrideOnStop(st, snapshot), false, "Stop does not touch a pause");
+  assert.ok(needsPauseRecovery(st, snapshot), "still there after Stop");
+
+  // another actor's paused takeover (nil ids) is not ours
+  const nil = "00000000-0000-0000-0000-000000000000";
+  assert.equal(
+    needsPauseRecovery(
+      applySessionCreated(createInitialLiveViewState(target), target, session),
+      pausedDto("disconnected", { id: nil, session_id: nil, owner: "peer:p" })
+    ),
+    null
+  );
+
+  // POST /control/recover clears the latch: no takeover, bot may run again
+  const cleared = applyControlStateDto(st, dto(null));
+  assert.equal(cleared.viewState, "watch");
+  assert.equal(cleared.ownedTakeoverId, null);
+  assert.equal(needsPauseRecovery(cleared, dto(null)), null);
+});
+
+test("a pending release is not settled by the daemon's own suspend pause (no reason)", () => {
+  const pending = () =>
+    applyReleaseFailed(applyReleaseStarted(owning(), "req-keep", null), "release_failed", "x");
+  // suspend_release: paused with reason None, same id
+  const suspended = applyControlStateDto(pending(), pausedDto(null));
+  assert.equal(suspended.pendingRequest?.kind, "release", "Retry stays");
+  assert.equal(suspended.lastError?.code, "release_failed");
+  assert.equal(buildReleasePayload(suspended, "ignored", null)?.request_id, "req-keep");
+  assert.equal(isControlBusy(suspended), true);
+  // a real interruption (reason set), the id gone, or a completed journal settle it
+  assert.equal(applyControlStateDto(pending(), pausedDto("disconnected")).pendingRequest, null);
+  assert.equal(applyControlStateDto(pending(), dto(null)).pendingRequest, null);
+  const journal = {
+    ...dto(takeover()),
+    release: { takeover_id: "to-1", request_id: "req-keep", state: "released" as const }
+  } as ControlStateDto;
+  assert.equal(applyControlStateDto(pending(), journal).pendingRequest, null);
+});
+
+test("while a release is pending the session heartbeat renews no lease", () => {
+  const releasing = applyReleaseStarted(owning(), "req-1", null);
+  assert.deepEqual(buildSessionHeartbeat(owning()), { takeover_id: "to-1", control_epoch: 5 });
+  assert.deepEqual(buildSessionHeartbeat(releasing), {});
+  assert.deepEqual(
+    buildSessionHeartbeat(applyReleaseFailed(releasing, "release_failed", "x")),
+    {}
+  );
+});
+
+test("palette and Modal layering: the topmost layer owns Escape in either open order", () => {
+  // Settings (Modal) open, then Ctrl+K palette
+  let stack = createModalStack();
+  const modal = stack.next();
+  stack.add(modal);
+  const palette = stack.next();
+  stack.add(palette);
+  assert.equal(stack.isTop(palette), true);
+  assert.equal(stack.isTop(modal), false, "Modal's Escape handler stands down");
+  stack.remove(palette);
+  assert.equal(stack.isTop(modal), true, "Escape reaches the modal again");
+
+  // palette first, then a Modal on top
+  stack = createModalStack();
+  const palette2 = stack.next();
+  stack.add(palette2);
+  const modal2 = stack.next();
+  stack.add(modal2);
+  assert.equal(stack.isTop(modal2), true);
+  assert.equal(stack.isTop(palette2), false, "palette must not close on the modal's Escape");
+});
+
+test("an unverifiable reacquire leaves a clear-pause path; restart is a clear-pause, not a resume", () => {
+  // reacquire attempt fails (503 old target reset cannot be verified)
+  let st = applyControlStateDto(applyStreamDisconnected(owning()), pausedDto("disconnected"));
+  st = applyTakeoverStarted(st, "req-r", { reacquire: true });
+  st = applyTakeoverFailed(st, "unavailable", "old target reset cannot be verified");
+  assert.equal(st.viewState, "paused", "still paused");
+  assert.equal(describeRecoveryPrompt(st, null)?.mode, "reacquire");
+  assert.ok(needsPauseRecovery(st, pausedDto("disconnected")), "banner + clear pause remain");
+
+  // after a daemon restart the reason is `restart`: the action is clear-pause
+  const restarted = applyControlStateDto(owning(), pausedDto("restart"));
+  assert.notEqual(describeRecoveryPrompt(restarted, null)?.mode, "reacquire");
 });

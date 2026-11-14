@@ -81,6 +81,7 @@ export function LiveViewer() {
     releaseTakeover,
     retryRelease,
     recoverTakeover,
+    clearPause,
     overrideStop,
     enqueueInput,
     resetInputState,
@@ -698,10 +699,18 @@ export function LiveViewer() {
             >
               {recoveryPrompt.mode === "reacquire"
                 ? t("liveView.reacquireAction")
-                : recoveryPrompt.mode === "clear_pause"
-                  ? t("liveView.clearPauseAction")
-                  : t("liveView.recoverAction")}
+                : t("liveView.clearPauseAction")}
             </Button>
+            {recoveryPrompt.mode === "reacquire" ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="live-view-clear-pause"
+                onClick={() => void clearPause()}
+              >
+                {t("liveView.clearPauseAction")}
+              </Button>
+            ) : null}
           </>
         ) : (
           <>
@@ -727,7 +736,7 @@ export function LiveViewer() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => void recoverTakeover()}
+                onClick={() => void clearPause()}
               >
                 {t("liveView.clearPauseAction")}
               </Button>

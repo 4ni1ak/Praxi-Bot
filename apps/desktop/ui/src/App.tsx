@@ -42,6 +42,7 @@ import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
 import { BOT_COLORS, botView } from "./lib/botProfile";
 import { getAutostart, setAutostart } from "./lib/providers";
+import { PausedControlBanner } from "./components/PausedControlBanner";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
 import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
@@ -650,6 +651,7 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
+        <PausedControlBanner />
         {route.kind === "onboarding" ? (
           <OnboardingView
             settings={settings}

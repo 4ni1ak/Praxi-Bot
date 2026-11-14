@@ -434,9 +434,19 @@ export function applyControlStateDto(
   // someone else's, or no longer active/acquiring (lapsed lease, Stop, restart).
   const takeoverGone =
     pendingRelease !== null && (t === null || t.id !== pendingRelease.takeoverId);
-  const releaseSettled =
+  // Settled only by a real end: the takeover is gone, the daemon's release
+  // journal completed, or the takeover was interrupted for a REASON (lapsed
+  // lease, Stop, restart). A pause without a reason is the daemon's own
+  // `suspend_release` while a hand-back is in progress or failed: the retry
+  // (same request id) must stay available.
+  const journalDone =
     pendingRelease !== null &&
-    (takeoverGone || (t?.state !== "active" && t?.state !== "acquiring"));
+    dto.release?.request_id === pendingRelease.requestId &&
+    (dto.release?.state as string) === "released";
+  const interrupted =
+    t !== null && t.state === "paused" && (t.reason ?? null) !== null;
+  const releaseSettled =
+    pendingRelease !== null && (takeoverGone || journalDone || interrupted);
   const settled = {
     pendingRequest: releaseSettled ? null : state.pendingRequest,
     lastError: releaseSettled ? null : state.lastError,
@@ -618,6 +628,10 @@ export function buildSessionHeartbeat(
 ): ViewHeartbeat {
   // A dead or frozen stream must not keep renewing the 15 s input lease.
   if (state.disconnected || state.streamStale) {
+    return {};
+  }
+  // A pending hand-back never renews the input lease.
+  if (state.pendingRequest?.kind === "release") {
     return {};
   }
   if (isActivelyOwningTakeover(state) && state.ownedTakeoverId !== null) {
@@ -874,4 +888,32 @@ export function controlSnapshotKey(dto: ControlStateDto): string {
     dto.mode,
     t ? [t.id, t.state, t.reason ?? null, t.owner, t.target_id, t.session_id, t.control_epoch] : null
   ]);
+}
+
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+export interface PauseRecovery {
+  takeoverId: string;
+  reason: ViewReason | null;
+}
+
+/**
+ * A takeover of THIS client that the daemon left paused (stream drop, lapsed
+ * lease, local Stop, restart). The daemon only shows real ids to the owning
+ * actor, so a non-nil id in the snapshot means it is ours. Independent of the
+ * viewer, the right panel and the native run state: while this is non-null the
+ * bot is paused behind the user and a control must stay on screen.
+ */
+export function needsPauseRecovery(
+  state: LiveViewControllerState,
+  control: ControlStateDto | null
+): PauseRecovery | null {
+  const t = control ? control.takeover : state.takeover;
+  if (!t || t.state !== "paused") {
+    return null;
+  }
+  const ours =
+    (t.id !== NIL_UUID && t.id !== "") ||
+    (state.ownedTakeoverId !== null && state.ownedTakeoverId === t.id);
+  return ours ? { takeoverId: t.id, reason: t.reason ?? null } : null;
 }

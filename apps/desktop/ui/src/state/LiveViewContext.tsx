@@ -90,6 +90,8 @@ interface LiveViewContextValue {
   releaseTakeover: (humanAction?: HumanAction | null) => Promise<void>;
   retryRelease: () => Promise<void>;
   recoverTakeover: () => Promise<void>;
+  /** `POST /v1/control/recover`: clear a paused latch (no view session needed). */
+  clearPause: () => Promise<void>;
   /**
    * Emergency stop through `POST /v1/control/override`. With `onlyIfControlled`
    * (the global Stop) it does nothing unless a screen takeover is held, so a plain
@@ -780,6 +782,29 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     );
   }, [performRelease]);
 
+  // `POST /v1/control/recover` (local user): clears the paused latch so bot
+  // desktop actions are allowed again. It needs no view session, so it works
+  // with the viewer and the panel closed.
+  const clearPause = useCallback(async () => {
+    if (!client) {
+      return;
+    }
+    try {
+      const dto = await client.recoverControl();
+      setControlState(dto);
+      registry.syncControlState(dto);
+      updateState((prev) => applyControlStateDto(prev, dto));
+      void refreshTargets();
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : "recover_failed";
+      const message = err instanceof Error ? err.message : String(err);
+      updateState((prev) => applyTakeoverFailed(prev, code, message));
+    }
+  }, [client, refreshTargets, registry, setControlState, updateState]);
+
+  // Reacquire a takeover the stream drop paused. Every other paused case
+  // (local Stop, restart, revoked, ...) is a clear-pause: the daemon cannot
+  // always verify a reset for the old target, `recover` can.
   const recoverTakeover = useCallback(async () => {
     if (!client) {
       return;
@@ -788,43 +813,19 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     if (!prompt) {
       return;
     }
-    if (prompt.mode === "clear_pause") {
-      try {
-        const dto = await client.recoverControl();
-        setControlState(dto);
-        registry.syncControlState(dto);
-        updateState((prev) => applyControlStateDto(prev, dto));
-        void refreshTargets();
-      } catch (err) {
-        const code = err instanceof ApiError ? err.code : "recover_failed";
-        const message = err instanceof Error ? err.message : String(err);
-        updateState((prev) => applyTakeoverFailed(prev, code, message));
-      }
+    if (prompt.mode !== "reacquire") {
+      await clearPause();
       return;
     }
     const requestId = crypto.randomUUID();
-    const req = buildTakeoverRequest(
-      stateRef.current,
-      requestId,
-      prompt.mode === "reacquire"
-        ? { reacquireTakeoverId: prompt.takeoverId }
-        : { recover: true, reason: prompt.recoveryReason ?? "owner_lost" }
-    );
+    const req = buildTakeoverRequest(stateRef.current, requestId, {
+      reacquireTakeoverId: prompt.takeoverId
+    });
     if (!req) {
-      try {
-        const dto = await client.recoverControl();
-        setControlState(dto);
-        updateState((prev) => applyControlStateDto(prev, dto));
-      } catch {
-        // surfaced via refreshTargets
-      }
-      return;
+      return; // no view session yet: open the screen first
     }
     updateState((prev) =>
-      applyTakeoverStarted(prev, requestId, {
-        reacquire: prompt.mode === "reacquire",
-        recover: prompt.mode === "recover"
-      })
+      applyTakeoverStarted(prev, requestId, { reacquire: true, recover: false })
     );
     try {
       const accepted = await client.requestTakeover(req);
@@ -835,7 +836,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       const message = err instanceof Error ? err.message : String(err);
       updateState((prev) => applyTakeoverFailed(prev, code, message));
     }
-  }, [client, controlState, refreshTargets, registry, setControlState, updateState]);
+  }, [client, clearPause, controlState, refreshTargets, updateState]);
 
   const overrideStop = useCallback(
     async (opts: { onlyIfControlled?: boolean } = {}) => {
@@ -939,6 +940,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       releaseTakeover,
       retryRelease,
       recoverTakeover,
+      clearPause,
       overrideStop,
       enqueueInput,
       resetInputState,
@@ -966,6 +968,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       releaseTakeover,
       retryRelease,
       recoverTakeover,
+      clearPause,
       overrideStop,
       enqueueInput,
       resetInputState,

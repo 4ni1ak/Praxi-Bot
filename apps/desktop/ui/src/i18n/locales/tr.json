@@ -1612,7 +1612,7 @@
       "application_opened": "Uygulama açıldı",
       "other": "Diğer adım"
     },
-    "recoverAction": "Kurtar ve sürdür",
+    "recoverAction": "Duraklatmayı kaldır (bot yeniden çalışabilir)",
     "reacquireAction": "Kontrolü yeniden al",
     "clearPauseAction": "Duraklatmayı kaldır",
     "otherOwner": "Kontrol {{owner}} tarafında",
@@ -1648,7 +1648,7 @@
       "unavailable": "Ekran hedefi şu anda kullanılamıyor.",
       "expired": "İzleme oturumunun süresi doldu. Yeniden bağlanın.",
       "revoked": "Bu aygıtın ekran erişim yetkisi kaldırıldı.",
-      "disconnected": "Bot duraklatıldı; yeniden devralın veya devam ettirin.",
+      "disconnected": "Ekran bağlantısı koptu ve bot duraklatıldı. Kontrolü yeniden alın veya botun tekrar çalışması için duraklatmayı kaldırın.",
       "stale": "Kareler güncelliğini yitirdi. Yeni kare gelip kurtarma yapılana kadar botlar duraklatıldı.",
       "geometry_changed": "Ekran çözünürlüğü değişti. Yeni kare bekleniyor.",
       "refresh_pending": "Hedeften güncel kare bekleniyor.",
@@ -1658,7 +1658,7 @@
       "reset_failed": "Tuş sıfırlaması doğrulanamadı; botlar güvenli şekilde duraklatıldı.",
       "partial_injection": "Girdi olayı tam olarak uygulanamadı.",
       "rate_limited": "Hız sınırı nedeniyle girdi geçici olarak yavaşlatıldı.",
-      "restart": "Kontrol sırasındayken servis yeniden başlatıldı. Devam etmeden önce kurtarın.",
+      "restart": "Kontrol sizdeyken daemon yeniden başladı. Botun devam etmesini istediğinizde duraklatmayı kaldırın.",
       "persistence_failed": "Kontrol durumu diske kaydedilemedi; güvenli duraklatma korunuyor.",
       "local_override": "Yerel olarak durduruldu. Hazır olduğunuzda duraklatmayı kaldırın.",
       "stream_stale": "Yakın zamanda yeni kare veya kalp atışı gelmedi; girdi güvenli şekilde kilitlendi.",
@@ -1676,6 +1676,11 @@
     },
     "reconnecting": "Ekran akışına yeniden bağlanılıyor…",
     "releaseOnClose": "Kapatmak önce kontrolü bota geri verir.",
-    "dismissKeepsControl": "Kapatmak yalnızca görünümü gizler: kontrol sizde kalır. Panelden Bitirdim veya Yeniden dene'yi kullanın."
+    "dismissKeepsControl": "Kapatmak yalnızca görünümü gizler: kontrol sizde kalır. Panelden Bitirdim veya Yeniden dene'yi kullanın.",
+    "pausedBanner": {
+      "title": "Bot duraklatıldı, sizi bekliyor",
+      "body": "Bir ekran devralma botu duraklatılmış bıraktı. Devam etmesi için duraklatmayı kaldırın veya kontrolü yeniden almak için ekranı açın."
+    },
+    "openScreen": "Ekranı aç"
   }
 }
