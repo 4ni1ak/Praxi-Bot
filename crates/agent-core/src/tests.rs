@@ -1035,7 +1035,11 @@ async fn large_output_is_spilled_with_preview_and_path() {
             .trim_end_matches(']'),
     );
     assert!(path.starts_with(env.dir.path().join("spill")));
-    assert_eq!(std::fs::read_to_string(path).unwrap().len(), big.len());
+    // The file is the run's own and goes away when the run has ended.
+    assert!(
+        !path.exists(),
+        "spill files are removed at the end of the run"
+    );
 }
 
 #[tokio::test]

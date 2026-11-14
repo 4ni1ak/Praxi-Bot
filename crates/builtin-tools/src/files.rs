@@ -658,6 +658,51 @@ fn validate_path(sh: &Shared, raw: &str, follow: Follow) -> Result<PathBuf, Tool
     Ok(opened)
 }
 
+/// True when `path` is inside `dir` (component-wise, widened like
+/// `in_checkpoint_store`).
+fn under_dir(path: &Path, dir: &Path) -> bool {
+    let (Ok(path), Ok(dir)) = (widen_path(path), widen_path(dir)) else {
+        return false;
+    };
+    let (p, d) = (norm_parts(&path), norm_parts(&dir));
+    !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+}
+
+/// Like [`validate_path`] for reads, plus one read-only exemption from the
+/// allowed roots: the spill files of the CURRENT run
+/// (`<data_dir>/spill/<run>`), which the loop itself points the model at.
+/// Links must stay inside that directory and the credential/protected-file
+/// rules still apply.
+fn validate_read_path(sh: &Shared, raw: &str, run: &str) -> Result<PathBuf, ToolError> {
+    let run_dir = sh.spill_dir.join(run);
+    let in_run = !run.is_empty()
+        && !run.contains(['/', '\\', '.'])
+        && lexical_absolute(raw).is_ok_and(|l| under_dir(&l, &run_dir));
+    if sh.allowed_roots.is_empty() || !in_run {
+        return validate_path(sh, raw, Follow::Content);
+    }
+    if sh.roots_unresolved {
+        return Err(denied(ROOT_UNRESOLVED_MSG));
+    }
+    let lexical = lexical_absolute(raw)?;
+    let ctx = ResolveCtx {
+        follow: Follow::Content,
+        roots: &[],
+        drives: &sh.drives,
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = resolve_local(&lexical, &ctx)?;
+    let opened = final_identity(&resolved)?;
+    if !under_dir(&opened, &run_dir) {
+        return Err(denied(ROOT_MSG));
+    }
+    if credential_blocked(sh, &lexical, &resolved) || credential_blocked(sh, &lexical, &opened) {
+        return Err(denied(GRANT_MSG));
+    }
+    Ok(opened)
+}
+
 fn resolve_local(path: &Path, ctx: &ResolveCtx<'_>) -> Result<PathBuf, ToolError> {
     if ctx.depth > MAX_LINK_DEPTH {
         return Err(denied(LINK_MSG));
@@ -2191,8 +2236,8 @@ fn read_line_range(
     Ok((kept, total))
 }
 
-fn do_read(sh: &Shared, i: &ReadIn) -> Result<String, ToolError> {
-    let path = validate_path(sh, &i.path, Follow::Content)?;
+fn do_read(sh: &Shared, run: &str, i: &ReadIn) -> Result<String, ToolError> {
+    let path = validate_read_path(sh, &i.path, run)?;
     let Some(r) = &i.range else {
         return read_text(&path);
     };
@@ -2630,7 +2675,7 @@ impl Tool for FsTool {
         let text = match self.op {
             Op::Read => {
                 let i: ReadIn = parse(input)?;
-                blocking(move || do_read(&sh, &i)).await?
+                blocking(move || do_read(&sh, &run, &i)).await?
             }
             Op::List => {
                 let i: ListIn = parse(input)?;
@@ -4111,6 +4156,52 @@ mod tests {
             matches!(err, ToolError::PermissionDenied(_)),
             "a grant is exact: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn confined_reads_may_open_only_this_runs_spill_files() {
+        let (d, w, _t) = setup();
+        let root = w.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let t = tools_bounded(d.path(), std::slice::from_ref(&root), &[]);
+        let c = ctx(); // run-1
+        let mine = d.path().join("spill").join("run-1");
+        let other = d.path().join("spill").join("run-2");
+        fs::create_dir_all(&mine).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(mine.join("c.txt"), "spilled-data").unwrap();
+        fs::write(other.join("c.txt"), "other-run").unwrap();
+        fs::write(mine.join(".env"), "SECRET=1").unwrap();
+        let reader = get(&t, "fs_read");
+        let read = |p: PathBuf| {
+            let reader = reader.clone();
+            let c = ToolContext {
+                run_id: "run-1".into(),
+                max_inline_bytes: 1 << 20,
+                bot_id: None,
+            };
+            async move { reader.call(&c, json!({"path": p})).await }
+        };
+        let ok = text(&read(mine.join("c.txt")).await.unwrap());
+        assert!(ok.contains("spilled-data"), "{ok}");
+        for denied in [
+            other.join("c.txt"),
+            mine.join("..").join("run-2").join("c.txt"),
+            mine.join(".env"),
+        ] {
+            let err = read(denied.clone()).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{}: {err}",
+                denied.display()
+            );
+        }
+        // Read-only: writing there is still outside the roots.
+        let werr = get(&t, "fs_write")
+            .call(&c, json!({"path": mine.join("n.txt"), "content": "x"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(werr, ToolError::PermissionDenied(_)), "{werr}");
     }
 
     #[tokio::test]
