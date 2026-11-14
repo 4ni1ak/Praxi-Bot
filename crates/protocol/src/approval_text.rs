@@ -20,9 +20,16 @@ use serde_json::Value;
 /// Khmer inherent vowels, Hangul fillers including U+FFA0, zero-width / bidi
 /// format controls, variation selectors, tags, shorthand/musical format
 /// controls), plus the remaining `Cf` format characters, `Zl`/`Zp` line and
-/// paragraph separators, and Braille Pattern Blank (`U+2800`).
+/// paragraph separators, Braille Pattern Blank (`U+2800`), non-ASCII spaces,
+/// private-use code points, and the object replacement character (`U+FFFC`).
 #[must_use]
 pub fn is_hidden(c: char) -> bool {
+    is_default_ignorable(c) || is_non_ascii_space(c) || is_private_use(c) || c == '\u{FFFC}'
+}
+
+/// Unicode `Default_Ignorable_Code_Point` plus the other `Cf` / `Zl` / `Zp`
+/// characters the card has always treated as invisible.
+fn is_default_ignorable(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'
@@ -51,6 +58,97 @@ pub fn is_hidden(c: char) -> bool {
             | '\u{1BCA0}'..='\u{1BCA3}'
             | '\u{1D173}'..='\u{1D17A}'
             | '\u{E0000}'..='\u{E0FFF}'
+    )
+}
+
+/// Spaces other than U+0020. They look like a normal space on a card and in
+/// Telegram, so a string of them is a hidden channel unless revealed.
+#[must_use]
+pub fn is_non_ascii_space(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}'
+    )
+}
+
+/// Unicode private-use planes: BMP `U+E000`–`U+F8FF` and planes 15–16.
+#[must_use]
+pub fn is_private_use(c: char) -> bool {
+    let u = u32::from(c);
+    (0xE000..=0xF8FF).contains(&u)
+        || (0x000F_0000..=0x000F_FFFD).contains(&u)
+        || (0x0010_0000..=0x0010_FFFD).contains(&u)
+}
+
+/// Characters that are never legitimate in text a user is asked to send.
+///
+/// The call is refused. Revealing them is not enough: a tag, a bidi override,
+/// an invisible operator, a private-use code point, or U+FFFC has no ordinary
+/// use in a search, a mail, or a shell command, and approving one would send
+/// a character the user cannot reliably read.
+///
+/// Tab, newline, and CR are not in this set. CR is revealed (see
+/// [`is_revealed_egress_char`]) so CRLF text can be approved.
+#[must_use]
+pub fn is_forbidden_egress_char(c: char) -> bool {
+    if matches!(c, '\t' | '\n' | '\r') {
+        return false;
+    }
+    if c.is_control() || is_private_use(c) || c == '\u{FFFC}' {
+        return true;
+    }
+    matches!(
+        c,
+        // Unicode tag block, including the unassigned tail of the plane.
+        '\u{E0000}'..='\u{E0FFF}'
+            // Bidi embeddings and overrides.
+            | '\u{202A}'..='\u{202E}'
+            // Bidi isolates.
+            | '\u{2066}'..='\u{2069}'
+            // Deprecated bidi format controls.
+            | '\u{206A}'..='\u{206F}'
+            // Word joiner and invisible math operators.
+            | '\u{2060}'..='\u{2064}'
+            // Zero-width space. ZWNJ (U+200C) and ZWJ (U+200D) are not here.
+            | '\u{200B}'
+            // Line and paragraph separators hide a break the same way a newline does.
+            | '\u{2028}'
+            | '\u{2029}'
+            // Mongolian vowel separator, deprecated and usually invisible.
+            | '\u{180E}'
+    )
+}
+
+/// Hidden or non-printing characters that real text does contain.
+///
+/// The approval payload shows each one as `<U+XXXX>` and the user can approve
+/// the send. The bytes that leave still contain the original character.
+/// Emoji variation selectors and ZWJ, ZWNJ in Persian and Hindi, LRM/RLM/ALM
+/// in Arabic and Hebrew, and CR in CRLF are in this set.
+#[must_use]
+pub fn is_revealed_egress_char(c: char) -> bool {
+    !is_forbidden_egress_char(c)
+        && (is_hidden(c) || c == '\r' || (c.is_control() && c != '\n' && c != '\t'))
+}
+
+/// Characters a prompt-free egress (a search after untrusted content only, or
+/// a send the bot's waiver does not show) may carry without a card.
+///
+/// They are ordinary in emoji, Persian, Hindi, Arabic, Hebrew, and CRLF.
+/// Anything else that [`is_revealed_egress_char`] would mark has no card to
+/// show the marker, so the call is refused instead.
+#[must_use]
+pub fn is_prompt_free_text_char(c: char) -> bool {
+    matches!(
+        c,
+        '\u{FE0E}'
+            | '\u{FE0F}'
+            | '\u{200C}'
+            | '\u{200D}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{061C}'
+            | '\r'
     )
 }
 
@@ -406,8 +504,30 @@ fn egress_text(details: &Value) -> Option<String> {
     if !reads.is_empty() {
         out.push_str(&quoted("SOURCES", &reads.join("\n")));
     }
+    if let Some(summary) = payload_summary(egress) {
+        out.push_str(&summary);
+        out.push('\n');
+    }
     out.push_str(&quoted("OUTGOING PAYLOAD", &payload));
     Some(out)
+}
+
+/// Line and character counts of the text that would be sent, plus how many
+/// non-printing characters the payload shows as `<U+XXXX>`.
+fn payload_summary(egress: &Value) -> Option<String> {
+    let lines = egress.get("payload_lines").and_then(Value::as_u64)?;
+    let chars = egress.get("payload_chars").and_then(Value::as_u64)?;
+    let hidden = egress
+        .get("hidden_chars")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut line = format!("Outgoing text: {lines} lines, {chars} characters");
+    if hidden > 0 {
+        line.push_str(&format!(
+            ", {hidden} non-printing characters shown as <U+XXXX>"
+        ));
+    }
+    Some(line)
 }
 
 fn utf16_len(s: &str) -> usize {
@@ -750,5 +870,74 @@ mod tests {
         );
         assert!(hides_characters(&payload));
         assert!(!hides_characters("weather"));
+    }
+
+    #[test]
+    fn forbidden_characters_are_not_the_ones_real_text_needs() {
+        for ch in [
+            '\u{E0041}',
+            '\u{202E}',
+            '\u{2066}',
+            '\u{2062}',
+            '\u{200B}',
+            '\u{E000}',
+            '\u{FFFC}',
+            '\u{0000}',
+            '\u{001B}',
+            '\u{0085}',
+            '\u{2028}',
+            '\u{180E}',
+        ] {
+            assert!(
+                is_forbidden_egress_char(ch),
+                "U+{:04X} should be refused",
+                u32::from(ch)
+            );
+            assert!(!is_revealed_egress_char(ch));
+        }
+        for ch in [
+            '\u{FE0F}', '\u{200D}', '\u{200C}', '\u{200E}', '\u{200F}', '\u{061C}', '\r',
+            '\u{00A0}', '\u{1680}', '\u{2000}', '\u{200A}', '\u{202F}', '\u{205F}', '\u{3000}',
+            '\u{00AD}', '\u{FEFF}',
+        ] {
+            assert!(
+                !is_forbidden_egress_char(ch),
+                "U+{:04X} should be approvable once revealed",
+                u32::from(ch)
+            );
+            assert!(
+                is_revealed_egress_char(ch),
+                "U+{:04X} should be revealed",
+                u32::from(ch)
+            );
+            assert!(is_hidden(ch) || ch == '\r', "U+{:04X}", u32::from(ch));
+        }
+        assert!(is_prompt_free_text_char('\u{FE0F}'));
+        assert!(is_prompt_free_text_char('\u{200C}'));
+        assert!(!is_prompt_free_text_char('\u{00A0}'));
+        assert!(!is_forbidden_egress_char('\n'));
+        assert!(!is_forbidden_egress_char('\t'));
+        assert!(!is_revealed_egress_char('a'));
+    }
+
+    #[test]
+    fn egress_summary_states_the_size_and_the_hidden_count() {
+        let details = json!({
+            "kind": "egress",
+            "reason": "read a file",
+            "read": ["file notes.txt"],
+            "host": "configured-search-provider",
+            "payload": "weather <U+00A0>",
+            "payload_kind": "query",
+            "payload_lines": 1,
+            "payload_chars": 8,
+            "hidden_chars": 1
+        });
+        let text = describe_details(&details).unwrap();
+        assert!(
+            text.contains("Outgoing text: 1 lines, 8 characters, 1 non-printing"),
+            "{text}"
+        );
+        assert!(text.contains("weather <U+00A0>"), "{text}");
     }
 }
