@@ -3,6 +3,7 @@ import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
 import { MockLiveViewService } from "./mockLiveView.ts";
 import type {
   Bot,
+  BotSkills,
   Chat,
   ConfiguredProviderDto,
   ControlModeName,
@@ -15,10 +16,14 @@ import type {
   McpServerConfig,
   McpTool,
   Message,
+  OwnSkill,
   PolicyDto,
   ProvidersDto,
+  PutBotSkillsInput,
   ReleaseRequest,
   SessionUpdate,
+  SkillAssignmentMode,
+  SkillsCatalog,
   TakeoverRequest,
   UsageSummary,
   GlobalEnvelope,
@@ -47,6 +52,51 @@ function bot(id: string, name: string, color: string, shape: string, model: stri
     }
   };
 }
+
+const MOCK_SKILLS_CATALOG: SkillsCatalog = {
+  skills: [
+    {
+      name: "code-review",
+      description: "Inspect pull requests for subtle bugs, missing tests, and style regressions.",
+      version: "1.2.0",
+      scope: "bundled",
+      requires: { apps: [], domains: [], keywords: ["review", "pr"] },
+      hub: null
+    },
+    {
+      name: "github-triage",
+      description: "Categorize new issues, check duplicates, and suggest labels.",
+      version: "1.0.4",
+      scope: "shared",
+      requires: { apps: ["github"], domains: ["github.com"], keywords: ["issues"] },
+      hub: { source: "clawhub", locked: true }
+    },
+    {
+      name: "meeting-notes",
+      description: "Turn transcripts into crisp action items and owners.",
+      version: "0.9.0",
+      scope: "shared",
+      requires: { apps: [], domains: [], keywords: [] },
+      hub: null
+    },
+    {
+      name: "release-notes",
+      description: "Draft changelog highlights grouped by user impact.",
+      version: "1.1.0",
+      scope: "bundled",
+      requires: { apps: [], domains: [], keywords: [] },
+      hub: null
+    }
+  ],
+  issues: []
+};
+
+const MOCK_OWN_SKILLS: Record<string, OwnSkill[]> = {
+  [ATLAS]: [{ name: "atlas-standup", version: "0.1.0" }],
+  [NOVA]: []
+};
+
+const SKILL_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 const BOTS: Bot[] = [
   bot(ATLAS, "Atlas", "#9D9AE8", "cloud", "anthropic/claude-sonnet-5-5"),
@@ -336,6 +386,10 @@ export class MockApiClient extends ApiClient {
     }
   ];
 
+  private botSkills = new Map<string, { mode: SkillAssignmentMode; names: string[] }>([
+    [NOVA, { mode: "selected", names: ["meeting-notes", "removed-skill"] }]
+  ]);
+
   constructor() {
     super({ base_url: MOCK_BASE_URL, token: "mock" });
     this.servers = [
@@ -399,7 +453,12 @@ export class MockApiClient extends ApiClient {
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
         return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+      case "GET /skills":
+        return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":
+        if (seg[1] && seg[2] === "skills") {
+          return ok(this.getBotSkillsState(seg[1]));
+        }
         return ok(structuredClone(this.bots));
       case "GET /chats":
         if (seg[2] === "messages") {
@@ -539,6 +598,9 @@ export class MockApiClient extends ApiClient {
         return ok(created);
       }
       case "PUT /bots":
+        if (seg[1] && seg[2] === "skills") {
+          return ok(this.putBotSkillsState(seg[1], opts.body as PutBotSkillsInput));
+        }
         { const index = this.bots.findIndex(b => b.id === seg[1]);
           if (index >= 0) this.bots[index] = { ...this.bots[index], ...(opts.body as Partial<Bot>) };
           return ok(this.bots[index] ?? this.bots[0]); }
@@ -638,6 +700,57 @@ export class MockApiClient extends ApiClient {
       return { request_id: sub, decision: verdict.decision ?? "proceed" };
     }
     throw new ApiError(404, "not_found", `mock control: ${method} /${seg.join("/")}`);
+  }
+
+  private getBotSkillsState(botId: string): BotSkills {
+    if (!this.bots.some((b) => b.id === botId)) {
+      throw new ApiError(404, "not_found", `bot ${botId} not found`);
+    }
+    const stored = this.botSkills.get(botId);
+    const mode: SkillAssignmentMode = stored?.mode ?? "all";
+    const names = mode === "selected" ? stored?.names ?? [] : [];
+    const availableByName = new Map(
+      MOCK_SKILLS_CATALOG.skills.map((s) => [s.name, s])
+    );
+    const selectedSet = new Set(names);
+    return {
+      mode,
+      assigned: names.map((name) => ({
+        name,
+        state: availableByName.has(name) ? "ok" : "missing"
+      })),
+      available: MOCK_SKILLS_CATALOG.skills.map((s) => ({
+        ...structuredClone(s),
+        assigned: mode === "all" || selectedSet.has(s.name)
+      })),
+      own: structuredClone(MOCK_OWN_SKILLS[botId] ?? [])
+    };
+  }
+
+  private putBotSkillsState(botId: string, body: PutBotSkillsInput): BotSkills {
+    if (!this.bots.some((b) => b.id === botId)) {
+      throw new ApiError(404, "not_found", `bot ${botId} not found`);
+    }
+    if (body.mode === "all") {
+      this.botSkills.delete(botId);
+      return this.getBotSkillsState(botId);
+    }
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const raw of body.names ?? []) {
+      if (!SKILL_NAME_RE.test(raw)) {
+        throw new ApiError(422, "unprocessable_entity", `invalid skill name: ${raw}`);
+      }
+      if (!seen.has(raw)) {
+        seen.add(raw);
+        normalized.push(raw);
+      }
+    }
+    if (normalized.length > 200) {
+      throw new ApiError(422, "unprocessable_entity", "too many assigned skills");
+    }
+    this.botSkills.set(botId, { mode: "selected", names: normalized });
+    return this.getBotSkillsState(botId);
   }
 
   private email(method: string, seg: string[], body: unknown): unknown {

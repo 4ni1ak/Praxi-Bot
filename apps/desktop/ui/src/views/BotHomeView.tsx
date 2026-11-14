@@ -2,6 +2,7 @@ import { MessageSquare, PenLine, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, Button, Card } from "ui";
+import { BotSkillsSection } from "../components/BotSkillsSection";
 import formStyles from "../components/Form.module.css";
 import { botView, draftFromBot } from "../lib/botProfile";
 import { useDaemon } from "../state/DaemonContext";
@@ -134,6 +135,8 @@ export function BotHomeView({
             {error}
           </p>
         ) : null}
+
+        <BotSkillsSection botId={botId} client={client} />
 
         <h2 className={styles.heading}>{t("bots.chats")}</h2>
         {botChats.length === 0 ? (

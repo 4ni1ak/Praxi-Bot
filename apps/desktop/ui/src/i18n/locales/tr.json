@@ -234,6 +234,31 @@
     "confirmDelete": "Silmek için tekrar tıkla",
     "chats": "Sohbetler",
     "noChats": "Henüz sohbet yok. “Yeni sohbet” ile başla.",
+    "skills": {
+      "heading": "Beceriler",
+      "loading": "Beceriler yükleniyor…",
+      "summaryAll": "Tüm ortak becerileri kullanır ({{count}})",
+      "summarySelected": "{{total}} ortak beceriden {{count}} tanesi",
+      "summaryLearned": "(+{{count}} öğrenilmiş)",
+      "summaryMissing": "Atanmış {{count}} beceri diskte bulunamıyor",
+      "chooseButton": "Beceri seç…",
+      "modalTitle": "Becerileri seç",
+      "modeLabel": "Ortak beceri erişimi",
+      "modeAll": "Tüm ortak beceriler",
+      "modeSelected": "Yalnızca seçtiklerim",
+      "searchPlaceholder": "Ad veya açıklamaya göre beceri filtrele…",
+      "missingTitle": "Kullanılamıyor",
+      "missingHint": "Atanan bu beceriler artık diskte yok. İstersen kaldırabilir ya da olduğu gibi bırakabilirsin.",
+      "removeMissing": "Kaldır",
+      "emptyCatalog": "Henüz ortak veya yerleşik beceri yüklü değil.",
+      "emptySearch": "Aramana uyan beceri yok.",
+      "ownTitle": "Bu botun kendi öğrendiği beceriler ({{count}})",
+      "ownHint": "Öğrenilen beceriler bu bota aittir ve her zaman etkin kalır.",
+      "scope": {
+        "shared": "ortak",
+        "bundled": "yerleşik"
+      }
+    },
     "chatState": {
       "needs": "Senden bekliyor",
       "running": "Çalışıyor"
