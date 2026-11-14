@@ -50,13 +50,15 @@ fn setup_with(policy: Policy) -> T {
     }
 }
 
-fn save_workflow(t: &T) {
+fn save_workflow(t: &T, bot: &str) {
     let mut wf = Workflow::new("danger_wf");
     wf.steps = vec![Step::Tool(ToolStep {
         tool: "danger_run".to_owned(),
         input: json!({}),
     })];
     WorkflowStore::new(t.state.storage().data_dir())
+        .for_bot(bot)
+        .unwrap()
         .save(&wf)
         .unwrap();
 }
@@ -411,8 +413,8 @@ async fn run_now_dispatches_a_prompt_into_a_chat_named_after_the_schedule() {
 async fn run_now_dispatches_a_workflow_and_a_tool_through_the_gate() {
     let t = setup_with(Policy::full());
     t.state.start_scheduler().unwrap();
-    save_workflow(&t);
     let (bot, _) = make_chat(&t).await;
+    save_workflow(&t, &bot);
 
     let wf = create(
         &t,

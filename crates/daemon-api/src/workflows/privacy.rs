@@ -8,17 +8,21 @@ use storage::RunStep;
 use uuid::Uuid;
 use workflow_replay::{Param, ParamType, Recording, Workflow};
 
-use super::{ApiError, AppState, SkippedCall};
+use super::{ApiError, AppState, ParameterOrigin, SkippedCall, StepProvenance};
 
 pub(super) struct Secret {
     token: String,
     name: String,
+    kind: ParamType,
+    original: String,
 }
 
 pub(super) struct ReviewSteps {
     pub steps: Vec<RunStep>,
     pub skipped: Vec<SkippedCall>,
     pub secrets: Vec<Secret>,
+    pub provenance: Vec<StepProvenance>,
+    pub untrusted_content: bool,
 }
 
 fn map_strings(value: &mut Value, f: &impl Fn(&str) -> String) {
@@ -35,53 +39,109 @@ fn sensitive_key(key: &str) -> bool {
     [
         "password",
         "passwd",
+        "pwd",
+        "pass",
         "secret",
         "token",
         "api_key",
         "apikey",
         "authorization",
+        "credential",
+        "cookie",
+        "bearer",
+        "otp",
+        "private_key",
+        "header",
     ]
     .iter()
     .any(|s| key.contains(s))
 }
 
-fn protect(input: &mut Value, typed: bool, secrets: &mut Vec<Secret>, literals: &mut Vec<String>) {
+// Structural references are preserved only for tools whose recorder needs
+// them. Every other string field is ambiguous data and requires fresh input.
+fn protect(input: &mut Value, tool: &str, secrets: &mut Vec<Secret>) {
+    protect_field(input, tool, secrets, false);
+}
+
+fn protect_field(input: &mut Value, tool: &str, secrets: &mut Vec<Secret>, typed_secret: bool) {
     match input {
         Value::Object(fields) => {
             for (key, value) in fields {
-                if (sensitive_key(key) || (typed && matches!(key.as_str(), "text" | "value")))
-                    && let Some(text) = value.as_str().filter(|s| !s.is_empty())
-                {
-                    literals.push(text.to_owned());
-                    let name = format!("recorded_secret_{}", secrets.len() + 1);
-                    let token = format!("WFSECRET{}", Uuid::now_v7().simple());
-                    *value = Value::String(token.clone());
-                    secrets.push(Secret { token, name });
-                } else {
-                    protect(value, typed, secrets, literals);
+                let structural = matches!(
+                    tool,
+                    "browser_click"
+                        | "browser_fill"
+                        | "browser_select"
+                        | "browser_press"
+                        | "desktop_click"
+                        | "desktop_type"
+                        | "desktop_set_value"
+                        | "desktop_key"
+                ) && matches!(
+                    key.as_str(),
+                    "ref" | "index" | "button" | "key" | "app" | "window_title"
+                );
+                if !structural || sensitive_key(key) {
+                    protect_field(value, tool, secrets, typed_secret || sensitive_key(key));
                 }
             }
         }
         Value::Array(items) => {
             for value in items {
-                protect(value, typed, secrets, literals);
+                protect_field(value, tool, secrets, typed_secret);
             }
+        }
+        Value::String(_) | Value::Number(_) | Value::Bool(_)
+            if input.is_string() || typed_secret =>
+        {
+            let original = input
+                .as_str()
+                .map_or_else(|| input.to_string(), str::to_owned);
+            let kind = match input {
+                Value::Number(_) => ParamType::Number,
+                Value::Bool(_) => ParamType::Bool,
+                _ => ParamType::String,
+            };
+            let name = format!("recorded_secret_{}", secrets.len() + 1);
+            // Unique field placeholders are replaced only at whole fields.
+            let token = format!("WFSECRET{}", Uuid::now_v7().simple());
+            *input = Value::String(token.clone());
+            secrets.push(Secret {
+                token,
+                name,
+                kind,
+                original,
+            });
         }
         _ => {}
     }
 }
 
-fn unwrapped(input: &mut Value, tool: &str, secrets: &mut Vec<Secret>, literals: &mut Vec<String>) {
-    if tool == "use_tool" {
-        let name = input["name"].as_str().unwrap_or_default().to_owned();
-        protect(&mut input["input"], is_typing(&name), secrets, literals);
-    } else {
-        protect(input, is_typing(tool), secrets, literals);
+fn skipped_reason(
+    name: &str,
+    spec: Option<&tool_registry::ToolSpec>,
+    result: Option<&Value>,
+) -> Option<&'static str> {
+    if result.is_some_and(|row| row["is_error"] == true) {
+        return Some("call failed");
     }
-}
-
-fn is_typing(tool: &str) -> bool {
-    matches!(tool, "browser_fill" | "desktop_type" | "desktop_set_value")
+    if spec.is_some_and(|spec| {
+        spec.effect == tool_registry::Effect::Read
+            || spec.category == protocol::PermissionCategory::Meta
+    }) || matches!(
+        name,
+        "fs_read"
+            | "browser_snapshot"
+            | "desktop_get_state"
+            | "fs_list"
+            | "fs_search"
+            | "todo_write"
+            | "ask_user"
+    ) {
+        Some("read-only or meta call")
+    } else {
+        None
+    }
 }
 
 pub(super) fn review_steps(s: &AppState, id: RunId) -> Result<ReviewSteps, ApiError> {
@@ -93,10 +153,18 @@ pub(super) fn review_steps(s: &AppState, id: RunId) -> Result<ReviewSteps, ApiEr
         }
     }
     let mut steps = s.storage().list_steps(id)?;
+    let user_text = steps
+        .iter()
+        .filter(|step| step.name == "user_message")
+        .filter_map(|step| step.input["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut skipped = Vec::new();
     let mut secrets = Vec::new();
-    let mut literals = Vec::new();
-    let registry = s.agent().tool_registry();
+    let mut provenance = Vec::new();
+    let mut untrusted_content = false;
+    let run = s.run_of_user(id)?;
+    let registry = s.agent().workflow_recording_tools(run.bot_id)?;
     for step in steps.iter_mut().filter(|step| step.name == "tools") {
         let results = step.output.as_ref().and_then(|o| o["results"].as_array());
         let Some(calls) = step.input["calls"].as_array_mut() else {
@@ -122,99 +190,119 @@ pub(super) fn review_steps(s: &AppState, id: RunId) -> Result<ReviewSteps, ApiEr
                 &tool
             }
             .to_owned();
-            let spec = registry
+            let tool_handle = registry
                 .get(&name)
-                .or_else(|| registry.get(&name.replace("__", ".")));
-            if result.is_some_and(|row| row["is_error"] == true) {
+                .or_else(|| registry.get(&name.replace("__", ".")))
+                .ok_or_else(|| ApiError::conflict("source tool is not visible to this bot"))?;
+            let spec = tool_handle.spec();
+            if let Some(reason) = skipped_reason(&name, Some(spec), result) {
                 skipped.push(SkippedCall {
-                    tool: name,
-                    reason: "call failed".into(),
-                });
-            } else if spec.as_ref().is_some_and(|t| {
-                t.spec().effect == tool_registry::Effect::Read
-                    || t.spec().category == protocol::PermissionCategory::Meta
-            }) || matches!(
-                name.as_str(),
-                "fs_read"
-                    | "browser_snapshot"
-                    | "desktop_get_state"
-                    | "fs_list"
-                    | "fs_search"
-                    | "todo_write"
-                    | "ask_user"
-            ) {
-                skipped.push(SkippedCall {
-                    tool: name,
-                    reason: "read-only or meta call".into(),
+                    tool: name.clone(),
+                    reason: reason.into(),
                 });
             }
-            // UI trees do not always expose password metadata. Conservatively
-            // require a fresh value for every typed field, never retain defaults.
-            unwrapped(&mut safe, &tool, &mut secrets, &mut literals);
+            let non_meta = spec.category != protocol::PermissionCategory::Meta;
+            let read = spec.effect == tool_registry::Effect::Read && non_meta;
+            let data = if tool == "use_tool" {
+                &mut safe["input"]
+            } else {
+                &mut safe
+            };
+            if read {
+                untrusted_content = true;
+            }
+            if !read && non_meta && !result.is_some_and(|r| r["is_error"] == true) {
+                provenance.push(step_origin(
+                    data,
+                    untrusted_content,
+                    &user_text,
+                    provenance.len(),
+                ));
+            }
+            // Any non-meta tool result can contain external/private content,
+            // including MCP write responses and browser navigation output.
+            if non_meta
+                && result.is_some_and(|r| r["text"].as_str().is_some_and(|text| !text.is_empty()))
+            {
+                untrusted_content = true;
+            }
+            protect(data, &name, &mut secrets);
             call["arguments"] =
                 Value::String(serde_json::to_string(&safe).map_err(ApiError::internal)?);
         }
     }
-    mask_context(&mut steps, &literals, &secrets)?;
+    // The recorder must not lift defaults from chat text or derive a
+    // description containing a typed value. Tool arguments were replaced at
+    // their exact field occurrences, never across unrelated steps.
+    for step in &mut steps {
+        if step.name == "user_message" {
+            step.input["text"] = Value::String(String::new());
+        }
+    }
     Ok(ReviewSteps {
         steps,
         skipped,
         secrets,
+        provenance,
+        untrusted_content,
     })
 }
 
-fn mask_context(
-    steps: &mut [RunStep],
-    literals: &[String],
-    secrets: &[Secret],
-) -> Result<(), ApiError> {
-    // User text and tool output can echo a password. They are context data,
-    // not templates: erase the literals there before the recorder reads them.
-    for step in steps {
-        if let Some(calls) = step.input["calls"].as_array_mut() {
-            for call in calls {
-                if let Some(arguments) = call["arguments"].as_str() {
-                    let mut input: Value =
-                        serde_json::from_str(arguments).map_err(ApiError::internal)?;
-                    let data = if call["name"] == "use_tool" {
-                        &mut input["input"]
-                    } else {
-                        &mut input
-                    };
-                    map_strings(data, &|text| {
-                        if secrets.iter().any(|secret| secret.token == text) {
-                            text.to_owned()
-                        } else {
-                            mask(text, literals)
-                        }
-                    });
-                    call["arguments"] =
-                        Value::String(serde_json::to_string(&input).map_err(ApiError::internal)?);
-                }
-            }
+fn step_origin(data: &Value, tainted: bool, user_text: &str, index: usize) -> StepProvenance {
+    let mut parameters = Vec::new();
+    collect_origins(data, "", &mut parameters, tainted, user_text);
+    StepProvenance {
+        step_index: index,
+        untrusted_read_before: tainted,
+        origin: if !tainted && parameters.iter().all(|p| p.origin == "user_request") {
+            "user_request"
+        } else {
+            "run_content_or_model"
         }
-        if step.name == "user_message" {
-            map_strings(&mut step.input["text"], &|text| mask(text, literals));
-        }
-        if let Some(results) = step
-            .output
-            .as_mut()
-            .and_then(|output| output["results"].as_array_mut())
-        {
-            // Correlation ids are structural, not display text. A short
-            // password must not corrupt ids and turn successful calls into drops.
-            for result in results {
-                map_strings(&mut result["text"], &|text| mask(text, literals));
-            }
-        }
+        .into(),
+        needs_confirmation: tainted || parameters.iter().any(|p| p.origin != "user_request"),
+        parameters,
     }
-    Ok(())
 }
 
-fn mask(text: &str, literals: &[String]) -> String {
-    literals.iter().fold(text.to_owned(), |text, literal| {
-        text.replace(literal, REDACTED)
-    })
+fn collect_origins(
+    value: &Value,
+    pointer: &str,
+    out: &mut Vec<ParameterOrigin>,
+    tainted: bool,
+    user_text: &str,
+) {
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                collect_origins(
+                    value,
+                    &format!("{pointer}/{}", key.replace('~', "~0").replace('/', "~1")),
+                    out,
+                    tainted,
+                    user_text,
+                );
+            }
+        }
+        Value::Array(items) => {
+            for (i, value) in items.iter().enumerate() {
+                collect_origins(value, &format!("{pointer}/{i}"), out, tainted, user_text);
+            }
+        }
+        _ => out.push(ParameterOrigin {
+            pointer: pointer.into(),
+            origin: if !tainted
+                && value
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty() && user_text.contains(text))
+            {
+                "user_request"
+            } else {
+                "run_content_or_model"
+            }
+            .into(),
+        }),
+    }
 }
 
 pub(super) fn finish(
@@ -230,27 +318,80 @@ pub(super) fn finish(
             continue;
         }
         map_strings(&mut value, &|text| {
-            text.replace(&secret.token, &format!("{{{}}}", secret.name))
+            if text == secret.token {
+                format!("{{{}}}", secret.name)
+            } else {
+                text.to_owned()
+            }
         });
         required.push(secret.name.clone());
         params.push(Param {
             name: secret.name.clone(),
-            ty: ParamType::String,
+            ty: secret.kind,
             default: None,
-            description: "Sensitive or typed value; supply again when running".into(),
+            description:
+                "Fresh input required; recorded values may contain credentials or destinations"
+                    .into(),
         });
     }
+    let structural_url_credentials = has_url_credentials(&value);
+    let structural_secret_echo = contains_protected_literal(&value, secrets);
     recording.workflow = serde_json::from_value(value).map_err(ApiError::internal)?;
     recording.workflow.params.extend(params);
+    // Snapshot-derived locators can contain credentials too. Refuse rather
+    // than storing a redacted literal that replay would later send.
+    let encoded = serde_json::to_string(&recording.workflow).map_err(ApiError::internal)?;
+    if encoded.contains(REDACTED)
+        || structural_url_credentials
+        || Redactor::new().contains_secret(&encoded)
+        || structural_secret_echo
+    {
+        return Err(ApiError::conflict(
+            "credential in structural recording data; cannot safely record",
+        ));
+    }
     redact_metadata(&mut recording.workflow)?;
     if !required.is_empty() {
-        recording.warnings.push("Typed fields and sensitive values require fresh parameters; no recorded default is retained".into());
+        recording.warnings.push("Ambiguous data, typed fields and destinations require fresh parameters; no recorded default is retained".into());
     }
     recording
         .workflow
         .validate()
         .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(required)
+}
+
+fn contains_protected_literal(value: &Value, secrets: &[Secret]) -> bool {
+    match value {
+        Value::String(text) => secrets.iter().any(|secret| {
+            text == &secret.original
+                || (secret.original.len() >= 6 && text.contains(&secret.original))
+        }),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| contains_protected_literal(value, secrets)),
+        Value::Object(fields) => fields
+            .values()
+            .any(|value| contains_protected_literal(value, secrets)),
+        _ => false,
+    }
+}
+
+// Snapshot-derived locator strings are structural, not replay payloads. If
+// they contain URL credentials, refuse the recording rather than retain them.
+fn has_url_credentials(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.split_once("://").is_some_and(|(_, rest)| {
+            rest.contains('?')
+                || rest
+                    .split(['/', '?', '#', ' ', '\n'])
+                    .next()
+                    .is_some_and(|host| host.contains('@'))
+        }),
+        Value::Array(values) => values.iter().any(has_url_credentials),
+        Value::Object(fields) => fields.values().any(has_url_credentials),
+        _ => false,
+    }
 }
 
 pub(super) fn redact_metadata(wf: &mut Workflow) -> Result<(), ApiError> {
@@ -267,19 +408,69 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn typed_and_nested_credentials_are_replaced_even_without_password_metadata() {
-        let mut input =
-            json!({"text":"p4ss", "nested":{"api_key":"sk-abcdefghijklmnopqrstuvwxyz"}});
+    fn ambiguous_credentials_commands_urls_headers_and_typed_values_require_parameters() {
+        for (tool, input) in [
+            (
+                "shell",
+                json!({"command":"curl -u user:pw https://example.test"}),
+            ),
+            (
+                "navigate",
+                json!({"url":"https://user:pw@example.test/?token=hidden"}),
+            ),
+            (
+                "mcp__send",
+                json!({"value":"unrecognised-credential", "headers":{"X-Custom":"hidden"}, "cookie":"session=hidden"}),
+            ),
+            ("browser_fill", json!({"ref":"e1", "text":"1"})),
+            (
+                "mutate",
+                json!({"pwd":"hidden", "otp":"123", "private_key":"hidden", "value":"[REDACTED]"}),
+            ),
+        ] {
+            let mut safe = input.clone();
+            let mut secrets = Vec::new();
+            protect(&mut safe, tool, &mut secrets);
+            assert!(!secrets.is_empty());
+            let mut wf = Workflow::new("safe");
+            wf.steps
+                .push(workflow_replay::Step::Tool(workflow_replay::ToolStep {
+                    tool: tool.into(),
+                    input: safe,
+                }));
+            let mut recording = Recording {
+                workflow: wf,
+                dropped: vec![],
+                warnings: vec![],
+            };
+            finish(&mut recording, &secrets).unwrap();
+            assert!(
+                recording
+                    .workflow
+                    .params
+                    .iter()
+                    .all(|p| p.default.is_none())
+            );
+            assert!(!recording.workflow.to_toml().unwrap().contains(REDACTED));
+            let saved = recording.workflow.to_toml().unwrap();
+            assert!(!saved.contains("curl -u"));
+            assert!(!saved.contains("user:pw"));
+            assert!(!saved.contains("unrecognised-credential"));
+            assert!(!saved.contains("session=hidden"));
+        }
+    }
+
+    #[test]
+    fn quoted_typed_credentials_echoed_in_structural_fields_are_refused() {
+        let secret = "fake\"password\nvalue";
+        let mut input = serde_json::json!({"text":secret});
         let mut secrets = Vec::new();
-        let mut literals = Vec::new();
-        protect(&mut input, true, &mut secrets, &mut literals);
-        assert!(!input.to_string().contains("p4ss"));
-        assert!(!input.to_string().contains("sk-"));
-        assert_eq!(mask("p4ss", &literals), REDACTED);
-        let mut wf = Workflow::new("password_test");
+        protect(&mut input, "browser_fill", &mut secrets);
+        input["snapshot_title"] = serde_json::json!(format!("Title: {secret}"));
+        let mut wf = Workflow::new("safe");
         wf.steps
             .push(workflow_replay::Step::Tool(workflow_replay::ToolStep {
-                tool: "write".into(),
+                tool: "mutate".into(),
                 input,
             }));
         let mut recording = Recording {
@@ -287,17 +478,40 @@ mod tests {
             dropped: vec![],
             warnings: vec![],
         };
-        let required = finish(&mut recording, &secrets).unwrap();
-        assert_eq!(required.len(), 2);
-        assert!(
-            recording
-                .workflow
-                .params
-                .iter()
-                .all(|p| p.default.is_none())
-        );
-        let toml = recording.workflow.to_toml().unwrap();
-        assert!(!toml.contains("p4ss"));
-        assert!(!toml.contains("sk-"));
+        assert!(finish(&mut recording, &secrets).is_err());
+    }
+
+    #[test]
+    fn snapshot_derived_url_credentials_are_refused_instead_of_saved_as_literals() {
+        for url in [
+            "https://user:pw@example.test/",
+            "https://example.test/?cookie=unknown-credential",
+        ] {
+            let mut wf = Workflow::new("safe");
+            wf.steps
+                .push(workflow_replay::Step::Navigate(workflow_replay::Navigate {
+                    url: url.into(),
+                    profile: None,
+                }));
+            let mut recording = Recording {
+                workflow: wf,
+                dropped: vec![],
+                warnings: vec![],
+            };
+            assert!(finish(&mut recording, &[]).is_err());
+        }
+    }
+
+    #[test]
+    fn short_typed_value_masks_only_its_field_and_never_other_steps() {
+        let mut first = json!({"ref":"e1", "text":"e"});
+        let second = json!({"ref":"e1", "button":"left"});
+        let mut secrets = Vec::new();
+        protect(&mut first, "browser_fill", &mut secrets);
+        let mut next = second.clone();
+        protect(&mut next, "browser_click", &mut secrets);
+        assert_eq!(next, second);
+        assert_eq!(first["ref"], "e1");
+        assert_ne!(first["text"], "e");
     }
 }

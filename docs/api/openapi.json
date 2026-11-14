@@ -3855,6 +3855,17 @@
           "workflows"
         ],
         "operationId": "list",
+        "parameters": [
+          {
+            "name": "bot_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -3944,6 +3955,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "bot_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -3986,6 +4006,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "bot_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -7052,6 +7081,22 @@
           }
         }
       },
+      "ParameterOrigin": {
+        "type": "object",
+        "required": [
+          "pointer",
+          "origin"
+        ],
+        "properties": {
+          "origin": {
+            "type": "string",
+            "description": "Exact user-request match before tool output, or conservatively unknown."
+          },
+          "pointer": {
+            "type": "string"
+          }
+        }
+      },
       "ParseSchedule": {
         "type": "object",
         "description": "Body of `POST /v1/schedules/parse`.",
@@ -7559,7 +7604,7 @@
           },
           "params": {
             "type": "object",
-            "description": "Values containing double quotes are rejected: the existing K0 command\nparser cannot preserve them. Other whitespace and backslashes are data.",
+            "description": "Out-of-band values, kept only in replay memory and registered for redaction.",
             "additionalProperties": {
               "type": "string"
             },
@@ -7580,6 +7625,14 @@
           "steps"
         ],
         "properties": {
+          "confirmed_steps": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Step indexes explicitly acknowledged after reviewing external influence."
+          },
           "description": {
             "type": "string"
           },
@@ -8039,6 +8092,37 @@
             "format": "int64",
             "description": "Event streams open right now.",
             "minimum": 0
+          }
+        }
+      },
+      "StepProvenance": {
+        "type": "object",
+        "required": [
+          "step_index",
+          "origin",
+          "parameters",
+          "needs_confirmation",
+          "untrusted_read_before"
+        ],
+        "properties": {
+          "needs_confirmation": {
+            "type": "boolean"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParameterOrigin"
+            }
+          },
+          "step_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "untrusted_read_before": {
+            "type": "boolean"
           }
         }
       },
@@ -8534,6 +8618,7 @@
               "$ref": "#/components/schemas/WorkflowParam"
             }
           },
+          "source": {},
           "steps": {
             "type": "array",
             "items": {}
@@ -8572,7 +8657,8 @@
           "workflow",
           "skipped",
           "warnings",
-          "required_params"
+          "required_params",
+          "step_provenance"
         ],
         "properties": {
           "required_params": {
@@ -8590,6 +8676,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SkippedCall"
+            }
+          },
+          "step_provenance": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepProvenance"
             }
           },
           "warnings": {
