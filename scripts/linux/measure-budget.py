@@ -179,17 +179,70 @@ def parse_proc_cgroup_v2(text: str | None) -> str | None:
     return None
 
 
-def try_reset_memory_peak(cg_dir: Path) -> bool:
-    """Reset cgroup v2 memory.peak when supported and writable (Linux 6.12+ as root)."""
-    peak_file = cg_dir / "memory.peak"
-    if not peak_file.is_file():
-        return False
-    try:
-        with peak_file.open("w", encoding="utf-8") as fh:
-            fh.write("0\n")
-        return True
-    except OSError:
-        return False
+class PeakWatcher:
+    """Tracks cgroup v2 memory.peak using a single kept-open file descriptor.
+
+    On Linux 6.12+, writing to memory.peak resets the watermark ONLY for
+    subsequent reads through that same open file description; a fresh open()
+    returns the cgroup-wide lifetime watermark.
+    """
+
+    def __init__(self, cg_dir: Path) -> None:
+        self.cg_dir = cg_dir
+        self.fd: int | None = None
+        self.reset_ok: bool = False
+        self.initial_value: int | None = None
+        self._open_and_reset()
+
+    def _open_and_reset(self) -> None:
+        peak_file = self.cg_dir / "memory.peak"
+        if not peak_file.is_file():
+            return
+        fd: int | None = None
+        try:
+            fd = os.open(peak_file, os.O_RDWR)
+            os.write(fd, b"0\n")
+            os.lseek(fd, 0, os.SEEK_SET)
+            raw = os.read(fd, 128).decode("utf-8", errors="replace").strip()
+            val = int(raw)
+            self.fd = fd
+            self.reset_ok = True
+            self.initial_value = val
+        except (OSError, ValueError):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            self.fd = None
+            self.reset_ok = False
+
+    def read_window_peak(self) -> int | None:
+        if not self.reset_ok or self.fd is None:
+            return None
+        try:
+            os.lseek(self.fd, 0, os.SEEK_SET)
+            raw = os.read(self.fd, 128).decode("utf-8", errors="replace").strip()
+            return int(raw)
+        except (OSError, ValueError):
+            return None
+
+    def close(self) -> None:
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+
+
+def try_reset_memory_peak(cg_dir: Path) -> PeakWatcher | None:
+    """Open memory.peak R/W, reset its per-fd watermark, and return the watcher if supported."""
+    watcher = PeakWatcher(cg_dir)
+    if watcher.reset_ok:
+        return watcher
+    watcher.close()
+    return None
 
 
 def read_cgroup_pids(cg_dir: Path) -> list[int]:
@@ -437,6 +490,7 @@ def collect_tick(
     cgroup_root: Path,
     unit_cgroups: dict[str, str],
     praxi_uid: int | None,
+    peak_watchers: dict[str, PeakWatcher] | None = None,
 ) -> dict[str, Any]:
     meminfo = read_meminfo(proc_root)
     vmstat = read_vmstat(proc_root)
@@ -451,6 +505,8 @@ def collect_tick(
         rel = cg_rel.lstrip("/")
         cg_path = cgroup_root / rel if rel else cgroup_root
         info = read_cgroup_dir(cg_path)
+        if peak_watchers and unit in peak_watchers and peak_watchers[unit].reset_ok:
+            info["window_peak_bytes"] = peak_watchers[unit].read_window_peak()
         cg_data[unit] = info
         if unit == "praxi.slice":
             slice_rel = rel or "praxi.slice"
@@ -601,29 +657,42 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             timestamps.append(t_val)
             ticks.append(collect_tick(p_root, c_root, unit_cgroups, praxi_uid))
     else:
-        for unit, cg_rel in unit_cgroups.items():
-            rel = cg_rel.lstrip("/")
-            cg_path = Path(args.cgroup_root) / rel if rel else Path(args.cgroup_root)
-            reset_units[unit] = try_reset_memory_peak(cg_path) if cg_path.is_dir() else False
-        slice_peak_reset = reset_units.get("praxi.slice", False)
-        start_mono = time.monotonic()
-        end_mono = start_mono + max(0.0, args.duration)
-        while True:
-            now = time.monotonic()
-            timestamps.append(now - start_mono)
-            ticks.append(
-                collect_tick(
-                    Path(args.proc_root),
-                    Path(args.cgroup_root),
-                    unit_cgroups,
-                    praxi_uid,
+        watchers: dict[str, PeakWatcher] = {}
+        try:
+            for unit, cg_rel in unit_cgroups.items():
+                rel = cg_rel.lstrip("/")
+                cg_path = Path(args.cgroup_root) / rel if rel else Path(args.cgroup_root)
+                if cg_path.is_dir():
+                    watcher = try_reset_memory_peak(cg_path)
+                    if watcher is not None:
+                        watchers[unit] = watcher
+                        reset_units[unit] = True
+                    else:
+                        reset_units[unit] = False
+                else:
+                    reset_units[unit] = False
+            start_mono = time.monotonic()
+            end_mono = start_mono + max(0.0, args.duration)
+            while True:
+                now = time.monotonic()
+                timestamps.append(now - start_mono)
+                ticks.append(
+                    collect_tick(
+                        Path(args.proc_root),
+                        Path(args.cgroup_root),
+                        unit_cgroups,
+                        praxi_uid,
+                        peak_watchers=watchers,
+                    )
                 )
-            )
-            if args.duration <= 0 or now >= end_mono:
-                break
-            sleep_for = min(args.interval, max(0.0, end_mono - time.monotonic()))
-            if sleep_for > 0:
-                time.sleep(sleep_for)
+                if args.duration <= 0 or now >= end_mono:
+                    break
+                sleep_for = min(args.interval, max(0.0, end_mono - time.monotonic()))
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+        finally:
+            for watcher in watchers.values():
+                watcher.close()
 
     elapsed_s = max(0.0, timestamps[-1] - timestamps[0]) if len(timestamps) >= 2 else float(args.duration)
     total_vanished = sum(t["vanished_pids"] for t in ticks)
@@ -654,11 +723,25 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
         obs_max = max(cur_vals) if cur_vals else None
         cg_peak = max(peak_vals) if peak_vals else None
+        win_peak_vals = [u["window_peak_bytes"] for u in u_ticks if u.get("window_peak_bytes") is not None]
+        win_peak = max(win_peak_vals) if win_peak_vals else None
         unit_reset = reset_units.get(unit, False)
-        if unit_reset and cg_peak is not None:
-            effective_peak = max(obs_max or 0, cg_peak)
+        reset_peak = win_peak if win_peak is not None else (cg_peak if fixture_dir else None)
+        if unit_reset and reset_peak is not None:
+            effective_peak = max(obs_max or 0, reset_peak)
+            effective_peak_method = (
+                "memory.peak (fixture window reset)"
+                if fixture_dir
+                else "memory.peak (same-fd window reset)"
+            )
+        elif obs_max is not None:
+            unit_reset = False
+            effective_peak = obs_max
+            effective_peak_method = "memory.current_max (sampled)"
         else:
-            effective_peak = obs_max if obs_max is not None else cg_peak
+            unit_reset = False
+            effective_peak = cg_peak
+            effective_peak_method = "memory.peak (lifetime fallback)"
 
         ev_first = first_u.get("memory_events", {})
         ev_last = last_u.get("memory_events", {})
@@ -687,6 +770,7 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "memory_peak_available": cg_peak is not None,
             "memory_peak_reset": unit_reset,
             "effective_peak": fmt_bytes(effective_peak),
+            "effective_peak_method": effective_peak_method,
             "memory_high": last_u.get("memory_high"),
             "memory_max": last_u.get("memory_max"),
             "memory_events_last": ev_last,
@@ -762,25 +846,32 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     slice_cg = cgroups_summary.get("praxi.slice", {})
     slice_observed = bool(slice_cg.get("exists"))
     slice_lifetime_peak = slice_cg["memory_peak"]["bytes"] if slice_cg.get("memory_peak") else None
+    slice_peak_reset = bool(slice_cg.get("memory_peak_reset"))
+    slice_effective_peak = slice_cg["effective_peak"]["bytes"] if slice_cg.get("effective_peak") else None
     peak_inconclusive = False
-    if slice_observed and slice_peak_reset and slice_lifetime_peak is not None:
-        cur_max = slice_cg["memory_current_max"]["bytes"] if slice_cg.get("memory_current_max") else 0
-        praxi_tree_peak_bytes = max(cur_max, slice_lifetime_peak) + escaped_mem_peak_bytes
+    if slice_observed and slice_peak_reset and slice_effective_peak is not None:
+        praxi_tree_peak_bytes = slice_effective_peak + escaped_mem_peak_bytes
         praxi_tree_peak_source = "praxi.slice/memory.peak (window reset)"
+        praxi_tree_peak_method = slice_cg.get("effective_peak_method", "memory.peak (same-fd window reset)")
     elif slice_observed and slice_cg.get("memory_current_max"):
         praxi_tree_peak_bytes = slice_cg["memory_current_max"]["bytes"] + escaped_mem_peak_bytes
         praxi_tree_peak_source = "praxi.slice/memory.current_max"
+        praxi_tree_peak_method = "memory.current_max (sampled)"
     elif slice_observed and slice_cg.get("effective_peak"):
         praxi_tree_peak_bytes = slice_cg["effective_peak"]["bytes"] + escaped_mem_peak_bytes
         praxi_tree_peak_source = "praxi.slice/memory.peak"
+        praxi_tree_peak_method = "memory.peak (lifetime fallback)"
     elif sum_pss_max is not None:
         praxi_tree_peak_bytes = sum_pss_max
         praxi_tree_peak_source = "sum_proc_pss_max"
+        praxi_tree_peak_method = "procfs smaps_rollup PSS sum"
     else:
         praxi_tree_peak_bytes = sum_rss_max
         praxi_tree_peak_source = "sum_proc_rss_max (double-counts shared pages)"
+        praxi_tree_peak_method = "procfs status VmRSS sum (shared pages double-counted)"
     if escaped_mem_peak_bytes > 0 and slice_observed:
         praxi_tree_peak_source += " + escaped_procs"
+        praxi_tree_peak_method += " + escaped_procs"
 
     # Determine Praxi CPU % (prefer cgroup slice cpu.stat -> summed process CPU)
     if slice_cg.get("exists") and slice_cg.get("cpu_pct_of_one_core") is not None:
@@ -912,6 +1003,7 @@ def run_measurement(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "praxi_tree": {
             "effective_peak": fmt_bytes(praxi_tree_peak_bytes),
             "effective_peak_source": praxi_tree_peak_source,
+            "effective_peak_method": praxi_tree_peak_method,
             "lifetime_cgroup_memory_peak": slice_cg.get("memory_peak"),
             "memory_peak_reset": slice_peak_reset,
             "slice_memory_events_delta": slice_cg.get("memory_events_delta"),
@@ -974,7 +1066,7 @@ def format_text(report: dict[str, Any]) -> str:
         f"  OOM kills       : {hm['oom_kill_events']}",
         "",
         "Praxi Process Tree:",
-        f"  Effective peak  : {fb(pt['effective_peak'])} [source: {pt['effective_peak_source']}]",
+        f"  Effective peak  : {fb(pt['effective_peak'])} [source: {pt['effective_peak_source']}; method: {pt.get('effective_peak_method')}]",
         f"  Lifetime cg peak: {fb(pt['lifetime_cgroup_memory_peak'])} [praxi.slice/memory.peak watermark, reset={pt.get('memory_peak_reset')}]",
         f"  Display+Session : {fb(pt['display_and_session_peak'])}",
         f"  Summed RSS max  : {fb(pt['sum_process_rss_max'])} (NOTE: double-counts shared pages)",
@@ -992,6 +1084,7 @@ def format_text(report: dict[str, Any]) -> str:
         lines.append(
             f"  {unit}: cur={fb(cg['memory_current_last'])} window_peak={fb(cg['effective_peak'])} "
             f"lifetime_peak={fb(cg['memory_peak'])} peak_avail={cg['memory_peak_available']} "
+            f"reset={cg.get('memory_peak_reset')} method={cg.get('effective_peak_method')} "
             f"high={cg['memory_high']} max={cg['memory_max']} "
             f"events_delta(high={evd.get('high', 0)},max={evd.get('max', 0)},oom_kill={evd.get('oom_kill', 0)}) "
             f"cpu_1core={cg['cpu_pct_of_one_core']}% pids={len(cg['pids_last'])}"

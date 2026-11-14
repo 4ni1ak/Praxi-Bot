@@ -3,14 +3,22 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parent.parent / "measure-budget.py"
+_SPEC = importlib.util.spec_from_file_location("measure_budget", SCRIPT)
+assert _SPEC and _SPEC.loader
+measure_budget = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(measure_budget)
 MIB = 1024 * 1024
 GIB = 1024 * 1024 * 1024
 
@@ -389,6 +397,168 @@ class MeasureBudgetTests(unittest.TestCase):
             self.assertIsNone(data["praxi_tree"]["sum_process_pss_max"])
             self.assertIn("sum_proc_rss_max", data["praxi_tree"]["effective_peak_source"])
             self.assertFalse(data["budget"]["passed"])
+
+    def test_same_fd_memory_peak_reset_vs_lifetime_watermark(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc_root = root / "proc"
+            cg_root = root / "cgroup"
+            write_meminfo_vmstat(proc_root, 6 * 1024 * 1024, 5 * 1024 * 1024)
+            write_proc_entry(proc_root, 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000, cgroup_v2="/praxi.slice")
+            # Lifetime memory.peak on disk (what fresh opens see) is 2.6 GB (> budget)
+            write_cgroup(cg_root, "/praxi.slice", 350 * MIB, 2_600_000_000, 10_000, [10])
+            peak_path = cg_root / "praxi.slice" / "memory.peak"
+
+            # Simulate Linux 6.12+ per-open-fd memory.peak reset semantics:
+            # writing b"0\n" resets ONLY that fd's watermark to 380 MiB (then 410 MiB on read),
+            # while fresh read_text() opens still see the 2.6 GB lifetime peak.
+            fake_fds: dict[int, dict[str, int]] = {}
+            next_fd = 9000
+            real_open = os.open
+            real_write = os.write
+            real_lseek = os.lseek
+            real_read = os.read
+            real_close = os.close
+
+            def fake_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+                nonlocal next_fd
+                if Path(os.fspath(path)) == peak_path and (flags & os.O_RDWR):
+                    next_fd += 1
+                    fake_fds[next_fd] = {"value": 2_600_000_000, "offset": 0, "reads": 0}
+                    return next_fd
+                return real_open(path, flags, *args, **kwargs)
+
+            def fake_write(fd: int, data: bytes) -> int:
+                if fd in fake_fds:
+                    fake_fds[fd]["value"] = 380 * MIB
+                    fake_fds[fd]["offset"] = 0
+                    return len(data)
+                return real_write(fd, data)
+
+            def fake_lseek(fd: int, pos: int, how: int) -> int:
+                if fd in fake_fds:
+                    fake_fds[fd]["offset"] = pos
+                    return pos
+                return real_lseek(fd, pos, how)
+
+            def fake_read(fd: int, n: int) -> bytes:
+                if fd in fake_fds:
+                    st = fake_fds[fd]
+                    if st["offset"] > 0:
+                        return b""
+                    st["reads"] += 1
+                    # Simulate a sub-interval spike to 410 MiB observed on the 2nd read (tick 0)
+                    val = 410 * MIB if st["reads"] >= 2 else st["value"]
+                    payload = f"{val}\n".encode("utf-8")
+                    st["offset"] = len(payload)
+                    return payload[:n]
+                return real_read(fd, n)
+
+            def fake_close(fd: int) -> None:
+                if fd in fake_fds:
+                    del fake_fds[fd]
+                    return
+                real_close(fd)
+
+            args = SimpleNamespace(
+                label="live-same-fd",
+                duration=0.0,
+                interval=0.5,
+                max_samples=100,
+                units=["praxi.slice"],
+                proc_root=str(proc_root),
+                cgroup_root=str(cg_root),
+                browser_path=None,
+                fixture_dir=None,
+                budget_tree_bytes=2_500_000_000,
+                budget_host_bytes=6_000_000_000,
+                budget_session_mib=None,
+                budget_idle_cpu_pct=None,
+                check_budget=True,
+            )
+            with (
+                mock.patch.object(measure_budget, "resolve_live_unit_cgroups", return_value={"praxi.slice": "/praxi.slice"}),
+                mock.patch.object(measure_budget, "resolve_praxi_uid", return_value=999),
+                mock.patch.object(measure_budget, "detect_os_pretty", return_value="Ubuntu 24.04 Fixture"),
+                mock.patch.object(measure_budget, "detect_browser_version", return_value="fixture-browser"),
+                mock.patch("os.open", side_effect=fake_open),
+                mock.patch("os.write", side_effect=fake_write),
+                mock.patch("os.lseek", side_effect=fake_lseek),
+                mock.patch("os.read", side_effect=fake_read),
+                mock.patch("os.close", side_effect=fake_close),
+            ):
+                report, exit_code = measure_budget.run_measurement(args)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(fake_fds, {}, "PeakWatcher fd must be closed after measurement")
+            self.assertTrue(report["praxi_tree"]["memory_peak_reset"])
+            self.assertEqual(report["praxi_tree"]["effective_peak"]["bytes"], 410 * MIB)
+            self.assertEqual(report["praxi_tree"]["effective_peak_method"], "memory.peak (same-fd window reset)")
+            self.assertEqual(report["praxi_tree"]["lifetime_cgroup_memory_peak"]["bytes"], 2_600_000_000)
+            self.assertTrue(report["budget"]["passed"])
+            self.assertFalse(report["budget"]["inconclusive"])
+            txt = measure_budget.format_text(report)
+            self.assertIn("method: memory.peak (same-fd window reset)", txt)
+
+    def test_unwritable_memory_peak_falls_back_to_sampling_and_reports_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc_root = root / "proc"
+            cg_root = root / "cgroup"
+            write_meminfo_vmstat(proc_root, 6 * 1024 * 1024, 5 * 1024 * 1024)
+            write_proc_entry(proc_root, 10, "bot", 1, 999, 10, 0, 10, 50_000, 40_000, cgroup_v2="/praxi.slice")
+            write_cgroup(cg_root, "/praxi.slice", 350 * MIB, 2_600_000_000, 10_000, [10])
+            peak_path = cg_root / "praxi.slice" / "memory.peak"
+            real_open = os.open
+
+            def deny_peak_rw(path: object, flags: int, *args: object, **kwargs: object) -> int:
+                if Path(os.fspath(path)) == peak_path and (flags & os.O_RDWR):
+                    raise PermissionError("read-only cgroup memory.peak")
+                return real_open(path, flags, *args, **kwargs)
+
+            args = SimpleNamespace(
+                label="live-no-reset",
+                duration=0.0,
+                interval=0.5,
+                max_samples=100,
+                units=["praxi.slice"],
+                proc_root=str(proc_root),
+                cgroup_root=str(cg_root),
+                browser_path=None,
+                fixture_dir=None,
+                budget_tree_bytes=2_500_000_000,
+                budget_host_bytes=6_000_000_000,
+                budget_session_mib=None,
+                budget_idle_cpu_pct=None,
+                check_budget=True,
+            )
+            with (
+                mock.patch.object(measure_budget, "resolve_live_unit_cgroups", return_value={"praxi.slice": "/praxi.slice"}),
+                mock.patch.object(measure_budget, "resolve_praxi_uid", return_value=999),
+                mock.patch.object(measure_budget, "detect_os_pretty", return_value="Ubuntu 22.04 Fixture"),
+                mock.patch.object(measure_budget, "detect_browser_version", return_value="fixture-browser"),
+                mock.patch("os.open", side_effect=deny_peak_rw),
+            ):
+                report, exit_code = measure_budget.run_measurement(args)
+
+            self.assertEqual(exit_code, 2)
+            self.assertFalse(report["praxi_tree"]["memory_peak_reset"])
+            self.assertEqual(report["praxi_tree"]["effective_peak"]["bytes"], 350 * MIB)
+            self.assertEqual(report["praxi_tree"]["effective_peak_method"], "memory.current_max (sampled)")
+            self.assertFalse(report["budget"]["passed"])
+            self.assertTrue(report["budget"]["inconclusive"])
+            txt = measure_budget.format_text(report)
+            self.assertIn("method: memory.current_max (sampled)", txt)
+            self.assertIn("FAIL (INCONCLUSIVE)", txt)
+
+    def test_regular_file_memory_peak_detected_as_reset_unsupported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cg_dir = Path(tmp) / "praxi.slice"
+            write_cgroup(Path(tmp), "/praxi.slice", 350 * MIB, 2_600_000_000, 10_000, [10])
+            # Regular file on disk turns "2600000000\n" into "0\n00000000\n" on O_RDWR write,
+            # which PeakWatcher detects as unsupported reset rather than lying memory_peak_reset=True.
+            watcher = measure_budget.try_reset_memory_peak(cg_dir)
+            self.assertIsNone(watcher)
 
 
 if __name__ == "__main__":
