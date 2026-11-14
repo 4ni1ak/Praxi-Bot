@@ -754,17 +754,24 @@ pub struct SkillReview {
 }
 
 fn review_dir(dir: &Path) -> Result<SkillReview, String> {
-    use crate::hub::util::{hash_files, walk};
+    use crate::hub::util::{hex, walk};
+    use sha2::{Digest, Sha256};
     let files = walk(dir).map_err(|e| e.to_string())?;
-    let fingerprint = hash_files(&files).map_err(|e| e.to_string())?;
+    let mut hash = Sha256::new();
     let files = files
         .iter()
         .map(|file| {
-            fs::read_to_string(&file.path)
-                .map(|text| (file.rel.clone(), text))
-                .map_err(|e| e.to_string())
+            let text = fs::read_to_string(&file.path).map_err(|e| e.to_string())?;
+            // Fingerprint exactly the snapshot returned for review, rather
+            // than reading each file once for hashing and again for display.
+            hash.update(file.rel.as_bytes());
+            hash.update([0]);
+            hash.update((text.len() as u64).to_le_bytes());
+            hash.update(text.as_bytes());
+            Ok::<_, String>((file.rel.clone(), text))
         })
         .collect::<Result<_, _>>()?;
+    let fingerprint = hex(&hash.finalize());
     Ok(SkillReview { fingerprint, files })
 }
 

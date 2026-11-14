@@ -78,25 +78,35 @@ mod tests {
         let shown = String::from_utf8(out).unwrap();
         assert!(shown.contains("body\\t"));
         assert!(shown.contains(&review.fingerprint));
+        // An actual content change after review must invalidate the previously
+        // printed fingerprint, even if the skill still has the same name.
+        bot.write_versioned(
+            "x",
+            "---\nname: x\ndescription: d\n---\nchanged body",
+            Some("0.1.0"),
+            true,
+        )
+        .unwrap();
         assert!(
             run(
                 tmp.path(),
                 &SkillsCmd::Trust {
                     name: "x".into(),
                     bot_id: Some("a".into()),
-                    reviewed: "stale".into()
+                    reviewed: review.fingerprint
                 },
                 &mut Vec::new()
             )
             .is_err()
         );
         assert!(bot.get("x").unwrap().untrusted);
+        let current = bot.review_for_trust("x").unwrap();
         run(
             tmp.path(),
             &SkillsCmd::Trust {
                 name: "x".into(),
                 bot_id: Some("a".into()),
-                reviewed: review.fingerprint,
+                reviewed: current.fingerprint,
             },
             &mut Vec::new(),
         )
