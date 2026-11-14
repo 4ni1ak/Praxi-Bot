@@ -159,14 +159,14 @@ test("a persistent paused-control banner is mounted outside the run banner and o
   const at = app.indexOf("<PausedControlBanner />");
   const before = app.slice(Math.max(0, at - 120), at);
   assert.doesNotMatch(before, /isRunActive/, "not tied to the native run state Stop resets");
-  assert.match(banner, /needsPauseRecovery\(/);
-  assert.match(banner, /clearPause\(\)/);
+  assert.match(banner, /visibleActions\(/);
+  assert.match(banner, /clearPause\("own"\)/);
   assert.match(banner, /openViewer\(\)/);
   assert.doesNotMatch(banner, /controlState\.mode|isRunActive/);
 });
 
 test("the panel computer block and the viewer dock both carry reacquire and clear-pause while paused", () => {
-  assert.match(panelBlock, /needsPauseRecovery\(/);
+  assert.match(panelBlock, /visibleActions\(/);
   assert.match(panelBlock, /bot-computer-reacquire/);
   assert.match(panelBlock, /bot-computer-clear-pause/);
   assert.match(viewer, /live-view-clear-pause/);
@@ -190,7 +190,7 @@ test("the command palette is portaled to body and only the topmost layer handles
 // ---- fourth review ----
 
 test("every client polls the control snapshot (not only the Tauri bridge) and feeds the banner", () => {
-  assert.match(context, /getControlState\(\)\s*\.then\(ingestControlSnapshot\)/);
+  assert.match(context, /getControlState\(\)\s*\.then\(\(dto\) => ingestControlSnapshot\(dto, ticket\)\)/);
   assert.match(context, /CONTROL_POLL_MS/);
   const poll = context.slice(context.indexOf("CONTROL_POLL_MS);") - 400, context.indexOf("CONTROL_POLL_MS);") + 40);
   assert.doesNotMatch(poll, /isTauriRuntime/);

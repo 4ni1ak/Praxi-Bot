@@ -43,7 +43,9 @@ import {
   createInitialLiveViewState,
   describeRecoveryPrompt,
   isActivelyOwningTakeover,
+  foreignPausedTakeover,
   isControlBusy,
+  isLocalBaseUrl,
   needsPauseRecovery,
   pickDefaultTarget,
   planViewerClose,
@@ -51,7 +53,12 @@ import {
   shouldOverrideOnStop,
   type LiveViewControllerState
 } from "../lib/liveViewState.ts";
-import { runClearPause, runRelease } from "../lib/liveViewRelease.ts";
+import {
+  type ClearTarget,
+  runClearPause,
+  runRelease
+} from "../lib/liveViewRelease.ts";
+import { createSnapshotSequencer } from "../lib/snapshotOrder.ts";
 import { runReconnectLoop } from "../lib/liveViewReconnect.ts";
 import {
   consumeLiveViewStream,
@@ -93,7 +100,9 @@ interface LiveViewContextValue {
   retryRelease: () => Promise<void>;
   recoverTakeover: () => Promise<void>;
   /** `POST /v1/control/recover`: clear a paused latch (no view session needed). */
-  clearPause: () => Promise<void>;
+  clearPause: (kind?: "own" | "foreign" | "latch") => Promise<void>;
+  /** This client is the local user (loopback daemon), not a paired peer. */
+  isLocalClient: boolean;
   /**
    * Emergency stop through `POST /v1/control/override`. With `onlyIfControlled`
    * (the global Stop) it does nothing unless a screen takeover is held, so a plain
@@ -106,7 +115,9 @@ interface LiveViewContextValue {
   showPanelAction: (highlight: PanelActionHighlight) => void;
   registerBridge: (bridge: ControlBridge | null) => void;
   /** Feed a control snapshot the bridge re-read into state and the Stop gate. */
-  ingestControlSnapshot: (dto: ControlStateDto) => void;
+  ingestControlSnapshot: (dto: ControlStateDto, ticket?: number) => void;
+  /** Ticket for a snapshot request about to be issued (orders it against actions). */
+  issueSnapshotTicket: () => number;
 }
 
 const LiveViewContext = createContext<LiveViewContextValue | null>(null);
@@ -142,10 +153,17 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
     null
   );
-  const setControlState = useCallback((dto: ControlStateDto | null) => {
-    controlStateRef.current = dto;
-    setControlStateRaw(dto);
-  }, []);
+  // Orders snapshots by request time: a poll sent before an action must not
+  // overwrite the newer state that action returned.
+  const sequencer = useMemo(() => createSnapshotSequencer(), []);
+  const setControlState = useCallback(
+    (dto: ControlStateDto | null) => {
+      sequencer.markFresh();
+      controlStateRef.current = dto;
+      setControlStateRaw(dto);
+    },
+    [sequencer]
+  );
   const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
   const [thumbDemand, setThumbDemand] = useState<{
     active: boolean;
@@ -227,7 +245,10 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   // Snapshots the bridge re-reads (every heartbeat, on events) feed the same
   // ref the global Stop consults, so a takeover this UI never adopted is seen.
   const ingestControlSnapshot = useCallback(
-    (dto: ControlStateDto) => {
+    (dto: ControlStateDto, ticket?: number) => {
+      if (ticket !== undefined && !sequencer.accept(ticket)) {
+        return; // an older request resolved after a newer state was applied
+      }
       const changed =
         controlStateRef.current === null ||
         controlSnapshotKey(controlStateRef.current) !== controlSnapshotKey(dto);
@@ -237,8 +258,9 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         updateState((prev) => applyControlStateDto(prev, dto));
       }
     },
-    [updateState]
+    [sequencer, updateState]
   );
+  const issueSnapshotTicket = useCallback(() => sequencer.issue(), [sequencer]);
 
   useEffect(() => {
     registry.setOwnedTakeoverId(state.ownedTakeoverId);
@@ -250,13 +272,15 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     }
     setLoadingTargets(true);
     try {
+      const ticket = sequencer.issue();
       const [nextTargets, nextCtrl] = await Promise.all([
         client.listViewTargets(),
         client.getControlState().catch(() => null)
       ]);
       setTargets(nextTargets);
-      if (nextCtrl) {
-        setControlState(nextCtrl);
+      if (nextCtrl && sequencer.accept(ticket)) {
+        controlStateRef.current = nextCtrl;
+        setControlStateRaw(nextCtrl);
         registry.syncControlState(nextCtrl);
         updateState((prev) => applyControlStateDto(prev, nextCtrl));
       }
@@ -265,7 +289,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoadingTargets(false);
     }
-  }, [client, registry, setControlState, updateState]);
+  }, [client, registry, sequencer, updateState]);
 
   // Refresh targets & control snapshot on client connect and when panel/viewer opens.
   useEffect(() => {
@@ -290,13 +314,18 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       return undefined;
     }
     const id = window.setInterval(() => {
+      // One poller: the control bridge (Tauri) polls on the same interval.
+      if (registry.current()) {
+        return;
+      }
+      const ticket = sequencer.issue();
       void client
         .getControlState()
-        .then(ingestControlSnapshot)
+        .then((dto) => ingestControlSnapshot(dto, ticket))
         .catch(() => undefined);
     }, CONTROL_POLL_MS);
     return () => window.clearInterval(id);
-  }, [client, ingestControlSnapshot]);
+  }, [client, ingestControlSnapshot, registry, sequencer]);
 
   useEffect(() => {
     if (client && (viewerOpen || thumbDemand.active)) {
@@ -799,45 +828,65 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     );
   }, [performRelease]);
 
-  // `POST /v1/control/recover` (local user): clears the paused latch so bot
-  // desktop actions are allowed again. It needs no view session, so it works
-  // with the viewer and the panel closed.
-  const clearPause = useCallback(async () => {
-    if (!client) {
-      return;
-    }
-    // Re-read first and abort unless the paused takeover the user saw is still
-    // paused and ours (a peer may have taken control within the poll window).
-    const shown = needsPauseRecovery(stateRef.current, controlStateRef.current);
-    const outcome = await runClearPause(
-      {
-        getControlState: () => client.getControlState(),
-        recover: () => client.recoverControl()
-      },
-      shown ? shown.takeoverId : null
-    );
-    if (outcome.kind === "cleared") {
-      setControlState(outcome.dto);
-      registry.syncControlState(outcome.dto);
-      updateState((prev) => applyControlStateDto(prev, outcome.dto));
-      void refreshTargets();
-      return;
-    }
-    if (outcome.kind === "aborted") {
-      ingestControlSnapshot(outcome.fresh);
-      updateState((prev) =>
-        applyTakeoverFailed(
-          prev,
-          "pause_changed",
-          "the paused takeover changed; not cleared"
-        )
+  // Clears a pause, verified against fresh daemon state first (see
+  // `runClearPause`): our own paused takeover, another actor's paused takeover
+  // (local user only, labelled with the owner) or a plain owner-less latch.
+  // `POST /v1/control/recover` needs no view session, so it works with the
+  // viewer and the panel closed.
+  const clearPause = useCallback(
+    async (kind: ClearTarget["kind"] = "own") => {
+      if (!client) {
+        return;
+      }
+      const cur = stateRef.current;
+      const ctl = controlStateRef.current;
+      let target: ClearTarget | null = null;
+      if (kind === "own") {
+        const shown = needsPauseRecovery(cur, ctl);
+        target = shown ? { kind: "own", takeoverId: shown.takeoverId } : null;
+      } else if (kind === "foreign") {
+        const f = foreignPausedTakeover(cur, ctl);
+        target = f && isLocalBaseUrl(client.baseUrl) ? { kind: "foreign", expected: f } : null;
+      } else {
+        target = { kind: "latch" };
+      }
+      const outcome = await runClearPause(
+        {
+          getControlState: () => client.getControlState(),
+          recover: () => client.recoverControl(),
+          releaseLatch: () => client.releaseControl()
+        },
+        target
       );
-      return;
-    }
-    updateState((prev) =>
-      applyTakeoverFailed(prev, outcome.code, outcome.message)
-    );
-  }, [client, ingestControlSnapshot, refreshTargets, registry, setControlState, updateState]);
+      if (outcome.kind === "cleared") {
+        setControlState(outcome.dto);
+        registry.syncControlState(outcome.dto);
+        updateState((prev) => ({
+          ...applyControlStateDto(prev, outcome.dto),
+          lastError: null
+        }));
+        void refreshTargets();
+        return;
+      }
+      if (outcome.kind === "aborted") {
+        if (outcome.fresh) {
+          ingestControlSnapshot(outcome.fresh);
+        }
+        updateState((prev) =>
+          applyTakeoverFailed(
+            prev,
+            "pause_changed",
+            "the control state changed; not cleared"
+          )
+        );
+        return;
+      }
+      updateState((prev) =>
+        applyTakeoverFailed(prev, outcome.code, outcome.message)
+      );
+    },
+    [client, ingestControlSnapshot, refreshTargets, registry, setControlState, updateState]
+  );
 
   // Reacquire a takeover the stream drop paused. Every other paused case
   // (local Stop, restart, revoked, ...) is a clear-pause: the daemon cannot
@@ -952,6 +1001,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const isLocalClient = client ? isLocalBaseUrl(client.baseUrl) : false;
+
   const recoveryPrompt = useMemo(
     () => describeRecoveryPrompt(state, controlState),
     [state, controlState]
@@ -978,13 +1029,15 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       retryRelease,
       recoverTakeover,
       clearPause,
+      isLocalClient,
       overrideStop,
       enqueueInput,
       resetInputState,
       setComposing,
       showPanelAction,
       registerBridge,
-      ingestControlSnapshot
+      ingestControlSnapshot,
+      issueSnapshotTicket
     }),
     [
       targets,
@@ -1006,13 +1059,15 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       retryRelease,
       recoverTakeover,
       clearPause,
+      isLocalClient,
       overrideStop,
       enqueueInput,
       resetInputState,
       setComposing,
       showPanelAction,
       registerBridge,
-      ingestControlSnapshot
+      ingestControlSnapshot,
+      issueSnapshotTicket
     ]
   );
 

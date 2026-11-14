@@ -100,6 +100,8 @@ export type PendingControlRequest =
       takeoverId: string;
       controlEpoch: number;
       humanAction: HumanAction | null;
+      /** When the hand-back started: bounds the lease renewal of a release that never reached the daemon. */
+      startedAtMs: number;
     };
 
 export interface RecoveryPrompt {
@@ -276,7 +278,8 @@ function ownedTakeoverRef(
 export function applyReleaseStarted(
   state: LiveViewControllerState,
   requestId: string,
-  humanAction: HumanAction | null = null
+  humanAction: HumanAction | null = null,
+  nowMs: number = Date.now()
 ): LiveViewControllerState {
   const owned = ownedTakeoverRef(state);
   if (!owned) {
@@ -291,7 +294,8 @@ export function applyReleaseStarted(
       requestId,
       takeoverId,
       controlEpoch,
-      humanAction
+      humanAction,
+      startedAtMs: nowMs
     },
     lastError: null
   };
@@ -637,8 +641,12 @@ export function isActivelyOwningTakeover(
  * Build heartbeat body for `PUT /v1/view/sessions/{id}/heartbeat`.
  * Only echoes `{ takeover_id, control_epoch }` while actively owning.
  */
+/** How long a pending release may keep renewing the input lease before it is left to lapse. */
+export const RELEASE_LEASE_MAX_MS = 20_000;
+
 export function buildSessionHeartbeat(
-  state: LiveViewControllerState
+  state: LiveViewControllerState,
+  nowMs: number = Date.now()
 ): ViewHeartbeat {
   // A dead or frozen stream must not keep renewing the 15 s input lease.
   if (state.disconnected || state.streamStale) {
@@ -651,7 +659,13 @@ export function buildSessionHeartbeat(
   const pending = state.pendingRequest;
   if (pending?.kind === "release") {
     const t = state.takeover;
-    return t && t.id === pending.takeoverId && t.state === "active"
+    // Bounded: a release that failed before the daemon suspended the takeover
+    // (input sink gone, ...) must not renew the lease for as long as a view
+    // session lives; after the bound it lapses into the paused banner state.
+    return t &&
+      t.id === pending.takeoverId &&
+      t.state === "active" &&
+      nowMs - pending.startedAtMs <= RELEASE_LEASE_MAX_MS
       ? { takeover_id: pending.takeoverId, control_epoch: pending.controlEpoch }
       : {};
   }
@@ -969,4 +983,124 @@ export function needsPauseRecovery(
     return { takeoverId: owned, reason: state.reason };
   }
   return null;
+}
+
+export interface ForeignPaused {
+  owner: string;
+  targetId: string;
+  reason: ViewReason | null;
+}
+
+/**
+ * Another actor's PAUSED takeover as the local snapshot shows it (id redacted to
+ * nil). Only the local user may clear it (`POST /v1/control/recover`).
+ */
+export function foreignPausedTakeover(
+  state: LiveViewControllerState,
+  control: ControlStateDto | null
+): ForeignPaused | null {
+  const t = control ? control.takeover : state.takeover;
+  if (!t || t.state !== "paused" || (t.id !== NIL_UUID && t.id !== "")) {
+    return null;
+  }
+  return { owner: t.owner, targetId: t.target_id, reason: t.reason ?? null };
+}
+
+/** Does a fresh snapshot still show exactly that foreign paused takeover? */
+export function sameForeignPaused(
+  control: ControlStateDto | null,
+  expected: ForeignPaused
+): boolean {
+  const t = control?.takeover;
+  return (
+    !!t &&
+    t.state === "paused" &&
+    (t.id === NIL_UUID || t.id === "") &&
+    t.owner === expected.owner &&
+    t.target_id === expected.targetId &&
+    (t.reason ?? null) === expected.reason
+  );
+}
+
+/** Loopback (or mock) daemon URL: this client is the local user, not a paired peer. */
+export function isLocalBaseUrl(baseUrl: string): boolean {
+  if (baseUrl.startsWith("mock://")) {
+    return true;
+  }
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
+export type UiAction =
+  | "bitirdim"
+  | "retry_bitirdim"
+  | "reacquire"
+  | "clear_pause"
+  | "clear_foreign_pause"
+  | "clear_latch"
+  | "open_screen"
+  | "stop";
+
+export interface VisibleActions {
+  dock: UiAction[];
+  panel: UiAction[];
+  banner: UiAction[];
+}
+
+/**
+ * The control actions each surface offers for a state. The dock, the panel block
+ * and the banner render exactly this list, and a table-driven test pins it so a
+ * change cannot strand a state without a way to stop input, hand back / be told
+ * the hand-back is gone, and unpause the bot.
+ */
+export function visibleActions(
+  state: LiveViewControllerState,
+  control: ControlStateDto | null,
+  isLocal: boolean
+): VisibleActions {
+  const out: VisibleActions = { dock: ["stop"], panel: [], banner: [] };
+  const releasePending = state.pendingRequest?.kind === "release";
+  const ownsActive =
+    isActivelyOwningTakeover(state) && state.viewState === "active";
+  const own = needsPauseRecovery(state, control);
+  const foreign = foreignPausedTakeover(state, control);
+
+  if (ownsActive || releasePending) {
+    out.dock.push(state.lastError && releasePending ? "retry_bitirdim" : "bitirdim");
+  } else if (state.viewState === "paused" && own) {
+    const reacquire = describeRecoveryPrompt(state, control)?.mode === "reacquire";
+    if (reacquire) {
+      out.dock.push("reacquire");
+    }
+    out.dock.push("clear_pause");
+  } else if (!state.disconnected) {
+    if (foreign && isLocal) {
+      out.dock.push("clear_foreign_pause");
+    }
+    if (control?.latched === "paused" && !state.takeover) {
+      out.dock.push("clear_latch");
+    }
+  }
+
+  if (isActivelyOwningTakeover(state) || releasePending) {
+    out.panel.push(state.lastError && releasePending ? "retry_bitirdim" : "bitirdim");
+  } else if (own) {
+    if (describeRecoveryPrompt(state, control)?.mode === "reacquire") {
+      out.panel.push("reacquire");
+    }
+    out.panel.push("clear_pause");
+  } else {
+    out.panel.push("open_screen");
+  }
+
+  if (own) {
+    out.banner.push("clear_pause", "open_screen");
+  } else if (foreign && isLocal) {
+    out.banner.push("clear_foreign_pause", "open_screen");
+  }
+  return out;
 }

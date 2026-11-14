@@ -1,6 +1,8 @@
 import type { ControlStateDto, ReleaseRequest } from "../api/types.ts";
 import {
+  type ForeignPaused,
   releaseConfirmedBy,
+  sameForeignPaused,
   snapshotPausedTakeoverId
 } from "./liveViewState.ts";
 
@@ -78,35 +80,65 @@ export async function runRelease(
 
 export type ClearPauseOutcome =
   | { kind: "cleared"; dto: ControlStateDto }
-  | { kind: "aborted"; fresh: ControlStateDto }
+  | { kind: "aborted"; fresh: ControlStateDto | null }
   | { kind: "failed"; code: string; message: string };
 
+/** What the user is clearing; every kind is verified against fresh state first. */
+export type ClearTarget =
+  | { kind: "own"; takeoverId: string }
+  | { kind: "foreign"; expected: ForeignPaused }
+  | { kind: "latch" };
+
 /**
- * Clear a paused latch (`POST /v1/control/recover`) only if the takeover the
- * user saw is STILL paused and ours: the daemon's recover does not check the
- * caller against the owner and would interrupt a takeover a peer has taken in
- * the meantime. `expectedId` is the paused takeover id shown on screen (null for
- * the latch-only button, which cannot be verified against an id).
+ * Clear a pause only if the state the user saw is still the daemon's state:
+ * - `own`: the same takeover id is still paused and ours -> `POST /control/recover`;
+ * - `foreign`: still paused with the same owner, target and reason (the id is
+ *   redacted) -> `POST /control/recover` (local user only; the daemon's recover
+ *   does not check the caller against the owner);
+ * - `latch`: no takeover at all, a plain user pause -> the ordinary
+ *   `POST /control/release` (ADR 0029); `recover` only as the fallback for the
+ *   unreadable-latch case the daemon requires it for.
+ * Anything that changed in between aborts without posting; unreadable state
+ * fails closed.
  */
 export async function runClearPause(
   deps: {
     getControlState(): Promise<ControlStateDto>;
     recover(): Promise<ControlStateDto>;
+    releaseLatch(): Promise<ControlStateDto>;
   },
-  expectedId: string | null
+  target: ClearTarget | null
 ): Promise<ClearPauseOutcome> {
-  if (expectedId !== null) {
-    let fresh: ControlStateDto;
-    try {
-      fresh = await deps.getControlState();
-    } catch (err) {
-      return { kind: "failed", ...describeError(err, "recover_failed") };
-    }
-    if (snapshotPausedTakeoverId(fresh) !== expectedId) {
-      return { kind: "aborted", fresh };
-    }
+  if (target === null) {
+    return { kind: "aborted", fresh: null };
+  }
+  let fresh: ControlStateDto;
+  try {
+    fresh = await deps.getControlState();
+  } catch (err) {
+    return { kind: "failed", ...describeError(err, "recover_failed") };
+  }
+  const still =
+    target.kind === "own"
+      ? snapshotPausedTakeoverId(fresh) === target.takeoverId
+      : target.kind === "foreign"
+        ? sameForeignPaused(fresh, target.expected)
+        : (fresh.takeover ?? null) === null;
+  if (!still) {
+    return { kind: "aborted", fresh };
   }
   try {
+    if (target.kind === "latch") {
+      try {
+        return { kind: "cleared", dto: await deps.releaseLatch() };
+      } catch (releaseErr) {
+        try {
+          return { kind: "cleared", dto: await deps.recover() };
+        } catch {
+          return { kind: "failed", ...describeError(releaseErr, "recover_failed") };
+        }
+      }
+    }
     return { kind: "cleared", dto: await deps.recover() };
   } catch (err) {
     return { kind: "failed", ...describeError(err, "recover_failed") };

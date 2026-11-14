@@ -628,6 +628,7 @@ import { foreignTakeoverOwner, snapshotPausedTakeoverId } from "./liveViewState.
 import { runClearPause } from "./liveViewRelease.ts";
 
 const NIL = "00000000-0000-0000-0000-000000000000";
+const OWN = { kind: "own" as const, takeoverId: "to-1" };
 
 test("a missed control_state_changed cannot hide the banner: the polled snapshot or the local mirror shows it", () => {
   // the snapshot ingested by the poll (key changed) shows our paused takeover
@@ -678,28 +679,32 @@ test("Clear pause re-reads state and aborts when the takeover changed within the
     recover: async () => {
       calls.push("recover");
       return dto(null);
+    },
+    releaseLatch: async () => {
+      calls.push("release");
+      return dto(null);
     }
   });
   // a peer took active control since the banner was drawn
-  const stale = await runClearPause(mk(dto(takeover({ id: NIL, owner: "peer:p" }))), "to-1");
+  const stale = await runClearPause(mk(dto(takeover({ id: NIL, owner: "peer:p" }))), OWN);
   assert.equal(stale.kind, "aborted");
   assert.deepEqual(calls, ["get"], "recover never posted");
 
   // a different paused takeover
   calls.length = 0;
-  const other = await runClearPause(mk(pausedDto("disconnected", { id: "to-9" })), "to-1");
+  const other = await runClearPause(mk(pausedDto("disconnected", { id: "to-9" })), OWN);
   assert.equal(other.kind, "aborted");
   assert.ok(!calls.includes("recover"));
 
   // unreadable state: fail closed
   calls.length = 0;
-  const down = await runClearPause(mk(new Error("down")), "to-1");
+  const down = await runClearPause(mk(new Error("down")), OWN);
   assert.equal(down.kind, "failed");
   assert.ok(!calls.includes("recover"));
 
   // same takeover still paused: cleared
   calls.length = 0;
-  const ok = await runClearPause(mk(pausedDto("disconnected")), "to-1");
+  const ok = await runClearPause(mk(pausedDto("disconnected")), OWN);
   assert.equal(ok.kind, "cleared");
   assert.deepEqual(calls, ["get", "recover"]);
 });

@@ -34,7 +34,8 @@ export function ControlBridgeHost() {
     selectedTarget,
     showPanelAction,
     registerBridge,
-    ingestControlSnapshot
+    ingestControlSnapshot,
+    issueSnapshotTicket
   } = useLiveView();
 
   const botsRef = useRef(bots);
@@ -84,6 +85,7 @@ export function ControlBridgeHost() {
           computerTarget: computerTargetRef.current
         }),
       onSnapshot: ingestControlSnapshot,
+      issueSnapshotTicket,
       panelOverlay: {
         showAction: showPanelAction
       },
@@ -128,7 +130,7 @@ export function ControlBridgeHost() {
       offState();
       window.clearInterval(beat);
     };
-  }, [client, onDaemonEvent, registerBridge, showPanelAction, ingestControlSnapshot]);
+  }, [client, onDaemonEvent, registerBridge, showPanelAction, ingestControlSnapshot, issueSnapshotTicket]);
 
   return null;
 }

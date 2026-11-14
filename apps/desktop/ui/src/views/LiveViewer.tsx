@@ -32,8 +32,10 @@ import {
   foreignTakeoverOwner,
   isControlBusy,
   isActivelyOwningTakeover,
+  foreignPausedTakeover,
   needsPauseRecovery,
-  summarizeTarget
+  summarizeTarget,
+  visibleActions
 } from "../lib/liveViewState";
 import { viewerKeyAction } from "../lib/liveViewLayers";
 import { layerStack } from "../lib/modalStack";
@@ -84,6 +86,7 @@ export function LiveViewer() {
     retryRelease,
     recoverTakeover,
     clearPause,
+    isLocalClient,
     overrideStop,
     enqueueInput,
     resetInputState,
@@ -281,6 +284,8 @@ export function LiveViewer() {
   const isReleasing = state.pendingRequest?.kind === "release";
   const otherOwner = foreignTakeoverOwner(state);
   const pauseRecovery = needsPauseRecovery(state, controlState);
+  const foreignPaused = foreignPausedTakeover(state, controlState);
+  const actions = visibleActions(state, controlState, isLocalClient).dock;
 
   const tone = state.disconnected || state.streamStale
     ? "paused"
@@ -730,11 +735,22 @@ export function LiveViewer() {
             >
               {t("liveView.watchAction")}
             </Button>
-            {controlState?.latched === "paused" && !state.takeover ? (
+            {actions.includes("clear_foreign_pause") && foreignPaused ? (
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => void clearPause()}
+                data-testid="live-view-clear-foreign"
+                onClick={() => void clearPause("foreign")}
+              >
+                {t("liveView.clearForeignPause", { owner: foreignPaused.owner })}
+              </Button>
+            ) : null}
+            {actions.includes("clear_latch") ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="live-view-clear-latch"
+                onClick={() => void clearPause("latch")}
               >
                 {t("liveView.clearPauseAction")}
               </Button>

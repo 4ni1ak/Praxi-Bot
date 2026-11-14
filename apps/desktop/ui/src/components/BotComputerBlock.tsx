@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import {
   isActivelyOwningTakeover,
-  needsPauseRecovery,
-  summarizeTarget
+  summarizeTarget,
+  visibleActions
 } from "../lib/liveViewState";
 import { useLiveView } from "../state/LiveViewContext";
 import styles from "./BotComputerBlock.module.css";
@@ -42,9 +42,10 @@ export function BotComputerBlock() {
     controlState,
     recoveryPrompt,
     recoverTakeover,
-    clearPause
+    clearPause,
+    isLocalClient
   } = useLiveView();
-  const pausedRecovery = needsPauseRecovery(state, controlState);
+  const panelActions = visibleActions(state, controlState, isLocalClient).panel;
   // Control can outlive the viewer (a failed hand-back keeps it): never leave the
   // bot paused with only a status pill, always offer Bitirdim here too.
   const releasePending = state.pendingRequest?.kind === "release";
@@ -169,7 +170,7 @@ export function BotComputerBlock() {
         </div>
       </button>
 
-      {pausedRecovery && !showRelease ? (
+      {panelActions.includes("clear_pause") && !showRelease ? (
         <div className={styles.release} data-testid="bot-computer-paused-actions">
           {recoveryPrompt?.mode === "reacquire" ? (
             <Button
@@ -185,7 +186,7 @@ export function BotComputerBlock() {
             variant={recoveryPrompt?.mode === "reacquire" ? "secondary" : "primary"}
             size="sm"
             data-testid="bot-computer-clear-pause"
-            onClick={() => void clearPause()}
+            onClick={() => void clearPause("own")}
           >
             {t("liveView.clearPauseAction")}
           </Button>

@@ -132,7 +132,9 @@ export interface BridgeDeps {
     showAction(highlight: PanelActionHighlight): void;
   };
   /** Every control snapshot the bridge applied (the app's single source of truth). */
-  onSnapshot?(dto: ControlStateDto): void;
+  onSnapshot?(dto: ControlStateDto, ticket?: number): void;
+  /** Ticket drawn when a snapshot GET is issued (orders it against user actions). */
+  issueSnapshotTicket?(): number;
   botMeta(botId: string): BotMeta;
   startingStep: string;
   now(): number;
@@ -208,7 +210,8 @@ export class ControlBridge {
     }
     this.chain = this.chain
       .then(async () => {
-        this.applyControlDto(await get.call(this.deps.client));
+        const ticket = this.deps.issueSnapshotTicket?.();
+        this.applyControlDto(await get.call(this.deps.client), ticket);
       })
       .catch(() => undefined);
     return this.chain;
@@ -315,9 +318,9 @@ export class ControlBridge {
     };
   }
 
-  private applyControlDto(dto: ControlStateDto): void {
+  private applyControlDto(dto: ControlStateDto, ticket?: number): void {
     this.applyTakeoverInfo(dto.takeover);
-    this.deps.onSnapshot?.(dto);
+    this.deps.onSnapshot?.(dto, ticket);
   }
 
   /** True only for this app's own live takeover, never a peer's or a stale one. */
@@ -425,7 +428,8 @@ export class ControlBridge {
         }
         if (this.deps.client.getControlState) {
           try {
-            this.applyControlDto(await this.deps.client.getControlState());
+            const ticket = this.deps.issueSnapshotTicket?.();
+            this.applyControlDto(await this.deps.client.getControlState(), ticket);
           } catch {
             // the next refresh / heartbeat re-syncs
           }
