@@ -30,6 +30,39 @@ impl Default for Effect {
     }
 }
 
+/// What kind of current-state observation a tool returns. A newer observation
+/// of the same scope makes older ones stale, so the agent loop may shorten the
+/// older copies it re-sends to the model (never the stored step output).
+///
+/// Kept as a name lookup ([`ObservationScope::of_tool`]) rather than a field on
+/// [`ToolSpec`] so every existing spec literal (built-in, MCP, CLI, plugin)
+/// stays valid and unaffected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationScope {
+    /// The page of the browser (snapshot, or the snapshot a page action returns).
+    Page,
+    /// The accessibility state of a desktop window.
+    Window,
+    /// A directory or window listing.
+    Listing,
+}
+
+impl ObservationScope {
+    /// Scope of a built-in tool's result, `None` for every other tool.
+    #[must_use]
+    pub fn of_tool(name: &str) -> Option<Self> {
+        match name {
+            "browser_open" | "browser_snapshot" | "browser_click" | "browser_fill"
+            | "browser_select" | "browser_press" | "browser_scroll" | "browser_wait"
+            | "browser_back" => Some(Self::Page),
+            "desktop_get_state" => Some(Self::Window),
+            "fs_list" | "desktop_list_apps" => Some(Self::Listing),
+            _ => None,
+        }
+    }
+}
+
 /// Static description of a tool, registered once at startup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -99,6 +132,25 @@ mod tests {
             platforms: vec![Platform::All],
         };
         assert_eq!(spec.effect, Effect::Read);
+    }
+
+    #[test]
+    fn observation_scopes_cover_the_named_tools_only() {
+        assert_eq!(
+            ObservationScope::of_tool("browser_snapshot"),
+            Some(ObservationScope::Page)
+        );
+        assert_eq!(
+            ObservationScope::of_tool("desktop_get_state"),
+            Some(ObservationScope::Window)
+        );
+        assert_eq!(
+            ObservationScope::of_tool("fs_list"),
+            Some(ObservationScope::Listing)
+        );
+        assert_eq!(ObservationScope::of_tool("browser_eval"), None);
+        assert_eq!(ObservationScope::of_tool("fs_write_file"), None);
+        assert_eq!(ObservationScope::of_tool("mcp__x__browser_snapshot"), None);
     }
 
     #[test]
