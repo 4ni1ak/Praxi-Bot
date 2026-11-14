@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { rank } from "../lib/fuzzy";
+import { layerStack } from "../lib/modalStack";
 import styles from "./CommandPalette.module.css";
 
 export interface PaletteCommand {
@@ -46,6 +47,16 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
 
+  // A layer like Modal/Popover: whatever sits below (the live viewer) stops
+  // owning Tab/Escape while the palette is open.
+  const seqRef = useRef(0);
+  if (seqRef.current === 0) seqRef.current = layerStack.next();
+  useEffect(() => {
+    const seq = seqRef.current;
+    layerStack.add(seq);
+    return () => layerStack.remove(seq);
+  }, []);
+
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
@@ -89,6 +100,7 @@ export function CommandPalette({
       choose(active);
     } else if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       onClose();
     }
   };
