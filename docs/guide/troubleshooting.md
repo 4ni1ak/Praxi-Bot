@@ -17,11 +17,20 @@ error.
   press its button, and every attempt is written to the audit log. Nothing
   else is offered as a one-click fix; the API token is never regenerated.
 - **Copy support report** copies a Markdown summary (versions, platform,
-  check results, config file *names*). Your user folder is shown as `~`, and
-  stored secrets, the API token, key-like strings and e-mail addresses are
-  masked. Read it before you share it.
+  check results, config file *names*). Your user folder is shown as `~`;
+  secrets the daemon knows (also URL-encoded, base64 or JSON-escaped), the
+  API token, key-like strings, credentials and host names in URLs, the lines
+  a config parse error quotes, your user and computer names and e-mail
+  addresses are masked. If the secrets cannot be read, no report is made.
+  Read it before you share it.
+- **Peer / VPS link** is checked against the daemon's live connection: a
+  configured host that is offline, unpaired, or a daemon without peer
+  networking is reported as a problem. A coding CLI whose sign-in could not
+  be confirmed is a warning, never "ready".
 - The daemon routes behind the page are `GET /v1/doctor`, `POST
-  /v1/doctor/repair/{id}` and `GET /v1/doctor/report` (bearer token required).
+  /v1/doctor/repair/{id}` and `GET /v1/doctor/report` (bearer token
+  required). They are local to the computer: paired phones and desktops
+  cannot call them.
   `bot doctor` runs more checks that need a terminal (port probe, browser
   launch, `--online` connection tests).
 
