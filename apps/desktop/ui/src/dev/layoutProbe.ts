@@ -117,3 +117,54 @@ export async function runLayoutProbe(): Promise<void> {
   );
   document.body.appendChild(script);
 }
+
+/**
+ * Search probe (`?probe=search`): in a rail collapsed only by fitting, click Search and report where the
+ * popover is, whether it is what the user would hit at its centre (not painted over), where focus is,
+ * whether the stored rail width survived, and what Escape does.
+ */
+export async function runSearchProbe(): Promise<void> {
+  await runLayoutProbe();
+  const out: Record<string, unknown> = {};
+  const button = document.querySelector<HTMLButtonElement>("[data-rail-tier] header button, [data-rail-tier] [class*=topActions] button");
+  const storedRail = () => {
+    try {
+      return (JSON.parse(window.localStorage.getItem("praxi.shell.layout.v1") ?? "null") as { rail?: number } | null)?.rail ?? null;
+    } catch {
+      return null;
+    }
+  };
+  out.railTier = document.querySelector("[data-rail-tier]")?.getAttribute("data-rail-tier") ?? null;
+  out.railWidthBefore = document.querySelector("[data-rail-tier]")?.getBoundingClientRect().width ?? null;
+  if (!button) {
+    out.error = "search button not found";
+  } else {
+    button.click();
+    await pause(400);
+    const dialog = document.querySelector<HTMLElement>('body > [role="dialog"]');
+    const input = dialog?.querySelector("input") ?? null;
+    const r = dialog?.getBoundingClientRect();
+    out.dialog = r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null;
+    out.dialogIsBodyChild = dialog?.parentElement === document.body;
+    if (r) {
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      out.hitInsideDialog = !!hit && !!dialog?.contains(hit);
+      // The right part of the dialog is over the chat column: it must win there too.
+      const hitRight = document.elementFromPoint(r.right - 8, r.top + r.height / 2);
+      out.hitRightInsideDialog = !!hitRight && !!dialog?.contains(hitRight);
+    }
+    out.focusInInput = !!input && document.activeElement === input;
+    out.railWidthAfterOpen = document.querySelector("[data-rail-tier]")?.getBoundingClientRect().width ?? null;
+    out.storedRailAfterOpen = storedRail();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await pause(200);
+    out.dialogGoneAfterEscape = document.querySelector('body > [role="dialog"]') === null;
+    out.focusOnButtonAfterEscape = document.activeElement === button;
+    out.storedRailAfterEscape = storedRail();
+  }
+  const script = document.createElement("script");
+  script.id = "search-probe";
+  script.type = "application/json";
+  script.textContent = JSON.stringify(out);
+  document.body.appendChild(script);
+}

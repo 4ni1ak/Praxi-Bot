@@ -47,6 +47,11 @@ cases.push(
   { name: '1400/glass/obsidian/open/backdrop', width: 1400, query: 'theme=obsidian&style=glass&panel=1&rail=264&backdrop=aurora' },
   { name: '900/glass/clay/open/rail440', width: 900, query: 'theme=clay&style=glass&panel=1&rail=440' }
 );
+const searchMode = args.includes('--search');
+if (searchMode) {
+  cases.length = 0;
+  cases.push({ name: '760/glass/clay/open/search', width: 760, probe: 'search', query: 'theme=clay&style=glass&panel=1&rail=264' });
+}
 const selected = !only ? cases
   : /^[\d,]+$/.test(only) ? only.split(',').map((i) => cases[Number(i)]).filter(Boolean)
   : cases.filter((c) => c.name.includes(only));
@@ -101,11 +106,19 @@ try {
   for (const [i, c] of selected.entries()) {
     if (Date.now() - started > budgetMs) { process.stdout.write(`BUDGET exhausted after ${i} cases\n`); failed++; break; }
     let out = '';
-    for (let attempt = 0; attempt < 4 && !out.includes('layout-probe'); attempt++) {
+    for (let attempt = 0; attempt < 4 && !out.includes(searchMode ? 'search-probe' : 'layout-probe'); attempt++) {
       out = await run(chrome, ['--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
       '--force-device-scale-factor=1', `--window-size=${c.width},900`, `--virtual-time-budget=${process.env.VTB ?? 30000}`,
-      `--user-data-dir=${join(tmp, `profile-${i}-${attempt}`)}`, '--dump-dom', `http://127.0.0.1:${port}/?mock=1&probe=layout&${c.query}`],
+      `--user-data-dir=${join(tmp, `profile-${i}-${attempt}`)}`, '--dump-dom', `http://127.0.0.1:${port}/?mock=1&probe=${c.probe ?? 'layout'}&${c.query}`],
       { stdio: ['ignore', 'pipe', args.includes('--debug') ? 'inherit' : 'ignore'], timeout: CASE_TIMEOUT });
+    }
+    if (searchMode) {
+      const sm = /<script id="search-probe" type="application\/json">([\s\S]*?)<\/script>/.exec(out);
+      process.stdout.write(sm ? `${c.name}: ${sm[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')}
+` : `FAIL ${c.name}: no search probe output
+`);
+      if (!sm) failed++;
+      continue;
     }
     const m = /<script id="layout-probe" type="application\/json">([\s\S]*?)<\/script>/.exec(out);
     if (!m) { process.stdout.write(`FAIL ${c.name}: no probe output (timeout or crash)

@@ -51,7 +51,7 @@ paintSavedAppearanceEarly(windowKind !== "main");
 // Layout probe (card 233): same guard as state/useQuotas.ts, so production builds drop it.
 if (
   (import.meta.env.DEV || import.meta.env.VITE_MOCK === "1") &&
-  new URLSearchParams(window.location.search).get("probe") === "layout"
+  ["layout", "search"].includes(new URLSearchParams(window.location.search).get("probe") ?? "")
 ) {
   const stored = new URLSearchParams(window.location.search).get("stored");
   if (stored) {
@@ -63,7 +63,7 @@ if (
     }
   }
   void import("./dev/layoutProbe")
-    .then((m) => m.runLayoutProbe())
+    .then((m) => (new URLSearchParams(window.location.search).get("probe") === "search" ? m.runSearchProbe() : m.runLayoutProbe()))
     .catch((e: unknown) => {
       document.documentElement.dataset.probeError = String(e);
     });
