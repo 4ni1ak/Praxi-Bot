@@ -4413,12 +4413,12 @@ mod tests {
         let notes = data.path().join("notes.txt");
         let envf = data.path().join(".env");
         let token = data.path().join("api-token");
-        let sh = shared_with(data.path(), vec![notes.clone()]);
+        let sh = shared_with(&data.path().join("daemon"), vec![notes.clone()]);
         assert!(
             credential_blocked(&sh, &notes, &envf),
             "a grant of the lexical path must not authorize a resolved .env"
         );
-        let sh_env = shared_with(data.path(), vec![envf.clone()]);
+        let sh_env = shared_with(&data.path().join("daemon"), vec![envf.clone()]);
         assert!(
             credential_blocked(&sh_env, &envf, &token),
             "a grant of .env must not authorize api-token"
@@ -4983,7 +4983,8 @@ mod tests {
         fs::write(data.join("peer-node"), secret).unwrap();
         fs::write(data.join("vault").join("note.txt"), secret).unwrap();
         fs::write(data.join("secrets").join("note.txt"), secret).unwrap();
-        fs::write(data.join("notes.txt"), "ordinary").unwrap();
+        fs::create_dir(data.join("files")).unwrap();
+        fs::write(data.join("files/notes.txt"), "ordinary").unwrap();
         let short = win_fs::short_path(&data).unwrap();
         assert_ne!(
             short
@@ -5018,7 +5019,7 @@ mod tests {
         }
         let ok = text(
             &get(&t, "fs_read")
-                .call(&c, json!({"path": data.join("notes.txt")}))
+                .call(&c, json!({"path": data.join("files/notes.txt")}))
                 .await
                 .unwrap(),
         );

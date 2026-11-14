@@ -860,8 +860,9 @@ mod tests {
 
     #[tokio::test]
     async fn script_can_call_registered_tools_through_the_registry() {
-        let (d, reg) = registry();
-        let file = d
+        let (_data, reg) = registry();
+        let work = tempfile::tempdir().unwrap();
+        let file = work
             .path()
             .join("s.txt")
             .display()
