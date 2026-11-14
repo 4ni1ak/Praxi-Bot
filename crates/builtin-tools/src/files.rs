@@ -4101,7 +4101,7 @@ mod tests {
         // Use the host's actual configured roots, but stop at validation:
         // no file contents in those roots are read or modified by this test.
         let roots = native_cli_authority_roots();
-        assert!(!roots.is_empty());
+        assert_ne!(roots.len(), 0, "host must provide a home/config root");
         for root in roots {
             for path in [
                 root.clone(),
