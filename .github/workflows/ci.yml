@@ -33,7 +33,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -42,6 +42,14 @@ jobs:
       - name: Run tests
         if: success() || failure()
         run: cargo test --workspace --no-fail-fast
+
+      - name: Check explicit-artifact local embeddings
+        if: success() || failure()
+        run: cargo clippy -p daemon-api -p cli --all-targets --features local-embeddings -- -D warnings
+
+      - name: Test local embedding build without downloads
+        if: success() || failure()
+        run: cargo test -p memory-store -p daemon-api --features local-embeddings --no-fail-fast
 
   browser-integration:
     name: Browser integration (Chrome for Testing)
@@ -96,6 +104,7 @@ jobs:
       - name: Check licenses
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
+          arguments: --all-features
           command: check licenses bans advisories sources
 
   ui-lint-and-typecheck:

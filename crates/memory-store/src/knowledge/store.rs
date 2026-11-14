@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::{
-    DocumentInfo, DocumentInput, IndexOutcome, KnowledgeLimits, NewSource, Scope, Source,
-    SourceUpdate, chunk_text, schema,
+    DocumentFormat, DocumentInfo, DocumentInput, IndexOutcome, KnowledgeLimits, NewSource,
+    RemoteEmbeddingConsent, Scope, Source, SourceUpdate, chunk_text, schema,
 };
 use crate::{MemoryError, Result, Trust};
 
@@ -135,9 +135,9 @@ impl KnowledgeStore {
         }
         let version = schema::migrate(&mut conn, None)?;
         schema::validate_structure(&conn)?;
-        conn.prepare(&format!("SELECT {SOURCE_COLS} FROM sources"))?;
-        conn.prepare("SELECT id,source_id,locator,title,format,content_hash,mtime_ms,revision FROM documents")?;
-        conn.prepare("SELECT rowid,id,source_id,document_id,ordinal,section,line_start,line_end,content_hash,body FROM chunks")?;
+        validate_import_sources(&conn)?;
+        validate_import_documents(&conn)?;
+        validate_import_chunks(&conn)?;
         if conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
             return Err(MemoryError::Invalid(
                 "knowledge index has invalid foreign keys".into(),
@@ -168,6 +168,11 @@ impl KnowledgeStore {
         schema::migrate(&mut conn, Some(scope))?;
         let tx = conn.transaction()?;
         tx.execute("UPDATE sources SET enabled=0,remote_embedding_json=NULL,revision=revision+1,updated_ms=?1", [storage::now_ms()])?;
+        // Imported work never resumes network activity. Explicitly purge these
+        // rows as well as relying on the attested grant-revocation trigger.
+        tx.execute("DELETE FROM embedding_jobs", [])?;
+        tx.execute("DELETE FROM knowledge_embeddings WHERE remote=1", [])?;
+        tx.execute("DELETE FROM embedding_cache WHERE remote=1", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -241,17 +246,8 @@ impl KnowledgeStore {
         if let Some(label) = &update.label {
             validate_metadata(label, 1024, false, "source label")?;
         }
-        if let Some(Some(consent)) = &update.remote_embedding
-            && (consent.profile_fingerprint.len() != 64
-                || !consent
-                    .profile_fingerprint
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                || consent.granted_at_ms < 0)
-        {
-            return Err(MemoryError::Invalid(
-                "invalid embedding profile consent".into(),
-            ));
+        if let Some(Some(consent)) = &update.remote_embedding {
+            validate_consent(consent)?;
         }
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -432,6 +428,98 @@ fn reject_symlink(path: &Path) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
     }
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn validate_consent(consent: &RemoteEmbeddingConsent) -> Result<()> {
+    if !valid_digest(&consent.profile_fingerprint) || consent.granted_at_ms < 0 {
+        return Err(MemoryError::Invalid(
+            "invalid embedding profile consent".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn text_at<'a>(row: &'a Row<'_>, index: usize) -> rusqlite::Result<&'a str> {
+    row.get_ref(index)?
+        .as_str()
+        .map_err(|error| conversion(index, error))
+}
+
+fn validate_import_uuid(row: &Row<'_>, index: usize) -> Result<()> {
+    // IDs are later looked up using UUID::to_string(). Accepting upper-case,
+    // compact, or URN spellings would leave otherwise parseable rows unreachable.
+    if text_at(row, index)? != uuid_at(row, index)?.to_string() {
+        return Err(MemoryError::Invalid(
+            "knowledge identifier is not canonical".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_import_sources(conn: &Connection) -> Result<()> {
+    // Schema validation already caps every row/field count. Stream through the
+    // same typed conversion as runtime reads; retain at most one source at once.
+    let mut statement = conn.prepare(&format!("SELECT {SOURCE_COLS} FROM sources"))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        validate_import_uuid(row, 0)?;
+        let source = source_row(row)?;
+        validate_metadata(&source.label, 1024, false, "source label")?;
+        validate_metadata(&source.locator, 4096, false, "source locator")?;
+        if let Some(consent) = &source.remote_embedding {
+            validate_consent(consent)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_import_documents(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare(
+        "SELECT id,source_id,locator,title,format,content_hash,mtime_ms,revision FROM documents",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        validate_import_uuid(row, 0)?;
+        validate_import_uuid(row, 1)?;
+        validate_metadata(text_at(row, 2)?, 4096, false, "document locator")?;
+        validate_metadata(text_at(row, 3)?, 1024, true, "document title")?;
+        let _: DocumentFormat = json_at(row, 4)?;
+        if !valid_digest(text_at(row, 5)?) {
+            return Err(MemoryError::Invalid("invalid document content hash".into()));
+        }
+        let _: Option<i64> = row.get(6)?;
+        let _: u64 = integer_at(row, 7)?;
+    }
+    Ok(())
+}
+
+fn validate_import_chunks(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare(
+        "SELECT id,source_id,document_id,ordinal,section,line_start,line_end,content_hash,body FROM chunks",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        for index in [0, 1, 2] {
+            validate_import_uuid(row, index)?;
+        }
+        for index in [3, 5, 6] {
+            let _: usize = integer_at(row, index)?;
+        }
+        // Check SQLite types and UTF-8 without copying the bounded chunk text.
+        text_at(row, 4)?;
+        text_at(row, 8)?;
+        if !valid_digest(text_at(row, 7)?) {
+            return Err(MemoryError::Invalid("invalid chunk content hash".into()));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn validate_metadata(

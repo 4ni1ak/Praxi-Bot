@@ -176,6 +176,18 @@ exist on main. End-to-end poisoning/egress enforcement requires #46 integration
 and its gate tests on the combined code; merge review must preserve that boundary.
 No prompt label alone is claimed to make an LLM immune to prompt injection.
 
+Component integration was also run against exact #46 commit
+`5d5773281bc38b1c08882bdbf3f8b6bb841efa87`: the identical knowledge tool/storage
+and provenance code were registered on that branch with a test-only module.
+Both direct search and discovery delegation persisted private/untrusted facts
+despite a document forging `fact=false`; native egress approval then stopped a
+canary-bearing `web_search` before invocation under `Policy::full`. Reopening
+storage reconstructed the same taint and approval requirement. The native gate,
+approval/execution modules and router remained byte-identical to #46. The
+[reproducible harness](../../evals/retrieval/compatibility/README.md) records the
+two passing tests. This checks the boundary contract, not a full branch merge or
+the automatic-retrieval hook on a combined branch; main still needs #46.
+
 At the inspected #46 head, egress classification is static per registered tool.
 A mutable hybrid backend must conservatively declare egress even when a specific
 call falls back to local search, so #46 will ask on tainted turns in that case.
@@ -211,6 +223,23 @@ dispatched HTTP bytes cannot be recalled. No raw document cache is shared across
 bots, and source deletion removes its chunks/vector associations and unused
 derived cache records.
 
+The daemon installs this runtime behind the same `knowledge_search` tool. It
+reads the bot's current owner settings for every invocation and caches at most
+16 bot/profile services. Each bot keeps only its current configuration snapshot;
+changing or disabling settings releases the old service. Query-vector caches
+hold hashes and at most 64 vectors for five minutes, never raw query text.
+Before each remote attempt the host re-resolves the existing provider's current
+`SecretRef` and destination. A cached service cannot send to a newly configured
+endpoint under an old grant, and key rotation does not retain an old key.
+The live secret redactor refreshes once before each outbound batch.
+
+Source/settings mutations and bounded dispatch share an authority lock. A
+management request reports busy while a previous dispatch is in flight; after
+revocation succeeds, later dispatch cannot use its old settings snapshot.
+Automatic continuation preserves durable retry limits. Only an explicit owner
+retry resets a source's failed-job state; it never refunds account reservations
+or clears provider cooldowns.
+
 Gemini 001 uses `RETRIEVAL_QUERY`/`RETRIEVAL_DOCUMENT`. Gemini Embedding 2 instead
 uses documented task prefixes and document title/text formatting; its multiple
 content parts form an aggregate embedding, not independent vectors. A batch must
@@ -235,6 +264,15 @@ must not infer permission to download missing artifacts. Multilingual E5 uses
 different `query:`/`passage:` prefixes. Native artifact availability, model
 license/checksums and Windows/ARM performance require separate validation; the
 default build and CI retrieval eval never need a real model or a GPU.
+Build this adapter with `cargo build -p cli --features local-embeddings` and
+select six absolute, SHA-256-pinned files: runtime, ONNX model, tokenizer,
+model config, special-token map and tokenizer config. The local recipe uses
+up to eight tokenizer-checked windows per chunk, covers the complete input,
+and pools normalized vectors with token weights. Oversized input is rejected
+instead of silently truncating it. Inference uses one CPU thread and one
+global inference slot with batches of two windows. Windows/Linux CI compiles
+and tests the optional feature using hermetic artifact/tokenizer fixtures;
+it does not download or run actual model weights.
 
 ## Shared Markdown brain and state transfer
 

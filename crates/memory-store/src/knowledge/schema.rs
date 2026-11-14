@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::Scope;
 use crate::{MemoryError, Result};
 
-pub(super) const VERSION: u32 = 1;
+pub(super) const VERSION: u32 = 2;
 
 const INITIAL: &str = r"
 CREATE TABLE knowledge_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -84,18 +84,22 @@ pub(super) fn migrate(conn: &mut Connection, expected: Option<Scope>) -> Result<
             "INSERT INTO knowledge_meta(key,value) VALUES ('user_id',?1),('bot_id',?2)",
             params![scope.user_id.to_string(), scope.bot_id.to_string()],
         )?;
-        tx.pragma_update(None, "user_version", VERSION)?;
+        tx.pragma_update(None, "user_version", 1)?;
         tx.commit()?;
+    }
+    if found < 2 {
+        super::embedding::migrate(conn)?;
     }
     Ok(VERSION)
 }
 
 pub(super) fn validate_structure(conn: &Connection) -> Result<()> {
     validate_schema(conn)?;
+    super::embedding::validate_structure(conn)?;
     let oversized: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sources WHERE length(CAST(label AS BLOB))>1024 OR length(CAST(locator AS BLOB))>4096 OR length(CAST(remote_embedding_json AS BLOB))>1024)
-         OR EXISTS(SELECT 1 FROM documents WHERE length(CAST(title AS BLOB))>1024 OR length(CAST(locator AS BLOB))>4096 OR length(content_hash)<>64)
-         OR EXISTS(SELECT 1 FROM chunks WHERE length(CAST(body AS BLOB))>32000 OR length(CAST(section AS BLOB))>8192 OR line_start<1 OR line_end<line_start OR length(content_hash)<>64)
+        "SELECT EXISTS(SELECT 1 FROM sources WHERE length(CAST(id AS BLOB))<>36 OR length(CAST(kind AS BLOB))>32 OR length(CAST(label AS BLOB))>1024 OR length(CAST(locator AS BLOB))>4096 OR length(CAST(remote_embedding_json AS BLOB))>1024)
+         OR EXISTS(SELECT 1 FROM documents WHERE length(CAST(id AS BLOB))<>36 OR length(CAST(source_id AS BLOB))<>36 OR length(CAST(format AS BLOB))>32 OR length(CAST(title AS BLOB))>1024 OR length(CAST(locator AS BLOB))>4096 OR length(content_hash)<>64)
+         OR EXISTS(SELECT 1 FROM chunks WHERE length(CAST(id AS BLOB))<>36 OR length(CAST(source_id AS BLOB))<>36 OR length(CAST(document_id AS BLOB))<>36 OR length(CAST(body AS BLOB))>32000 OR length(CAST(section AS BLOB))>8192 OR line_start<1 OR line_end<line_start OR length(content_hash)<>64)
          OR (SELECT COUNT(*) FROM sources)>4096 OR (SELECT COUNT(*) FROM documents)>100000 OR (SELECT COUNT(*) FROM chunks)>250000",
         [], |r| r.get(0))?;
     if oversized {

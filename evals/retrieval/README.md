@@ -14,6 +14,15 @@ in `knowledge.rs`. PR2 runs the same corpus through its deterministic fake
 embedder and hybrid retriever; that is wiring evidence, not a benchmark of Gemini
 or another semantic model.
 
+The fake embedder constructs a sorted vocabulary from corpus text and returns
+binary term vectors. It does not read filenames, source IDs, expected answers or
+query labels. An orthogonal unknown-token coordinate makes the no-match case
+exercise actual zero-similarity abstention. Both lexical and hybrid paths use
+the same unchanged query labels and quality gates. The hybrid test additionally
+checks durable indexing reuse and the bounded query-vector cache. Its scores
+verify vector indexing, cosine ranking, fusion and result budgets; they do not
+establish paraphrase or multilingual quality for a production embedding model.
+
 The token comparison counts **complete serialized search responses**, including
 citations, provenance and escaping, with the embedded `cl100k_base` reference BPE.
 It also reports the runtime `ceil(Unicode scalars / 4)` estimate and UTF-8 bytes.
