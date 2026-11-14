@@ -184,17 +184,17 @@ export class ApiClient {
   proposeWorkflow(runId: string): Promise<WorkflowProposal> {
     return this.request("POST", `/runs/${encodeURIComponent(runId)}/workflow-proposal`);
   }
-  listWorkflows(): Promise<WorkflowDefinition[]> {
-    return this.request("GET", "/workflows");
+  listWorkflows(botId: string): Promise<WorkflowDefinition[]> {
+    return this.request("GET", `/workflows?bot_id=${encodeURIComponent(botId)}`);
   }
-  getWorkflow(name: string): Promise<WorkflowDefinition> {
-    return this.request("GET", `/workflows/${encodeURIComponent(name)}`);
+  getWorkflow(name: string, botId: string): Promise<WorkflowDefinition> {
+    return this.request("GET", `/workflows/${encodeURIComponent(name)}?bot_id=${encodeURIComponent(botId)}`);
   }
   saveWorkflow(input: SaveWorkflow): Promise<WorkflowDefinition> {
     return this.request("POST", "/workflows", { body: input });
   }
-  deleteWorkflow(name: string): Promise<void> {
-    return this.request("DELETE", `/workflows/${encodeURIComponent(name)}`);
+  deleteWorkflow(name: string, botId: string): Promise<void> {
+    return this.request("DELETE", `/workflows/${encodeURIComponent(name)}?bot_id=${encodeURIComponent(botId)}`);
   }
   runWorkflow(name: string, input: RunWorkflow): Promise<WorkflowRun> {
     return this.request("POST", `/workflows/${encodeURIComponent(name)}/run`, { body: input });

@@ -5,9 +5,10 @@ import type { WorkflowProposal } from "../api/types.ts";
 
 const proposal: WorkflowProposal = {
   run_id: "run-1",
-  workflow: { name: "reviewed", description: "<script>untrusted page text</script>", params: [
+  workflow: { name: "reviewed", description: "<script>untrusted page text</script>", source: null, params: [
     { name: "password", type: "string", default: null, description: "Required" }
   ], steps: [{ kind: "shell", command: "echo 'full command including trailing arguments'" }, { kind: "tool", input: { text: "untrusted data" } }] },
+  step_provenance: [],
   warnings: [], skipped: [], required_params: ["password"]
 };
 
@@ -50,4 +51,13 @@ test("cancel retains edits for review, failures permit retry without losing data
   assert.equal(state.phase, "ready");
   assert.equal(state.error, "name exists");
   assert.equal(state.draft?.name, "edited");
+});
+
+test("external influence requires an explicit acknowledgement for every affected step", () => {
+  const influenced = { ...proposal, step_provenance: [{step_index:0,needs_confirmation:true,origin:"run_content_or_model",parameters:[],untrusted_read_before:true}] };
+  let state = reviewReducer(EMPTY_REVIEW, {type:"loaded", proposal:influenced});
+  state = reviewReducer(state, {type:"open"});
+  assert.equal(reviewReducer(state, {type:"save"}).phase, "ready");
+  state = reviewReducer(state, {type:"edit",draft:{...state.draft!, confirmed_steps:[0]}});
+  assert.equal(reviewReducer(state, {type:"save"}).phase, "saving");
 });

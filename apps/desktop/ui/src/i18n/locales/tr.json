@@ -1599,6 +1599,11 @@
     "save": "İş akışını kaydet",
     "saving": "Kaydediliyor…",
     "saved": "İş akışı kaydedildi",
-    "defaultValue": "Varsayılan değer"
+    "defaultValue": "Varsayılan değer",
+    "tooFewSteps": "Bu koşuda kaydedilebilir en az iki adım yok.",
+    "fromUser": "Değerler araç çıktısı okunmadan önce kullanıcı isteğiyle eşleşti.",
+    "fromContent": "Değerler araç çıktısından veya model çıkarımından gelmiş olabilir.",
+    "confirmInfluencedStep": "Bu adımı ve dış içerik etkisini inceledim.",
+    "untrustedWarning": "Bu koşu dış veya özel içerik okudu. Kalıcı otomasyona izin vermeden önce etkilenen her adımı inceleyin."
   }
 }

@@ -353,7 +353,7 @@ export function ChatView({
           run
         });
       }
-      if (run === lastFinished && serverRuns.some(s => s.id === run.id && s.can_remember === true)) {
+      if (run === lastFinished && serverRuns.some(s => s.id === run.id && s.state === "succeeded" && !s.parent_run_id)) {
         out.push({ kind: "workflow", key: `${run.id}-workflow`, ts: run.finishedMs ?? run.startedMs, run });
       }
     }

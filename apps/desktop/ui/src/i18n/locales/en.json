@@ -1599,6 +1599,11 @@
     "save": "Save workflow",
     "saving": "Saving…",
     "saved": "Workflow saved",
-    "defaultValue": "Default value"
+    "defaultValue": "Default value",
+    "tooFewSteps": "This run has fewer than two recordable steps.",
+    "fromUser": "Values matched the user request before any tool output.",
+    "fromContent": "Values may come from tool output or model inference.",
+    "confirmInfluencedStep": "I reviewed this step and its external influence.",
+    "untrustedWarning": "This run read external or private content. Review every affected step before granting persistent automation."
   }
 }

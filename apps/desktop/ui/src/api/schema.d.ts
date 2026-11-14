@@ -2427,6 +2427,11 @@ export interface components {
              */
             expires_in_secs: number;
         };
+        ParameterOrigin: {
+            /** @description Exact user-request match before tool output, or conservatively unknown. */
+            origin: string;
+            pointer: string;
+        };
         /** @description Body of `POST /v1/schedules/parse`. */
         ParseSchedule: {
             /** @description English or Turkish phrase, e.g. `every weekday at 9`, `her gün 09:00`. */
@@ -2612,15 +2617,14 @@ export interface components {
         RunWorkflow: {
             /** Format: uuid */
             chat_id: string;
-            /**
-             * @description Values containing double quotes are rejected: the existing K0 command
-             *     parser cannot preserve them. Other whitespace and backslashes are data.
-             */
+            /** @description Out-of-band values, kept only in replay memory and registered for redaction. */
             params?: {
                 [key: string]: string;
             };
         };
         SaveWorkflow: {
+            /** @description Step indexes explicitly acknowledged after reviewing external influence. */
+            confirmed_steps?: number[];
             description: string;
             name: string;
             params: components["schemas"]["WorkflowParam"][];
@@ -2838,6 +2842,13 @@ export interface components {
              */
             sse_subscribers: number;
         };
+        StepProvenance: {
+            needs_confirmation: boolean;
+            origin: string;
+            parameters: components["schemas"]["ParameterOrigin"][];
+            step_index: number;
+            untrusted_read_before: boolean;
+        };
         TakeoverAccepted: {
             /** Format: int64 */
             control_epoch: number;
@@ -3029,6 +3040,7 @@ export interface components {
             description: string;
             name: string;
             params: components["schemas"]["WorkflowParam"][];
+            source?: unknown;
             steps: unknown[];
         };
         WorkflowParam: {
@@ -3043,6 +3055,7 @@ export interface components {
             /** Format: uuid */
             run_id: string;
             skipped: components["schemas"]["SkippedCall"][];
+            step_provenance: components["schemas"]["StepProvenance"][];
             warnings: string[];
             workflow: components["schemas"]["WorkflowDto"];
         };
@@ -5712,7 +5725,9 @@ export interface operations {
     };
     list: {
         parameters: {
-            query?: never;
+            query: {
+                bot_id: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5770,7 +5785,9 @@ export interface operations {
     };
     show: {
         parameters: {
-            query?: never;
+            query: {
+                bot_id: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -5799,7 +5816,9 @@ export interface operations {
     };
     delete: {
         parameters: {
-            query?: never;
+            query: {
+                bot_id: string;
+            };
             header?: never;
             path: {
                 name: string;

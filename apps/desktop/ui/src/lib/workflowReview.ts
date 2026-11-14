@@ -29,13 +29,14 @@ export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewS
       name: action.proposal.workflow.name,
       description: action.proposal.workflow.description,
       params: action.proposal.workflow.params.map(p => ({ ...p })),
+      confirmed_steps: [],
       steps: action.proposal.workflow.steps
     } };
     case "unavailable": return { ...EMPTY_REVIEW, phase: "unavailable" };
     case "open": return state.phase === "ready" ? { ...state, open: true } : state;
     case "close": return state.phase === "saving" ? state : { ...state, open: false };
     case "edit": return state.phase === "ready" ? { ...state, draft: action.draft, error: null } : state;
-    case "save": return state.open && state.phase === "ready" && state.draft?.name.trim() ? { ...state, phase: "saving", error: null } : state;
+    case "save": return state.open && state.phase === "ready" && state.draft?.name.trim() && state.proposal?.step_provenance.every((step, i) => !step.needs_confirmation || state.draft?.confirmed_steps?.includes(i)) ? { ...state, phase: "saving", error: null } : state;
     case "saved": return state.phase === "saving" ? { ...state, phase: "saved", open: false } : state;
     case "failed": return state.phase === "saving" ? { ...state, phase: "ready", error: action.error } : state;
   }

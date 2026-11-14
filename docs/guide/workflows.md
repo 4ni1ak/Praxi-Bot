@@ -8,14 +8,16 @@ model calls**. There are three related mechanisms. Know which exist today:
 | --- | --- | --- |
 | **Replay** | Run a saved, parameterised workflow deterministically | Available |
 | **Remember** | Tell Praxi "this request should go straight to the route that just worked" | Available (desktop app button, API) |
-| **Record** | Turn a successful run into a workflow file automatically | **Planned** in the product; the library exists but no CLI command or daemon route exposes it yet |
+| **Record** | Review a successful run and explicitly save its mutating steps | Available (desktop review, API, CLI) |
 
 ## Workflows
 
-A workflow is a file `<data dir>/workflows/<name>.toml` (an `index.json` next to
-it is rebuilt automatically). It has optional **parameters** and a list of
-**steps**. Today you write these files by hand (or generate them with a script);
-the bot finds them with `workflow_list` and runs them with `workflow_run`.
+A workflow belongs to one bot and is stored at
+`<data dir>/bots/<bot-id>/workflows/<name>.toml`. Its index is rebuilt automatically.
+This location is inside the daemon state boundary protected from bot file tools.
+Legacy files at `<data dir>/workflows` are not discovered by the daemon.
+A workflow has **parameters** and a list of **steps**. `workflow_list` and
+`workflow_run` use the calling bot's store.
 
 ```toml
 version = 1
@@ -46,6 +48,49 @@ fingerprint = "9f2c0a41d3b7e855"    # recorded identity (hex)
 
 Names use letters, digits and simple separators. `{param}` placeholders are
 filled in when the workflow runs.
+
+### Record and review a run
+
+After a successful top-level run, press **Save as workflow** to request a
+proposal. Nothing is saved until you review the complete steps and explicitly
+save. Read and meta calls are listed but omitted. Unsupported or missing
+mutating calls make the recording ineligible; partial automation cannot be saved.
+Runs that used the normal model path are eligible too.
+
+The proposal tracks parameter origins and prior external/private tool output.
+Unknown origins are treated conservatively. Review and acknowledge each affected
+step. Saved files retain the source run, bot and source-content mark; a replay
+inherits that mark and asks for fresh approvals even when a standing grant exists.
+
+Recorded data fields, including destinations, paths, commands, credentials and
+all typed text, become required parameters without defaults. This intentionally
+favours fresh input over silently reusing a recipient or destination. Such
+workflows cannot be selected by fuzzy routing or the model's `workflow_run` tool.
+Use the human replay endpoint or CLI, which keep parameter values outside chat
+history, run-step inputs, event journals and provider requests:
+
+```text
+bot workflow propose <run-id>
+bot workflow save reviewed-proposal.json
+bot workflow list --bot <bot-id>
+bot workflow show <name> --bot <bot-id>
+bot workflow run <name> --chat <chat-id> --params-stdin
+bot workflow delete <name> --bot <bot-id>
+```
+
+For a proposal requiring acknowledgement, edit its top-level `confirmed_steps`
+array to contain the zero-based indexes you reviewed before saving with the CLI.
+`--params-stdin` reads a JSON object of parameter names and string values from
+standard input. Supply it through a private input stream; never put credentials
+in shell arguments. Runtime values currently need at least six bytes because the
+shared redactor deliberately ignores shorter values. Unsupported short values
+are refused. Values containing quotes, newlines and backslashes are accepted.
+Values remain only in process memory; after a restart, start a new replay and
+supply them again. An interrupted human replay fails without a model handover.
+
+The API requires `bot_id` on workflow list/show/delete, derives the save scope
+from the source run, and derives replay scope from the owned `chat_id`. Phone-role
+peers have no workflow read, proposal, mutation or replay access.
 
 ### Step kinds
 
@@ -117,8 +162,4 @@ the whole ladder off per bot with `[router] enabled = false`.
 
 ## Planned
 
-- One-click **record** from a successful run (the recorder keeps only successful
-  state-changing desktop, browser and tool calls, turns element references into
-  stable locators and lifts literal values from your message into parameters;
-  the result is a proposal you review before saving).
 - A workflow editor in the desktop app.

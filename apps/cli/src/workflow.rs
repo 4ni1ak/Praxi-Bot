@@ -8,9 +8,16 @@ use std::{io::Write, path::PathBuf};
 #[derive(Subcommand)]
 pub(crate) enum WorkflowCmd {
     /// List saved workflows.
-    List,
+    List {
+        #[arg(long)]
+        bot: String,
+    },
     /// Show every step and parameter of a workflow.
-    Show { name: String },
+    Show {
+        name: String,
+        #[arg(long)]
+        bot: String,
+    },
     /// Print an UNSAVED proposal for review (redirect JSON to a file to edit).
     Propose { run: String },
     /// Save reviewed metadata/defaults; source steps are rebuilt and compared.
@@ -22,16 +29,33 @@ pub(crate) enum WorkflowCmd {
         description: Option<String>,
     },
     /// Delete a saved workflow.
-    Delete { name: String },
+    Delete {
+        name: String,
+        #[arg(long)]
+        bot: String,
+    },
     /// Replay in an existing chat through the normal permission engine.
     Run {
         name: String,
         #[arg(long)]
         chat: String,
-        /// JSON object of parameter names and string values.
-        #[arg(long, default_value = "{}")]
-        params: String,
+        /// Read the JSON parameter object from stdin (never from argv).
+        #[arg(long)]
+        params_stdin: bool,
     },
+}
+
+fn scoped(path: &str, bot: &str) -> Result<String> {
+    let bot: uuid::Uuid = bot.parse()?;
+    Ok(format!("{path}?bot_id={bot}"))
+}
+
+fn read_params(
+    mut input: impl std::io::Read,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    let mut text = String::new();
+    input.read_to_string(&mut text)?;
+    serde_json::from_str(&text).map_err(|_| "invalid workflow parameter JSON".into())
 }
 
 fn workflow_path(name: &str) -> Result<String> {
@@ -58,7 +82,7 @@ fn save_body(proposal: &Value, name: Option<&str>, description: Option<&str>) ->
         .as_array()
         .ok_or("proposal is missing reviewed steps")?;
     Ok(
-        json!({"run_id":run_id, "name":name, "description":description.or_else(|| wf["description"].as_str()).unwrap_or_default(), "params":params, "steps":steps}),
+        json!({"run_id":run_id, "name":name, "description":description.or_else(|| wf["description"].as_str()).unwrap_or_default(), "params":params, "steps":steps, "confirmed_steps":proposal.get("confirmed_steps").cloned().unwrap_or_else(|| json!([]))}),
     )
 }
 
@@ -68,8 +92,8 @@ pub(crate) async fn run(
     out: &mut impl Write,
 ) -> Result<()> {
     let (method, path, body) = match command {
-        WorkflowCmd::List => (Method::GET, "/v1/workflows".into(), None),
-        WorkflowCmd::Show { name } => (Method::GET, workflow_path(name)?, None),
+        WorkflowCmd::List { bot } => (Method::GET, scoped("/v1/workflows", bot)?, None),
+        WorkflowCmd::Show { name, bot } => (Method::GET, scoped(&workflow_path(name)?, bot)?, None),
         WorkflowCmd::Propose { run } => {
             let run: uuid::Uuid = run.parse()?;
             (
@@ -94,10 +118,20 @@ pub(crate) async fn run(
                 )?),
             )
         }
-        WorkflowCmd::Delete { name } => (Method::DELETE, workflow_path(name)?, None),
-        WorkflowCmd::Run { name, chat, params } => {
+        WorkflowCmd::Delete { name, bot } => {
+            (Method::DELETE, scoped(&workflow_path(name)?, bot)?, None)
+        }
+        WorkflowCmd::Run {
+            name,
+            chat,
+            params_stdin,
+        } => {
             let chat: uuid::Uuid = chat.parse()?;
-            let params: std::collections::BTreeMap<String, String> = serde_json::from_str(params)?;
+            let params = if *params_stdin {
+                read_params(std::io::stdin().lock())?
+            } else {
+                std::collections::BTreeMap::default()
+            };
             (
                 Method::POST,
                 format!("{}/run", workflow_path(name)?),
@@ -113,6 +147,27 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_parameters_are_read_from_stdin_and_never_accepted_on_argv() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: WorkflowCmd,
+        }
+        assert!(
+            Args::try_parse_from(["test", "run", "flow", "--chat", "id", "--params", "secret"])
+                .is_err()
+        );
+        assert!(
+            Args::try_parse_from(["test", "run", "flow", "--chat", "id", "--params-stdin"]).is_ok()
+        );
+        assert_eq!(
+            read_params(br#"{"password":"fake-runtime-value"}"#.as_slice()).unwrap()["password"],
+            "fake-runtime-value"
+        );
+    }
+
     #[test]
     fn review_file_forwards_complete_steps_for_server_side_comparison() {
         let proposal = json!({"run_id":uuid::Uuid::now_v7(), "workflow":{"name":"original", "description":"reviewed", "params":[], "steps":[{"kind":"shell","command":"untrusted injected command"}]}});
