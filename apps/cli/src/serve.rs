@@ -807,6 +807,18 @@ pub fn serve(
         peer_enabled,
     } = opts;
     let (port, json, grace) = (*port, *json, *grace);
+    let mut ownership = daemon_api::host::HostConfig::load(data_dir)?;
+    if *host_mode {
+        ownership.mode = daemon_api::host::HostMode::Host;
+        if !data_dir.join("host.toml").exists() {
+            ownership.state = if data_dir.join("bot.db").exists() {
+                daemon_api::host::HostState::Active
+            } else {
+                daemon_api::host::HostState::Fresh
+            };
+        }
+        ownership.save(data_dir)?;
+    }
     let storage = Arc::new(Storage::open(data_dir)?);
     let token = load_or_create_token(data_dir)?;
     if !token.restricted {
@@ -881,11 +893,20 @@ pub fn serve(
                 }
             })
         };
-        let peer =
-            crate::peer::start_server(data_dir, *host_mode, *peer_enabled, state.clone()).await?;
+        let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
+        let peer = crate::peer::start_server(
+            data_dir,
+            host_is_host,
+            *peer_enabled || *host_mode,
+            state.clone(),
+        )
+        .await?;
+        if let Some(net) = peer.clone() {
+            crate::host::watch_peers(&state, net);
+        }
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
         let computer = Arc::new(crate::computer::CliComputerProvider::new(
-            *host_mode,
+            host_is_host,
             local_desktop,
             peer.clone(),
             local_id.clone(),
@@ -957,16 +978,20 @@ pub fn serve(
         // The Telegram channel (when a token is stored and it is enabled) talks
         // to this daemon through its own loopback address.
         let telegram = telegram_store.as_ref().map(|store| {
-            let t = channels::start_telegram(
+            let t = channels::telegram_runtime(
                 data_dir,
                 Arc::clone(store),
                 &format!("http://{addr}"),
                 &api_token,
                 None,
+                Some(state.leader().clone()),
             );
             state.add_channel(t.clone());
             t
         });
+        if state.leader().config().runs_components() {
+            state.leader().start().await?;
+        }
         if let Some(t) = &telegram {
             use daemon_api::ChannelControl;
             let i = t.info();
@@ -998,6 +1023,7 @@ pub fn serve(
         }
         // MCP children stay up through the agent grace period (a running tool
         // call may still need them) and are stopped once the loop has paused.
+        let leader = state.leader().clone();
         let shutdown_peer = peer.clone();
         let outcome = run_daemon(listener, state, telegram, async move {
             shutdown_signal().await;
@@ -1006,6 +1032,7 @@ pub fn serve(
             }
         })
         .await;
+        leader.detach_network();
         if let Some(peer) = peer {
             peer.shutdown().await;
         }
