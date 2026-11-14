@@ -138,6 +138,11 @@
   overflow-wrap: anywhere;
 }
 
+.fullPayload {
+  max-height: 40vh;
+  overflow: auto;
+}
+
 .question {
   display: flex;
   flex-direction: column;

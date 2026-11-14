@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { CalendarClock, Clock, ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -16,6 +16,7 @@ import {
 } from "../state/timeline";
 import {
   egressDetails,
+  payloadReviewComplete,
   formatFiring,
   scheduleDetails,
   type EgressApprovalDetails,
@@ -244,8 +245,16 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
   );
 }
 
-function EgressApprovalBody({ d }: { d: EgressApprovalDetails }) {
+function EgressApprovalBody({ d, onReviewed }: {
+  d: EgressApprovalDetails;
+  onReviewed: (payload: string) => void;
+}) {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const view = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (view.current && payloadReviewComplete(expanded, view.current)) onReviewed(d.payload);
+  }, [expanded, d.payload, onReviewed]);
   const kind = d.payloadKind === "query" || d.payloadKind === "url" ? d.payloadKind : "body";
   return (
     <div data-testid="approval-egress">
@@ -265,9 +274,26 @@ function EgressApprovalBody({ d }: { d: EgressApprovalDetails }) {
           })}
         </p>
       ) : null}
-      <pre className={styles.egressCode} tabIndex={0}>
-        {d.payload}
-      </pre>
+      {d.reviewFullPayload ? (
+        <>
+          <p className={styles.bodyLabel}>{t("chat.approval.egress.large", { bytes: d.payloadBytes ?? 0 })}</p>
+          <Button size="sm" variant="secondary" onClick={() => setExpanded(true)}>
+            {t("chat.approval.egress.reviewFull")}
+          </Button>
+        </>
+      ) : null}
+      {!d.reviewFullPayload || expanded ? (
+        <pre
+          ref={view}
+          className={[styles.egressCode, d.reviewFullPayload ? styles.fullPayload : ""].join(" ")}
+          tabIndex={0}
+          onScroll={(event) => {
+            if (payloadReviewComplete(expanded, event.currentTarget)) onReviewed(d.payload);
+          }}
+        >
+          {d.payload}
+        </pre>
+      ) : null}
     </div>
   );
 }
@@ -285,6 +311,8 @@ export function ApprovalCard({
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
   const egress = egressDetails(tool.details);
+  const [reviewedPayload, setReviewedPayload] = useState<string | null>(null);
+  const reviewPending = egress?.reviewFullPayload && reviewedPayload !== egress.payload;
 
   const decide = async (
     decision: "approve" | "deny",
@@ -349,12 +377,12 @@ export function ApprovalCard({
             </div>
           </>
         )}
-        {egress ? <EgressApprovalBody d={egress} /> : null}
+        {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
         <div className={styles.actions}>
           <Button
             size="sm"
             variant="primary"
-            disabled={disabled}
+            disabled={disabled || reviewPending}
             onClick={() => void decide("approve", "once")}
           >
             {isSendTool(tool.name)

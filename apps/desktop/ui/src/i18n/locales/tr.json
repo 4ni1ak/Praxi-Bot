@@ -320,6 +320,8 @@
         "note": "Bu onay yalnızca bu değişikliği kapsar; her seferinde sorulur."
       },
       "egress": {
+        "large": "Bu içerik kısa kartta incelenemeyecek kadar büyük ({{bytes}} bayt). Onaylamadan önce tam metni açıp sonuna kadar kaydırın.",
+        "reviewFull": "İçeriğin tamamını incele",
         "host": "Hedef: {{host}}",
         "read": "Bu çalışma şunu okudu: {{list}}",
         "payload": {

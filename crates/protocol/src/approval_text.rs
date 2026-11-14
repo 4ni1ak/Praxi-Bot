@@ -508,6 +508,9 @@ fn egress_text(details: &Value) -> Option<String> {
         out.push_str(&summary);
         out.push('\n');
     }
+    if egress.get("review_full_payload").and_then(Value::as_bool) == Some(true) {
+        out.push_str("Large payload: review the FULL text below before approving.\n");
+    }
     out.push_str(&quoted("OUTGOING PAYLOAD", &payload));
     Some(out)
 }

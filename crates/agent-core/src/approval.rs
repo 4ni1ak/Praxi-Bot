@@ -218,8 +218,7 @@ impl Shared {
     }
 
     /// Egress card for a tainted run. `None` when the run is clean, the tool
-    /// cannot send data off the machine, or the payload is too large to show
-    /// in full. Attached even when the ask came from `always_ask` or a floor,
+    /// cannot send data off the machine. Attached even when the ask came from `always_ask` or a floor,
     /// so the card still names the read and the host.
     ///
     /// The payload is the revealed text. Tool-injected defaults (the browser
@@ -250,36 +249,8 @@ impl Shared {
                 taint::append_payload(&mut details, &extra);
             }
         }
-        taint::finalize_egress_record(&mut details).ok()?;
+        taint::finalize_egress_record(&mut details);
         Some(details)
-    }
-
-    /// Raw outgoing text, including tool-injected lines, before it is revealed.
-    fn transmitted_text(&self, ctx: &RunCtx, name: &str, input: &Value) -> String {
-        let mut details = {
-            let taint = ctx.taint.lock();
-            match taint::egress_record(&taint, name, input) {
-                Some(details) => details,
-                None => return String::new(),
-            }
-        };
-        let tctx = tool_registry::ToolContext {
-            run_id: ctx.run_id.to_string(),
-            bot_id: Some(ctx.bot_id.to_string()),
-            ..tool_registry::ToolContext::default()
-        };
-        if let Some(extra) = self
-            .tools
-            .get(name)
-            .and_then(|tool| tool.egress_extra(&tctx, input))
-        {
-            taint::append_payload(&mut details, &extra);
-        }
-        details
-            .get("payload")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
     }
 
     fn closed_guard(
@@ -575,8 +546,7 @@ impl Shared {
     /// selectors, ZWJ, ZWNJ, LRM/RLM, CR) are revealed on the card and may be
     /// approved. A prompt-free send has no card, so those same characters are
     /// refused unless they are in the small set that is ordinary in emoji and
-    /// in Arabic, Hebrew, Persian, or Hindi. A payload over 8 KiB is refused
-    /// when a card would otherwise scroll it out of sight.
+    /// in Arabic, Hebrew, Persian, or Hindi. Large payloads require full review.
     ///
     /// `showing_card` is true on the approval path. The allow path (a search
     /// after untrusted content only, or the bot's egress waiver) passes false.
@@ -600,18 +570,7 @@ impl Shared {
                 "the outgoing text contains characters that cannot be sent (hidden tags, direction overrides, private-use or similar); remove them and ask again"
                     .to_owned(),
             )
-        } else if showing_card {
-            let text = self.transmitted_text(ctx, name, input);
-            if text.len() > taint::MAX_EGRESS_PAYLOAD_BYTES {
-                Some(format!(
-                    "the outgoing text is {} bytes, above the {} byte limit that can be shown in full; shorten it and ask again",
-                    text.len(),
-                    taint::MAX_EGRESS_PAYLOAD_BYTES
-                ))
-            } else {
-                None
-            }
-        } else if taint::input_needs_a_card_to_show(input) {
+        } else if !showing_card && taint::input_needs_a_card_to_show(input) {
             Some(
                 "the outgoing text contains characters that would not be visible, and this call is not shown for approval; remove them and ask again"
                     .to_owned(),
@@ -1148,7 +1107,7 @@ impl ToolGate for LoopGate {
                 .and_then(ExecPermit::commit)
                 .map_err(|reason| {
                     format!(
-                        "permission denied by the user{}",
+                        "tool call was not authorized{}",
                         reason.map_or_else(String::new, |r| format!(": {r}"))
                     )
                 })

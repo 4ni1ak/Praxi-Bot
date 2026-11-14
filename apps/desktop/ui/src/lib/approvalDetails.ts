@@ -91,6 +91,8 @@ export interface EgressApprovalDetails {
   host: string;
   payload: string;
   payloadKind: string;
+  payloadBytes?: number;
+  reviewFullPayload: boolean;
   /** Lines in the text that would be sent. Absent on older events. */
   payloadLines?: number;
   /** Characters in the text that would be sent. Absent on older events. */
@@ -115,6 +117,8 @@ export function egressDetails(details: unknown): EgressApprovalDetails | null {
     host: typeof raw.host === "string" ? raw.host : "",
     payload: typeof raw.payload === "string" ? raw.payload : "",
     payloadKind: typeof raw.payload_kind === "string" ? raw.payload_kind : "body",
+    payloadBytes: count(raw.payload_bytes),
+    reviewFullPayload: raw.review_full_payload === true,
     payloadLines: count(raw.payload_lines),
     payloadChars: count(raw.payload_chars),
     hiddenChars: count(raw.hidden_chars)
@@ -139,4 +143,13 @@ export function formatFiring(rfc3339: string, locale?: string): string {
     timeZone: "UTC"
   }).format(d);
   return `${date}, ${m[4]}:${m[5]}`;
+}
+
+/** Approval becomes available only with the full view open and its end visible. */
+export function payloadReviewComplete(
+  expanded: boolean,
+  view: { scrollTop: number; clientHeight: number; scrollHeight: number }
+): boolean {
+  return expanded && view.clientHeight > 0 &&
+    view.scrollTop + view.clientHeight >= view.scrollHeight - 1;
 }

@@ -1476,7 +1476,7 @@ async fn a_non_ascii_space_is_revealed_on_a_card_and_refused_without_one() {
 }
 
 #[tokio::test]
-async fn an_oversized_payload_is_refused_without_a_card() {
+async fn a_large_payload_has_a_full_review_card_and_sends_only_after_approval() {
     let env = setup();
     let read = read_tool("fs_read", ContentClass::untrusted_private());
     let search = egress_tool(
@@ -1485,7 +1485,7 @@ async fn an_oversized_payload_is_refused_without_a_card() {
         PermissionCategory::Browser,
         ContentClass::untrusted_egress(),
     );
-    let query = "x".repeat(taint::MAX_EGRESS_PAYLOAD_BYTES + 1);
+    let query = "x".repeat(taint::FULL_REVIEW_PAYLOAD_BYTES + 1);
     let fake = Fake::new(vec![
         calls(&[("c1", "fs_read", json!({"path": "notes.txt"}))]),
         calls(&[("c2", "web_search", json!({"query": query}))]),
@@ -1501,13 +1501,16 @@ async fn an_oversized_payload_is_refused_without_a_card() {
     );
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "search").unwrap();
-    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else { unreachable!() };
+    let details = card.details.as_ref().unwrap();
+    assert_eq!(details["review_full_payload"], true);
+    assert_eq!(details["payload_chars"], query.len());
+    assert!(details["payload"].as_str().unwrap().contains(&query));
     assert_eq!(search.count.load(Ordering::SeqCst), 0);
-    let msg = tool_messages(&fake.request(2)).join("\n");
-    assert!(msg.contains("8192"), "{msg}");
-    while let Ok(item) = rx.try_recv() {
-        assert!(!matches!(item.envelope.event, Event::ApprovalNeeded(_)));
-    }
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user).unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(search.count.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

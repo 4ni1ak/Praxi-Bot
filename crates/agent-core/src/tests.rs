@@ -540,7 +540,7 @@ async fn ask_then_deny_tells_model_and_skips_tool() {
     let msgs = tool_messages(&fake.request(1));
     assert_eq!(msgs.len(), 1);
     assert!(
-        msgs[0].contains("denied by the user") && msgs[0].contains("too risky"),
+        msgs[0].contains("not authorized") && msgs[0].contains("too risky"),
         "{msgs:?}"
     );
     assert_eq!(

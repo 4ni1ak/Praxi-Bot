@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { egressDetails, formatFiring, scheduleDetails } from "./approvalDetails.ts";
+import { egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
 
 const card = {
   kind: "schedule",
@@ -109,4 +109,17 @@ test("an egress card keeps the full payload, including beside a schedule", () =>
   assert.equal(nested?.host, "example.com");
   assert.equal(nested?.payloadKind, "url");
   assert.equal(egressDetails({ kind: "other" }), null);
+});
+
+test("large payload review preserves the full tail and requires the expanded view end", () => {
+  const payload = "x".repeat(9000) + "TAIL";
+  const parsed = egressDetails({kind: "egress", payload, payload_bytes: 9004, review_full_payload: true});
+  assert.equal(parsed?.payload, payload);
+  assert.equal(parsed?.payloadBytes, 9004);
+  assert.equal(parsed?.reviewFullPayload, true);
+  const atEnd = {scrollTop: 900, clientHeight: 100, scrollHeight: 1000};
+  assert.equal(payloadReviewComplete(false, atEnd), false);
+  assert.equal(payloadReviewComplete(true, {...atEnd, scrollTop: 0}), false);
+  assert.equal(payloadReviewComplete(true, atEnd), true);
+  assert.equal(payloadReviewComplete(true, {scrollTop: 0, clientHeight: 0, scrollHeight: 0}), false);
 });

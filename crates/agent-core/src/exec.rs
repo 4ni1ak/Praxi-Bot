@@ -74,7 +74,7 @@ enum Slot {
 
 fn user_denied(reason: Option<String>) -> String {
     format!(
-        "Permission denied by the user{}. Do not retry this call.",
+        "Tool call was not authorized{}. Do not retry this call.",
         reason.map_or_else(String::new, |r| format!(": {r}"))
     )
 }

@@ -564,28 +564,9 @@ fn host_of_url(url: &str) -> String {
         .unwrap_or_else(|| "unparseable URL".to_owned())
 }
 
-/// Name, description and body of a skill write, then every input field.
-///
-/// `skill_publish` has no body in the call. The tool appends the stored skill
-/// before the card is shown. A field the schema adds later is still printed.
+/// Show SKILL.md verbatim once; parsed copies would duplicate its body.
 fn skill_payload(input: &Value) -> String {
-    let mut lines = Vec::new();
-    if let Some(content) = input.get("content").and_then(Value::as_str)
-        && let Ok(skill) = skills::parse_skill(content, skills::Source::Bot, None)
-    {
-        lines.push(format!("name: {}", skill.name));
-        lines.push(format!("description: {}", skill.description));
-        lines.push("body:".to_owned());
-        lines.push(skill.body);
-    }
-    let fields = render_transmitted(input);
-    if !fields.is_empty() {
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        lines.push(fields);
-    }
-    lines.join("\n")
+    render_transmitted(input)
 }
 
 /// A click names an on-screen target. `prompt_text` is typed into the page,
@@ -640,9 +621,8 @@ fn input_matches(value: &Value, text_matches: impl Fn(&str) -> bool + Copy) -> b
     }
 }
 
-/// Largest outgoing text the card will show. Longer text is refused so a
-/// secret cannot sit below the fold of a scrolled card.
-pub(crate) const MAX_EGRESS_PAYLOAD_BYTES: usize = 8 * 1024;
+/// Above this size the desktop requires opening and reviewing the full text.
+pub(crate) const FULL_REVIEW_PAYLOAD_BYTES: usize = 8 * 1024;
 
 /// The payload the card stores: hidden characters revealed, blank-line runs
 /// collapsed, with the original size counted separately.
@@ -653,17 +633,8 @@ pub(crate) struct ShownPayload {
     pub hidden: usize,
 }
 
-/// Reveal and collapse `raw` for the card.
-///
-/// # Errors
-/// The text is longer than [`MAX_EGRESS_PAYLOAD_BYTES`].
-pub(crate) fn present_payload(raw: &str) -> Result<ShownPayload, String> {
-    if raw.len() > MAX_EGRESS_PAYLOAD_BYTES {
-        return Err(format!(
-            "the outgoing text is {} bytes, above the {MAX_EGRESS_PAYLOAD_BYTES} byte limit that can be shown in full; shorten it and ask again",
-            raw.len()
-        ));
-    }
+/// Reveal and collapse `raw` for the card without dropping a size-limited tail.
+pub(crate) fn present_payload(raw: &str) -> ShownPayload {
     let chars = raw.chars().count();
     let lines = if raw.is_empty() {
         0
@@ -675,12 +646,12 @@ pub(crate) fn present_payload(raw: &str) -> Result<ShownPayload, String> {
         .filter(|c| protocol::approval_text::is_revealed_egress_char(*c))
         .count();
     let revealed = protocol::approval_text::reveal_hidden(raw, true);
-    Ok(ShownPayload {
+    ShownPayload {
         text: collapse_card_whitespace(&revealed),
         lines,
         chars,
         hidden,
-    })
+    }
 }
 
 /// Collapse runs of blank lines and trailing whitespace so they cannot bury
@@ -797,7 +768,7 @@ fn mailbox_domain(addr: &str) -> Option<String> {
 #[cfg(test)]
 pub(crate) fn egress_details(taint: &ContentTaint, name: &str, input: &Value) -> Option<Value> {
     let mut value = egress_record(taint, name, input)?;
-    finalize_egress_record(&mut value).ok()?;
+    finalize_egress_record(&mut value);
     Some(value)
 }
 
@@ -830,24 +801,22 @@ pub(crate) fn egress_record(taint: &ContentTaint, name: &str, input: &Value) -> 
 }
 
 /// Replace `payload` with the text the user can see, and record its real size.
-///
-/// # Errors
-/// The payload is longer than [`MAX_EGRESS_PAYLOAD_BYTES`].
-pub(crate) fn finalize_egress_record(value: &mut Value) -> Result<(), String> {
+pub(crate) fn finalize_egress_record(value: &mut Value) {
     let raw = value
         .get("payload")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let shown = present_payload(&raw)?;
+    let shown = present_payload(&raw);
     let Some(obj) = value.as_object_mut() else {
-        return Ok(());
+        return;
     };
     obj.insert("payload".to_owned(), json!(shown.text));
     obj.insert("payload_lines".to_owned(), json!(shown.lines));
     obj.insert("payload_chars".to_owned(), json!(shown.chars));
     obj.insert("hidden_chars".to_owned(), json!(shown.hidden));
-    Ok(())
+    obj.insert("payload_bytes".to_owned(), json!(raw.len()));
+    obj.insert("review_full_payload".to_owned(), json!(raw.len() > FULL_REVIEW_PAYLOAD_BYTES));
 }
 
 /// Point the card at `host` and rewrite the reason line to match.
@@ -933,13 +902,21 @@ mod card_tests {
     use super::{ContentTaint, egress_payload};
 
     #[test]
+    fn skill_write_card_shows_the_verbatim_document_only_once() {
+        let content = "---\nname: x\ndescription: d\n---\nUNIQUE_BODY\n";
+        let (_, payload, _) = egress_payload("skill_write", &json!({"name": "x", "content": content}));
+        assert!(payload.contains(content));
+        assert_eq!(payload.matches("UNIQUE_BODY").count(), 1);
+    }
+
+    #[test]
     fn mixed_blank_and_trailing_whitespace_reports_each_character_kind() {
-        let shown = super::present_payload("hello\t\n \t \t\nbye \t\t\n\t").unwrap();
+        let shown = super::present_payload("hello\t\n \t \t\nbye \t\t\n\t");
         assert!(shown.text.contains("trailing whitespace: 0 spaces, 1 tabs"), "{}", shown.text);
         assert!(shown.text.contains("1 blank lines: 2 spaces, 2 tabs"), "{}", shown.text);
         assert!(shown.text.contains("trailing whitespace: 1 spaces, 2 tabs"), "{}", shown.text);
         assert!(shown.text.ends_with("1 blank lines: 0 spaces, 1 tabs …]"), "{}", shown.text);
-        let buried = super::present_payload(&format!("hello\n{}\nbye", " \t".repeat(2000))).unwrap();
+        let buried = super::present_payload(&format!("hello\n{}\nbye", " \t".repeat(2000)));
         assert!(buried.text.contains("2000 spaces, 2000 tabs"), "{}", buried.text);
         assert!(buried.text.contains("bye"));
     }
@@ -1072,7 +1049,7 @@ mod card_tests {
         assert!(payload.contains("blank lines"), "{payload}");
         assert_eq!(card["hidden_chars"], 1);
         assert!(card["payload_chars"].as_u64().unwrap() > 10);
-        assert!(super::present_payload(&"x".repeat(super::MAX_EGRESS_PAYLOAD_BYTES + 1)).is_err());
+
     }
 
     #[test]
