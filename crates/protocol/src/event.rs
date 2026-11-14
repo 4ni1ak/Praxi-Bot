@@ -284,6 +284,9 @@ pub struct RunError {
 /// The user restored a file checkpoint of this run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CheckpointRestored {
+    /// Restore attempt failed; inspect warnings and safety snapshots.
+    #[serde(default)]
+    pub partial: bool,
     pub run_id: RunId,
     /// Restored checkpoint id, or `"all"` when undoing the whole run.
     pub checkpoint_id: String,

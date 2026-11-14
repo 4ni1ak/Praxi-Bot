@@ -79,6 +79,7 @@ impl AgentLoop {
                     visibility,
                 ),
                 tools,
+                checkpoint_access: RwLock::new((Vec::new(), Vec::new())),
                 providers: RwLock::new(providers),
                 global_policy: RwLock::new(cfg.global_policy.clone()),
                 policy_locked: std::sync::atomic::AtomicBool::new(false),
@@ -175,8 +176,23 @@ impl AgentLoop {
         cfg.control = Some(Arc::new(LoopControl {
             sh: Arc::downgrade(&self.sh),
         }));
+        *self.sh.checkpoint_access.write() =
+            (cfg.fs_allowed_roots.clone(), cfg.fs_granted_paths.clone());
         let _ = builtin_tools::register_builtin_tools(&self.sh.tools, cfg);
         self
+    }
+
+    /// Current filesystem roots and exact credential grants, from the registered file tools.
+    #[must_use]
+    pub fn checkpoint_access(&self) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+        self.sh.checkpoint_access.read().clone()
+    }
+
+    /// Apply the production redactor, including its configured source refresher.
+    #[must_use]
+    pub fn redact_host_text(&self, text: String) -> String {
+        self.sh.refresh_redactor();
+        self.sh.redact(text)
     }
 
     /// Register extra tools that need the loop's permission gate (for example
@@ -1289,6 +1305,7 @@ mod emit_tests {
         agent.emit_run_event(
             run_id,
             Event::CheckpointRestored(CheckpointRestored {
+                partial: false,
                 run_id,
                 checkpoint_id: "cp-1".into(),
                 safety_checkpoint_id: "cp-safe".into(),
@@ -1298,6 +1315,7 @@ mod emit_tests {
         agent.emit_run_event(
             run_id,
             Event::CheckpointRestored(CheckpointRestored {
+                partial: false,
                 run_id,
                 checkpoint_id: "cp-2".into(),
                 safety_checkpoint_id: "cp-safe-2".into(),
