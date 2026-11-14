@@ -2,6 +2,8 @@
 
 #![allow(clippy::assert_is_empty)]
 
+mod planning_pause;
+
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
