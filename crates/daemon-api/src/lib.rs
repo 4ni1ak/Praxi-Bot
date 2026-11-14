@@ -14,6 +14,8 @@
 
 pub mod auth;
 pub mod control;
+pub mod doctor;
+mod doctor_routes;
 pub mod dto;
 pub mod email;
 mod email_routes;
@@ -61,6 +63,7 @@ const EMAIL_TESTS_AT_ONCE: usize = 2;
 
 pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
 pub use control::{ControlConfig, ControlHub};
+pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
 pub use email::{EmailControl, EmailControlError};
 pub use error::ApiError;
 pub use mcp::{McpControl, McpControlError};
@@ -194,6 +197,10 @@ struct Inner {
     /// The running scheduler (see [`AppState::start_scheduler`]).
     scheduler: parking_lot::Mutex<Option<Scheduler>>,
     leader: OnceLock<host::LeaderControl>,
+    /// Embedder additions to `/v1/doctor` (see [`AppState::set_doctor_host`]).
+    doctor_host: OnceLock<Arc<dyn DoctorHost>>,
+    /// One diagnostics run at a time (`/v1/doctor*`).
+    doctor_runs: Arc<tokio::sync::Semaphore>,
     #[cfg(test)]
     scheduler_clock: parking_lot::Mutex<Option<Arc<dyn scheduler::Clock>>>,
     /// Shutdown steps in the order they ran (tests only).
@@ -322,6 +329,8 @@ impl AppState {
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
+            doctor_host: OnceLock::new(),
+            doctor_runs: Arc::new(tokio::sync::Semaphore::new(1)),
             #[cfg(test)]
             scheduler_clock: parking_lot::Mutex::new(None),
             #[cfg(test)]
@@ -363,6 +372,31 @@ impl AppState {
     /// a second call is ignored).
     pub fn set_secret_store(&self, store: Arc<dyn secret_store::SecretStore>) {
         let _ = self.0.secrets.set(store);
+    }
+
+    /// Add desktop / browser facts and repairs to `/v1/doctor` (call once;
+    /// a second call is ignored).
+    pub fn set_doctor_host(&self, host: Arc<dyn DoctorHost>) {
+        let _ = self.0.doctor_host.set(host);
+    }
+
+    pub(crate) fn doctor_host(&self) -> Option<Arc<dyn DoctorHost>> {
+        self.0.doctor_host.get().cloned()
+    }
+
+    /// The diagnostics slot, or `429` while another run is in progress.
+    pub(crate) fn doctor_permit(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, error::ApiError> {
+        Arc::clone(&self.0.doctor_runs)
+            .try_acquire_owned()
+            .map_err(|_| {
+                error::ApiError::new(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    "too_many_requests",
+                    "diagnostics are already running; try again in a moment",
+                )
+            })
     }
 
     pub(crate) fn mcp(&self) -> Option<Arc<dyn McpControl>> {
@@ -792,6 +826,9 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
         .route("/v1/providers/reload", post(r::reload_providers))
+        .route("/v1/doctor", get(doctor_routes::get_doctor))
+        .route("/v1/doctor/report", get(doctor_routes::report))
+        .route("/v1/doctor/repair/{id}", post(doctor_routes::repair))
         .route(
             "/v1/schedules",
             get(r::list_schedules).post(r::create_schedule),
