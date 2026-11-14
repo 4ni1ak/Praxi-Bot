@@ -1675,6 +1675,7 @@
       "recover_failed": "Could not recover control. Try again."
     },
     "reconnecting": "Reconnecting to the screen stream…",
-    "releaseOnClose": "Closing hands control back to the bot first."
+    "releaseOnClose": "Closing hands control back to the bot first.",
+    "dismissKeepsControl": "Closing only hides the viewer: control stays with you. Use Bitirdim or Retry in the panel."
   }
 }

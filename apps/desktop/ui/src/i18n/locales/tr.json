@@ -1675,6 +1675,7 @@
       "recover_failed": "Kontrol kurtarılamadı. Tekrar deneyin."
     },
     "reconnecting": "Ekran akışına yeniden bağlanılıyor…",
-    "releaseOnClose": "Kapatmak önce kontrolü bota geri verir."
+    "releaseOnClose": "Kapatmak önce kontrolü bota geri verir.",
+    "dismissKeepsControl": "Kapatmak yalnızca görünümü gizler: kontrol sizde kalır. Panelden Bitirdim veya Yeniden dene'yi kullanın."
   }
 }

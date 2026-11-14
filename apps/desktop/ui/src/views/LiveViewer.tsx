@@ -33,6 +33,7 @@ import {
   isActivelyOwningTakeover,
   summarizeTarget
 } from "../lib/liveViewState";
+import { viewerKeyAction } from "../lib/liveViewLayers";
 import { layerStack } from "../lib/modalStack";
 import { useDaemon } from "../state/DaemonContext";
 import { useLiveView } from "../state/LiveViewContext";
@@ -160,7 +161,14 @@ export function LiveViewer() {
       return undefined;
     }
     const onGlobalKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape" && !e.shiftKey && !isInteractive && !stageFocused) {
+      const action = viewerKeyAction({
+        stack: layerStack,
+        seq: layerSeqRef.current,
+        event: e,
+        interactive: isInteractive,
+        stageFocused
+      });
+      if (action === "close") {
         e.preventDefault();
         void closeViewer();
       }
@@ -226,7 +234,14 @@ export function LiveViewer() {
     layerStack.add(seq);
     const onKey = (e: globalThis.KeyboardEvent) => {
       const node = backdropRef.current;
-      if (e.key !== "Tab" || !node || !layerStack.isTop(seq)) {
+      const action = viewerKeyAction({
+        stack: layerStack,
+        seq,
+        event: e,
+        interactive: false,
+        stageFocused: false
+      });
+      if (action !== "trap-tab" || !node) {
         return;
       }
       const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
@@ -342,7 +357,6 @@ export function LiveViewer() {
     <div
       className={styles.backdrop}
       role="dialog"
-      aria-modal="true"
       aria-label={t("liveView.title")}
       data-testid="live-viewer"
       ref={backdropRef}
@@ -353,8 +367,13 @@ export function LiveViewer() {
             variant="ghost"
             size="sm"
             onClick={() => void closeViewer()}
-            disabled={isReleasing}
-            title={ownsActive ? t("liveView.releaseOnClose") : undefined}
+            title={
+              isReleasing
+                ? t("liveView.dismissKeepsControl")
+                : ownsActive
+                  ? t("liveView.releaseOnClose")
+                  : undefined
+            }
             data-testid="live-viewer-close"
           >
             <ArrowLeft />
@@ -460,7 +479,6 @@ export function LiveViewer() {
           <Button
             variant="secondary"
             size="sm"
-            disabled={isReleasing}
             onClick={() => void closeViewer()}
             data-testid="live-viewer-approvals-open"
           >

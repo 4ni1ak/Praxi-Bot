@@ -39,18 +39,19 @@ import {
   buildTakeoverRequest,
   canSendLiveInput,
   computeWantSession,
+  controlSnapshotKey,
   createInitialLiveViewState,
   describeRecoveryPrompt,
   isActivelyOwningTakeover,
   isControlBusy,
   pickDefaultTarget,
   planViewerClose,
-  reconnectDelayMs,
   type RecoveryPrompt,
   shouldOverrideOnStop,
   type LiveViewControllerState
 } from "../lib/liveViewState.ts";
 import { runRelease } from "../lib/liveViewRelease.ts";
+import { runReconnectLoop } from "../lib/liveViewReconnect.ts";
 import {
   consumeLiveViewStream,
   type DecodedFrameRecord,
@@ -100,6 +101,8 @@ interface LiveViewContextValue {
   setComposing: (composing: boolean) => void;
   showPanelAction: (highlight: PanelActionHighlight) => void;
   registerBridge: (bridge: ControlBridge | null) => void;
+  /** Feed a control snapshot the bridge re-read into state and the Stop gate. */
+  ingestControlSnapshot: (dto: ControlStateDto) => void;
 }
 
 const LiveViewContext = createContext<LiveViewContextValue | null>(null);
@@ -216,6 +219,22 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   const registerBridge: (bridge: ControlBridge | null) => void =
     registry.register;
+
+  // Snapshots the bridge re-reads (every heartbeat, on events) feed the same
+  // ref the global Stop consults, so a takeover this UI never adopted is seen.
+  const ingestControlSnapshot = useCallback(
+    (dto: ControlStateDto) => {
+      const changed =
+        controlStateRef.current === null ||
+        controlSnapshotKey(controlStateRef.current) !== controlSnapshotKey(dto);
+      controlStateRef.current = dto;
+      if (changed) {
+        setControlStateRaw(dto);
+        updateState((prev) => applyControlStateDto(prev, dto));
+      }
+    },
+    [updateState]
+  );
 
   useEffect(() => {
     registry.setOwnedTakeoverId(state.ownedTakeoverId);
@@ -360,31 +379,13 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         );
       });
 
-    // One connection attempt: new session, frame stream, until it ends or throws.
-    const connectOnce = async (onHealthy: () => void): Promise<void> => {
-      const session = await client.createViewSession({
-        client_id: clientIdRef.current,
-        target_id: selectedTarget.target_id,
-        profile: isActivelyOwningTakeover(stateRef.current) ? "live" : "watch",
-        codecs: selectedTarget.capabilities.codecs,
-        max_width: viewerOpen ? 1600 : 960,
-        max_height: viewerOpen ? 1000 : 600
-      });
-      if (abort.signal.aborted) {
-        void client.deleteViewSession(session.session_id).catch(() => undefined);
-        return;
-      }
-      mountedSessionId = session.session_id;
-      activeSessionRef.current = session;
-      lastFeedbackAtRef.current = 0;
-      lastGeometrySentRef.current = null;
-      updateState((prev) => applySessionCreated(prev, selectedTarget, session));
-
-      const res = await client.openViewFrameStream(
-        session.session_id,
-        abort.signal
-      );
-      if (!res.body || abort.signal.aborted) {
+    // Open and consume the frame stream of one session until it ends or throws.
+    const openStream = async (
+      sessionId: string,
+      signal: AbortSignal
+    ): Promise<void> => {
+      const res = await client.openViewFrameStream(sessionId, signal);
+      if (!res.body || signal.aborted) {
         return;
       }
 
@@ -415,7 +416,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
               URL.revokeObjectURL(url);
             }
           };
-          if (abort.signal.aborted) {
+          if (signal.aborted) {
             revoke();
           } else {
             window.requestAnimationFrame(revoke);
@@ -426,9 +427,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       await consumeLiveViewStream({
         stream: res.body,
         presenter,
-        signal: abort.signal,
+        signal,
         onActivity: () => {
-          onHealthy();
           updateState((prev) => applyStreamActivity(prev, Date.now()));
         },
         onStatus: (statusHeader) => {
@@ -446,11 +446,11 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           const due =
             geometryChanged ||
             nowMs - lastFeedbackAtRef.current >= FEEDBACK_THROTTLE_MS;
-          if (due && !abort.signal.aborted) {
+          if (due && !signal.aborted) {
             lastFeedbackAtRef.current = nowMs;
             lastGeometrySentRef.current = frame.header.geometry_revision;
             void client
-              .updateViewSession(session.session_id, {
+              .updateViewSession(sessionId, {
                 last_rendered_frame_seq: frame.header.frame_seq,
                 decode_ms: metrics.decodeMs,
                 buffered_frames: metrics.bufferedFrames
@@ -461,40 +461,42 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       });
     };
 
-    // A stream that fails OR ends (daemon restart, network blip, budget end) is a
-    // disconnect: input and the lease heartbeat stop, the badge says so, and a new
-    // session is created with bounded backoff. Control is never resumed here; the
-    // user reacquires explicitly once fresh control state is read.
-    const runSession = async () => {
-      let attempt = 0;
-      while (!abort.signal.aborted) {
-        try {
-          await connectOnce(() => {
-            attempt = 0;
-          });
-        } catch {
-          // handled as a disconnect below
+    // A stream that fails OR ends is a disconnect: input and the lease heartbeat
+    // stop, the dock shows the paused/disconnected state (Reacquire), and the
+    // SAME session is reopened with backoff (a session that owns a takeover is
+    // never deleted on a transient drop). Control is never resumed here.
+    void runReconnectLoop(
+      {
+        createSession: () =>
+          client.createViewSession({
+            client_id: clientIdRef.current,
+            target_id: selectedTarget.target_id,
+            profile: isActivelyOwningTakeover(stateRef.current) ? "live" : "watch",
+            codecs: selectedTarget.capabilities.codecs,
+            max_width: viewerOpen ? 1600 : 960,
+            max_height: viewerOpen ? 1000 : 600
+          }),
+        openStream,
+        deleteSession: (id) => client.deleteViewSession(id)
+      },
+      {
+        onSession: (session) => {
+          mountedSessionId = session.session_id;
+          activeSessionRef.current = session;
+          lastFeedbackAtRef.current = 0;
+          lastGeometrySentRef.current = null;
+          updateState((prev) => applySessionCreated(prev, selectedTarget, session));
+        },
+        onDisconnected: () => {
+          inputQueueRef.current.clear();
+          updateState((prev) => applyStreamDisconnected(prev));
+        },
+        beforeRetry: () => {
+          void refreshTargets();
         }
-        if (abort.signal.aborted) {
-          return;
-        }
-        inputQueueRef.current.clear();
-        updateState((prev) => applyStreamDisconnected(prev));
-        const dead = mountedSessionId;
-        mountedSessionId = null;
-        if (dead) {
-          void client.deleteViewSession(dead).catch(() => undefined);
-        }
-        attempt += 1;
-        await sleep(reconnectDelayMs(attempt));
-        if (abort.signal.aborted) {
-          return;
-        }
-        void refreshTargets();
-      }
-    };
-
-    void runSession();
+      },
+      { signal: abort.signal, sleep, now: () => Date.now() }
+    );
 
     return () => {
       abort.abort();
@@ -875,8 +877,12 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const closeViewer = useCallback(async () => {
     inputQueueRef.current.clear();
     const plan = planViewerClose(stateRef.current);
-    if (plan === "wait") {
-      return; // a hand-back is already pending; Retry lives in the dock
+    if (plan === "dismiss") {
+      // A hand-back is pending (failed or in flight): hide the viewer WITHOUT
+      // pretending it succeeded. Ownership and the request id stay, and the
+      // panel keeps Bitirdim / Retry.
+      setViewerOpen(false);
+      return;
     }
     if (plan === "release_first") {
       // Closing must not leave the bot paused behind a hidden screen: hand back
@@ -938,7 +944,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       resetInputState,
       setComposing,
       showPanelAction,
-      registerBridge
+      registerBridge,
+      ingestControlSnapshot
     }),
     [
       targets,
@@ -964,7 +971,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       resetInputState,
       setComposing,
       showPanelAction,
-      registerBridge
+      registerBridge,
+      ingestControlSnapshot
     ]
   );
 

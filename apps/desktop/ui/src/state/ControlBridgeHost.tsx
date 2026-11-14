@@ -29,8 +29,13 @@ import { useLiveView } from "./LiveViewContext";
 export function ControlBridgeHost() {
   const { t } = useTranslation();
   const { client, bots, onDaemonEvent } = useDaemon();
-  const { targets, selectedTarget, showPanelAction, registerBridge } =
-    useLiveView();
+  const {
+    targets,
+    selectedTarget,
+    showPanelAction,
+    registerBridge,
+    ingestControlSnapshot
+  } = useLiveView();
 
   const botsRef = useRef(bots);
   botsRef.current = bots;
@@ -78,6 +83,7 @@ export function ControlBridgeHost() {
           selectedTarget: selectedRef.current,
           computerTarget: computerTargetRef.current
         }),
+      onSnapshot: ingestControlSnapshot,
       panelOverlay: {
         showAction: showPanelAction
       },
@@ -122,7 +128,7 @@ export function ControlBridgeHost() {
       offState();
       window.clearInterval(beat);
     };
-  }, [client, onDaemonEvent, registerBridge, showPanelAction]);
+  }, [client, onDaemonEvent, registerBridge, showPanelAction, ingestControlSnapshot]);
 
   return null;
 }

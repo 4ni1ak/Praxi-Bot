@@ -131,6 +131,8 @@ export interface BridgeDeps {
   panelOverlay?: {
     showAction(highlight: PanelActionHighlight): void;
   };
+  /** Every control snapshot the bridge applied (the app's single source of truth). */
+  onSnapshot?(dto: ControlStateDto): void;
   botMeta(botId: string): BotMeta;
   startingStep: string;
   now(): number;
@@ -315,6 +317,7 @@ export class ControlBridge {
 
   private applyControlDto(dto: ControlStateDto): void {
     this.applyTakeoverInfo(dto.takeover);
+    this.deps.onSnapshot?.(dto);
   }
 
   /** True only for this app's own live takeover, never a peer's or a stale one. */

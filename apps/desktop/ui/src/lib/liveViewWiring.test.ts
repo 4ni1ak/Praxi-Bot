@@ -68,3 +68,83 @@ test("the viewer layer sits below dialogs and toasts so approvals stay answerabl
   assert.ok(viewerZ < z(read("../components/Modal.module.css"), "\\.backdrop"));
   assert.ok(viewerZ < z(read("../components/Toast.module.css"), "\\.region"));
 });
+
+// ---- second review: which element carries which handler, and who calls what ----
+
+const host = read("../state/ControlBridgeHost.tsx");
+const modal = read("../components/Modal.tsx");
+const palette = read("../components/CommandPalette.tsx");
+
+/** The opening tag (`<div ... >`) that contains `needle`. */
+function tagAround(source: string, needle: string): string {
+  const at = source.indexOf(needle);
+  assert.ok(at > 0, `${needle} present`);
+  const open = Math.max(
+    source.lastIndexOf("<div", at),
+    source.lastIndexOf("<textarea", at),
+    source.lastIndexOf("<Button", at)
+  );
+  return source.slice(open, source.indexOf(">", at) + 1);
+}
+
+test("each handler spread sits on the right element", () => {
+  const stage = tagAround(viewer, "{...stageController.stage}");
+  assert.match(stage, /^<div/);
+  assert.match(stage, /ref=\{stageRef\}/);
+  assert.doesNotMatch(stage, /stageController\.(ime|toolbar)/);
+
+  const ime = tagAround(viewer, "{...stageController.ime}");
+  assert.match(ime, /^<textarea/);
+  assert.doesNotMatch(ime, /stageController\.(stage|toolbar)/);
+
+  const toolbar = tagAround(viewer, "{...stageController.toolbar}");
+  assert.match(toolbar, /^<div/);
+  assert.match(toolbar, /focusOverlayBar/);
+  assert.doesNotMatch(toolbar, /stageController\.(stage|ime)/);
+});
+
+test("ControlBridgeHost registers its bridge through the stable registerBridge", () => {
+  assert.match(host, /registerBridge\(bridge\)/);
+  assert.match(host, /registerBridge\(null\)/);
+  const deps = /\}, \[([^\]]*)\]\);\s*return null;/.exec(host);
+  assert.ok(deps, "effect dependency list");
+  assert.match(deps[1], /\bregisterBridge\b/);
+  assert.doesNotMatch(deps[1], /controlState/);
+  assert.match(host, /onSnapshot: ingestControlSnapshot/);
+  assert.equal((host.match(/new ControlBridge\(/g) ?? []).length, 1);
+});
+
+test("the context calls the tested helpers (release, close, reconnect)", () => {
+  assert.match(context, /await runRelease\(/);
+  assert.match(context, /planViewerClose\(stateRef\.current\)/);
+  assert.match(context, /runReconnectLoop\(/);
+  assert.match(context, /applyStreamDisconnected\(prev\)/);
+  assert.match(context, /applySessionCreated\(prev, selectedTarget, session\)/);
+  // dismissing never goes through performRelease
+  const dismiss = /plan === "dismiss"\) \{[^}]*\}/.exec(context);
+  assert.ok(dismiss);
+  assert.doesNotMatch(dismiss[0], /performRelease/);
+  assert.match(dismiss[0], /setViewerOpen\(false\)/);
+  // the old per-attempt deleteViewSession on every drop is gone
+  assert.equal(
+    (context.match(/deleteViewSession\(/g) ?? []).length,
+    4,
+    "no-session cleanup, pagehide, effect cleanup, loop delete link"
+  );
+});
+
+test("the viewer is not aria-modal, never disables its only dismiss, and defers keys to higher layers", () => {
+  assert.doesNotMatch(viewer, /aria-modal/);
+  const back = tagAround(viewer, 'data-testid="live-viewer-close"');
+  assert.doesNotMatch(back, /disabled/);
+  assert.match(viewer, /viewerKeyAction\(/);
+  assert.doesNotMatch(viewer, /inert/);
+});
+
+test("Modal uses the ref-counted inert tracker and the palette is a layer", () => {
+  assert.match(modal, /appInert\.acquire\(seq\)/);
+  assert.match(modal, /appInert\.release\(seq\)/);
+  assert.doesNotMatch(modal, /querySelectorAll\('\[aria-modal/);
+  assert.match(palette, /layerStack\.add\(seq\)/);
+  assert.match(palette, /e\.stopPropagation\(\)/);
+});
