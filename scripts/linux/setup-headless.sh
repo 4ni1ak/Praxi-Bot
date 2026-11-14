@@ -142,6 +142,9 @@ else
   if [[ "${WITHOUT_DESKTOP}" -eq 1 ]]; then
     die "--without-desktop is only supported with --system"
   fi
+  if [[ "${DRY_RUN}" -eq 0 && "${EUID:-$(id -u)}" -eq 0 ]]; then
+    die "--user mode cannot be run as root; pass --system or run as an unprivileged user"
+  fi
 fi
 
 ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
@@ -177,6 +180,13 @@ set_env_kv() {
   local file="$1" key="$2" val="$3"
   sed -i "/^${key}=/d" "${file}"
   printf '%s=%s\n' "${key}" "${val}" >> "${file}"
+}
+
+ensure_env_default() {
+  local file="$1" key="$2" val="$3"
+  if ! grep -q "^${key}=" "${file}"; then
+    printf '%s=%s\n' "${key}" "${val}" >> "${file}"
+  fi
 }
 
 remove_env_key() {
@@ -281,6 +291,10 @@ set -euo pipefail
 disp="${1:?display required}"
 xauth_file="${2:?Xauthority path required}"
 mkdir -p "$(dirname "${xauth_file}")"
+if [[ -s "${xauth_file}" ]] && xauth -f "${xauth_file}" list "${disp}" 2>/dev/null | grep -q 'MIT-MAGIC-COOKIE-1'; then
+  chmod 0600 "${xauth_file}"
+  exit 0
+fi
 if command -v mcookie >/dev/null 2>&1; then
   cookie="$(mcookie)"
 else
@@ -506,6 +520,7 @@ XFSETTINGSD_PID=""
 XFWM_PID=""
 XFDESKTOP_PID=""
 XFPANEL_PID=""
+STOP_REQUESTED=0
 
 cleanup() {
   local pid
@@ -517,18 +532,26 @@ cleanup() {
   wait 2>/dev/null || true
   rm -f "${DBUS_SOCKET}"
 }
-trap cleanup EXIT INT TERM
+on_term() {
+  STOP_REQUESTED=1
+  cleanup
+  exit 0
+}
+trap on_term INT TERM
+trap cleanup EXIT
 
 dbus-daemon --session --address="unix:path=${DBUS_SOCKET}" --nofork --nopidfile &
 DBUS_PID=$!
 
 for _ in $(seq 1 50); do
   if [[ -S "${DBUS_SOCKET}" ]]; then
+    chmod 0600 "${DBUS_SOCKET}"
     break
   fi
   sleep 0.1
 done
 [[ -S "${DBUS_SOCKET}" ]] || { echo "error: session D-Bus socket did not appear" >&2; exit 1; }
+chmod 0600 "${DBUS_SOCKET}"
 
 if command -v dbus-update-activation-environment >/dev/null 2>&1; then
   dbus-update-activation-environment \
@@ -576,7 +599,33 @@ XFDESKTOP_PID=$!
 xfce4-panel &
 XFPANEL_PID=$!
 
-wait -n "${DBUS_PID}" "${XFWM_PID}" "${XFDESKTOP_PID}" "${XFPANEL_PID}"
+while [[ "${STOP_REQUESTED}" -eq 0 ]]; do
+  rc=0
+  wait -n "${DBUS_PID}" "${XFWM_PID}" "${XFDESKTOP_PID}" "${XFPANEL_PID}" || rc=$?
+  [[ "${STOP_REQUESTED}" -eq 0 ]] || break
+  if ! kill -0 "${DBUS_PID}" 2>/dev/null; then
+    echo "error: session dbus-daemon exited (rc=${rc})" >&2
+    exit 1
+  fi
+  if ! kill -0 "${XFWM_PID}" 2>/dev/null; then
+    echo "error: xfwm4 exited (rc=${rc})" >&2
+    exit 1
+  fi
+  if ! kill -0 "${XFDESKTOP_PID}" 2>/dev/null; then
+    echo "warning: xfdesktop exited (rc=${rc}); restarting" >&2
+    sleep 1
+    [[ "${STOP_REQUESTED}" -eq 0 ]] || break
+    xfdesktop &
+    XFDESKTOP_PID=$!
+  fi
+  if ! kill -0 "${XFPANEL_PID}" 2>/dev/null; then
+    echo "warning: xfce4-panel exited (rc=${rc}); restarting" >&2
+    sleep 1
+    [[ "${STOP_REQUESTED}" -eq 0 ]] || break
+    xfce4-panel &
+    XFPANEL_PID=$!
+  fi
+done
 EOF
   chmod 0755 "${target}"
 }
@@ -607,25 +656,53 @@ if [[ "${MODE}" == "system" ]]; then
   install -d -m 0750 -o "${SVC_USER}" -g "${SVC_USER}" "${DATA_DIR}"
   install -d -m 0750 -o root -g "${SVC_USER}" "${CONF_DIR}"
 
-  # Clean up any conflicting user-level unit on the invoking user's account.
-  cleanup_user_unit() {
-    local uhome="$1" uunit="${1}/.config/systemd/user/praxi-headless-desktop.service" uvnc="${1}/.config/systemd/user/praxi-headless-vnc.service"
-    if [[ -f "${uvnc}" ]]; then
-      rm -f "${uvnc}"
-    fi
-    if [[ -f "${uunit}" ]] && grep -q "DISPLAY=${DISPLAY_NUM}" "${uunit}" 2>/dev/null; then
-      log "removing conflicting user-level unit ${uunit} for ${DISPLAY_NUM}"
-      rm -f "${uunit}"
-    fi
-    if [[ -n "${uhome}" && -d "${uhome}/.config/systemd/user" ]]; then
-      rm -f "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-desktop.service" \
-        "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-vnc.service" 2>/dev/null || true
+  run_user_systemctl() {
+    local uname="$1" uid="$2"
+    shift 2
+    local runtime_dir="/run/user/${uid}"
+    local current_user
+    current_user="$(id -un 2>/dev/null || true)"
+    if [[ -z "${uname}" || "${uname}" == "${current_user}" || "${EUID:-$(id -u)}" -ne 0 ]]; then
+      env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1 || true
+    elif command -v runuser >/dev/null 2>&1; then
+      runuser -u "${uname}" -- env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="${runtime_dir}" systemctl --user "$@" >/dev/null 2>&1 || true
     fi
   }
-  cleanup_user_unit "${HOME}"
-  if [[ -n "${SUDO_USER:-}" ]]; then
-    sudo_home="$(getent passwd "${SUDO_USER}" | cut -d: -f6 || true)"
-    [[ -n "${sudo_home}" ]] && cleanup_user_unit "${sudo_home}"
+
+  # Clean up any conflicting user-level unit on the invoking user's account.
+  cleanup_user_unit() {
+    local uname="$1" uhome="$2"
+    [[ -n "${uhome}" ]] || return 0
+    local uunit="${uhome}/.config/systemd/user/praxi-headless-desktop.service"
+    local uvnc="${uhome}/.config/systemd/user/praxi-headless-vnc.service"
+    local uid=""
+    if [[ -n "${uname}" ]]; then
+      uid="$(id -u "${uname}" 2>/dev/null || true)"
+    fi
+    if [[ -f "${uvnc}" ]]; then
+      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-vnc.service
+      rm -f "${uvnc}" "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-vnc.service"
+      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" daemon-reload
+    fi
+    if [[ -f "${uunit}" ]] && grep -Eq "DISPLAY=${DISPLAY_NUM}([\"\'[:space:]]|$)" "${uunit}" 2>/dev/null; then
+      log "stopping, disabling, and removing conflicting user-level unit ${uunit} for ${DISPLAY_NUM}"
+      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" disable --now praxi-headless-desktop.service
+      rm -f "${uunit}" "${uhome}/.config/systemd/user/default.target.wants/praxi-headless-desktop.service"
+      [[ -n "${uid}" ]] && run_user_systemctl "${uname}" "${uid}" daemon-reload
+    fi
+  }
+  if [[ "${WITHOUT_DESKTOP}" -eq 0 ]]; then
+    cur_user="$(id -un 2>/dev/null || true)"
+    cleanup_user_unit "${cur_user}" "${HOME}"
+    if [[ -n "${SUDO_USER:-}" ]]; then
+      sudo_home="$(getent passwd "${SUDO_USER}" | cut -d: -f6 || true)"
+      if [[ -n "${sudo_home}" && "${sudo_home}" != "${HOME}" ]]; then
+        cleanup_user_unit "${SUDO_USER}" "${sudo_home}"
+      fi
+    fi
+    if [[ "${DATA_DIR}" != "${HOME}" ]]; then
+      cleanup_user_unit "${SVC_USER}" "${DATA_DIR}"
+    fi
   fi
 
   HARDENING="NoNewPrivileges=true
@@ -660,7 +737,7 @@ UNIT
 
   if [[ "${WITHOUT_DESKTOP}" -eq 1 ]]; then
     log "removing praxi-desktop.service and praxi-xvfb.service"
-    systemctl disable --now praxi-desktop.service praxi-xvfb.service >/dev/null 2>&1 || true
+    systemctl disable --now praxi-xvfb.service praxi-desktop.service >/dev/null 2>&1 || true
     rm -f "${UNIT_DIR}/praxi-desktop.service" "${UNIT_DIR}/praxi-xvfb.service"
     rm -f "${UNIT_DIR}/praxi.service.d/desktop.conf" "${UNIT_DIR}/praxi-node.service.d/desktop.conf"
     if [[ -f "${ENV_FILE}" ]]; then
@@ -691,9 +768,22 @@ UNIT
   write_wait_desktop_helper "${LIBEXEC_DIR}/praxi-wait-desktop.sh"
   write_xfce_session_script "${LIBEXEC_DIR}/praxi-xfce-session.sh"
 
+  upholds_units=()
+  if [[ "${SESSION_MODE}" == "xfce" ]]; then
+    upholds_units+=(praxi-desktop.service)
+  fi
+  if [[ -f "${UNIT_DIR}/praxi.service" ]]; then
+    upholds_units+=(praxi.service)
+  fi
+  upholds_line=""
+  if [[ "${#upholds_units[@]}" -gt 0 ]]; then
+    upholds_line="Upholds=${upholds_units[*]}"
+  fi
+
   cat > "${UNIT_DIR}/praxi-xvfb.service" <<UNIT
 [Unit]
 Description=Praxi virtual display (Xvfb ${DISPLAY_NUM})
+${upholds_line}
 
 [Service]
 Type=simple
@@ -721,7 +811,7 @@ UNIT
     cat > "${UNIT_DIR}/praxi-desktop.service" <<UNIT
 [Unit]
 Description=Praxi minimal Xfce desktop session (${DISPLAY_NUM})
-Requires=praxi-xvfb.service
+BindsTo=praxi-xvfb.service
 After=praxi-xvfb.service
 PartOf=praxi-xvfb.service
 JoinsNamespaceOf=praxi-xvfb.service
@@ -750,7 +840,7 @@ Environment=GNOME_ACCESSIBILITY=1
 ${browser_bin:+Environment=BOT_BROWSER_PATH=${browser_bin}}
 ExecStart=${LIBEXEC_DIR}/praxi-xfce-session.sh
 ExecStartPost=${LIBEXEC_DIR}/praxi-wait-desktop.sh ${DBUS_SOCKET}
-Restart=on-failure
+Restart=always
 RestartSec=3
 TimeoutStopSec=15
 KillMode=control-group
@@ -760,6 +850,7 @@ ${HARDENING}
 WantedBy=multi-user.target
 UNIT
   else
+    systemctl daemon-reload
     systemctl disable --now praxi-desktop.service >/dev/null 2>&1 || true
     rm -f "${UNIT_DIR}/praxi-desktop.service"
   fi
@@ -777,14 +868,15 @@ UNIT
     if [[ "${SESSION_MODE}" == "xfce" ]]; then
       cat > "${UNIT_DIR}/${svc}.service.d/desktop.conf" <<UNIT
 [Unit]
-Requires=praxi-xvfb.service praxi-desktop.service
+BindsTo=praxi-xvfb.service
+Requires=praxi-desktop.service
 After=praxi-xvfb.service praxi-desktop.service
 JoinsNamespaceOf=praxi-xvfb.service
 UNIT
     else
       cat > "${UNIT_DIR}/${svc}.service.d/desktop.conf" <<UNIT
 [Unit]
-Requires=praxi-xvfb.service
+BindsTo=praxi-xvfb.service
 After=praxi-xvfb.service
 JoinsNamespaceOf=praxi-xvfb.service
 UNIT
@@ -792,6 +884,8 @@ UNIT
   done
 
   if [[ -f "${ENV_FILE}" ]]; then
+    ensure_env_default "${ENV_FILE}" BOT_MAX_COMPUTER_RUNS 1
+    ensure_env_default "${ENV_FILE}" BOT_BROWSER_IDLE_SECONDS 120
     set_env_kv "${ENV_FILE}" DISPLAY "${DISPLAY_NUM}"
     set_env_kv "${ENV_FILE}" XAUTHORITY "${XAUTH_FILE}"
     if [[ "${SESSION_MODE}" == "xfce" ]]; then
