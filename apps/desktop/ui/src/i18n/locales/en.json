@@ -1085,6 +1085,7 @@
       "ai": "AI",
       "computer": "Computer",
       "usage": "Usage",
+      "diagnostics": "Diagnostics",
       "updates": "Updates",
       "appearance": "Appearance"
     },
@@ -1353,6 +1354,72 @@
       "toast": {
         "saved": "Web search settings saved",
         "keyCleared": "API key removed from secret store"
+      }
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "description": "Checks why the bot might not be working and fixes common problems.",
+      "running": "Running diagnostics…",
+      "allGood": "Everything looks fine",
+      "problems": "{{count}} item needs attention",
+      "problems_other": "{{count}} items need attention",
+      "checkedAt": "Last checked at {{time}}",
+      "rerun": "Run again",
+      "copyReport": "Copy support report",
+      "reportCopied": "Support report copied. Keys, tokens, e-mail addresses and your user folder are masked.",
+      "reportFailed": "Could not create the support report",
+      "repairDone": "Repair finished",
+      "repairFailed": "The repair did not succeed",
+      "offline": "Not connected to the daemon. Start Praxi to run diagnostics.",
+      "loadError": "Could not run diagnostics",
+      "notOnPlatform": "Not available on this platform.",
+      "privacy": "Diagnostics only read your settings. A repair runs only when you click its button.",
+      "status": {
+        "ok": "OK",
+        "warn": "Check",
+        "fail": "Problem",
+        "neutral": "Not used",
+        "unsupported": "Not available"
+      },
+      "repair": {
+        "create_data_dir": "Create folder",
+        "reload_providers": "Reload providers",
+        "restart_browser": "Restart browser"
+      },
+      "checks": {
+        "daemon": "Daemon",
+        "host_ownership": "Host ownership",
+        "peer_link": "Peer / VPS link",
+        "data_dir": "Data folder",
+        "unicode_path": "Turkish characters in paths",
+        "config": "Provider settings file",
+        "secret_backend": "Secret store",
+        "providers": "AI providers",
+        "providers_loaded": "Loaded providers",
+        "cli_accounts": "Coding CLI accounts",
+        "model_catalog": "Model catalog",
+        "browser": "Browser",
+        "desktop_automation": "Desktop automation",
+        "capabilities": "Capabilities",
+        "schedule_tools": "Schedule tools",
+        "disk_space": "Disk space",
+        "clock": "Clock"
+      },
+      "hints": {
+        "providers": "Add the API key in Settings → AI, or sign in to the coding CLI and turn it on there.",
+        "providers_loaded": "Reload the providers so the bot uses the saved settings.",
+        "cli_accounts": "Open a terminal once and sign in to the CLI (for example `claude` or `codex login`).",
+        "data_dir": "Create the data folder, or check that you have permission to write to it.",
+        "unicode_path": "Move the data folder to a path without special characters, or to a local NTFS disk.",
+        "disk_space": "Free some disk space; conversations and logs cannot be saved when the disk is full.",
+        "clock": "Turn on automatic date and time in the system settings.",
+        "browser": "Install Chrome, Edge or Chromium (not the snap package).",
+        "desktop_automation": "Restart the app; if it stays off, check that desktop automation was not turned off.",
+        "secret_backend": "Restart the app; if the secret store stays locked, set it up again in Settings.",
+        "config": "The provider settings file is damaged; add the provider again in Settings → AI.",
+        "host_ownership": "This installation is idle; activate it from the host settings.",
+        "peer_link": "Pair this device with the host again.",
+        "schedule_tools": "schedule.toml is invalid; fix or delete it."
       }
     }
   },
