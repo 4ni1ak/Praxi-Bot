@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
 import process from 'node:process';
 import { evaluateShell, APP_FNS } from '../../../apps/desktop/ui/src/lib/shellGeometry.ts';
+import { MUTATIONS } from '../../../apps/desktop/ui/src/lib/shellMutations.ts';
 import { LEGACY_FNS, LEGACY_SIDEBAR_CSS } from '../../../apps/desktop/ui/src/lib/shellLegacy.ts';
 
 // Deterministic v6 shell layout check (card 233).  No browser: the geometry functions are the
@@ -12,7 +13,8 @@ const sources = {
   sidebarCss: read('../src/components/Sidebar.module.css'),
   tokensCss: read('../tokens.css'),
   globalCss: read('../../../apps/desktop/ui/src/global.css'),
-  themeTs: read('../src/theme.ts')
+  themeTs: read('../src/theme.ts'),
+  sidebarTsx: read('../src/components/Sidebar.tsx')
 };
 
 let failed = false;
@@ -45,5 +47,14 @@ for (const [label, re] of expectations) {
     process.stderr.write(`selftest FAILED: the legacy shell was not caught for "${label}"\n`);
   }
 }
+for (const m of MUTATIONS) {
+  const r = evaluateShell({ ...sources, sidebarCss: m.css ? m.css(sources.sidebarCss) : sources.sidebarCss }, APP_FNS, m.options);
+  const out = [...r.contractFailures, ...r.violations].join('\n');
+  if (!m.expect.test(out)) {
+    failed = true;
+    process.stderr.write(`selftest FAILED: mutation not caught on its own: ${m.name}\n`);
+  }
+}
+if (!failed) process.stdout.write(`selftest: ${MUTATIONS.length} single mutations each rejected on their own\n`);
 if (!failed) process.stdout.write(`selftest: legacy shell rejected (${legacy.contractFailures.length} contract, ${legacy.violations.length} geometry violations)\n`);
 process.exitCode = failed ? 1 : 0;

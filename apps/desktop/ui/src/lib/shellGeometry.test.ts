@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { APP_FNS, evaluateShell, shellBoxes } from "./shellGeometry.ts";
+import { MUTATIONS } from "./shellMutations.ts";
 import { LEGACY_FNS, LEGACY_SIDEBAR_CSS } from "./shellLegacy.ts";
 import { evalLength, readShellContract } from "./shellContract.ts";
 import { FLOAT_GAP, FLOAT_PAD } from "./shellLayout.ts";
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
 const sources = {
+  sidebarTsx: read("../../../../../packages/ui/src/components/Sidebar.tsx"),
   sidebarCss: read("../../../../../packages/ui/src/components/Sidebar.module.css"),
   tokensCss: read("../../../../../packages/ui/tokens.css"),
   globalCss: read("../global.css"),
@@ -63,4 +65,22 @@ test("the length evaluator reads plain CSS lengths", () => {
   assert.equal(evalLength("calc(320px - var(--missing, 2px))", vars), 318);
   assert.equal(evalLength("calc(320px - var(--missing, var(--space-3)))", vars), 308);
   assert.equal(evalLength("100%", vars), undefined);
+});
+
+for (const m of MUTATIONS) {
+  test(`single mutation is rejected on its own: ${m.name}`, () => {
+    const css = m.css ? m.css(sources.sidebarCss) : sources.sidebarCss;
+    const report = evaluateShell({ ...sources, sidebarCss: css }, APP_FNS, m.options);
+    const text = [...report.contractFailures, ...report.violations].join("\n");
+    assert.ok(text.length > 0, "the check must fail");
+    assert.match(text, m.expect);
+  });
+}
+
+test("the rail reserve keeps the chat above its minimum at every frame of the close slide", () => {
+  const settled = evaluateShell(sources, APP_FNS, { railPolicy: "settled" });
+  assert.deepEqual(settled.violations, []);
+  const immediate = evaluateShell(sources, APP_FNS, { railPolicy: "immediate" });
+  // Review numbers: 760 px, float, stored rail 440, panel 260: the chat is squeezed while the panel still slides.
+  assert.ok(immediate.violations.some((v) => /vw=760 rail=440 panel=260 float=on closing progress=1 \(transition\): main 4\d(\.\d+)?px/.test(v)));
 });

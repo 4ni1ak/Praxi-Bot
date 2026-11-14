@@ -4,8 +4,8 @@
  * (`shellLayout.ts`) and the border / padding numbers read from the CSS (`shellContract.ts`).
  * `checkMatrix` asserts the layout invariants over the whole width x rail x panel x style grid.
  */
-import { FLOAT_GAP, FLOAT_PAD, fitRail, MAIN_MIN, panelMax, PANEL_MIN } from "./shellLayout.ts";
-import type { ShellModel } from "./shellContract.ts";
+import { FLOAT_GAP, FLOAT_PAD, fitRail, MAIN_MIN, panelMax, PANEL_MIN, PANEL_SETTLE_MS } from "./shellLayout.ts";
+import type { ShellModel, StateKey } from "./shellContract.ts";
 
 export interface Box {
   left: number;
@@ -18,8 +18,13 @@ export interface ShellInput {
   rail: number;
   /** Stored panel width (before the clamp against the window). */
   panel: number;
+  /** The panel's DOM state (`data-open`). */
   panelOpen: boolean;
   float: boolean;
+  /** Slide progress of the panel's width/margin transition, 0 = closed width, 1 = open width. Default: settled. */
+  progress?: number;
+  /** Whether the rail fit still reserves the panel (open, or closing and not yet settled). Default: panelOpen. */
+  reserve?: boolean;
 }
 
 export interface ShellBoxes {
@@ -30,6 +35,8 @@ export interface ShellBoxes {
   panelInner: Box;
   /** Right edge of the panel's content box (border-box right minus its right border). */
   panelContentRight: number;
+  /** Width of the panel's content box. */
+  panelContentWidth: number;
 }
 
 /** The clamp functions under test: the app's, or an older variant for the mutation self-test. */
@@ -42,29 +49,39 @@ export const APP_FNS: ShellFns = { panelMax, fitRail };
 
 export function shellBoxes(input: ShellInput, model: ShellModel, fns: ShellFns = APP_FNS): ShellBoxes {
   const { vw, float, panelOpen } = input;
+  const reserve = input.reserve ?? panelOpen;
   const pad = float ? model.floatPad : 0;
   const gap = float ? model.floatGap : 0;
-  const panelW = panelOpen ? Math.min(input.panel, fns.panelMax(vw, input.rail, float)) : 0;
-  const railW = fns.fitRail ? fns.fitRail(vw, input.rail, panelW, float, panelOpen) : input.rail;
+  // Target width (what the app writes into --panel-w), also while the panel is closed or closing.
+  const targetW = Math.min(input.panel, fns.panelMax(vw, input.rail, float));
+  const railW = fns.fitRail ? fns.fitRail(vw, input.rail, targetW, float, reserve) : input.rail;
+  const openKey: StateKey = float ? "floatOpen" : "plainOpen";
+  const closedKey: StateKey = float ? "floatClosed" : "plainClosed";
+  const key = panelOpen ? openKey : closedKey;
+  const state = model.states[key];
+  const p = input.progress ?? (panelOpen ? 1 : 0);
+  // Slide: width and margin move together from the closed to the open value.
+  const openW = model.states[openKey].width(targetW);
+  const closedW = model.states[closedKey].width(targetW);
+  const panelW = panelOpen && p === 1 ? state.width(targetW) : closedW + (openW - closedW) * p;
+  const margin =
+    model.states[closedKey].marginLeft + (model.states[openKey].marginLeft - model.states[closedKey].marginLeft) * p;
   const content = { left: pad, right: vw - pad };
   const rail = { left: content.left, right: content.left + railW };
-  const mainLeft = rail.right + gap;
-  // flex: main takes what is left; a closed float panel (width 0) pulls its gap back.
-  const pull = float && !panelOpen ? model.closedPanelPull : 0;
-  const mainRight = content.right - panelW - (panelOpen ? gap : gap - pull);
-  const main = { left: mainLeft, right: mainRight };
-  const panelLeft = mainRight + (panelOpen ? gap : gap - pull);
+  const mainRight = content.right - panelW - margin - gap;
+  const main = { left: rail.right + gap, right: mainRight };
+  const panelLeft = mainRight + gap + margin;
   const panel = { left: panelLeft, right: panelLeft + panelW };
-  const b = panelOpen ? (float ? model.borders.float : model.borders.plain) : { left: 0, right: 0 };
-  const innerW = panelOpen ? model.innerWidth(panelW, b.left, b.right, float) : panelW;
-  const innerLeft = panel.left + b.left;
+  const innerW = model.innerWidth(targetW, key);
+  const innerLeft = panel.left + state.borderLeft;
   return {
     content,
     rail,
     main,
     panel,
     panelInner: { left: innerLeft, right: innerLeft + innerW },
-    panelContentRight: panel.right - b.right
+    panelContentRight: panel.right - state.borderRight,
+    panelContentWidth: panelW - state.borderLeft - state.borderRight
   };
 }
 
@@ -88,46 +105,70 @@ export interface MatrixResult {
 
 const EPS = 0.01;
 
-export function checkMatrix(model: ShellModel, fns: ShellFns = APP_FNS): MatrixResult {
+export interface MatrixOptions {
+  /** `settled`: the rail keeps the open geometry until the panel has finished closing (the app). `immediate`: the pre-review behaviour. */
+  railPolicy?: "settled" | "immediate";
+}
+
+/** Progress steps sampled along the panel's slide (width and margin are linear in progress, so the ends are the worst case). */
+const SLIDE = [0, 0.25, 0.5, 0.75, 1];
+
+export function checkMatrix(model: ShellModel, fns: ShellFns = APP_FNS, options: MatrixOptions = {}): MatrixResult {
+  const policy = options.railPolicy ?? "settled";
   const violations: string[] = [];
   let cells = 0;
   let narrowest = { width: Infinity, cell: "" };
   const add = (cell: string, msg: string) => violations.push(`${cell}: ${msg}`);
+  const common = (cell: string, g: ShellBoxes, vw: number, pad: number, panelVisible: boolean) => {
+    const mainW = g.main.right - g.main.left;
+    if (mainW < narrowest.width) narrowest = { width: mainW, cell };
+    const boxes: Array<[string, Box]> = [["rail", g.rail], ["main", g.main]];
+    if (panelVisible) boxes.push(["panel", g.panel]);
+    for (const [name, b] of boxes) {
+      if (b.left < pad - EPS || b.right > vw - pad + EPS) add(cell, `${name} [${b.left}, ${b.right}] leaves [${pad}, ${vw - pad}]`);
+    }
+    if (g.rail.right > g.main.left + EPS) add(cell, "rail overlaps main");
+    if (panelVisible && g.main.right > g.panel.left + EPS) add(cell, "main overlaps panel");
+    if (mainW < 280 - EPS) add(cell, `main ${mainW}px < 280`);
+    if (vw >= 900 && mainW < MAIN_MIN - EPS) add(cell, `main ${mainW}px < MAIN_MIN ${MAIN_MIN}`);
+    if (!Number.isFinite(mainW)) add(cell, "main width is not a number");
+  };
   for (const vw of MATRIX.widths) {
     for (const rail of MATRIX.rails) {
       for (const float of [false, true]) {
+        const pad = float ? model.floatPad : 0;
         for (const panelCase of panelCases(vw, rail, float, fns)) {
+          const open = panelCase !== "closed";
           for (const [corners, scale] of Object.entries(MATRIX.corners)) {
             cells++;
-            const open = panelCase !== "closed";
             const cell = `vw=${vw} rail=${rail} panel=${panelCase} float=${float ? "on" : "off"} corners=${corners}`;
             const g = shellBoxes({ vw, rail, panel: open ? panelCase : PANEL_MIN, panelOpen: open, float }, model, fns);
-            const pad = float ? model.floatPad : 0;
-            const mainW = g.main.right - g.main.left;
-            if (mainW < narrowest.width) narrowest = { width: mainW, cell };
-            const boxes: Array<[string, Box]> = [["rail", g.rail], ["main", g.main]];
-            if (open) boxes.push(["panel", g.panel], ["panelInner", g.panelInner]);
-            for (const [name, b] of boxes) {
-              if (b.left < pad - EPS || b.right > vw - pad + EPS) {
-                add(cell, `${name} [${b.left}, ${b.right}] leaves [${pad}, ${vw - pad}]`);
-              }
-            }
-            if (g.rail.right > g.main.left + EPS) add(cell, "rail overlaps main");
-            if (open && g.main.right > g.panel.left + EPS) add(cell, "main overlaps panel");
-            if (mainW < 280 - EPS) add(cell, `main ${mainW}px < 280`);
-            if (vw >= 900 && mainW < MAIN_MIN - EPS) add(cell, `main ${mainW}px < MAIN_MIN ${MAIN_MIN}`);
+            common(cell, g, vw, pad, open);
             if (open) {
               if (Math.abs(g.panel.right - (vw - pad)) > EPS) add(cell, `panel.right ${g.panel.right} != ${vw - pad}`);
               if (g.panelInner.right > g.panelContentRight + EPS) {
                 add(cell, `panelInner.right ${g.panelInner.right} > panel content right ${g.panelContentRight} (clipped ${g.panelInner.right - g.panelContentRight}px)`);
               }
+              const innerW = g.panelInner.right - g.panelInner.left;
+              if (!(Math.abs(innerW - g.panelContentWidth) <= EPS)) {
+                add(cell, `panelInner width ${innerW} != available content width ${g.panelContentWidth}`);
+              }
+              if (g.panelInner.right > vw + EPS) add(cell, `content reaches ${g.panelInner.right} > window ${vw}`);
               // Corners: the panel must be able to hold its own radius (12px card radius x 1.35 x scale).
               const radius = 12 * scale * 1.35;
               if (float && 2 * radius > g.panel.right - g.panel.left) add(cell, `radius ${radius}px does not fit the panel`);
             }
-            // scrollWidth <= vw: nothing sits right of the window.
-            const rightMost = Math.max(g.rail.right, g.main.right, open ? g.panel.right : 0, open ? g.panelInner.right : 0);
-            if (rightMost > vw + EPS) add(cell, `content reaches ${rightMost} > window ${vw}`);
+          }
+          if (!open) continue;
+          // Transition frames, both directions, against the reserved (settled) rail geometry.
+          for (const direction of ["closing", "opening"] as const) {
+            for (const progress of SLIDE) {
+              const closing = direction === "closing";
+              const reserve = closing ? policy === "settled" : true;
+              const cell = `vw=${vw} rail=${rail} panel=${panelCase} float=${float ? "on" : "off"} ${direction} progress=${progress} (transition)`;
+              const g = shellBoxes({ vw, rail, panel: panelCase, panelOpen: !closing, float, progress, reserve }, model, fns);
+              common(cell, g, vw, pad, progress > 0);
+            }
           }
         }
       }
@@ -145,7 +186,7 @@ export interface LayoutReport extends MatrixResult {
 }
 
 /** Contract rules + the whole matrix, for the sources and clamp functions given. */
-export function evaluateShell(src: CssSources, fns: ShellFns = APP_FNS): LayoutReport {
-  const { model, failures } = readShellContract(src, { floatPad: FLOAT_PAD, floatGap: FLOAT_GAP });
-  return { ...checkMatrix(model, fns), contractFailures: failures };
+export function evaluateShell(src: CssSources, fns: ShellFns = APP_FNS, options: MatrixOptions = {}): LayoutReport {
+  const { model, failures } = readShellContract(src, { floatPad: FLOAT_PAD, floatGap: FLOAT_GAP, settleMs: PANEL_SETTLE_MS });
+  return { ...checkMatrix(model, fns, options), contractFailures: failures };
 }
