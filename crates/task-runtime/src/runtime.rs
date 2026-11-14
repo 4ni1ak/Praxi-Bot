@@ -228,6 +228,9 @@ impl Runtime {
         }
         let last = self.storage.list_steps(run_id)?.pop();
         let pending = match last {
+            // Planning completed before a pause, but execution never began.
+            // This is safe even for a non-idempotent step and is not skipped.
+            Some(s) if StepStatus::parse(&s.status) == Some(StepStatus::Intent) => Some(s),
             Some(s) if !skip && StepStatus::parse(&s.status) == Some(StepStatus::Interrupted) => {
                 if s.idempotent {
                     Some(s)
@@ -365,7 +368,11 @@ impl Runtime {
             }
             let run = self.require_run(run_id)?;
             let (step_id, spec, mut attempt) = if let Some(prev) = pending.take() {
-                let attempt = prev.attempt + 1;
+                let attempt = if StepStatus::parse(&prev.status) == Some(StepStatus::Intent) {
+                    prev.attempt
+                } else {
+                    prev.attempt + 1
+                };
                 st.update_step(
                     prev.id,
                     StepStatus::Intent.as_str(),
@@ -377,7 +384,26 @@ impl Runtime {
                 (prev.id, StepSpec::from_row(&prev), attempt)
             } else {
                 let history = st.list_steps(run_id)?;
-                match self.executor.next_step(&run, &history).await {
+                // Planning can await providers too (for example the routing
+                // classifier). Stop must cancel that work before execution
+                // or a terminal result is committed.
+                let next = tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        return self.transition(run_id, self.stop_state(run_id), None);
+                    }
+                    next = self.executor.next_step(&run, &history) => next,
+                };
+                // Planning may consume queued input. Preserve a completed
+                // plan as an unexecuted intent on pause so resume cannot lose
+                // it. Cancellation still discards the plan.
+                let stopped = token.is_cancelled() || self.pausing.lock().contains(&run_id);
+                if stopped
+                    && (self.stop_state(run_id) != RunState::Paused || !matches!(next, Ok(Some(_))))
+                {
+                    return self.transition(run_id, self.stop_state(run_id), None);
+                }
+                match next {
                     Ok(None) => return self.transition(run_id, RunState::Succeeded, None),
                     Err(e) => return self.transition(run_id, RunState::Failed, Some(&e.0)),
                     Ok(Some(spec)) => {
@@ -399,6 +425,9 @@ impl Runtime {
                         };
                         // Intent is durable before the step runs.
                         st.insert_step(&row)?;
+                        if stopped {
+                            return self.transition(run_id, self.stop_state(run_id), None);
+                        }
                         (row.id, spec, 1)
                     }
                 }
@@ -801,6 +830,122 @@ mod tests {
             vec![("a".into(), "interrupted".into(), 1)]
         );
         assert!(rt.cancel(run).is_err(), "already terminal");
+    }
+
+    struct Planning {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        next: Option<StepSpec>,
+        executed: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl StepExecutor for Planning {
+        async fn next_step(
+            &self,
+            _: &Run,
+            history: &[RunStep],
+        ) -> std::result::Result<Option<StepSpec>, ExecError> {
+            if !history.is_empty() {
+                return Ok(None);
+            }
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(self.next.clone())
+        }
+
+        async fn execute(
+            &self,
+            _: &Run,
+            step: &StepSpec,
+            _: &CancellationToken,
+        ) -> std::result::Result<Value, ExecError> {
+            self.executed.lock().push(step.name.clone());
+            Ok(Value::Null)
+        }
+    }
+
+    async fn stop_during_planning(pause: bool, interrupt: bool, next: Option<StepSpec>) {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, u, b) = setup(dir.path());
+        let preserves_intent = pause && !interrupt && next.is_some();
+        let planner = Arc::new(Planning {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+            next,
+            executed: Mutex::new(Vec::new()),
+        });
+        let rt = Arc::new(Runtime::new(st.clone(), planner.clone()));
+        let run = rt.create_run(u, b, None, "turn").unwrap();
+        let mut handle = tokio::spawn({
+            let rt = rt.clone();
+            async move { rt.start(run).await }
+        });
+        tokio::time::timeout(Duration::from_secs(5), planner.entered.notified())
+            .await
+            .expect("planner never entered");
+        if pause {
+            assert!(rt.request_pause(run, interrupt));
+        } else {
+            rt.cancel(run).unwrap();
+        }
+        if !interrupt {
+            // A graceful pause lets planning finish, but cannot execute its
+            // answer or report success after that pause was requested.
+            planner.release.notify_one();
+        }
+        let outcome = tokio::time::timeout(Duration::from_secs(5), &mut handle).await;
+        if outcome.is_err() {
+            handle.abort();
+        }
+        assert_eq!(
+            outcome
+                .expect("planning ignored the stop")
+                .unwrap()
+                .unwrap(),
+            if pause {
+                RunState::Paused
+            } else {
+                RunState::Cancelled
+            }
+        );
+        assert!(planner.executed.lock().is_empty());
+        let steps = st.list_steps(run).unwrap();
+        if preserves_intent {
+            assert_eq!(steps.len(), 1);
+            assert_eq!(steps[0].status, StepStatus::Intent.as_str());
+            assert!(!steps[0].idempotent);
+            // Skipping interrupted work must not skip an unexecuted intent.
+            assert_eq!(
+                rt.resume_skipping_interrupted(run).await.unwrap(),
+                RunState::Succeeded
+            );
+            assert_eq!(*planner.executed.lock(), vec![steps[0].name.clone()]);
+            assert_eq!(st.list_steps(run).unwrap()[0].attempt, 1);
+        } else {
+            assert_eq!(steps.len(), 0);
+        }
+        assert_eq!(rt.active_runs(), Vec::<RunId>::new());
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_pending_planning() {
+        stop_during_planning(false, true, None).await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_pause_interrupts_pending_planning() {
+        stop_during_planning(true, true, None).await;
+    }
+
+    #[tokio::test]
+    async fn graceful_pause_during_planning_does_not_start_a_step() {
+        stop_during_planning(true, false, Some(spec("write", false))).await;
+    }
+
+    #[tokio::test]
+    async fn graceful_pause_during_planning_does_not_report_success() {
+        stop_during_planning(true, false, None).await;
     }
 
     #[tokio::test]
