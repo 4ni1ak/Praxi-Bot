@@ -890,10 +890,18 @@ async fn the_foreground_page_makes_matching_skills_suggested() {
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
     let reqs = brain.requests();
     assert!(!system_of(&reqs[0]).contains("- [suggested]"));
-    let last = reqs[0].messages.last().unwrap();
-    assert_eq!(last.role, MessageRole::System);
-    let note = last.content.as_str().unwrap();
-    assert!(note.starts_with("Suggested skills"), "{note}");
+    let user = reqs[0]
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .unwrap();
+    let note = user.content.as_str().unwrap();
+    assert!(note.starts_with("hello"), "{note}");
+    assert!(
+        note.contains("[loop hint, not written by the user: Suggested skills"),
+        "{note}"
+    );
     assert!(note.contains("my-site"), "{note}");
 }
 

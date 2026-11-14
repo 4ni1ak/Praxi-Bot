@@ -710,19 +710,20 @@ async fn skill_hint_lists_the_skill_first() {
         .unwrap()
         .to_owned();
     // The index in the system prompt is name-ordered and never carries the
-    // per-turn suggestion; that goes to a short System note at the end.
+    // per-turn suggestion; that goes into the latest user message as a hint.
+    assert!(sys.contains("- github-basics:"), "{sys}");
     assert!(!sys.contains("- [suggested]"), "{sys}");
     let req = &script.requests_for("fake/m")[0];
-    let last = req.messages.last().unwrap();
-    assert_eq!(last.role, provider_catalog::MessageRole::System);
-    assert!(
-        last.content
-            .as_str()
-            .unwrap()
-            .starts_with("Suggested skills for the current page/app/request"),
-        "{last:?}"
-    );
-    assert!(last.content.as_str().unwrap().contains("github-basics"));
+    let user = req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == provider_catalog::MessageRole::User)
+        .unwrap();
+    let user = user.content.as_str().unwrap();
+    assert!(user.starts_with("frobnicate the gizmo"), "{user}");
+    assert!(user.contains("[loop hint, not written by the user: Suggested skills"));
+    assert!(user.contains("github-basics"));
 }
 
 // ---------- budget, switches, embedder ----------

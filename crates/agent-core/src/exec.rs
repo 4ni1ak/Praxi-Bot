@@ -27,9 +27,9 @@ use tokio_util::sync::CancellationToken;
 use tool_registry::{ContentPart, Tool, ToolContext, ToolOutput, ToolSpec};
 
 use crate::approval::ExecPermit;
+use crate::compaction::Compaction;
 use crate::history::{
-    Compaction, GUARD_NOTE, build_messages, expose, status_of, step_output, tool_defs,
-    truncate_utf8,
+    GUARD_NOTE, build_messages, expose, status_of, step_output, tool_defs, truncate_utf8,
 };
 use crate::router::{RoutePlan, route_hints};
 use crate::shared::{
@@ -460,6 +460,13 @@ impl TurnExecutor {
             .as_deref()
             .map(|r| GUARD_NOTE.replace("{reason}", r));
         let (skills, suggested_skills) = self.skills_block(&ctx, &steps, &hints.skills);
+        let lookup = |n: &str| self.sh.tools.get(n).map(|t| t.spec().clone());
+        let spill_dir = self
+            .sh
+            .storage
+            .data_dir()
+            .join("spill")
+            .join(run.id.to_string());
         let messages = build_messages(
             &self.sh.storage,
             run,
@@ -468,7 +475,7 @@ impl TurnExecutor {
             note.as_deref(),
             skills.as_deref(),
             suggested_skills.as_deref(),
-            &Compaction::from_guards(&self.sh.cfg.guards),
+            &Compaction::from_guards(&self.sh.cfg.guards, Some(&lookup), Some(&spill_dir)),
         )
         .map_err(xe)?;
         let mut primary = ctx.profile.models.executor.clone();

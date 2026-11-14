@@ -3,6 +3,7 @@
 #![allow(clippy::assert_is_empty)]
 
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -5367,4 +5368,72 @@ async fn a_multiline_secret_in_the_details_is_refused_like_any_other() {
     while let Ok(item) = rx.try_recv() {
         assert!(!matches!(item.envelope.event, Event::ApprovalNeeded(_)));
     }
+}
+
+/// End to end: a 10-step browser turn through the real loop. The model sees
+/// the superseded snapshots shortened (and the shortened prefix stays
+/// byte-identical between calls of the same stride), the stored step outputs
+/// stay complete, and the system prompt never changes.
+#[tokio::test]
+async fn multi_step_browser_turn_compacts_what_the_model_sees_not_what_is_stored() {
+    let env = setup();
+    let mut page = String::from("# Shop (https://shop.test/)\n");
+    for n in 0..250 {
+        let _ = writeln!(page, "[e{n}] link \"item {n}\"");
+    }
+    let mut snap = tool("browser_snapshot", Effect::Read, &page);
+    snap.spec.category = PermissionCategory::Browser;
+    let snap = Arc::new(snap);
+    let mut replies: Vec<Reply> = (0..10)
+        .map(|i| calls(&[(&format!("c{i}"), "browser_snapshot", json!({"n": i}))]))
+        .collect();
+    replies.push(text("done"));
+    let fake = Fake::new(replies);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&snap)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "look at the shop").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(fake.n_requests(), 11);
+
+    let last = tool_messages(&fake.request(10));
+    assert_eq!(last.len(), 10);
+    let shortened = last
+        .iter()
+        .filter(|m| m.contains("[older observation shortened:"))
+        .count();
+    assert_eq!(shortened, 8, "{last:?}");
+    assert_eq!(last[8], page);
+    assert_eq!(last[9], page);
+
+    // Same stride (n = 8 and n = 9 both have horizon 8): byte-identical prefix.
+    let (a, b) = (fake.request(8), fake.request(9));
+    for (x, y) in a.messages.iter().zip(&b.messages) {
+        assert_eq!(
+            serde_json::to_string(x).unwrap(),
+            serde_json::to_string(y).unwrap()
+        );
+    }
+    // System prompt: identical on every call of the turn.
+    let sys0 = fake.request(0).messages[0].content.clone();
+    for i in 1..11 {
+        assert_eq!(fake.request(i).messages[0].content, sys0, "call {i}");
+    }
+    // Storage keeps the complete outputs.
+    let stored = env.storage.list_steps(run).unwrap();
+    let full = stored
+        .iter()
+        .filter(|s| s.name == "tools")
+        .filter(|s| {
+            s.output
+                .as_ref()
+                .is_some_and(|o| o.to_string().contains("item 249"))
+        })
+        .count();
+    assert_eq!(full, 10);
 }

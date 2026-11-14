@@ -30,36 +30,57 @@ impl Default for Effect {
     }
 }
 
-/// What kind of current-state observation a tool returns. A newer observation
-/// of the same scope makes older ones stale, so the agent loop may shorten the
-/// older copies it re-sends to the model (never the stored step output).
+/// What kind of full, current-state observation a built-in tool returns.  A
+/// newer observation of the same target makes an older one stale, so the agent
+/// loop may shorten the older copy it re-sends to the model (never the stored
+/// step output).
 ///
-/// Kept as a name lookup ([`ObservationScope::of_tool`]) rather than a field on
+/// Only tools that return the whole observation are listed: diff-returning
+/// browser actions (`browser_click`, ...) are not, because their output is
+/// only meaningful next to the full snapshot they refer to.
+///
+/// Kept as a lookup ([`ObservationScope::of_builtin`]) rather than a field on
 /// [`ToolSpec`] so every existing spec literal (built-in, MCP, CLI, plugin)
 /// stays valid and unaffected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObservationScope {
-    /// The page of the browser (snapshot, or the snapshot a page action returns).
+    /// The full page of the browser (`browser_open`, `browser_snapshot`).
     Page,
     /// The accessibility state of a desktop window.
     Window,
-    /// A directory or window listing.
-    Listing,
+    /// A directory listing.
+    FsListing,
+    /// The list of open windows.
+    AppListing,
 }
 
 impl ObservationScope {
-    /// Scope of a built-in tool's result, `None` for every other tool.
+    /// Scope for a bare tool name, without checking what is registered under
+    /// that name.  Prefer [`Self::of_builtin`].
     #[must_use]
-    pub fn of_tool(name: &str) -> Option<Self> {
+    pub fn of_name(name: &str) -> Option<Self> {
         match name {
-            "browser_open" | "browser_snapshot" | "browser_click" | "browser_fill"
-            | "browser_select" | "browser_press" | "browser_scroll" | "browser_wait"
-            | "browser_back" => Some(Self::Page),
+            "browser_open" | "browser_snapshot" => Some(Self::Page),
             "desktop_get_state" => Some(Self::Window),
-            "fs_list" | "desktop_list_apps" => Some(Self::Listing),
+            "fs_list" => Some(Self::FsListing),
+            "desktop_list_apps" => Some(Self::AppListing),
             _ => None,
         }
+    }
+
+    /// Scope of the registered tool `spec`, only when it really is the
+    /// built-in one: the name matches and so does the permission category
+    /// (a CLI, plugin or MCP tool that happens to share a bare name does not).
+    #[must_use]
+    pub fn of_builtin(spec: &ToolSpec) -> Option<Self> {
+        let scope = Self::of_name(&spec.name)?;
+        let category = match scope {
+            Self::Page => PermissionCategory::Browser,
+            Self::Window | Self::AppListing => PermissionCategory::Desktop,
+            Self::FsListing => PermissionCategory::Fs,
+        };
+        (spec.category == category).then_some(scope)
     }
 }
 
@@ -135,22 +156,46 @@ mod tests {
     }
 
     #[test]
-    fn observation_scopes_cover_the_named_tools_only() {
+    fn observation_scopes_cover_the_full_observation_tools_only() {
+        let mk = |name: &str, category| ToolSpec {
+            name: name.into(),
+            description: "d".into(),
+            input_schema: json!({ "type": "object" }),
+            effect: Effect::Read,
+            category,
+            platforms: vec![Platform::All],
+        };
         assert_eq!(
-            ObservationScope::of_tool("browser_snapshot"),
+            ObservationScope::of_builtin(&mk("browser_snapshot", PermissionCategory::Browser)),
             Some(ObservationScope::Page)
         );
         assert_eq!(
-            ObservationScope::of_tool("desktop_get_state"),
+            ObservationScope::of_builtin(&mk("desktop_get_state", PermissionCategory::Desktop)),
             Some(ObservationScope::Window)
         );
         assert_eq!(
-            ObservationScope::of_tool("fs_list"),
-            Some(ObservationScope::Listing)
+            ObservationScope::of_builtin(&mk("fs_list", PermissionCategory::Fs)),
+            Some(ObservationScope::FsListing)
         );
-        assert_eq!(ObservationScope::of_tool("browser_eval"), None);
-        assert_eq!(ObservationScope::of_tool("fs_write_file"), None);
-        assert_eq!(ObservationScope::of_tool("mcp__x__browser_snapshot"), None);
+        assert_eq!(
+            ObservationScope::of_builtin(&mk("desktop_list_apps", PermissionCategory::Desktop)),
+            Some(ObservationScope::AppListing)
+        );
+        // Diff-returning actions and unrelated tools are not observations.
+        for n in [
+            "browser_click",
+            "browser_fill",
+            "browser_eval",
+            "fs_write_file",
+        ] {
+            assert_eq!(ObservationScope::of_name(n), None, "{n}");
+        }
+        // A colliding bare name of another kind of tool does not qualify.
+        assert_eq!(
+            ObservationScope::of_builtin(&mk("fs_list", PermissionCategory::Script)),
+            None
+        );
+        assert_eq!(ObservationScope::of_name("mcp:x/browser_snapshot"), None);
     }
 
     #[test]
