@@ -76,3 +76,10 @@ test("the hooks exist and keep their contract", () => {
   assert.match(viewport, /dataset\.windowResizing = "true"/);
   assert.match(viewport, /delete root\.dataset\.windowResizing/);
 });
+
+test("the live-view block in the narrow panel wraps instead of overflowing (card 233 x PR 56)", () => {
+  const css = read("../components/BotComputerBlock.module.css");
+  assert.match(css, /\.head \{[^}]*flex-wrap: wrap;/);
+  assert.match(css, /\.release \{[^}]*flex-wrap: wrap;[^}]*gap: var\(--space-2\);/);
+  assert.doesNotMatch(css, /\.release > \* \+ \* \{/, "sibling margins misplace the second row once the buttons wrap");
+});

@@ -168,3 +168,56 @@ export async function runSearchProbe(): Promise<void> {
   script.textContent = JSON.stringify(out);
   document.body.appendChild(script);
 }
+
+/**
+ * Content probe (`?probe=content&lvState=paused&reacq=<label>`): at the narrowest fitted panel, measure the live-view
+ * block's status row and recovery controls.  The mock has no stream drop, so the Reacquire button is cloned from the
+ * Clear-pause button (same component, same classes) with the label passed in `reacq`.
+ */
+export async function runContentProbe(): Promise<void> {
+  await runLayoutProbe();
+  const out: Record<string, unknown> = {};
+  const q = new URLSearchParams(window.location.search);
+  let waited = 0;
+  const actions = () => document.querySelector<HTMLElement>('[data-testid="bot-computer-paused-actions"]');
+  while (!actions() && waited < DEADLINE_MS) {
+    await pause(POLL_MS);
+    waited += POLL_MS;
+  }
+  const row = actions();
+  const clear = document.querySelector<HTMLElement>('[data-testid="bot-computer-clear-pause"]');
+  const status = document.querySelector<HTMLElement>('[data-testid="bot-computer-status"]');
+  const panel = document.querySelector<HTMLElement>('[data-shell-part="panel"]');
+  if (!row || !clear || !status || !panel) {
+    out.error = `live-view block not rendered (${[!row && "actions", !clear && "clear-pause", !status && "status", !panel && "panel"].filter(Boolean).join(", ")})`;
+  } else {
+    const reacq = q.get("reacq");
+    if (reacq) {
+      const clone = clear.cloneNode(true) as HTMLElement;
+      clone.setAttribute("data-testid", "bot-computer-reacquire-probe");
+      clone.textContent = reacq;
+      row.insertBefore(clone, clear);
+    }
+    await pause(150);
+    const pr = panel.getBoundingClientRect();
+    const cs = getComputedStyle(panel);
+    const contentRight = pr.right - (parseFloat(cs.borderRightWidth) || 0);
+    const rect = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+    };
+    out.contentRight = contentRight;
+    out.panelWidth = pr.width;
+    out.status = rect(status);
+    out.statusText = status.textContent;
+    out.buttons = Array.from(row.children).map((c) => ({ text: c.textContent, ...rect(c) }));
+    out.row = { ...rect(row), scrollWidth: row.scrollWidth, clientWidth: row.clientWidth };
+    const block = status.closest("section");
+    out.block = block ? { ...rect(block), scrollWidth: block.scrollWidth, clientWidth: block.clientWidth } : null;
+  }
+  const script = document.createElement("script");
+  script.id = "content-probe";
+  script.type = "application/json";
+  script.textContent = JSON.stringify(out);
+  document.body.appendChild(script);
+}

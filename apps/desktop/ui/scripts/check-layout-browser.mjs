@@ -4,7 +4,7 @@
 // with `--dump-dom` and reads the JSON the dev-only layout probe appended.  Everything it creates
 // lives in one temp dir that is deleted in `finally`; Chrome and vite are killed as process trees.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -48,9 +48,22 @@ cases.push(
   { name: '900/glass/clay/open/rail440', width: 900, query: 'theme=clay&style=glass&panel=1&rail=440' }
 );
 const searchMode = args.includes('--search');
+const contentMode = args.includes('--content');
+const probeId = searchMode ? 'search-probe' : contentMode ? 'content-probe' : 'layout-probe';
 if (searchMode) {
   cases.length = 0;
   cases.push({ name: '760/glass/clay/open/search', width: 760, probe: 'search', query: 'theme=clay&style=glass&panel=1&rail=264' });
+}
+if (contentMode) {
+  // The narrowest fitted panel (stored 260) holding the live-view block, in both locales.
+  cases.length = 0;
+  const locale = (l) => JSON.parse(readFileSync(resolve(root, `src/i18n/locales/${l}.json`), 'utf8')).liveView;
+  for (const lang of ['tr', 'en']) {
+    for (const style of ['glass', 'solid']) {
+      cases.push({ name: `760/${style}/clay/panel260/${lang}/live-view-paused`, width: 760, probe: 'content',
+        query: `theme=clay&style=${style}&panel=1&rail=264&stored=260&lvState=paused&lang=${lang}&reacq=${encodeURIComponent(locale(lang).reacquireAction)}` });
+    }
+  }
 }
 const selected = !only ? cases
   : /^[\d,]+$/.test(only) ? only.split(',').map((i) => cases[Number(i)]).filter(Boolean)
@@ -106,18 +119,35 @@ try {
   for (const [i, c] of selected.entries()) {
     if (Date.now() - started > budgetMs) { process.stdout.write(`BUDGET exhausted after ${i} cases\n`); failed++; break; }
     let out = '';
-    for (let attempt = 0; attempt < 4 && !out.includes(searchMode ? 'search-probe' : 'layout-probe'); attempt++) {
+    for (let attempt = 0; attempt < 4 && !out.includes(probeId); attempt++) {
       out = await run(chrome, ['--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
       '--force-device-scale-factor=1', `--window-size=${c.width},900`, `--virtual-time-budget=${process.env.VTB ?? 30000}`,
       `--user-data-dir=${join(tmp, `profile-${i}-${attempt}`)}`, '--dump-dom', `http://127.0.0.1:${port}/?mock=1&probe=${c.probe ?? 'layout'}&${c.query}`],
       { stdio: ['ignore', 'pipe', args.includes('--debug') ? 'inherit' : 'ignore'], timeout: CASE_TIMEOUT });
     }
-    if (searchMode) {
-      const sm = /<script id="search-probe" type="application\/json">([\s\S]*?)<\/script>/.exec(out);
-      process.stdout.write(sm ? `${c.name}: ${sm[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')}
-` : `FAIL ${c.name}: no search probe output
+    if (searchMode || contentMode) {
+      const sm = new RegExp(`<script id="${probeId}" type="application/json">([\\s\\S]*?)</script>`).exec(out);
+      if (!sm) { process.stdout.write(`FAIL ${c.name}: no ${probeId} output
+`); failed++; continue; }
+      const data = JSON.parse(sm[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+      if (contentMode) {
+        const bad = [];
+        if (data.error) bad.push(data.error);
+        else {
+          const items = [['status', data.status], ...data.buttons.map((b) => [`button "${b.text}"`, b])];
+          for (const [label, r] of items) if (r.right > data.contentRight + 0.5 || r.left < 0) bad.push(`${label} right ${r.right} > panel content right ${data.contentRight}`);
+          if (data.row.scrollWidth > data.row.clientWidth + 0.5) bad.push(`recovery row scrolls (${data.row.scrollWidth} > ${data.row.clientWidth})`);
+          if (data.block.scrollWidth > data.block.clientWidth + 0.5) bad.push(`live-view block overflows (${data.block.scrollWidth} > ${data.block.clientWidth})`);
+        }
+        process.stdout.write(`${bad.length ? 'FAIL' : 'ok  '} ${c.name} panel=${data.panelWidth} contentRight=${data.contentRight} status=${data.status ? `${data.status.left.toFixed(0)}..${data.status.right.toFixed(0)} "${data.statusText}"` : '-'} buttons=${(data.buttons ?? []).map((b) => `"${b.text}" ${b.left.toFixed(0)}..${b.right.toFixed(0)} y${b.top.toFixed(0)}`).join(' | ')}
 `);
-      if (!sm) failed++;
+        for (const line of bad) process.stdout.write(`       - ${line}
+`);
+        if (bad.length) failed++;
+      } else {
+        process.stdout.write(`${c.name}: ${JSON.stringify(data)}
+`);
+      }
       continue;
     }
     const m = /<script id="layout-probe" type="application\/json">([\s\S]*?)<\/script>/.exec(out);
