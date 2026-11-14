@@ -1942,6 +1942,97 @@ async fn pending_steering_continues_a_scheduled_tool_run() {
 }
 
 #[tokio::test]
+async fn steering_refresh_leaves_run_state_unlocked_and_rechecks_closed() {
+    for closed in [false, true] {
+        let env = setup();
+        let secret = "steering-refresh-sentinel-KEY-6280";
+        let write = Arc::new(tool("t.write", Effect::Write, "unused"));
+        let fake = Fake::new(vec![
+            calls(&[("c1", "t.write", json!({}))]),
+            text("adjusted"),
+        ]);
+        let handle = crate::SharedRedactor::default();
+        let mut config = cfg(Policy::approve_destructive());
+        config.redactor = Some(handle.clone());
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[t(&write)],
+            profile(""),
+            config,
+        );
+        let mut rx = lp.subscribe();
+        let run = lp.run_turn(env.chat, "start").unwrap();
+        let Event::ApprovalNeeded(approval) =
+            until(&mut rx, |event| matches!(event, Event::ApprovalNeeded(_))).await
+        else {
+            unreachable!()
+        };
+        let ctx = lp.ctx_of(run).unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        handle.set_refresher(Arc::new(move |redactor| {
+            entered_tx.send(()).unwrap();
+            release_rx
+                .lock()
+                .recv_timeout(Duration::from_secs(5))
+                .expect("test did not release redactor refresh");
+            redactor.register(secret);
+        }));
+        let input = format!("keep {secret} safe");
+        let (unlocked, delivery) = std::thread::scope(|scope| {
+            let sender = scope.spawn(|| {
+                lp.send_user_message(env.chat, &input, MessageMode::Steer)
+                    .unwrap()
+            });
+            entered_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("steering did not enter redactor refresh");
+            // The driver must be able to inspect/close the run while the
+            // secret store is blocked. No scheduling or sleep-based race.
+            let unlocked = ctx.state.try_lock().is_some_and(|mut state| {
+                state.closed = closed;
+                true
+            });
+            release_tx.send(()).unwrap();
+            (unlocked, sender.join().unwrap())
+        });
+        handle.set_refresher(Arc::new(|_| {}));
+        assert!(unlocked, "steering refresh held the run-state lock");
+        let messages = env.storage.list_messages(env.chat).unwrap();
+        if closed {
+            assert_eq!(delivery, Delivery::Queued);
+            assert!(ctx.state.lock().steer.is_empty());
+            assert_eq!(messages.len(), 1, "closed run accepted a chat row");
+            // Keep this test's artificial close from starting a follow-up.
+            assert_eq!(lp.sh.queued.lock().remove(&env.chat).unwrap(), [input]);
+        } else {
+            assert_eq!(delivery, Delivery::Steered(run));
+            assert_eq!(messages.len(), 2);
+            assert_eq!(messages[1].content, "keep [REDACTED] safe");
+            assert_eq!(ctx.state.lock().steer[0], messages[1].content);
+            // The accepted queue can still be reconstructed from that row.
+            let restored = make_loop(
+                &env.storage,
+                env.bot,
+                &fake,
+                &[],
+                profile(""),
+                cfg(Policy::full()),
+            );
+            assert_eq!(
+                restored.ctx_of(run).unwrap().state.lock().steer[0],
+                messages[1].content
+            );
+        }
+        lp.deny(approval.call_id, env.user, None).unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    }
+}
+
+#[tokio::test]
 async fn pending_steering_redacts_persisted_steps() {
     let env = setup();
     let secret = "steering-sentinel-KEY-5150";

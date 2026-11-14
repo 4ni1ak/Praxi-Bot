@@ -476,16 +476,27 @@ impl AgentLoop {
             self.cancel(run_id)?;
             return Ok(Delivery::Stopped(run_id));
         }
+        // Refresh may read the OS secret store. Prepare without holding the
+        // active/run-state locks, then validate the current run and `closed`
+        // below. Persist and queue exactly the same redacted representation.
+        let steering = (mode == MessageMode::Steer).then(|| {
+            self.sh.refresh_redactor();
+            self.sh.redact(text.to_owned())
+        });
         {
             let active = self.sh.active.lock();
             if let Some(&run_id) = active.get(&chat_id) {
-                if mode == MessageMode::Steer {
+                if let Some(content) = steering {
                     let ctx = self.sh.runs.lock().get(&run_id).cloned();
                     if let Some(ctx) = ctx {
                         let mut st = ctx.state.lock();
                         if !st.closed {
-                            let stored =
-                                self.insert_user_message(ctx.user_id, chat_id, run_id, text)?;
+                            let stored = self.insert_redacted_user_message(
+                                ctx.user_id,
+                                chat_id,
+                                run_id,
+                                content,
+                            )?;
                             st.steer.push_back(stored);
                             return Ok(Delivery::Steered(run_id));
                         }
@@ -928,6 +939,16 @@ impl AgentLoop {
         // provider request) masked.
         self.sh.refresh_redactor();
         let content = self.sh.redact(text.to_owned());
+        self.insert_redacted_user_message(user_id, chat_id, run_id, content)
+    }
+
+    fn insert_redacted_user_message(
+        &self,
+        user_id: UserId,
+        chat_id: ChatId,
+        run_id: RunId,
+        content: String,
+    ) -> Result<String> {
         self.sh.storage.insert_message(&DbMessage {
             id: Uuid::now_v7(),
             user_id,
