@@ -6404,3 +6404,66 @@ async fn explicit_node_before_provider_install_retains_requested_key() {
     assert_eq!(lp.resume_waiting_for_pc().await, vec![run]);
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
 }
+
+#[tokio::test]
+async fn browser_eval_script_approvals_and_grants_are_computer_scoped() {
+    let env = setup();
+    let mut eval = tool("browser_eval", Effect::Write, "evaluated");
+    eval.spec.category = PermissionCategory::Script;
+    let eval = Arc::new(eval);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "browser_eval", json!({}))]),
+        text("host done"),
+        calls(&[("c2", "browser_eval", json!({}))]),
+        text("browser done"),
+        calls(&[("c3", "browser_eval", json!({}))]),
+        text("browser again"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&eval)],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::approve_destructive()),
+    );
+    lp.set_computer_provider(Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    }));
+    // A broad legacy Script grant also cannot waive a computer tool approval.
+    lp.sh.grants.lock().always.push(crate::Grant {
+        bot_id: env.bot,
+        target: GrantTarget::Category(PermissionCategory::Script),
+        granted_at_ms: 1,
+        computer: None,
+    });
+    let mut rx = lp.subscribe();
+    for target in ["host", "browser"] {
+        lp.add_profile(
+            env.bot,
+            profile(&format!("[runtime]\ncomputer = {target:?}\n")),
+        );
+        let run = lp.run_turn(env.chat, "evaluate").unwrap();
+        let Event::ApprovalNeeded(a) =
+            until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+        else {
+            unreachable!()
+        };
+        assert!(a.summary.contains(&format!("[{target}: Local computer")));
+        assert_eq!(
+            a.details.as_ref().unwrap()["computer_target"]["kind"],
+            target
+        );
+        lp.approve(a.call_id, ApprovalScope::AlwaysCategory, env.user)
+            .unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    }
+    let same_target = lp.run_turn(env.chat, "again").unwrap();
+    assert_eq!(lp.wait(same_target).await.unwrap(), RunState::Succeeded);
+    assert!(env.storage.list_approvals(same_target).unwrap().is_empty());
+    assert_eq!(eval.count.load(Ordering::SeqCst), 3);
+}

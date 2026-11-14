@@ -121,10 +121,11 @@ pub(crate) fn grant_target(detail: &Value) -> Option<GrantTarget> {
 /// Add the immutable computer identity to both event details and the summary.
 fn computer_approval(
     ctx: &RunCtx,
+    name: &str,
     category: PermissionCategory,
     details: &mut Option<Value>,
 ) -> String {
-    let computer = ctx.grant_scope(category).map(|_| json!({
+    let computer = ctx.tool_grant_scope(name, category).map(|_| json!({
             "kind": ctx.resolved_computer.label.as_str(),
             "node_id": ctx.resolved_computer.node.as_ref().map(|n| &n.id),
             "node_name": ctx.resolved_computer.node.as_ref().map_or("Local computer", |n| n.name.as_str()),
@@ -204,14 +205,16 @@ impl Shared {
         }
         let granted = {
             let g = self.grants.lock();
-            g.this_chat
-                .contains(&(ctx.chat_id, name.to_owned(), ctx.grant_scope(category)))
-                || g.covers(
-                    ctx.bot_id,
-                    name,
-                    category,
-                    ctx.grant_scope(category).as_deref(),
-                )
+            g.this_chat.contains(&(
+                ctx.chat_id,
+                name.to_owned(),
+                ctx.tool_grant_scope(name, category),
+            )) || g.covers(
+                ctx.bot_id,
+                name,
+                category,
+                ctx.tool_grant_scope(name, category).as_deref(),
+            )
         };
         if granted || (self.cfg.read_tools_skip_ask && effect == Effect::Read) {
             Decision::Allow
@@ -507,7 +510,7 @@ impl Shared {
         let once_only = details.is_some() || self.always_ask(name);
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
-        let prefix = computer_approval(ctx, category, &mut details);
+        let prefix = computer_approval(ctx, name, category, &mut details);
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
         let parked_at = policy_revision(self);
@@ -639,12 +642,18 @@ impl Shared {
 
     /// Persist a new "always allow" rule for the run's bot (idempotent) and
     /// keep the audit entry.
-    fn add_grant(&self, ctx: &RunCtx, target: GrantTarget, category: PermissionCategory) {
+    fn add_grant(
+        &self,
+        ctx: &RunCtx,
+        target: GrantTarget,
+        category: PermissionCategory,
+        name: &str,
+    ) {
         let grant = Grant {
             bot_id: ctx.bot_id,
             target,
             granted_at_ms: now_ms(),
-            computer: ctx.grant_scope(category),
+            computer: ctx.tool_grant_scope(name, category),
         };
         {
             let mut g = self.grants.lock();
@@ -775,7 +784,7 @@ impl ExecPermit {
                 self.sh.grants.lock().this_chat.insert((
                     self.ctx.chat_id,
                     self.name.clone(),
-                    self.ctx.grant_scope(self.category),
+                    self.ctx.tool_grant_scope(&self.name, self.category),
                 ));
             }
             ApprovalScope::Always => {
@@ -783,6 +792,7 @@ impl ExecPermit {
                     &self.ctx,
                     GrantTarget::Tool(self.name.clone()),
                     self.category,
+                    &self.name,
                 );
             }
             ApprovalScope::AlwaysCategory => {
@@ -790,6 +800,7 @@ impl ExecPermit {
                     &self.ctx,
                     GrantTarget::Category(self.category),
                     self.category,
+                    &self.name,
                 );
             }
         }

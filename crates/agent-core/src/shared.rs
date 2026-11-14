@@ -637,10 +637,19 @@ pub(crate) struct RunCtx {
 
 impl RunCtx {
     pub(crate) fn grant_scope(&self, category: PermissionCategory) -> Option<String> {
-        matches!(
+        self.tool_grant_scope("", category)
+    }
+
+    pub(crate) fn tool_grant_scope(
+        &self,
+        name: &str,
+        category: PermissionCategory,
+    ) -> Option<String> {
+        (matches!(
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
-        )
+        ) || name.starts_with("desktop_")
+            || name.starts_with("browser_"))
         .then(|| {
             format!(
                 "{}:{}",
