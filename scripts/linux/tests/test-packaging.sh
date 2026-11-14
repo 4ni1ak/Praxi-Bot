@@ -26,6 +26,19 @@ assert_file_not_contains() {
   fi
 }
 
+run_timed() {
+  local rc=0
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 30s "$@" || rc=$?
+    if [[ "${rc}" -eq 124 || "${rc}" -eq 137 ]]; then
+      fail "command timed out (rc=${rc}): $*"
+    fi
+    return "${rc}"
+  else
+    "$@"
+  fi
+}
+
 # 1. Syntax & lint checks
 bash -n "${INSTALL_SH}" "${SETUP_SH}" "$0"
 pass "bash -n syntax checks"
@@ -82,17 +95,29 @@ case "${1:-}" in
   *) echo "Linux" ;;
 esac
 EOF
-cat > "${FAKE_BIN}/id" <<'EOF'
+REAL_ID="$(command -v id)"
+[[ -x "${REAL_ID}" ]] || fail "could not resolve real id binary"
+cat > "${FAKE_BIN}/id" <<EOF
 #!/usr/bin/env bash
-if [[ "${1:-}" == "-u" && "${2:-}" == "praxi" ]]; then
-  [[ -f "${SANDBOX_STATE}/user_created" ]] && { echo "999"; exit 0; }
+depth="\${_PRAXI_FAKE_ID_DEPTH:-0}"
+if [[ "\${depth}" -ge 4 ]]; then
+  echo "ERROR: fake id recursion guard triggered (depth=\${depth})" >&2
+  exit 99
+fi
+export _PRAXI_FAKE_ID_DEPTH=\$((depth + 1))
+if [[ "\${1:-}" == "-u" && "\${2:-}" == "praxi" ]]; then
+  [[ -f "\${SANDBOX_STATE}/user_created" ]] && { echo "999"; exit 0; }
   exit 1
 fi
-if [[ "${1:-}" == "-u" ]]; then
-  echo "0"
+if [[ "\${1:-}" == "-u" && "\${2:-}" == "tester" ]]; then
+  echo "1000"
   exit 0
 fi
-command id "$@"
+if [[ "\${1:-}" == "-u" && -z "\${2:-}" ]]; then
+  echo "\${FAKE_UID:-0}"
+  exit 0
+fi
+exec "${REAL_ID}" "\$@"
 EOF
 cat > "${FAKE_BIN}/useradd" <<'EOF'
 #!/usr/bin/env bash
@@ -147,7 +172,7 @@ cat > "${FAKE_BIN}/apt-cache" <<'EOF'
 if [[ "${1:-}" == "policy" ]]; then
   pkg="${2:-}"
   if [[ "${pkg}" == "chromium" || "${pkg}" == "chromium-browser" ]]; then
-    printf '%s:\n  Installed: (none)\n  Candidate: 2:1snap1-0ubuntu2\n' "${pkg}"
+    printf '%s:\n  Installed: (none)\n  Candidate: %s\n' "${pkg}" "${FAKE_CHROMIUM_CANDIDATE:-2:1snap1-0ubuntu2}"
   else
     printf '%s:\n  Installed: (none)\n  Candidate: 1.0-fixture\n' "${pkg}"
   fi
@@ -177,6 +202,26 @@ EOF
 cat > "${FAKE_BIN}/dpkg" <<'EOF'
 #!/usr/bin/env bash
 echo "amd64"
+EOF
+cat > "${FAKE_BIN}/xauth" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SANDBOX_STATE}/xauth.log"
+file=""
+if [[ "${1:-}" == "-f" ]]; then
+  file="$2"
+  shift 2
+fi
+case "${1:-}" in
+  list)
+    disp="${2:-}"
+    if [[ -s "${file}" ]] && grep -Fq "${disp}" "${file}"; then
+      printf 'host/unix%s  MIT-MAGIC-COOKIE-1  deadbeef\n' "${disp}"
+    fi
+    ;;
+  add)
+    printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "${file}"
+    ;;
+esac
 EOF
 chmod +x "${FAKE_BIN}"/*
 
@@ -223,32 +268,70 @@ chmod +x "${SANDBOX}/opt/praxi-browser/chrome"
 export PATH="${FAKE_BIN}:${PATH}"
 
 # 4. Option conflict checks on install-linux.sh
-if bash "${SB_INSTALL}" --with-desktop-session --without-desktop-session --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" > "${TMP_ROOT}/conflict1.log" 2>&1; then
+if run_timed bash "${SB_INSTALL}" --with-desktop-session --without-desktop-session --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" > "${TMP_ROOT}/conflict1.log" 2>&1; then
   fail "conflicting desktop-session flags should fail"
 fi
-if bash "${SB_INSTALL}" --offline --with-desktop-session --skip-packages --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" --custom-trusted-root "${RELEASE_DIR}/praxi-linux.sigstore.json" > "${TMP_ROOT}/conflict2.log" 2>&1; then
+if run_timed bash "${SB_INSTALL}" --offline --with-desktop-session --skip-packages --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" --custom-trusted-root "${RELEASE_DIR}/praxi-linux.sigstore.json" > "${TMP_ROOT}/conflict2.log" 2>&1; then
   fail "--offline + --with-desktop-session should fail"
 fi
 pass "install-linux option conflicts rejected"
 
-# 5. Bare-Xvfb install preserved on upgrade without --with-desktop-session
-if ! bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
-  --with-desktop --skip-packages --no-start > "${TMP_ROOT}/bare.log" 2>&1; then
+# 5. Legacy bare-Xvfb (origin/main without -auth / xdpyinfo) preserved on no-flag upgrade,
+#    and existing praxi.env gets BOT_MAX_COMPUTER_RUNS / BOT_BROWSER_IDLE_SECONDS defaults
+cat > "${SANDBOX}/etc/praxi/praxi.env" <<EOF
+BOT_DATA_DIR=${SANDBOX}/var/lib/praxi
+BOT_PORT=47821
+BOT_SECRETS_BACKEND=file
+BOT_SECRETS_PASSPHRASE=legacy-passphrase
+HOME=${SANDBOX}/var/lib/praxi
+DISPLAY=:99
+EOF
+cat > "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" <<EOF
+[Unit]
+Description=Praxi virtual display (Xvfb :99)
+
+[Service]
+Type=simple
+User=praxi
+Group=praxi
+ExecStartPre=!/usr/bin/install -d -o root -g root -m 1777 /tmp/.X11-unix
+ExecStart=${FAKE_BIN}/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp +extension RANDR +extension XTEST
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --skip-packages --no-start > "${TMP_ROOT}/legacy-upgrade.log" 2>&1
+[[ -f "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" ]] || fail "bare Xvfb unit lost on upgrade"
+[[ ! -f "${SANDBOX}/etc/systemd/system/praxi-desktop.service" ]] || fail "upgrade without --with-desktop-session must not add Xfce"
+assert_file_not_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "praxi-wait-x11.sh"
+assert_file_not_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "-auth"
+assert_file_not_contains "${SANDBOX}/etc/praxi/praxi.env" "XAUTHORITY="
+assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_MAX_COMPUTER_RUNS=1"
+assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_BROWSER_IDLE_SECONDS=120"
+
+# Explicit --with-desktop installs x11-utils + xauth and writes new -auth + readiness ExecStartPost
+: > "${SANDBOX_STATE}/apt.log"
+printf 'ID=debian\nVERSION_ID="12"\nPRETTY_NAME="Debian 12 (Fixture)"\n' > "${SANDBOX}/etc/os-release"
+if ! FAKE_CHROMIUM_CANDIDATE="120.0-1" run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop --no-start > "${TMP_ROOT}/bare.log" 2>&1; then
   cat "${TMP_ROOT}/bare.log" >&2
   fail "bare Xvfb install failed"
 fi
-[[ -f "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" ]] || fail "bare Xvfb unit missing"
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04 LTS (Fixture)"\n' > "${SANDBOX}/etc/os-release"
+assert_file_contains "${SANDBOX_STATE}/apt.log" "x11-utils"
+assert_file_contains "${SANDBOX_STATE}/apt.log" "xauth"
+assert_file_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "praxi-wait-x11.sh"
+assert_file_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "Upholds=praxi.service"
 [[ ! -f "${SANDBOX}/etc/systemd/system/praxi-desktop.service" ]] || fail "bare Xvfb should not install praxi-desktop.service"
+pass "existing bare-Xvfb install preserved on no-flag upgrade and upgraded on --with-desktop"
 
-# Upgrade without desktop-session flag must preserve bare Xvfb
-bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
-  --skip-packages --no-start > "${TMP_ROOT}/bare-upgrade.log" 2>&1
-[[ -f "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" ]] || fail "bare Xvfb unit lost on upgrade"
-[[ ! -f "${SANDBOX}/etc/systemd/system/praxi-desktop.service" ]] || fail "upgrade without --with-desktop-session must not add Xfce"
-pass "existing bare-Xvfb install preserved on upgrade"
-
-# 6. Explicit --with-desktop-session install
-bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+# 6. Explicit --with-desktop-session install (with default 1280x800x24 when no desktop unit exists yet)
+rm -f "${SANDBOX}/etc/systemd/system/praxi-xvfb.service"
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --with-desktop-session --skip-packages --no-start > "${TMP_ROOT}/xfce.log" 2>&1
 
 SLICE_FILE="${SANDBOX}/etc/systemd/system/praxi.slice"
@@ -260,8 +343,9 @@ DROPIN_FILE="${SANDBOX}/etc/systemd/system/praxi.service.d/desktop.conf"
 ENV_FILE="${SANDBOX}/etc/praxi/praxi.env"
 NODE_ENV="${SANDBOX}/etc/praxi/praxi-node.env"
 SESSION_EXEC="${SANDBOX}/opt/praxi/libexec/praxi-xfce-session.sh"
+XAUTH_EXEC="${SANDBOX}/opt/praxi/libexec/praxi-xauth-init.sh"
 
-for f in "${SLICE_FILE}" "${XVFB_FILE}" "${DESK_FILE}" "${SVC_FILE}" "${NODE_FILE}" "${DROPIN_FILE}" "${ENV_FILE}" "${NODE_ENV}" "${SESSION_EXEC}"; do
+for f in "${SLICE_FILE}" "${XVFB_FILE}" "${DESK_FILE}" "${SVC_FILE}" "${NODE_FILE}" "${DROPIN_FILE}" "${ENV_FILE}" "${NODE_ENV}" "${SESSION_EXEC}" "${XAUTH_EXEC}"; do
   [[ -f "${f}" ]] || fail "expected generated file missing: ${f}"
 done
 
@@ -275,18 +359,22 @@ done
 assert_file_contains "${XVFB_FILE}" "-screen 0 1280x800x24"
 assert_file_contains "${XVFB_FILE}" "-nolisten tcp"
 assert_file_contains "${XVFB_FILE}" "-auth ${SANDBOX}/var/lib/praxi/.Xauthority"
+assert_file_contains "${XVFB_FILE}" "Upholds=praxi-desktop.service praxi.service"
 assert_file_not_contains "${XVFB_FILE}" "-ac"
 assert_file_not_contains "${XVFB_FILE}" "-fbdir"
 assert_file_not_contains "${XVFB_FILE}" "xhost"
 
-assert_file_contains "${DESK_FILE}" "Requires=praxi-xvfb.service"
+assert_file_contains "${DESK_FILE}" "BindsTo=praxi-xvfb.service"
 assert_file_contains "${DESK_FILE}" "PartOf=praxi-xvfb.service"
 assert_file_contains "${DESK_FILE}" "JoinsNamespaceOf=praxi-xvfb.service"
+assert_file_contains "${DESK_FILE}" "Restart=always"
 assert_file_contains "${DESK_FILE}" "KillMode=control-group"
 assert_file_not_contains "${DESK_FILE}" "praxi.env"
 awk '/^\[Service\]/{in_svc=1} /^\[/{if(!/^\[Service\]/)in_svc=0} in_svc && /^JoinsNamespaceOf=/{exit 1}' "${DESK_FILE}" || fail "JoinsNamespaceOf must be in [Unit], not [Service]"
 
-assert_file_contains "${DROPIN_FILE}" "Requires=praxi-xvfb.service praxi-desktop.service"
+assert_file_contains "${DROPIN_FILE}" "BindsTo=praxi-xvfb.service"
+assert_file_contains "${DROPIN_FILE}" "Requires=praxi-desktop.service"
+assert_file_contains "${DROPIN_FILE}" "After=praxi-xvfb.service praxi-desktop.service"
 assert_file_contains "${DROPIN_FILE}" "JoinsNamespaceOf=praxi-xvfb.service"
 
 assert_file_contains "${ENV_FILE}" "DISPLAY=:99"
@@ -303,19 +391,38 @@ assert_file_contains "${SESSION_EXEC}" "xfwm4 --compositor=off"
 assert_file_contains "${SESSION_EXEC}" "xfce4-screensaver.desktop"
 assert_file_contains "${SESSION_EXEC}" "xfce4-power-manager.desktop"
 assert_file_contains "${SESSION_EXEC}" "use_compositing"
+# shellcheck disable=SC2016
+assert_file_contains "${SESSION_EXEC}" 'chmod 0600 "${DBUS_SOCKET}"'
+assert_file_contains "${SESSION_EXEC}" "xfdesktop exited"
+assert_file_contains "${SESSION_EXEC}" "xfce4-panel exited"
 assert_file_not_contains "${SESSION_EXEC}" "openbox"
 assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "Slice=praxi.slice"
-pass "explicit --with-desktop-session generates secure Xfce/Xvfb/slice topology"
 
-# 7. Re-run idempotence preserves desktop session + geometry
-bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+# Verify praxi-xauth-init.sh reuses existing cookie on subsequent starts
+: > "${SANDBOX_STATE}/xauth.log"
+TEST_XAUTH="${TMP_ROOT}/test.Xauthority"
+bash "${XAUTH_EXEC}" :99 "${TEST_XAUTH}"
+first_content="$(cat "${TEST_XAUTH}")"
+bash "${XAUTH_EXEC}" :99 "${TEST_XAUTH}"
+second_content="$(cat "${TEST_XAUTH}")"
+[[ "${first_content}" == "${second_content}" ]] || fail "praxi-xauth-init.sh regenerated cookie instead of reusing existing"
+add_calls="$(grep -c ' add :99 ' "${SANDBOX_STATE}/xauth.log" || true)"
+[[ "${add_calls}" -eq 1 ]] || fail "expected exactly 1 xauth add call across two starts, got ${add_calls}"
+pass "explicit --with-desktop-session generates secure Xfce/Xvfb/slice topology and reuses xauth cookie"
+
+# 7. Re-run idempotence preserves desktop session + geometry (both no-flag and explicit --with-desktop-session)
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --skip-packages --no-start > "${TMP_ROOT}/idempotent.log" 2>&1
 [[ -f "${DESK_FILE}" ]] || fail "idempotent re-run lost praxi-desktop.service"
 assert_file_contains "${XVFB_FILE}" "-screen 0 1280x800x24"
-pass "idempotent upgrade preserves praxi-desktop.service and 1280x800x24"
+
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages --no-start > "${TMP_ROOT}/idempotent-flag.log" 2>&1
+assert_file_contains "${XVFB_FILE}" "-screen 0 1280x800x24"
+pass "idempotent upgrade (no-flag and --with-desktop-session) preserves praxi-desktop.service and 1280x800x24"
 
 # 8. Explicit --without-desktop-session removes desktop session but keeps Xvfb
-bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --without-desktop-session --skip-packages --no-start > "${TMP_ROOT}/downgrade.log" 2>&1
 [[ ! -f "${DESK_FILE}" ]] || fail "--without-desktop-session did not remove praxi-desktop.service"
 [[ -f "${XVFB_FILE}" ]] || fail "--without-desktop-session should keep praxi-xvfb.service"
@@ -323,18 +430,28 @@ assert_file_not_contains "${ENV_FILE}" "DBUS_SESSION_BUS_ADDRESS"
 assert_file_contains "${ENV_FILE}" "DISPLAY=:99"
 pass "--without-desktop-session rollback removes Xfce session cleanly"
 
-# 9. setup-headless.sh reconciliation & package list checks
-# 9a. User mode refuses :99 when praxi-xvfb.service owns :99
-if HOME="${SANDBOX}/home/tester" bash "${SB_SETUP}" --user --display :99 --skip-packages --no-start > "${TMP_ROOT}/conflict-disp.log" 2>&1; then
+# 9. setup-headless.sh reconciliation, root-in-user-mode rejection, & package list checks
+# 9a. Root running default --user mode without --system is rejected
+if FAKE_UID=0 HOME="${SANDBOX}/home/tester" run_timed bash "${SB_SETUP}" --display :98 --skip-packages --no-start > "${TMP_ROOT}/root-user.log" 2>&1; then
+  fail "setup-headless without --system should fail when run as root"
+fi
+assert_file_contains "${TMP_ROOT}/root-user.log" "pass --system or run as an unprivileged user"
+pass "setup-headless rejects root in default --user mode"
+
+# 9b. User mode refuses :99 when praxi-xvfb.service owns :99
+if FAKE_UID=1000 HOME="${SANDBOX}/home/tester" run_timed bash "${SB_SETUP}" --user --display :99 --skip-packages --no-start > "${TMP_ROOT}/conflict-disp.log" 2>&1; then
   fail "setup-headless --user should refuse display :99 owned by praxi-xvfb.service"
 fi
 assert_file_contains "${TMP_ROOT}/conflict-disp.log" "owned by system unit praxi-xvfb.service"
 pass "setup-headless --user prevents duplicate display server on :99"
 
-# 9b. User mode on :98 creates minimal Xfce session with private Xauthority (no openbox, no -ac)
-HOME="${SANDBOX}/home/tester" bash "${SB_SETUP}" --user --display :98 --skip-packages --no-start > "${TMP_ROOT}/user-xfce.log" 2>&1
+# 9c. User mode on :98 creates minimal Xfce session with private Xauthority (no openbox, no -ac)
+FAKE_UID=1000 HOME="${SANDBOX}/home/tester" run_timed bash "${SB_SETUP}" --user --display :98 --skip-packages --no-start > "${TMP_ROOT}/user-xfce.log" 2>&1
 USER_SESSION="${SANDBOX}/home/tester/.local/bin/praxi-headless-session.sh"
 USER_UNIT="${SANDBOX}/home/tester/.config/systemd/user/praxi-headless-desktop.service"
+USER_WANTS="${SANDBOX}/home/tester/.config/systemd/user/default.target.wants/praxi-headless-desktop.service"
+mkdir -p "$(dirname "${USER_WANTS}")"
+ln -sf "${USER_UNIT}" "${USER_WANTS}"
 [[ -f "${USER_SESSION}" && -f "${USER_UNIT}" ]] || fail "user-mode Xfce files missing"
 assert_file_contains "${USER_SESSION}" "-nolisten tcp"
 assert_file_contains "${USER_SESSION}" "-auth"
@@ -342,21 +459,36 @@ assert_file_not_contains "${USER_SESSION}" " -ac "
 assert_file_not_contains "${USER_UNIT}" "openbox"
 pass "setup-headless --user creates private Xfce session on :98"
 
-# 9c. System mode restores Xfce session and cleans up any conflicting user unit on :99
-mkdir -p "${SANDBOX}/home/tester/.config/systemd/user"
-printf 'Environment="DISPLAY=:99"\n' > "${SANDBOX}/home/tester/.config/systemd/user/praxi-headless-desktop.service"
+# 9d. System mode on :99 preserves :98 user unit & wants symlink, then removes :99 user unit via disable --now
 : > "${SANDBOX_STATE}/apt.log"
-HOME="${SANDBOX}/home/tester" bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --no-start > "${TMP_ROOT}/sys-setup.log" 2>&1
+: > "${SANDBOX_STATE}/systemctl.log"
+FAKE_UID=0 HOME="${SANDBOX}/home/tester" run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --no-start > "${TMP_ROOT}/sys-setup-preserve98.log" 2>&1
+[[ -f "${USER_UNIT}" && -L "${USER_WANTS}" && -e "${USER_WANTS}" ]] || fail "setup-headless --system on :99 should preserve :98 user unit and wants symlink"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "disable --now praxi-headless-desktop.service"
+
+printf 'Environment="DISPLAY=:99"\n' > "${USER_UNIT}"
+: > "${SANDBOX_STATE}/systemctl.log"
+FAKE_UID=0 HOME="${SANDBOX}/home/tester" run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --skip-packages --no-start > "${TMP_ROOT}/sys-setup.log" 2>&1
 [[ -f "${DESK_FILE}" ]] || fail "setup-headless --system did not create praxi-desktop.service"
-[[ ! -f "${SANDBOX}/home/tester/.config/systemd/user/praxi-headless-desktop.service" ]] || fail "setup-headless --system did not remove conflicting user unit on :99"
+[[ ! -f "${USER_UNIT}" && ! -L "${USER_WANTS}" && ! -e "${USER_WANTS}" ]] || fail "setup-headless --system did not remove conflicting :99 user unit and wants symlink"
+assert_file_contains "${SANDBOX_STATE}/systemctl.log" "--user disable --now praxi-headless-desktop.service"
 assert_file_contains "${SANDBOX_STATE}/apt.log" "xfwm4 xfce4-panel xfdesktop4"
 assert_file_not_contains "${SANDBOX_STATE}/apt.log" "chromium-browser"
 assert_file_not_contains "${SANDBOX_STATE}/apt.log" "x11vnc"
 assert_file_not_contains "${SANDBOX_STATE}/apt.log" "cups"
-pass "setup-headless --system installs minimal Xfce packages and reconciles :99"
+
+# Also verify install-linux.sh cleans conflicting :99 user unit while preserving :98
+printf 'Environment="DISPLAY=:99"\n' > "${USER_UNIT}"
+ln -sf "${USER_UNIT}" "${USER_WANTS}"
+: > "${SANDBOX_STATE}/systemctl.log"
+HOME="${SANDBOX}/home/tester" run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages --no-start > "${TMP_ROOT}/install-clean-user.log" 2>&1
+[[ ! -f "${USER_UNIT}" && ! -L "${USER_WANTS}" && ! -e "${USER_WANTS}" ]] || fail "install-linux.sh did not remove conflicting :99 user unit"
+assert_file_contains "${SANDBOX_STATE}/systemctl.log" "--user disable --now praxi-headless-desktop.service"
+pass "setup-headless --system and install-linux reconcile :99 via systemctl --user disable --now without touching :98"
 
 # 10. Explicit --without-desktop removes both units and DISPLAY
-bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --without-desktop --skip-packages --no-start > "${TMP_ROOT}/nodesk.log" 2>&1
 [[ ! -f "${DESK_FILE}" && ! -f "${XVFB_FILE}" ]] || fail "--without-desktop did not remove desktop units"
 assert_file_not_contains "${ENV_FILE}" "DISPLAY="
