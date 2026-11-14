@@ -888,7 +888,13 @@ async fn the_foreground_page_makes_matching_skills_suggested() {
     }));
     let run = lp.run_turn(env.chat, "hello").unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
-    assert!(system_of(&brain.requests()[0]).contains("[suggested] my-site"));
+    let reqs = brain.requests();
+    assert!(!system_of(&reqs[0]).contains("- [suggested]"));
+    let last = reqs[0].messages.last().unwrap();
+    assert_eq!(last.role, MessageRole::System);
+    let note = last.content.as_str().unwrap();
+    assert!(note.starts_with("Suggested skills"), "{note}");
+    assert!(note.contains("my-site"), "{note}");
 }
 
 #[tokio::test]

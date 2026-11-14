@@ -709,11 +709,20 @@ async fn skill_hint_lists_the_skill_first() {
         .as_str()
         .unwrap()
         .to_owned();
-    let first_skill_line = sys.lines().find(|l| l.starts_with("- ")).unwrap();
+    // The index in the system prompt is name-ordered and never carries the
+    // per-turn suggestion; that goes to a short System note at the end.
+    assert!(!sys.contains("- [suggested]"), "{sys}");
+    let req = &script.requests_for("fake/m")[0];
+    let last = req.messages.last().unwrap();
+    assert_eq!(last.role, provider_catalog::MessageRole::System);
     assert!(
-        first_skill_line.starts_with("- [suggested] github-basics"),
-        "{first_skill_line}"
+        last.content
+            .as_str()
+            .unwrap()
+            .starts_with("Suggested skills for the current page/app/request"),
+        "{last:?}"
     );
+    assert!(last.content.as_str().unwrap().contains("github-basics"));
 }
 
 // ---------- budget, switches, embedder ----------

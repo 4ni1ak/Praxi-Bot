@@ -28,7 +28,8 @@ use tool_registry::{ContentPart, Tool, ToolContext, ToolOutput, ToolSpec};
 
 use crate::approval::ExecPermit;
 use crate::history::{
-    GUARD_NOTE, build_messages, expose, status_of, step_output, tool_defs, truncate_utf8,
+    Compaction, GUARD_NOTE, build_messages, expose, status_of, step_output, tool_defs,
+    truncate_utf8,
 };
 use crate::router::{RoutePlan, route_hints};
 use crate::shared::{
@@ -458,7 +459,7 @@ impl TurnExecutor {
         let note = guard_reason
             .as_deref()
             .map(|r| GUARD_NOTE.replace("{reason}", r));
-        let skills = self.skills_block(&ctx, &steps, &hints.skills);
+        let (skills, suggested_skills) = self.skills_block(&ctx, &steps, &hints.skills);
         let messages = build_messages(
             &self.sh.storage,
             run,
@@ -466,6 +467,8 @@ impl TurnExecutor {
             &ctx.profile,
             note.as_deref(),
             skills.as_deref(),
+            suggested_skills.as_deref(),
+            &Compaction::from_guards(&self.sh.cfg.guards),
         )
         .map_err(xe)?;
         let mut primary = ctx.profile.models.executor.clone();
@@ -584,16 +587,19 @@ impl TurnExecutor {
         }
     }
 
-    /// The skills index block for the system prompt: skills matching the
-    /// foreground page / app (when the embedder tells us) or else the turn's
-    /// latest user text are listed first.
+    /// The skills index block for the system prompt (name-ordered, so it does
+    /// not change between the model calls of a turn) and, separately, the short
+    /// note naming the skills that match the foreground page / app (when the
+    /// embedder tells us), the turn's latest user text or the router hint.
     fn skills_block(
         &self,
         ctx: &RunCtx,
         steps: &[RunStep],
         suggested: &[String],
-    ) -> Option<String> {
-        let index = self.sh.skills.get()?;
+    ) -> (Option<String>, Option<String>) {
+        let Some(index) = self.sh.skills.get() else {
+            return (None, None);
+        };
         let hints = self
             .sh
             .skill_hints
@@ -616,10 +622,26 @@ impl TurnExecutor {
         // Per-bot resolver: learned skills of this bot (and only this bot) are
         // listed next to the shared and bundled ones. An unusable bot id falls
         // back to the shared view, the same scope a bot-less caller gets.
+        let bot = ctx.bot_id.to_string();
+        let stable = skills::SkillContext::default();
         let block = index
-            .prompt_block_for_bot(Some(&ctx.bot_id.to_string()), &skill_ctx, suggested)
-            .unwrap_or_else(|_| index.prompt_block_suggesting(&skill_ctx, suggested));
-        (!block.is_empty()).then_some(block)
+            .prompt_block_for_bot(Some(&bot), &stable, &[])
+            .unwrap_or_else(|_| index.prompt_block(&stable));
+        let listed = index
+            .for_bot(Some(&bot))
+            .map_or_else(|_| index.list(), |view| view.list());
+        let names: Vec<String> = listed
+            .into_iter()
+            .filter(|s| s.matches(&skill_ctx) || suggested.contains(&s.name))
+            .map(|s| s.name)
+            .collect();
+        let note = (!names.is_empty()).then(|| {
+            format!(
+                "Suggested skills for the current page/app/request (load one with skill_read): {}",
+                names.join(", ")
+            )
+        });
+        ((!block.is_empty()).then_some(block), note)
     }
 
     /// One model, up to `model_retry.max_attempts` attempts inside one shared
