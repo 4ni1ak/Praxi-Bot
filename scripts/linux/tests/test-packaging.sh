@@ -7,6 +7,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 INSTALL_SH="${REPO_ROOT}/scripts/install-linux.sh"
 SETUP_SH="${REPO_ROOT}/scripts/linux/setup-headless.sh"
+REAL_UID="$(id -u)"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TMP_ROOT}"' EXIT
@@ -17,7 +18,10 @@ fail() { printf 'FAIL: %s\n' "$*" >&3; exit 1; }
 
 assert_file_contains() {
   local file="$1" pattern="$2" msg="${3:-}"
-  grep -Fq -- "${pattern}" "${file}" || fail "${msg:-expected pattern ${pattern} in ${file}}"
+  if ! grep -Fq -- "${pattern}" "${file}"; then
+    cat "${file}" >&3 || true
+    fail "${msg:-expected pattern ${pattern} in ${file}}"
+  fi
 }
 
 assert_file_not_contains() {
@@ -30,7 +34,17 @@ assert_file_not_contains() {
 run_timed() {
   local rc=0
   command -v timeout >/dev/null 2>&1 || fail "timeout command is required for test-packaging.sh"
-  timeout -k 5s --foreground 30s "$@" || rc=$?
+  (
+    local cur_u cur_cnt target_u
+    cur_u="$(ulimit -u 2>/dev/null || echo unlimited)"
+    cur_cnt="$({ ps -u "${REAL_UID}" --no-headers 2>/dev/null || true; } | wc -l)"
+    cur_cnt="${cur_cnt//[^0-9]/}"
+    target_u=$(( ${cur_cnt:-0} + 128 ))
+    if [[ "${cur_u}" == "unlimited" ]] || { [[ "${cur_u}" =~ ^[0-9]+$ ]] && (( cur_u > target_u )); }; then
+      ulimit -u "${target_u}" 2>/dev/null || true
+    fi
+    exec timeout -k 5s 30s "$@"
+  ) || rc=$?
   if [[ "${rc}" -eq 124 || "${rc}" -eq 137 ]]; then
     fail "command timed out (rc=${rc}): $*"
   fi
@@ -156,17 +170,33 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ "${dir_mode}" -eq 1 ]]; then
+  if [[ -n "${FAKE_FAIL_INSTALL_DIR_MATCH:-}" && "${args[*]}" == *"${FAKE_FAIL_INSTALL_DIR_MATCH}"* ]]; then
+    echo "install: cannot create directory '${args[*]}': No space left on device" >&2
+    exit 1
+  fi
   mkdir -p "${args[@]}"
   if [[ -n "${mode}" ]]; then
     chmod "${mode}" "${args[@]}"
   fi
   printf 'install -d owner=%s group=%s mode=%s %s\n' "${owner}" "${group}" "${mode}" "${args[*]}" >> "${SANDBOX_STATE}/perms.log"
 else
-  cp -f "${args[0]}" "${args[1]}"
-  if [[ -n "${mode}" ]]; then
-    chmod "${mode}" "${args[1]}"
+  dst="${args[1]}"
+  base="$(basename "${dst}")"
+  if [[ -n "${FAKE_SLEEP_BEFORE_INSTALL_TARGET:-}" && "${base}" == "${FAKE_SLEEP_BEFORE_INSTALL_TARGET}" ]]; then
+    if [[ -n "${FAKE_READY_MARKER_FILE:-}" ]]; then
+      : > "${FAKE_READY_MARKER_FILE}"
+    fi
+    sleep 5
   fi
-  printf 'install owner=%s group=%s mode=%s %s\n' "${owner}" "${group}" "${mode}" "${args[1]}" >> "${SANDBOX_STATE}/perms.log"
+  if [[ -n "${FAKE_FAIL_INSTALL_TARGET:-}" && "${base}" == "${FAKE_FAIL_INSTALL_TARGET}" ]]; then
+    echo "install: error writing '${dst}': No space left on device" >&2
+    exit 1
+  fi
+  cp -f "${args[0]}" "${dst}"
+  if [[ -n "${mode}" ]]; then
+    chmod "${mode}" "${dst}"
+  fi
+  printf 'install owner=%s group=%s mode=%s %s\n' "${owner}" "${group}" "${mode}" "${dst}" >> "${SANDBOX_STATE}/perms.log"
 fi
 EOF
 write_fake_shim gh <<'EOF'
@@ -183,32 +213,94 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 verb=""
-unit=""
+has_now=0
+units=()
 for a in "$@"; do
   case "${a}" in
-    --user|--quiet|--now) continue ;;
+    --user|--quiet|--no-block) continue ;;
+    --now) has_now=1; continue ;;
     *)
       if [[ -z "${verb}" ]]; then
         verb="${a}"
       else
-        unit="${a}"
+        units+=("${a}")
       fi
       ;;
   esac
 done
+unit="${units[0]:-}"
+state_add() {
+  local f="$1" u="$2"
+  touch "${f}"
+  if ! grep -Fxq -- "${u}" "${f}" 2>/dev/null; then
+    printf '%s\n' "${u}" >> "${f}"
+  fi
+}
+state_del() {
+  local f="$1" u="$2"
+  if [[ -f "${f}" ]]; then
+    grep -Fxv -- "${u}" "${f}" > "${f}.tmp" 2>/dev/null || true
+    mv -f "${f}.tmp" "${f}"
+  fi
+}
 case "${verb}" in
   is-active)
+    if [[ "${FAKE_STATEFUL_SYSTEMCTL:-0}" -eq 1 ]]; then
+      [[ -n "${unit}" ]] && grep -Fxq -- "${unit}" "${SANDBOX_STATE}/active_units" 2>/dev/null && exit 0
+      exit 1
+    fi
     if [[ -n "${unit}" && " ${FAKE_ACTIVE_UNITS:-} " == *" ${unit} "* ]]; then
       exit 0
     fi
     exit 1
     ;;
-  is-enabled) exit 0 ;;
+  is-enabled)
+    if [[ "${FAKE_STATEFUL_SYSTEMCTL:-0}" -eq 1 ]]; then
+      [[ -n "${unit}" ]] && grep -Fxq -- "${unit}" "${SANDBOX_STATE}/enabled_units" 2>/dev/null && exit 0
+      exit 1
+    fi
+    exit 0
+    ;;
   cat) exit 1 ;;
   start|restart)
-    if [[ -n "${FAKE_FAIL_START_UNIT:-}" && "${unit}" == "${FAKE_FAIL_START_UNIT}" && -f "${FAKE_FAIL_ONCE_FLAG:-/nonexistent}" ]]; then
-      rm -f "${FAKE_FAIL_ONCE_FLAG}"
-      exit 1
+    for u in "${units[@]}"; do
+      if [[ -n "${FAKE_FAIL_START_UNIT:-}" && "${u}" == "${FAKE_FAIL_START_UNIT}" && -f "${FAKE_FAIL_ONCE_FLAG:-/nonexistent}" ]]; then
+        rm -f "${FAKE_FAIL_ONCE_FLAG}"
+        exit 1
+      fi
+      if [[ "${FAKE_STATEFUL_SYSTEMCTL:-0}" -eq 1 ]]; then
+        state_add "${SANDBOX_STATE}/active_units" "${u}"
+      fi
+    done
+    exit 0
+    ;;
+  stop)
+    if [[ "${FAKE_STATEFUL_SYSTEMCTL:-0}" -eq 1 ]]; then
+      for u in "${units[@]}"; do
+        state_del "${SANDBOX_STATE}/active_units" "${u}"
+      done
+    fi
+    exit 0
+    ;;
+  enable)
+    if [[ "${FAKE_STATEFUL_SYSTEMCTL:-0}" -eq 1 ]]; then
+      for u in "${units[@]}"; do
+        state_add "${SANDBOX_STATE}/enabled_units" "${u}"
+        if [[ "${has_now}" -eq 1 ]]; then
+          state_add "${SANDBOX_STATE}/active_units" "${u}"
+        fi
+      done
+    fi
+    exit 0
+    ;;
+  disable)
+    if [[ "${FAKE_STATEFUL_SYSTEMCTL:-0}" -eq 1 ]]; then
+      for u in "${units[@]}"; do
+        state_del "${SANDBOX_STATE}/enabled_units" "${u}"
+        if [[ "${has_now}" -eq 1 ]]; then
+          state_del "${SANDBOX_STATE}/active_units" "${u}"
+        fi
+      done
     fi
     exit 0
     ;;
@@ -217,6 +309,10 @@ esac
 EOF
 write_fake_shim apt-get <<'EOF'
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/apt.log"
+if [[ "${FAKE_FAIL_APT:-0}" -eq 1 && "${1:-}" == "install" ]]; then
+  echo "E: Unable to fetch some archives (simulated package failure)" >&2
+  exit 100
+fi
 exit 0
 EOF
 write_fake_shim apt-cache <<'EOF'
@@ -243,6 +339,9 @@ done
 if [[ -n "${out}" ]]; then
   printf 'fake-download\n' > "${out}"
 elif [[ "${url}" == *"/v1/health"* ]]; then
+  if [[ "${FAKE_FAIL_HEALTH:-0}" -eq 1 ]]; then
+    exit 22
+  fi
   printf '{"status":"ok","version":"0.1.0"}\n'
 fi
 EOF
@@ -420,25 +519,171 @@ run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-lin
   --skip-packages --no-start > "${TMP_ROOT}/override-upgrade.log" 2>&1
 assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_MAX_COMPUTER_RUNS=3"
 assert_file_contains "${SANDBOX}/etc/praxi/praxi.env" "BOT_BROWSER_IDLE_SECONDS=300"
+assert_file_contains "${TMP_ROOT}/override-upgrade.log" "daemon is stopped (--no-start)"
+FAKE_ACTIVE_UNITS="praxi.service" run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --skip-packages --no-start > "${TMP_ROOT}/nostart-active-upgrade.log" 2>&1
+assert_file_contains "${TMP_ROOT}/nostart-active-upgrade.log" "stopped for upgrade and remain stopped (--no-start)"
 sed -i '/^BOT_MAX_COMPUTER_RUNS=/d;/^BOT_BROWSER_IDLE_SECONDS=/d' "${SANDBOX}/etc/praxi/praxi.env"
 
-# 5c. Failed upgrade mid-flight rolls back VERSION, units, env, and restarts previously active services
-printf 'v0.0.9-prev\n' > "${SANDBOX}/opt/praxi/VERSION"
-touch "${TMP_ROOT}/fail-once"
-: > "${SANDBOX_STATE}/systemctl.log"
-if FAKE_ACTIVE_UNITS="praxi-xvfb.service praxi.service" \
-  FAKE_FAIL_START_UNIT="praxi.service" \
-  FAKE_FAIL_ONCE_FLAG="${TMP_ROOT}/fail-once" \
+# 5c. Comprehensive rollback tests across failure stages
+setup_prev_install() {
+  mkdir -p "${SANDBOX}/opt/praxi/bin" "${SANDBOX}/etc/systemd/system" "${SANDBOX}/etc/praxi" "${SANDBOX}/usr/local/bin"
+  rm -rf "${SANDBOX}/etc/systemd/system/praxi-desktop.service" \
+    "${SANDBOX}/etc/systemd/system/praxi.slice" \
+    "${SANDBOX}/etc/systemd/system/praxi.service.d" \
+    "${SANDBOX}/etc/systemd/system/praxi-node.service.d" \
+    "${SANDBOX}/opt/praxi/libexec"
+  printf 'v0.0.9-prev\n' > "${SANDBOX}/opt/praxi/VERSION"
+  printf '#!/bin/sh\necho prev-bot-0.0.9\n' > "${SANDBOX}/opt/praxi/bin/bot"
+  printf '#!/bin/sh\necho prev-node-0.0.9\n' > "${SANDBOX}/opt/praxi/bin/bot-node"
+  chmod +x "${SANDBOX}/opt/praxi/bin/bot" "${SANDBOX}/opt/praxi/bin/bot-node"
+  cat > "${SANDBOX}/etc/praxi/praxi.env" <<EOF
+BOT_DATA_DIR=${SANDBOX}/var/lib/praxi
+BOT_PORT=47821
+BOT_SECRETS_BACKEND=file
+BOT_SECRETS_PASSPHRASE=legacy-passphrase
+HOME=${SANDBOX}/var/lib/praxi
+DISPLAY=:99
+CUSTOM_KEEP=1
+EOF
+  cat > "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" <<EOF
+[Unit]
+Description=Praxi virtual display (Xvfb :99)
+
+[Service]
+Type=simple
+User=praxi
+Group=praxi
+ExecStartPre=!/usr/bin/install -d -o root -g root -m 1777 /tmp/.X11-unix
+ExecStart=${FAKE_BIN}/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp +extension RANDR +extension XTEST
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  cat > "${SANDBOX}/etc/systemd/system/praxi.service" <<EOF
+[Unit]
+Description=Praxi-Bot daemon prev
+
+[Service]
+ExecStart=${SANDBOX}/opt/praxi/bin/bot serve
+EOF
+  cp -f "${SANDBOX}/etc/praxi/praxi.env" "${TMP_ROOT}/prev-praxi.env.snap"
+  cp -f "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "${TMP_ROOT}/prev-xvfb.service.snap"
+  cp -f "${SANDBOX}/etc/systemd/system/praxi.service" "${TMP_ROOT}/prev-praxi.service.snap"
+  printf 'praxi-xvfb.service\npraxi.service\n' > "${SANDBOX_STATE}/active_units"
+  printf 'praxi-xvfb.service\npraxi.service\n' > "${SANDBOX_STATE}/enabled_units"
+  : > "${SANDBOX_STATE}/systemctl.log"
+}
+
+assert_prev_install_restored_and_running() {
+  local label="$1"
+  assert_file_contains "${SANDBOX}/opt/praxi/VERSION" "v0.0.9-prev" "${label}: VERSION not restored"
+  assert_file_contains "${SANDBOX}/opt/praxi/bin/bot" "prev-bot-0.0.9" "${label}: bot binary not restored"
+  diff -u "${TMP_ROOT}/prev-praxi.env.snap" "${SANDBOX}/etc/praxi/praxi.env" || fail "${label}: praxi.env bytes not restored"
+  diff -u "${TMP_ROOT}/prev-xvfb.service.snap" "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" || fail "${label}: praxi-xvfb.service bytes not restored"
+  diff -u "${TMP_ROOT}/prev-praxi.service.snap" "${SANDBOX}/etc/systemd/system/praxi.service" || fail "${label}: praxi.service bytes not restored"
+  [[ ! -f "${SANDBOX}/etc/systemd/system/praxi-desktop.service" ]] || fail "${label}: new praxi-desktop.service should be removed"
+  [[ ! -f "${SANDBOX}/etc/systemd/system/praxi.slice" ]] || fail "${label}: new praxi.slice should be removed"
+  [[ ! -d "${SANDBOX}/etc/systemd/system/praxi.service.d" ]] || fail "${label}: new praxi.service.d should be removed"
+  grep -Fxq "praxi-xvfb.service" "${SANDBOX_STATE}/active_units" || fail "${label}: praxi-xvfb.service not active after rollback"
+  grep -Fxq "praxi.service" "${SANDBOX_STATE}/active_units" || fail "${label}: praxi.service not active after rollback"
+  if grep -Fxq "praxi-desktop.service" "${SANDBOX_STATE}/active_units"; then
+    fail "${label}: praxi-desktop.service should not be active after rollback"
+  fi
+  if grep -Fxq "praxi-desktop.service" "${SANDBOX_STATE}/enabled_units"; then
+    fail "${label}: praxi-desktop.service should not be enabled after rollback"
+  fi
+}
+
+# 5c-1. Package-step failure aborts BEFORE stopping active services
+setup_prev_install
+if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_APT=1 \
   run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
-  --skip-packages > "${TMP_ROOT}/rollback-upgrade.log" 2>&1; then
+  --with-desktop-session > "${TMP_ROOT}/rollback-pkg.log" 2>&1; then
+  fail "expected package install failure to exit non-zero"
+fi
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "stop praxi"
+assert_prev_install_restored_and_running "5c-1 package failure"
+
+# 5c-2. Disk-full (ENOSPC) failure during binary install after stopping services
+setup_prev_install
+if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_INSTALL_TARGET="bot" \
+  run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages > "${TMP_ROOT}/rollback-enospc.log" 2>&1; then
+  fail "expected binary install ENOSPC to exit non-zero"
+fi
+assert_file_contains "${TMP_ROOT}/rollback-enospc.log" "rolling back to previous working installation"
+assert_prev_install_restored_and_running "5c-2 binary install ENOSPC"
+
+# 5c-3. Unit write failure AFTER binaries, praxi.env, and unit files were overwritten
+setup_prev_install
+if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_INSTALL_DIR_MATCH="praxi.service.d" \
+  run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages > "${TMP_ROOT}/rollback-unit-write.log" 2>&1; then
+  fail "expected unit write failure to exit non-zero"
+fi
+assert_file_contains "${TMP_ROOT}/rollback-unit-write.log" "rolling back to previous working installation"
+assert_prev_install_restored_and_running "5c-3 unit write failure"
+
+# 5c-4. Failed systemctl start during upgrade
+setup_prev_install
+touch "${TMP_ROOT}/fail-once"
+if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_START_UNIT="praxi.service" FAKE_FAIL_ONCE_FLAG="${TMP_ROOT}/fail-once" \
+  run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --skip-packages > "${TMP_ROOT}/rollback-start.log" 2>&1; then
   fail "expected failed startup during upgrade to exit non-zero and trigger rollback"
 fi
-assert_file_contains "${TMP_ROOT}/rollback-upgrade.log" "rolling back to previous working installation"
-assert_file_contains "${SANDBOX}/opt/praxi/VERSION" "v0.0.9-prev"
-assert_file_not_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "-auth"
-assert_file_contains "${SANDBOX_STATE}/systemctl.log" "start praxi-xvfb.service"
-assert_file_contains "${SANDBOX_STATE}/systemctl.log" "start praxi.service"
-pass "failed upgrade rolls back VERSION, units, env, and restarts prior services"
+assert_file_contains "${TMP_ROOT}/rollback-start.log" "rolling back to previous working installation"
+assert_prev_install_restored_and_running "5c-4 failed start"
+
+# 5c-5. Readiness check failure AFTER new install started & enabled praxi-xvfb, praxi-desktop, praxi
+setup_prev_install
+if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_HEALTH=1 PRAXI_READY_TIMEOUT_SECS=2 \
+  run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages > "${TMP_ROOT}/rollback-readiness.log" 2>&1; then
+  fail "expected failed readiness check to exit non-zero and trigger rollback"
+fi
+assert_file_contains "${TMP_ROOT}/rollback-readiness.log" "rolling back to previous working installation"
+assert_file_contains "${SANDBOX_STATE}/systemctl.log" "disable praxi-desktop.service"
+# Verify rollback stops new praxi-xvfb/praxi-desktop/praxi AFTER readiness failure and BEFORE daemon-reload/start
+python3 - "${SANDBOX_STATE}/systemctl.log" <<'PY' || fail "5c-5 rollback stop/restore/start ordering wrong"
+import sys
+lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8")]
+# Second stop of praxi-xvfb.service is the rollback stop (first is pre-install stop)
+xvfb_stops = [i for i, l in enumerate(lines) if l == "stop praxi-xvfb.service"]
+assert len(xvfb_stops) >= 2, f"expected >=2 stop praxi-xvfb.service, got {lines}"
+rb_xvfb_stop = xvfb_stops[-1]
+rb_desk_stop = max(i for i, l in enumerate(lines) if l == "stop praxi-desktop.service")
+rb_praxi_stop = max(i for i, l in enumerate(lines) if l == "stop praxi.service")
+rb_reload = max(i for i, l in enumerate(lines) if l == "daemon-reload")
+rb_praxi_start = max(i for i, l in enumerate(lines) if l == "start praxi.service")
+assert rb_xvfb_stop < rb_desk_stop < rb_praxi_stop < rb_reload < rb_praxi_start, lines[rb_xvfb_stop:]
+PY
+assert_prev_install_restored_and_running "5c-5 readiness check failure"
+
+# 5c-6. Signal (SIGTERM) mid-install after services were stopped triggers rollback and exits non-zero
+setup_prev_install
+rm -f "${TMP_ROOT}/mid-install-marker"
+FAKE_STATEFUL_SYSTEMCTL=1 \
+  FAKE_SLEEP_BEFORE_INSTALL_TARGET="bot" \
+  FAKE_READY_MARKER_FILE="${TMP_ROOT}/mid-install-marker" \
+  timeout -k 5s 30s bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop-session --skip-packages > "${TMP_ROOT}/rollback-signal.log" 2>&1 &
+sig_pid=$!
+for _ in $(seq 1 100); do
+  [[ -f "${TMP_ROOT}/mid-install-marker" ]] && break
+  sleep 0.05
+done
+[[ -f "${TMP_ROOT}/mid-install-marker" ]] || { kill -KILL "${sig_pid}" 2>/dev/null || true; fail "5c-6 did not reach mid-install marker"; }
+kill -TERM "${sig_pid}"
+sig_rc=0
+wait "${sig_pid}" || sig_rc=$?
+[[ "${sig_rc}" -ne 0 ]] || fail "5c-6 expected non-zero exit after SIGTERM rollback"
+assert_file_contains "${TMP_ROOT}/rollback-signal.log" "rolling back to previous working installation"
+assert_prev_install_restored_and_running "5c-6 SIGTERM mid-install"
+pass "rollback verified across package, ENOSPC, unit-write, start, readiness, and SIGTERM failures"
 
 # Explicit --with-desktop installs x11-utils + xauth and writes new -auth + readiness ExecStartPost
 : > "${SANDBOX_STATE}/apt.log"
@@ -525,8 +770,10 @@ assert_file_contains "${NODE_ENV}" "DBUS_SESSION_BUS_ADDRESS=unix:path=${SANDBOX
 assert_file_not_contains "${NODE_ENV}" "BOT_SECRETS_PASSPHRASE"
 
 # Verify real file modes & directory ownership/mode logs
+assert_file_contains "${TMP_ROOT}/xfce.log" "daemon is stopped (--no-start)"
 [[ "$(stat -c '%a' "${ENV_FILE}")" == "640" ]] || fail "expected 0640 on ${ENV_FILE}"
 [[ "$(stat -c '%a' "${NODE_ENV}")" == "640" ]] || fail "expected 0640 on ${NODE_ENV}"
+assert_file_contains "${SANDBOX_STATE}/perms.log" "chown root:praxi ${ENV_FILE} ${NODE_ENV}"
 assert_file_contains "${SANDBOX_STATE}/perms.log" "install -d owner=praxi group=praxi mode=0750 ${SANDBOX}/var/lib/praxi"
 assert_file_contains "${SANDBOX_STATE}/perms.log" "install -d owner=root group=praxi mode=0750 ${SANDBOX}/etc/praxi"
 
@@ -650,16 +897,38 @@ run_ok "${TMP_ROOT}/session-apps-off.log" bash "${SB_INSTALL}" --version v0.1.0 
 assert_file_contains "${DESK_FILE}" "Environment=PRAXI_ENABLE_SESSION_APPS=0"
 pass "--with-session-apps / --without-session-apps toggles terminal/thunar packages and PRAXI_ENABLE_SESSION_APPS"
 
-# 6e. systemd < 249 omits Upholds= with warning
+# 6e. systemd < 249 omits Upholds= and uses ExecStartPost uphold fallback for dependent recovery; >= 249 uses Upholds=
+UPHOLD_EXEC="${SANDBOX}/opt/praxi/libexec/praxi-xvfb-uphold.sh"
 FAKE_SYSTEMD_VERSION=239 run_ok "${TMP_ROOT}/old-systemd.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --with-desktop-session --skip-packages --no-start
 assert_file_contains "${TMP_ROOT}/old-systemd.log" "omitting Upholds="
+assert_file_contains "${TMP_ROOT}/old-systemd.log" "ExecStartPost uphold fallback"
 assert_file_not_contains "${XVFB_FILE}" "Upholds="
-# Restore systemd >= 249 unit state for subsequent checks
+assert_file_contains "${XVFB_FILE}" "ExecStartPost=!${UPHOLD_EXEC}"
+assert_file_contains "${XVFB_FILE}" "Restart=on-failure"
+assert_file_contains "${DESK_FILE}" "BindsTo=praxi-xvfb.service"
+assert_file_contains "${DESK_FILE}" "Restart=always"
+assert_file_contains "${DROPIN_FILE}" "BindsTo=praxi-xvfb.service"
+assert_file_contains "${DROPIN_FILE}" "Wants=praxi-desktop.service"
+[[ -x "${UPHOLD_EXEC}" ]] || fail "praxi-xvfb-uphold.sh missing or not executable"
+printf 'praxi-desktop.service\npraxi.service\n' > "${SANDBOX_STATE}/enabled_units"
+: > "${SANDBOX_STATE}/active_units"
+: > "${SANDBOX_STATE}/systemctl.log"
+FAKE_STATEFUL_SYSTEMCTL=1 run_timed bash "${UPHOLD_EXEC}"
+grep -Fxq "praxi-desktop.service" "${SANDBOX_STATE}/active_units" || fail "praxi-xvfb-uphold.sh did not start praxi-desktop.service"
+grep -Fxq "praxi.service" "${SANDBOX_STATE}/active_units" || fail "praxi-xvfb-uphold.sh did not start praxi.service"
+assert_file_contains "${SANDBOX_STATE}/systemctl.log" "start --no-block praxi-desktop.service"
+assert_file_contains "${SANDBOX_STATE}/systemctl.log" "start --no-block praxi.service"
+# Upgrade back to systemd >= 249 (both no-flag and --with-desktop-session) removes fallback and emits Upholds=
+run_ok "${TMP_ROOT}/new-systemd-noflag.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --skip-packages --no-start
+assert_file_contains "${XVFB_FILE}" "Upholds=praxi-desktop.service praxi.service"
+assert_file_not_contains "${XVFB_FILE}" "praxi-xvfb-uphold.sh"
 run_ok "${TMP_ROOT}/new-systemd.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --with-desktop-session --skip-packages --no-start
 assert_file_contains "${XVFB_FILE}" "Upholds=praxi-desktop.service praxi.service"
-pass "systemd < 249 cleanly omits Upholds= while >= 249 emits it"
+assert_file_not_contains "${XVFB_FILE}" "praxi-xvfb-uphold.sh"
+pass "systemd < 249 uses ExecStartPost uphold fallback while >= 249 emits Upholds="
 
 # 7. Re-run idempotence preserves desktop session + geometry (both no-flag and explicit --with-desktop-session)
 run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
@@ -754,22 +1023,50 @@ FAKE_ACTIVE_UNITS="praxi-headless-desktop.service" HOME="${SANDBOX}/home/tester"
 assert_file_contains "${SANDBOX_STATE}/systemctl.log" "--user disable --now praxi-headless-desktop.service"
 pass "setup-headless --system and install-linux reconcile :99 (including ExecStart scripts) without touching :98"
 
-# 9f. Parity check between install-linux.sh and setup-headless.sh --system unit/helper templates (Nit 10)
+# 9f. Parity checks between install-linux.sh and setup-headless.sh across desktop, headless-only, and --user layouts
 PARITY_INST="${TMP_ROOT}/parity-install"
 mkdir -p "${PARITY_INST}"
 cp -f "${SLICE_FILE}" "${XVFB_FILE}" "${DESK_FILE}" "${DROPIN_FILE}" \
-  "${SESSION_EXEC}" "${XAUTH_EXEC}" "${SANDBOX}/opt/praxi/libexec/praxi-wait-x11.sh" "${PARITY_INST}/"
+  "${SESSION_EXEC}" "${XAUTH_EXEC}" "${UPHOLD_EXEC}" \
+  "${SANDBOX}/opt/praxi/libexec/praxi-wait-x11.sh" \
+  "${SANDBOX}/opt/praxi/libexec/praxi-wait-desktop.sh" "${PARITY_INST}/"
 FAKE_UID=0 run_timed bash "${SB_SETUP}" --system --display :99 --screen 1280x800x24 --skip-packages --no-start > "${TMP_ROOT}/parity-setup.log" 2>&1
 for rel in praxi.slice praxi-xvfb.service praxi-desktop.service desktop.conf \
-  praxi-xfce-session.sh praxi-xauth-init.sh praxi-wait-x11.sh; do
+  praxi-xfce-session.sh praxi-xauth-init.sh praxi-wait-x11.sh praxi-wait-desktop.sh praxi-xvfb-uphold.sh; do
   case "${rel}" in
     desktop.conf) rhs="${DROPIN_FILE}" ;;
-    praxi-xfce-session.sh|praxi-xauth-init.sh|praxi-wait-x11.sh) rhs="${SANDBOX}/opt/praxi/libexec/${rel}" ;;
+    praxi-xfce-session.sh|praxi-xauth-init.sh|praxi-wait-x11.sh|praxi-wait-desktop.sh|praxi-xvfb-uphold.sh) rhs="${SANDBOX}/opt/praxi/libexec/${rel}" ;;
     *) rhs="${SANDBOX}/etc/systemd/system/${rel}" ;;
   esac
-  diff -u "${PARITY_INST}/${rel}" "${rhs}" || fail "template drift between install-linux.sh and setup-headless.sh in ${rel}"
+  diff -u "${PARITY_INST}/${rel}" "${rhs}" || fail "template drift between install-linux.sh and setup-headless.sh (desktop) in ${rel}"
 done
-pass "install-linux.sh and setup-headless.sh --system generate identical units and helper scripts"
+
+# Headless-only (Xvfb without Xfce session) parity
+PARITY_HEADLESS="${TMP_ROOT}/parity-headless"
+mkdir -p "${PARITY_HEADLESS}"
+run_ok "${TMP_ROOT}/parity-headless-inst.log" bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
+  --with-desktop --without-desktop-session --display :99 --screen 1920x1080x24 --skip-packages --no-start
+[[ ! -f "${DESK_FILE}" ]] || fail "headless-only install should not have praxi-desktop.service"
+cp -f "${SLICE_FILE}" "${XVFB_FILE}" "${DROPIN_FILE}" "${XAUTH_EXEC}" "${UPHOLD_EXEC}" \
+  "${SANDBOX}/opt/praxi/libexec/praxi-wait-x11.sh" "${PARITY_HEADLESS}/"
+FAKE_UID=0 run_ok "${TMP_ROOT}/parity-headless-setup.log" bash "${SB_SETUP}" --system --session none \
+  --display :99 --screen 1920x1080x24 --skip-packages --no-start
+[[ ! -f "${DESK_FILE}" ]] || fail "headless-only setup-headless should not have praxi-desktop.service"
+for rel in praxi.slice praxi-xvfb.service desktop.conf praxi-xauth-init.sh praxi-wait-x11.sh praxi-xvfb-uphold.sh; do
+  case "${rel}" in
+    desktop.conf) rhs="${DROPIN_FILE}" ;;
+    praxi-xauth-init.sh|praxi-wait-x11.sh|praxi-xvfb-uphold.sh) rhs="${SANDBOX}/opt/praxi/libexec/${rel}" ;;
+    *) rhs="${SANDBOX}/etc/systemd/system/${rel}" ;;
+  esac
+  diff -u "${PARITY_HEADLESS}/${rel}" "${rhs}" || fail "template drift between install-linux.sh and setup-headless.sh (headless-only) in ${rel}"
+done
+
+# --user mode shared helper script parity
+FAKE_UID=1000 HOME="${SANDBOX}/home/tester" run_ok "${TMP_ROOT}/parity-user-setup.log" bash "${SB_SETUP}" --user \
+  --display :98 --screen 1280x800x24 --skip-packages --no-start
+diff -u "${PARITY_INST}/praxi-xauth-init.sh" "${SANDBOX}/home/tester/.local/bin/praxi-xauth-init.sh" || fail "helper drift in --user praxi-xauth-init.sh"
+diff -u "${PARITY_INST}/praxi-xfce-session.sh" "${SANDBOX}/home/tester/.local/bin/praxi-xfce-session.sh" || fail "helper drift in --user praxi-xfce-session.sh"
+pass "install-linux.sh and setup-headless.sh generate identical units/helpers across desktop, headless-only, and --user layouts"
 
 # 10. Explicit --without-desktop removes units, praxi.slice, Slice= lines, DISPLAY, and XAUTHORITY (Nit 9)
 run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \

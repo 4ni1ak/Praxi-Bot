@@ -367,8 +367,12 @@ installs, or preserving the existing `praxi-xvfb.service` geometry unless
   the top-left **Applications** menu on `xfce4-panel` to launch **Web Browser**
   (manual launch). `xfce4-terminal` and `thunar` are **not** installed or
   exposed in the menu by default; pass `--with-session-apps` if you explicitly
-  need them (or `--without-session-apps` to hide them again). All launched
-  applications inherit `praxi.slice` containment and run as the `praxi` user
+  need them, or `--without-session-apps` to hide them again. Note that
+  `--without-session-apps` only writes `Hidden=true` `.desktop` overrides and
+  omits them from `helpers.rc`—it does **not** uninstall `xfce4-terminal` or
+  `thunar` if they were already installed by an earlier run or the base OS (their
+  binaries stay on disk until removed explicitly with `apt-get remove` / `dnf remove`).
+  All launched applications inherit `praxi.slice` containment and run as the `praxi` user
   with `DISPLAY`, `XAUTHORITY`, and `DBUS_SESSION_BUS_ADDRESS`. Note that while
   `praxi-desktop.service` does not place `BOT_SECRETS_PASSPHRASE` in the session
   environment, any application running as `praxi` has filesystem read access to
@@ -440,8 +444,10 @@ observed Praxi processes, or any process escaping `praxi.slice` also fails
   will immediately be restarted while `praxi-xvfb.service` stays active. Stop
   everything cleanly with `sudo systemctl stop praxi-xvfb.service` (which stops
   `praxi-desktop.service` and `praxi.service` via `BindsTo=`). On older hosts
-  with systemd < 249, `Upholds=` is omitted with an installer warning (so manual
-  restart or reboot is required if Xvfb recovers from a crash). `praxi.service`
+  with systemd < 249, `Upholds=` is omitted with an installer warning and
+  `praxi-xvfb.service` uses an `ExecStartPost=!` uphold fallback
+  (`praxi-xvfb-uphold.sh`) to start enabled dependents in the new namespace
+  after Xvfb starts or recovers from a crash. `praxi.service`
   uses `Wants=praxi-desktop.service` so a desktop-session failure does not block
   the always-on daemon.
 - **Xauthority permission / auth errors (`Invalid MIT-MAGIC-COOKIE-1`):**

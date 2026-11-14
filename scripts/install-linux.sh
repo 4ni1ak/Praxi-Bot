@@ -34,7 +34,7 @@
 #   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
 #   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
 #   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar (runs as praxi with read access to praxi.env)
-#   --without-session-apps  Hide/omit xfce4-terminal and thunar from the desktop session menu
+#   --without-session-apps  Hide xfce4-terminal and thunar menu entries (does not uninstall packages)
 #   --without-desktop-session  Remove praxi-desktop.service and session bus env (keeps praxi-xvfb unless --without-desktop)
 #   --desktop-session <none|xfce>  Explicit desktop session selector (xfce or none)
 #   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
@@ -140,7 +140,7 @@ Options:
   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar
                        (security note: menu apps run as praxi and can read praxi.env / data dir)
-  --without-session-apps  Hide/omit xfce4-terminal and thunar from the desktop session menu
+  --without-session-apps  Hide xfce4-terminal and thunar menu entries (does not uninstall packages)
   --without-desktop-session  Remove praxi-desktop.service and session bus env (keeps praxi-xvfb unless --without-desktop)
   --desktop-session <none|xfce>  Explicit desktop session selector (xfce or none)
   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
@@ -529,6 +529,10 @@ WAS_ACTIVE_NODE=0
 WAS_ACTIVE_XVFB=0
 WAS_ACTIVE_DESKTOP=0
 WAS_ACTIVE_PRAXI=0
+WAS_ENABLED_NODE=0
+WAS_ENABLED_XVFB=0
+WAS_ENABLED_DESKTOP=0
+WAS_ENABLED_PRAXI=0
 
 restore_backup() {
   local b c u
@@ -559,28 +563,73 @@ restore_backup() {
 
 on_exit() {
   local exit_rc=$?
+  trap - EXIT HUP INT TERM
   set +e
   if [[ "${INSTALL_SUCCEEDED:-0}" -eq 0 && "${UPGRADE_STOPPED:-0}" -eq 1 && "${BACKUP_CREATED:-0}" -eq 1 ]]; then
+    if [[ "${exit_rc}" -eq 0 ]]; then
+      exit_rc=1
+    fi
     printf '[praxi-install] error: installation failed after stopping services; rolling back to previous working installation\n' >&2
+    # Stop anything the failed attempt started or left activating. Stop praxi-xvfb
+    # before praxi-desktop/praxi so Upholds= does not restart them during rollback.
+    local u was_enabled
+    for u in praxi-node.service praxi-xvfb.service praxi-desktop.service praxi.service "${SLICE_NAME}"; do
+      if [[ -f "${UNIT_DIR}/${u}" ]] || systemctl is-active --quiet "${u}" 2>/dev/null; then
+        systemctl stop "${u}" >/dev/null 2>&1 || true
+      fi
+    done
+    # Disable units enabled by the failed attempt that were not previously present/enabled.
+    for u in praxi-node.service praxi-desktop.service praxi-xvfb.service praxi.service; do
+      was_enabled=0
+      case "${u}" in
+        praxi-node.service) was_enabled="${WAS_ENABLED_NODE:-0}" ;;
+        praxi-desktop.service) was_enabled="${WAS_ENABLED_DESKTOP:-0}" ;;
+        praxi-xvfb.service) was_enabled="${WAS_ENABLED_XVFB:-0}" ;;
+        praxi.service) was_enabled="${WAS_ENABLED_PRAXI:-0}" ;;
+      esac
+      if [[ -f "${UNIT_DIR}/${u}" ]] && { [[ ! -e "${WORK}/backup/units/${u}" ]] || [[ "${was_enabled}" -eq 0 ]]; }; then
+        systemctl disable "${u}" >/dev/null 2>&1 || true
+      fi
+    done
     restore_backup
     systemctl daemon-reload >/dev/null 2>&1 || true
+    if [[ "${WAS_ENABLED_XVFB:-0}" -eq 1 && -f "${UNIT_DIR}/praxi-xvfb.service" ]]; then
+      systemctl enable praxi-xvfb.service >/dev/null 2>&1 || true
+    fi
+    if [[ "${WAS_ENABLED_DESKTOP:-0}" -eq 1 && -f "${UNIT_DIR}/praxi-desktop.service" ]]; then
+      systemctl enable praxi-desktop.service >/dev/null 2>&1 || true
+    fi
+    if [[ "${WAS_ENABLED_PRAXI:-0}" -eq 1 && -f "${UNIT_DIR}/praxi.service" ]]; then
+      systemctl enable praxi.service >/dev/null 2>&1 || true
+    fi
+    if [[ "${WAS_ENABLED_NODE:-0}" -eq 1 && -f "${UNIT_DIR}/praxi-node.service" ]]; then
+      systemctl enable praxi-node.service >/dev/null 2>&1 || true
+    fi
     local restart_err=0
     if [[ "${WAS_ACTIVE_XVFB:-0}" -eq 1 ]]; then
-      systemctl start praxi-xvfb.service || restart_err=1
+      if ! systemctl start praxi-xvfb.service || ! systemctl is-active --quiet praxi-xvfb.service; then
+        restart_err=1
+      fi
     fi
     if [[ "${WAS_ACTIVE_DESKTOP:-0}" -eq 1 ]]; then
-      systemctl start praxi-desktop.service || restart_err=1
+      if ! systemctl start praxi-desktop.service || ! systemctl is-active --quiet praxi-desktop.service; then
+        restart_err=1
+      fi
     fi
     if [[ "${WAS_ACTIVE_PRAXI:-0}" -eq 1 ]]; then
-      systemctl start praxi.service || restart_err=1
+      if ! systemctl start praxi.service || ! systemctl is-active --quiet praxi.service; then
+        restart_err=1
+      fi
     fi
     if [[ "${WAS_ACTIVE_NODE:-0}" -eq 1 ]]; then
-      systemctl start praxi-node.service || restart_err=1
+      if ! systemctl start praxi-node.service || ! systemctl is-active --quiet praxi-node.service; then
+        restart_err=1
+      fi
     fi
     if [[ "${restart_err}" -ne 0 ]]; then
-      printf '[praxi-install] warning: rollback restored previous files, but one or more previously active services failed to restart\n' >&2
+      printf '[praxi-install] warning: rollback restored previous files, but one or more previously active services failed to restart or did not become active\n' >&2
     else
-      printf '[praxi-install] rollback complete; previously active services restarted\n' >&2
+      printf '[praxi-install] rollback complete; previously active services restarted and active\n' >&2
     fi
   elif [[ "${INSTALL_SUCCEEDED:-0}" -eq 0 && "${PACKAGES_PHASE:-0}" -eq 1 ]]; then
     disable_print_services || true
@@ -589,6 +638,9 @@ on_exit() {
   exit "${exit_rc}"
 }
 trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 
 download_release_asset() {
@@ -694,7 +746,7 @@ SYSTEMD_HAS_UPHOLDS=0
 if [[ "${SYSTEMD_VER}" =~ ^[0-9]+$ ]] && (( SYSTEMD_VER >= 249 )); then
   SYSTEMD_HAS_UPHOLDS=1
 elif [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
-  warn "systemd version '${SYSTEMD_VER:-unknown}' (< 249) does not support Upholds=; omitting Upholds= from praxi-xvfb.service (Xvfb crash auto-recovery of dependents disabled)"
+  warn "systemd version '${SYSTEMD_VER:-unknown}' (< 249) does not support Upholds=; omitting Upholds= from praxi-xvfb.service and using ExecStartPost uphold fallback for dependent recovery"
 fi
 
 BROWSER_BIN=""
@@ -745,6 +797,18 @@ for u in "${SLICE_NAME}" praxi.service praxi-node.service praxi-xvfb.service pra
 done
 BACKUP_CREATED=1
 
+if [[ -f "${UNIT_DIR}/praxi-node.service" ]] && systemctl is-enabled --quiet praxi-node.service 2>/dev/null; then
+  WAS_ENABLED_NODE=1
+fi
+if [[ -f "${UNIT_DIR}/praxi-xvfb.service" ]] && systemctl is-enabled --quiet praxi-xvfb.service 2>/dev/null; then
+  WAS_ENABLED_XVFB=1
+fi
+if [[ -f "${UNIT_DIR}/praxi-desktop.service" ]] && systemctl is-enabled --quiet praxi-desktop.service 2>/dev/null; then
+  WAS_ENABLED_DESKTOP=1
+fi
+if [[ -f "${UNIT_DIR}/praxi.service" ]] && systemctl is-enabled --quiet praxi.service 2>/dev/null; then
+  WAS_ENABLED_PRAXI=1
+fi
 if systemctl is-active --quiet praxi-node.service 2>/dev/null; then
   WAS_ACTIVE_NODE=1
 fi
@@ -1375,11 +1439,24 @@ while [[ "${STOP_REQUESTED}" -eq 0 ]]; do
 done
 EOF
 
+  cat > "${LIBEXEC_DIR}/praxi-xvfb-uphold.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# Fallback for systemd < 249 (no Upholds=): start enabled dependents after
+# Xvfb starts or restarts so they rejoin the new Xvfb mount namespace.
+for u in praxi-desktop.service praxi.service praxi-node.service; do
+  if systemctl is-enabled --quiet "${u}" 2>/dev/null; then
+    systemctl start --no-block "${u}" >/dev/null 2>&1 || true
+  fi
+done
+EOF
+
   chmod 0755 \
     "${LIBEXEC_DIR}/praxi-xauth-init.sh" \
     "${LIBEXEC_DIR}/praxi-wait-x11.sh" \
     "${LIBEXEC_DIR}/praxi-wait-desktop.sh" \
-    "${LIBEXEC_DIR}/praxi-xfce-session.sh"
+    "${LIBEXEC_DIR}/praxi-xfce-session.sh" \
+    "${LIBEXEC_DIR}/praxi-xvfb-uphold.sh"
 }
 
 run_user_systemctl() {
@@ -1495,19 +1572,22 @@ read_existing_xvfb_exec() {
     case "${line}" in
       ExecStartPre=*) EXISTING_XVFB_EXEC_PRE+=("${line}") ;;
       ExecStart=*) EXISTING_XVFB_EXEC_START+=("${line}") ;;
+      ExecStartPost=*praxi-xvfb-uphold.sh*) ;;
       ExecStartPost=*) EXISTING_XVFB_EXEC_POST+=("${line}") ;;
     esac
   done < "${UNIT_DIR}/praxi-xvfb.service"
 }
 
 write_xvfb_unit() {
-  local xvfb_bin upholds_line="" xauth_env_line exec_block="" line
+  local xvfb_bin upholds_line="" uphold_post_line="" xauth_env_line exec_block="" line
   if [[ "${SYSTEMD_HAS_UPHOLDS}" -eq 1 ]]; then
     if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
       upholds_line="Upholds=praxi-desktop.service praxi.service"
     else
       upholds_line="Upholds=praxi.service"
     fi
+  else
+    uphold_post_line="ExecStartPost=!${LIBEXEC_DIR}/praxi-xvfb-uphold.sh"
   fi
   if [[ "${XVFB_HAS_AUTH}" -eq 1 ]]; then
     xauth_env_line="Environment=XAUTHORITY=${XAUTH_FILE}"
@@ -1543,7 +1623,8 @@ Environment=HOME=${DATA_DIR}
 Environment=DISPLAY=${DISPLAY_NUM}
 ${xauth_env_line:+${xauth_env_line}
 }${exec_block}
-Restart=on-failure
+${uphold_post_line:+${uphold_post_line}
+}Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15
 ${HARDENING}
@@ -1647,7 +1728,8 @@ if [[ "${NO_START}" -eq 0 ]]; then
   if [[ "${START_FAILED}" -eq 0 ]]; then
     ready=0
     consecutive=0
-    for ((attempt=0; attempt<30; attempt++)); do
+    readiness_attempts="${PRAXI_READY_TIMEOUT_SECS:-30}"
+    for ((attempt=0; attempt<readiness_attempts; attempt++)); do
       if systemctl is-active --quiet praxi.service && \
         health="$(curl -fsS --noproxy '*' --connect-timeout 1 --max-time 2 "http://127.0.0.1:${PORT}/v1/health")" && \
         [[ "${health}" =~ \"status\"[[:space:]]*:[[:space:]]*\"(ok|setup_required)\" ]] && \
@@ -1678,6 +1760,11 @@ if [[ "${NO_START}" -eq 0 ]]; then
   log "daemon ready on loopback (health may report setup_required until provider setup)"
 else
   log "files installed and units enabled; startup/readiness skipped (--no-start)"
+  if [[ "${WAS_ACTIVE_PRAXI}" -eq 1 || "${WAS_ACTIVE_XVFB}" -eq 1 || "${WAS_ACTIVE_DESKTOP}" -eq 1 || "${WAS_ACTIVE_NODE}" -eq 1 ]]; then
+    warn "daemon and previously active services were stopped for upgrade and remain stopped (--no-start)"
+  else
+    warn "daemon is stopped (--no-start)"
+  fi
 fi
 INSTALL_SUCCEEDED=1
 

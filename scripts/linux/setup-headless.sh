@@ -19,7 +19,7 @@
 #   --user                     Configure user-level dev session (default)
 #   --session <xfce|none>      Desktop session type (default: xfce; 'none' removes session in --system mode)
 #   --with-session-apps        Also install/expose xfce4-terminal and thunar (runs as praxi with read access to praxi.env)
-#   --without-session-apps     Hide/omit xfce4-terminal and thunar from the desktop session menu
+#   --without-session-apps     Hide xfce4-terminal and thunar menu entries (does not uninstall packages)
 #   --without-desktop-session  Alias for --session none (--system mode)
 #   --without-desktop          Remove praxi-desktop.service and praxi-xvfb.service (--system mode)
 #   --display <:N>             X11 display number for Xvfb (default: :99)
@@ -373,6 +373,22 @@ for _ in $(seq 1 100); do
 done
 echo "error: Xfce desktop session did not become ready within 10s" >&2
 exit 1
+EOF
+  chmod 0755 "${target}"
+}
+
+write_xvfb_uphold_helper() {
+  local target="$1"
+  cat > "${target}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# Fallback for systemd < 249 (no Upholds=): start enabled dependents after
+# Xvfb starts or restarts so they rejoin the new Xvfb mount namespace.
+for u in praxi-desktop.service praxi.service praxi-node.service; do
+  if systemctl is-enabled --quiet "${u}" 2>/dev/null; then
+    systemctl start --no-block "${u}" >/dev/null 2>&1 || true
+  fi
+done
 EOF
   chmod 0755 "${target}"
 }
@@ -832,6 +848,8 @@ UMask=0077"
     systemctl daemon-reload
     if [[ "${NO_START}" -eq 0 ]] && systemctl is-enabled --quiet praxi.service 2>/dev/null; then
       systemctl restart praxi.service
+    elif [[ "${NO_START}" -eq 1 ]] && systemctl is-enabled --quiet praxi.service 2>/dev/null; then
+      warn "praxi.service was not restarted (--no-start); start it with: sudo systemctl restart praxi.service"
     fi
     log "system desktop units removed."
     exit 0
@@ -859,21 +877,25 @@ UNIT
   write_wait_x11_helper "${LIBEXEC_DIR}/praxi-wait-x11.sh"
   write_wait_desktop_helper "${LIBEXEC_DIR}/praxi-wait-desktop.sh"
   write_xfce_session_script "${LIBEXEC_DIR}/praxi-xfce-session.sh"
+  write_xvfb_uphold_helper "${LIBEXEC_DIR}/praxi-xvfb-uphold.sh"
 
   SYSTEMD_VER="$(systemctl --version 2>/dev/null | awk 'NR==1 {print $2}' | sed 's/[^0-9].*//')"
   SYSTEMD_HAS_UPHOLDS=0
   if [[ "${SYSTEMD_VER}" =~ ^[0-9]+$ ]] && (( SYSTEMD_VER >= 249 )); then
     SYSTEMD_HAS_UPHOLDS=1
   else
-    warn "systemd version '${SYSTEMD_VER:-unknown}' (< 249) does not support Upholds=; omitting Upholds= from praxi-xvfb.service"
+    warn "systemd version '${SYSTEMD_VER:-unknown}' (< 249) does not support Upholds=; omitting Upholds= from praxi-xvfb.service and using ExecStartPost uphold fallback for dependent recovery"
   fi
   upholds_line=""
+  uphold_post_line=""
   if [[ "${SYSTEMD_HAS_UPHOLDS}" -eq 1 ]]; then
     if [[ "${SESSION_MODE}" == "xfce" ]]; then
       upholds_line="Upholds=praxi-desktop.service praxi.service"
     else
       upholds_line="Upholds=praxi.service"
     fi
+  else
+    uphold_post_line="ExecStartPost=!${LIBEXEC_DIR}/praxi-xvfb-uphold.sh"
   fi
 
   cat > "${UNIT_DIR}/praxi-xvfb.service" <<UNIT
@@ -895,7 +917,8 @@ ExecStartPre=!/usr/bin/install -d -o root -g root -m 1777 /tmp/.X11-unix
 ExecStartPre=${LIBEXEC_DIR}/praxi-xauth-init.sh ${DISPLAY_NUM} ${XAUTH_FILE}
 ExecStart=${xvfb_bin} ${DISPLAY_NUM} -screen 0 ${SCREEN_SPEC} -auth ${XAUTH_FILE} -nolisten tcp +extension RANDR +extension XTEST
 ExecStartPost=${LIBEXEC_DIR}/praxi-wait-x11.sh ${DISPLAY_NUM} ${XAUTH_FILE}
-Restart=on-failure
+${uphold_post_line:+${uphold_post_line}
+}Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15
 ${HARDENING}
@@ -1054,6 +1077,11 @@ UNIT
     log "system desktop services active (slice=${SLICE_NAME}, display=${DISPLAY_NUM}, screen=${SCREEN_SPEC}, session=${SESSION_MODE})"
   else
     log "system desktop units written and enabled (--no-start)"
+    if [[ "${SESSION_MODE}" == "xfce" ]]; then
+      warn "desktop/daemon services were not started (--no-start); start them with: sudo systemctl start praxi-xvfb.service praxi-desktop.service praxi.service"
+    else
+      warn "display/daemon services were not started (--no-start); start them with: sudo systemctl start praxi-xvfb.service praxi.service"
+    fi
   fi
   exit 0
 fi
