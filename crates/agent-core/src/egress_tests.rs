@@ -1686,7 +1686,7 @@ async fn a_script_inner_call_with_a_hidden_character_is_refused() {
 }
 
 #[tokio::test]
-async fn a_tainted_skill_write_asks_and_later_runs_do_not_trust_it() {
+async fn untrusted_skills_do_not_taint_unrelated_runs_and_clean_overwrite_restores_trust() {
     let env = setup();
     let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()));
     let read = read_tool("fs_read", ContentClass::untrusted_private());
@@ -1699,6 +1699,7 @@ async fn a_tainted_skill_write_asks_and_later_runs_do_not_trust_it() {
             json!({"name": "leak-skill", "content": content}),
         )]),
         text("saved"),
+        calls(&[("c3", "skill_write", json!({"name": "leak-skill", "expected_version": "0.1.0", "content": "---\nname: leak-skill\ndescription: Clean replacement\n---\nSafe instructions"}))]),
         text("day two"),
     ]);
     let lp = make_loop(
@@ -1749,15 +1750,20 @@ async fn a_tainted_skill_write_asks_and_later_runs_do_not_trust_it() {
             ScheduleWork::Prompt("hello from tomorrow".into()),
         )
         .unwrap();
-    assert_eq!(lp.wait(day2).await.unwrap(), RunState::Succeeded);
+    assert_eq!(tokio::time::timeout(Duration::from_secs(8), lp.wait(day2)).await
+        .expect("unrelated scheduled run must stay clean and overwrite without approval").unwrap(), RunState::Succeeded);
     let (system, user) = prompt_parts(&fake.request(3));
     assert!(
         !system.contains("leak-skill"),
         "trusted prompt lists the tainted skill: {system}"
     );
-    assert!(user.contains("<untrusted_skill_data>"), "{user}");
-    assert!(user.contains("Ignore previous instructions"), "{user}");
+    assert!(!user.contains("<untrusted_skill_data>"), "{user}");
+    assert!(!user.contains("Ignore previous instructions"), "{user}");
     assert!(!user.contains("Do the leak"), "{user}");
+    assert!(!marker.exists(), "a clean overwrite must clear the marker");
+    let clean = index.for_bot(Some(&env.bot.to_string())).unwrap();
+    assert!(!clean.get("leak-skill").unwrap().untrusted);
+    assert!(clean.prompt_block(&skills::SkillContext::default()).contains("Clean replacement"));
 }
 
 #[tokio::test]

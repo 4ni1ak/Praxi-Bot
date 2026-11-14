@@ -313,7 +313,7 @@ impl Shared {
             }
         }
         if let Some(index) = self.skills.get() {
-            for s in index.list() {
+            for s in index.list().into_iter().filter(|skill| !skill.untrusted) {
                 let version = format!("{}:{:016x}", s.version, fnv(s.body.as_bytes()));
                 out.push(
                     Candidate::new(CandidateKind::Skill, &s.name, &s.description)

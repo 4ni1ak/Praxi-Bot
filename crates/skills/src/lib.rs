@@ -36,7 +36,7 @@ mod tools;
 
 pub use index::{
     MAX_FILE_BYTES, PROMPT_BUDGET_BYTES, SKILL_FILE, SkillIndex, SkillIssue, SkillPaths,
-    SkillRoots, validate_bot_id,
+    SkillRoots, SkillReview, validate_bot_id,
 };
 pub use scoped_store::WrittenSkill;
 pub use skill::{

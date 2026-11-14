@@ -16,6 +16,7 @@ mod presets;
 mod prompt;
 mod remote;
 mod serve;
+mod skills_cmd;
 mod update;
 mod web_host;
 mod wizard;
@@ -74,6 +75,11 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 enum Command {
+    /// Review local skills and explicitly trust reviewed content.
+    Skills {
+        #[command(subcommand)]
+        action: skills_cmd::SkillsCmd,
+    },
     /// Manage the active host and paired devices.
     Host {
         #[command(subcommand)]
@@ -549,6 +555,7 @@ fn run() -> Result<()> {
 
     // Daemon commands (no secret store needed, except `serve` with real providers).
     match command {
+        Command::Skills { action } => return skills_cmd::run(&data_dir, action, &mut std::io::stdout()),
         Command::Serve { .. } => return run_serve(&cli, command, &data_dir),
         Command::Doctor(c) => return run_doctor(&cli, c, &data_dir),
         Command::SelfUpdate(args) => return update::run(args),

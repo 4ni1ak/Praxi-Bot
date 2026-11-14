@@ -203,3 +203,16 @@ always asks for approval. That last rule is damping only: one approved
 actor/target IDs, event-type counts, sequence ranges, timing and fixed outcomes;
 audit failure denies authorization and suspends input. See the
 [live-view API and integration status](../api/live-view.md).
+
+
+Untrusted skills stay out of automatic prompts and router suggestions. They are
+available through `skill_list` and `skill_read`; runs that use those tools carry
+their read exposure. Unrelated fresh runs stay clean. A clean `skill_write`
+overwrite clears the marker after saving the replacement successfully.
+
+Users can review and trust existing content locally without an egress waiver:
+`bot skills review <name> --bot-id <id>` prints every file in full with
+JSON-quoted whitespace and a fingerprint. After reviewing it, run
+`bot skills trust <name> --bot-id <id> --reviewed <fingerprint>`.
+Omit `--bot-id` for a shared skill. A changed file invalidates the fingerprint;
+review it again. These commands are user actions, never model tools.

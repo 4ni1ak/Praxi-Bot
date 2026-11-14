@@ -673,6 +673,35 @@ impl SkillIndex {
         Ok(written)
     }
 
+    /// Review every text file of an effective disk skill, under its scope lock.
+    /// The fingerprint binds the later explicit user trust action to these bytes.
+    /// # Errors
+    /// Unknown/bundled skill, unsafe path, non-text file, or I/O error.
+    pub fn review_for_trust(&self, name: &str) -> Result<SkillReview, String> {
+        self.reload();
+        let dir = self.get(name).and_then(|s| s.dir).ok_or("skill has no on-disk directory")?;
+        let scope = dir.parent().ok_or("skill has no scope")?;
+        let _guard = ScopeLock::acquire(scope)?;
+        review_dir(&dir)
+    }
+
+    /// Explicit user action, intentionally not exposed as a model tool.
+    /// # Errors
+    /// Review is stale, skill is unsafe/missing, or marker removal fails.
+    pub fn trust_reviewed(&self, name: &str, fingerprint: &str) -> Result<(), String> {
+        self.reload();
+        let dir = self.get(name).and_then(|s| s.dir).ok_or("skill has no on-disk directory")?;
+        let scope = dir.parent().ok_or("skill has no scope")?;
+        let _guard = ScopeLock::acquire(scope)?;
+        if review_dir(&dir)?.fingerprint != fingerprint {
+            return Err("skill changed since review; review the full skill again".into());
+        }
+        set_untrusted_marker(&dir.join(SKILL_FILE), false)?;
+        drop(_guard);
+        self.reload();
+        Ok(())
+    }
+
     /// Publish this bot's skill as `<shared>/<name>@<version>/`, preserving
     /// existing legacy/hub directories and their provenance. A different
     /// effective shared skill requires explicit `replace` authorization.
@@ -701,6 +730,25 @@ impl SkillIndex {
         self.reload();
         Ok(path)
     }
+}
+
+/// Complete text review of a skill directory for an explicit user trust action.
+#[derive(Debug, Clone)]
+pub struct SkillReview {
+    /// Hash of every file, including its name and the trust marker.
+    pub fingerprint: String,
+    /// Exact contents keyed by relative path. Binary skills require external review.
+    pub files: BTreeMap<String, String>,
+}
+
+fn review_dir(dir: &Path) -> Result<SkillReview, String> {
+    use crate::hub::util::{hash_files, walk};
+    let files = walk(dir).map_err(|e| e.to_string())?;
+    let fingerprint = hash_files(&files).map_err(|e| e.to_string())?;
+    let files = files.iter().map(|file| {
+        fs::read_to_string(&file.path).map(|text| (file.rel.clone(), text)).map_err(|e| e.to_string())
+    }).collect::<Result<_, _>>()?;
+    Ok(SkillReview { fingerprint, files })
 }
 
 /// Sidecar written by the daemon. Not part of the model-controlled `SKILL.md`.

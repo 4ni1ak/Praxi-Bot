@@ -342,7 +342,7 @@ impl TurnExecutor {
     /// Prepend the recalled-memory block to the first user message (never to
     /// the system prompt, so the prompt cache stays valid).
     fn with_recall(&self, ctx: &RunCtx, text: &str) -> String {
-        let text = self.prepend_untrusted_skills(ctx, text.to_owned());
+        let text = text.to_owned();
         let Some(m) = self
             .sh
             .cfg
@@ -373,26 +373,6 @@ impl TurnExecutor {
             }
             Err(_) => text,
         }
-    }
-
-    /// Untrusted skill names and descriptions go on the user message, the same
-    /// place untrusted memory does. The system-prompt skills block stays
-    /// trusted-only.
-    fn prepend_untrusted_skills(&self, ctx: &RunCtx, text: String) -> String {
-        let Some(index) = self.sh.skills.get() else {
-            return text;
-        };
-        let block = index
-            .untrusted_block_for_bot(Some(&ctx.bot_id.to_string()))
-            .unwrap_or_default();
-        if block.is_empty() {
-            return text;
-        }
-        ctx.taint.lock().note(
-            tool_registry::ContentClass::declared(true, false, false),
-            "untrusted skill",
-        );
-        memory_store::prepend_to_user_message(&block, &text)
     }
 
     fn is_read(&self, ctx: &RunCtx, hints: &[String], name: &str, args: &str) -> bool {
