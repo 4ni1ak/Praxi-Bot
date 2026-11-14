@@ -225,6 +225,13 @@ impl Tool for WorkflowRun {
         let mut opts = self.opts.clone();
         opts.run_id.clone_from(&ctx.run_id);
         opts.bot_id.clone_from(&ctx.bot_id);
+        // A saved workflow is persisted behaviour, including all substituted
+        // parameters. Record that exposure before its first outbound step.
+        self.gate.note_exposure(
+            &ctx.run_id,
+            ContentClass::untrusted_private(),
+            "saved workflow",
+        );
         let report = Replayer::new(self.handles.clone(), opts)
             .replay(&wf, &i.params, self.gate.as_ref())
             .await

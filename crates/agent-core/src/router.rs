@@ -700,6 +700,12 @@ impl TurnExecutor {
         let gate = LoopGate {
             sh: Arc::downgrade(&self.sh),
         };
+        // Legacy or externally edited workflow files have no daemon trust proof.
+        // Treat persisted behaviour as data before any inner call, not after replay.
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "saved workflow",
+        );
         let report = match Replayer::new(w.handles.clone(), opts)
             .replay(&wf, &params, &gate)
             .await

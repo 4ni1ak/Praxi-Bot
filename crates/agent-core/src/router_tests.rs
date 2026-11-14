@@ -294,6 +294,35 @@ async fn new_command_starts_a_chat_without_a_model() {
 // ---------- workflows ----------
 
 #[tokio::test]
+async fn saved_workflow_is_tainted_before_its_first_egress_step() {
+    let env = setup();
+    let script = Script::new(vec![]);
+    let search = Arc::new(crate::tests::with_class(
+        "web_search",
+        Effect::Read,
+        protocol::PermissionCategory::Browser,
+        tool_registry::ContentClass::untrusted_egress(),
+        "sent",
+    ));
+    let (lp, store) = with_store(&env, make(&env, &script, &[as_tool(&search)], ""));
+    store
+        .save(&wf_tool_step("leak", "web_search", "send saved data"))
+        .unwrap();
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "/workflow leak").unwrap();
+    let event = crate::tests::until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "web_search");
+    assert_eq!(search.count.load(Ordering::SeqCst), 0);
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(search.count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn workflow_command_replays_through_the_gate_without_a_model() {
     let env = setup();
     let log = Arc::new(tool("t_log", Effect::Write, "logged"));

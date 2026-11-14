@@ -127,6 +127,20 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
     ) -> Decision {
+        // Document converters are shell-free writers too. In particular a
+        // one-column CSV can be a valid SKILL.md or workflow/config document.
+        let output_field = match name {
+            "docx_write" | "xlsx_write" => Some("path"),
+            "csv_transform" => Some("output_path"),
+            _ => None,
+        };
+        if let Some(path) = output_field
+            .and_then(|field| input.get(field))
+            .and_then(Value::as_str)
+            && builtin_tools::files::check_daemon_write(self.storage.data_dir(), path).is_err()
+        {
+            return Decision::Deny;
+        }
         let mut raw_command = raw_command_for(name, input);
         if raw_command.is_empty() {
             input
@@ -1052,6 +1066,17 @@ pub(crate) struct LoopGate {
 
 #[async_trait]
 impl ToolGate for LoopGate {
+    fn note_exposure(&self, run_id: &str, content: ContentClass, label: &str) {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return;
+        };
+        if let Some(sh) = self.sh.upgrade()
+            && let Some(ctx) = sh.runs.lock().get(&protocol::RunId(id))
+        {
+            ctx.taint.lock().note(content, label);
+        }
+    }
+
     fn content_tainted(&self, run_id: &str) -> bool {
         let Ok(id) = run_id.parse::<uuid::Uuid>() else {
             return false;

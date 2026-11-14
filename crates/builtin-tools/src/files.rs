@@ -80,6 +80,35 @@ pub struct FsTool {
     shared: Arc<Shared>,
 }
 
+/// Apply the same daemon boundary to local writers hosted outside this crate.
+/// The lexical, resolved and opened identities are all checked, including a
+/// missing leaf reached through a symlink. No credential/root check is waived.
+/// # Errors
+/// Unsafe/unverifiable path or a destination under the daemon data directory.
+pub fn check_daemon_write(data_dir: &Path, raw: &str) -> Result<(), ToolError> {
+    let data_dir = canonical_data_dir(data_dir);
+    let lexical = lexical_absolute(raw)?;
+    let drives = DriveCache::new();
+    let ctx = ResolveCtx {
+        follow: Follow::Write,
+        roots: &[],
+        drives: &drives,
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = resolve_local(&lexical, &ctx)?;
+    let opened = final_identity(&resolved)?;
+    if [&lexical, &resolved, &opened]
+        .iter()
+        .any(|p| under_daemon_data(p, &data_dir).is_some())
+    {
+        return Err(denied(
+            "local writers cannot modify the daemon data directory",
+        ));
+    }
+    Ok(())
+}
+
 /// Build all file tools; `data_dir` hosts checkpoints and spill files.
 ///
 /// UNC paths, device paths, and credential files are refused. No root limit
@@ -860,7 +889,10 @@ fn widen_for_compare(path: &Path) -> PathBuf {
 fn under_data_sensitive(path: &Path, data_dir: &Path) -> bool {
     under_daemon_data(path, data_dir).is_some_and(|rel| {
         !rel.first().is_some_and(|name| {
-            matches!(name.as_str(), "checkpoints" | "files" | "spill" | "screenshots" | "logs")
+            matches!(
+                name.as_str(),
+                "checkpoints" | "files" | "spill" | "screenshots" | "logs"
+            )
         })
     })
 }
@@ -868,13 +900,23 @@ fn under_data_sensitive(path: &Path, data_dir: &Path) -> bool {
 fn under_daemon_data(path: &Path, data_dir: &Path) -> Option<Vec<String>> {
     let path = widen_for_compare(path);
     let data_dir = widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
-    let p: Vec<_> = norm_parts(&path).iter().map(|s| canonical_name(s)).collect();
-    let d: Vec<_> = norm_parts(&data_dir).iter().map(|s| canonical_name(s)).collect();
+    let p: Vec<_> = norm_parts(&path)
+        .iter()
+        .map(|s| canonical_name(s))
+        .collect();
+    let d: Vec<_> = norm_parts(&data_dir)
+        .iter()
+        .map(|s| canonical_name(s))
+        .collect();
     (p.len() >= d.len() && p[..d.len()] == d[..]).then(|| p[d.len()..].to_vec())
 }
 
 fn canonical_name(part: &str) -> String {
-    part.split(':').next().unwrap_or(part).trim_end_matches([' ', '.']).to_ascii_lowercase()
+    part.split(':')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches([' ', '.'])
+        .to_ascii_lowercase()
 }
 
 /// Even an exact credential grant cannot authorize changing daemon behaviour.
@@ -884,7 +926,9 @@ fn validate_mutation(sh: &Shared, raw: &str, resolved: &Path) -> Result<(), Tool
     if under_daemon_data(&lexical, &sh.data_dir).is_some()
         || under_daemon_data(resolved, &sh.data_dir).is_some()
     {
-        return Err(denied("file tools cannot modify the daemon data directory; use the owning tool or user interface"));
+        return Err(denied(
+            "file tools cannot modify the daemon data directory; use the owning tool or user interface",
+        ));
     }
     Ok(())
 }
@@ -1517,8 +1561,11 @@ pub(crate) fn vet_checkpoint_write(path: &Path) -> io::Result<()> {
     if !policy.roots.is_empty() && !roots_contain(&policy.roots, &opened) {
         return Err(deny_io(ROOT_MSG));
     }
-    if [&lexical, &resolved, &opened].iter().any(|p| under_daemon_data(p, &policy.data_dir).is_some())
-        || protected_paths(&[&lexical, &resolved, &opened], &policy) {
+    if [&lexical, &resolved, &opened]
+        .iter()
+        .any(|p| under_daemon_data(p, &policy.data_dir).is_some())
+        || protected_paths(&[&lexical, &resolved, &opened], &policy)
+    {
         return Err(deny_io(GRANT_MSG));
     }
     Ok(())
@@ -2417,7 +2464,9 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
         return Err(exec_err("edit failed: old text not found"));
     }
     if n > 1 && !i.replace_all {
-        return Err(exec_err(format!("edit failed: old text matches {n} times; include more context or set replace_all")));
+        return Err(exec_err(format!(
+            "edit failed: old text matches {n} times; include more context or set replace_all"
+        )));
     }
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     let updated = text.replace(&i.old, &i.new);
@@ -3796,16 +3845,38 @@ mod tests {
         let mut c = ctx();
         c.content_tainted = true;
         for relative in [
-            "skills/x/SKILL.md", "skills/x/.praxi-untrusted", "skills.lock.json",
-            "skills-usage.json", "workflows/morning.toml", "bots/a/profile.toml",
-            "bots/a/skills/x/SKILL.md", "profiles/a.toml", "persona.md",
-            "bot.db", "memory.db", "schedules.db", "schedule.toml",
-            "mcp.toml", "cli-settings.json", "plugins/x/config.toml",
-            "providers.toml", "web.toml", "email.toml", "config.toml",
-            "policy.json", "host.toml", "control-latch.json", "peer/devices.json",
-            "telegram_state.json", "telegram-inbox.jsonl", "channels.toml",
-            "runs/history.json", "notes/instructions.md", "browsers/a/Preferences",
-            "checkpoints/forged.json", "future-trusted-store/instructions",
+            "skills/x/SKILL.md",
+            "skills/x/.praxi-untrusted",
+            "skills.lock.json",
+            "skills-usage.json",
+            "workflows/morning.toml",
+            "bots/a/profile.toml",
+            "bots/a/skills/x/SKILL.md",
+            "profiles/a.toml",
+            "persona.md",
+            "bot.db",
+            "memory.db",
+            "schedules.db",
+            "schedule.toml",
+            "mcp.toml",
+            "cli-settings.json",
+            "plugins/x/config.toml",
+            "providers.toml",
+            "web.toml",
+            "email.toml",
+            "config.toml",
+            "policy.json",
+            "host.toml",
+            "control-latch.json",
+            "peer/devices.json",
+            "telegram_state.json",
+            "telegram-inbox.jsonl",
+            "channels.toml",
+            "runs/history.json",
+            "notes/instructions.md",
+            "browsers/a/Preferences",
+            "checkpoints/forged.json",
+            "future-trusted-store/instructions",
         ] {
             let file = d.path().join(relative);
             fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -3815,13 +3886,25 @@ mod tests {
             fs::write(&source, "replacement").unwrap();
             for (name, input) in [
                 ("fs_write", json!({"path": file, "content": "forged"})),
-                ("fs_edit", json!({"path": file, "old": "original", "new": "forged"})),
-                ("fs_move", json!({"from": source, "to": file, "overwrite": true})),
-                ("fs_move", json!({"from": file, "to": source, "overwrite": true})),
+                (
+                    "fs_edit",
+                    json!({"path": file, "old": "original", "new": "forged"}),
+                ),
+                (
+                    "fs_move",
+                    json!({"from": source, "to": file, "overwrite": true}),
+                ),
+                (
+                    "fs_move",
+                    json!({"from": file, "to": source, "overwrite": true}),
+                ),
                 ("fs_delete", json!({"path": file})),
             ] {
                 let error = get(&t, name).call(&c, input).await.unwrap_err();
-                assert!(matches!(error, ToolError::PermissionDenied(_)), "{relative} {name}: {error}");
+                assert!(
+                    matches!(error, ToolError::PermissionDenied(_)),
+                    "{relative} {name}: {error}"
+                );
                 assert_eq!(fs::read_to_string(&file).unwrap(), "original");
             }
         }
@@ -3835,7 +3918,13 @@ mod tests {
         fs::create_dir_all(&skills).unwrap();
         let link = w.path().join("alias");
         std::os::unix::fs::symlink(&skills, &link).unwrap();
-        let error = get(&t, "fs_write").call(&ctx(), json!({"path": link.join("SKILL.md"), "content": "forged"})).await.unwrap_err();
+        let error = get(&t, "fs_write")
+            .call(
+                &ctx(),
+                json!({"path": link.join("SKILL.md"), "content": "forged"}),
+            )
+            .await
+            .unwrap_err();
         assert!(matches!(error, ToolError::PermissionDenied(_)), "{error}");
         assert!(!skills.join("SKILL.md").exists());
     }
@@ -3910,7 +3999,15 @@ mod tests {
     async fn daemon_state_directories_default_to_protected() {
         let (d, _w, t) = setup();
         let c = ctx();
-        for dir in ["peer", "bots", "profiles", "runs", "skills", "workflows", "future-trusted-store"] {
+        for dir in [
+            "peer",
+            "bots",
+            "profiles",
+            "runs",
+            "skills",
+            "workflows",
+            "future-trusted-store",
+        ] {
             let file = d.path().join(dir).join("x.toml");
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, "secret").unwrap();

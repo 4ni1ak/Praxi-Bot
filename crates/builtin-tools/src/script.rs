@@ -59,6 +59,10 @@ pub trait ToolGate: Send + Sync {
     /// A human-readable denial reason.
     async fn authorize(&self, req: &GateRequest) -> Result<(), String>;
 
+    /// Record content consumed by a composite tool before its inner calls run.
+    /// Only host code supplies this classification; model input cannot clear it.
+    fn note_exposure(&self, _run_id: &str, _content: ContentClass, _label: &str) {}
+
     /// Whether `run_id` has already read untrusted or private content.
     ///
     /// Skill writes use this to store the skill as untrusted data. The default
