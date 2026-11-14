@@ -333,6 +333,48 @@ mod tests {
     use std::sync::atomic::Ordering;
     use tool_registry::{Effect, ToolRegistry};
     #[tokio::test]
+    async fn cli_carried_approval_runs_the_exact_revealed_payload_once() {
+        use crate::tests::{until, with_class};
+        use tool_registry::{ContentClass, PermissionCategory};
+        let env = setup();
+        let search = Arc::new(with_class("web_search", Effect::Read, PermissionCategory::Browser,
+            ContentClass::untrusted_egress(), "sent"));
+        let registry = ToolRegistry::new();
+        registry.register(search.clone());
+        let lp = crate::AgentLoop::new(env.storage.clone(), registry,
+            crate::Providers::single(Arc::new(UnusedHttp)), cfg(Policy::full()));
+        lp.add_profile(env.bot, profile(""));
+        let id = lp.run_turn(env.chat, "hi").unwrap();
+        lp.wait(id).await.unwrap();
+        let run = env.storage.get_run(id).unwrap().unwrap();
+        lp.sh.ctx(&run).unwrap().taint.lock().note(ContentClass::private_read(), "file");
+        let host = Host { sh: lp.sh.clone(), run, approved: parking_lot::Mutex::new(Vec::new()), executed: parking_lot::Mutex::new(Vec::new()) };
+        let input = json!({"query": "French\u{a0}text\u{feff}"});
+        let mut rx = lp.subscribe();
+        let (approved, ()) = tokio::join!(host.approve("web_search", input.clone()), async {
+            let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+            let Event::ApprovalNeeded(card) = event else { unreachable!() };
+            assert_eq!(card.input, input);
+            assert!(card.details.unwrap()["payload"].as_str().unwrap().contains("<U+00A0>"));
+            lp.approve(card.call_id, crate::ApprovalScope::Once, env.user).unwrap();
+        });
+        assert!(approved);
+        let reply = host.call("web_search", input.clone()).await;
+        assert!(!reply.is_error, "{}", reply.text);
+        assert_eq!(search.count.load(Ordering::SeqCst), 1);
+        // A changed call cannot consume the permit for the approved bytes.
+        assert!(host.approved.lock().is_empty());
+        let mut saw_exact = false;
+        while let Ok(event) = rx.try_recv() {
+            if let Event::ToolCallRequested(call) = event.envelope.event {
+                assert_eq!(call.input, input);
+                saw_exact = true;
+            }
+        }
+        assert!(saw_exact);
+    }
+
+    #[tokio::test]
     async fn bridge_reuses_policy_and_tool_events() {
         for allow in [false, true] {
             let env = setup();

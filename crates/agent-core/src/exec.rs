@@ -943,7 +943,7 @@ impl TurnExecutor {
                 }
             } else if let Err(message) =
                 self.sh
-                    .refuse_unshowable_egress(&ctx, &resolved.name, &resolved.input, None, false)
+                    .refuse_unshowable_egress(&ctx, &resolved.name, &resolved.input, None, carried.is_some())
             {
                 Slot::Done {
                     text: user_denied(Some(message)),
