@@ -207,7 +207,8 @@
   overflow-y: auto;
 }
 
-:global(:root[data-resizing]) .panel {
+:global(:root[data-resizing]) .panel,
+:global(:root[data-window-resizing]) .panel {
   transition: none;
 }
 

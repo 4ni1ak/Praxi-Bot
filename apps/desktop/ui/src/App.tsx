@@ -24,6 +24,8 @@ import {
   isMiniRail,
   loadShellLayout,
   fitRail,
+  railAfterStep,
+  searchPlan,
   FLOAT_PAD,
   isFloatShell,
   panelMax,
@@ -36,7 +38,6 @@ import {
   PANEL_MIN,
   saveShellLayout,
   stepPanel,
-  stepRail,
   type ShellLayout
 } from "./lib/shellLayout";
 import { useMcp } from "./state/useMcp";
@@ -52,6 +53,8 @@ import { createDebounced } from "./lib/debounce";
 import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
 import { Backdrop, sceneColors } from "./components/Backdrop";
 import { useApplyAppearance } from "./state/useApplyAppearance";
+import { usePanelReserve } from "./state/usePanelReserve";
+import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
 import { DaemonProvider, useDaemon } from "./state/DaemonContext";
@@ -131,13 +134,8 @@ function AppShell() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
   const [panelOpen, setPanelOpen] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const viewportWidth = useViewportWidth();
   const chipRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
   // Remember the column widths (after a pause, so a drag writes once).
   const layoutRef = useRef(layout);
   useEffect(() => {
@@ -414,7 +412,10 @@ function AppShell() {
   const panelVisible = panelOpen && botInView;
   const float = isFloatShell(settings.uiStyle, backdropIsActive(settings.backdrop, settings.backgroundUrl));
   const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
-  const railWidth = fitRail(viewportWidth, layout.rail, panelWidth, float, panelVisible);
+  const panelReserve = usePanelReserve(panelVisible);
+  const railWidth = fitRail(viewportWidth, layout.rail, panelWidth, float, panelReserve);
+  const fitStored = (candidate: number) => fitRail(viewportWidth, candidate, panelWidth, float, panelReserve);
+  const search = searchPlan(layout.rail, railWidth, botSearch !== null);
   const mini = isMiniRail(railWidth);
   const togglePanel = () => setPanelOpen((open) => !open);
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
@@ -553,17 +554,17 @@ function AppShell() {
             min={RAIL_MINI}
             max={RAIL_MAX}
             onDrag={(x) => setRail(railWidthFromPointer(x, gridPad()))}
-            onStep={(dir) => setRail(stepRail(layout.rail, dir))}
+            onStep={(dir) => setRail(railAfterStep(layout.rail, railWidth, dir, fitStored))}
           />
           <SidebarHeader>
             <div className={styles.brand}>
               <b className={styles.brandName}>{PRODUCT_CONFIG.appName}</b>
               <div className={styles.topActions}>
-                <button className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (mini) setRail(RAIL_MIN); setBotSearch(botSearch === null || mini ? "" : null); }}><Search /></button>
+                <button className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (search.expandStored) setRail(RAIL_MIN); setBotSearch(search.open ? "" : null); }}><Search /></button>
                 <button className={styles.iconButton} title={t("sidebar.newBot")} aria-label={t("sidebar.newBot")} data-testid="new-bot-button" onClick={() => setNewBotOpen(true)}><Plus /></button>
               </div>
             </div>
-            {botSearch !== null && !mini ? <input className={styles.botSearch} autoFocus value={botSearch} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} /> : null}
+            {botSearch !== null && (!mini || search.popover) ? <input className={[styles.botSearch, search.popover ? styles.botSearchPopover : ""].filter(Boolean).join(" ")} autoFocus value={botSearch} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} /> : null}
           </SidebarHeader>
           <SidebarSection>
             {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={() => setRoute({ kind: "needs" })}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}

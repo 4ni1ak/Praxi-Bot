@@ -76,8 +76,21 @@ export function panelMax(viewportWidth: number, rail = 0, float = false): number
 }
 
 /**
+ * The panel's width/margin transition lasts `--motion-duration-slow` (450 ms).  The rail keeps the
+ * geometry of the OPEN panel for this long after the panel starts closing, so the chat column never
+ * drops below `MAIN_MIN` at any frame of the transition (checked against tokens.css by check:layout).
+ */
+export const PANEL_SETTLE_MS = 500;
+
+/** Room the rail may take next to the panel while the chat keeps `MAIN_MIN`. */
+export function railRoom(viewportWidth: number, panelWidth: number, float: boolean, panelOpen: boolean): number {
+  return viewportWidth - shellChrome(float, panelOpen) - (panelOpen ? panelWidth : 0) - MAIN_MIN;
+}
+
+/**
  * Rail width that fits next to the panel: the panel clamp wins, so a rail that would squeeze the
  * chat below `MAIN_MIN` is narrowed, and snaps to icons when it would drop below `RAIL_MIN`.
+ * `panelOpen` is the panel's RESERVED state (open, or closing and not yet settled).
  */
 export function fitRail(
   viewportWidth: number,
@@ -86,9 +99,40 @@ export function fitRail(
   float: boolean,
   panelOpen: boolean
 ): number {
-  const room = viewportWidth - shellChrome(float, panelOpen) - (panelOpen ? panelWidth : 0) - MAIN_MIN;
+  const room = railRoom(viewportWidth, panelWidth, float, panelOpen);
   if (rail <= room) return rail;
   return room >= RAIL_MIN ? room : RAIL_MINI;
+}
+
+/**
+ * Explicit keyboard resize of the rail.  The step starts from the DISPLAYED (fitted) width and the
+ * result becomes the stored preference, so the arrow keys always move what the user sees.  A step
+ * that would only widen the stored value beyond what fits (no visible change) leaves the stored
+ * preference alone instead of silently overwriting it.
+ */
+export function railAfterStep(
+  stored: number,
+  displayed: number,
+  dir: -1 | 1,
+  fitted: (candidate: number) => number
+): number {
+  const next = stepRail(displayed, dir);
+  return fitted(next) === displayed && next !== displayed ? stored : next;
+}
+
+/**
+ * The Search button.  A rail the user collapsed (stored width = icons) expands as before; a rail that is
+ * only collapsed by fitting keeps the stored preference and shows the field as a compact popover.
+ */
+export function searchPlan(
+  storedRail: number,
+  displayedRail: number,
+  searchOpen: boolean
+): { expandStored: boolean; popover: boolean; open: boolean } {
+  const userMini = isMiniRail(storedRail);
+  const displayedMini = isMiniRail(displayedRail);
+  const expandStored = displayedMini && userMini;
+  return { expandStored, popover: displayedMini && !userMini, open: !searchOpen || expandStored };
 }
 
 /** Panel width for a pointer at `x`, measured from the window's right edge. */
