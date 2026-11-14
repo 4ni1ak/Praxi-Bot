@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { appInert } from "../lib/inertStack";
 import { layerStack as modalStack } from "../lib/modalStack";
 import styles from "./Modal.module.css";
 
@@ -42,8 +43,7 @@ export function Modal({
     const node = ref.current;
     const seq = seqRef.current;
     modalStack.add(seq);
-    const appRoot = document.getElementById("root");
-    if (appRoot) appRoot.inert = true;
+    appInert.acquire(seq);
     (node?.querySelector<HTMLElement>("[data-autofocus]") ?? node)?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (!modalStack.isTop(seq)) return;
@@ -74,7 +74,7 @@ export function Modal({
     return () => {
       document.removeEventListener("keydown", onKey, true);
       modalStack.remove(seq);
-      if (appRoot && ![...document.querySelectorAll('[aria-modal="true"]')].some(dialog => dialog !== node)) appRoot.inert = false;
+      appInert.release(seq);
       previous?.focus?.();
     };
   }, [open]);
