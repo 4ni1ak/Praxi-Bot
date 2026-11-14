@@ -702,15 +702,15 @@ fn collapse_card_whitespace(text: &str) -> String {
             let n = i - start;
             // `split` yields one empty slot after a trailing newline. That is
             // not a blank line the sender used to bury text.
-            if n == 1 && i == lines.len() {
+            if n == 1 && i == lines.len() && lines[start].is_empty() {
                 continue;
             }
             if started {
                 out.push('\n');
             }
-            if n >= 2 {
-                let _ = write!(out, "[… {n} blank lines …]");
-            }
+            let spaces = lines[start..i].iter().map(|line| line.bytes().filter(|b| *b == b' ').count()).sum::<usize>();
+            let tabs = lines[start..i].iter().map(|line| line.bytes().filter(|b| *b == b'\t').count()).sum::<usize>();
+            let _ = write!(out, "[… {n} blank lines: {spaces} spaces, {tabs} tabs …]");
             started = true;
             continue;
         }
@@ -718,10 +718,10 @@ fn collapse_card_whitespace(text: &str) -> String {
             out.push('\n');
         }
         out.push_str(body);
-        if trail >= 2 {
-            let _ = write!(out, " [… {trail} trailing whitespace …]");
-        } else if trail == 1 {
-            out.push(' ');
+        if trail > 0 {
+            let spaces = lines[i][body.len()..].bytes().filter(|b| *b == b' ').count();
+            let tabs = trail - spaces;
+            let _ = write!(out, " [… trailing whitespace: {spaces} spaces, {tabs} tabs …]");
         }
         started = true;
         i += 1;
@@ -931,6 +931,18 @@ mod card_tests {
     };
 
     use super::{ContentTaint, egress_payload};
+
+    #[test]
+    fn mixed_blank_and_trailing_whitespace_reports_each_character_kind() {
+        let shown = super::present_payload("hello\t\n \t \t\nbye \t\t\n\t").unwrap();
+        assert!(shown.text.contains("trailing whitespace: 0 spaces, 1 tabs"), "{}", shown.text);
+        assert!(shown.text.contains("1 blank lines: 2 spaces, 2 tabs"), "{}", shown.text);
+        assert!(shown.text.contains("trailing whitespace: 1 spaces, 2 tabs"), "{}", shown.text);
+        assert!(shown.text.ends_with("1 blank lines: 0 spaces, 1 tabs …]"), "{}", shown.text);
+        let buried = super::present_payload(&format!("hello\n{}\nbye", " \t".repeat(2000))).unwrap();
+        assert!(buried.text.contains("2000 spaces, 2000 tabs"), "{}", buried.text);
+        assert!(buried.text.contains("bye"));
+    }
 
     #[test]
     fn browser_open_card_contains_every_transmitted_field() {
