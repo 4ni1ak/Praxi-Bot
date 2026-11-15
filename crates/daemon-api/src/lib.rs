@@ -13,6 +13,7 @@
 //! browser `EventSource` clients (Host / Origin still apply).
 
 pub mod auth;
+pub mod changes;
 pub mod control;
 pub mod doctor;
 mod doctor_routes;
@@ -192,6 +193,11 @@ struct Inner {
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
     policy_lock: parking_lot::Mutex<()>,
+    restore_locks: parking_lot::Mutex<std::collections::HashSet<RunId>>,
+    #[cfg(test)]
+    restore_fail_at: parking_lot::Mutex<Option<usize>>,
+    #[cfg(test)]
+    restore_pause: parking_lot::Mutex<Option<changes::TestRestorePause>>,
     /// Serialises `providers.toml` read-modify-write operations (`POST /v1/providers/cli/enable`).
     providers_lock: parking_lot::Mutex<()>,
     /// Why `policy.json` could not be loaded (locked deny-all mode), if so.
@@ -333,6 +339,11 @@ impl AppState {
             secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
+            restore_locks: parking_lot::Mutex::new(std::collections::HashSet::new()),
+            #[cfg(test)]
+            restore_fail_at: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            restore_pause: parking_lot::Mutex::new(None),
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
@@ -857,6 +868,15 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/runs/{id}/cancel", post(r::cancel_run))
         .route("/v1/runs/{id}/resume", post(r::resume_run))
         .route("/v1/runs/{id}/remember", post(r::remember_run))
+        .route("/v1/runs/{id}/changes", get(changes::get_run_changes))
+        .route(
+            "/v1/runs/{id}/changes/{cp}/preview",
+            get(changes::preview_restore),
+        )
+        .route(
+            "/v1/runs/{id}/changes/{cp}/restore",
+            post(changes::restore_changes),
+        )
         .route("/v1/usage", get(r::usage))
         .route(
             "/v1/control/state",

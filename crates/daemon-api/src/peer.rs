@@ -93,6 +93,11 @@ fn answers_overlay_question(path: &str) -> bool {
         .is_some_and(|rest| uuid::Uuid::parse_str(rest).is_ok())
 }
 
+// File contents and host restores require a desktop user.
+fn host_file_review(path: &str) -> bool {
+    path.starts_with("/v1/runs/") && path.split('/').nth(4) == Some("changes")
+}
+
 /// `/v1/bots/{id}/skills` mutates a bot's prompt-trust boundary.
 fn is_bot_skills_path(path: &str) -> bool {
     path.strip_prefix("/v1/bots/")
@@ -115,7 +120,8 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::forbidden(why).into_response();
     }
     let denied = peer.role != PeerRole::Desktop
-        && (peer.role != PeerRole::Phone
+        && (host_file_review(&check_path)
+            || peer.role != PeerRole::Phone
             || (req.method() == Method::POST
                 && PHONE_DENIED_POST_PATHS.contains(&check_path.as_str()))
             || (matches!(*req.method(), Method::POST | Method::PUT)

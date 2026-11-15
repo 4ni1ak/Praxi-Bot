@@ -710,6 +710,7 @@ pub struct SkillHints {
 pub(crate) struct Shared {
     pub storage: Arc<Storage>,
     pub tools: ToolRegistry,
+    pub checkpoint_access: RwLock<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)>,
     pub providers: RwLock<Providers>,
     /// Workspace-wide policy; replaceable at runtime (`PUT /v1/policy`).
     pub global_policy: RwLock<Policy>,

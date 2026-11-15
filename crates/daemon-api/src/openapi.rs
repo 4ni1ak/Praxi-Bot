@@ -9,8 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp, mcp_routes,
-    routes, skills, sse, web, web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
+    mcp_routes, routes, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -78,6 +78,9 @@ impl Modify for Security {
         routes::cancel_run,
         routes::resume_run,
         routes::remember_run,
+        changes::get_run_changes,
+        changes::preview_restore,
+        changes::restore_changes,
         routes::usage,
         routes::get_control_state,
         routes::put_control_state,
@@ -146,6 +149,9 @@ impl Modify for Security {
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
+        changes::CheckpointComputerDto, changes::CheckpointLocationDto, changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
+        changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,
+        changes::RestorePreviewDto, changes::RestoreRequestDto, changes::RestoreResponseDto,
         skills::SkillScope, skills::SkillIssueScope, skills::SkillRequiresDto, skills::SkillHubInfoDto,
         skills::CatalogSkillDto, skills::SkillIssueDto, skills::SkillsCatalogDto,
         skills::SkillAssignmentModeDto, skills::AssignedSkillState, skills::AssignedSkillDto,
