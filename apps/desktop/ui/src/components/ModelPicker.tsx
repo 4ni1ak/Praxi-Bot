@@ -1,16 +1,18 @@
-import { Check, ChevronDown, Download, Plug, Search, Sparkles } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Check, ChevronDown, ChevronRight, Download, Plug, Search, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { isMockMode } from "../api/mockMode";
 import {
   filterModelGroups,
   isCliDefault,
   modelHint,
+  pickerSections,
   recommendedOptions,
   type ModelGroup,
-  type ModelOption
+  type ModelOption,
+  type SourceGroup
 } from "../lib/modelPicker";
-import { productBrandKey, providerBrand } from "../lib/modelBrand";
+import { productBrandKey, providerBrand, sourceLabel } from "../lib/modelBrand";
 import { modelDisplayName } from "../lib/modelName";
 import { matchesQuery } from "../lib/searchText";
 import { THINKING_LEVELS, useThinkingLevel } from "../lib/thinkingLevel";
@@ -62,9 +64,9 @@ function EngineSection({
     }
   };
   return (
-    <div role="group" aria-label={t("modelPicker.engines")} className={styles.group}>
+    <div role="group" aria-label={t("modelPicker.addEngines")} className={styles.group}>
       <div className={styles.groupLabel} aria-hidden="true">
-        <span>{t("modelPicker.engines")}</span>
+        <span>{t("modelPicker.addEngines")}</span>
       </div>
       {rows.map((r) => (
         <button
@@ -86,10 +88,12 @@ function EngineSection({
 }
 
 /**
- * Model popover used by the composer, the bot editor and settings.  Closed state of the list:
- * an optional "automatic" row, up to four recommended models by their real names, a collapsed
- * "All models" list (grouped by provider or CLI engine, searchable, raw id only as small
- * secondary text) and, last, rows that connect or install coding CLIs.
+ * Model popover used by the composer, the bot editor and settings.  Layout: an optional
+ * "automatic" row, up to four recommended models, a "Coding CLIs" section (one collapsible group
+ * per connected engine) and an "API providers" section (one collapsible group per provider; an
+ * aggregator lists a few curated models and "Show all N").  Every row names its source on the
+ * right; the icon is the model's maker.  Search covers everything and groups hits by source.
+ * Last come rows that connect or install coding CLIs.
  * `value` and the picked option use the `provider/model` form.
  */
 export function ModelPicker({
@@ -120,26 +124,26 @@ export function ModelPicker({
   engines?: boolean;
 }) {
   const { t } = useTranslation();
+  const valueRef = useMemo(() => {
+    const [provider = "", ...rest] = value.split("/");
+    return { provider, model: rest.join("/") };
+  }, [value]);
   const [open, setOpen] = useState(
     () => reviewOpen && isMockMode() && new URLSearchParams(window.location.search).get("screen") === "models"
   );
-  const [allOpen, setAllOpen] = useState(
-    () => isMockMode() && new URLSearchParams(window.location.search).get("all") === "1"
+  const mockParam = (name: string) => (isMockMode() ? new URLSearchParams(window.location.search).get(name) : null);
+  const [query, setQuery] = useState(() => mockParam("modelq") ?? "");
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set([valueRef.provider, ...(mockParam("expand")?.split(",") ?? [])])
   );
-  const [query, setQuery] = useState(
-    () => (isMockMode() ? new URLSearchParams(window.location.search).get("modelq") ?? "" : "")
-  );
+  const [full, setFull] = useState<ReadonlySet<string>>(() => new Set(mockParam("showall")?.split(",") ?? []));
   const [level, setLevel] = useThinkingLevel();
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const shown = useMemo(
-    () =>
-      filterModelGroups(groups, query).sort((a, b) => {
-        const order = [groups[0]?.provider, "openai", "gemini", "ollama", "claude-code"];
-        const priority = (id: string) => (order.includes(id) ? order.indexOf(id) : order.length);
-        return priority(a.provider) - priority(b.provider);
-      }),
-    [groups, query]
-  );
+  // Search results: every model, grouped by source, CLI engines first.
+  const shown = useMemo(() => {
+    const found = filterModelGroups(groups, query);
+    return [...found.filter((g) => g.provider.startsWith("cli:")), ...found.filter((g) => !g.provider.startsWith("cli:"))];
+  }, [groups, query]);
 
   // "Other model id": a CLI accepts models its short list does not show.
   const typed = query.trim();
@@ -149,14 +153,36 @@ export function ModelPicker({
 
   const searching = typed !== "";
   const recommended = useMemo(() => (searching ? [] : recommendedOptions(groups)), [groups, searching]);
-  const showAll = searching || allOpen;
-  const total = groups.reduce((n, g) => n + g.models.length, 0);
+  const sections = useMemo(() => pickerSections(groups, value), [groups, value]);
+
+  // Design review only (mock mode): `?scrollto=<provider>` brings that group into view.
+  const scrollTo = mockParam("scrollto");
+  useEffect(() => {
+    if (!open || !scrollTo) return;
+    const id = window.setTimeout(
+      () => document.querySelector(`[data-testid="${testId}-group-${scrollTo}"]`)?.scrollIntoView({ block: "start" }),
+      150
+    );
+    return () => window.clearTimeout(id);
+  }, [open, scrollTo, testId]);
+
+  const toggle = (set: ReadonlySet<string>, id: string): Set<string> => {
+    const next = new Set(set);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  };
 
   const close = useCallback(() => {
     setOpen(false);
     setQuery("");
-    setAllOpen(false);
   }, []);
+
+  const openPicker = () => {
+    // The selected model's source starts open so the current choice is visible.
+    setExpanded(new Set([valueRef.provider]));
+    setFull(new Set());
+    setOpen(true);
+  };
 
   const pick = (ref: string) => {
     close();
@@ -180,8 +206,8 @@ export function ModelPicker({
   const label = (m: ModelOption) =>
     isCliDefault(m) ? t("modelPicker.cliDefault") : m.displayName;
 
-  const [valueProvider = "", ...rest] = value.split("/");
-  const valueModel = rest.join("/");
+  const valueProvider = valueRef.provider;
+  const valueModel = valueRef.model;
   const current = groups.find((g) => g.provider === valueProvider)?.models.find((m) => m.ref === value);
   const valueLabel = current ? label(current) : valueModel ? modelDisplayName(valueModel) : "";
 
@@ -200,13 +226,18 @@ export function ModelPicker({
     }
   };
 
-  const optionRow = (m: ModelOption, opts: { hint?: boolean; sub?: boolean }) => {
+  const optionRow = (m: ModelOption, opts: { rec?: boolean }) => {
     const active = !autoOption?.selected && m.ref === value;
     const primary = label(m);
-    const raw = opts.sub && !isCliDefault(m) && primary !== m.model ? m.model : null;
+    // Second line: why it is recommended, or the raw id (OpenCode / OpenRouter ids name the maker).
+    const secondary = opts.rec
+      ? t(`modelPicker.hint.${modelHint(m.model)}`)
+      : !isCliDefault(m) && primary !== m.model
+        ? m.model
+        : null;
     return (
       <button
-        key={`${opts.hint ? "rec" : "all"}-${m.ref}`}
+        key={`${opts.rec ? "rec" : "row"}-${m.ref}`}
         type="button"
         role="option"
         aria-selected={active}
@@ -216,17 +247,59 @@ export function ModelPicker({
         <BrandMark name={productBrandKey(m.provider, m.model)} size={16} />
         <span className={styles.optionText} title={m.model}>
           {primary}
-          {raw ? <span className={styles.rawId}>{raw}</span> : null}
+          {secondary ? <span className={styles.rawId}>{secondary}</span> : null}
         </span>
-        {opts.hint ? (
-          <span className={styles.optionSub}>
-            {m.provider.startsWith("cli:") ? providerBrand(m.provider).label : t(`modelPicker.hint.${modelHint(m.model)}`)}
-          </span>
-        ) : null}
+        <span className={styles.source}>{sourceLabel(m.provider)}</span>
         {active ? <Check aria-hidden="true" /> : null}
       </button>
     );
   };
+
+  const groupRow = (g: SourceGroup) => {
+    const brand = providerBrand(g.provider);
+    const isOpen = expanded.has(g.provider);
+    const isFull = full.has(g.provider);
+    const rows = isFull ? [...g.featured, ...g.rest] : g.featured;
+    return (
+      <div key={g.provider} className={styles.group} role="group" aria-label={sourceLabel(g.provider)}>
+        <button
+          type="button"
+          data-picker-row
+          className={styles.groupHead}
+          aria-expanded={isOpen}
+          data-testid={`${testId}-group-${g.provider}`}
+          onClick={() => setExpanded(toggle(expanded, g.provider))}
+        >
+          <ChevronRight aria-hidden="true" className={isOpen ? styles.chevOpen : undefined} />
+          <BrandMark name={brand.company} size={14} />
+          <span className={styles.groupName}>{sourceLabel(g.provider)}</span>
+          <span className={styles.groupCount}>{g.total}</span>
+        </button>
+        {isOpen ? (
+          <>
+            {rows.map((m) => optionRow(m, {}))}
+            {!isFull && g.rest.length > 0 ? (
+              <button
+                type="button"
+                data-picker-row
+                className={styles.showAll}
+                data-testid={`${testId}-showall-${g.provider}`}
+                onClick={() => setFull(toggle(full, g.provider))}
+              >
+                {t("modelPicker.showAll", { count: g.total })}
+              </button>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    );
+  };
+
+  const sectionLabel = (key: string) => (
+    <div className={styles.sectionLabel} aria-hidden="true">
+      <span>{t(key)}</span>
+    </div>
+  );
 
   return (
     <div className={styles.root}>
@@ -239,7 +312,7 @@ export function ModelPicker({
         aria-expanded={open}
         title={t("modelPicker.title")}
         data-testid={testId}
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => (open ? close() : openPicker())}
       >
         {autoOption?.selected ? (
           <Sparkles aria-hidden="true" />
@@ -262,7 +335,7 @@ export function ModelPicker({
         placement={placement}
         role="dialog"
         label={t("modelPicker.title")}
-        width={320}
+        width={360}
         initialFocus="none"
       >
         <label className={styles.search}>
@@ -334,44 +407,38 @@ export function ModelPicker({
                   <div className={styles.groupLabel} aria-hidden="true">
                     <span>{t("modelPicker.recommended")}</span>
                   </div>
-                  {recommended.map((m) => optionRow(m, { hint: true }))}
+                  {recommended.map((m) => optionRow(m, { rec: true }))}
                 </div>
               ) : null}
-              {!searching && shown.length > 0 ? (
-                <button
-                  type="button"
-                  data-picker-row
-                  className={styles.allToggle}
-                  aria-expanded={allOpen}
-                  data-testid={`${testId}-all`}
-                  onClick={() => setAllOpen((v) => !v)}
-                >
-                  <span>{t("modelPicker.all", { count: total })}</span>
-                  <ChevronDown aria-hidden="true" className={allOpen ? styles.chevOpen : undefined} />
-                </button>
-              ) : null}
-              {showAll
-                ? shown.map((g) => {
-                    const brand = providerBrand(g.provider);
-                    return (
-                      <div
-                        key={g.provider}
-                        className={styles.group}
-                        role="group"
-                        aria-label={`${brand.label}${brand.note ? ` ${brand.note}` : ""}`}
-                      >
-                        <div className={styles.groupLabel} aria-hidden="true">
-                          <BrandMark name={brand.company} size={14} />
-                          <span>{brand.label}</span>
-                          {brand.note ? <span className={styles.groupNote}>{brand.note}</span> : null}
-                        </div>
-                        {g.models.map((m) => optionRow(m, { sub: true }))}
+              {searching
+                ? shown.map((g) => (
+                    <div key={g.provider} className={styles.group} role="group" aria-label={sourceLabel(g.provider)}>
+                      <div className={styles.groupLabel} aria-hidden="true">
+                        <BrandMark name={providerBrand(g.provider).company} size={14} />
+                        <span>{sourceLabel(g.provider)}</span>
+                        <span className={styles.groupCount}>{g.models.length}</span>
                       </div>
-                    );
-                  })
-                : null}
+                      {g.models.map((m) => optionRow(m, {}))}
+                    </div>
+                  ))
+                : (
+                  <>
+                    {sections.cli.length > 0 ? (
+                      <>
+                        {sectionLabel("modelPicker.sectionCli")}
+                        {sections.cli.map(groupRow)}
+                      </>
+                    ) : null}
+                    {sections.api.length > 0 ? (
+                      <>
+                        {sectionLabel("modelPicker.sectionApi")}
+                        {sections.api.map(groupRow)}
+                      </>
+                    ) : null}
+                  </>
+                )}
               {engines ? (
-                <EngineSection query={query} testId={testId} onInstall={close} onConnected={() => setAllOpen(true)} />
+                <EngineSection query={query} testId={testId} onInstall={close} onConnected={() => undefined} />
               ) : null}
             </>
           )}
