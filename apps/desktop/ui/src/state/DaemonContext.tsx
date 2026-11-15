@@ -53,7 +53,8 @@ export interface ComputerEntry {
 }
 
 /** Runs in these states can still produce approvals / questions. */
-const LIVE_RUN_STATES = new Set(["pending", "running", "waiting_approval"]);
+// "pending" is not a daemon run state; "queued" runs can still ask (card 237 PR C).
+const LIVE_RUN_STATES = new Set(["queued", "running", "waiting_approval"]);
 
 type Action =
   | { type: "reset" }
@@ -426,7 +427,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     if (ids.length === 0) {
       return 0;
     }
-    await c.stopListedRuns(crypto.randomUUID(), ids);
+    await c.stopRuns({ stop_id: crypto.randomUUID(), run_ids: ids, scope: "listed" });
     return ids.length;
   }, []);
 

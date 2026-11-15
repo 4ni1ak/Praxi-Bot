@@ -6,6 +6,8 @@
 //! read; all text returned here is data, never trusted instructions.
 
 mod chunk;
+pub mod embedding;
+mod embedding_runtime;
 mod schema;
 mod search;
 mod store;

@@ -21,7 +21,6 @@ import type {
   HostLinkConnection,
   HostLinkInfo,
   HostLinkList,
-  StopRunsResponse,
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
@@ -65,7 +64,9 @@ import type {
   RestoreResponse,
   BotSkills,
   PutBotSkillsInput,
-  SkillsCatalog
+  SkillsCatalog,
+  StopRunsInput,
+  StopRunsResponse
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -106,7 +107,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -125,7 +126,7 @@ export class ApiClient {
   private async send(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -145,7 +146,8 @@ export class ApiClient {
       res = await fetch(url, {
         method,
         headers,
-        body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        signal: opts.signal
       });
     } catch (e) {
       throw new ApiError(
@@ -188,13 +190,6 @@ export class ApiClient {
   disconnectHost(id: string): Promise<void> {
     return this.request("DELETE", `/hosts/${encodeURIComponent(id)}/connect`);
   }
-  /** Stop exactly these runs (the `listed` scope; never a sweep). */
-  stopListedRuns(stopId: string, runIds: string[]): Promise<StopRunsResponse> {
-    return this.request("POST", "/runs/stop", {
-      body: { stop_id: stopId, run_ids: runIds, scope: "listed" }
-    });
-  }
-
   listBots(): Promise<Bot[]> {
     return this.request("GET", "/bots");
   }
@@ -254,6 +249,13 @@ export class ApiClient {
   }
   cancelRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/cancel`);
+  }
+  /**
+   * One user Stop (`POST /v1/runs/stop`). Idempotent per `stop_id`: the daemon fixes the
+   * target set on first receipt, so a retry must reuse the same id. `signal` bounds one attempt.
+   */
+  stopRuns(body: StopRunsInput, signal?: AbortSignal): Promise<StopRunsResponse> {
+    return this.request("POST", "/runs/stop", { body, signal });
   }
   resumeRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/resume`);
@@ -349,12 +351,12 @@ export class ApiClient {
     });
   }
   /** Release an owned screen takeover or clear a legacy latch. */
-  releaseControl(req?: ReleaseRequest): Promise<ControlStateDto> {
-    return this.request("POST", "/control/release", req ? { body: req } : {});
+  releaseControl(req?: ReleaseRequest, signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/release", req ? { body: req, signal } : { signal });
   }
   /** Local Stop override: interrupts any active takeover and keeps the pause latch. */
-  overrideControl(): Promise<ControlStateDto> {
-    return this.request("POST", "/control/override");
+  overrideControl(signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/override", { signal });
   }
   /** Local user recovery: clears an interrupted/recovered latch after key reset. */
   recoverControl(): Promise<ControlStateDto> {

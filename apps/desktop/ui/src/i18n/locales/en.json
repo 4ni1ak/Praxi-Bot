@@ -204,7 +204,11 @@
     "refusedBadge": "{{count}} bot action refused",
     "refusedBadge_other": "{{count}} bot actions refused",
     "hotkeyHint": "Stop in app: {{hotkey}}",
-    "dragHandleAria": "Drag floating control widget"
+    "dragHandleAria": "Drag floating control widget",
+    "stopPending": "Stopping — confirming every run…",
+    "stopConfirmed": "Stopped — every run confirmed",
+    "stopUnknown": "Stopping — could not confirm with the app yet",
+    "dismissStop": "Hide the Stop indicator (the main window keeps its status)"
   },
   "dev": {
     "sectionTitle": "Developer",
@@ -1852,6 +1856,41 @@
     "connectionLost": "Connection to the screen lost. Reconnecting…",
     "clearForeignPause": "Clear {{owner}}'s pause"
   },
+  "stopStatus": {
+    "title": {
+      "stopping": "Stopping…",
+      "unreachable": "Stopped on this computer",
+      "partial": "Some runs could not be stopped",
+      "expired": "Stop expired",
+      "unconfirmable": "Earlier Stop not confirmed",
+      "stopped": "Stopped",
+      "unconfirmed": "Stop not confirmed",
+      "released": "Runs allowed to continue"
+    },
+    "detail": {
+      "stoppingCount_one": "{{stopped}} of {{count}} run stopped; waiting for the rest to end.",
+      "stoppingCount_other": "{{stopped}} of {{count}} runs stopped; waiting for the rest to end.",
+      "stoppingNone": "Asking the daemon to stop every running bot…",
+      "partial": "{{stopped}} of {{count}} stopped. The rest are held and cannot act; retrying…",
+      "expiredRetry": "The daemon no longer had this Stop on record. Retrying only the {{held}} runs still held; nothing started later is touched.",
+      "expiredNone": "The daemon no longer had this Stop on record; none of the runs it held is still going.",
+      "unconfirmable": "A Stop from before the app restarted never reached the daemon. Press Stop again if bots are still running.",
+      "stoppedCount_one": "{{count}} run stopped.",
+      "stoppedCount_other": "All {{count}} runs stopped.",
+      "stoppedNone": "No bot runs were going.",
+      "unreachableSweep": "Bot and takeover input is halted here. The daemon cannot be reached yet; when it is, this Stop will stop EVERY run open at that moment, including runs started meanwhile from another device or a schedule.",
+      "unreachableListed_one": "Bot and takeover input is halted here. The daemon has not confirmed yet; when it is reached it will stop only the {{count}} run known when you pressed Stop. Retrying…",
+      "unreachableListed_other": "Bot and takeover input is halted here. The daemon has not confirmed yet; when it is reached it will stop only the {{count}} runs known when you pressed Stop. Retrying…",
+      "unconfirmed": "The daemon lost this Stop before saying what it stopped. {{quarantined}} runs that may have been targeted are paused and cannot act until you decide.",
+      "released": "You let the paused runs continue. Nothing was cancelled.",
+      "stoppingSweep": "Asking the daemon to stop. This Stop will stop EVERY run open when the daemon receives it, including runs started meanwhile from another device or a schedule (the app had no fresh run list when you pressed Stop)."
+    },
+    "notAudited": "Not recorded in the audit log",
+    "progressLabel": "Runs stopped",
+    "dismiss": "Dismiss",
+    "stopAllNow": "Stop all now",
+    "letContinue": "Let them continue"
+  },
   "computerPicker": {
     "label": "Computer: {{name}}",
     "menu": "Computer",
@@ -1867,9 +1906,9 @@
     "add": "Add a host…",
     "stopHost": "Stop all runs on the host",
     "stopHostHint": "Stops what is running there now",
-    "stopped": "Stopped {{count}} run(s) on the host.",
     "stopNone": "Nothing is running on the host.",
-    "stopFailed": "Could not reach the host to stop its runs."
+    "stopFailed": "Could not reach the host to stop its runs.",
+    "stopped": "Stopped {{count}} run(s) on the host."
   },
   "pairHost": {
     "title": "Add a host",

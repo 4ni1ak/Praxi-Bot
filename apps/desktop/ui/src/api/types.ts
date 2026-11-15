@@ -13,6 +13,9 @@ export type Message = S["MessageDto"];
  */
 export type Run = S["RunDto"] & { schedule_id?: string | null };
 export type Approval = S["ApprovalDto"];
+export type StopRunResult = S["StopRunResult"];
+export type StopOutcome = S["StopOutcome"];
+export type StopScope = S["StopScope"];
 export type Health = S["Health"];
 export type HostLinkInfo = S["HostLinkInfo"];
 export type HostLinkList = S["HostLinkList"];

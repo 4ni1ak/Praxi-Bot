@@ -50,6 +50,9 @@ import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
+import { requestStop } from "./state/appStop";
+import { isNewerNativeSnapshot } from "./state/stopStatus";
+import { StopStatusNotice } from "./components/StopStatusNotice";
 import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
 import { LiveViewer } from "./views/LiveViewer";
 import { appearanceFromQuery } from "./lib/appearance";
@@ -93,7 +96,6 @@ import {
   resumeBotRun,
   setStopHotkey,
   simulateBotRun,
-  stopBotRun,
   subscribeOverlayEvents,
   takeTheWheel
 } from "./overlay/events";
@@ -128,7 +130,7 @@ function AppShell() {
     retry,
     activeComputerId
   } = useDaemon();
-  const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
+  const { setThumbnailDemand, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   // Chats, bots and runs belong to one computer: switching computers starts at home.
@@ -139,9 +141,14 @@ function AppShell() {
       setRoute({ kind: "home" });
     }
   }, [activeComputerId]);
-  const [controlState, setControlState] = useState<ControlSnapshot>(
+  const [controlState, setControlStateRaw] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
+  // Native snapshots arrive from events, reads and command replies in any order:
+  // apply only a newer revision (a failed read has none and is ignored).
+  const setControlState = useCallback((snap: ControlSnapshot) => {
+    setControlStateRaw((prev) => (isNewerNativeSnapshot(prev.stateRev ?? -1, snap) ? snap : prev));
+  }, []);
   const [recordingHotkey, setRecordingHotkey] = useState<boolean>(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<SettingsSectionId | null>(
@@ -241,7 +248,7 @@ function AppShell() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [setControlState]);
 
   useEffect(() => {
     return subscribeOverlayEvents({
@@ -249,7 +256,7 @@ function AppShell() {
         setControlState(snapshot);
       }
     });
-  }, []);
+  }, [setControlState]);
 
   // Continuous inputs (colour pickers, sliders) apply live but persist / broadcast after a pause.
   const latestSettings = useRef<AppSettings>(settings);
@@ -306,12 +313,11 @@ function AppShell() {
       const activeHotkey = controlState.stopHotkey || settings.stopHotkey;
       if (matchesHotkeyEvent(event, activeHotkey)) {
         event.preventDefault();
-        // Plain Stop stays independent: the daemon-wide override latch is only
-        // used while a screen takeover is held (never on key repeat).
+        // One key press = one Stop decision (never on key repeat). The ledger halts
+        // native input, cancels runs and pauses a held takeover.
         if (!event.repeat) {
-          void overrideStop({ onlyIfControlled: true });
+          requestStop("hotkey");
         }
-        void stopBotRun().then(setControlState);
       }
     };
 
@@ -319,7 +325,7 @@ function AppShell() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, overrideStop]);
+  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, setControlState]);
 
   // Native title bar on / off (Tauri window decorations; no-op in a browser).
   useEffect(() => {
@@ -501,8 +507,7 @@ function AppShell() {
             variant="danger"
             size="sm"
             onClick={() => {
-              void overrideStop({ onlyIfControlled: true });
-              void stopBotRun().then(setControlState);
+              requestStop("banner");
             }}
           >
             {t("widget.stop")}
@@ -686,6 +691,7 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
+        {panelVisible ? null : <StopStatusNotice variant="main" />}
         <PausedControlBanner />
         {route.kind === "onboarding" ? (
           <OnboardingView

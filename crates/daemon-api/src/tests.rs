@@ -27,6 +27,7 @@ mod email;
 mod host;
 mod host_slice;
 mod mcp;
+mod peer_knowledge;
 mod schedules;
 mod skills;
 mod web;
