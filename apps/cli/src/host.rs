@@ -29,6 +29,52 @@ pub enum HostCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Let a paired desktop watch (and take over) this host's screen. Local
+    /// only: run it on the host. The grant survives restarts.
+    Screen {
+        /// Paired device key from `bot host devices`.
+        #[arg(required_unless_present = "all_desktops")]
+        key: Option<String>,
+        /// Every paired device with the desktop role.
+        #[arg(long, conflicts_with = "key")]
+        all_desktops: bool,
+        /// Watch only: no takeover or input.
+        #[arg(long)]
+        view_only: bool,
+        /// Remove the grant instead of adding it.
+        #[arg(long)]
+        revoke: bool,
+    },
+}
+
+/// Device keys a `host screen` command applies to.
+async fn screen_targets(
+    client: &Client,
+    key: Option<&str>,
+    all_desktops: bool,
+) -> Result<Vec<String>> {
+    let keys: Vec<String> = if all_desktops {
+        let status = client.request(Method::GET, "/v1/host", None).await?;
+        status["peers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| p["role"] == "desktop")
+            .filter_map(|p| p["key"].as_str().map(str::to_owned))
+            .collect()
+    } else {
+        key.map(str::to_owned).into_iter().collect()
+    };
+    if keys.is_empty() {
+        return Err("no paired desktop found; check `bot host devices`".into());
+    }
+    if let Some(bad) = keys
+        .iter()
+        .find(|k| k.is_empty() || k.len() > 128 || !k.chars().all(|c| c.is_ascii_alphanumeric()))
+    {
+        return Err(format!("not a device key: {bad:?}").into());
+    }
+    Ok(keys)
 }
 
 pub async fn join(data: &Path, ticket: &str) -> Result<()> {
@@ -73,6 +119,29 @@ pub async fn run(
     json_output: bool,
     out: &mut dyn Write,
 ) -> Result<()> {
+    if let HostCmd::Screen {
+        key,
+        all_desktops,
+        view_only,
+        revoke,
+    } = action
+    {
+        for key in screen_targets(client, key.as_deref(), *all_desktops).await? {
+            let (view, input) = (!revoke, !revoke && !view_only);
+            client
+                .request(
+                    Method::PUT,
+                    &format!("/v1/view/privileges/{key}"),
+                    Some(json!({"view": view, "input": input})),
+                )
+                .await?;
+            writeln!(
+                out,
+                "{key}: screen view={view} input={input} (kept across restarts)"
+            )?;
+        }
+        return Ok(());
+    }
     let (method, path, body) = match action {
         HostCmd::Status | HostCmd::Devices => (Method::GET, "/v1/host".into(), None),
         HostCmd::Invite { role } => (
@@ -90,7 +159,9 @@ pub async fn run(
             "/v1/host/activate".into(),
             Some(json!({"force": force})),
         ),
-        HostCmd::Join { .. } => return Err("join is local only".into()),
+        HostCmd::Join { .. } | HostCmd::Screen { .. } => {
+            return Err("this command is local only".into());
+        }
     };
     if matches!(action, HostCmd::Activate { force: true }) {
         eprintln!(

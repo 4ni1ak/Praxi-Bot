@@ -1013,6 +1013,15 @@ pub fn serve(
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
         }
+        // Screen grants of paired devices survive a restart: a headless host
+        // has nobody at its screen to grant them again. Pairing
+        // reconciliation below still revokes devices that are gone.
+        state.load_screen_privileges().await;
+        if !host_is_host {
+            // This computer's links to paired hosts (`/v1/hosts`); the peer
+            // endpoint starts lazily unless `--peer` already started one.
+            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone());
+        }
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
         let computer = Arc::new(crate::computer::CliComputerProvider::new(
             host_is_host,

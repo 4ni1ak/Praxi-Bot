@@ -25,6 +25,7 @@ pub mod error;
 pub mod fake;
 mod fill_routes;
 pub mod host;
+pub mod host_links;
 mod knowledge;
 pub mod knowledge_runtime;
 mod knowledge_settings;
@@ -181,6 +182,7 @@ struct Inner {
     live_view: Arc<live_view::LiveView>,
     refresh_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
     provider_host: OnceLock<ProviderHost>,
+    host_links: OnceLock<Arc<dyn host_links::HostLinks>>,
     knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
@@ -345,6 +347,7 @@ impl AppState {
             live_view,
             refresh_rx: parking_lot::Mutex::new(Some(refresh_rx)),
             provider_host: OnceLock::new(),
+            host_links: OnceLock::new(),
             knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
             email: OnceLock::new(),
@@ -391,6 +394,16 @@ impl AppState {
     /// once, right after [`AppState::new`]; a second call is ignored).
     pub fn set_provider_host(&self, host: ProviderHost) {
         let _ = self.0.provider_host.set(host);
+    }
+
+    /// Enable `/v1/hosts/*` (this computer's links to paired hosts). Call
+    /// once, before [`serve`]; a second call is ignored.
+    pub fn set_host_links(&self, links: Arc<dyn host_links::HostLinks>) {
+        let _ = self.0.host_links.set(links);
+    }
+
+    pub(crate) fn host_links(&self) -> Option<Arc<dyn host_links::HostLinks>> {
+        self.0.host_links.get().cloned()
     }
 
     /// Enable `/v1/mcp/*` with the embedder MCP manager (call once, before
@@ -852,6 +865,12 @@ fn api_routes() -> Router<AppState> {
     use web_routes as w;
     Router::new()
         .route("/v1/host", get(host::status))
+        .route("/v1/hosts", get(host_links::list))
+        .route("/v1/hosts/pair", post(host_links::pair))
+        .route(
+            "/v1/hosts/{id}/connect",
+            post(host_links::connect).delete(host_links::disconnect),
+        )
         .route("/v1/host/invite", post(host::invite))
         .route(
             "/v1/host/devices/{key}",

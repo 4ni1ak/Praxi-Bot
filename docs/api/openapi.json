@@ -3298,6 +3298,127 @@
         ]
       }
     },
+    "/v1/hosts": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLinkList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/pair": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_pair",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairHostInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLinkInfo"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/connect": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_connect",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLinkConnection"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_disconnect",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp/catalog": {
       "get": {
         "tags": [
@@ -8197,6 +8318,99 @@
           }
         }
       },
+      "HostLinkConnection": {
+        "type": "object",
+        "description": "An open channel: a loopback endpoint that forwards to the host's API over\nthe paired connection. `token` is a bearer for that proxy only, valid while\nthe channel lives; it is never logged.",
+        "required": [
+          "id",
+          "name",
+          "base_url",
+          "token",
+          "state"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HostLinkState"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "HostLinkInfo": {
+        "type": "object",
+        "description": "A paired host.",
+        "required": [
+          "id",
+          "name",
+          "state"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One short, path-free sentence for `offline` / `unreachable`."
+          },
+          "id": {
+            "type": "string",
+            "description": "Paired device key (public, not a secret)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name the host announced at pairing."
+          },
+          "state": {
+            "$ref": "#/components/schemas/HostLinkState"
+          }
+        }
+      },
+      "HostLinkList": {
+        "type": "object",
+        "description": "`GET /v1/hosts`.",
+        "required": [
+          "local_version",
+          "local_api_version",
+          "hosts"
+        ],
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostLinkInfo"
+            }
+          },
+          "local_api_version": {
+            "type": "string",
+            "description": "HTTP API version of this computer's daemon."
+          },
+          "local_version": {
+            "type": "string",
+            "description": "Version of this computer's daemon."
+          }
+        }
+      },
+      "HostLinkState": {
+        "type": "string",
+        "description": "Connection state of one paired host as seen from this computer.",
+        "enum": [
+          "idle",
+          "connecting",
+          "connected",
+          "offline",
+          "unreachable"
+        ]
+      },
       "HostMode": {
         "type": "string",
         "enum": [
@@ -10246,6 +10460,19 @@
             "format": "int64",
             "description": "Seconds until it expires.",
             "minimum": 0
+          }
+        }
+      },
+      "PairHostInput": {
+        "type": "object",
+        "description": "`POST /v1/hosts/pair`.",
+        "required": [
+          "ticket"
+        ],
+        "properties": {
+          "ticket": {
+            "type": "string",
+            "description": "Pairing ticket printed by `bot host invite --role desktop` on the host."
           }
         }
       },

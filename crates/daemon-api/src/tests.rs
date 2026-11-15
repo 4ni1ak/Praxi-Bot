@@ -26,6 +26,7 @@ mod doctor;
 mod email;
 mod fill_secrets;
 mod host;
+mod host_slice;
 mod knowledge;
 mod knowledge_brain;
 mod mcp;

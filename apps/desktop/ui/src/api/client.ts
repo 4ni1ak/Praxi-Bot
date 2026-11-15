@@ -19,6 +19,9 @@ import type {
   Grant,
   GrantTarget,
   Health,
+  HostLinkConnection,
+  HostLinkInfo,
+  HostLinkList,
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
@@ -224,6 +227,21 @@ export class ApiClient {
     return this.request("GET", "/health", { auth: false });
   }
 
+  /** Paired hosts and their channel state (this computer's own daemon). */
+  listHosts(): Promise<HostLinkList> {
+    return this.request("GET", "/hosts");
+  }
+  /** Pair with a host using the ticket from `bot host invite --role desktop`. */
+  pairHost(ticket: string): Promise<HostLinkInfo> {
+    return this.request("POST", "/hosts/pair", { body: { ticket } });
+  }
+  /** Open (or reuse) the guarded channel to a paired host. */
+  connectHost(id: string): Promise<HostLinkConnection> {
+    return this.request("POST", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
+  disconnectHost(id: string): Promise<void> {
+    return this.request("DELETE", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
   listBots(): Promise<Bot[]> {
     return this.request("GET", "/bots");
   }
