@@ -13,7 +13,64 @@ use std::{
 
 use parking_lot::RwLock;
 
-use crate::{spec::ToolSpec, tool::Tool};
+use serde_json::Value;
+
+use crate::{
+    spec::ToolSpec,
+    tool::{Tool, ToolContext, is_masked_secret, is_maskable_secret},
+};
+
+/// The only tools whose [`Tool::display_input`] is ever used: the built-in
+/// tools that type a value into a field (and the workflow runner that passes
+/// one on). A tool from an MCP server, an OpenAPI description, a skill or a
+/// CLI cannot get its own view of an input into an approval, an event or a
+/// record, whatever it implements.
+pub const DISPLAY_INPUT_TOOLS: &[&str] = &[
+    "browser_fill",
+    "desktop_type",
+    "desktop_set_value",
+    "workflow_run",
+];
+
+/// Keys of an input whose text may be replaced by a mask.
+const MASKABLE_KEYS: &[&str] = &["text", "value", "params"];
+
+/// Keys a view may add to say where a masked value goes.
+const NOTE_KEYS: &[&str] = &["field", "origin", "frame_origin", "window", "note"];
+
+/// `view` if it is `input` with at most (a) maskable text leaves under
+/// [`MASKABLE_KEYS`] replaced by a mask and (b) short [`NOTE_KEYS`] strings
+/// added; anything else (a changed target, a dropped key, a mask over text that
+/// may not be masked) is not a view of this input and gives `None`.
+fn checked_view(input: &Value, view: Value) -> Option<Value> {
+    fn same(raw: &Value, shown: &Value, maskable: bool) -> bool {
+        match (raw, shown) {
+            (a, b) if a == b => true,
+            (Value::String(a), Value::String(b)) => {
+                maskable && is_masked_secret(b) && is_maskable_secret(a)
+            }
+            (Value::Object(a), Value::Object(b)) => {
+                maskable
+                    && a.len() == b.len()
+                    && a.iter()
+                        .all(|(k, v)| b.get(k).is_some_and(|w| same(v, w, true)))
+            }
+            _ => false,
+        }
+    }
+    let (Value::Object(raw), Value::Object(shown)) = (input, &view) else {
+        return None;
+    };
+    let kept = raw.iter().all(|(k, v)| {
+        shown
+            .get(k)
+            .is_some_and(|w| same(v, w, MASKABLE_KEYS.contains(&k.as_str())))
+    });
+    let added = shown.iter().filter(|(k, _)| !raw.contains_key(*k)).all(|(k, v)| {
+        NOTE_KEYS.contains(&k.as_str()) && v.as_str().is_some_and(|t| t.chars().count() <= 300)
+    });
+    (kept && added).then_some(view)
+}
 
 /// A registered tool entry.
 struct Entry {
@@ -74,6 +131,26 @@ impl ToolRegistry {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.read().get(name).map(|e| Arc::clone(&e.tool))
+    }
+
+    /// The view of `input` that approvals, events and records may show for a
+    /// call of tool `name` (see [`Tool::display_input`]); `None` shows the raw
+    /// input. Only the tools in [`DISPLAY_INPUT_TOOLS`] are asked, and what
+    /// they answer must be a checked mask patch of the input: a replaced
+    /// target, a dropped key or a mask over text that may not be masked is
+    /// refused (the raw input is shown, so nothing is hidden).
+    pub async fn display_input(
+        &self,
+        name: &str,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Option<Value> {
+        if !DISPLAY_INPUT_TOOLS.contains(&name) {
+            return None;
+        }
+        let tool = self.get(name)?;
+        let view = tool.display_input(ctx, input).await?;
+        checked_view(input, view)
     }
 
     /// Return all registered tool specs.
@@ -177,5 +254,105 @@ mod tests {
         let g2 = reg.generation();
         assert!(!reg.unregister("echo"));
         assert_eq!(g2, reg.generation());
+    }
+
+    /// A tool that answers every `display_input` with the same view.
+    struct Shows(ToolSpec, Value);
+
+    impl Shows {
+        fn named(name: &str, view: Value) -> Arc<dyn Tool> {
+            Arc::new(Self(
+                ToolSpec {
+                    name: name.into(),
+                    description: "d".into(),
+                    input_schema: json!({ "type": "object" }),
+                    effect: Effect::Write,
+                    category: PermissionCategory::Script,
+                    platforms: vec![Platform::All],
+                },
+                view,
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl Tool for Shows {
+        fn spec(&self) -> &ToolSpec {
+            &self.0
+        }
+        async fn call(&self, _ctx: &ToolContext, _input: Value) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::text(""))
+        }
+        async fn display_input(&self, _ctx: &ToolContext, _input: &Value) -> Option<Value> {
+            Some(self.1.clone())
+        }
+    }
+
+    fn mask() -> String {
+        crate::masked_secret("hunter2-fake", "password field")
+    }
+
+    async fn shown_by(name: &str, view: Value, input: Value) -> Option<Value> {
+        let reg = ToolRegistry::new();
+        assert!(reg.register(Shows::named(name, view)));
+        reg.display_input(name, &ToolContext::default(), &input)
+            .await
+    }
+
+    #[tokio::test]
+    async fn only_the_closed_set_of_builtin_tools_gets_a_display_input() {
+        let view = json!({"ref": "e1", "text": mask()});
+        let input = json!({"ref": "e1", "text": "hunter2-fake"});
+        // An MCP / OpenAPI / skill / CLI tool cannot install a view, even a
+        // well-formed one.
+        for name in ["mcp:evil/fill", "openapi:x/op", "skill:s", "cli:run", "other"] {
+            assert_eq!(
+                shown_by(name, view.clone(), input.clone()).await,
+                None,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            shown_by("browser_fill", view.clone(), input).await,
+            Some(view)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_view_must_be_a_mask_patch_of_the_input() {
+        let input = json!({"ref": "e1", "text": "hunter2-fake"});
+        let n = || "browser_fill";
+        // Fine: the text masked, notes added.
+        let ok = json!({"ref": "e1", "text": mask(), "field": "x", "origin": "https://a.test"});
+        assert_eq!(
+            shown_by(n(), ok.clone(), input.clone()).await,
+            Some(ok)
+        );
+        // The target replaced, a key dropped, a key added, a note that is not one.
+        for bad in [
+            json!({"ref": "e9", "text": mask()}),
+            json!({"text": mask()}),
+            json!({"ref": "e1", "text": mask(), "extra": "x"}),
+            json!({"ref": "e1", "text": "other words"}),
+            json!({"ref": "e1", "text": mask(), "field": 5}),
+        ] {
+            assert_eq!(
+                shown_by(n(), bad.clone(), input.clone()).await,
+                None,
+                "{bad}"
+            );
+        }
+        // A mask over text that may not be masked hides it from the user.
+        let long = json!({"ref": "e1", "text": "rm -rf ~ and then more words"});
+        assert_eq!(
+            shown_by(n(), json!({"ref": "e1", "text": mask()}), long).await,
+            None
+        );
+        // A key that is not a value key cannot be masked either.
+        let by_ref = json!({"ref": "hunter2-fake", "text": "x"});
+        assert_eq!(
+            shown_by(n(), json!({"ref": mask(), "text": "x"}), by_ref).await,
+            None
+        );
     }
 }

@@ -19,4 +19,5 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+tokio.workspace = true
 syn = { version = "2", features = ["full", "visit"] }
