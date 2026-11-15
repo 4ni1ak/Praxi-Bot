@@ -207,7 +207,8 @@
     "dragHandleAria": "Yüzen kontrol penceresini sürükle",
     "stopPending": "Durduruluyor — tüm çalışmalar doğrulanıyor…",
     "stopConfirmed": "Durduruldu — tüm çalışmalar doğrulandı",
-    "stopUnknown": "Durduruluyor — uygulamayla henüz doğrulanamadı"
+    "stopUnknown": "Durduruluyor — uygulamayla henüz doğrulanamadı",
+    "dismissStop": "Durdurma göstergesini gizle (ana pencere durumu göstermeye devam eder)"
   },
   "dev": {
     "sectionTitle": "Geliştirici",
@@ -1879,7 +1880,8 @@
       "unreachableListed_one": "Bot ve devralma girdisi burada durduruldu. Daemon henüz doğrulamadı; ulaşıldığında yalnızca Durdur'a bastığınızda bilinen {{count}} çalışmayı durduracak. Yeniden deneniyor…",
       "unreachableListed_other": "Bot ve devralma girdisi burada durduruldu. Daemon henüz doğrulamadı; ulaşıldığında yalnızca Durdur'a bastığınızda bilinen {{count}} çalışmayı durduracak. Yeniden deneniyor…",
       "unconfirmed": "Daemon bu durdurmanın neyi durdurduğunu bildirmeden kaydını kaybetti. Hedeflenmiş olabilecek {{quarantined}} çalışma duraklatıldı ve siz karar verene kadar işlem yapamaz.",
-      "released": "Duraklatılan çalışmaların devam etmesine izin verdiniz. Hiçbir şey iptal edilmedi."
+      "released": "Duraklatılan çalışmaların devam etmesine izin verdiniz. Hiçbir şey iptal edilmedi.",
+      "stoppingSweep": "Daemon'dan durdurması isteniyor. Bu durdurma, daemon onu aldığında açık olan TÜM çalışmaları durduracak; arada başka bir cihazdan veya bir zamanlamadan başlatılanlar dahil (Durdur'a bastığınızda uygulamanın güncel bir çalışma listesi yoktu)."
     },
     "notAudited": "Denetim günlüğüne kaydedilmedi",
     "progressLabel": "Durdurulan çalışmalar",

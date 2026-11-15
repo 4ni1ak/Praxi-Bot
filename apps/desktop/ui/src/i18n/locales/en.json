@@ -207,7 +207,8 @@
     "dragHandleAria": "Drag floating control widget",
     "stopPending": "Stopping — confirming every run…",
     "stopConfirmed": "Stopped — every run confirmed",
-    "stopUnknown": "Stopping — could not confirm with the app yet"
+    "stopUnknown": "Stopping — could not confirm with the app yet",
+    "dismissStop": "Hide the Stop indicator (the main window keeps its status)"
   },
   "dev": {
     "sectionTitle": "Developer",
@@ -1879,7 +1880,8 @@
       "unreachableListed_one": "Bot and takeover input is halted here. The daemon has not confirmed yet; when it is reached it will stop only the {{count}} run known when you pressed Stop. Retrying…",
       "unreachableListed_other": "Bot and takeover input is halted here. The daemon has not confirmed yet; when it is reached it will stop only the {{count}} runs known when you pressed Stop. Retrying…",
       "unconfirmed": "The daemon lost this Stop before saying what it stopped. {{quarantined}} runs that may have been targeted are paused and cannot act until you decide.",
-      "released": "You let the paused runs continue. Nothing was cancelled."
+      "released": "You let the paused runs continue. Nothing was cancelled.",
+      "stoppingSweep": "Asking the daemon to stop. This Stop will stop EVERY run open when the daemon receives it, including runs started meanwhile from another device or a schedule (the app had no fresh run list when you pressed Stop)."
     },
     "notAudited": "Not recorded in the audit log",
     "progressLabel": "Runs stopped",

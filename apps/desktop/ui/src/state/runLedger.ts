@@ -37,8 +37,6 @@ export const STOP_SWEEP_WINDOW_MS = 2000;
 export const STOP_COALESCE_MS = 250;
 /** One attempt of `POST /v1/runs/stop` is abandoned (and retried) after this. */
 export const STOP_ATTEMPT_TIMEOUT_MS = 3000;
-/** How long a `stop_bot_run` invoke may stay unanswered before its sequence is classified anyway. */
-export const STOP_ECHO_WAIT_MS = 2000;
 /** Retry delays; the last one repeats for as long as a targeted run is not terminal. */
 export const STOP_RETRY_MS: readonly number[] = [500, 1000, 2000, 5000];
 /** Request ids remembered so a replayed `control_requested` is never answered twice. */
@@ -276,6 +274,10 @@ export class RunLedger {
   private unresolved: number[] = [];
   private ackedSeq = 0;
   private lastRev = -1;
+  /** The newest native snapshot accepted (single owner: every route goes through here). */
+  private accepted: NativeStopSnapshot | null = null;
+  private readonly nativeListeners = new Set<(snap: NativeStopSnapshot) => void>();
+  private readonly reconcileListeners = new Set<() => void>();
   private version = 0;
   private saved: string | null = null;
 
@@ -299,6 +301,40 @@ export class RunLedger {
   }
 
   /** Called once for every NEW Stop decision of kind `all` (override / input-halt hooks). */
+  /**
+   * Called with every native snapshot the ledger ACCEPTS (newer revision, not a failed
+   * read), whoever routed it: events, reads and the ledger's own command replies.
+   */
+  onNativeAccepted(listener: (snap: NativeStopSnapshot) => void): () => void {
+    this.nativeListeners.add(listener);
+    return () => {
+      this.nativeListeners.delete(listener);
+    };
+  }
+
+  /** The newest accepted native snapshot (null until one). */
+  nativeSnapshot(): NativeStopSnapshot | null {
+    return this.accepted;
+  }
+
+  /** Called when the ledger needs a fresh run list to resolve an unconfirmed Stop. */
+  onReconcileNeeded(listener: () => void): () => void {
+    this.reconcileListeners.add(listener);
+    return () => {
+      this.reconcileListeners.delete(listener);
+    };
+  }
+
+  /** An unconfirmed Stop is waiting for a run list issued after its expiry. */
+  needsReconcile(): boolean {
+    for (const rec of this.records.values()) {
+      if (rec.phase === "unconfirmed" && rec.watchFromObs !== null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   onStop(listener: (rec: StopRecord) => void): () => void {
     this.stopListeners.add(listener);
     return () => {
@@ -538,16 +574,12 @@ export class RunLedger {
     }
     const rec = this.createRecord(origin, now);
     rec.awaitingEcho = true;
-    // Local input halts first; the daemon request does not wait for it.
-    const echoTimer = this.deps.clock.set(() => {
-      if (rec.awaitingEcho) {
-        rec.awaitingEcho = false;
-        this.classify();
-      }
-    }, STOP_ECHO_WAIT_MS);
+    // Local input halts first; the daemon request does not wait for it. There is NO
+    // timeout on the echo: until native answers, sequences it may own stay unattributed
+    // (blocking acks, never minting a decision); the Stop itself is already being sent
+    // with its own id and target set.
     this.deps.native.stopRun(rec.id).then(
       (snap) => {
-        this.deps.clock.clear(echoTimer);
         // The reply pairs this decision's own sequence with its token.
         this.onNativeSnapshot(snap);
         if (rec.awaitingEcho) {
@@ -556,7 +588,7 @@ export class RunLedger {
         }
       },
       () => {
-        this.deps.clock.clear(echoTimer);
+        // The command failed: it produced no sequence, so it owns none.
         rec.awaitingEcho = false;
         this.classify();
       }
@@ -656,6 +688,13 @@ export class RunLedger {
     }
     this.classify();
     const fresh = this.freshRev(snap);
+    if (fresh) {
+      // Accepting and caching are one step: no route can advance the revision without it.
+      this.accepted = snap;
+      for (const l of this.nativeListeners) {
+        l(snap);
+      }
+    }
     this.tryAck();
     this.changed();
     return fresh;
@@ -889,7 +928,7 @@ export class RunLedger {
         if (this.inFlight.get(rec.id) === handle.epoch) {
           this.inFlight.delete(rec.id);
         }
-        this.applyReply(rec, resp);
+        this.applyReply(rec, resp, body.scope);
       },
       (err: unknown) => {
         clock.clear(timeout);
@@ -923,7 +962,7 @@ export class RunLedger {
     this.retryTimers.set(rec.id, timer);
   }
 
-  private applyReply(rec: StopRecord, resp: StopRunsResponse): void {
+  private applyReply(rec: StopRecord, resp: StopRunsResponse, sentScope: StopScope): void {
     if (!this.isOpenRecord(rec)) {
       // A late duplicate: it may still confirm terminal runs, nothing else.
       for (const r of resp.results ?? []) {
@@ -973,6 +1012,16 @@ export class RunLedger {
       entry.quarantinedBy = null;
       entry.error = phase === "failed" ? (r.error ?? null) : null;
     }
+    if (sentScope === "all_existing" && resp.first_seen) {
+      // The daemon just swept every run open now: any run an older unconfirmed Stop
+      // might have targeted and that still exists is in this T (and held by it), and
+      // the rest are gone. That is the evidence the older uncertainty was waiting for.
+      for (const other of this.records.values()) {
+        if (other.phase === "unconfirmed") {
+          other.watchFromObs = null;
+        }
+      }
+    }
     // T is known now: every later attempt names exactly T (a restarted daemon that
     // forgot this id must not sweep again).
     rec.scope = "listed";
@@ -1009,6 +1058,9 @@ export class RunLedger {
       // Runs it quarantined stay quarantined; runs first seen before the next list
       // (which could have existed when the daemon fixed T) are quarantined too.
       rec.watchFromObs = this.obs;
+      for (const l of this.reconcileListeners) {
+        l();
+      }
     }
     if (held.length) {
       const next = this.blankRecord(rec.origin, rec.kind, now);

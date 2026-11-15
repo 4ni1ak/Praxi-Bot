@@ -55,8 +55,6 @@ interface Session {
 export class StopRuntime {
   readonly ledger: RunLedger;
   private readonly deps: StopRuntimeDeps;
-  /** The newest native snapshot the ledger ACCEPTED (never a failed read, never an older revision). */
-  private native: NativeControlSnapshot | null = null;
   private session: Session | null = null;
   private override: (opts: { onlyIfControlled: boolean }) => void = () => {};
 
@@ -65,6 +63,14 @@ export class StopRuntime {
     this.ledger = deps.ledger;
     // One decision, one takeover override (the viewer's always; others only if controlled).
     this.ledger.onStop((rec) => this.override(overrideOptionsFor(rec)));
+    // The ledger is the single owner of the accepted native snapshot: whoever routed it
+    // (an event, a read, the ledger's own Stop reply), the bridge hears every accepted one.
+    this.ledger.onNativeAccepted((snap) => {
+      const s = snap as NativeControlSnapshot;
+      void this.session?.bridge?.onNativeState(s.mode, s.runGeneration);
+    });
+    // An unconfirmed Stop needs a run list issued after its expiry: ask for one now.
+    this.ledger.onReconcileNeeded(() => this.resync());
   }
 
   /** Where the takeover half of a Stop goes (LiveViewContext's `overrideStop`). */
@@ -91,12 +97,7 @@ export class StopRuntime {
    * (Stops, acks); only an accepted newer revision is cached and given to the bridge.
    */
   onNativeSnapshot(snap: NativeControlSnapshot): boolean {
-    const fresh = this.ledger.onNativeSnapshot(snap);
-    if (fresh) {
-      this.native = snap;
-      void this.session?.bridge?.onNativeState(snap.mode, snap.runGeneration);
-    }
-    return fresh;
+    return this.ledger.onNativeSnapshot(snap);
   }
 
   /** Initial / explicit native read. A failed read changes nothing. */
@@ -114,11 +115,13 @@ export class StopRuntime {
       return false; // could not confirm
     }
     this.onNativeSnapshot(snap);
-    return this.native !== null && this.native.mode === "bot_driving" && snap.mode === "bot_driving";
+    const newest = this.nativeSnapshot();
+    return newest !== null && newest.mode === "bot_driving" && snap.mode === "bot_driving";
   }
 
+  /** The newest native snapshot the ledger accepted (never a failed read, never older). */
   nativeSnapshot(): NativeControlSnapshot | null {
-    return this.native;
+    return this.ledger.nativeSnapshot() as NativeControlSnapshot | null;
   }
 
   // ── daemon clients ─────────────────────────────────────────────────────────
@@ -133,7 +136,7 @@ export class StopRuntime {
     const session: Session = { client, handle, bridge, listSince: null };
     this.session = session;
     if (bridge) {
-      const known = this.native;
+      const known = this.nativeSnapshot();
       if (known) {
         void bridge.onNativeState(known.mode, known.runGeneration);
       } else {
@@ -208,7 +211,7 @@ export class StopRuntime {
       // events are notifications only and never replayed: re-read the snapshot
       void session.bridge.refreshControlState();
     }
-    if (!session.handle.synced) {
+    if (!session.handle.synced || this.ledger.needsReconcile()) {
       this.resync();
     }
   }

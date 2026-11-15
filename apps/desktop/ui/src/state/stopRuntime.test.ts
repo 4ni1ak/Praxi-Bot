@@ -30,19 +30,35 @@ function host(opts: { scope?: () => ScopeAnswer; runs?: [string, "running" | "pa
       (readFails ? { mode: "idle" } : native.snapshot()) as NativeControlSnapshot,
     now: () => clock.now()
   });
-  // LiveViewContext's takeover half, with the daemon's control endpoint faked.
+  // LiveViewContext's takeover half, with the daemon's control endpoint faked per client.
+  let currentClient: string | null = "A";
   let control: ControlStateDto | null = null;
+  let controlFor: string | null = null;
+  let overrideMode: "answer" | "hold" | "hang" = "answer";
   const overrides: string[] = [];
+  const overrideCalls: { client: string; resolve: (d: ControlStateDto) => void }[] = [];
+  const applied: string[] = [];
   const takeover = new TakeoverStop<string>({
-    client: () => "daemon",
+    client: () => currentClient,
     controlled: () =>
-      control ? shouldOverrideOnStop(createInitialLiveViewState(null), control) : null,
-    post: async (c) => {
-      overrides.push(c);
-      return control as ControlStateDto;
-    },
-    apply: () => {},
-    schedule: (fn, ms) => clock.set(fn, ms)
+      control && currentClient !== null && controlFor === currentClient
+        ? shouldOverrideOnStop(createInitialLiveViewState(null), control)
+        : null,
+    post: (c, signal) =>
+      new Promise<ControlStateDto>((resolve, reject) => {
+        overrides.push(c);
+        overrideCalls.push({ client: c, resolve });
+        if (overrideMode === "hang") {
+          return; // never settles, even when aborted
+        }
+        signal.addEventListener("abort", () => reject(new Error("aborted")));
+        if (overrideMode === "answer") {
+          resolve(control as ControlStateDto);
+        }
+      }),
+    apply: (c) => void applied.push(c),
+    schedule: (fn, ms) => clock.set(fn, ms),
+    cancel: (handle) => clock.clear(handle)
   });
   runtime.setOverride((o) => takeover.stop(!o.onlyIfControlled));
 
@@ -121,7 +137,26 @@ function host(opts: { scope?: () => ScopeAnswer; runs?: [string, "running" | "pa
     event,
     setControl: (d: ControlStateDto | null) => {
       control = d;
+      controlFor = currentClient;
       takeover.pump();
+    },
+    /** LiveViewContext's client changed (its snapshot no longer applies). */
+    switchClient: (name: string | null) => {
+      currentClient = name;
+      controlFor = null;
+      takeover.pump();
+    },
+    overrideMode: (m: "answer" | "hold" | "hang") => {
+      overrideMode = m;
+    },
+    overrideCalls,
+    applied,
+    /** Deliver only the native event at `index` of the queue (others stay withheld). */
+    deliverNativeOnly: (index: number) => {
+      const [snap] = native.events.splice(index, 1);
+      if (snap) {
+        runtime.onNativeSnapshot(snap as NativeControlSnapshot);
+      }
     },
     holdLists: (v: boolean) => {
       holdLists = v;
@@ -326,4 +361,178 @@ test("Stop with no daemon client: input halts at once and the status says what t
   assert.equal(s?.pendingSweep, true, "first delivery will stop every run open on arrival");
   // the override is owed until a client (and its snapshot) exists
   assert.equal(h.takeover.owes(), true);
+});
+
+// ---- review r-94b ----------------------------------------------------------------
+
+test("r-94b #1: a Stop reply accepted before its native event still reaches the bridge and the cache", async () => {
+  const h = host();
+  h.native.mode = "bot_driving";
+  h.native.touch();
+  await h.runtime.readNative();
+  const bridge = h.makeBridge();
+  h.runtime.attach(h.client, bridge);
+  await flush();
+  assert.equal(bridge.mode, "bot_driving");
+  h.runtime.requestStop("banner"); // native executes; its REPLY is processed first
+  await flush();
+  assert.equal(bridge.mode, "idle", "the bridge heard the reply's revision");
+  assert.equal(h.runtime.nativeSnapshot()?.mode, "idle", "and the cache holds it");
+  h.pumpNative(); // the event for the same revision arrives later: not fresh
+  await h.runtime.readNative(); // a later read of the same revision
+  await flush();
+  const replacement = h.makeBridge();
+  h.runtime.attach(h.client, replacement);
+  await flush();
+  assert.equal(replacement.mode, "idle", "a replacement bridge starts Idle");
+});
+
+test("r-94b #2: a missing echo never mints another Stop or cancels a run started after the presses", async () => {
+  const h = host();
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, h.makeBridge());
+  await flush();
+  h.native.holdReplies = true; // A's command runs natively but its reply is withheld ...
+  const a = h.runtime.requestStop("banner");
+  h.native.events.splice(0); // ... and so is its event (seq 1)
+  h.daemon.deliver(0); // T(A) = {} fixed
+  await flush();
+  h.clock.advance(1000);
+  h.native.userStop(null); // an independent native Stop B: seq 2
+  h.deliverNativeOnly(0);
+  await flush();
+  h.daemon.deliver(); // T(B) = {} fixed
+  await flush();
+  h.clock.advance(500);
+  h.daemon.start("R", "running"); // started after both target sets were fixed
+  h.event({ type: "run_started", run_id: "R", chat_id: "c", bot_id: "b" });
+  await flush();
+  h.clock.advance(60_000); // far past any former echo timeout
+  await flush();
+  const roots = h.ledger.stopRecords().filter((r) => r.kind === "all" && r.supersedes === null);
+  assert.equal(roots.length, 2, "two presses, two decisions");
+  assert.ok(roots.some((r) => r.id === a.id));
+  assert.equal(h.ledger.mayAct("R"), true);
+  assert.equal(h.daemon.tokenFired.has("R"), false, "R was never cancelled");
+  assert.ok(h.daemon.requests.every((r) => roots.some((x) => x.id === r.body.stop_id)));
+  assert.deepEqual(h.native.acks, [], "seq 1 stays unconfirmed (no ack past it)");
+});
+
+test("r-94b #3: a permanently hung override does not block the replacement client or a later Stop", async () => {
+  const h = host();
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, null);
+  h.setControl(activeTakeover());
+  h.overrideMode("hang");
+  h.runtime.requestStop("hotkey");
+  assert.deepEqual(h.overrides, ["A"]);
+  h.switchClient("B");
+  h.overrideMode("answer");
+  h.setControl(activeTakeover()); // B's snapshot shows a takeover still active
+  assert.deepEqual(h.overrides, ["A", "B"], "delivered through B despite A hanging");
+  await flush();
+  assert.equal(h.takeover.owes(), false);
+  // same client, hung again: a later Stop is not blocked either
+  h.overrideMode("hang");
+  h.clock.advance(1000); // a separate press, not the same key press
+  h.runtime.requestStop("banner");
+  h.clock.advance(1000);
+  h.overrideMode("answer");
+  h.runtime.requestStop("banner");
+  assert.equal(h.overrides.length, 4);
+  assert.equal(h.takeover.inputAllowed(), false, "local input stays disabled meanwhile");
+});
+
+test("r-94b #4: an unconfirmed Stop requests its own reconciliation and keeps its status until resolved", async () => {
+  const h = host();
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, null);
+  await flush();
+  const listsBefore = h.listCalls.length;
+  const a = h.runtime.requestStop("banner");
+  h.pumpNative();
+  h.daemon.processAndLose(0); // the daemon fixed T(A); the reply was lost
+  await flush();
+  h.daemon.forgetBook(); // TTL: the id is remembered, its target set is not
+  h.daemon.start("R", "running"); // a run seen while the uncertainty lasts
+  h.clock.advance(500); // retry -> expired
+  h.daemon.deliver();
+  await flush();
+  assert.equal(h.ledger.stop(a.id)?.phase, "unconfirmed");
+  assert.ok(h.listCalls.length > listsBefore, "a reconciliation list was requested by the runtime itself");
+  await flush();
+  assert.equal(h.ledger.mayAct("R"), false, "R may be in the forgotten T: quarantined");
+  // a newer Stop does not hide the older uncertainty while it is unresolved
+  const b = h.runtime.requestStop("hotkey");
+  assert.equal(h.status()?.kind, "unconfirmed");
+  assert.equal(h.status()?.stopId, a.id);
+  // B sweeps everything open now: the evidence A was waiting for
+  h.daemon.deliver();
+  await flush();
+  assert.equal(h.ledger.stop(a.id)?.phase, "settled");
+  assert.equal(h.status()?.stopId, b.id, "now the latest Stop is shown");
+  assert.equal(h.ledger.run("R")?.phase, "cancel_requested", "R is held by B, not released");
+});
+
+test("r-94b #5: a delayed override answer cannot pause a takeover the user acquired afterwards", async () => {
+  const h = host();
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, null);
+  h.overrideMode("hold");
+  h.runtime.requestStop("viewer"); // forced override, processed but its answer delayed
+  assert.deepEqual(h.overrides, ["A"]);
+  h.takeover.resume(); // the user reacquires (a newer explicit decision) ...
+  h.switchClient("B"); // ... and reconnects as B
+  h.setControl(activeTakeover()); // B: the new takeover is active
+  h.overrideCalls[0]?.resolve(activeTakeover()); // A finally answers
+  await flush();
+  assert.deepEqual(h.overrides, ["A"], "never re-sent through B");
+  assert.deepEqual(h.applied, [], "and A's answer is not applied");
+  assert.equal(h.takeover.inputAllowed(), true);
+});
+
+test("r-94b #8: connected but unsynced, the late-sweep warning is shown at once (en + tr text)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { stopDetail } = await import("./stopStatus.ts");
+  const h = host();
+  h.holdLists(true); // the first run list has not arrived: unsynced
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, null);
+  h.runtime.requestStop("banner");
+  const s = h.status();
+  assert.ok(s);
+  assert.equal(s.kind, "stopping", "connected, request in flight");
+  const d = stopDetail(s);
+  const text = (locale: string) => {
+    const dict = JSON.parse(readFileSync(new URL(`../i18n/locales/${locale}.json`, import.meta.url), "utf8")) as Record<string, unknown>;
+    return d.key.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown>)[k], dict) as string;
+  };
+  assert.match(text("en"), /EVERY run open when the daemon receives it, including runs started meanwhile/);
+  assert.match(text("tr"), /TÜM çalışmaları durduracak; arada başka bir cihazdan veya bir zamanlamadan başlatılanlar dahil/);
+});
+
+test("r-94b #4: with the reconciliation list hung, a later user Stop that sweeps resolves the older uncertainty", async () => {
+  const h = host();
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, null);
+  await flush();
+  const a = h.runtime.requestStop("banner");
+  h.pumpNative();
+  h.daemon.processAndLose(0);
+  await flush();
+  h.daemon.forgetBook();
+  h.daemon.start("R", "running");
+  h.holdLists(true); // the reconciliation list never comes back
+  h.clock.advance(500);
+  h.daemon.deliver(); // expired -> unconfirmed
+  await flush();
+  assert.equal(h.ledger.stop(a.id)?.phase, "unconfirmed");
+  assert.deepEqual(h.native.acks, []);
+  h.clock.advance(1000);
+  h.runtime.requestStop("banner"); // the user's "Stop all now": a new all_existing decision
+  h.pumpNative();
+  h.daemon.deliver(); // first receipt sweeps every run open now (R included)
+  await flush();
+  assert.equal(h.ledger.stop(a.id)?.phase, "settled", "the sweep is the evidence A waited for");
+  assert.deepEqual(h.native.acks, [1], "A's sequence is acknowledged; B's waits for R");
 });

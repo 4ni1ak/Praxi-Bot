@@ -86,7 +86,7 @@ export function StopStatusNotice({ variant }: { variant: "main" | "panel" }) {
             />
           </span>
         ) : null}
-        {status.kind === "unconfirmed" && !status.dismissible ? (
+        {status.recoverable ? (
           <span className={styles.actions}>
             <Button
               variant="danger"
@@ -108,7 +108,7 @@ export function StopStatusNotice({ variant }: { variant: "main" | "panel" }) {
             </Button>
           </span>
         ) : null}
-        {status.dismissible ? (
+        {status.dismissible || status.recoverable ? (
           <button
             type="button"
             className={styles.dismiss}

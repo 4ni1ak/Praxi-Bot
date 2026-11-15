@@ -50,6 +50,8 @@ export interface StopStatus {
   readonly audited: boolean;
   /** The user may dismiss it (nothing is in progress). */
   readonly dismissible: boolean;
+  /** Unconfirmed: offers "Stop all now" / "Let them continue" (and a plain dismiss). */
+  readonly recoverable?: boolean;
   readonly error: string | null;
 }
 
@@ -89,10 +91,15 @@ export function describeStop(input: {
   dismissed?: ReadonlySet<string>;
 }): StopStatus | null {
   const byId = new Map(input.records.map((r) => [r.id, r]));
-  // The latest user decision (successors are not decisions of their own).
-  const roots = input.records.filter((r) => r.kind === "all" && r.supersedes === null);
-  const root = roots[roots.length - 1];
-  if (!root || input.dismissed?.has(root.id)) {
+  // The latest user decision (successors are not decisions of their own). An
+  // unresolved unconfirmed Stop keeps its own status (and recovery) until it is
+  // confirmed, released or dismissed: a later Stop never hides it.
+  const roots = input.records.filter(
+    (r) => r.kind === "all" && r.supersedes === null && !input.dismissed?.has(r.id)
+  );
+  const unresolved = roots.filter((r) => r.phase === "unconfirmed");
+  const root = unresolved[unresolved.length - 1] ?? roots[roots.length - 1];
+  if (!root) {
     return null;
   }
   const { head, expired } = chainHead(root, byId);
@@ -131,7 +138,7 @@ export function describeStop(input: {
   const open = OPEN.has(head.phase);
 
   if (root.phase === "unconfirmed") {
-    return { ...base, kind: "unconfirmed", tone: "warning", dismissible: false };
+    return { ...base, kind: "unconfirmed", tone: "warning", dismissible: false, recoverable: true };
   }
   if (head.phase === "unconfirmable") {
     return { ...base, kind: "unconfirmable", tone: "warning", dismissible: true };
@@ -189,6 +196,11 @@ export function stopDetail(status: StopStatus): { key: string; params: Record<st
   };
   switch (status.kind) {
     case "stopping":
+      // Connected but the first delivery is still a sweep (the app had no fresh run
+      // list): say what it will cancel before it arrives.
+      if (status.pendingSweep) {
+        return { key: "stopStatus.detail.stoppingSweep", params };
+      }
       return status.total > 0
         ? { key: "stopStatus.detail.stoppingCount", params }
         : { key: "stopStatus.detail.stoppingNone", params };
