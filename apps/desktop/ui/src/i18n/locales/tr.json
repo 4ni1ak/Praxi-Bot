@@ -1098,7 +1098,20 @@
       "connecting": "Bağlanıyor",
       "disconnected": "Bağlı değil",
       "error": "Hata",
+      "auth_required": "Oturum açılması gerekiyor",
       "quarantined": "Karantinada"
+    },
+    "auth": {
+      "pasteLabel": "Tarayıcıdaki yönlendirme adresi",
+      "pasteSubmit": "Oturum açmayı bitir",
+      "pasteHint": "Tarayıcı başka bir bilgisayarda çalışıyorsa ve oturum açtıktan sonra hata sayfası gösteriyorsa, o sayfanın tam adresini kopyalıp buraya yapıştırın.",
+      "signIn": "Oturum aç",
+      "signOut": "Oturumu kapat",
+      "waiting": "Tarayıcıda oturum açılması bekleniyor…",
+      "signedInToast": "{{name}}: oturum açıldı",
+      "signedOutToast": "{{name}}: oturum kapatıldı",
+      "failedToast": "{{name}}: oturum açma tamamlanmadı",
+      "openFailed": "{{name}}: oturum açma sayfası tarayıcıda açılamadı"
     },
     "toolCount": "{{count}} araç",
     "toolCount_one": "{{count}} araç",

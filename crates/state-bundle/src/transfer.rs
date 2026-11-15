@@ -352,6 +352,10 @@ pub(crate) async fn receive(
     }
     for name in secrets.keys() {
         secret_store::validate_name(name)?;
+        // An imported OAuth record would plant someone else's sign-in.
+        if secret_store::is_managed_oauth_name(name) {
+            return Err(invalid("the bundle carries an MCP OAuth record"));
+        }
     }
     Ok((manifest, secrets, input.bytes))
 }

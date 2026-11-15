@@ -296,6 +296,8 @@ export interface GlobalEnvelope extends Envelope {
 
 export type McpTransport = S["McpTransportKind"];
 export type McpStatus = S["McpStatus"];
+export type McpAuthState = S["McpAuthState"];
+export type McpAuthStart = S["McpAuthStart"];
 export type McpServer = S["McpServerDto"];
 /** Body of `POST /v1/mcp/servers`. */
 export type McpServerConfig = S["McpServerInput"] & { name: string };

@@ -1098,7 +1098,20 @@
       "connecting": "Connecting",
       "disconnected": "Disconnected",
       "error": "Error",
+      "auth_required": "Sign-in required",
       "quarantined": "Quarantined"
+    },
+    "auth": {
+      "pasteLabel": "Redirect address from the browser",
+      "pasteSubmit": "Finish sign-in",
+      "pasteHint": "If the browser runs on another computer and shows an error page after you sign in, copy that page's full address and paste it here.",
+      "signIn": "Sign in",
+      "signOut": "Sign out",
+      "waiting": "Waiting for the browser sign-in…",
+      "signedInToast": "{{name}}: signed in",
+      "signedOutToast": "{{name}}: signed out",
+      "failedToast": "{{name}}: sign-in did not finish",
+      "openFailed": "{{name}}: the sign-in page could not be opened in the browser"
     },
     "toolCount": "{{count}} tools",
     "toolCount_one": "{{count}} tool",

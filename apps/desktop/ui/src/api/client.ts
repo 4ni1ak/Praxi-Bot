@@ -25,6 +25,8 @@ import type {
   InputBatch,
   InputResult,
   McpCatalogEntry,
+  McpAuthState,
+  McpAuthStart,
   McpServer,
   McpServerPatch,
   McpServerConfig,
@@ -493,6 +495,24 @@ export class ApiClient {
   }
   mcpCatalog(): Promise<McpCatalogEntry[]> {
     return this.request("GET", "/mcp/catalog");
+  }
+  startMcpAuth(name: string): Promise<McpAuthStart> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/start`);
+  }
+  /** Finish a sign-in with the redirect address pasted from the browser (headless daemon). */
+  completeMcpAuth(name: string, redirectUrl: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/callback`, {
+      body: { redirect_url: redirectUrl }
+    });
+  }
+  cancelMcpAuth(name: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/cancel`);
+  }
+  mcpAuthStatus(name: string): Promise<McpAuthState> {
+    return this.request("GET", `/mcp/servers/${encodeURIComponent(name)}/auth/status`);
+  }
+  logoutMcpAuth(name: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/logout`);
   }
   /** Store a secret (write-only: the daemon never returns the value). */
   setSecret(name: string, value: string): Promise<void> {
