@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use rusqlite::params;
+use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
 use super::store::{integer_at, sql_int, uuid_at};
 use super::{
@@ -43,25 +44,25 @@ impl KnowledgeStore {
 
     pub(super) fn lexical_candidates(&self, request: &SearchRequest) -> Result<Vec<SearchHit>> {
         validate_request(request)?;
-        let Some(query) = query_expression(&request.query) else {
+        let Some((query, terms, required_matches)) = query_expression(&request.query) else {
             return Ok(Vec::new());
         };
         let sources = serde_json::to_string(&request.source_ids)?;
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT c.id,c.source_id,c.document_id,s.label,d.locator,c.section,c.line_start,c.line_end,s.trust,c.body,bm25(chunks_fts,3.0,2.0,1.0)
+            "SELECT c.id,c.source_id,c.document_id,s.label,d.locator,c.section,c.line_start,c.line_end,s.trust,c.body,bm25(chunks_fts,3.0,2.0,1.0),d.title
              FROM chunks_fts JOIN chunks c ON c.rowid=chunks_fts.rowid
              JOIN sources s ON s.id=c.source_id JOIN documents d ON d.id=c.document_id
              WHERE chunks_fts MATCH ?1 AND s.enabled=1
              AND (?2='[]' OR c.source_id IN (SELECT value FROM json_each(?2)))
              ORDER BY bm25(chunks_fts,3.0,2.0,1.0),d.locator,c.ordinal,c.id LIMIT ?3")?;
-        Ok(stmt
+        let mut hits = stmt
             .query_map(params![query, sources, sql_int(CANDIDATES)?], |row| {
                 let source_trust = match row.get::<_, String>(8)?.as_str() {
                     "user" => Trust::User,
                     _ => Trust::Untrusted,
                 };
-                Ok(SearchHit {
+                let hit = SearchHit {
                     id: uuid_at(row, 0)?,
                     source_id: uuid_at(row, 1)?,
                     document_id: uuid_at(row, 2)?,
@@ -73,15 +74,32 @@ impl KnowledgeStore {
                     source_trust,
                     content: row.get(9)?,
                     score: -row.get::<_, f64>(10)?,
-                })
+                };
+                let title: String = row.get(11)?;
+                let words: HashSet<_> =
+                    normalized_terms(&format!("{title}\n{}\n{}", hit.section, hit.content))
+                        .into_iter()
+                        .collect();
+                let matches = terms.iter().filter(|term| words.contains(*term)).count();
+                Ok((hit, matches))
             })?
-            .collect::<rusqlite::Result<_>>()?)
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        hits.retain(|(_, matches)| *matches >= required_matches);
+        // Prefer evidence covering more of the meaningful query. A short
+        // glossary repeating one keyword should not outrank an answer covering
+        // the whole question merely because its document length is smaller.
+        hits.sort_by(|(a, a_matches), (b, b_matches)| {
+            b_matches
+                .cmp(a_matches)
+                .then_with(|| b.score.total_cmp(&a.score))
+        });
+        Ok(hits.into_iter().map(|(hit, _)| hit).collect())
     }
 }
 
 pub(super) fn validate_request(request: &SearchRequest) -> Result<()> {
     if request.query.len() > 4096
-        || request.source_ids.len() > 64
+        || request.source_ids.len() > 32
         || !(1..=20).contains(&request.top_k)
         || !(64..=2000).contains(&request.budget_tokens)
         || !(256..=32768).contains(&request.max_bytes)
@@ -93,17 +111,125 @@ pub(super) fn validate_request(request: &SearchRequest) -> Result<()> {
     Ok(())
 }
 
-fn query_expression(query: &str) -> Option<String> {
-    let mut seen = HashSet::new();
-    let tokens: Vec<String> = query
+fn normalized_terms(text: &str) -> Vec<String> {
+    let folded: String = text
+        .nfd()
+        .filter(|ch| !is_combining_mark(*ch))
+        .flat_map(char::to_lowercase)
+        .collect();
+    folded
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|word| !word.is_empty())
-        .map(str::to_lowercase)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn stopword(word: &str) -> bool {
+    matches!(
+        word,
+        "a" | "an"
+            | "and"
+            | "are"
+            | "as"
+            | "at"
+            | "be"
+            | "been"
+            | "before"
+            | "but"
+            | "by"
+            | "can"
+            | "could"
+            | "did"
+            | "do"
+            | "does"
+            | "doing"
+            | "for"
+            | "from"
+            | "have"
+            | "has"
+            | "how"
+            | "i"
+            | "if"
+            | "in"
+            | "is"
+            | "it"
+            | "its"
+            | "me"
+            | "my"
+            | "of"
+            | "on"
+            | "or"
+            | "our"
+            | "s"
+            | "should"
+            | "that"
+            | "the"
+            | "their"
+            | "them"
+            | "there"
+            | "these"
+            | "they"
+            | "this"
+            | "to"
+            | "today"
+            | "was"
+            | "we"
+            | "were"
+            | "what"
+            | "when"
+            | "where"
+            | "which"
+            | "who"
+            | "why"
+            | "will"
+            | "with"
+            | "would"
+            | "you"
+            | "your"
+            | "find"
+            | "please"
+            | "acaba"
+            | "bir"
+            | "bu"
+            | "bugun"
+            | "da"
+            | "de"
+            | "icin"
+            | "ile"
+            | "mi"
+            | "mu"
+            | "nasil"
+            | "ne"
+            | "neden"
+            | "nerede"
+            | "olan"
+            | "ve"
+            | "veya"
+    )
+}
+
+fn query_expression(query: &str) -> Option<(String, Vec<String>, usize)> {
+    let mut seen = HashSet::new();
+    let terms: Vec<String> = normalized_terms(query)
+        .into_iter()
+        .filter(|word| !stopword(word))
         .filter(|word| seen.insert(word.clone()))
         .take(32)
-        .map(|word| format!("\"{word}\""))
         .collect();
-    (!tokens.is_empty()).then(|| tokens.join(" OR "))
+    let required_matches = if query.contains('?') {
+        2
+    } else {
+        terms.len().min(2)
+    };
+    if terms.is_empty() || terms.len() < required_matches {
+        return None;
+    }
+    let expression = terms
+        .iter()
+        .map(|word| format!("\"{word}\""))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    Some((expression, terms, required_matches))
 }
 
 pub(super) fn pack_search_results(

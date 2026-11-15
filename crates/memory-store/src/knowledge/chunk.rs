@@ -22,6 +22,16 @@ pub fn chunk_text(
             "knowledge document exceeds byte limit".into(),
         ));
     }
+    // Keep the original input bound, then normalize only CRLF line endings.
+    // Line numbers are unchanged; literal standalone carriage returns remain
+    // source data instead of silently inventing additional cited lines.
+    let normalized;
+    let text = if text.contains("\r\n") {
+        normalized = text.replace("\r\n", "\n");
+        normalized.as_str()
+    } else {
+        text
+    };
     let lines: Vec<&str> = text.split_inclusive('\n').take(262_145).collect();
     if lines.len() > 262_144 {
         return Err(MemoryError::Invalid(

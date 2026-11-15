@@ -440,34 +440,30 @@ impl KnowledgeEmbeddingService {
     }
 }
 
-pub(super) fn migrate(conn: &mut rusqlite::Connection) -> Result<()> {
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+pub(super) fn migrate(conn: &rusqlite::Connection) -> Result<()> {
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version >= 2 {
         return Ok(());
     }
-    tx.execute_batch(index::SCHEMA)?;
-    tx.execute_batch(index::GRANT_TRIGGER)?;
-    tx.pragma_update(None, "user_version", 2)?;
-    tx.commit()?;
+    conn.execute_batch(index::SCHEMA)?;
+    conn.execute_batch(index::GRANT_TRIGGER)?;
+    conn.pragma_update(None, "user_version", 2)?;
     Ok(())
 }
 
-pub(super) fn migrate_v3(conn: &mut rusqlite::Connection) -> Result<()> {
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+pub(super) fn migrate_v3(conn: &rusqlite::Connection) -> Result<()> {
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version >= 3 {
         return Ok(());
     }
-    tx.execute_batch(index::FAILURE_SCHEMA)?;
-    tx.execute_batch("ALTER TABLE embedding_jobs ADD COLUMN batch_limit INTEGER NOT NULL DEFAULT 0 CHECK(batch_limit BETWEEN 0 AND 128); DROP TRIGGER knowledge_embedding_grant_changed;")?;
-    tx.execute_batch(index::GRANT_TRIGGER)?;
-    tx.execute(
+    conn.execute_batch(index::FAILURE_SCHEMA)?;
+    conn.execute_batch("ALTER TABLE embedding_jobs ADD COLUMN batch_limit INTEGER NOT NULL DEFAULT 0 CHECK(batch_limit BETWEEN 0 AND 128); DROP TRIGGER knowledge_embedding_grant_changed;")?;
+    conn.execute_batch(index::GRANT_TRIGGER)?;
+    conn.execute(
         "INSERT INTO knowledge_meta(key,value) VALUES('embedding_authority_epoch',?1)",
         [Uuid::now_v7().to_string()],
     )?;
-    tx.pragma_update(None, "user_version", 3)?;
-    tx.commit()?;
+    conn.pragma_update(None, "user_version", 3)?;
     Ok(())
 }
 
