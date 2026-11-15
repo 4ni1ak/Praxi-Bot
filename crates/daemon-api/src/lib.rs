@@ -14,6 +14,7 @@
 
 pub mod auth;
 pub mod changes;
+mod cli_engines;
 pub mod control;
 pub mod doctor;
 mod doctor_routes;
@@ -26,6 +27,7 @@ pub mod fake;
 mod file_access;
 mod fill_routes;
 pub mod host;
+pub mod host_links;
 mod knowledge;
 pub mod knowledge_runtime;
 mod knowledge_settings;
@@ -182,6 +184,7 @@ struct Inner {
     live_view: Arc<live_view::LiveView>,
     refresh_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
     provider_host: OnceLock<ProviderHost>,
+    host_links: OnceLock<Arc<dyn host_links::HostLinks>>,
     knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
@@ -218,6 +221,7 @@ struct Inner {
     policy_load_error: parking_lot::Mutex<Option<String>>,
     /// CLI provider detector (`GET /v1/providers/detected`).
     detector: parking_lot::RwLock<Arc<cli_provider::Detector>>,
+    cli_installs: cli_engines::InstallBook,
     /// The running scheduler (see [`AppState::start_scheduler`]).
     scheduler: parking_lot::Mutex<Option<Scheduler>>,
     leader: OnceLock<host::LeaderControl>,
@@ -346,6 +350,7 @@ impl AppState {
             live_view,
             refresh_rx: parking_lot::Mutex::new(Some(refresh_rx)),
             provider_host: OnceLock::new(),
+            host_links: OnceLock::new(),
             knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
             email: OnceLock::new(),
@@ -368,6 +373,7 @@ impl AppState {
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
+            cli_installs: cli_engines::InstallBook::default(),
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
             doctor_host: OnceLock::new(),
@@ -384,14 +390,35 @@ impl AppState {
             host_config,
             state.downgrade(),
         ));
+        state.install_unset_file_access();
         knowledge_runtime::install(&state);
         Ok(state)
+    }
+
+    /// An always-on host does not hand its account's files to bots nobody
+    /// configured: an unset file access mode means no access there.
+    fn install_unset_file_access(&self) {
+        let weak = self.downgrade();
+        self.agent().set_unset_file_access_denied(move || {
+            weak.upgrade()
+                .is_some_and(|s| s.leader().config().mode == host::HostMode::Host)
+        });
     }
 
     /// Let `/v1/providers` list the catalog and reload the providers (call
     /// once, right after [`AppState::new`]; a second call is ignored).
     pub fn set_provider_host(&self, host: ProviderHost) {
         let _ = self.0.provider_host.set(host);
+    }
+
+    /// Enable `/v1/hosts/*` (this computer's links to paired hosts). Call
+    /// once, before [`serve`]; a second call is ignored.
+    pub fn set_host_links(&self, links: Arc<dyn host_links::HostLinks>) {
+        let _ = self.0.host_links.set(links);
+    }
+
+    pub(crate) fn host_links(&self) -> Option<Arc<dyn host_links::HostLinks>> {
+        self.0.host_links.get().cloned()
     }
 
     /// Enable `/v1/mcp/*` with the embedder MCP manager (call once, before
@@ -853,6 +880,12 @@ fn api_routes() -> Router<AppState> {
     use web_routes as w;
     Router::new()
         .route("/v1/host", get(host::status))
+        .route("/v1/hosts", get(host_links::list))
+        .route("/v1/hosts/pair", post(host_links::pair))
+        .route(
+            "/v1/hosts/{id}/connect",
+            post(host_links::connect).delete(host_links::disconnect),
+        )
         .route("/v1/host/invite", post(host::invite))
         .route(
             "/v1/host/devices/{key}",
@@ -863,6 +896,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/host/update", post(host::update))
         .route("/v1/health", get(r::health))
         .route("/v1/view/targets", get(v::targets))
+        .route("/v1/view/availability", get(v::availability))
         .route("/v1/view/sessions", post(v::create_session))
         .route(
             "/v1/view/sessions/{id}",
@@ -982,6 +1016,12 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers", get(r::list_providers))
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
+        .route("/v1/providers/cli", get(cli_engines::list))
+        .route("/v1/providers/cli/install", post(cli_engines::preview))
+        .route(
+            "/v1/providers/cli/install/{approval_id}/decision",
+            post(cli_engines::decide),
+        )
         .route("/v1/providers/reload", post(r::reload_providers))
         .route("/v1/doctor", get(doctor_routes::get_doctor))
         .route("/v1/doctor/report", get(doctor_routes::report))
@@ -1101,6 +1141,14 @@ pub async fn serve(
         .start()
         .await
         .map_err(std::io::Error::other)?;
+    // Fake-provider/test embedders have no host provider configuration and
+    // must never probe the real machine's credentialed CLIs as a side effect.
+    if state.provider_host().is_some() {
+        let detector = state.detector();
+        tokio::spawn(async move {
+            let _ = detector.detect(false).await;
+        });
+    }
     let cancel = state.shutdown_token();
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(async move {

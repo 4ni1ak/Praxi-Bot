@@ -520,7 +520,7 @@ pub(crate) async fn get_run_changes(
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let state = s.clone();
     let review_run = run.clone();
-    let (roots, grants) = s.agent().checkpoint_access();
+    let (roots, grants) = s.agent().checkpoint_access_for(run.bot_id);
     let (changes, safety_checkpoint_ids) = tokio::task::spawn_blocking(move || {
         builtin_tools::with_checkpoint_access(&data_dir, &roots, &grants, || {
             let store = CheckpointStore::new(&data_dir);
@@ -601,7 +601,7 @@ pub(crate) async fn preview_restore(
     let run_str = run.id.0.to_string();
     let cp_arg = cp.clone();
 
-    let (roots, grants) = s.agent().checkpoint_access();
+    let (roots, grants) = s.agent().checkpoint_access_for(run.bot_id);
     let state = s.clone();
     let review_run = run.clone();
     let entries =
@@ -698,7 +698,7 @@ pub(crate) async fn restore_changes(
     let run_str = run.id.0.to_string();
     let cp_arg = cp.clone();
     let force = body.force;
-    let (roots, grants) = s.agent().checkpoint_access();
+    let (roots, grants) = s.agent().checkpoint_access_for(run.bot_id);
     let state = s.clone();
     let audit_actor = actor.key.clone();
     tokio::task::spawn_blocking(move || {

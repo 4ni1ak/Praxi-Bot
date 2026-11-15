@@ -73,20 +73,33 @@ fn run_case(case: &str) {
     )
     .unwrap();
     std::fs::write(dir.path().join("auth.json"), "C062_AUTH_SENTINEL").unwrap();
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
+    std::fs::write(
+        dir.path().join("fixture-config.json"),
+        serde_json::to_vec(&json!({
+            "FAKE_LOG": dir.path(),
+            "FAKE_MODE": if case == "shutdown_reaps_cli_tree" { "hang-tree" } else { "" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .env_clear()
+        .env("HOME", dir.path())
+        .env("USERPROFILE", dir.path())
+        .env("APPDATA", dir.path().join("roaming"))
+        .env("LOCALAPPDATA", dir.path().join("local"));
+    for key in ["SYSTEMROOT", "WINDIR", "TEMP", "TMP"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    let out = command
         .args(["--exact", case, "--nocapture"])
         .env("C062_CASE", case)
         .env("C062_ROOT", dir.path())
+        .env("DATABASE_URL", "C250_AMBIENT_SECRET_SENTINEL")
         .env("PATH", dir.path())
-        .env("FAKE_LOG", dir.path())
-        .env(
-            "FAKE_MODE",
-            if case == "shutdown_reaps_cli_tree" {
-                "hang-tree"
-            } else {
-                ""
-            },
-        )
         .env("CODEX_HOME", dir.path())
         .env("CLAUDE_CONFIG_DIR", dir.path())
         .output()
@@ -339,6 +352,14 @@ async fn child(case: &str) {
         RunState::Succeeded
     );
     assert_eq!(tool.count.load(Ordering::SeqCst), usize::from(!deny));
+    let child_env: Value =
+        serde_json::from_slice(&std::fs::read(root.join("env")).unwrap()).unwrap();
+    for key in ["FAKE_LOG", "FAKE_MODE", "DATABASE_URL"] {
+        assert!(
+            child_env.get(key).is_none(),
+            "unexpected child variable: {key}"
+        );
+    }
     let events = storage::read_event_log(root.join("store").as_path(), run).unwrap();
     let event_text = format!("{events:?}");
     assert!(!event_text.contains("C062_AUTH_SENTINEL"));

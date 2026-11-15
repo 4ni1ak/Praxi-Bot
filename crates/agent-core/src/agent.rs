@@ -67,8 +67,10 @@ impl builtin_tools::FsAccessProvider for LoopFsAccess {
         let Some(bot) = bot_id.and_then(|b| b.parse::<Uuid>().ok()).map(BotId) else {
             return denied();
         };
-        sh.profile_for(bot)
-            .map_or_else(|_| denied(), |p| p.files.scope())
+        let Ok(profile) = sh.profile_for(bot) else {
+            return denied();
+        };
+        profile.files.scope(&sh.unset_file_scope())
     }
 }
 
@@ -100,6 +102,7 @@ impl AgentLoop {
                     visibility,
                 ),
                 tools,
+                fs_unset_denied: RwLock::new(None),
                 checkpoint_access: RwLock::new((Vec::new(), Vec::new())),
                 providers: RwLock::new(providers),
                 global_policy: RwLock::new(cfg.global_policy.clone()),
@@ -206,7 +209,9 @@ impl AgentLoop {
         }));
         *self.sh.checkpoint_access.write() =
             (cfg.fs_allowed_roots.clone(), cfg.fs_granted_paths.clone());
-        if cfg.fs_access.is_none() {
+        // Static roots chosen by the host keep their meaning; otherwise each
+        // bot's own file access setting decides.
+        if cfg.fs_access.is_none() && cfg.fs_allowed_roots.is_empty() {
             cfg.fs_access = Some(Arc::new(LoopFsAccess {
                 sh: Arc::downgrade(&self.sh),
             }));
@@ -222,6 +227,37 @@ impl AgentLoop {
     #[must_use]
     pub fn checkpoint_access(&self) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
         self.sh.checkpoint_access.read().clone()
+    }
+
+    /// Decide per call whether bots without an explicit file access mode get
+    /// none (`true`, an always-on host) or "This computer" (`false`).
+    pub fn set_unset_file_access_denied(&self, denied: impl Fn() -> bool + Send + Sync + 'static) {
+        *self.sh.fs_unset_denied.write() = Some(Arc::new(denied));
+    }
+
+    /// Like [`Self::checkpoint_access`] for a run of `bot`: its CURRENT file
+    /// access setting decides (folder-only roots; an empty or unusable folder
+    /// list denies every path), so narrowing a bot also narrows review/restore.
+    #[must_use]
+    pub fn checkpoint_access_for(
+        &self,
+        bot: BotId,
+    ) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+        let (mut roots, grants) = self.checkpoint_access();
+        match self
+            .sh
+            .profile_for(bot)
+            .map(|p| p.files.scope(&self.sh.unset_file_scope()))
+        {
+            Ok(builtin_tools::FsScope::Folders(f)) if !f.is_empty() => roots = f,
+            // Folder mode without a folder (or an unset mode on a host): nothing resolves.
+            Ok(builtin_tools::FsScope::Folders(_)) => {
+                roots = vec![self.sh.storage.data_dir().join("__no-folder__")];
+            }
+            // This computer, or a profile that cannot be read: the static access.
+            Ok(builtin_tools::FsScope::Computer) | Err(_) => {}
+        }
+        (roots, grants)
     }
 
     /// Apply the production redactor, including its configured source refresher.

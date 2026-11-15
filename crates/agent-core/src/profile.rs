@@ -80,9 +80,10 @@ impl Default for RouterSettings {
 /// `[files]` table: what the built-in file tools may reach.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct FilesConfig {
-    /// `computer` (default) or `folder`.
+    /// `computer` or `folder`; unset = the loop's default (This computer, but
+    /// nothing on an always-on host until its owner chooses).
     #[serde(default)]
-    pub mode: FileAccessMode,
+    pub mode: Option<FileAccessMode>,
     /// Folders for `folder` mode. Empty in that mode denies every file call.
     #[serde(default)]
     pub folders: Vec<String>,
@@ -100,12 +101,14 @@ pub enum FileAccessMode {
 }
 
 impl FilesConfig {
-    /// The scope the file tools enforce for this configuration.
+    /// The scope the file tools enforce; `unset_default` applies when the
+    /// owner never chose a mode.
     #[must_use]
-    pub fn scope(&self) -> builtin_tools::FsScope {
+    pub fn scope(&self, unset_default: &builtin_tools::FsScope) -> builtin_tools::FsScope {
         match self.mode {
-            FileAccessMode::Computer => builtin_tools::FsScope::Computer,
-            FileAccessMode::Folder => builtin_tools::FsScope::Folders(
+            None => unset_default.clone(),
+            Some(FileAccessMode::Computer) => builtin_tools::FsScope::Computer,
+            Some(FileAccessMode::Folder) => builtin_tools::FsScope::Folders(
                 self.folders.iter().map(std::path::PathBuf::from).collect(),
             ),
         }
@@ -283,7 +286,11 @@ impl BotProfile {
     /// computer availability.
     #[must_use]
     pub fn tool_visible(&self, tool_name: &str) -> bool {
-        (!self.hide_desktop || !tool_name.starts_with("desktop_"))
+        // Shell commands and scripts cannot be confined to folders, so a
+        // "Folder only" bot does not get them (honest sandbox, not a pretence).
+        (self.files.mode != Some(FileAccessMode::Folder)
+            || !(tool_name.starts_with("shell_") || tool_name.starts_with("script_")))
+            && (!self.hide_desktop || !tool_name.starts_with("desktop_"))
             && (!self.hide_browser || !tool_name.starts_with("browser_"))
             && (self.tools.allow.is_empty() || self.allow.is_match(tool_name))
             && !self.exclude.is_match(tool_name)

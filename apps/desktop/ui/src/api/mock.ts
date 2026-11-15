@@ -590,6 +590,8 @@ export class MockApiClient extends ApiClient {
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
         return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+      case "GET /hosts":
+        return ok({ local_version: "0.1.0-mock", local_api_version: "1", hosts: [] });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":
@@ -696,6 +698,15 @@ export class MockApiClient extends ApiClient {
         return ok({ repair: id, detail: "done" });
       }
       case "GET /providers":
+        if (seg[1] === "cli") {
+          return ok(this.detectedProvidersList.map((detected) => ({
+            detected, executable_names: [detected.id], version_args: ["--version"], auth_args: [],
+            path: null, minimum_version: null, outdated: false,
+            login: detected.id === "opencode" ? "opencode auth login" : detected.id,
+            docs_url: "", install: null,
+            limitation: detected.id === "opencode" ? "native_tools_not_confined" : null
+          })));
+        }
         if (seg[1] === "detected") {
           const screen =
             typeof window !== "undefined"

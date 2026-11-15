@@ -2751,7 +2751,7 @@ exclude = [\"email_send\"]
         "excluded family advertised: {first}"
     );
     assert!(first.contains("Connected apps (by id): github."));
-    assert!(first.contains("call find_tool first"));
+    assert!(first.contains("Never say you cannot before you tried find_tool"));
     assert_eq!(
         first,
         system_text(&fake.request(1)),
@@ -8088,4 +8088,118 @@ computer = \"browser\"
     let row = env.storage.get_run(run).unwrap().unwrap();
     assert_ne!(row.computer_node.as_deref(), Some("local"));
     assert_eq!(row.computer_node, None);
+}
+
+#[tokio::test]
+async fn silent_end_after_discovery_is_nudged_once_then_answers() {
+    for answers in [true, false] {
+        let env = setup();
+        let browser = Arc::new(tool("browser_open", Effect::Read, "ok"));
+        let files = Arc::new(tool("fs_read", Effect::Read, "ok"));
+        let mut script = vec![
+            calls(&[("c1", "find_tool", json!({"query": "browser"}))]),
+            text(""),
+        ];
+        if answers {
+            script.push(text("opened it"));
+        } else {
+            script.push(text(""));
+        }
+        let fake = Fake::new(script);
+        let mut config = cfg(Policy::full());
+        config.discovery_threshold = 1;
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[&browser, &files],
+            profile(""),
+            config,
+        );
+        let run = lp.run_turn(env.chat, "open youtube").unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+        // find_tool, silent end, nudged call: exactly one extra call, no more.
+        assert_eq!(fake.n_requests(), 3);
+        let last = format!("{:?}", fake.request(2).messages);
+        assert!(last.contains("did not use them"), "nudge missing: {last}");
+        let msgs = env.storage.list_messages(env.chat).unwrap();
+        let reply = &msgs.last().unwrap().content;
+        if answers {
+            assert_eq!(reply, "opened it");
+        } else {
+            assert!(
+                reply.contains("no answer"),
+                "honest fallback missing: {reply}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn folder_only_bot_has_no_shell_and_its_checkpoint_access_follows_its_folders() {
+    let env = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir
+        .path()
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let confined = second_bot(&env, "Boxed");
+    let open = second_bot(&env, "Open");
+    let fake = Fake::new(vec![]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let boxed = profile(&format!(
+        "[files]
+mode = \"folder\"
+folders = [\"{folder}\"]
+"
+    ));
+    assert!(!boxed.tool_visible("shell_run") && !boxed.tool_visible("script_run"));
+    assert!(boxed.tool_visible("fs_read"));
+    lp.add_profile(confined, boxed);
+    lp.add_profile(
+        open,
+        profile(
+            "[files]
+mode = \"computer\"
+",
+        ),
+    );
+    assert_eq!(
+        lp.checkpoint_access_for(confined).0,
+        [std::path::PathBuf::from(dir.path())]
+    );
+    assert!(lp.checkpoint_access_for(open).0.is_empty());
+    // A bot that never chose a mode: This computer, but nothing on a host.
+    assert!(lp.checkpoint_access_for(env.bot).0.is_empty());
+    lp.set_unset_file_access_denied(|| true);
+    assert_eq!(
+        lp.checkpoint_access_for(env.bot).0.len(),
+        1,
+        "host: deny-all sentinel"
+    );
+    assert!(
+        lp.checkpoint_access_for(open).0.is_empty(),
+        "explicit choice still wins"
+    );
+}
+
+fn second_bot(env: &Env, name: &str) -> BotId {
+    let id = BotId::new();
+    env.storage
+        .insert_bot(&Bot {
+            id,
+            user_id: env.user,
+            name: name.into(),
+            config: json!({}),
+            created_at_ms: now_ms(),
+        })
+        .unwrap();
+    id
 }

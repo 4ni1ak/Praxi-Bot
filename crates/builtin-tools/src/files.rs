@@ -1004,14 +1004,162 @@ const CREDENTIAL_NAMES: &[&str] = &[
     "praxi-node.env",
     "secrets.enc",
     "identity.key",
+    // CLI configuration can install hooks/tools as well as carry credentials.
+    ".claude",
+    ".claude.json",
+    ".codex",
+    ".gemini",
+    ".cursor",
+    ".cursor-agent",
+    ".opencode",
+    // Project-level OpenCode config can declare plugins, commands and MCP
+    // servers that run code, so it is protected in every workspace on purpose.
+    // Likewise `.claude/` (hooks, commands) and `.cursor/` (rules, MCP).
+    "opencode.json",
+    "opencode.jsonc",
+    "oauth_creds.json",
 ];
+
+/// Config and data locations of the CLIs that are plain directory names
+/// (`opencode`, `cursor`, ...) and therefore only protected at their known
+/// place, as consecutive path components (lower case). A repository that merely
+/// lives in a folder called `opencode` or `cursor` stays usable.
+const CLI_CONFIG_SEQUENCES: &[&[&str]] = &[
+    &[".config", "opencode"],
+    &[".config", "claude"],
+    &[".config", "cursor"],
+    &[".config", "cursor-agent"],
+    &[".local", "share", "opencode"],
+    &[".local", "share", "cursor-agent"],
+    &["appdata", "roaming", "opencode"],
+    &["appdata", "roaming", "cursor"],
+    &["appdata", "local", "opencode"],
+    &["appdata", "local", "cursor"],
+    &["appdata", "local", "cursor-agent"],
+    &["library", "application support", "opencode"],
+    &["library", "application support", "cursor"],
+    &["library", "application support", "claude"],
+];
+
+fn env_abs_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+fn sequence_in(parts: &[String], seq: &[&str]) -> bool {
+    parts.windows(seq.len()).any(|w| {
+        w.iter()
+            .zip(seq)
+            .all(|(part, want)| canonical_name(part) == *want)
+    })
+}
+
+/// Directories that hold the CLI executables detection and the Claude runtime
+/// search outside the user's PATH (mirrors `cli-provider`'s `augment`). A file
+/// tool must never create, replace or move anything there: the next detection
+/// or run would execute it outside the permission engine.
+fn cli_executable_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for home in ["HOME", "USERPROFILE"]
+        .iter()
+        .filter_map(|k| env_abs_dir(k))
+    {
+        for rel in [
+            ".local/bin",
+            "bin",
+            ".volta/bin",
+            ".bun/bin",
+            ".npm-global",
+            ".nvm/versions/node",
+            ".local/share/cursor-agent",
+            "AppData/Roaming/npm",
+            "AppData/Local/cursor-agent",
+        ] {
+            out.push(home.join(rel));
+        }
+    }
+    if let Some(dir) = env_abs_dir("APPDATA") {
+        out.push(dir.join("npm"));
+    }
+    if let Some(dir) = env_abs_dir("LOCALAPPDATA") {
+        out.push(dir.join("cursor-agent"));
+    }
+    if let Some(dir) = env_abs_dir("NPM_CONFIG_PREFIX") {
+        out.push(dir);
+    }
+    out
+}
+
+/// Config locations relocated by an environment variable the CLIs honour.
+fn cli_relocated_config_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(dir) = env_abs_dir("XDG_CONFIG_HOME") {
+        out.extend(["opencode", "claude", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    if let Some(dir) = env_abs_dir("XDG_DATA_HOME") {
+        out.extend(["opencode", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    for key in ["APPDATA", "LOCALAPPDATA"] {
+        if let Some(dir) = env_abs_dir(key) {
+            out.extend(["opencode", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+        }
+    }
+    out
+}
+
+fn cli_location(parts: &[String]) -> bool {
+    // The directory set only depends on the process environment, which is fixed
+    // at startup; building it per call made directory walks quadratic.
+    static DIRS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    if CLI_CONFIG_SEQUENCES
+        .iter()
+        .any(|seq| sequence_in(parts, seq))
+    {
+        return true;
+    }
+    DIRS.get_or_init(|| {
+        cli_executable_dirs()
+            .into_iter()
+            .chain(cli_relocated_config_dirs())
+            .map(|dir| norm_parts(&widen_for_compare(&dir)))
+            .collect()
+    })
+    .iter()
+    .any(|dir| parts.starts_with(dir))
+}
 
 /// Hard link to a credential file under another name (`notes.txt` → `.env`)
 /// is not detected. These tools cannot create a hard link; a second directory
 /// entry for the same file is a known limitation of the name denylist.
 fn name_is_credential(name: &str) -> bool {
     let n = name.trim_end_matches([' ', '.']).to_ascii_lowercase();
-    n == ".env" || n.starts_with(".env.") || CREDENTIAL_NAMES.contains(&n.as_str())
+    n == ".env"
+        || n.starts_with(".env.")
+        // `.claude.json.backup*` and other siblings Claude Code writes.
+        || n.starts_with(".claude.json.")
+        || CREDENTIAL_NAMES.contains(&n.as_str())
+}
+
+fn cli_home_override(path: &[String]) -> bool {
+    [
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "GEMINI_CLI_HOME",
+        "OPENCODE_CONFIG_DIR",
+        "OPENCODE_CONFIG",
+    ]
+    .iter()
+    .any(|key| {
+        let Some(dir) = std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        else {
+            return false;
+        };
+        let dir = norm_parts(&widen_for_compare(&dir));
+        path.starts_with(&dir)
+    })
 }
 
 fn is_protected(path: &Path, data_dir: &Path) -> bool {
@@ -1021,7 +1169,10 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
             false
         }
     });
-    named || under_data_sensitive(path, data_dir)
+    named || {
+        let parts = norm_parts(&widen_for_compare(path));
+        cli_home_override(&parts) || cli_location(&parts) || under_data_sensitive(path, data_dir)
+    }
 }
 
 /// Whether `root` must not be handed out as a whole folder (for example to a
@@ -1031,7 +1182,7 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
 /// test the file tools do not need for single files.
 #[must_use]
 pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
-    if is_protected(root, data_dir) {
+    if hard_denied(root) || is_protected(root, data_dir) {
         return true;
     }
     let r = norm_parts(&widen_for_compare(root));
@@ -1158,8 +1309,9 @@ fn daemon_state_name(base: &str) -> bool {
         "knowledge-authority.db",
         "knowledge-runtime.db",
     ];
-    const FILES: [&str; 14] = [
+    const FILES: [&str; 15] = [
         "control-latch.json",
+        "view-privileges.json",
         "policy.json",
         "host.toml",
         "config.toml",
@@ -1194,74 +1346,258 @@ fn daemon_state_name(base: &str) -> bool {
 fn credential_blocked(sh: &Shared, lexical: &Path, resolved: &Path) -> bool {
     protected_ungranted(lexical, &sh.data_dir, &sh.grants)
         || protected_ungranted(resolved, &sh.data_dir, &sh.grants)
-        || sh.home.as_deref().is_some_and(|home| {
-            sensitive_location(lexical, home) || sensitive_location(resolved, home)
-        })
 }
 
-/// Home sub-folders with credentials or CLI/agent configuration. Never grantable.
-const SENSITIVE_HOME_DIRS: &[&str] = &[
-    ".ssh",
-    ".aws",
-    ".gnupg",
-    ".azure",
-    ".kube",
-    ".claude",
-    ".codex",
-    ".gemini",
-    ".opencode",
-    ".config/gh",
-    ".config/gcloud",
-    ".config/opencode",
-    ".docker",
+// ---- The ONE table of locations no file tool may touch --------------------
+//
+// Matched on canonical (widened, case-folded on Windows) paths at every depth
+// by `hard_denied`, which `protected_ungranted` applies to every operation:
+// read, list, search, write, edit, move (both ends), delete and checkpoints,
+// including each descendant a recursive operation visits. A host grant never
+// lifts these.
+
+/// Consecutive path components (lower case) that are credential, key,
+/// browser-profile, password-manager or CLI-config stores wherever they sit,
+/// so another user's profile or a copied tree is covered too.
+const SENSITIVE_SEQUENCES: &[&[&str]] = &[
+    // ssh / cloud / dev credentials (all platforms)
+    &[".ssh"],
+    &[".aws"],
+    &[".gnupg"],
+    &[".azure"],
+    &[".kube"],
+    &[".docker"],
+    &[".password-store"],
+    &[".terraform.d"],
+    &[".cargo", "credentials"],
+    &[".cargo", "credentials.toml"],
+    &[".config", "git", "credentials"],
+    &[".config", "gh"],
+    &[".config", "gcloud"],
+    &[".config", "op"],
+    &[".config", "rclone"],
+    &[".config", "1password"],
+    &[".config", "bitwarden"],
+    &[".config", "keepassxc"],
+    // agent / CLI configuration
+    &[".claude"],
+    &[".codex"],
+    &[".gemini"],
+    &[".opencode"],
+    // Linux keyrings, wallets, browsers
+    &[".local", "share", "keyrings"],
+    &[".local", "share", "kwalletd"],
+    &[".kde", "share", "apps", "kwallet"],
+    &[".mozilla"],
+    &[".thunderbird"],
+    &[".config", "google-chrome"],
+    &[".config", "google-chrome-beta"],
+    &[".config", "chromium"],
+    &[".config", "microsoft-edge"],
+    &[".config", "bravesoftware"],
+    &[".config", "opera"],
+    &[".config", "vivaldi"],
+    &["snap", "chromium"],
+    &["snap", "firefox"],
+    &["snap", "brave"],
+    &[".var", "app", "org.mozilla.firefox"],
+    &[".var", "app", "com.google.chrome"],
+    &[".var", "app", "org.chromium.chromium"],
+    &[".var", "app", "com.brave.browser"],
+    // Windows (under any profile)
+    &["appdata", "roaming", "gh"],
+    &["appdata", "roaming", "github cli"],
+    &["appdata", "roaming", "gcloud"],
+    &["appdata", "roaming", "claude"],
+    &["appdata", "roaming", "microsoft", "credentials"],
+    &["appdata", "roaming", "microsoft", "vault"],
+    &["appdata", "roaming", "microsoft", "protect"],
+    &["appdata", "roaming", "microsoft", "crypto"],
+    &["appdata", "local", "microsoft", "credentials"],
+    &["appdata", "local", "microsoft", "vault"],
+    &["appdata", "local", "microsoft", "edge"],
+    &["appdata", "local", "google", "chrome"],
+    &["appdata", "local", "bravesoftware"],
+    &["appdata", "local", "vivaldi"],
+    &["appdata", "roaming", "opera software"],
+    &["appdata", "roaming", "mozilla"],
+    &["appdata", "local", "mozilla"],
+    &["appdata", "roaming", "thunderbird"],
+    &["appdata", "roaming", "1password"],
+    &["appdata", "local", "1password"],
+    &["appdata", "roaming", "bitwarden"],
+    &["appdata", "roaming", "keepassxc"],
+    &["programdata", "microsoft", "crypto"],
+    &["programdata", "microsoft", "vault"],
+    &["system volume information"],
+    // macOS
+    &["library", "keychains"],
+    &["library", "cookies"],
+    &["library", "safari"],
+    &["library", "group containers"],
+    &["library", "application support", "google", "chrome"],
+    &["library", "application support", "microsoft edge"],
+    &["library", "application support", "bravesoftware"],
+    &["library", "application support", "firefox"],
+    &["library", "application support", "1password"],
+    &["library", "application support", "bitwarden"],
+    &["library", "application support", "vivaldi"],
+    &["library", "application support", "com.operasoftware.opera"],
+    &["library", "application support", "keepassxc"],
 ];
 
-/// Home-level files with credentials.
-const SENSITIVE_HOME_FILES: &[&str] = &[".netrc", ".npmrc", ".pypirc", ".git-credentials"];
+/// File names (lower case) that hold credentials wherever they are: browser
+/// stores, Windows account hives, private keys, dotfile credential stores.
+const SENSITIVE_NAMES: &[&str] = &[
+    "login data",
+    "login data for account",
+    "web data",
+    "local state",
+    "key3.db",
+    "key4.db",
+    "logins.json",
+    "cert9.db",
+    "cookies.sqlite",
+    "usrclass.dat",
+    ".netrc",
+    "_netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    ".pgpass",
+    ".vault-token",
+    ".my.cnf",
+    "credentials.tfrc.json",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+];
 
-/// OS-critical trees (compared after folding case on Windows).
-fn os_critical_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    #[cfg(windows)]
-    {
-        let root = std::env::var_os("SystemRoot")
-            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
-        dirs.push(root);
-    }
-    #[cfg(not(windows))]
-    {
-        for d in ["/etc", "/proc", "/sys", "/dev", "/boot", "/root"] {
-            dirs.push(PathBuf::from(d));
-        }
-    }
-    dirs
-}
+/// File-name suffixes (lower case) of password-manager vaults and key stores.
+const SENSITIVE_SUFFIXES: &[&str] = &[
+    ".kdbx",
+    ".kdb",
+    ".opvault",
+    ".agilekeychain",
+    ".1pif",
+    ".keychain",
+    ".keychain-db",
+    ".p12",
+    ".pfx",
+];
 
-/// Credential, CLI-config and OS-critical locations that "This computer" mode
-/// keeps refused (the user's own home folder is otherwise open).
-fn sensitive_location(path: &Path, home: &Path) -> bool {
-    let p = norm_parts(&widen_for_compare(path));
-    let h = norm_parts(&widen_for_compare(home));
-    if p.len() > h.len() && p[..h.len()] == h[..] {
-        let rel: Vec<String> = p[h.len()..].iter().map(|c| canonical_name(c)).collect();
-        for d in SENSITIVE_HOME_DIRS {
-            let parts: Vec<&str> = d.split('/').collect();
-            if rel.len() >= parts.len() && rel.iter().zip(&parts).all(|(a, b)| a == b) {
-                return true;
+/// Names too generic to refuse alone: refused only directly inside a
+/// `config` directory (the Windows registry hives under `System32\config`).
+const HIVE_NAMES: &[&str] = &["sam", "security", "system", "software", "default"];
+
+/// OS trees (absolute prefixes) that stay refused.
+fn sensitive_roots() -> &'static Vec<Vec<String>> {
+    static ROOTS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            dirs.push(env_abs_dir("SystemRoot").unwrap_or_else(|| PathBuf::from(r"C:\Windows")));
+        } else {
+            for d in [
+                "/etc",
+                "/proc",
+                "/sys",
+                "/dev",
+                "/boot",
+                "/root",
+                "/private/etc",
+                "/private/var/root",
+                "/private/var/db",
+                "/Library/Keychains",
+                "/var/lib/sss",
+                "/var/db",
+            ] {
+                dirs.push(PathBuf::from(d));
             }
         }
-        if rel.len() == 1 && SENSITIVE_HOME_FILES.contains(&rel[0].as_str()) {
+        dirs.iter()
+            .map(|d| norm_parts(&widen_for_compare(d)))
+            .collect()
+    })
+}
+
+/// The daemon account's own home (environment, fixed at startup) and the
+/// directories whose other children are OTHER users' profiles.
+#[allow(clippy::type_complexity)]
+fn user_dirs() -> &'static (Option<Vec<String>>, Vec<Vec<String>>) {
+    static DIRS: std::sync::OnceLock<(Option<Vec<String>>, Vec<Vec<String>>)> =
+        std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let home = crate::user_home();
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            let drive = env_abs_dir("SystemDrive").unwrap_or_else(|| PathBuf::from(r"C:\"));
+            roots.push(drive.join("Users"));
+        } else {
+            roots.extend(["/home", "/Users"].map(PathBuf::from));
+        }
+        if let Some(parent) = home.as_deref().and_then(Path::parent)
+            && parent.components().count() > 1
+        {
+            roots.push(parent.to_path_buf());
+        }
+        (
+            home.map(|h| norm_parts(&widen_for_compare(&h))),
+            roots
+                .iter()
+                .map(|r| norm_parts(&widen_for_compare(r)))
+                .collect(),
+        )
+    })
+}
+
+/// Whether `path` is in the table: a credential, key, browser, vault or OS
+/// location, or inside another user's profile. Pure text on the canonical
+/// form, so it holds for every descendant a walk meets.
+fn hard_denied(path: &Path) -> bool {
+    let parts = norm_parts(&widen_for_compare(path));
+    if SENSITIVE_SEQUENCES
+        .iter()
+        .any(|seq| sequence_in(&parts, seq))
+    {
+        return true;
+    }
+    if let Some(name) = parts.last().map(|p| canonical_name(p)) {
+        let hive_dir = parts
+            .len()
+            .checked_sub(2)
+            .and_then(|i| parts.get(i))
+            .is_some_and(|p| canonical_name(p) == "config");
+        let hit = if HIVE_NAMES.contains(&name.as_str()) {
+            hive_dir
+        } else {
+            SENSITIVE_NAMES.contains(&name.as_str())
+        };
+        if hit
+            || SENSITIVE_SUFFIXES.iter().any(|s| name.ends_with(s))
+            || name.starts_with("ntuser.dat")
+        {
             return true;
         }
     }
-    os_critical_dirs().iter().any(|d| {
-        let d = norm_parts(&widen_for_compare(d));
-        !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+    if sensitive_roots()
+        .iter()
+        .any(|r| !r.is_empty() && parts.starts_with(r))
+    {
+        return true;
+    }
+    let (home, roots) = user_dirs();
+    roots.iter().any(|root| {
+        parts.len() > root.len()
+            && parts.starts_with(root)
+            && !home.as_ref().is_some_and(|h| parts.starts_with(h))
     })
 }
 
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
-    is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path))
+    hard_denied(path)
+        || (is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path)))
 }
 
 /// Exact path, or the same file under its 8.3 and long names.
@@ -2574,7 +2910,13 @@ fn matcher(glob: Option<&str>) -> Result<Option<(globset::GlobMatcher, bool)>, T
 
 /// Walk `root` recursively (depth-limited), calling `f(path, is_dir)`.
 /// Returning `false` stops the walk.
-fn walk(root: &Path, depth: usize, f: &mut dyn FnMut(&Path, bool) -> bool) -> bool {
+/// [`walk`] that neither reports nor enters entries `skip` accepts.
+fn walk_skipping(
+    root: &Path,
+    depth: usize,
+    skip: &dyn Fn(&Path) -> bool,
+    f: &mut dyn FnMut(&Path, bool) -> bool,
+) -> bool {
     let Ok(rd) = fs::read_dir(root) else {
         return true;
     };
@@ -2592,10 +2934,13 @@ fn walk(root: &Path, depth: usize, f: &mut dyn FnMut(&Path, bool) -> bool) -> bo
         if is_dir && SKIP_DIRS.iter().any(|s| e.file_name() == *s) {
             continue;
         }
+        if skip(&p) {
+            continue;
+        }
         if !f(&p, is_dir) {
             return false;
         }
-        if is_dir && depth > 0 && !walk(&p, depth - 1, f) {
+        if is_dir && depth > 0 && !walk_skipping(&p, depth - 1, skip, f) {
             return false;
         }
     }
@@ -2628,6 +2973,7 @@ fn do_list(sh: &Shared, i: &ListIn) -> Result<String, ToolError> {
         return Err(exec_err(format!("{} is not a directory", i.path)));
     }
     let m = matcher(i.glob.as_deref())?;
+    let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
     let mut lines = Vec::new();
     let mut truncated = false;
     let mut push = |p: &Path, is_dir: bool| -> bool {
@@ -2652,10 +2998,10 @@ fn do_list(sh: &Shared, i: &ListIn) -> Result<String, ToolError> {
     };
     match &m {
         None => {
-            walk(&root, 0, &mut |p, d| push(p, d));
+            walk_skipping(&root, 0, &protected, &mut |p, d| push(p, d));
         }
         Some(m) => {
-            walk(&root, 10, &mut |p, d| {
+            walk_skipping(&root, 10, &protected, &mut |p, d| {
                 if glob_hit(m, &root, p) {
                     push(p, d)
                 } else {
@@ -2727,7 +3073,8 @@ fn do_search(sh: &Shared, i: &SearchIn) -> Result<String, ToolError> {
         let parent = root.parent().unwrap_or(&root);
         search_file(sh, &root, &q, parent, &mut out);
     } else if is_dir_nofollow(&root) {
-        walk(&root, 12, &mut |p, is_dir| {
+        let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
+        walk_skipping(&root, 12, &protected, &mut |p, is_dir| {
             if !is_dir && m.as_ref().is_none_or(|m| glob_hit(m, &root, p)) {
                 search_file(sh, p, &q, &root, &mut out);
             }
@@ -3243,6 +3590,212 @@ mod tests {
         do_cp_restore(&sh, &cp.id).unwrap();
         assert_eq!(fs::read_link(&dangling).unwrap(), missing);
         assert!(!missing.exists());
+    }
+
+    #[test]
+    fn cli_configuration_and_credentials_are_protected_even_in_broad_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            ".claude/settings.json",
+            ".claude/.credentials.json",
+            ".claude.json",
+            ".codex/auth.json",
+            ".gemini/oauth_creds.json",
+            ".cursor/mcp.json",
+            ".cursor-agent/auth.json",
+            "AppData/Roaming/Cursor/User/settings.json",
+            ".claude.json.backup.1700000000",
+            ".config/claude/settings.json",
+            ".config/opencode/opencode.json",
+            ".opencode/plugins/local.ts",
+            "project/opencode.json",
+            "project/opencode.jsonc",
+            ".local/share/opencode/auth.json",
+            "AppData/Local/opencode/auth.json",
+            ".CODEX. /auth.json",
+        ] {
+            assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
+        }
+        assert!(!is_protected(&dir.path().join("report.txt"), dir.path()));
+    }
+
+    #[test]
+    fn repositories_named_like_a_cli_are_not_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            "code/opencode/src/main.rs",
+            "code/opencode/README.md",
+            "src/cursor/mod.rs",
+            "work/cursor-agent/notes.txt",
+            "opencode/package.json",
+            "cursor",
+            "projects/claude/readme.md",
+            "a/.config/other/opencode/x",
+        ] {
+            assert!(
+                !is_protected(&dir.path().join(path), dir.path()),
+                "{path} must stay usable"
+            );
+        }
+    }
+
+    /// Run `name` again in a child process with `envs` set, so the test can
+    /// change HOME and friends without touching sibling tests.
+    fn rerun_with_env(name: &str, fixture: &str, root: &Path, envs: &[(&str, PathBuf)]) {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args(["--exact", name]);
+        child.env(fixture, root);
+        for (key, value) in envs {
+            child.env(key, value);
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn cli_executable_directories_are_protected() {
+        const FIXTURE: &str = "PRAXI_C250_BIN_DIR_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for path in [
+                ".local/bin/claude",
+                "bin/claude",
+                ".volta/bin/claude",
+                ".bun/bin/opencode",
+                ".npm-global/bin/claude",
+                "AppData/Roaming/npm/claude.cmd",
+                "AppData/Roaming/npm/claude.exe",
+                "AppData/Local/cursor-agent/cursor-agent.cmd",
+                ".nvm/versions/node/v22.1.0/bin/claude",
+                "prefix/bin/claude",
+                "xdg-config/opencode/opencode.json",
+                "xdg-data/opencode/auth.json",
+            ] {
+                assert!(is_protected(&root.join(path), &root), "{path}");
+            }
+            assert!(!is_protected(&root.join("docs/claude.md"), &root));
+            assert!(!is_protected(&root.join(".local/other/claude"), &root));
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::cli_executable_directories_are_protected",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+                ("APPDATA", root.path().join("AppData/Roaming")),
+                ("LOCALAPPDATA", root.path().join("AppData/Local")),
+                ("NPM_CONFIG_PREFIX", root.path().join("prefix")),
+                ("XDG_CONFIG_HOME", root.path().join("xdg-config")),
+                ("XDG_DATA_HOME", root.path().join("xdg-data")),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn file_tools_refuse_to_plant_cli_executables() {
+        const FIXTURE: &str = "PRAXI_C250_PLANT_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            let (_d, _w, t) = setup();
+            let c = ctx();
+            for rel in [".local/bin/claude", "AppData/Roaming/npm/claude.cmd"] {
+                let target = root.join(rel);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                let err = get(&t, "fs_write")
+                    .call(&c, json!({"path": &target, "content": "evil"}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                let src = root.join("planted.txt");
+                fs::write(&src, "evil").unwrap();
+                let err = get(&t, "fs_move")
+                    .call(&c, json!({"from": &src, "to": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                fs::write(&target, "real").unwrap();
+                let err = get(&t, "fs_delete")
+                    .call(&c, json!({"path": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert_eq!(fs::read_to_string(&target).unwrap(), "real");
+            }
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::file_tools_refuse_to_plant_cli_executables",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+            ],
+        );
+    }
+
+    #[test]
+    fn cli_custom_config_paths_are_protected() {
+        const FIXTURE: &str = "PRAXI_C250_CONFIG_PATH_FIXTURE";
+        const OVERRIDES: &[&str] = &[
+            "CODEX_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "GEMINI_CLI_HOME",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG",
+        ];
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for key in OVERRIDES {
+                let private = root.join(key);
+                assert!(is_protected(&private, &root), "{key}");
+                assert!(is_protected(&private.join("settings.json"), &root), "{key}");
+                assert!(
+                    !is_protected(&root.join(format!("{key}-other")), &root),
+                    "{key}"
+                );
+            }
+            return;
+        }
+        // Isolate overrides in a child harness; parallel tests never inherit
+        // mutations of this process's environment or real user config homes.
+        let root = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args([
+            "--exact",
+            "files::tests::cli_custom_config_paths_are_protected",
+        ]);
+        child.env(FIXTURE, root.path());
+        for key in OVERRIDES {
+            child.env(key, root.path().join(key));
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -4552,6 +5105,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_bot_cannot_grant_screen_access_by_editing_view_privileges() {
+        // `view-privileges.json` is reloaded at daemon start as live screen
+        // view/input grants for paired devices (card 252).
+        let (d, _w, t) = setup();
+        let c = ctx();
+        let file = d.path().join("view-privileges.json");
+        let original = "{}";
+        std::fs::write(&file, original).unwrap();
+        let forged = r#"{"peer:abc":{"view":true,"input":true}}"#;
+        for (tool, input) in [
+            ("fs_write", json!({"path": &file, "content": forged})),
+            (
+                "fs_edit",
+                json!({"path": &file, "old": "{}", "new": forged}),
+            ),
+            ("fs_delete", json!({"path": &file})),
+        ] {
+            let err = get(&t, tool).call(&c, input).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{tool}: {err}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    }
+
+    #[tokio::test]
     async fn a_not_yet_existing_protected_name_with_a_trailing_dot_cannot_be_created() {
         let (d, _w, t) = setup();
         let c = ctx();
@@ -4584,6 +5164,17 @@ mod tests {
             "praxi-node.env",
             "secrets.enc",
             "identity.key",
+            // CLI configuration can install hooks/tools as well as carry credentials.
+            ".claude",
+            ".claude.json",
+            ".codex",
+            ".gemini",
+            ".cursor",
+            ".opencode",
+            ".claude.json.backup",
+            "opencode.json",
+            "opencode.jsonc",
+            "oauth_creds.json",
         ] {
             let file = w.path().join(name);
             fs::write(&file, secret).unwrap();
@@ -4816,6 +5407,121 @@ mod tests {
                 .unwrap(),
         );
         assert!(ok.contains("safe"), "in-root reparse: {ok}");
+    }
+
+    fn sep(parts: &[&str]) -> PathBuf {
+        let mut p = PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" });
+        for part in parts {
+            p.push(part);
+        }
+        p
+    }
+
+    #[test]
+    fn credential_table_covers_browsers_vaults_hives_and_other_profiles() {
+        for denied in [
+            &["u", "AppData", "Roaming", "gh", "hosts.yml"][..],
+            &[
+                "u",
+                "AppData",
+                "Local",
+                "Google",
+                "Chrome",
+                "User Data",
+                "Local State",
+            ],
+            &[
+                "u",
+                "AppData",
+                "Local",
+                "Microsoft",
+                "Edge",
+                "User Data",
+                "Default",
+                "Login Data",
+            ],
+            &[
+                "u",
+                "AppData",
+                "Roaming",
+                "Mozilla",
+                "Firefox",
+                "Profiles",
+                "x.default",
+                "key4.db",
+            ],
+            &["u", "AppData", "Roaming", "Microsoft", "Credentials", "ABC"],
+            &[
+                "u",
+                "AppData",
+                "Roaming",
+                "Microsoft",
+                "Protect",
+                "S-1-5-21",
+                "key",
+            ],
+            &["u", "NTUSER.DAT"],
+            &["Windows", "System32", "config", "SAM"],
+            &["u", ".local", "share", "keyrings", "login.keyring"],
+            &["u", ".password-store", "mail.gpg"],
+            &["u", ".config", "google-chrome", "Default", "Cookies"],
+            &["u", ".mozilla", "firefox", "p.default", "logins.json"],
+            &["u", "Library", "Keychains", "login.keychain-db"],
+            &["u", "Library", "Application Support", "1Password", "data"],
+            &["u", "Documents", "family.kdbx"],
+            &["u", ".config", "gh", "hosts.yml"],
+        ] {
+            assert!(hard_denied(&sep(denied)), "{denied:?}");
+        }
+        assert!(!hard_denied(&sep(&["u", "Documents", "report.txt"])));
+        assert!(!hard_denied(&sep(&["u", "src", "config", "settings.toml"])));
+    }
+
+    #[tokio::test]
+    async fn recursive_tools_skip_protected_descendants_at_every_depth() {
+        let data = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let t = tools(data.path());
+        let cfg = w.path().join(".config");
+        fs::create_dir_all(cfg.join("gh")).unwrap();
+        fs::write(cfg.join("gh").join("hosts.yml"), "oauth_token: TOKEN123").unwrap();
+        fs::write(cfg.join("other.txt"), "fine").unwrap();
+        let c = ctx();
+        let listed = text(
+            &get(&t, "fs_list")
+                .call(&c, json!({"path": w.path(), "glob": "**/*"}))
+                .await
+                .unwrap(),
+        );
+        assert!(
+            !listed.contains("hosts.yml") && listed.contains("other.txt"),
+            "{listed}"
+        );
+        let found = text(
+            &get(&t, "fs_search")
+                .call(&c, json!({"query": "TOKEN123", "path": w.path()}))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(found, "no matches");
+        // Moving the parent must not carry the protected child along.
+        let copy = w.path().join("config-copy");
+        get(&t, "fs_move")
+            .call(&c, json!({"from": &cfg, "to": &copy}))
+            .await
+            .unwrap();
+        assert!(copy.join("other.txt").exists());
+        assert!(!copy.join("gh").exists(), "protected child was moved");
+        assert!(
+            cfg.join("gh").join("hosts.yml").exists(),
+            "protected child stays"
+        );
+        // Recursive delete keeps it too.
+        get(&t, "fs_delete")
+            .call(&c, json!({"path": &cfg, "recursive": true}))
+            .await
+            .ok();
+        assert!(cfg.join("gh").join("hosts.yml").exists());
     }
 
     struct FixedScope(crate::FsScope);

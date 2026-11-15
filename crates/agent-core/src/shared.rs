@@ -707,6 +707,9 @@ pub struct SkillHints {
 pub(crate) struct Shared {
     pub storage: Arc<Storage>,
     pub tools: ToolRegistry,
+    /// Whether a bot that never chose a file access mode gets no file access
+    /// (always-on host) instead of "This computer". Evaluated per call.
+    pub fs_unset_denied: RwLock<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
     pub checkpoint_access: RwLock<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)>,
     pub providers: RwLock<Providers>,
     /// Workspace-wide policy; replaceable at runtime (`PUT /v1/policy`).
@@ -903,6 +906,16 @@ impl Shared {
             .get(model)
             .copied()
             .or_else(|| self.providers.read().price_for(model))
+    }
+
+    /// Scope of a bot that never chose a file access mode.
+    pub fn unset_file_scope(&self) -> builtin_tools::FsScope {
+        let denied = self.fs_unset_denied.read().as_ref().is_some_and(|f| f());
+        if denied {
+            builtin_tools::FsScope::Folders(Vec::new())
+        } else {
+            builtin_tools::FsScope::Computer
+        }
     }
 
     /// Profile for a bot: explicit registration, else the bot row's JSON config.
@@ -1763,3 +1776,5 @@ pub(crate) const STEP_TOOLS: &str = "tools";
 pub(crate) const STEP_WORKFLOW: &str = "workflow";
 /// A built-in command run by the router (`/new`).
 pub(crate) const STEP_COMMAND: &str = "command";
+/// One system nudge after a model turn ended with no text after tool calls.
+pub(crate) const STEP_NUDGE: &str = "nudge";

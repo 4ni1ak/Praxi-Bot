@@ -27,13 +27,17 @@ pub struct FileAccessDto {
     pub folders: Vec<String>,
 }
 
-fn current(bot: &storage::Bot) -> FileAccessDto {
+/// The effective setting. A bot that never chose one is on "This computer",
+/// except on an always-on host where it has no file access until the host's
+/// owner chooses (shown as an empty "Folder only").
+fn current(bot: &storage::Bot, host: bool) -> FileAccessDto {
     let files = bot.config.get("files");
+    let unset = if host { "folder" } else { "computer" };
     FileAccessDto {
         mode: files
             .and_then(|f| f.get("mode"))
             .and_then(Value::as_str)
-            .unwrap_or("computer")
+            .unwrap_or(unset)
             .to_owned(),
         folders: files
             .and_then(|f| f.get("folders"))
@@ -121,7 +125,8 @@ pub(crate) async fn get_files(
     State(s): State<AppState>,
     Path(bot): Path<Uuid>,
 ) -> Result<Json<FileAccessDto>, ApiError> {
-    Ok(Json(current(&s.bot_of_user(BotId(bot))?)))
+    let host = s.leader().config().mode == crate::host::HostMode::Host;
+    Ok(Json(current(&s.bot_of_user(BotId(bot))?, host)))
 }
 
 /// Set the bot's file access mode. Local owner only.
@@ -150,5 +155,6 @@ pub(crate) async fn put_files(
     object.insert("files".into(), value);
     s.storage().update_bot(bot.id, &bot.name, &bot.config)?;
     s.refresh_profile(&bot);
-    Ok(Json(current(&bot)))
+    let host = s.leader().config().mode == crate::host::HostMode::Host;
+    Ok(Json(current(&bot, host)))
 }

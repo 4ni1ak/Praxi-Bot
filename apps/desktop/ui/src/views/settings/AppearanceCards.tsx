@@ -377,7 +377,7 @@ export function appearanceCards(b: SettingsBridge, t: TFunction): CardDef[] {
         <Switch
           label={t("appearance.clearChat.title")}
           checked={settings.transparentChat}
-          onChange={(transparentChat) => update({ transparentChat })}
+          onChange={(transparentChat) => update({ transparentChat, chatPanel: !transparentChat })}
         />
       </SettingRow>,
       { keywords: "transparent chat background saydam sohbet arka plan seffaf" }
