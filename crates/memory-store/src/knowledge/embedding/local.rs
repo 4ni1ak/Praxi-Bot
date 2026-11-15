@@ -99,14 +99,31 @@ fn read_artifact(artifact: &PinnedEmbeddingArtifact, limit: u64) -> Result<Vec<u
 
 /// Own the verified bytes for the native library's entire process lifetime.
 /// Linux uses a sealed memfd (no writable or replaceable filesystem name).
-/// Other platforms use a private directory and a read-only open handle;
-/// Windows denies write/delete sharing while that handle remains alive.
+/// Windows uses a private directory and denies write/delete sharing while its
+/// open handle remains alive. Other platforms fail closed.
 #[cfg(any(test, feature = "local-embeddings"))]
 struct VerifiedRuntime {
     path: PathBuf,
-    _file: std::fs::File,
+    _file: Option<std::fs::File>,
     #[cfg(windows)]
-    _directory: tempfile::TempDir,
+    _directory: Option<tempfile::TempDir>,
+}
+
+#[cfg(all(windows, any(test, feature = "local-embeddings")))]
+impl Drop for VerifiedRuntime {
+    fn drop(&mut self) {
+        // Windows cannot delete a readonly or share-locked DLL snapshot.
+        // Release the lock only after this runtime owner is being destroyed.
+        drop(self._file.take());
+        if let Ok(metadata) = std::fs::metadata(&self.path) {
+            let mut permissions = metadata.permissions();
+            permissions.set_readonly(false);
+            let _ = std::fs::set_permissions(&self.path, permissions);
+        }
+        if let Some(directory) = self._directory.take() {
+            let _ = directory.close();
+        }
+    }
 }
 
 #[cfg(any(test, feature = "local-embeddings"))]
@@ -137,7 +154,10 @@ impl VerifiedRuntime {
             )
             .map_err(std::io::Error::from)?;
             let path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
-            Ok(Self { path, _file: file })
+            Ok(Self {
+                path,
+                _file: Some(file),
+            })
         }
         #[cfg(windows)]
         {
@@ -175,8 +195,8 @@ impl VerifiedRuntime {
             }
             Ok(Self {
                 path,
-                _file: file,
-                _directory: directory,
+                _file: Some(file),
+                _directory: Some(directory),
             })
         }
     }
@@ -204,6 +224,14 @@ mod verified_copy_tests {
         assert_eq!(std::fs::read(&verified.path).unwrap(), bytes);
         assert!(std::fs::write(&verified.path, b"mutated verified bytes").is_err());
         assert_eq!(std::fs::read(&verified.path).unwrap(), bytes);
+        #[cfg(windows)]
+        {
+            let snapshot = verified.path.clone();
+            let directory = snapshot.parent().unwrap().to_path_buf();
+            drop(verified);
+            assert!(!snapshot.exists());
+            assert!(!directory.exists());
+        }
     }
 
     #[test]
@@ -238,9 +266,11 @@ mod inference {
     use tokio::sync::Semaphore;
 
     use super::{
-        Digest, EmbeddingProfile, EmbeddingTaskFormat, LocalEmbeddingArtifacts,
-        PinnedEmbeddingArtifact, Result, Sha256, VerifiedRuntime, invalid, read_artifact,
+        EmbeddingProfile, EmbeddingTaskFormat, LocalEmbeddingArtifacts,
+        Result, VerifiedRuntime, invalid, read_artifact,
     };
+    #[cfg(test)]
+    use super::{Digest, PinnedEmbeddingArtifact, Sha256};
 
     struct Model {
         embedding: TextEmbedding,

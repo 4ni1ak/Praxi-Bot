@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 mod authority;
+pub(crate) use authority::authorized;
 mod local_host;
 pub use authority::{
     EmbeddingApprovalChallenge, EmbeddingGrantTarget, grant_confirm, grant_request,
@@ -148,7 +149,8 @@ fn evict_bot(state: &AppState, bot: BotId) {
         runtime.services.lock().retain(|entry| entry.bot != bot);
     }
 }
-pub(crate) fn forget_bot(state: &AppState, bot: BotId) {
+/// Drop the current cached/admitted embedding generation.
+pub fn forget_bot(state: &AppState, bot: BotId) {
     invalidate_bot(state, bot);
 }
 
@@ -212,7 +214,7 @@ fn settings(state: &AppState, bot: BotId) -> Result<EmbeddingConfig, ApiError> {
         .fingerprint()
         .map_err(|_| ApiError::bad_request("invalid embedding profile"))?;
     config.query_consent =
-        authority::authorized(state, bot, &EmbeddingGrantTarget::Queries, &fingerprint);
+        authorized(state, bot, &EmbeddingGrantTarget::Queries, &fingerprint);
     Ok(config)
 }
 
@@ -247,7 +249,7 @@ impl HostAuthority {
             .profile
             .fingerprint()
             .is_ok_and(|current| current == profile)
-            && authority::authorized(&state, self.bot, target, profile).is_some()
+            && authorized(&state, self.bot, target, profile).is_some()
     }
 }
 
@@ -600,7 +602,33 @@ pub fn reset_embedding_cooldown(state: &AppState, bot: BotId) -> Result<(), ApiE
     let config = configured_settings(state, bot)?;
     EmbeddingRuntime::open(state.data_dir())
         .and_then(|runtime| runtime.reset_cooldown(&config.account_group))
-        .map_err(|_| ApiError::unavailable("embedding cooldown unavailable"))
+        .map_err(|_| ApiError::unavailable("embedding cooldown unavailable"))?;
+    for bot in state.storage().list_bots(state.user_id())? {
+        let Ok(other) = configured_settings(state, bot.id) else {
+            continue;
+        };
+        if other.account_group != config.account_group {
+            continue;
+        }
+        let path = state
+            .data_dir()
+            .join("bots")
+            .join(bot.id.to_string())
+            .join("knowledge.db");
+        if !path.exists() {
+            continue;
+        }
+        KnowledgeStore::open(
+            state.data_dir(),
+            Scope {
+                user_id: state.user_id(),
+                bot_id: bot.id,
+            },
+        )
+        .and_then(|store| store.reset_embedding_cooldown(&other.profile.fingerprint()?))
+        .map_err(|_| ApiError::unavailable("embedding source cooldown unavailable"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

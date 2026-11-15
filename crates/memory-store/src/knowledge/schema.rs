@@ -88,8 +88,12 @@ pub(super) fn migrate(conn: &mut Connection, expected: Option<Scope>) -> Result<
         )?;
         tx.pragma_update(None, "user_version", 1)?;
     }
-    if found < 2 { super::embedding::migrate(&tx)?; }
-    if found < 3 { super::embedding::migrate_v3(&tx)?; }
+    if found < 2 {
+        super::embedding::migrate(&tx)?;
+    }
+    if found < 3 {
+        super::embedding::migrate_v3(&tx)?;
+    }
     tx.commit()?;
     Ok(VERSION)
 }

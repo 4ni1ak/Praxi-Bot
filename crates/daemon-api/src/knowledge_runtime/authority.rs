@@ -236,7 +236,7 @@ pub fn grant_confirm(
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(unavailable)?;
-    let saved: Option<(String,String,String,Option<u64>,i64)> = tx.query_row("SELECT payload,index_epoch,source_identity,source_revision,expires_ms FROM challenges WHERE id=?1 AND owner=?2 AND bot=?3",params![challenge_id.to_string(),state.user_id().to_string(),bot.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional().map_err(unavailable)?;
+    let saved: Option<(String,String,String,Option<i64>,i64)> = tx.query_row("SELECT payload,index_epoch,source_identity,source_revision,expires_ms FROM challenges WHERE id=?1 AND owner=?2 AND bot=?3",params![challenge_id.to_string(),state.user_id().to_string(),bot.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional().map_err(unavailable)?;
     let (payload, saved_epoch, saved_identity, revision, expiry) =
         saved.ok_or_else(|| ApiError::not_found("embedding approval"))?;
     let challenge: EmbeddingApprovalChallenge =
@@ -261,7 +261,7 @@ pub fn grant_confirm(
             .source(source_id)
             .map_err(unavailable)?
             .ok_or_else(|| ApiError::not_found("knowledge source"))?;
-        if !current.enabled || Some(current.revision) != revision {
+        if !current.enabled || i64::try_from(current.revision).ok() != revision {
             return Err(ApiError::conflict(
                 "knowledge source changed while approval was open",
             ));
@@ -291,9 +291,9 @@ pub fn grant_confirm(
         [challenge_id.to_string()],
     )
     .map_err(unavailable)?;
+    state.storage().append_audit(state.user_id(),None,"user","knowledge.embedding_approved",&json!({"bot_id":bot,"challenge_id":challenge_id,"target":challenge.target,"profile":consent.profile_fingerprint})).map_err(unavailable)?;
     tx.commit().map_err(unavailable)?;
     invalidate_bot(state, bot);
-    state.storage().append_audit(state.user_id(),None,"user","knowledge.embedding_approved",&json!({"bot_id":bot,"challenge_id":challenge_id,"target":challenge.target,"profile":consent.profile_fingerprint})).map_err(unavailable)?;
     Ok(consent)
 }
 

@@ -293,10 +293,23 @@ impl AgentLoop {
         let Ok(run_id) = run_id.parse::<Uuid>().map(RunId) else {
             return Decision::Deny;
         };
-        let Some(ctx) = self.ctx_of(run_id).filter(|ctx| ctx.bot_id == bot_id) else {
+        let _gate = self.sh.exec_gate.lock();
+        // Never reconstruct a context from a caller-supplied persisted run ID.
+        // Only a currently executing run may exercise its captured initiator
+        // and inherited subagent policy.
+        if self.rt.state(run_id).ok() != Some(RunState::Running) {
+            return Decision::Deny;
+        }
+        let Some(ctx) = self
+            .sh
+            .runs
+            .lock()
+            .get(&run_id)
+            .filter(|ctx| ctx.bot_id == bot_id)
+            .cloned()
+        else {
             return Decision::Deny;
         };
-        let _gate = self.sh.exec_gate.lock();
         if self
             .sh
             .policy_locked
@@ -304,16 +317,21 @@ impl AgentLoop {
         {
             return Decision::Deny;
         }
+        let Ok(current) = self.sh.profile_for(bot_id) else {
+            return Decision::Deny;
+        };
+        let policy = self.sh.global_policy.read();
+        let request = ActionRequest {
+            category: PermissionCategory::Remote,
+            raw_command: String::new(),
+            initiator: ctx.initiator,
+        };
         self.sh.resolver.resolve(
-            &self.sh.global_policy.read(),
+            &policy,
             ctx.bot_policy.as_ref(),
             None,
-            &ActionRequest {
-                category: PermissionCategory::Remote,
-                raw_command: String::new(),
-                initiator: ctx.initiator,
-            },
-        )
+            &request,
+        ).stricter(self.sh.resolver.resolve(&policy, current.policy.as_ref(), None, &request))
     }
 
     /// Replace the workspace-wide default policy.

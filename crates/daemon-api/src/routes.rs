@@ -397,6 +397,9 @@ pub(crate) async fn update_bot(
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
     let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
     if preserve_runtime
@@ -409,6 +412,7 @@ pub(crate) async fn update_bot(
             .insert("runtime".into(), runtime.clone());
     }
     s.storage().update_bot(bot.id, &name, &config)?;
+    crate::knowledge_runtime::invalidate_bot(&s, bot.id);
     bot.name = name;
     bot.config = config;
     s.refresh_profile(&bot);
@@ -424,9 +428,14 @@ pub(crate) async fn delete_bot(
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
     s.storage()
         .delete_bot(bot.id)
         .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+    crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.
