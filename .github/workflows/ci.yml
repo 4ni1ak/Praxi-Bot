@@ -43,52 +43,6 @@ jobs:
         if: success() || failure()
         run: cargo test --workspace --no-fail-fast
 
-      # Temporary evidence probe; removed after its Windows run is recorded.
-      - name: Verify Windows skill snapshot guard removals
-        if: runner.os == 'Windows' && success()
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $false
-          $sourcePath = 'crates/skills/src/owner.rs'
-          $originalBytes = [IO.File]::ReadAllBytes($sourcePath)
-          $originalText = [Text.Encoding]::UTF8.GetString($originalBytes)
-          $guard = '.share_mode(SHARE_READ)'
-          if ([regex]::Matches($originalText, [regex]::Escape($guard)).Count -ne 1) {
-            throw 'Expected exactly one Windows snapshot sharing guard'
-          }
-          $cases = @(
-            @{ Name = 'writer sharing'; Replacement = '.share_mode(SHARE_READ | 2)'; Test = 'owner::windows_tests::windows_file_snapshot_handle_rejects_writes_renames_and_deletion' },
-            @{ Name = 'file deletion sharing'; Replacement = '.share_mode(SHARE_READ | 4)'; Test = 'owner::windows_tests::windows_file_snapshot_handle_rejects_writes_renames_and_deletion' },
-            @{ Name = 'ancestor deletion sharing'; Replacement = '.share_mode(SHARE_READ | 4)'; Test = 'owner::windows_tests::windows_snapshot_ancestor_handles_prevent_directory_replacement_until_drop' }
-          )
-          foreach ($probe in $cases) {
-            try {
-              $mutated = $originalText.Replace($guard, $probe.Replacement)
-              [IO.File]::WriteAllText($sourcePath, $mutated, [Text.UTF8Encoding]::new($false))
-              $result = & cargo test -p skills --lib $probe.Test -- --exact --nocapture 2>&1
-              $probeExit = $LASTEXITCODE
-              $result | Write-Output
-              $report = $result | Out-String
-              if ($probeExit -ne 101 -or
-                  $report -notmatch ([regex]::Escape($probe.Test) + '.*FAILED') -or
-                  $report -notmatch 'test result: FAILED' -or
-                  $report -notmatch 'panicked at' -or
-                  $report -match 'could not compile|error\[E\d+\]') {
-                throw "Guard probe did not fail at its named regression: $($probe.Name)"
-              }
-              Write-Output "Verified failed regression for removed guard: $($probe.Name)"
-            } finally {
-              [IO.File]::WriteAllBytes($sourcePath, $originalBytes)
-            }
-            & cargo test -p skills --lib $probe.Test -- --exact
-            if ($LASTEXITCODE -ne 0) {
-              throw "Restored regression failed: $($probe.Test)"
-            }
-          }
-          git diff --exit-code -- $sourcePath
-          if ($LASTEXITCODE -ne 0) { throw 'Snapshot source was not restored exactly' }
-
   browser-integration:
     name: Browser integration (Chrome for Testing)
     runs-on: ubuntu-latest
