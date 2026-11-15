@@ -265,12 +265,12 @@ mod inference {
     };
     use tokio::sync::Semaphore;
 
-    use super::{
-        EmbeddingProfile, EmbeddingTaskFormat, LocalEmbeddingArtifacts,
-        Result, VerifiedRuntime, invalid, read_artifact,
-    };
     #[cfg(test)]
     use super::{Digest, PinnedEmbeddingArtifact, Sha256};
+    use super::{
+        EmbeddingProfile, EmbeddingTaskFormat, LocalEmbeddingArtifacts, Result, VerifiedRuntime,
+        invalid, read_artifact,
+    };
 
     struct Model {
         embedding: TextEmbedding,

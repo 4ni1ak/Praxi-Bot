@@ -43,7 +43,8 @@ impl Host {
                 redactor: Some(redactor),
                 ..LoopConfig::default()
             },
-        );
+        )
+        .with_subagents();
         let state = AppState::new(agent, storage, crate::DaemonConfig::new("test-token")).unwrap();
         state.set_secret_store(secrets.clone());
         let host = Self {
@@ -233,6 +234,9 @@ async fn ready(host: &Host, server: &MockServer) -> (EmbeddingConfig, Source) {
     assert_eq!(progress.embedded_chunks, 1);
     (config, source)
 }
+
+#[path = "admission_tests.rs"]
+mod admission_tests;
 
 #[tokio::test]
 async fn installed_runtime_works_without_any_provider_and_respects_bot_scope() {

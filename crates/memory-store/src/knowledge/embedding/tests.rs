@@ -599,7 +599,7 @@ async fn incompatible_profile_generation_cannot_mix_vectors_or_reuse_grants() {
     let mut changed = config;
     changed.profile.model_revision = Some("fixture-v2".into());
     let second = authorized_service(store.clone(), provider.clone(), runtime, changed).unwrap();
-    assert_eq!(count(&store, "knowledge_embeddings"), 0);
+    assert_eq!(count(&store, "knowledge_embeddings"), 1);
     assert_eq!(
         second
             .embed_source_batch(id, &CancellationToken::new())
@@ -958,7 +958,7 @@ async fn portable_index_validation_rejects_missing_policy_trigger_and_invalid_ve
         .join("bots")
         .join(owner.bot_id.to_string())
         .join("knowledge.db");
-    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 2);
+    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 3);
     store
         .conn()
         .execute_batch("DROP TRIGGER knowledge_embedding_grant_changed")
@@ -1067,4 +1067,118 @@ async fn imported_local_vectors_and_cache_are_discarded_before_reenable() {
         "imported local vectors are attacker-supplied ranking data"
     );
     assert_eq!(count(&store, "embedding_cache"), 0);
+}
+
+#[tokio::test]
+async fn owner_cooldown_recovery_releases_job_but_keeps_failed_request_charged() {
+    let store = store();
+    let id = source(&store, "Invoice billing details.");
+    let provider = Arc::new(Fake::new(true));
+    provider.fail.store(true, Ordering::SeqCst);
+    let mut config = config(&provider);
+    config.budget.requests_per_day = 2;
+    let account = config.account_group.clone();
+    let profile = config.profile.clone();
+    let fingerprint = profile.fingerprint().unwrap();
+    grant(&store, id, &profile);
+    let runtime = Arc::new(EmbeddingRuntime::open_in_memory().unwrap());
+    let service =
+        authorized_service(store.clone(), provider.clone(), runtime.clone(), config).unwrap();
+    let cancel = CancellationToken::new();
+    let deferred = service.embed_source_batch(id, &cancel).await.unwrap();
+    assert_eq!(deferred.status, EmbeddingStatus::Deferred);
+    assert!(deferred.next_attempt_ms.unwrap() > storage::now_ms());
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+
+    provider.fail.store(false, Ordering::SeqCst);
+    runtime.reset_cooldown(&account).unwrap();
+    assert_eq!(
+        service
+            .embed_source_batch(id, &cancel)
+            .await
+            .unwrap()
+            .status,
+        EmbeddingStatus::Deferred,
+        "the durable source job also carries the provider deadline"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    store.reset_embedding_cooldown(&fingerprint).unwrap();
+    let job: (i64, u32, Option<String>) = store
+        .conn()
+        .query_row(
+            "SELECT not_before_ms,attempts,failure_code FROM embedding_jobs WHERE source_id=?1",
+            [id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(job, (0, 0, None));
+    assert_eq!(
+        service
+            .embed_source_batch(id, &cancel)
+            .await
+            .unwrap()
+            .status,
+        EmbeddingStatus::Complete
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+
+    let other = store
+        .add_source(NewSource::new(SourceKind::Note, "Other", "other"))
+        .unwrap();
+    add_document(&store, other.id, "two.md", "SSH server access.");
+    grant(&store, other.id, &profile);
+    assert_eq!(
+        service
+            .embed_source_batch(other.id, &cancel)
+            .await
+            .unwrap()
+            .status,
+        EmbeddingStatus::Deferred,
+        "the failed HTTP request and successful retry consume the two-request budget"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn dimension_aware_scan_ceiling_precedes_paid_query_dispatch() {
+    let store = store();
+    let id = source(&store, "Invoice billing details.");
+    add_document(&store, id, "two.md", "SSH server access.");
+    add_document(&store, id, "three.md", "Salad cooking recipe.");
+    let provider = Arc::new(Fake::new(true));
+    let mut config = config(&provider);
+    config.profile.dimensions = 8192;
+    config.query_timeout_ms = 2;
+    config.query_consent = Some(RemoteEmbeddingConsent {
+        profile_fingerprint: config.profile.fingerprint().unwrap(),
+        granted_at_ms: storage::now_ms(),
+    });
+    grant(&store, id, &config.profile);
+    let service = authorized_service(
+        store.clone(),
+        provider.clone(),
+        Arc::new(EmbeddingRuntime::open_in_memory().unwrap()),
+        config,
+    )
+    .unwrap();
+    let progress = service
+        .embed_source_batch(id, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(progress.embedded_chunks, 3);
+    let calls = provider.calls.load(Ordering::SeqCst);
+    let response = service
+        .search(
+            &SearchRequest::new("billing details"),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.mode, SearchMode::LexicalDegraded);
+    assert_eq!(response.hits.len(), 1);
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        calls,
+        "three 32KiB vectors exceed the admitted 2ms/64KiB scan budget before query dispatch"
+    );
 }

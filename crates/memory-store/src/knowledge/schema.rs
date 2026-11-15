@@ -201,3 +201,54 @@ pub(super) fn read_scope(conn: &Connection) -> Result<Scope> {
     );
     Ok(Scope { user_id, bot_id })
 }
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_version_one_opens_upgrade_embedding_schema_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let scope = Scope {
+            user_id: UserId::new(),
+            bot_id: BotId::new(),
+        };
+        let bot_dir = directory.path().join("bots").join(scope.bot_id.to_string());
+        std::fs::create_dir_all(&bot_dir).unwrap();
+        let path = bot_dir.join("knowledge.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(INITIAL).unwrap();
+        conn.execute_batch(INSERT_TRIGGER).unwrap();
+        conn.execute_batch(DELETE_TRIGGER).unwrap();
+        conn.execute(
+            "INSERT INTO knowledge_meta(key,value) VALUES ('user_id',?1),('bot_id',?2)",
+            params![scope.user_id.to_string(), scope.bot_id.to_string()],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        drop(conn);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        std::thread::scope(|threads| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let root = directory.path();
+                    threads.spawn(move || {
+                        barrier.wait();
+                        let store = crate::knowledge::KnowledgeStore::open(root, scope).unwrap();
+                        store.authority_epoch().unwrap()
+                    })
+                })
+                .collect();
+            let epochs: Vec<_> = handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect();
+            assert!(epochs.iter().all(|epoch| epoch == &epochs[0]));
+        });
+        assert_eq!(
+            crate::knowledge::KnowledgeStore::validate_and_migrate(path).unwrap(),
+            VERSION
+        );
+    }
+}

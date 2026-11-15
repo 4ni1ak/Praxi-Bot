@@ -326,12 +326,14 @@ impl AgentLoop {
             raw_command: String::new(),
             initiator: ctx.initiator,
         };
-        self.sh.resolver.resolve(
-            &policy,
-            ctx.bot_policy.as_ref(),
-            None,
-            &request,
-        ).stricter(self.sh.resolver.resolve(&policy, current.policy.as_ref(), None, &request))
+        self.sh
+            .resolver
+            .resolve(&policy, ctx.bot_policy.as_ref(), None, &request)
+            .stricter(
+                self.sh
+                    .resolver
+                    .resolve(&policy, current.policy().as_ref(), None, &request),
+            )
     }
 
     /// Replace the workspace-wide default policy.
