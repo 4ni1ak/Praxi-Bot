@@ -144,6 +144,37 @@ fn production_redactor(sources: &RedactorSources) -> SharedRedactor {
     handle
 }
 
+/// The production redactor's secret list, read once, for a report written
+/// outside the daemon (`bot doctor --report`): every value in `store`, the
+/// API token in `data_dir` (as stored, even if malformed), the vault
+/// passphrase and credential environment variables, each with its encoded
+/// variants.  Unlike [`production_redactor`] it fails closed: a store that
+/// cannot be read is an error, never a smaller secret list.
+///
+/// # Errors
+/// The secret store cannot be listed or read.
+pub fn report_redactor(
+    data_dir: &Path,
+    store: &dyn SecretStore,
+) -> std::result::Result<SharedRedactor, secret_store::SecretError> {
+    let sources = RedactorSources {
+        store: None,
+        api_token: std::fs::read_to_string(daemon_api::token_path(data_dir))
+            .map(|t| t.trim().to_owned())
+            .unwrap_or_default(),
+        passphrase: env_passphrase(),
+        catalog_vars: catalog_env_vars(data_dir),
+    };
+    let extras: Vec<String> = sources
+        .extras()
+        .into_iter()
+        .filter(|v| !v.is_empty())
+        .collect();
+    let handle = SharedRedactor::default();
+    handle.refresh_from_store(Some(store), &extras)?;
+    Ok(handle)
+}
+
 /// A secret store that masks every value written through it from the moment
 /// it is stored (the daemon's write-only secrets route, MCP, channels), not
 /// only after the next refresh.

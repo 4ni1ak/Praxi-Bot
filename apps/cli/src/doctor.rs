@@ -556,9 +556,10 @@ fn check_telegram(env: &DoctorEnv<'_>) -> Check {
     }
 }
 
-/// Mask the home directory, e-mail addresses and anything that looks like a
-/// key or token (24+ characters of `[A-Za-z0-9_-]`).
+/// Pattern masking only (no secret list): the home directory, e-mail
+/// addresses, user / host names and anything that looks like a key or token.
 #[must_use]
+#[cfg(test)]
 pub fn redact(s: &str) -> String {
     let home = core::home_dir();
     core::redact_report(
@@ -567,14 +568,21 @@ pub fn redact(s: &str) -> String {
             secrets: None,
             home: home.as_deref(),
             identities: core::machine_identities(),
+            known: core::KnownIds::default(),
         },
     )
 }
 
 /// A redacted diagnostic bundle: versions, OS, check results and provider
-/// ids. No keys, tokens, secret names or file contents.
+/// ids. No keys, tokens, secret names or file contents.  `secrets` is the
+/// production redactor's secret list (see [`crate::serve::report_redactor`]);
+/// model and provider ids from the catalog and the config stay readable.
 #[must_use]
-pub fn report_bundle(env: &DoctorEnv<'_>, checks: &[Check]) -> Value {
+pub fn report_bundle(
+    env: &DoctorEnv<'_>,
+    checks: &[Check],
+    secrets: &agent_core::SharedRedactor,
+) -> Value {
     let providers: Vec<Value> = ProviderConfig::load(&config_path(env.data_dir))
         .map(|c| {
             c.providers
@@ -601,27 +609,48 @@ pub fn report_bundle(env: &DoctorEnv<'_>, checks: &[Check]) -> Value {
         "providers": providers,
         "doctor": to_json(checks),
     });
-    redact_value(&mut v);
+    let home = core::home_dir();
+    let redact = |t: &str| secrets.redact(t);
+    let scrub = core::Scrub {
+        secrets: Some(&redact),
+        home: home.as_deref(),
+        identities: core::machine_identities(),
+        known: core::KnownIds::collect(env.data_dir, env.catalog.as_ref().ok().copied()),
+    };
+    redact_value(&mut v, &scrub);
     v
 }
 
-fn redact_value(v: &mut Value) {
+fn redact_value(v: &mut Value, scrub: &core::Scrub<'_>) {
     match v {
-        Value::String(s) => *s = redact(s),
-        Value::Array(a) => a.iter_mut().for_each(redact_value),
-        Value::Object(o) => o.values_mut().for_each(redact_value),
+        Value::String(s) => *s = core::redact_report(s, scrub),
+        Value::Array(a) => a.iter_mut().for_each(|x| redact_value(x, scrub)),
+        Value::Object(o) => o.values_mut().for_each(|x| redact_value(x, scrub)),
         _ => {}
     }
 }
 
-/// Write the report bundle to `path`.
+/// Write the report bundle to `path`, redacted with the same secret list as
+/// the daemon's support report.  Refuses (and writes nothing) when the
+/// secret store cannot be opened or read: without the secret list the report
+/// could carry a stored secret in clear.
 ///
 /// # Errors
-/// The file cannot be written.
+/// The secret store is unavailable, or the file cannot be written.
 pub fn write_report(env: &DoctorEnv<'_>, checks: &[Check], path: &Path) -> Result<()> {
+    let store = env.store.as_ref().map_err(|e| {
+        format!(
+            "not writing the report: the secret store cannot be opened ({e}), so stored secrets could not be masked; fix the secret backend (see the secret backend check) and try again"
+        )
+    })?;
+    let secrets = crate::serve::report_redactor(env.data_dir, store.0).map_err(|e| {
+        format!(
+            "not writing the report: the secret store cannot be read ({e}), so stored secrets could not be masked; fix the secret backend (see the secret backend check) and try again"
+        )
+    })?;
     std::fs::write(
         path,
-        serde_json::to_string_pretty(&report_bundle(env, checks))?,
+        serde_json::to_string_pretty(&report_bundle(env, checks, &secrets))?,
     )?;
     Ok(())
 }
@@ -843,6 +872,55 @@ id = "m1"
         assert_eq!(get(&checks, "telegram").status, Status::Warn);
     }
 
+    struct FailingStore;
+
+    impl SecretStore for FailingStore {
+        fn get(
+            &self,
+            _: &str,
+        ) -> std::result::Result<Option<SecretValue>, secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+        fn set(&self, _: &str, _: &str) -> std::result::Result<(), secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+        fn delete(&self, _: &str) -> std::result::Result<bool, secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+        fn list_names(&self) -> std::result::Result<Vec<String>, secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+    }
+
+    #[test]
+    fn report_is_refused_when_the_secrets_cannot_be_read() {
+        let d = tempfile::tempdir().unwrap();
+        let cat = catalog();
+        let path = d.path().join("report.json");
+        // The store does not open.
+        let mut e = DoctorEnv {
+            data_dir: d.path(),
+            catalog: Ok(&cat),
+            store: Err("passphrase needed".into()),
+            port: free_port(),
+            online: false,
+            browser: None,
+            browser_error: None,
+            detected: None,
+            desktop: None,
+        };
+        let checks = run_checks(&e);
+        let err = write_report(&e, &checks, &path).unwrap_err().to_string();
+        assert!(err.contains("not writing the report"), "{err}");
+        assert!(!path.exists());
+        // The store opens, but cannot be read.
+        let failing = FailingStore;
+        e.store = Ok((&failing, "failing".into()));
+        let err = write_report(&e, &checks, &path).unwrap_err().to_string();
+        assert!(err.contains("cannot be read"), "{err}");
+        assert!(!path.exists());
+    }
+
     #[test]
     fn redaction_masks_tokens_and_home() {
         let tok = "a".repeat(64);
@@ -854,6 +932,10 @@ id = "m1"
         assert!(r.contains("short-id"));
     }
 
+    /// A stored secret no pattern recognises: short segments, no key shape,
+    /// no percent-escape.
+    const PLAIN_SECRET: &str = "vault pass 9|9";
+
     #[test]
     fn report_has_no_secrets() {
         let d = tempfile::tempdir().unwrap();
@@ -864,18 +946,25 @@ id = "m1"
                 "sk-supersecretvalue-0123456789abcdef",
             )
             .unwrap();
+        store.set("vault.note", PLAIN_SECRET).unwrap();
         std::fs::write(daemon_api::token_path(d.path()), "b".repeat(64)).unwrap();
         let mut s = ProviderSettings::new("alpha", 1);
         s.key = Some(SecretRef::new("provider.alpha.api_key").unwrap());
         let mut cfg = ProviderConfig::default();
         cfg.upsert(s);
+        // A provider id equal to a stored secret: copied into the provider
+        // list and the check details; only the secret list can mask it.
+        cfg.upsert(ProviderSettings::new(PLAIN_SECRET, 2));
         cfg.save(&config_path(d.path())).unwrap();
+        // The patterns alone do not catch it.
+        assert!(redact(PLAIN_SECRET).contains("vault pass"));
         let e = env(d.path(), &cat, &store, free_port());
         let checks = run_checks(&e);
         let path = d.path().join("report.json");
         write_report(&e, &checks, &path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("supersecret"));
+        assert!(!text.contains("vault pass"), "{text}");
         assert!(!text.contains(&"b".repeat(64)));
         assert!(!text.contains("provider.alpha.api_key"));
         let v: Value = serde_json::from_str(&text).unwrap();
