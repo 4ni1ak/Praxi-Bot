@@ -4232,6 +4232,20 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
             self.0.release.store(true, Ordering::SeqCst);
         }
     }
+    struct AbortOnDrop(tokio::task::JoinHandle<()>);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    async fn wait_for(what: &'static str, cond: &dyn Fn() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !cond() {
+            assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+
     struct MockDesktopCapture {
         geom: Arc<Mutex<GeometrySnapshot>>,
         gate: Arc<CaptureGate>,
@@ -4240,7 +4254,11 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
         fn capture(&mut self, raw_buf: &mut Vec<u8>) -> Result<CapturedRawInfo, CaptureFailure> {
             let geom = *self.geom.lock();
             if geom.display_token == 2
-                && self.gate.new_geometry_captures.fetch_add(1, Ordering::SeqCst) >= 1
+                && self
+                    .gate
+                    .new_geometry_captures
+                    .fetch_add(1, Ordering::SeqCst)
+                    >= 1
             {
                 self.gate.parked.store(true, Ordering::SeqCst);
                 while !self.gate.release.load(Ordering::SeqCst) {
@@ -4391,12 +4409,6 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
     // reads for 2s) and every wait below is a bounded poll on state, never a fixed sleep.
     let mut body = response.into_body();
     let drainer = tokio::spawn(async move { while body.frame().await.is_some() {} });
-    struct AbortOnDrop(tokio::task::JoinHandle<()>);
-    impl Drop for AbortOnDrop {
-        fn drop(&mut self) {
-            self.0.abort();
-        }
-    }
     let _drainer = AbortOnDrop(drainer);
     let geometry_of = |t: &Test| {
         t.state
@@ -4406,13 +4418,6 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
             .get(&session_id)
             .and_then(|s| s.geometry)
     };
-    async fn wait_for(what: &'static str, cond: &dyn Fn() -> bool) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(20);
-        while !cond() {
-            assert!(std::time::Instant::now() < deadline, "timed out: {what}");
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
-    }
     wait_for("first frame stored", &|| {
         geometry_of(&t).is_some_and(|(r, _, _)| r == 1)
     })
