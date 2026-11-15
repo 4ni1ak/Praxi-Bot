@@ -3228,9 +3228,16 @@ export interface components {
         Status: "ok" | "warn" | "fail" | "skipped";
         /**
          * @description What happened to one run of a Stop's target set.
+         *
+         *     `cancelled` is the only outcome that means the run has stopped. For a live
+         *     run the daemon can only fire the run's cancel token: `cancel_requested`
+         *     says it did so, and the run's effects (a tool call, a shell child, a
+         *     browser or desktop action) have ceased only once its `state` is terminal or
+         *     `run_finished` arrives. A human takeover is not touched by this route
+         *     (`/v1/control/override` handles it).
          * @enum {string}
          */
-        StopOutcome: "cancelled" | "already_terminal" | "not_found" | "failed";
+        StopOutcome: "cancelled" | "cancel_requested" | "already_terminal" | "not_found" | "failed";
         /** @description One member of a Stop's target set. */
         StopRunResult: {
             /** @description Why the cancel failed. */
@@ -3260,11 +3267,24 @@ export interface components {
         };
         /** @description Response of `POST /v1/runs/stop`. */
         StopRunsResponse: {
+            /**
+             * @description `false` when the audit row of this call could not be written. Only the
+             *     local user's Stop proceeds without it (peers fail with 500).
+             */
+            audited?: boolean;
+            /**
+             * @description `true` when this `stop_id` was seen before but its target set is no
+             *     longer kept (expired or evicted): nothing was cancelled and `results`
+             *     is empty. Send a new `stop_id` to stop again.
+             */
+            expired?: boolean;
             /** @description `true` when this call fixed the target set, `false` for a repeat. */
             first_seen: boolean;
             /**
              * @description Every member of the target set. A run that is not listed was not
-             *     targeted (it was created after the first receipt).
+             *     targeted (it was created after the first receipt). A repeat retries
+             *     `failed` members and re-issues the cancel of `cancel_requested` ones;
+             *     terminal and unknown members are never touched again.
              */
             results: components["schemas"]["StopRunResult"][];
             /**
