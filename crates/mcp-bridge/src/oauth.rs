@@ -41,6 +41,48 @@ pub fn credential_name(server: &str) -> String {
     format!("mcp/{server}/oauth")
 }
 
+/// Orders every write of one server's OAuth record against sign-out and
+/// removal.  A credential store made with [`SecretCredentialStore::guarded`]
+/// remembers the epoch it started in; [`CredentialGuard::revoke`] moves the
+/// epoch and runs its delete under the same write lock, so a sign-in exchange
+/// or refresh that was in flight either saved before the delete (and is
+/// deleted) or finds the epoch moved and saves nothing.  Signing out can
+/// therefore never be undone by an older writer.
+#[derive(Clone, Default)]
+pub struct CredentialGuard(Arc<CredentialGuardInner>);
+
+#[derive(Default)]
+struct CredentialGuardInner {
+    epoch: std::sync::atomic::AtomicU64,
+    write: parking_lot::Mutex<()>,
+}
+
+impl CredentialGuard {
+    /// The current epoch.
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.0.epoch.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Invalidate every writer that started before this call, then run `f`
+    /// (typically the delete) while no writer can save.
+    pub fn revoke<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _write = self.0.write.lock();
+        self.0
+            .epoch
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        f()
+    }
+}
+
+impl std::fmt::Debug for CredentialGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialGuard")
+            .field("epoch", &self.epoch())
+            .finish()
+    }
+}
+
 /// OAuth credentials of one MCP server, kept in the secret store.
 pub struct SecretCredentialStore {
     store: Arc<dyn SecretStore>,
@@ -48,6 +90,8 @@ pub struct SecretCredentialStore {
     /// Canonical URL of the MCP server the credentials were issued for.
     resource: String,
     registrar: Option<SecretRegistrar>,
+    /// The guard and the epoch this store started in.
+    guard: Option<(CredentialGuard, u64)>,
 }
 
 /// What is written to the secret store: the credentials and the server they
@@ -111,7 +155,24 @@ impl SecretCredentialStore {
             name: credential_name(server),
             resource: canonical_resource(url)?,
             registrar,
+            guard: None,
         })
+    }
+
+    /// Tie this store to `guard` as of now: after the next
+    /// [`CredentialGuard::revoke`] it neither loads nor saves.
+    #[must_use]
+    pub fn guarded(mut self, guard: Option<&CredentialGuard>) -> Self {
+        self.guard = guard.map(|g| (g.clone(), g.epoch()));
+        self
+    }
+
+    /// Whether a revoke happened since this store was made.
+    #[must_use]
+    pub fn revoked(&self) -> bool {
+        self.guard
+            .as_ref()
+            .is_some_and(|(guard, epoch)| guard.epoch() != *epoch)
     }
 
     /// Hand the token values inside `serialized` to the redactor.
@@ -140,6 +201,9 @@ fn store_error(action: &str) -> AuthError {
 #[async_trait::async_trait]
 impl CredentialStore for SecretCredentialStore {
     async fn load(&self) -> std::result::Result<Option<StoredCredentials>, AuthError> {
+        if self.revoked() {
+            return Ok(None);
+        }
         let Some(value) = self
             .store
             .get(&self.name)
@@ -175,16 +239,42 @@ impl CredentialStore for SecretCredentialStore {
         // Before the store write: the value must be masked by the time anything
         // could log it.
         self.register(&serialized);
-        self.store
-            .set(&self.name, &serialized)
-            .map_err(|_| store_error("write"))
+        let write = || {
+            self.store
+                .set(&self.name, &serialized)
+                .map_err(|_| store_error("write"))
+        };
+        match &self.guard {
+            None => write(),
+            Some((guard, epoch)) => {
+                // Checked and written under the guard's lock: a revoke is
+                // either entirely before (refused here) or entirely after.
+                let _write = guard.0.write.lock();
+                if guard.epoch() == *epoch {
+                    write()
+                } else {
+                    Err(AuthError::CredentialStoreError(
+                        "the sign-in was revoked meanwhile; credentials were not stored".into(),
+                    ))
+                }
+            }
+        }
     }
 
     async fn clear(&self) -> std::result::Result<(), AuthError> {
-        self.store
-            .delete(&self.name)
-            .map(|_| ())
-            .map_err(|_| store_error("delete"))
+        let delete = || {
+            self.store
+                .delete(&self.name)
+                .map(|_| ())
+                .map_err(|_| store_error("delete"))
+        };
+        match &self.guard {
+            None => delete(),
+            Some((guard, _)) => {
+                let _write = guard.0.write.lock();
+                delete()
+            }
+        }
     }
 }
 
@@ -245,6 +335,9 @@ pub struct SignInOptions {
     pub challenge: Option<String>,
     /// Accept `http` endpoints on loopback (local development only).
     pub allow_loopback_http: bool,
+    /// Orders this flow's credential writes against sign-out (set by the
+    /// manager; `None` in standalone use).
+    pub guard: Option<CredentialGuard>,
 }
 
 impl std::fmt::Debug for SignInOptions {
@@ -308,7 +401,8 @@ impl SignIn {
         registrar: Option<SecretRegistrar>,
         options: SignInOptions,
     ) -> Result<Self> {
-        let credentials = SecretCredentialStore::new(store, server, url, registrar)?;
+        let credentials = SecretCredentialStore::new(store, server, url, registrar)?
+            .guarded(options.guard.as_ref());
         let mut manager = AuthorizationManager::new(url)
             .await
             .map_err(|e| auth_error(server, &e))?;
@@ -426,7 +520,15 @@ pub async fn stored_bearer(
     force_refresh: bool,
     options: &SignInOptions,
 ) -> Result<Option<String>> {
-    let probe = SecretCredentialStore::new(Arc::clone(store), server, url, registrar.cloned())?;
+    let probe = SecretCredentialStore::new(Arc::clone(store), server, url, registrar.cloned())?
+        .guarded(options.guard.as_ref());
+    let revoked = {
+        let (guard, epoch) = (
+            options.guard.clone(),
+            options.guard.as_ref().map(CredentialGuard::epoch),
+        );
+        move || guard.as_ref().map(CredentialGuard::epoch) != epoch
+    };
     let Some(stored) = probe
         .load()
         .await
@@ -501,6 +603,9 @@ pub async fn stored_bearer(
             }
             Ok(Some(token))
         }
+        // Signed out while refreshing: the refreshed token was not stored and
+        // is not used.
+        Err(_) if revoked() => Err(McpError::AuthRequired(server.to_owned())),
         Err(AuthError::AuthorizationRequired | AuthError::TokenRefreshRejected(_)) => {
             Err(McpError::AuthRequired(server.to_owned()))
         }

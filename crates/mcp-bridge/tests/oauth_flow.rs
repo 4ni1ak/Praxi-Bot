@@ -14,6 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const ACCESS: &str = "access-sentinel-e2e-7f3a";
 const REFRESH: &str = "refresh-sentinel-e2e-91bc";
 const REFRESHED: &str = "refreshed-access-sentinel-e2e-637c";
+const ROTATED: &str = "rotated-refresh-sentinel-e2e-0d4e";
 
 #[derive(Default)]
 struct MemoryStore(Mutex<BTreeMap<String, String>>);
@@ -36,7 +37,15 @@ impl SecretStore for MemoryStore {
 
 /// What the fake authorization server saw and what it expects.
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)] // independent fixture switches
 struct Seen {
+    /// When set, a refresh answer waits for one permit (the test decides
+    /// exactly when the refreshed tokens arrive).
+    refresh_gate: Option<Arc<tokio::sync::Semaphore>>,
+    /// Refresh requests received (counted before waiting at the gate).
+    refreshes_received: usize,
+    /// Answer refreshes with a new refresh token ([`ROTATED`]).
+    rotate_refresh: bool,
     expires_in: Option<u64>,
     refresh_allowed: bool,
     /// When set, speak MCP for this bearer instead of always returning 401.
@@ -243,6 +252,17 @@ async fn fake_authorization_server(
                             && seen.lock().refresh_allowed;
                         let expires_in = seen.lock().expires_in.unwrap_or(3600);
                         seen.lock().token_requests.push(form);
+                        if refreshing {
+                            let gate = {
+                                let mut seen = seen.lock();
+                                seen.refreshes_received += 1;
+                                seen.refresh_gate.clone()
+                            };
+                            if let Some(gate) = gate {
+                                gate.acquire().await.unwrap().forget();
+                            }
+                        }
+                        let rotated = seen.lock().rotate_refresh;
                         if valid || refreshing {
                             (
                                 "200 OK",
@@ -250,7 +270,7 @@ async fn fake_authorization_server(
                                     "access_token": if refreshing { REFRESHED } else { ACCESS },
                                     "token_type": "Bearer",
                                     "expires_in": if refreshing { 3600 } else { expires_in },
-                                    "refresh_token": REFRESH,
+                                    "refresh_token": if refreshing && rotated { ROTATED } else { REFRESH },
                                 }),
                             )
                         } else {
@@ -785,5 +805,87 @@ async fn metadata_document_is_preferred_to_a_preregistered_client_when_supported
     let params = pairs(sign_in.authorization_url().split_once('?').unwrap().1);
     assert_eq!(params["client_id"], "https://client.example/metadata.json");
     finish_sign_in(sign_in, &base, &seen).await;
+    server.abort();
+}
+
+/// Review finding 3: a refresh that is waiting for its answer when the user
+/// signs out must not store the refreshed (rotated) credentials afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn sign_out_during_a_blocked_refresh_leaves_no_credentials() {
+    let (base, seen, server) = fake_authorization_server(true).await;
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    {
+        let mut seen = seen.lock();
+        seen.expires_in = Some(30); // inside the 60 s window: refresh on connect
+        seen.refresh_allowed = true;
+        seen.rotate_refresh = true;
+        seen.mcp_bearer = Some(REFRESHED.into());
+        seen.refresh_gate = Some(Arc::clone(&gate));
+    }
+    let store = Arc::new(MemoryStore::default());
+    let manager = Arc::new(
+        McpManager::with_policy(tool_registry::ToolRegistry::new(), McpPolicy::default())
+            .with_secret_store(store.clone()),
+    );
+    assert!(matches!(
+        manager
+            .add_server(http_config("race", format!("{base}/mcp")))
+            .await,
+        Err(McpError::AuthRequired(_))
+    ));
+    finish_sign_in(
+        manager.start_sign_in("race", options()).await.unwrap(),
+        &base,
+        &seen,
+    )
+    .await;
+    assert!(store.0.lock().contains_key(&credential_name("race")));
+
+    // Connect: the refresh request reaches the token endpoint and waits.
+    let connecting = tokio::spawn({
+        let manager = Arc::clone(&manager);
+        async move { manager.reenable("race").await }
+    });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while seen.lock().refreshes_received == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Sign out while it waits: the record is gone right away.
+    let signing_out = tokio::spawn({
+        let manager = Arc::clone(&manager);
+        async move { manager.sign_out("race").await }
+    });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while store.0.lock().contains_key(&credential_name("race")) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Now the rotated tokens arrive.
+    gate.add_permits(1);
+    assert!(signing_out.await.unwrap().unwrap());
+    let connected = connecting.await.unwrap();
+    assert!(
+        matches!(connected, Err(McpError::AuthRequired(_))),
+        "{connected:?}"
+    );
+    assert!(
+        !store.0.lock().contains_key(&credential_name("race")),
+        "a refresh re-stored credentials after sign-out"
+    );
+    let all = format!("{:?}", store.0.lock());
+    assert!(!all.contains(ROTATED) && !all.contains(REFRESHED));
+    // No session was opened with the refreshed bearer.
+    assert!(
+        seen.lock()
+            .mcp_authorization
+            .iter()
+            .all(|a| a.as_deref() != Some(&format!("Bearer {REFRESHED}")))
+    );
+    manager.shutdown().await;
     server.abort();
 }

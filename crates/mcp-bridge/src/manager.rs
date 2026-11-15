@@ -180,6 +180,8 @@ pub(crate) struct Server {
     watching: AtomicBool,
     /// A live HTTP request rejected its bearer, even if local expiry is later.
     refresh_required: AtomicBool,
+    /// Orders OAuth credential writes against sign-out and removal.
+    credentials: crate::oauth::CredentialGuard,
 }
 
 impl Server {
@@ -200,6 +202,7 @@ impl Server {
         &self,
         mut options: crate::oauth::SignInOptions,
     ) -> Result<crate::oauth::SignInOptions> {
+        options.guard = Some(self.credentials.clone());
         if let Some(config) = &self.config.oauth {
             options.client_id.clone_from(&config.client_id);
             options
@@ -732,6 +735,8 @@ impl Server {
     }
 
     fn retire(&self) {
+        // Writers of the retired registration can no longer save credentials.
+        self.credentials.revoke(|| ());
         let mut st = self.state.lock();
         st.retired = true;
         st.generation = st.generation.wrapping_add(1);
@@ -918,8 +923,11 @@ impl McpManager {
         let store = self.secrets.clone().ok_or_else(|| {
             McpError::Config(format!("server `{id}`: no secret store is configured"))
         })?;
-        let existed = store
-            .delete(&crate::oauth::credential_name(id))
+        // Revoke first: a sign-in exchange or refresh in flight can no longer
+        // save, so the delete below is final.
+        let existed = server
+            .credentials
+            .revoke(|| store.delete(&crate::oauth::credential_name(id)))
             .map_err(|_| McpError::Store("cannot delete OAuth credentials".to_owned()))?;
         server.drop_session().await;
         let mut state = server.state.lock();
@@ -1011,6 +1019,7 @@ impl McpManager {
             registrar: self.registrar.clone(),
             watching: AtomicBool::new(false),
             refresh_required: AtomicBool::new(false),
+            credentials: crate::oauth::CredentialGuard::default(),
             config,
         });
         {
