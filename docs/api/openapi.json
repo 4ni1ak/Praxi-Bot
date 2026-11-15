@@ -1077,6 +1077,205 @@
         ]
       }
     },
+    "/v1/doctor": {
+      "get": {
+        "tags": [
+          "doctor"
+        ],
+        "summary": "Run the read-only diagnostics.",
+        "operationId": "get_doctor",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoctorReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "a diagnostics run is already in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/doctor/repair/{id}": {
+      "post": {
+        "tags": [
+          "doctor"
+        ],
+        "summary": "Run one allow-listed repair.  The request is the local user's click in\nSettings (bots have no API token; paired peers are refused by the peer\nrouter).  An attributed `doctor.repair_requested` audit record is written\nbefore anything runs (no record, no repair), and `doctor.repair` records\nthe outcome.",
+        "operationId": "repair",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Repair id: create_data_dir, reload_providers or restart_browser",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not an allow-listed repair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "this daemon cannot run that repair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the repair ran and failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "the audit record could not be written; nothing ran",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/doctor/report": {
+      "get": {
+        "tags": [
+          "doctor"
+        ],
+        "summary": "A redacted Markdown support report: versions, platform, check results and\nconfig file names (never contents).  The home directory becomes `~`;\nsecrets known to the daemon (and their encoded forms), the API token,\nkey-shaped strings, credentials in URLs and assignments, host names, user\nnames and e-mail addresses are masked.  Ends within 15 s.",
+        "operationId": "report",
+        "responses": {
+          "200": {
+            "description": "Markdown report",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "safe redaction unavailable or the report did not finish in time",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/email/accounts": {
       "get": {
         "tags": [
@@ -4430,6 +4629,52 @@
           }
         }
       },
+      "Check": {
+        "type": "object",
+        "description": "One diagnostic result.",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What was found."
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How to fix it by hand (for warn / fail)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id (`data_dir`, `providers`, ...)."
+          },
+          "repair": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Repair",
+                "description": "The one-click repair, when one is allowed for this finding."
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "description": "Result class."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short human name (`data dir`, `providers`, ...), as `bot doctor` prints it."
+          }
+        }
+      },
       "CliAuthState": {
         "type": "string",
         "description": "Authentication status reported by a CLI provider (`GET /v1/providers/detected`).",
@@ -4880,6 +5125,27 @@
           "not_accessible",
           "line_endings"
         ]
+      },
+      "DoctorReport": {
+        "type": "object",
+        "description": "`GET /v1/doctor` response.",
+        "required": [
+          "ok",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            },
+            "description": "Results, in display order."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "`false` when any check failed."
+          }
+        }
       },
       "EffectivePolicyDto": {
         "type": "object",
@@ -7534,6 +7800,33 @@
           }
         }
       },
+      "Repair": {
+        "type": "string",
+        "description": "An allow-listed, one-click repair.  Deliberately closed: nothing here runs\na shell command, and regenerating the API token is not offered.",
+        "enum": [
+          "create_data_dir",
+          "reload_providers",
+          "restart_browser"
+        ]
+      },
+      "RepairResult": {
+        "type": "object",
+        "description": "`POST /v1/doctor/repair/{id}` response.",
+        "required": [
+          "repair",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What it did."
+          },
+          "repair": {
+            "$ref": "#/components/schemas/Repair",
+            "description": "The repair that ran."
+          }
+        }
+      },
       "RestoreActionDto": {
         "type": "string",
         "description": "Action a restore operation will apply to a path.",
@@ -8299,6 +8592,16 @@
           }
         }
       },
+      "Status": {
+        "type": "string",
+        "description": "Result class of one check.",
+        "enum": [
+          "ok",
+          "warn",
+          "fail",
+          "skipped"
+        ]
+      },
       "TakeoverAccepted": {
         "type": "object",
         "required": [
@@ -8859,6 +9162,9 @@
     },
     {
       "name": "web"
+    },
+    {
+      "name": "doctor"
     }
   ]
 }

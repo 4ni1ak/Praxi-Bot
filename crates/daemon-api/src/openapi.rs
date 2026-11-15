@@ -9,8 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, dto, email, email_routes, error, host, live_view, mcp, mcp_routes, routes, sse, web,
-    web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
+    mcp_routes, routes, sse, web, web_routes,
 };
 
 struct Security;
@@ -91,6 +91,9 @@ impl Modify for Security {
         routes::detect_providers,
         routes::enable_cli_provider,
         routes::reload_providers,
+        doctor_routes::get_doctor,
+        doctor_routes::repair,
+        doctor_routes::report,
         routes::list_schedules,
         routes::create_schedule,
         routes::get_schedule,
@@ -146,6 +149,8 @@ impl Modify for Security {
         changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
         changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,
         changes::RestorePreviewDto, changes::RestoreRequestDto, changes::RestoreResponseDto,
+        doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
+        doctor_routes::RepairResult,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
@@ -153,7 +158,7 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web")
+        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"), (name = "doctor")
     )
 )]
 pub struct ApiDoc;

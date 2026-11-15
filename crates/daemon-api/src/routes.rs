@@ -1261,7 +1261,7 @@ fn persist_cli_enable(
     })
 }
 
-async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, ApiError> {
+pub(crate) async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, ApiError> {
     let st = s.clone();
     let built =
         tokio::task::spawn_blocking(move || (st.provider_host().expect("checked above").reload)())

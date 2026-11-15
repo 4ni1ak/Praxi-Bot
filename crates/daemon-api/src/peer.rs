@@ -31,6 +31,18 @@ pub const PHONE_DENIED_POST_PATHS: &[&str] = &["/v1/host/import", "/v1/host/hand
 /// Host-local provider management endpoints forbidden to ALL paired peers.
 pub const PEER_DENIED_POST_PATHS: &[&str] = &["/v1/providers/cli/enable", "/v1/providers/reload"];
 
+/// Host-local diagnostics forbidden to ALL paired peers, for every method.
+/// Repairs (`/v1/doctor/repair/*`) are actions of the user at this host's
+/// desktop UI; the check list and the support report describe the host (paths,
+/// platform, provider set), so peers do not read them either.
+pub const PEER_DENIED_PREFIX_DOCTOR: &str = "/v1/doctor";
+
+/// Whether `path` (decoded and slash-normalized) is a diagnostics endpoint.
+fn is_doctor_path(path: &str) -> bool {
+    path.strip_prefix(PEER_DENIED_PREFIX_DOCTOR)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 /// Same API and permissions as loopback, with transport authentication.
 pub fn peer_router(state: AppState) -> Router {
     crate::api_routes()
@@ -66,6 +78,15 @@ fn normalize_deny_path(path: &str) -> String {
     out
 }
 
+/// Why `method path` is refused to every paired peer role, if it is: the
+/// host-local provider management and diagnostics endpoints.
+fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
+        return Some("host-local provider management is not allowed for peers");
+    }
+    is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
+}
+
 /// `POST /v1/control/{request_id}` answers an overlay question: local only.
 fn answers_overlay_question(path: &str) -> bool {
     path.strip_prefix("/v1/control/")
@@ -88,9 +109,8 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         Err(_) => return ApiError::forbidden("invalid path").into_response(),
     };
     let check_path = normalize_deny_path(&path);
-    if req.method() == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path.as_str()) {
-        return ApiError::forbidden("host-local provider management is not allowed for peers")
-            .into_response();
+    if let Some(why) = host_local_denial(req.method(), &check_path) {
+        return ApiError::forbidden(why).into_response();
     }
     let denied = peer.role != PeerRole::Desktop
         && (host_file_review(&check_path)

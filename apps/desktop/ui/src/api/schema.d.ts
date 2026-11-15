@@ -298,6 +298,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run the read-only diagnostics. */
+        get: operations["get_doctor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor/repair/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run one allow-listed repair.  The request is the local user's click in
+         *     Settings (bots have no API token; paired peers are refused by the peer
+         *     router).  An attributed `doctor.repair_requested` audit record is written
+         *     before anything runs (no record, no repair), and `doctor.repair` records
+         *     the outcome.
+         */
+        post: operations["repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A redacted Markdown support report: versions, platform, check results and
+         *     config file names (never contents).  The home directory becomes `~`;
+         *     secrets known to the daemon (and their encoded forms), the API token,
+         *     key-shaped strings, credentials in URLs and assignments, host names, user
+         *     names and e-mail addresses are masked.  Ends within 15 s.
+         */
+        get: operations["report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/email/accounts": {
         parameters: {
             query?: never;
@@ -1462,6 +1525,20 @@ export interface components {
             /** @description Title. */
             title: string;
         };
+        /** @description One diagnostic result. */
+        Check: {
+            /** @description What was found. */
+            detail: string;
+            /** @description How to fix it by hand (for warn / fail). */
+            hint?: string | null;
+            /** @description Stable id (`data_dir`, `providers`, ...). */
+            id: string;
+            repair?: null | components["schemas"]["Repair"];
+            /** @description Result class. */
+            status: components["schemas"]["Status"];
+            /** @description Short human name (`data dir`, `providers`, ...), as `bot doctor` prints it. */
+            title: string;
+        };
         /**
          * @description Authentication status reported by a CLI provider (`GET /v1/providers/detected`).
          * @enum {string}
@@ -1643,6 +1720,13 @@ export interface components {
          * @enum {string}
          */
         DiffOmittedReasonDto: "binary" | "too_large" | "run_budget_exceeded" | "directory" | "symlink" | "not_accessible" | "line_endings";
+        /** @description `GET /v1/doctor` response. */
+        DoctorReport: {
+            /** @description Results, in display order. */
+            checks: components["schemas"]["Check"][];
+            /** @description `false` when any check failed. */
+            ok: boolean;
+        };
         /** @description A bot's permission picture (`GET /v1/bots/{id}`). */
         EffectivePolicyDto: {
             /**
@@ -2592,6 +2676,19 @@ export interface components {
             route: Record<string, never>;
         };
         /**
+         * @description An allow-listed, one-click repair.  Deliberately closed: nothing here runs
+         *     a shell command, and regenerating the API token is not offered.
+         * @enum {string}
+         */
+        Repair: "create_data_dir" | "reload_providers" | "restart_browser";
+        /** @description `POST /v1/doctor/repair/{id}` response. */
+        RepairResult: {
+            /** @description What it did. */
+            detail: string;
+            /** @description The repair that ran. */
+            repair: components["schemas"]["Repair"];
+        };
+        /**
          * @description Action a restore operation will apply to a path.
          * @enum {string}
          */
@@ -2919,6 +3016,11 @@ export interface components {
              */
             sse_subscribers: number;
         };
+        /**
+         * @description Result class of one check.
+         * @enum {string}
+         */
+        Status: "ok" | "warn" | "fail" | "skipped";
         TakeoverAccepted: {
             /** Format: int64 */
             control_epoch: number;
@@ -3827,6 +3929,162 @@ export interface operations {
             };
             /** @description unknown, answered or timed-out request */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_doctor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description a diagnostics run is already in progress */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair id: create_data_dir, reload_providers or restart_browser */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairResult"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local user */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not an allow-listed repair */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description this daemon cannot run that repair */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the repair ran and failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the audit record could not be written; nothing ran */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Markdown report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description safe redaction unavailable or the report did not finish in time */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
