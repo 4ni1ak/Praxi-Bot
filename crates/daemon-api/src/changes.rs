@@ -706,6 +706,11 @@ mod tests {
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
                 error: None,
+                computer_target: None,
+                computer_node: None,
+                computer_node_name: None,
+                paused_at_ms: None,
+                pause_reason: None,
             })
             .unwrap();
 
@@ -723,6 +728,11 @@ mod tests {
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
                 error: None,
+                computer_target: None,
+                computer_node: None,
+                computer_node_name: None,
+                paused_at_ms: None,
+                pause_reason: None,
             })
             .unwrap();
 
@@ -1393,6 +1403,11 @@ mod tests {
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
                 error: None,
+                computer_target: None,
+                computer_node: None,
+                computer_node_name: None,
+                paused_at_ms: None,
+                pause_reason: None,
             })
             .unwrap();
 

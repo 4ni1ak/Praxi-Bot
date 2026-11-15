@@ -135,12 +135,18 @@ options. Missing, corrupt, or mismatched provenance/root material stops the
 operation before installation.
 
 Other options: `--port`, `--display`, `--screen`, `--bundle`, `--sha256`,
-`--skip-packages`, `--no-start`, `--with-desktop`, `--without-desktop`.
+`--skip-packages`, `--no-start`, `--with-desktop`, `--with-desktop-session`,
+`--with-session-apps`, `--without-session-apps`, `--without-desktop-session`,
+`--desktop-session <none|xfce>`, `--without-desktop`.
 Re-running upgrades the binaries and preserves `/var/lib/praxi`,
 `/etc/praxi/praxi.env`, and `/etc/praxi/praxi-node.env`. A custom `BOT_PORT` stays
-unless `--port` is supplied. An existing Xvfb unit and `DISPLAY` stay unless
-`--without-desktop` is supplied. On an online host, `--with-desktop` installs
-or refreshes Xvfb and Chromium.
+unless `--port` is supplied. Existing `praxi-xvfb` / `praxi-desktop` units,
+`-screen 0` geometry, and `DISPLAY` stay unless `--screen`, `--display`,
+`--without-desktop-session`, or `--without-desktop` is supplied (and a bare-Xvfb
+host keeps bare Xvfb unless `--with-desktop-session` is passed). On an online
+host, `--with-desktop` installs or refreshes Xvfb and Chromium;
+`--with-desktop-session` adds a minimal Xfce desktop session on top of Xvfb
+(`1280x800x24` on a fresh desktop setup, or preserving existing Xvfb geometry).
 
 ### Release administrator setup and dry run
 
@@ -191,19 +197,33 @@ The script:
   display is in use. That file does not contain `BOT_SECRETS_PASSPHRASE`;
 - installs `praxi.service` (`bot serve`, 127.0.0.1 only) and enables it, plus
   `praxi-node.service` (not enabled, see below);
-- with `--with-desktop`, installs `praxi-xvfb.service` (virtual display `:99`)
-  and a non-snap Chromium browser (source selection below). Prepares the root-owned,
-  mode 1777 X11 socket directory inside the shared private `/tmp` before Xvfb starts. A later run keeps that unit until `--without-desktop`;
-- applies systemd hardening: `NoNewPrivileges`, `ProtectSystem=strict` with
-  `ReadWritePaths=/var/lib/praxi`, `ProtectHome`, `PrivateTmp`,
-  `PrivateDevices`, kernel and cgroup protections;
+- with `--with-desktop`, installs `praxi-xvfb.service` (virtual display `:99`,
+  `-nolisten tcp`, private `0600` Xauthority in `/var/lib/praxi/.Xauthority`, no
+  `-fbdir` frame files) and a non-snap Chromium browser (source selection below).
+  Prepares the root-owned, mode 1777 X11 socket directory inside the shared
+  private `/tmp` before Xvfb starts. A later run keeps that unit until `--without-desktop`;
+- with `--with-desktop-session`, also installs minimal Xfce (`xfwm4 --compositor=off`,
+  `xfce4-panel` with Applications menu, `xfdesktop`, private `praxi` D-Bus
+  session bus + AT-SPI2) in `praxi-desktop.service`, initially `1280x800x24` on
+  fresh desktop installs (preserving existing geometry on upgrades), with
+  screen-lock/power/printer autostarts disabled and no unconditional browser
+  autostart (`xfce4-terminal` and `thunar` are hidden and omitted by default
+  unless `--with-session-apps` is explicitly passed);
+- when desktop mode is active, applies `praxi.slice` (`CPUQuota=100%`,
+  `MemoryHigh=3G`, `MemoryMax=4G`) across `praxi.service`,
+  `praxi-node.service`, `praxi-xvfb.service`, `praxi-desktop.service`, browser
+  children, and applications launched from the menu (hosts without desktop mode
+  do not receive `praxi.slice` limits), plus systemd hardening: `NoNewPrivileges`,
+  `ProtectSystem=strict` with `ReadWritePaths=/var/lib/praxi`, `ProtectHome`,
+  `PrivateTmp`, `PrivateDevices`, kernel and cgroup protections;
 - adds wrapper commands `praxi` (the `bot` CLI, using `praxi.env`) and
   `praxi-node` (using `praxi-node.env`) that run as the `praxi` user.
 
 The installer waits for two consecutive active-unit and valid loopback health
 checks, with at most 30 attempts (each HTTP request has a two-second timeout).
-Failure prints the last 50 service journal entries and exits nonzero, after
-attempting to restore a previously active node. `--no-start` installs/enables
+Failure prints the last 50 service journal entries, rolls back binaries, units,
+wrappers, and environment files to the previous working installation, restarts
+any previously active services, and exits nonzero. `--no-start` installs/enables
 files only and explicitly skips startup and readiness.
 
 A fresh daemon stays running with HTTP 200 health `status: "setup_required"`.
@@ -334,33 +354,143 @@ Ubuntu 24.04's AppArmor user-namespace restriction is accommodated by a named
 following Ubuntu's Chrome profile. The Chromium sandbox and systemd hardening
 remain enabled; no `--no-sandbox` or broad unit relaxation is applied.
 
+### Desktop session, application menu, and browser lifecycle
+
+Xvfb alone does **not** supply a usable desktop (no window manager, panel, or
+application launcher). Adding `--with-desktop-session` (or running
+`sudo bash scripts/linux/setup-headless.sh --system`) provisions a minimal Xfce
+session (`praxi-desktop.service`) on Xvfb (`1280x800x24` on fresh desktop
+installs, or preserving the existing `praxi-xvfb.service` geometry unless
+`--screen` is passed), running as the same unprivileged `praxi` user:
+
+- **Application menu usage & security posture:** During live-view takeover, open
+  the top-left **Applications** menu on `xfce4-panel` to launch **Web Browser**
+  (manual launch). `xfce4-terminal` and `thunar` are **not** installed or
+  exposed in the menu by default; pass `--with-session-apps` if you explicitly
+  need them, or `--without-session-apps` to hide them again. Note that
+  `--without-session-apps` only writes `Hidden=true` `.desktop` overrides and
+  omits them from `helpers.rc`—it does **not** uninstall `xfce4-terminal` or
+  `thunar` if they were already installed by an earlier run or the base OS (their
+  binaries stay on disk until removed explicitly with `apt-get remove` / `dnf remove`).
+  All launched applications inherit `praxi.slice` containment and run as the `praxi` user
+  with `DISPLAY`, `XAUTHORITY`, and `DBUS_SESSION_BUS_ADDRESS`. Note that while
+  `praxi-desktop.service` does not place `BOT_SECRETS_PASSPHRASE` in the session
+  environment, any application running as `praxi` has filesystem read access to
+  `/etc/praxi/praxi.env` (`0640 root:praxi`, containing `BOT_SECRETS_PASSPHRASE`)
+  and read/write access to `/var/lib/praxi`. Exposing a terminal or file manager
+  with `--with-session-apps` allows a live-view operator—or an unguarded UI
+  click—to read those files and run commands as `praxi` outside the daemon's
+  shell permission engine.
+- **Source & display limitations:** X11/Xvfb only (`XDG_SESSION_TYPE=x11`);
+  Wayland is unsupported. Only one display owner is allowed per display (`:99`
+  is owned by `praxi-xvfb.service`). No VNC, RDP, X11 TCP (`-nolisten tcp`),
+  `xhost +`, `-fbdir` framebuffer dump, or default frame disk storage is enabled,
+  and no new listening ports are opened. Keeping a legacy bare-Xvfb unit without
+  `-auth` omits Xauthority authentication and leaves Xvfb's abstract Unix socket
+  reachable by other local accounts; pass `--with-desktop` or
+  `--with-desktop-session` to upgrade it to private `0600` Xauthority.
+- **Lazy, idle-closed browser policy:** Chromium is never autostarted by Xfce
+  or systemd. Managed `CdpDriver` instances default in the daemon (`bot serve`)
+  to a **120 s** idle shutdown (`[limits] browser_idle_seconds = 120` in
+  `/var/lib/praxi/host.toml`) and a RAM-based concurrency cap (`1` run below
+  8 GiB RAM, `2` runs at 8 GiB+ RAM, or `[limits] max_computer_runs` in
+  `host.toml`). The installer does not pin or overwrite
+  `BOT_MAX_COMPUTER_RUNS` or `BOT_BROWSER_IDLE_SECONDS` in `/etc/praxi/praxi.env`
+  so `host.toml` and daemon defaults remain effective; setting those env vars in
+  `praxi.env` overrides `host.toml`. Watch streams do not launch or pin the
+  browser; an active bot computer run or active takeover pins it. Named browser
+  profiles persist under `/var/lib/praxi/browsers` and are preserved across idle
+  shutdown. Any browser opened manually by a human from the Applications menu is
+  outside `CdpDriver` idle shutdown and still counts toward `praxi.slice` RAM.
+  *(Note: `BrowserSettings::isolated` defaults `headless: true` unless overridden
+  for headed takeover/computer-use targets.)*
+
 ### Small-host resource check
 
 Production hosts run prebuilt release tarballs; don't compile Rust on the
 1-core/6-GB (or 2-core/12-GB) machine. Keep Chromium lazy: this installer never
 starts a persistent browser. The doctor probe closes its browser after checking.
-Configurable idle shutdown/concurrency limits belong to task 054 and are not
-implemented by this packaging fix.
+Plan targets are ≤500 MiB for display + session idle (the ~300 MB Xfce figure is
+a planning estimate, not a guarantee), **<2.5 GB** (`2,500,000,000` bytes /
+~2.33 GiB) peak for the complete Praxi process tree, and ≤5% of one core for
+idle CPU. `praxi.slice` enforces `CPUQuota=100%`, `MemoryHigh=3G`,
+`MemoryMax=4G` as containment, not as a substitute for measuring real RAM.
 
-For a repeatable check, record `MemoryCurrent` and `MemoryPeak` from
-`sudo systemctl show praxi praxi-xvfb -p MemoryCurrent -p MemoryPeak` while idle,
-during a representative chat turn, and with one browser tab open. When running
-`sudo praxi doctor`, sample the corresponding `praxi-doctor-*.service` too
-(`systemctl list-units 'praxi-doctor-*'`). These cgroup counters include browser
-children; `/proc/<pid>/status` `VmRSS`/`VmHWM` can separately record process RSS.
-Target a combined peak below 2.5 GB, leaving room on a 6-GB host. A doctor probe
-is a short launch smoke test, not a representative chat workload measurement.
-
-## Update, logs, uninstall
+Run the repeatable measurement tool on the host (outputs text/JSON metrics only;
+never reads `/proc/<pid>/cmdline`, `/proc/<pid>/environ`, frames, titles, or
+URLs):
 
 ```sh
-sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz   # update
-# an existing praxi-xvfb unit and DISPLAY are kept
-sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz --without-desktop
-journalctl -u praxi -n 100
+sudo python3 scripts/linux/measure-budget.py \
+  --label desktop-idle --duration 30 --interval 0.5 \
+  --require-slice-containment --check-budget --format both
+```
+
+You can also inspect cgroup counters directly with
+`sudo systemctl show praxi.slice praxi praxi-desktop praxi-xvfb -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec`.
+Note that summed process `VmRSS` double-counts shared pages across processes;
+when `praxi.slice/memory.peak` is writable (Linux 6.12+ as root),
+`measure-budget.py` resets it at the start of the window and checks the true
+kernel window peak (plus any escaped Praxi processes outside `praxi.slice`); on
+older kernels where `memory.peak` is read-only, a lifetime `memory.peak` above
+the budget fails `--check-budget` as inconclusive. Absent `praxi.slice`, zero
+observed Praxi processes, or any process escaping `praxi.slice` also fails
+`--check-budget`.
+
+### Troubleshooting desktop, Xauthority, D-Bus, and namespaces
+
+- **Stopping all Praxi services cleanly:** On systemd 249+, `praxi-xvfb.service`
+  sets `Upholds=praxi-desktop.service praxi.service`, so `sudo systemctl stop praxi`
+  will immediately be restarted while `praxi-xvfb.service` stays active. Stop
+  everything cleanly with `sudo systemctl stop praxi-xvfb.service` (which stops
+  `praxi-desktop.service` and `praxi.service` via `BindsTo=`). On older hosts
+  with systemd < 249, `Upholds=` is omitted with an installer warning and
+  `praxi-xvfb.service` uses an `ExecStartPost=!` uphold fallback
+  (`praxi-xvfb-uphold.sh`) to start enabled dependents in the new namespace
+  after Xvfb starts or recovers from a crash. `praxi.service`
+  uses `Wants=praxi-desktop.service` so a desktop-session failure does not block
+  the always-on daemon.
+- **Xauthority permission / auth errors (`Invalid MIT-MAGIC-COOKIE-1`):**
+  `/var/lib/praxi/.Xauthority` is created with mode `0600` owned by
+  `praxi:praxi` and reused across `praxi-xvfb.service` restarts when already
+  valid. `praxi-desktop.service` and `praxi.service` bind to `praxi-xvfb.service`
+  (`BindsTo=`/`After=`, with `Upholds=` on `praxi-xvfb.service`) so an
+  unexpected Xvfb exit stops dependents and brings them back cleanly. To force a
+  fresh cookie, remove `/var/lib/praxi/.Xauthority` and run
+  `sudo systemctl restart praxi-xvfb.service`.
+- **X11 socket / `PrivateTmp` namespace mismatch (`Can't open display :99`):**
+  `praxi-xvfb.service`, `praxi-desktop.service`, `praxi.service`, and
+  `praxi-node.service` must share the Xvfb mount namespace via
+  `JoinsNamespaceOf=praxi-xvfb.service` in `/etc/systemd/system/praxi*.service.d/desktop.conf`.
+  Always use `sudo praxi doctor` rather than direct `bot doctor` so the doctor
+  probe joins the same namespace and slice.
+- **D-Bus / AT-SPI2 missing (`org.a11y.Bus` or `xfconf` errors):** Verify
+  `DBUS_SESSION_BUS_ADDRESS=unix:path=/var/lib/praxi/.dbus-session` is present
+  in `/etc/praxi/praxi.env` and the mode `0600` socket
+  `/var/lib/praxi/.dbus-session` exists (`sudo systemctl status praxi-desktop.service`).
+- **XTEST / RANDR missing:** Confirm `praxi-xvfb.service` runs with
+  `+extension RANDR +extension XTEST` and `xdpyinfo -display :99` (inside the
+  service namespace) lists both extensions.
+
+## Update, logs, rollback, and uninstall
+
+```sh
+sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz   # update (keeps existing desktop mode)
+sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz --without-desktop-session  # remove Xfce, keep Xvfb
+sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz --without-desktop          # remove Xfce and Xvfb
+journalctl -u praxi -u praxi-desktop -u praxi-xvfb -n 100
 sudo ./scripts/install-linux.sh --uninstall           # keeps data and user
 sudo ./scripts/install-linux.sh --uninstall --purge   # deletes data too
 ```
 
-If you only need a headless desktop session for development, the older
-user-level script `scripts/linux/setup-headless.sh` is still available.
+On source-built hosts without a signed release archive, `scripts/linux/setup-headless.sh`
+provisions or rolls back the exact same system units:
+
+```sh
+sudo bash scripts/linux/setup-headless.sh --system --display :99 --screen 1280x800x24
+sudo bash scripts/linux/setup-headless.sh --system --without-desktop-session
+sudo bash scripts/linux/setup-headless.sh --system --without-desktop
+```
+
+For user-level development sessions on a separate display (never colliding with
+`:99`), run `bash scripts/linux/setup-headless.sh --user --display :98`.

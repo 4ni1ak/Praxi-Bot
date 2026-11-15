@@ -27,11 +27,12 @@ use crate::exec::TurnExecutor;
 use crate::history::{status_of, step_output};
 use crate::profile::BotProfile;
 use crate::shared::{
-    ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants,
-    LoopError, MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork,
-    Shared, StreamItem, Verdict, initiator_of, kind_for, kind_for_schedule,
+    ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
+    CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
+    MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork, Shared,
+    StreamItem, Verdict, initiator_of, kind_for, kind_for_schedule,
 };
-use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_REVOKED};
+use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
 type Result<T> = std::result::Result<T, LoopError>;
 
@@ -84,6 +85,10 @@ impl AgentLoop {
                 global_policy: RwLock::new(cfg.global_policy.clone()),
                 policy_locked: std::sync::atomic::AtomicBool::new(false),
                 control: RwLock::new(None),
+                computer_provider: RwLock::new(None),
+                static_desktop: RwLock::new(None),
+                run_computers: Mutex::new(HashMap::new()),
+                wait_pc_timers: Mutex::new(HashMap::new()),
                 computer_slots: Arc::new(tokio::sync::Semaphore::new(
                     cfg.max_computer_runs
                         .clamp(1, tokio::sync::Semaphore::MAX_PERMITS),
@@ -110,6 +115,7 @@ impl AgentLoop {
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
                 approval_paused: Mutex::new(HashSet::new()),
+                identity_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
                 exec_gate: Mutex::new(()),
                 #[cfg(test)]
@@ -170,6 +176,7 @@ impl AgentLoop {
     /// interactive approval flow as direct calls.
     #[must_use]
     pub fn with_builtin_tools(self, mut cfg: BuiltinConfig) -> Self {
+        (*self.sh.static_desktop.write()).clone_from(&cfg.desktop);
         cfg.gate = Arc::new(LoopGate {
             sh: Arc::downgrade(&self.sh),
         });
@@ -216,6 +223,12 @@ impl AgentLoop {
     /// desktop app here); see [`ControlGate`].
     pub fn set_control_gate(&self, gate: Arc<dyn ControlGate>) {
         *self.sh.control.write() = Some(gate);
+    }
+
+    /// Install the runtime computer availability provider (`serve` wires host
+    /// display and connected remote PC desktops here).
+    pub fn set_computer_provider(&self, provider: Arc<dyn computer_target::ComputerProvider>) {
+        *self.sh.computer_provider.write() = Some(provider);
     }
 
     /// Names of the registered tools, sorted.
@@ -625,6 +638,107 @@ impl AgentLoop {
             .map_err(|_| LoopError::NoPendingApproval(call_id))
     }
 
+    /// Reconcile portable computer state against this daemon and its paired desktops.
+    /// Persist the public local identity so a regenerated key produces a one-time audit notice.
+    ///
+    /// # Errors
+    /// Fails on storage errors. Call before starting the scheduler or resuming runs.
+    ///
+    /// `paired_ids` is `None` when the paired-device list is unknown (the peer
+    /// stack is not running): `pc` scopes are then left untouched, because
+    /// nothing positively says they are foreign; they simply do not match
+    /// while the PC is unreachable.
+    pub fn reconcile_computer_identity(
+        &self,
+        local_id: &str,
+        paired_ids: Option<&[String]>,
+    ) -> Result<()> {
+        let valid_scope = |scope: &str| {
+            scope.split_once(':').is_some_and(|(kind, id)| {
+                id == local_id
+                    || (kind == "pc"
+                        && paired_ids.is_none_or(|ids| ids.iter().any(|paired| paired == id)))
+            })
+        };
+        let mut computer_users = HashSet::new();
+        let orphaned: Vec<_> = {
+            let mut grants = self.sh.grants.lock();
+            grants
+                .always
+                .iter_mut()
+                .filter_map(|grant| {
+                    if !grant.inert
+                        && grant
+                            .computer
+                            .as_deref()
+                            .is_some_and(|scope| !valid_scope(scope))
+                    {
+                        grant.inert = true;
+                        Some(grant.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        for grant in orphaned {
+            let Some(bot) = self.sh.storage.get_bot(grant.bot_id)? else {
+                continue;
+            };
+            computer_users.insert(bot.user_id);
+            let mut detail = grant_detail(&grant);
+            detail["reason"] = serde_json::json!(
+                "computer identity no longer belongs to this daemon or a paired desktop; approve again"
+            );
+            self.sh.storage.append_audit(
+                bot.user_id,
+                None,
+                "system",
+                AUDIT_GRANT_INERT,
+                &detail,
+            )?;
+        }
+        let paused = self
+            .sh
+            .storage
+            .list_runs_by_state(RunState::Paused.as_str())?;
+        for run in &paused {
+            if run.computer_target.is_some() {
+                computer_users.insert(run.user_id);
+            }
+        }
+        {
+            let grants = self.sh.grants.lock();
+            for grant in grants.always.iter().filter(|g| g.computer.is_some()) {
+                if let Some(bot) = self.sh.storage.get_bot(grant.bot_id)? {
+                    computer_users.insert(bot.user_id);
+                }
+            }
+        }
+        record_computer_identity(&self.sh.storage, local_id, &computer_users)?;
+        for run in paused {
+            // A never-bound initial PC wait may still select its first paired PC.
+            let invalid = match (run.computer_target.as_deref(), run.computer_node.as_deref()) {
+                (None, _) | (_, Some("local")) => true,
+                (Some(kind), Some(id)) => !valid_scope(&format!("{kind}:{id}")),
+                _ => false,
+            };
+            if invalid {
+                let reason = "Cannot resume: stored computer identity is unknown or no longer belongs to this daemon or a paired desktop (identity changed or state imported); start a new run";
+                self.cancel_wait_pc_timer(run.id);
+                self.rt.fail_paused(run.id, reason)?;
+                self.sh.storage.append_audit(
+                    run.user_id,
+                    Some(run.id),
+                    "system",
+                    "run.computer_identity_unavailable",
+                    &serde_json::json!({ "reason": reason }),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// The persisted "always allow" rules of a bot.
     #[must_use]
     pub fn list_grants(&self, bot_id: BotId) -> Vec<Grant> {
@@ -660,6 +774,8 @@ impl AgentLoop {
                 bot_id,
                 target: target.clone(),
                 granted_at_ms: 0,
+                computer: None,
+                inert: false,
             };
             self.sh.storage.append_audit(
                 bot.user_id,
@@ -710,9 +826,35 @@ impl AgentLoop {
     /// # Errors
     /// Fails if the run is terminal or storage fails.
     pub fn cancel(&self, run_id: RunId) -> Result<()> {
+        self.cancel_wait_pc_timer(run_id);
+        self.sh.run_computers.lock().remove(&run_id);
+        self.sh.directives.lock().remove(&run_id);
+        let idle_paused = !self.sh.tasks.lock().contains_key(&run_id)
+            && self.rt.state(run_id).ok() == Some(RunState::Paused);
         self.rt.cancel(run_id)?;
         // A cancelled parent takes its subagents with it.
         self.cancel_descendants(run_id);
+        if idle_paused {
+            if let Ok(Some(run)) = self.sh.storage.get_run(run_id)
+                && let Some(chat_id) = run.chat_id
+            {
+                let mut active = self.sh.active.lock();
+                if active.get(&chat_id) == Some(&run_id) {
+                    active.remove(&chat_id);
+                }
+            }
+            if let Some(ctx) = self.ctx_of(run_id) {
+                self.sh.emit(
+                    &ctx,
+                    Event::RunFinished(RunFinished {
+                        run_id,
+                        error: Some("cancelled".into()),
+                    }),
+                );
+                self.sh.runs.lock().remove(&run_id);
+                self.sh.run_computers.lock().remove(&run_id);
+            }
+        }
         Ok(())
     }
 
@@ -746,7 +888,155 @@ impl AgentLoop {
             )?;
             ids.push(run.id);
         }
+        self.reconcile_waiting_for_pc_runs()?;
         Ok(ids)
+    }
+
+    /// Re-arm timeout watchers for every persisted `waiting_for_pc` run (and
+    /// expire any whose deadline has already elapsed). Safe to call both before
+    /// and inside a Tokio runtime.
+    ///
+    /// # Errors
+    /// Fails on storage errors.
+    pub fn reconcile_waiting_for_pc_runs(&self) -> Result<()> {
+        let limit = self.sh.cfg.wait_for_pc_timeout;
+        for run in self
+            .sh
+            .storage
+            .list_paused_runs_with_reason(computer_target::WAIT_FOR_PC_REASON)?
+        {
+            let elapsed = Duration::from_millis(
+                u64::try_from(
+                    storage::now_ms().saturating_sub(run.paused_at_ms.unwrap_or(run.updated_at_ms)),
+                )
+                .unwrap_or(0),
+            );
+            if elapsed >= limit {
+                self.fail_waiting_pc_run(run.id, limit);
+            } else {
+                self.spawn_wait_pc_timer(run.id, limit.saturating_sub(elapsed));
+            }
+        }
+        Ok(())
+    }
+
+    /// Resume any runs paused with `waiting_for_pc` whose target PC desktop is
+    /// now online. Returns the run ids that were resumed.
+    pub async fn resume_waiting_for_pc(&self) -> Vec<RunId> {
+        if self.sh.shutting_down.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
+        let Ok(paused) = self
+            .sh
+            .storage
+            .list_paused_runs_with_reason(computer_target::WAIT_FOR_PC_REASON)
+        else {
+            return Vec::new();
+        };
+        let mut resumed = Vec::new();
+        for run in paused {
+            let Ok(profile) = self.sh.profile_for(run.bot_id) else {
+                continue;
+            };
+            let rc = self.sh.resolve_computer_for_run(&profile, Some(&run));
+            if rc.wait_for_pc || rc.unavailable_reason.is_some() {
+                continue;
+            }
+            for attempt in 0..5 {
+                match self.resume(run.id) {
+                    Ok(()) => {
+                        resumed.push(run.id);
+                        break;
+                    }
+                    Err(LoopError::StillFinishing(_)) if attempt < 4 => {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        resumed
+    }
+
+    fn cancel_wait_pc_timer(&self, run_id: RunId) {
+        if let Some(tok) = self.sh.wait_pc_timers.lock().remove(&run_id) {
+            tok.cancel();
+        }
+    }
+
+    fn spawn_wait_pc_timer(&self, run_id: RunId, delay: Duration) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        self.cancel_wait_pc_timer(run_id);
+        let tok = tokio_util::sync::CancellationToken::new();
+        self.sh.wait_pc_timers.lock().insert(run_id, tok.clone());
+        let this = self.clone();
+        let limit = self.sh.cfg.wait_for_pc_timeout;
+        handle.spawn(async move {
+            tokio::select! {
+                () = tok.cancelled() => return,
+                () = tokio::time::sleep(delay) => {}
+            }
+            this.sh.wait_pc_timers.lock().remove(&run_id);
+            if !tok.is_cancelled() {
+                this.fail_waiting_pc_run(run_id, limit);
+            }
+        });
+    }
+
+    pub(crate) fn fail_waiting_pc_run(&self, run_id: RunId, timeout: Duration) {
+        let Ok(Some(run)) = self.sh.storage.get_run(run_id) else {
+            return;
+        };
+        if run.state != RunState::Paused.as_str()
+            || run.pause_reason.as_deref() != Some(computer_target::WAIT_FOR_PC_REASON)
+        {
+            return;
+        }
+        let message = format!(
+            "timed out waiting for PC desktop to come online after {}",
+            format_wait_duration(timeout)
+        );
+        let ctx = self.ctx_of(run_id);
+        if self.rt.fail_paused(run_id, &message).is_ok() {
+            self.sh.directives.lock().remove(&run_id);
+            self.sh.run_computers.lock().remove(&run_id);
+            if let Some(chat_id) = run.chat_id {
+                let mut active = self.sh.active.lock();
+                if active.get(&chat_id) == Some(&run_id) {
+                    active.remove(&chat_id);
+                }
+            }
+            let _ = self.sh.storage.append_audit(
+                run.user_id,
+                Some(run_id),
+                "system",
+                "run.wait_pc_timed_out",
+                &serde_json::json!({
+                    "timeout_ms": u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                }),
+            );
+            if let Some(ctx) = &ctx {
+                self.sh.emit(
+                    ctx,
+                    Event::Error(RunError {
+                        run_id,
+                        message: message.clone(),
+                        recoverable: false,
+                    }),
+                );
+                self.sh.emit(
+                    ctx,
+                    Event::RunFinished(RunFinished {
+                        run_id,
+                        error: Some(message),
+                    }),
+                );
+            }
+            self.sh.runs.lock().remove(&run_id);
+            self.sh.run_computers.lock().remove(&run_id);
+        }
     }
 
     /// Resume a `Paused` run in the background.  An interrupted model step is
@@ -820,6 +1110,9 @@ impl AgentLoop {
     /// [`Self::recover`] afterwards to checkpoint anything a crash left behind.
     pub async fn shutdown(&self, grace: Duration) -> Vec<RunId> {
         self.sh.shutting_down.store(true, Ordering::SeqCst);
+        for (_, tok) in self.sh.wait_pc_timers.lock().drain() {
+            tok.cancel();
+        }
         let deadline = tokio::time::Instant::now() + grace;
         // Hard stop for the unwinding of interrupted runs.
         let hard = deadline + Duration::from_secs(5);
@@ -940,12 +1233,14 @@ impl AgentLoop {
         ]
         .into_iter()
         .map(|c| {
-            let (decision, via_grant) = self.sh.effective_category(bot_id, policy.as_ref(), c);
+            let (decision, via_grant, scopes) =
+                self.sh.effective_category(bot_id, policy.as_ref(), c);
             (
                 c,
                 CategoryDecision {
                     decision,
                     via_grant,
+                    scopes,
                 },
             )
         })
@@ -1015,6 +1310,7 @@ impl AgentLoop {
         let handle = tokio::spawn(async move {
             let _ = rx.await;
             let my_id = tokio::task::id();
+            let after = this.clone();
             this.drive(run_id, start).await;
             #[cfg(test)]
             {
@@ -1030,6 +1326,17 @@ impl AgentLoop {
                 if mine { tasks.remove(&run_id) } else { None }
             };
             drop(finished);
+            if matches!(start, Start::Fresh)
+                && !sh.shutting_down.load(Ordering::SeqCst)
+                && sh.storage.get_run(run_id).ok().flatten().is_some_and(|r| {
+                    r.state == RunState::Paused.as_str()
+                        && r.pause_reason.as_deref() == Some(computer_target::WAIT_FOR_PC_REASON)
+                })
+            {
+                tokio::spawn(async move {
+                    let _ = after.resume_waiting_for_pc().await;
+                });
+            }
             #[cfg(test)]
             sh.task_reap_done.store(true, Ordering::SeqCst);
         });
@@ -1044,13 +1351,28 @@ impl AgentLoop {
         Box::pin(async move {
             let res = match start {
                 Start::Fresh => {
-                    let is_child = self
-                        .sh
-                        .storage
-                        .get_run(run_id)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|r| r.parent_run_id.is_some());
+                    let run = self.sh.storage.get_run(run_id).ok().flatten();
+                    let is_child = run.as_ref().is_some_and(|r| r.parent_run_id.is_some());
+                    let mut wait_for_pc = false;
+                    let mut unavailable = None;
+                    let mut prepare_timed_out = false;
+                    let mut computer_notice = None;
+                    if !is_child
+                        && let Some(run) = &run
+                        && let Ok(profile) = self.sh.profile_for(run.bot_id)
+                    {
+                        prepare_timed_out = self.sh.prepare_run_computer(&profile, run).await;
+                        let rc = self.sh.resolve_computer_for_run(&profile, None);
+                        computer_notice.clone_from(&rc.notice);
+                        wait_for_pc = rc.wait_for_pc;
+                        unavailable.clone_from(&rc.unavailable_reason);
+                        if let Err(e) = self.sh.bind_computer(run_id, &rc) {
+                            let _ = self.rt.pause_queued(run_id, None);
+                            self.conclude(run_id, &self.rt.fail_paused(run_id, &e.to_string()));
+                            return;
+                        }
+                        self.sh.run_computers.lock().insert(run_id, rc);
+                    }
                     // A child announces itself with `subagent_started` instead.
                     if !is_child && let Some(ctx) = self.ctx_of(run_id) {
                         self.sh.emit(
@@ -1062,18 +1384,124 @@ impl AgentLoop {
                                 schedule_id: ctx.schedule_id,
                             }),
                         );
+                        if prepare_timed_out {
+                            self.sh.emit(
+                                &ctx,
+                                Event::Error(RunError {
+                                    run_id,
+                                    message: COMPUTER_PREPARE_TIMEOUT_NOTICE.into(),
+                                    recoverable: true,
+                                }),
+                            );
+                        }
+                        if let Some(message) = computer_notice {
+                            self.sh.emit(
+                                &ctx,
+                                Event::Error(RunError {
+                                    run_id,
+                                    message,
+                                    recoverable: true,
+                                }),
+                            );
+                        }
                     }
-                    self.rt.start(run_id).await
+                    if let Some(reason) = unavailable {
+                        let result = self.rt.pause_queued(run_id, None);
+                        if result.is_ok() {
+                            self.conclude(run_id, &self.rt.fail_paused(run_id, &reason));
+                        }
+                        return;
+                    }
+                    if wait_for_pc {
+                        let pause_res = self
+                            .rt
+                            .pause_queued(run_id, Some(computer_target::WAIT_FOR_PC_REASON));
+                        if matches!(pause_res, Ok(RunState::Paused)) {
+                            self.spawn_wait_pc_timer(run_id, self.sh.cfg.wait_for_pc_timeout);
+                        }
+                        pause_res
+                    } else {
+                        self.rt.start(run_id).await
+                    }
                 }
-                Start::Resume => match self.rt.resume(run_id).await {
-                    Err(RuntimeError::NeedsDecision(_)) => {
-                        self.rt.resume_skipping_interrupted(run_id).await
-                    }
-                    other => other,
-                },
+                Start::Resume => self.drive_resume(run_id).await,
             };
             self.conclude(run_id, &res);
         })
+    }
+
+    async fn drive_resume(&self, run_id: RunId) -> std::result::Result<RunState, RuntimeError> {
+        self.cancel_wait_pc_timer(run_id);
+        let run = self
+            .sh
+            .storage
+            .get_run(run_id)?
+            .ok_or(RuntimeError::NotFound(run_id))?;
+        if run.parent_run_id.is_none()
+            && let Ok(profile) = self.sh.profile_for(run.bot_id)
+        {
+            let provider = self.sh.computer_provider.read().clone();
+            if crate::shared::Shared::computer_identity_unbound(&run, provider.as_deref()) {
+                self.sh.identity_paused.lock().insert(run_id);
+                self.emit_computer_notice(run_id, COMPUTER_IDENTITY_UNBOUND_NOTICE);
+                return Ok(RunState::Paused);
+            }
+            let prepare_timed_out = self.sh.prepare_run_computer(&profile, &run).await;
+            let rc = self.sh.resolve_computer_for_run(&profile, Some(&run));
+            if let Some(reason) = rc.unavailable_reason.clone() {
+                if prepare_timed_out {
+                    self.sh.run_computers.lock().insert(run_id, rc);
+                    self.emit_computer_notice(run_id, COMPUTER_PREPARE_TIMEOUT_NOTICE);
+                }
+                return self.rt.fail_paused(run_id, &reason);
+            }
+            self.sh.bind_computer(run_id, &rc)?;
+            let computer_notice = rc.notice.clone();
+            self.sh.run_computers.lock().insert(run_id, rc.clone());
+            if prepare_timed_out {
+                self.emit_computer_notice(run_id, COMPUTER_PREPARE_TIMEOUT_NOTICE);
+            }
+            if let Some(message) = computer_notice {
+                self.emit_computer_notice(run_id, &message);
+            }
+            if rc.wait_for_pc {
+                self.sh
+                    .storage
+                    .set_run_pause_reason(run_id, Some(computer_target::WAIT_FOR_PC_REASON))?;
+                let elapsed = Duration::from_millis(
+                    u64::try_from(
+                        storage::now_ms()
+                            .saturating_sub(run.paused_at_ms.unwrap_or(run.updated_at_ms)),
+                    )
+                    .unwrap_or(0),
+                );
+                self.spawn_wait_pc_timer(
+                    run_id,
+                    self.sh.cfg.wait_for_pc_timeout.saturating_sub(elapsed),
+                );
+                return Ok(RunState::Paused);
+            }
+        }
+        match self.rt.resume(run_id).await {
+            Err(RuntimeError::NeedsDecision(_)) => {
+                self.rt.resume_skipping_interrupted(run_id).await
+            }
+            other => other,
+        }
+    }
+
+    fn emit_computer_notice(&self, run_id: RunId, message: &str) {
+        let Some(ctx) = self.ctx_of(run_id) else {
+            return;
+        };
+        self.sh.emit(
+            &ctx,
+            Event::Error(RunError {
+                run_id,
+                message: message.to_owned(),
+                recoverable: true,
+            }),
+        );
     }
 
     pub(crate) fn ctx_of(&self, run_id: RunId) -> Option<Arc<crate::shared::RunCtx>> {
@@ -1084,6 +1512,14 @@ impl AgentLoop {
     /// Persist the final answer, emit the closing events and start any queued turn.
     fn conclude(&self, run_id: RunId, res: &std::result::Result<RunState, RuntimeError>) {
         let run = self.sh.storage.get_run(run_id).ok().flatten();
+        crate::compaction::forget_turn(run_id);
+        if !matches!(res, Ok(RunState::Paused)) {
+            // A finished run's spill files are no longer reachable by the
+            // model; crashed runs are swept by age.
+            let data_dir = self.sh.storage.data_dir();
+            crate::compaction::remove_run_spill(data_dir, run_id);
+            crate::compaction::sweep_spill(data_dir, crate::compaction::SPILL_RETENTION);
+        }
         if let Some(parent) = run.as_ref().and_then(|r| r.parent_run_id) {
             self.conclude_child(run_id, parent, res);
             return;
@@ -1094,10 +1530,17 @@ impl AgentLoop {
             // a finished marker in its log would end later followers), no
             // queued follow-up turn.
             let approval_timeout = self.sh.approval_paused.lock().remove(&run_id);
+            let identity_unbound = self.sh.identity_paused.lock().remove(&run_id);
+            let wait_pc = run.as_ref().and_then(|r| r.pause_reason.as_deref())
+                == Some(computer_target::WAIT_FOR_PC_REASON);
             if let Some(ctx) = &ctx {
                 let message = if approval_timeout {
                     "run paused: nobody answered the approval request in time; resume it with \
                      POST /v1/runs/{id}/resume"
+                } else if identity_unbound {
+                    "run paused: this computer's identity could not be read; it stays paused                      and can be resumed after the next restart"
+                } else if wait_pc {
+                    "run paused: waiting for PC desktop to come online"
                 } else {
                     "run paused: the daemon is shutting down; resume it after the next start"
                 };
@@ -1111,6 +1554,7 @@ impl AgentLoop {
                 );
             }
             self.sh.runs.lock().remove(&run_id);
+            self.sh.run_computers.lock().remove(&run_id);
             if let Some(chat_id) = run.as_ref().and_then(|r| r.chat_id) {
                 let mut active = self.sh.active.lock();
                 if active.get(&chat_id) == Some(&run_id) {
@@ -1167,6 +1611,7 @@ impl AgentLoop {
                 .emit(ctx, Event::RunFinished(RunFinished { run_id, error }));
         }
         self.sh.runs.lock().remove(&run_id);
+        self.sh.run_computers.lock().remove(&run_id);
 
         let Some(run) = run else { return };
         self.start_next_queued(&run, run_id);
@@ -1255,11 +1700,43 @@ impl AgentLoop {
     }
 }
 
+fn record_computer_identity(
+    storage: &Storage,
+    local_id: &str,
+    computer_users: &HashSet<UserId>,
+) -> Result<()> {
+    for user in storage.list_users()? {
+        let previous = storage
+            .last_audit_by_action(user.id, "computer.identity")?
+            .and_then(|e| e.detail["computer"].as_str().map(str::to_owned));
+        // Users who never used computer tools get no identity row.
+        if previous.is_none() && !computer_users.contains(&user.id) {
+            continue;
+        }
+        if previous.as_deref() != Some(local_id) {
+            storage.append_audit(user.id, None, "system", "computer.identity",
+                    &serde_json::json!({
+                        "computer": local_id, "previous": previous,
+                        "reason": if previous.is_some() {
+                            "Local computer identity changed; orphaned grants are inert and paused runs cannot resume"
+                        } else {
+                            "Local computer identity recorded"
+                        },
+                    }))?;
+        }
+    }
+    Ok(())
+}
+
 fn load_grants(storage: &Storage) -> Grants {
     let mut grants = Grants::default();
+    let mut inert_audited = HashSet::new();
     for user in storage.list_users().unwrap_or_default() {
         for e in storage.list_audit(user.id).unwrap_or_default() {
-            if e.action != AUDIT_GRANT_ALWAYS && e.action != AUDIT_GRANT_REVOKED {
+            if !matches!(
+                e.action.as_str(),
+                AUDIT_GRANT_ALWAYS | AUDIT_GRANT_REVOKED | AUDIT_GRANT_INERT
+            ) {
                 continue;
             }
             let bot = e.detail["bot_id"]
@@ -1269,19 +1746,89 @@ fn load_grants(storage: &Storage) -> Grants {
             let (Some(bot_id), Some(target)) = (bot, grant_target(&e.detail)) else {
                 continue;
             };
-            grants
-                .always
-                .retain(|g| !(g.bot_id == bot_id && g.target == target));
+            if e.action == AUDIT_GRANT_INERT {
+                inert_audited.insert((
+                    bot_id,
+                    target.clone(),
+                    e.detail["computer"].as_str().map(str::to_owned),
+                ));
+                for g in &mut grants.always {
+                    if g.bot_id == bot_id
+                        && g.target == target
+                        && g.computer.as_deref() == e.detail["computer"].as_str()
+                    {
+                        g.inert = true;
+                    }
+                }
+                continue;
+            }
+            let computer = e.detail["computer"].as_str().map(str::to_owned);
+            grants.always.retain(|g| {
+                !(g.bot_id == bot_id
+                    && g.target == target
+                    && (e.action == AUDIT_GRANT_REVOKED || g.computer == computer))
+            });
             if e.action == AUDIT_GRANT_ALWAYS {
                 grants.always.push(Grant {
                     bot_id,
                     target,
                     granted_at_ms: e.ts_ms,
+                    computer,
+                    inert: false,
                 });
             }
         }
     }
+    let mut pending_inert = Vec::new();
+    for g in &mut grants.always {
+        if legacy_unscoped_computer(g)
+            || g.computer
+                .as_deref()
+                .is_some_and(|scope| scope.ends_with(":local"))
+        {
+            g.inert = true;
+            let key = (g.bot_id, g.target.clone(), g.computer.clone());
+            if inert_audited.insert(key) {
+                pending_inert.push(g.clone());
+            }
+        }
+    }
+    for grant in pending_inert {
+        let Ok(Some(bot)) = storage.get_bot(grant.bot_id) else {
+            continue;
+        };
+        let mut detail = grant_detail(&grant);
+        detail["reason"] =
+            serde_json::json!("legacy desktop/browser grant has no verifiable computer identity");
+        let _ = storage.append_audit(bot.user_id, None, "system", AUDIT_GRANT_INERT, &detail);
+    }
     grants
+}
+
+fn legacy_unscoped_computer(g: &Grant) -> bool {
+    if g.computer.is_some() {
+        return false;
+    }
+    match &g.target {
+        GrantTarget::Category(category) => matches!(
+            category,
+            PermissionCategory::Desktop | PermissionCategory::Browser
+        ),
+        GrantTarget::Tool(name) => name.starts_with("desktop_") || name.starts_with("browser_"),
+    }
+}
+
+fn format_wait_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs >= 3600 && secs.is_multiple_of(3600) {
+        format!("{}h", secs / 3600)
+    } else if secs >= 60 && secs.is_multiple_of(60) {
+        format!("{}m", secs / 60)
+    } else if secs > 0 {
+        format!("{secs}s")
+    } else {
+        format!("{}ms", d.as_millis())
+    }
 }
 
 #[cfg(test)]
