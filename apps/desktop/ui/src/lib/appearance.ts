@@ -43,8 +43,15 @@ export interface AppearanceSettings {
   panelTransparency: number;
   /** Glass blur radius, px (12..48). */
   panelBlur: number;
-  /** The center chat area has no background of its own. */
+  /** The center chat area has no background of its own (v6 look; derived: `!chatPanel`). */
   transparentChat: boolean;
+  /**
+   * The owner switched the center panel back on. A separate flag from the old
+   * `transparentChat` on purpose: settings saved before the v6 design stored
+   * `transparentChat: false` without the user ever choosing it, so only this
+   * explicit flag turns the panel on.
+   */
+  chatPanel: boolean;
   /** Paint the chosen panel style even when the OS asks apps to reduce transparency. */
   transparencyOverride: boolean;
 }
@@ -61,7 +68,8 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   backdropDim: DEFAULT_BACKDROP_DIM,
   panelTransparency: DEFAULT_SURFACE.transparency,
   panelBlur: DEFAULT_SURFACE.blur,
-  transparentChat: false,
+  transparentChat: true,
+  chatPanel: false,
   transparencyOverride: false
 };
 
@@ -80,6 +88,7 @@ export const parseOwnBubble = (v: unknown): OwnBubble => oneOf(OWN_BUBBLES, v, D
  * to the defaults; old theme names keep working.
  */
 export function normalizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
+  const chatPanel = raw.chatPanel === true;
   return {
     themeMode: parseThemeMode(raw.themeMode),
     customTheme: parseCustomTheme(raw.customTheme),
@@ -92,7 +101,8 @@ export function normalizeAppearance(raw: Record<string, unknown>): AppearanceSet
     backdropDim: parseBackdropDim(raw.backdropDim),
     panelTransparency: parsePanelTransparency(raw.panelTransparency),
     panelBlur: parsePanelBlur(raw.panelBlur),
-    transparentChat: parseTransparentChat(raw.transparentChat),
+    transparentChat: !chatPanel,
+    chatPanel,
     transparencyOverride: raw.transparencyOverride === true
   };
 }
@@ -142,7 +152,7 @@ export function appearanceFromQuery(
     backdropDim: q("dim") ?? saved.backdropDim,
     panelTransparency: q("alpha") ?? saved.panelTransparency,
     panelBlur: q("blur") ?? saved.panelBlur,
-    transparentChat: q("clear") ?? saved.transparentChat,
+    chatPanel: q("clear") !== undefined ? !parseTransparentChat(q("clear")) : saved.chatPanel,
     // Review screenshots run in headless Chrome, which reports the OS transparency preference too.
     transparencyOverride: q("rt") === "ignore" ? true : saved.transparencyOverride
   });

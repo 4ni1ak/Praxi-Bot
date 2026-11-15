@@ -434,6 +434,16 @@
   background-color: color-mix(in srgb, var(--color-surface-elevated) 60%, transparent);
 }
 
+/* Selected row must read differently from hover and from a bot-tinted backdrop (254-F). */
+.railItem[aria-current="page"] {
+  background-color: var(--color-surface-active);
+  box-shadow: inset var(--size-border-thick) 0 0 var(--color-accent-text);
+}
+
+.railItem[aria-current="page"]:focus-visible {
+  box-shadow: inset var(--size-border-thick) 0 0 var(--color-accent-text), var(--shadow-focus);
+}
+
 .railFoot {
   gap: var(--space-2);
 }
@@ -567,4 +577,104 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---- Sidebar bot order (254-F): drag rows, keyboard grip, main-bot mark ---- */
+.botList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.srOnly {
+  position: absolute;
+  width: var(--size-border);
+  height: var(--size-border);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.botRow {
+  position: relative;
+  display: flex;
+  touch-action: none;
+}
+
+.botRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.botRow[data-dragging="true"] {
+  opacity: 0.5;
+}
+
+.botRow[data-drop]::after {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  height: var(--size-border-thick);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent-text);
+}
+
+.botRow[data-drop="before"]::after {
+  top: calc(var(--space-1) * -1);
+}
+
+.botRow[data-drop="after"]::after {
+  bottom: calc(var(--space-1) * -1);
+}
+
+.grip {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: var(--space-6);
+  height: var(--space-8);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-faint);
+  cursor: grab;
+  opacity: 0;
+}
+
+.botRow:hover .grip,
+.grip:focus-visible {
+  opacity: 1;
+}
+
+.grip:hover {
+  color: var(--color-text);
+  background-color: var(--color-surface-active);
+}
+
+.grip:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.mainMark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  vertical-align: middle;
+}
+
+.mainMark > svg {
+  width: calc(var(--size-icon-sm) * 0.7);
+  height: calc(var(--size-icon-sm) * 0.7);
 }

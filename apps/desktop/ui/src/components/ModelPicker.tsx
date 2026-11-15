@@ -92,6 +92,8 @@ export function ModelPicker({
 
   const [valueProvider = "", ...rest] = value.split("/");
   const valueModel = rest.join("/");
+  const valueLabel = groups.find((g) => g.provider === valueProvider)
+    ?.models.find((m) => m.ref === value)?.displayName ?? valueModel;
 
   return (
     <div className={styles.root}>
@@ -114,7 +116,7 @@ export function ModelPicker({
         <span className={styles.triggerText}>
           {autoOption?.selected
             ? autoOption.label
-            : (valueModel && labelFor ? labelFor(valueProvider, valueModel) : valueModel) ||
+            : (valueModel && labelFor ? labelFor(valueProvider, valueModel) : valueLabel) ||
               placeholder ||
               t("modelPicker.none")}
         </span>
@@ -203,7 +205,7 @@ export function ModelPicker({
                         >
                           <BrandMark name={productBrandKey(m.provider, m.model)} size={16} />
                           <span className={styles.optionText} title={labelFor ? m.model : undefined}>
-                            {labelFor ? labelFor(m.provider, m.model) : m.model}
+                            {labelFor ? labelFor(m.provider, m.model) : m.displayName}
                           </span>
                           {active ? <Check aria-hidden="true" /> : null}
                         </button>

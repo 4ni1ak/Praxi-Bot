@@ -8,6 +8,11 @@
     "usage": "Kullanım",
     "schedules": "Zamanlanmış görevler",
     "apps": "Uygulamalar",
+    "mainBot": "Ana",
+    "mainBotHint": "Ana bot: yeni sohbetlerin varsayılanı",
+    "reorderBot": "{{name}} sırasını değiştir (ok tuşları yukarı/aşağı taşır)",
+    "reorderHint": "Satırı sürükleyin ya da bu tutamaça odaklanıp yukarı/aşağı okuna basın",
+    "reorderMoved": "{{name}} {{pos}}. sıraya taşındı",
     "searchBots": "Botlarda ara",
     "unread": "Okunmamış mesaj"
   },
@@ -290,7 +295,8 @@
       "queueHint": "Mevcut tur bittikten sonra ilet",
       "steerHint": "Hemen ilet ve mevcut turu yönlendir"
     },
-    "placeholder": "Bota mesaj yaz…",
+    "placeholder": "Mesaj yaz…  / komutlar · @ botlar",
+    "addCommand": "Komut veya bot ekle",
     "placeholderBusy": "Bot çalışıyor — sıraya al veya yönlendir…",
     "send": "Gönder",
     "subagent": {
@@ -472,7 +478,6 @@
       "noMatch": "Eşleşme yok"
     },
     "conversationLabel": "Bugün",
-    "composerHint": "Göndermek için Enter · Komutlar için / · Bot seçmek için @",
     "openBot": "{{name}} ayrıntılarını aç",
     "emptyTitle": "Birlikte ne yapalım?",
     "emptyGreeting": "Merhaba, ben {{name}}",
@@ -689,6 +694,26 @@
         "running": "Sana soruluyor",
         "done": "Sana soruldu",
         "failed": "Sana sorulamadı"
+      },
+      "mcp_search": {
+        "running": "{{appAt}} aranıyor",
+        "done": "{{appAt}} arandı",
+        "failed": "{{appAt}} aranamadı"
+      },
+      "mcp_read": {
+        "running": "{{appAt}} okunuyor",
+        "done": "{{appAt}} okundu",
+        "failed": "{{appAt}} okunamadı"
+      },
+      "mcp_draft": {
+        "running": "{{app}} taslağı hazırlanıyor",
+        "done": "{{app}} taslağı hazırlandı",
+        "failed": "{{app}} taslağı hazırlanamadı"
+      },
+      "mcp_send": {
+        "running": "{{app}} ile gönderiliyor",
+        "done": "{{app}} ile gönderildi",
+        "failed": "{{app}} ile gönderilemedi"
       },
       "mcp": {
         "running": "{{app}} kullanılıyor ({{action}})",
@@ -1132,6 +1157,32 @@
       "notApplied": "{{name}}: kaydedilmedi, bu uygulama başka yerde değiştirildi (örneğin artık tüm botlara açık). Güncel durum gösteriliyor.",
       "savedToast": "{{name}}: bot erişimi kaydedildi"
     },
+    "error": {
+      "showDetails": "Ayrıntıları göster",
+      "hideDetails": "Ayrıntıları gizle",
+      "message": "Hata",
+      "stderr": "Sunucunun yazdıkları",
+      "noStderr": "Sunucu durmadan önce hiçbir şey yazmadı.",
+      "hint": {
+        "runtime_node": "Node.js PATH üzerinde bulunamadı. LTS sürümünü https://nodejs.org adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_uv": "uv PATH üzerinde bulunamadı. Kurun (Windows: winget install --id=astral-sh.uv -e veya https://docs.astral.sh/uv/) ya da klasörünü PATH'e ekleyin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_pipx": "pipx PATH üzerinde bulunamadı. https://pipx.pypa.io adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_docker": "docker komutu PATH üzerinde bulunamadı. Docker'ı kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_other": "Bu sunucuyu başlatan program PATH üzerinde bulunamadı. Kurun, klasörünü PATH'e ekleyin ya da sunucu ayarlarında tam yolunu verin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "closed": "Sunucu başlarken durdu. Neyi yazdığını görmek için ayrıntıları açın (örneğin Docker kurulu ama çalışmıyor), sorunu giderin ve Yeniden bağlan'a basın.",
+        "spawn": "Sunucu programı başlatılamadı. Sunucu ayarlarındaki komutu kontrol edin ve Yeniden bağlan'a basın.",
+        "needs_folder": "Bu uygulamanın okuyup yazabileceği tek klasörü seçin, sonra Kaydet ve bağla'ya basın.",
+        "timeout": "Sunucu zamanında yanıt vermedi. İlk başlatma paketler inerken yavaş olabilir; tekrar denemek için Yeniden bağlan'a basın.",
+        "config": "Sunucu ayarları ya da gerekli bir gizli anahtar eksik veya geçersiz. Düzeltin ve Yeniden bağlan'a basın."
+      }
+    },
+    "folder": {
+      "label": "Botun okuyup yazabileceği klasör",
+      "placeholder": "Tam yol, örneğin C:\\Users\\siz\\Documents",
+      "hint": "Uygulamayla yalnızca bu klasör paylaşılır. Praxi-Bot'un kendi verileri ve kimlik bilgisi klasörleri reddedilir.",
+      "missing": "Önce bir klasör seçin.",
+      "save": "Kaydet ve bağla"
+    },
     "reconnect": "Yeniden bağlan",
     "disconnectConfirm": "Bu sunucunun bağlantısı kesilsin mi?",
     "disconnect": "Bağlantıyı kes",
@@ -1245,7 +1296,7 @@
       },
       "detected": {
         "title": "Bu bilgisayarda bulunanlar",
-        "description": "Kurulu yapay zekâ araçlarını kendimiz buluruz. Açtıkların model listesinde görünür; anahtar girmen gerekmez.",
+        "description": "Bu bilgisayardaki kurulu CLI'ları algılarız. Yalnızca Claude Code sınırlandırılmış bot motoru olarak çalışır. Codex engelli; Cursor, OpenCode ve Gemini yalnızca algılama ve kurulum içindir.",
         "termsNotice": "Sağlayıcınızın abonelik koşulları geçerlidir; etkinleştirmeden önce otomatik kullanıma izin verildiğini doğrulayın.",
         "refresh": "Yeniden tara",
         "retry": "Yeniden dene",
@@ -1263,7 +1314,34 @@
         "signIn": "Giriş yap",
         "signInIn": "Terminalde çalıştır:",
         "install": "Kur",
-        "toggle": "{{name}} kullan"
+        "toggle": "{{name}} kullan",
+        "installedVersion": "Kurulu · {{version}}",
+        "outdated": "Güncel değil",
+        "codexBlocked": "Codex bot motoru olarak engellendi: salt okunur korumalı alanı tüm yerleşik araçları kapatmıyor.",
+        "nativeToolsOpen": "OpenCode: yalnızca algılama ve kurulum. CLI'da yerleşik araçları kapatma seçeneği yok; bot motoru olarak çalıştırılamaz.",
+        "runnableEngine": "Giriş ve uyumluluk kontrollerinden sonra sınırlandırılmış bot motoru olarak kullanılabilir.",
+        "detectionOnly": "Yalnızca algılama ve kurulum; bu sürümde bot motoru olarak çalıştırılamaz.",
+        "commandVerified": "Komut yerel kaynakta doğrulandı; kurulum test edilmedi.",
+        "commandUnverified": "Doğrulanmamış komut — satıcı belgelerini kontrol edin, sonra kopyalayıp kendiniz çalıştırın.",
+        "copyCommand": "Komutu kopyala",
+        "howSignIn": "Nasıl giriş yapılır",
+        "docs": "Belgeler",
+        "copied": "Komut kopyalandı",
+        "installApproval": "Mevcut kullanıcınızla, yetki yükseltmeden çalışır. Satıcı yazılımını indirip çalıştırır. Devam etmek için bir kez onaylayın. Girişi ayrıca terminalinizden yapın.",
+        "installSummary": "{{engine}} kur veya güncelle",
+        "dismissExpired": "Süresi dolan onayı kapat",
+        "installRunning": "Kuruluyor… bu bölümden ayrılmak verilmiş onayı iptal etmez.",
+        "installOutput": "Kurulum çıktısı (güvenilmeyen)",
+        "installDone": "Kurulum tamamlandı. Algılama yenilendi; giriş yapmanız gerekebilir.",
+        "installErrors": {
+          "npm_missing": "Node.js ve npm kurup yeniden deneyin veya komutu terminalinize kopyalayın.",
+          "node_missing": "Node.js bulunamadı. Komutu kopyalayıp terminalinizden çalıştırın.",
+          "npm_shim_refused": "Bu npm başlatıcısı burada güvenle çalıştırılamıyor. Komutu kopyalayıp terminalinizden çalıştırın.",
+          "powershell_missing": "PowerShell bulunamadı. Komutu kopyalayıp terminalinizden çalıştırın.",
+          "timeout": "Kurulum on dakikayı aştığı için durduruldu. Yeniden denemeden önce çıktıyı kontrol edin.",
+          "output_limit": "Kurulum çıktısı sınırı aştığı için kurulum durduruldu. Devam etmek için terminalinizi kullanın.",
+          "install_failed": "Kurulum başarıyla tamamlanamadı. Çıktıyı kontrol edin veya komutu terminalinizden çalıştırın."
+        }
       },
       "advanced": "Gelişmiş sağlayıcı ayarları"
     },
@@ -1780,7 +1858,9 @@
     "noChats": "Henüz sohbet yok.",
     "untitled": "Yeni sohbet",
     "computer": "Bilgisayar",
-    "edit": "Botu düzenle"
+    "edit": "Botu düzenle",
+    "runsOnHost": "{{name}} sunucusunda çalışır",
+    "runsOnLocal": "Bu bilgisayarda çalışır"
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",
@@ -1890,6 +1970,20 @@
     "refresh": "Hedefleri yenile",
     "backToChat": "Geri",
     "targetsLabel": "Hedef ekran",
+    "checkingTargets": "Ekranlar denetleniyor…",
+    "queryFailed": "Ekran listesi yüklenemedi. Otomatik olarak yeniden denenecek.",
+    "loadingPreview": "İlk görüntü yükleniyor…",
+    "noScreen": {
+      "desktop_off": "masaüstü denetimi kapalı",
+      "unsupported_platform": "bu platformda ekran yakalama yok",
+      "wayland": "Wayland oturumları desteklenmiyor, X11 oturumu kullanın",
+      "no_display": "kullanılabilir bir ekran yok",
+      "screen_unavailable": "ekran şu an açılamıyor (kilitli oturum veya eksik izin)",
+      "start_failed": "ekran yakalama başlatılamadı",
+      "starting": "ekran denetleniyor…",
+      "timed_out": "ekran yanıt vermedi, yeniden deneniyor",
+      "unknown": "ekran kullanılamıyor"
+    },
     "noTargets": "Henüz bildirilen bir ekran hedefi yok.",
     "hostLabel": "Ana makine: {{host}}",
     "viewOnly": "Salt izleme",
@@ -1901,6 +1995,7 @@
     "releaseFocus": "Klavyeden çık",
     "emergencyStop": "Botları durdur",
     "watchAction": "Devral",
+    "handBackAction": "Geri ver",
     "doneAction": "Bitirdim",
     "doneLabel": "Bitirdim",
     "retryingDone": "Kontrol geri veriliyor…",
@@ -1928,6 +2023,9 @@
       "active": "Kontrol sizde",
       "finishing": "Geri veriliyor…",
       "paused": "Duraklatıldı",
+      "checking": "Ekranlar denetleniyor…",
+      "queryFailed": "Ekranlar yüklenemedi",
+      "noScreen": "Henüz ekran yok",
       "unavailable": "Kullanılamıyor",
       "closed": "Kapalı",
       "disconnected": "Bağlantı kesildi",
@@ -1939,6 +2037,8 @@
       "active": "Kontrol sizde",
       "paused": "Duraklatıldı · Sizi bekliyor",
       "unavailable": "Beklemede · Etkin değil",
+      "ready": "Bu bilgisayar · hazır",
+      "noScreenReason": "Ekran yok: {{detail}}",
       "empty": "Etkin ekran yok"
     },
     "reasons": {
@@ -2207,5 +2307,44 @@
     "dismiss": "Kapat",
     "stopAllNow": "Hepsini şimdi durdur",
     "letContinue": "Devam etsinler"
+  },
+  "computerPicker": {
+    "label": "Bilgisayar: {{name}}",
+    "menu": "Bilgisayar",
+    "host": "Sunucu",
+    "localHint": "Burada, bu PC'de çalışır",
+    "link": {
+      "idle": "Eşleşmiş, bağlı değil",
+      "connecting": "Bağlanıyor…",
+      "connected": "Bağlı",
+      "offline": "Yanıt vermiyor",
+      "unreachable": "Artık eşleşmiş değil"
+    },
+    "add": "Sunucu ekle…",
+    "stopHost": "Sunucudaki tüm çalışmaları durdur",
+    "stopHostHint": "Şu an orada çalışanları durdurur",
+    "stopNone": "Sunucuda çalışan bir şey yok.",
+    "stopFailed": "Çalışmaları durdurmak için sunucuya ulaşılamadı.",
+    "stopped": "Sunucuda {{count}} çalışma durduruldu."
+  },
+  "pairHost": {
+    "title": "Sunucu ekle",
+    "lead": "Bu bilgisayarı her zaman açık sunucunla eşleştir; ekranını izle ve orada çalışan botlarla sohbet et.",
+    "step1": "Sunucuda şunu çalıştır:",
+    "step3": "Yazdırdığı bileti aşağıya yapıştır. Bir kez çalışır ve birkaç dakikada geçerliliğini yitirir.",
+    "ticket": "Eşleştirme bileti",
+    "hint": "Bilet bir kez kullanılır ve kaydedilmez.",
+    "pair": "Eşleştir",
+    "pairing": "Eşleştiriliyor…",
+    "failed": "Eşleştirme olmadı. Sunucunun açık ve biletin yeni olduğunu kontrol et."
+  },
+  "hostState": {
+    "connecting": "{{name}} sunucusuna bağlanılıyor…",
+    "offline": "{{name}} yanıt vermiyor. Botları çalışmaya devam eder; uygulama kendiliğinden yeniden bağlanır.",
+    "notPaired": "{{name}} artık bu bilgisayarı kabul etmiyor. Yeni bir biletle yeniden eşleştir.",
+    "versionBlocking": "Bu uygulama ({{local}}) ile {{name}} ({{host}}) farklı sürümlerde. Sunucuyu kullanmadan önce ikisini aynı sürüme getir.",
+    "versionWarning": "Uygulama {{local}}, {{name}} {{host}}: küçük bir fark, her şeyin çalışması beklenir.",
+    "noModelKey": "{{name}} sunucusunda henüz model anahtarı yok. Ekranını izleyebilir ve botlarını yönetebilirsin; sunucuya bir anahtar eklenene kadar sohbetlere yanıt gelmez.",
+    "useThisComputer": "Bu bilgisayarı kullan"
   }
 }

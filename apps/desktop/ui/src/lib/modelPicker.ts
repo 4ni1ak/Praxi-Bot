@@ -7,6 +7,9 @@ export interface ModelOption {
   ref: string;
   provider: string;
   model: string;
+  displayName: string;
+  recommended: boolean;
+  recommendedRank: number | null;
 }
 
 export interface ModelGroup {
@@ -16,8 +19,9 @@ export interface ModelGroup {
 
 /**
  * Models offered by the picker, grouped by provider.  Only enabled providers
- * are listed; a provider's default model and the `current` ref are included
- * even when the provider reports no listing.  Enabled CLI providers expose a
+ * are listed. Legacy responses preserve configured defaults; a metadata-aware
+ * response is authoritative about filtered defaults. The `current` ref remains
+ * selectable even when unlisted. Enabled CLI providers expose a
  * single `default` model unless `includeCli` is `false`.  The default provider comes first.
  */
 export function modelGroups(
@@ -36,7 +40,8 @@ export function modelGroups(
       continue;
     }
     const set = groups.get(p.id) ?? new Set<string>();
-    if (p.default_model) {
+    if (p.default_model && (p.model_details === undefined
+      || p.model_details.some((m) => m.id === p.default_model))) {
       set.add(p.default_model);
     }
     for (const m of p.models) {
@@ -65,11 +70,22 @@ export function modelGroups(
     )
     .map(([provider, models]) => ({
       provider,
-      models: [...models].sort().map((model) => ({
-        ref: `${provider}/${model}`,
-        provider,
-        model
-      }))
+      models: [...models].map((model) => {
+        const metadata = dto?.configured.find((p) => p.id === provider)
+          ?.model_details?.find((m) => m.id === model);
+        return {
+          ref: `${provider}/${model}`,
+          provider,
+          model,
+          displayName: metadata?.display_name ?? model,
+          recommended: metadata?.recommended ?? false,
+          recommendedRank: metadata?.recommended_rank ?? null
+        };
+      }).sort((a, b) =>
+        (a.recommendedRank ?? Number.MAX_SAFE_INTEGER) - (b.recommendedRank ?? Number.MAX_SAFE_INTEGER)
+        || a.displayName.localeCompare(b.displayName)
+        || a.model.localeCompare(b.model)
+      )
     }));
 }
 
@@ -81,7 +97,7 @@ export function filterModelGroups(
   return groups
     .map((g) => ({
       provider: g.provider,
-      models: g.models.filter((m) => matchesQuery(query, m.provider, m.model))
+      models: g.models.filter((m) => matchesQuery(query, m.provider, m.model, m.displayName))
     }))
     .filter((g) => g.models.length > 0);
 }

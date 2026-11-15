@@ -258,6 +258,7 @@ pub fn build_agent_with_live_views(
         view_registry,
         false,
         skills,
+        None,
     )
     .expect("test agent skill wiring")
 }
@@ -280,6 +281,7 @@ fn build_agent_with_skills(
     view_registry: Option<Arc<live_view::TargetRegistry>>,
     dynamic_desktop: bool,
     skills: SkillIndex,
+    fill_secrets: Option<Arc<secret_store::FillSecrets>>,
 ) -> Result<AgentLoop> {
     if !skills.has_assignments() {
         return Err("skill index must carry the per-bot assignment source".into());
@@ -296,6 +298,7 @@ fn build_agent_with_skills(
     let mut tools = BuiltinConfig::new(storage.data_dir().to_path_buf(), Arc::new(gate));
     tools.desktop.clone_from(&desktop);
     tools.dynamic_desktop = dynamic_desktop;
+    tools.fill_secrets = fill_secrets;
     tools.view_registry = view_registry;
     tools.knowledge = Some(Arc::new(
         builtin_tools::knowledge::LocalKnowledgeBackend::new(Arc::clone(storage)),
@@ -919,12 +922,41 @@ pub fn serve(
     });
     let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
     let views = Arc::new(live_view::TargetRegistry::default());
+    // This computer's screen becomes a (lazy) view target. Opening it can touch
+    // the OS, so it is probed on a worker thread with a deadline: the API starts
+    // regardless, and the panel is told why while there is no screen. The raw
+    // reason goes only to this log, redacted.
+    let _desktop_view = crate::view_targets::DesktopRegistrar::start(
+        Arc::clone(&views),
+        crate::view_targets::local_opener(desktop.clone()),
+        {
+            let redactor = redactor.clone();
+            Arc::new(move |line: &str| eprintln!("warning: {}", redactor.redact(line)))
+        },
+        crate::view_targets::Timing::default(),
+    );
     let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
     let effective_peer_enabled =
         peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
     let dynamic_desktop = effective_peer_enabled;
     let local_desktop = desktop.clone();
     let skill_index = skill_index_with_assignments(&storage, data_dir);
+    // Owner-stored fill secrets live in the same secret store as everything
+    // else, under `fill/`; every value is registered with the production
+    // redactor as it is stored and as it is read, on top of the periodic
+    // refresh that already covers every name in the store.
+    let fill_secrets = telegram_store.as_ref().and_then(|store| {
+        let hook_redactor = redactor.clone();
+        match secret_store::FillSecrets::open(Arc::clone(store), data_dir) {
+            Ok(f) => Some(Arc::new(f.with_value_hook(Arc::new(move |v: &str| {
+                hook_redactor.register(v);
+            })))),
+            Err(e) => {
+                eprintln!("warning: fill secrets are disabled: {e}");
+                None
+            }
+        }
+    });
     let agent = build_agent_with_skills(
         &storage,
         providers,
@@ -934,6 +966,7 @@ pub fn serve(
         Some(Arc::clone(&views)),
         dynamic_desktop,
         skill_index.clone(),
+        fill_secrets.clone(),
     )?;
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
@@ -954,6 +987,9 @@ pub fn serve(
         .set_skills(skill_index)
         .map_err(|e| format!("skills wiring: {e}"))?;
     register_schedule_tools(data_dir, &state);
+    if let Some(f) = &fill_secrets {
+        state.set_fill_secrets(Arc::clone(f));
+    }
     state.set_doctor_host(Arc::new(ServeDoctorHost {
         desktop: desktop_caps,
         redactor: redactor.clone(),
@@ -989,6 +1025,15 @@ pub fn serve(
         .await?;
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
+        }
+        // Screen grants of paired devices survive a restart: a headless host
+        // has nobody at its screen to grant them again. Pairing
+        // reconciliation below still revokes devices that are gone.
+        state.load_screen_privileges().await;
+        if !host_is_host {
+            // This computer's links to paired hosts (`/v1/hosts`); the peer
+            // endpoint starts lazily unless `--peer` already started one.
+            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone());
         }
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
         let computer = Arc::new(crate::computer::CliComputerProvider::new(
@@ -1879,6 +1924,7 @@ body
             None,
             false,
             plain,
+            None,
         );
         assert!(
             result.is_err(),

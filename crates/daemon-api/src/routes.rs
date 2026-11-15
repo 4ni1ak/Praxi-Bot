@@ -322,6 +322,12 @@ pub(crate) async fn create_bot(
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, mut config) = resolve_bot(input)?;
     crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
+    crate::peer::protect_execution_config(
+        peer.as_ref().map(|peer| &peer.0),
+        s.leader().config().mode == crate::host::HostMode::Host,
+        None,
+        &mut config,
+    )?;
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -425,6 +431,12 @@ pub(crate) async fn update_bot(
     crate::peer::protect_knowledge_config(
         peer.as_ref().map(|peer| &peer.0),
         bot.config.get("knowledge"),
+        &mut config,
+    )?;
+    crate::peer::protect_execution_config(
+        peer.as_ref().map(|peer| &peer.0),
+        s.leader().config().mode == crate::host::HostMode::Host,
+        Some(&bot.config),
         &mut config,
     )?;
     if config.get("knowledge").is_some()
@@ -725,6 +737,9 @@ pub(crate) async fn delete_bot(
         Ok(())
     })
     .await?;
+    // The bot's browser slot, driver and screen target go with it; nothing
+    // selectable or resident stays behind for a bot that no longer exists.
+    s.live_view().registry.retire_bot(bot.id.0);
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.
@@ -1397,12 +1412,16 @@ async fn models_of(
 /// provider offers (fetched live, with a short timeout; failures are reported
 /// per provider and never fail the route).
 #[utoipa::path(get, path = "/v1/providers", tag = "providers", security(("bearer" = [])),
+    params(crate::provider_models::ProvidersQuery),
     responses((status = 200, body = ProvidersDto)))]
 pub(crate) async fn list_providers(
     State(s): State<AppState>,
+    Query(query): Query<crate::provider_models::ProvidersQuery>,
 ) -> Result<Json<ProvidersDto>, ApiError> {
     let cfg = provider_catalog::ProviderConfig::load(&provider_catalog::config_path(&s.data_dir()))
-        .map_err(|e| ApiError::internal(format!("providers.toml: {e}")))?;
+        .map_err(|e| {
+            ApiError::internal(s.agent().redact_host_text(format!("providers.toml: {e}")))
+        })?;
     let live = s.agent().providers();
     let mut active = live.ids();
     active.extend(
@@ -1420,16 +1439,33 @@ pub(crate) async fn list_providers(
         .providers
         .iter()
         .zip(models)
-        .map(|(p, (models, models_error))| ConfiguredProviderDto {
-            id: p.id.clone(),
-            enabled: p.enabled,
-            is_default: default_id.as_deref() == Some(p.id.as_str()),
-            default_model: p.default_model.clone(),
-            has_key: p.key.is_some(),
-            custom: p.custom.is_some(),
-            active: active.contains(&p.id),
-            models,
-            models_error,
+        .map(|(p, (models, models_error))| {
+            let models = if p.cli.is_some() {
+                cli_provider::engine_spec(p.id.strip_prefix("cli:").unwrap_or(""))
+                    .map_or_else(Vec::new, |spec| {
+                        spec.models.iter().map(|m| (*m).to_owned()).collect()
+                    })
+            } else {
+                models
+            };
+            let model_details = crate::provider_models::for_picker(
+                s.agent(),
+                p,
+                models,
+                query.chat_only.unwrap_or(true),
+            );
+            ConfiguredProviderDto {
+                id: p.id.clone(),
+                enabled: p.enabled,
+                is_default: default_id.as_deref() == Some(p.id.as_str()),
+                default_model: p.default_model.clone(),
+                has_key: p.key.is_some(),
+                custom: p.custom.is_some(),
+                active: active.contains(&p.id),
+                models: model_details.iter().map(|m| m.id.clone()).collect(),
+                model_details,
+                models_error: models_error.map(|e| s.agent().redact_host_text(e)),
+            }
         })
         .collect();
     let mut catalog: Vec<CatalogProviderDto> = s
@@ -1486,14 +1522,18 @@ pub(crate) struct DetectProvidersQuery {
     pub refresh: Option<String>,
 }
 
-/// Detect installed, signed-in coding CLIs.
+/// Detect installed, signed-in coding CLIs. Local owner only: the rows carry
+/// the signed-in account label (an email or organisation) and install state.
 #[utoipa::path(get, path = "/v1/providers/detected", tag = "providers", security(("bearer" = [])),
     params(DetectProvidersQuery),
-    responses((status = 200, body = Vec<DetectedProviderDto>)))]
+    responses((status = 200, body = Vec<DetectedProviderDto>),
+              (status = 403, body = ErrorBody, description = "caller is not the local owner")))]
 pub(crate) async fn detect_providers(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     Query(query): Query<DetectProvidersQuery>,
 ) -> Result<Json<Vec<DetectedProviderDto>>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let refresh = query
         .refresh
         .as_deref()
@@ -1555,6 +1595,7 @@ fn persist_cli_enable(
         custom: false,
         active: saved.enabled,
         models: Vec::new(),
+        model_details: Vec::new(),
         models_error: None,
     })
 }
@@ -1583,8 +1624,10 @@ pub(crate) async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, Api
               (status = 400, body = ErrorBody, description = "engine is not runnable or unknown")))]
 pub(crate) async fn enable_cli_provider(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     ApiJson(body): ApiJson<EnableCliProviderInput>,
 ) -> Result<Json<ConfiguredProviderDto>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let Some(spec) = cli_provider::engine_spec(&body.id).filter(|spec| spec.runnable) else {
         return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
             &body.id,

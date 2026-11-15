@@ -7,6 +7,7 @@ import {
   normalizeAppearance,
   type AppearanceSettings
 } from "../lib/appearance";
+import { parseBotOrder } from "../lib/botOrder";
 import {
   type ComputerTarget,
   parseComputerTarget,
@@ -47,6 +48,8 @@ export interface AppSettings extends AppearanceSettings {
   sendWith: SendWith;
   /** Where the bot's computer / browser runs. */
   computerTarget: ComputerTarget;
+  /** Sidebar bot order (bot ids); the first bot is the main bot. Empty = daemon order. */
+  botOrder: string[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -73,7 +76,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   accountName: "",
   windowFrame: true,
   sendWith: "enter",
-  computerTarget: "this-pc"
+  computerTarget: "this-pc",
+  botOrder: []
 };
 
 export function shouldOpenOnboardingOnStart(
@@ -119,7 +123,8 @@ export function loadSettingsSync(): AppSettings | null {
       ...DEFAULT_SETTINGS,
       ...parsed,
       ...normalizeAppearance(parsed as Record<string, unknown>),
-      computerTarget: parseComputerTarget(parsed.computerTarget)
+      computerTarget: parseComputerTarget(parsed.computerTarget),
+      botOrder: parseBotOrder(parsed.botOrder)
     };
   } catch {
     return null;
@@ -203,6 +208,8 @@ export async function loadSettings(): Promise<AppSettings> {
         await store.get<string>("computerTarget")
       );
 
+      const botOrder = parseBotOrder(await store.get<unknown>("botOrder"));
+
       return {
         ...appearance,
         backgroundUrl,
@@ -227,7 +234,8 @@ export async function loadSettings(): Promise<AppSettings> {
         accountName,
         windowFrame,
         sendWith,
-        computerTarget
+        computerTarget,
+        botOrder
       };
     } catch {
       // Fall back to localStorage below if reading from plugin-store fails
@@ -276,6 +284,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("windowFrame", settings.windowFrame);
       await store.set("sendWith", settings.sendWith);
       await store.set("computerTarget", settings.computerTarget);
+      await store.set("botOrder", settings.botOrder);
       await store.save();
     } catch {
       // Ignore store write errors in non-Tauri environments

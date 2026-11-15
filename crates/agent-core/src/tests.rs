@@ -2,6 +2,7 @@
 
 #![allow(clippy::assert_is_empty)]
 
+mod fill_secret;
 mod planning_pause;
 
 use std::collections::VecDeque;
@@ -2750,7 +2751,7 @@ exclude = [\"email_send\"]
         "excluded family advertised: {first}"
     );
     assert!(first.contains("Connected apps (by id): github."));
-    assert!(first.contains("call find_tool first"));
+    assert!(first.contains("Never say you cannot before you tried find_tool"));
     assert_eq!(
         first,
         system_text(&fake.request(1)),
@@ -8093,4 +8094,49 @@ computer = \"browser\"
     let row = env.storage.get_run(run).unwrap().unwrap();
     assert_ne!(row.computer_node.as_deref(), Some("local"));
     assert_eq!(row.computer_node, None);
+}
+
+#[tokio::test]
+async fn silent_end_after_discovery_is_nudged_once_then_answers() {
+    for answers in [true, false] {
+        let env = setup();
+        let browser = Arc::new(tool("browser_open", Effect::Read, "ok"));
+        let files = Arc::new(tool("fs_read", Effect::Read, "ok"));
+        let mut script = vec![
+            calls(&[("c1", "find_tool", json!({"query": "browser"}))]),
+            text(""),
+        ];
+        if answers {
+            script.push(text("opened it"));
+        } else {
+            script.push(text(""));
+        }
+        let fake = Fake::new(script);
+        let mut config = cfg(Policy::full());
+        config.discovery_threshold = 1;
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[&browser, &files],
+            profile(""),
+            config,
+        );
+        let run = lp.run_turn(env.chat, "open youtube").unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+        // find_tool, silent end, nudged call: exactly one extra call, no more.
+        assert_eq!(fake.n_requests(), 3);
+        let last = format!("{:?}", fake.request(2).messages);
+        assert!(last.contains("did not use them"), "nudge missing: {last}");
+        let msgs = env.storage.list_messages(env.chat).unwrap();
+        let reply = &msgs.last().unwrap().content;
+        if answers {
+            assert_eq!(reply, "opened it");
+        } else {
+            assert!(
+                reply.contains("no answer"),
+                "honest fallback missing: {reply}"
+            );
+        }
+    }
 }

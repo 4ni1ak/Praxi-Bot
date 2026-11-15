@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { McpCatalogEntry, McpServer } from "../api/types";
-import { applyServerEvent } from "../lib/mcpApps";
+import { applyServerEvent, eventNeedsRefetch } from "../lib/mcpApps";
 import { useDaemon } from "./DaemonContext";
 
 /**
@@ -57,11 +57,13 @@ export function useMcp(active: boolean): {
       if (ev.type !== "mcp_server_changed") {
         return;
       }
-      // A server this list has not seen: fetch the fresh list.
+      // Show the new status at once; the event has no diagnostics, so settled
+      // transitions (and servers this list has not seen) refetch the real DTO.
       const next = applyServerEvent(serversRef.current, ev);
       if (next) {
         setServers(next);
-      } else {
+      }
+      if (eventNeedsRefetch(serversRef.current, ev)) {
         void reload();
       }
     });

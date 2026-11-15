@@ -1,7 +1,7 @@
-import { BellDot, ChevronDown, FlaskConical, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
+import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
 import { isMockMode } from "./api/mockMode";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -73,7 +73,6 @@ import { usePanelReserve } from "./state/usePanelReserve";
 import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
-import { DaemonProvider, useDaemon } from "./state/DaemonContext";
 import { AddSkillModal } from "./components/AddSkillModal";
 import { useToast } from "./components/Toast";
 import { createChatFor, newChatFailureNeedsToast } from "./lib/newChat";
@@ -83,6 +82,17 @@ import { useBotSkills } from "./state/useBotSkills";
 import { BotEditModal } from "./views/BotEditModal";
 import { BotEmptyView } from "./views/BotEmptyView";
 import { BotProfileModal } from "./views/BotProfileModal";
+import { useBotReorder } from "./components/useBotReorder";
+import { setBotOrderSnapshot } from "./store/botOrderStore";
+import { computerScopePlan } from "./lib/hostState";
+import { ComputerPicker } from "./components/ComputerPicker";
+import { HostStateBanner } from "./components/HostStateBanner";
+import {
+  DaemonProvider,
+  HostSession,
+  LOCAL_COMPUTER,
+  useDaemon
+} from "./state/DaemonContext";
 import { ChatView } from "./views/ChatView";
 import { NeedsYouView } from "./views/NeedsYouView";
 import { OnboardingView } from "./views/OnboardingView";
@@ -139,7 +149,8 @@ function AppShell() {
     client,
     refreshBots,
     refreshChats,
-    retry
+    retry,
+    activeComputerId
   } = useDaemon();
   const { setThumbnailDemand, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
@@ -151,6 +162,14 @@ function AppShell() {
     leave.attempt(() => setRoute(next));
   };
   const toast = useToast();
+  // Chats, bots and runs belong to one computer: switching computers starts at home.
+  const lastComputer = useRef(activeComputerId);
+  useEffect(() => {
+    if (lastComputer.current !== activeComputerId) {
+      lastComputer.current = activeComputerId;
+      setRoute({ kind: "home" });
+    }
+  }, [activeComputerId]);
   const [controlState, setControlStateRaw] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
@@ -328,6 +347,18 @@ function AppShell() {
       return next;
     });
   };
+
+  // Sidebar order: settings hold the ids, the daemon context sorts `bots` with them (top = main bot).
+  useEffect(() => {
+    setBotOrderSnapshot(settings.botOrder);
+  }, [settings.botOrder]);
+  const [orderNote, setOrderNote] = useState("");
+  const botIds = useMemo(() => bots.map((b) => b.id), [bots]);
+  const reorder = useBotReorder(
+    botIds,
+    (botOrder) => updateSettings({ botOrder }),
+    (id, pos) => setOrderNote(t("sidebar.reorderMoved", { name: bots.find((b) => b.id === id)?.name ?? "", pos }))
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -656,6 +687,8 @@ function AppShell() {
             ) : null}
           </SidebarHeader>
           <SidebarSection>
+            <span className={styles.srOnly} role="status" aria-live="polite">{orderNote}</span>
+            <div ref={reorder.containerRef} className={styles.botList}>
             {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
             {bots.filter(bot => bot.name.toLowerCase().includes((botSearch ?? "").toLowerCase())).map((bot) => {
               const view = botView(bot);
@@ -664,11 +697,19 @@ function AppShell() {
               const live = runs.find(r => r.bot_id === bot.id && ["running", "pending", "waiting_approval"].includes(r.state));
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
               const avatarState = state === "thinking" || state === "working" || state === "waiting-approval" || state === "error" ? state : "idle";
-              return <SidebarItem key={bot.id} className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => goToBot(bot.id)}>
-                <BotAvatar bot={view} size="md" state={avatarState} decorative />
-                <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
-              </SidebarItem>;
+              const index = botIds.indexOf(bot.id);
+              const canReorder = botSearch === null || botSearch === "";
+              const drag = reorder.drag;
+              const dropEdge = drag && drag.id !== bot.id && drag.over === index ? (drag.over < drag.from ? "before" : "after") : undefined;
+              return <div key={bot.id} className={styles.botRow} data-dragging={drag?.id === bot.id ? "true" : undefined} data-drop={dropEdge} {...(canReorder ? reorder.rowProps(bot.id) : { "data-bot-id": bot.id })}>
+                <SidebarItem className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => goToBot(bot.id)}>
+                  <BotAvatar bot={view} size="md" state={avatarState} decorative />
+                  <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}{index === 0 && botIds.length > 1 ? <span className={styles.mainMark} title={t("sidebar.mainBotHint")}><Star aria-hidden="true" />{t("sidebar.mainBot")}</span> : null}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
+                </SidebarItem>
+                {canReorder && !mini && botIds.length > 1 ? <button type="button" className={styles.grip} aria-label={t("sidebar.reorderBot", { name: view.name })} title={t("sidebar.reorderHint")} {...reorder.gripProps(bot.id)}><GripVertical aria-hidden="true" /></button> : null}
+              </div>;
             })}
+            </div>
           </SidebarSection>
 
           <SidebarFooter className={styles.railFoot}>
@@ -683,7 +724,7 @@ function AppShell() {
     >
       <div className={styles.mainColumn}>
         <div className={styles.titleBar} data-tauri-drag-region>
-          <span />
+          <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
           {botInView && panelBotView ? (
             <button
               ref={chipRef}
@@ -701,7 +742,7 @@ function AppShell() {
             </button>
           ) : <span />}
           <div className={styles.windowActions} data-tauri-drag-region>
-            <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
+            <ComputerPicker />
             <button className={styles.iconButton} title={t("account.settings")} aria-label={t("account.settings")} onClick={() => setSettingsOpen("general")}><Settings2 /></button>
             {isTauriRuntime() && !settings.windowFrame ? <>
               <button className={styles.iconButton} title={t("window.minimize")} aria-label={t("window.minimize")} onClick={() => void getCurrentWindow().minimize()}><Minus /></button>
@@ -710,7 +751,8 @@ function AppShell() {
             </> : null}
           </div>
         </div>
-        <HealthIndicator />
+        {activeComputerId === LOCAL_COMPUTER ? <HealthIndicator /> : null}
+        <HostStateBanner />
         <ShellBridgeHost
           settings={settings}
           onOpenChat={openChat}
@@ -953,16 +995,38 @@ function AppShell() {
   );
 }
 
+/**
+ * The local daemon's safety machinery (heartbeat, native Stop and tray, local event
+ * stream, approval overlays) stays connected to THIS computer whichever computer the
+ * views show. Selecting a host only swaps the daemon the chat and panel views talk
+ * to (a second session and live view, rebuilt per host).
+ */
+export function ComputerScope({ children }: { children: ReactNode }) {
+  const { activeComputerId } = useDaemon();
+  const plan = computerScopePlan(activeComputerId, LOCAL_COMPUTER);
+  return (
+    <LiveViewProvider>
+      {plan.localBridge ? <ControlBridgeHost /> : null}
+      {!plan.hostSession ? (
+        children
+      ) : (
+        <HostSession key={activeComputerId}>
+          <LiveViewProvider>{children}</LiveViewProvider>
+        </HostSession>
+      )}
+    </LiveViewProvider>
+  );
+}
+
 export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
-        <LiveViewProvider>
+        <ComputerScope>
           <LeaveGuardProvider>
-            <ControlBridgeHost />
             <AppShell />
           </LeaveGuardProvider>
-        </LiveViewProvider>
+        </ComputerScope>
       </DaemonProvider>
     </ToastProvider>
   );

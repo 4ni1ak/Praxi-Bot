@@ -489,6 +489,7 @@ function reduce(
     case "workflow_step_completed":
     case "control_requested":
     case "control_state_changed":
+    case "view_targets_changed":
     case "mcp_server_changed":
       return state;
   }
