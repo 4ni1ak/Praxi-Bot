@@ -128,6 +128,8 @@
       "viaGrant": "“Her zaman izin ver” kuralı sayesinde izinli",
       "grantCategory": "Her {{name}} aracına her zaman izin ver",
       "grantTool": "{{name}} için her zaman izin ver",
+      "inertGrant": "Etkin değil: bu kural bir bilgisayara bağlı değil ve artık uygulanmıyor.",
+      "scopedAllow": "Şu bilgisayarlarda izinli: {{scopes}}",
       "revoke": "Geri al",
       "workspace": {
         "title": "Çalışma alanı varsayılanı",
@@ -234,6 +236,35 @@
     "confirmDelete": "Silmek için tekrar tıkla",
     "chats": "Sohbetler",
     "noChats": "Henüz sohbet yok. “Yeni sohbet” ile başla.",
+    "skills": {
+      "heading": "Beceriler",
+      "loading": "Beceriler yükleniyor…",
+      "summaryAll": "Tüm ortak becerileri kullanır ({{count}})",
+      "summarySelected": "{{total}} ortak beceriden {{count}} tanesi",
+      "summaryLearned": "(+{{count}} öğrenilmiş)",
+      "summaryMissing": "Atanmış {{count}} beceri diskte bulunamıyor",
+      "chooseButton": "Beceri seç…",
+      "modalTitle": "Becerileri seç",
+      "modeLabel": "Ortak beceri erişimi",
+      "modeAll": "Tüm ortak beceriler",
+      "modeSelected": "Yalnızca seçtiklerim",
+      "searchPlaceholder": "Ad veya açıklamaya göre beceri filtrele…",
+      "missingTitle": "Kullanılamıyor",
+      "missingHint": "Atanan bu beceriler artık diskte yok. İstersen kaldırabilir ya da olduğu gibi bırakabilirsin.",
+      "removeMissing": "Kaldır",
+      "emptyCatalog": "Henüz ortak veya yerleşik beceri yüklü değil.",
+      "emptySearch": "Aramana uyan beceri yok.",
+      "ownTitle": "Bu botun kendi öğrendiği beceriler ({{count}})",
+      "tooMany": "En fazla {{max}} beceri atanabilir. Daha az beceri seç ya da \"Tüm ortak beceriler\" seçeneğini kullan.",
+      "conflict": "Bu pencere açıldıktan sonra beceriler değişti (başka bir pencere ya da cihaz kaydetti). Güncel atama yeniden yüklendi; gözden geçirip tekrar dene.",
+      "invalid": "Kaydedilemedi: {{detail}}",
+      "boundaryHint": "Bu, botun önüne konan ve beceri araçlarıyla yükleyebildiği becerileri sınırlar. Gizli bir depo değildir: dosya ya da kabuk erişimi olan bir bot, beceri klasörünü diskten yine de okuyabilir.",
+      "ownHint": "Öğrenilen beceriler bu bota aittir ve her zaman etkin kalır.",
+      "scope": {
+        "shared": "ortak",
+        "bundled": "yerleşik"
+      }
+    },
     "chatState": {
       "needs": "Senden bekliyor",
       "running": "Çalışıyor"
@@ -338,7 +369,71 @@
     "notice": {
       "modelFallback": "Model {{from}} yerine {{to}} oldu: {{reason}}",
       "error": "{{message}}",
-      "workflowDrift": "{{workflow}} iş akışı sapma gösterdi: {{reason}}"
+      "workflowDrift": "{{workflow}} iş akışı sapma gösterdi: {{reason}}",
+      "checkpointRestored": "{{checkpointId}} denetim noktasından {{count}} dosya geri yüklendi. Güvenlik denetim noktası: {{safetyId}}.",
+      "checkpointRestorePartial": "{{checkpointId}} geri alma işlemi başarısız; {{count}} dosya hâlâ değişmiş olabilir. {{safetyId}} güvenlik denetim noktasından kurtarabilirsiniz."
+    },
+    "changes": {
+      "tab": "Değişiklikler",
+      "title": "Dosya değişiklikleri ({{count}})",
+      "undoAll": "Tümünü geri al",
+      "undoFile": "Geri al",
+      "loading": "Dosya değişiklikleri yükleniyor...",
+      "loadError": "Dosya değişiklikleri yüklenemedi: {{message}}",
+      "empty": "Bu çalıştırmada izlenen bir dosya değişikliği yok.",
+      "scopeDisclaimer": "Geri alma yalnızca dosya araçlarını kapsar (fs_write, fs_edit, fs_move, fs_delete). Kabuk, web, e-posta veya masaüstü araçlarının dış etkileri otomatik olarak geri alınamaz.",
+      "modifiedSinceBadge": "Çalıştırma sonrası değişti",
+      "movedFrom": "Kaynak: {{path}}",
+      "viaLink": "Bağlantı üzerinden: {{path}}",
+      "diffStats": "+{{added}} / -{{removed}}",
+      "bytes": "{{count}} B",
+      "showDiff": "Farkı göster",
+      "hideDiff": "Farkı gizle",
+      "kind": {
+        "created": "Oluşturuldu",
+        "modified": "Değiştirildi",
+        "deleted": "Silindi",
+        "moved": "Taşındı"
+      },
+      "omitted": {
+        "binary": "İkili dosya — satır içi fark gösterilmiyor ({{before}} -> {{after}}).",
+        "too_large": "Dosya satır içi fark sınırını aşıyor ({{before}} -> {{after}}).",
+        "run_budget_exceeded": "Çalıştırma fark bütçesi aşıldı — satır içi fark gösterilmiyor ({{before}} -> {{after}}).",
+        "directory": "Klasör — satır içi fark gösterilmiyor.",
+        "symlink": "Sembolik bağlantı — satır içi fark gösterilmiyor.",
+        "modified_since": "Dosya bu çalıştırma bittikten sonra diskte değişti.",
+        "not_accessible": "Güncel dosya erişim ayarlarıyla erişilemiyor.",
+        "line_endings": "Yalnızca satır sonları değişti (LF/CRLF)."
+      },
+      "modal": {
+        "titleSingle": "{{path}} değişikliği geri alınsın mı?",
+        "titleAll": "Bu çalıştırmadaki tüm dosya değişiklikleri geri alınsın mı?",
+        "previewLoading": "Diskteki güncel dosyalar denetleniyor...",
+        "safetyNote": "Geri alma, bağlantılı tüm dosya işlemlerini etkiler; aşağıdaki yolları inceleyin. Güvenlik denetim noktası, bu geri almayı geri alabilmeniz için güncel durumu saklar.",
+        "modifiedWarning": "Bu dosyalar çalıştırmadan sonra değişti. Biliniyorsa değiştiren çalıştırma gösterilir; diğer değişiklikler size ait olabilir. Üzerine yazmadan önce onaylayın.",
+        "overwriteLabel": "Yeni değişikliklerimin üzerine yaz",
+        "unverifiedWarning": "Bazı dosyaların mevcut durumu doğrulanamadı. Değişti olarak listelenen dosyalarda doğrulanmış fark var. Değişen veya doğrulanamayan dosyaların üzerine yazmadan önce onaylayın.",
+        "unverifiedOverwriteLabel": "Değişen veya doğrulanamayan dosyaların üzerine yaz",
+        "confirm": "Geri yükle",
+        "restoring": "Geri yükleniyor...",
+        "cancel": "İptal",
+        "action": {
+          "restore": "Önceki sürümü geri yükle",
+          "delete": "Oluşturulan dosyayı sil",
+          "keep": "Bağlantıyı olduğu gibi bırak"
+        }
+      },
+      "restoreDone": "{{count}} dosya geri yüklendi. Güvenlik anlık görüntüsü kaydedildi.",
+      "restoreFailed": "Geri yüklenemedi: {{message}}",
+      "loadMore": "Daha fazla dosya yükle",
+      "safetyCheckpoint": "Güvenlik denetim noktası: {{id}}",
+      "undoUndo": "Bu geri almayı geri al",
+      "changedByRun": "Başka bir çalışma değiştirdi ({{run}})",
+      "changedOutsideRun": "Bu çalıştırma dışında değiştirildi",
+      "computerScope": "Çalıştırma bilgisayarı: {{computer}}. Bu dosya kontrol noktaları bağlı daemon’un diskindedir.",
+      "computerUnknown": "Kaydedilmemiş",
+      "couldNotVerify": "Dosyanın mevcut durumu doğrulanamadı",
+      "restorePartial": "Geri alma başarısız; aşağıdaki geri dönüş uyarısını ve güvenlik denetim noktasını inceleyin."
     },
     "route": {
       "workflow": "İş akışı: {{name}} (0 LLM çağrısı)",
@@ -1085,6 +1180,7 @@
       "ai": "Yapay zeka",
       "computer": "Bilgisayar",
       "usage": "Kullanım",
+      "diagnostics": "Tanılama",
       "updates": "Güncellemeler",
       "appearance": "Görünüm"
     },
@@ -1353,6 +1449,73 @@
       "toast": {
         "saved": "Web araması ayarları kaydedildi",
         "keyCleared": "API anahtarı gizli depodan kaldırıldı"
+      }
+    },
+    "diagnostics": {
+      "title": "Tanılama",
+      "description": "Botun neden çalışmadığını kontrol eder ve sık görülen sorunları düzeltir.",
+      "running": "Tanılama çalışıyor…",
+      "allGood": "Her şey yolunda görünüyor",
+      "problems": "{{count}} öğe ilgi bekliyor",
+      "problems_other": "{{count}} öğe ilgi bekliyor",
+      "checkedAt": "Son kontrol: {{time}}",
+      "rerun": "Yeniden çalıştır",
+      "copyReport": "Destek raporunu kopyala",
+      "reportCopied": "Destek raporu kopyalandı. Anahtarlar, belirteçler, e-posta adresleri ve kullanıcı klasörünüz gizlendi.",
+      "reportFailed": "Destek raporu oluşturulamadı",
+      "repairDone": "Onarım tamamlandı",
+      "repairFailed": "Onarım başarılı olmadı",
+      "offline": "Arka plan servisine bağlı değil. Tanılama için Praxi'yi başlatın.",
+      "loadError": "Tanılama çalıştırılamadı",
+      "empty": "Hiç denetim sonucu gelmedi",
+      "notOnPlatform": "Bu platformda kullanılamaz.",
+      "privacy": "Tanılama yalnızca ayarlarınızı okur. Bir onarım yalnızca düğmesine tıkladığınızda çalışır.",
+      "status": {
+        "ok": "Tamam",
+        "warn": "Kontrol et",
+        "fail": "Sorun",
+        "neutral": "Kullanılmıyor",
+        "unsupported": "Kullanılamaz"
+      },
+      "repair": {
+        "create_data_dir": "Klasörü oluştur",
+        "reload_providers": "Sağlayıcıları yeniden yükle",
+        "restart_browser": "Tarayıcıyı yeniden başlat"
+      },
+      "checks": {
+        "daemon": "Arka plan servisi",
+        "host_ownership": "Sunucu sahipliği",
+        "peer_link": "Eş / VPS bağlantısı",
+        "data_dir": "Veri klasörü",
+        "unicode_path": "Yollarda Türkçe karakterler",
+        "config": "Sağlayıcı ayar dosyası",
+        "secret_backend": "Gizli bilgi deposu",
+        "providers": "Yapay zekâ sağlayıcıları",
+        "providers_loaded": "Yüklü sağlayıcılar",
+        "cli_accounts": "Kodlama CLI hesapları",
+        "model_catalog": "Model kataloğu",
+        "browser": "Tarayıcı",
+        "desktop_automation": "Masaüstü otomasyonu",
+        "capabilities": "Yetenekler",
+        "schedule_tools": "Zamanlama araçları",
+        "disk_space": "Disk alanı",
+        "clock": "Saat"
+      },
+      "hints": {
+        "providers": "API anahtarını Ayarlar → Yapay zekâ'dan ekleyin ya da kodlama CLI'ında oturum açıp orada etkinleştirin.",
+        "providers_loaded": "Botun kayıtlı ayarları kullanması için sağlayıcıları yeniden yükleyin.",
+        "cli_accounts": "Bir kez terminal açıp CLI'da oturum açın (örneğin `claude` ya da `codex login`).",
+        "data_dir": "Veri klasörünü oluşturun ya da klasöre yazma izniniz olduğunu kontrol edin.",
+        "unicode_path": "Veri klasörünü özel karakter içermeyen bir yola ya da yerel bir NTFS diske taşıyın.",
+        "disk_space": "Biraz disk alanı açın; disk dolduğunda sohbetler ve kayıtlar kaydedilemez.",
+        "clock": "Sistem ayarlarında otomatik tarih ve saati açın.",
+        "browser": "Chrome, Edge ya da Chromium kurun (snap paketi değil).",
+        "desktop_automation": "Uygulamayı yeniden başlatın; kapalı kalırsa masaüstü otomasyonunun kapatılmadığını kontrol edin.",
+        "secret_backend": "Uygulamayı yeniden başlatın; gizli bilgi deposu kilitli kalırsa Ayarlar'dan yeniden kurun.",
+        "config": "Sağlayıcı ayar dosyası bozuk; sağlayıcıyı Ayarlar → Yapay zekâ'dan yeniden ekleyin.",
+        "host_ownership": "Bu kurulum boşta; sunucu ayarlarından etkinleştirin.",
+        "peer_link": "Bu cihazı sunucuyla yeniden eşleştirin.",
+        "schedule_tools": "schedule.toml geçersiz; düzeltin ya da silin."
       }
     }
   },

@@ -32,6 +32,7 @@ import {
 } from "../components/ChatCards";
 import { Markdown } from "../components/Markdown";
 import { ModelPicker } from "../components/ModelPicker";
+import { RunChangesSection } from "../components/RunChangesSection";
 import { ThinkingChain } from "../components/ThinkingChain";
 import { useToast } from "../components/Toast";
 import {
@@ -99,7 +100,27 @@ type Entry =
   | { kind: "chain"; key: string; ts: number; chain: Chain; runId: string }
   | { kind: "runError"; key: string; ts: number; message: string }
   | { kind: "route"; key: string; ts: number; run: RunState }
+  | { kind: "changes"; key: string; ts: number; run: RunState }
   | { kind: "remember"; key: string; ts: number; run: RunState };
+
+const FILE_CHECKPOINT_TOOLS = new Set([
+  "fs_write",
+  "fs_edit",
+  "fs_move",
+  "fs_delete"
+]);
+
+function canShowRunChanges(run: RunState, isLastFinished: boolean): boolean {
+  if (run.finishedMs === undefined) {
+    return false;
+  }
+  if (isLastFinished) {
+    return true;
+  }
+  return run.items.some(
+    (item) => item.kind === "tool" && FILE_CHECKPOINT_TOOLS.has(item.name)
+  );
+}
 
 /** `idle` = offer the button; `saved` = done; `hidden` = the daemon said no (409). */
 type RememberState = "idle" | "busy" | "saved" | "hidden";
@@ -337,6 +358,14 @@ export function ChatView({
           key: `${run.id}-error`,
           ts: run.finishedMs,
           message: run.error
+        });
+      }
+      if (canShowRunChanges(run, run === lastFinished)) {
+        out.push({
+          kind: "changes",
+          key: `${run.id}-changes`,
+          ts: run.finishedMs ?? run.startedMs,
+          run
         });
       }
       if (
@@ -812,6 +841,22 @@ export function ChatView({
                       <span className={styles.routeLabel}>{label}</span>
                     </span>
                   </div>
+                );
+              }
+              case "changes": {
+                const restoreSignal = e.run.items.filter(
+                  (item) =>
+                    item.kind === "notice" &&
+                    ["chat.notice.checkpointRestored", "chat.notice.checkpointRestorePartial"].includes(item.i18nKey ?? "")
+                ).length;
+                return (
+                  <RunChangesSection
+                    key={e.key}
+                    runId={e.run.id}
+                    client={client}
+                    restoreSignal={restoreSignal}
+                    safetyCheckpointIds={e.run.items.flatMap((item) => item.kind === "notice" && ["chat.notice.checkpointRestored", "chat.notice.checkpointRestorePartial"].includes(item.i18nKey ?? "") && item.values?.safetyId ? [String(item.values.safetyId)] : [])}
+                  />
                 );
               }
               case "remember": {

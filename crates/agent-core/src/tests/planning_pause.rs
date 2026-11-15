@@ -115,3 +115,82 @@ async fn pause_after_planning_preserves_popped_steering_exactly_once() {
         assert_eq!(steering[0].attempt, 1);
     }
 }
+
+/// Both mechanisms apply at once: #53 keeps the popped steering as a durable
+/// (unexecuted) user-step intent, and the restart recovery rebuilds the steer
+/// queue from the stored chat rows. The message must still be delivered once.
+#[test]
+fn pause_after_planning_then_restart_delivers_steering_exactly_once() {
+    for interrupt in [false, true] {
+        let env = setup();
+        let path = env.dir.path().to_path_buf();
+        let bot = env.bot;
+        let rt1 = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let run = rt1.block_on(async {
+            let fake = Fake::new(vec![text("first answer")]);
+            let lp = make_loop(
+                &env.storage,
+                env.bot,
+                &fake,
+                &[],
+                profile(""),
+                cfg(Policy::full()),
+            );
+            let planner = Arc::new(PauseAfterSteer {
+                inner: TurnExecutor { sh: lp.sh.clone() },
+                runtime: OnceLock::new(),
+                interrupt,
+                injected: AtomicBool::new(false),
+            });
+            let rt = Arc::new(Runtime::new(env.storage.clone(), planner.clone()));
+            planner.runtime.set(Arc::downgrade(&rt)).unwrap();
+            let lp = AgentLoop::from_parts(lp.sh.clone(), rt);
+            let run = lp.run_turn(env.chat, "start").unwrap();
+            assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+            assert_eq!(fake.n_requests(), 1);
+            run
+        });
+        drop(rt1);
+        let _data_dir = env.crash();
+
+        let storage = Arc::new(Storage::open(&path).unwrap());
+        let rt2 = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt2.block_on(async {
+            let fake = Fake::new(vec![text("adjusted")]);
+            let lp = make_loop(&storage, bot, &fake, &[], profile(""), cfg(Policy::full()));
+            lp.recover().unwrap();
+            lp.resume(run).unwrap();
+            assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+            assert_eq!(fake.n_requests(), 1);
+            let users: Vec<_> = fake
+                .request(0)
+                .messages
+                .iter()
+                .filter(|m| m.role == MessageRole::User)
+                .filter_map(|m| m.content.as_str().map(str::to_owned))
+                .collect();
+            assert_eq!(
+                users,
+                ["start", STEER],
+                "steering must be delivered exactly once (interrupt={interrupt})"
+            );
+            let steering = storage
+                .list_steps(run)
+                .unwrap()
+                .into_iter()
+                .filter(|s| s.name == STEP_USER && s.input["text"] == STEER)
+                .count();
+            assert_eq!(steering, 1);
+            let fresh = make_loop(&storage, bot, &fake, &[], profile(""), cfg(Policy::full()));
+            assert!(fresh.ctx_of(run).unwrap().state.lock().steer.is_empty());
+        });
+    }
+}

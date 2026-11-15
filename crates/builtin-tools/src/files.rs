@@ -34,6 +34,40 @@ use tool_registry::{
 use crate::checkpoint::CheckpointStore;
 use crate::util::{exec_err, finish_text, parse, spec};
 
+// Host restores exclude daemon file mutations from preview through commit.
+// Readers remain available; external applications are checked via after-hashes.
+type MutationLocks = std::collections::HashMap<PathBuf, std::sync::Weak<parking_lot::RwLock<()>>>;
+static FILE_MUTATIONS: std::sync::OnceLock<parking_lot::Mutex<MutationLocks>> =
+    std::sync::OnceLock::new();
+
+fn file_mutations(data_dir: &Path) -> Arc<parking_lot::RwLock<()>> {
+    let mut locks = FILE_MUTATIONS
+        .get_or_init(parking_lot::Mutex::default)
+        .lock();
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    locks
+        .entry(canonical_data_dir(data_dir))
+        .or_default()
+        .upgrade()
+        .unwrap_or_else(|| {
+            let lock = Arc::new(parking_lot::RwLock::new(()));
+            locks.insert(canonical_data_dir(data_dir), Arc::downgrade(&lock));
+            lock
+        })
+}
+
+/// Run a host restore while excluding mutating file tools.
+///
+/// # Errors
+/// Another file operation is in flight.
+pub fn try_with_exclusive_file_access<T>(data_dir: &Path, f: impl FnOnce() -> T) -> io::Result<T> {
+    let lock = file_mutations(data_dir);
+    let _guard = lock.try_write().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::WouldBlock, "a file operation is in progress")
+    })?;
+    Ok(f())
+}
+
 const MAX_LIST: usize = 500;
 const MAX_MATCHES: usize = 200;
 const MAX_SEARCH_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -650,6 +684,83 @@ fn validate_path(sh: &Shared, raw: &str, follow: Follow) -> Result<PathBuf, Tool
     // any caller reads bytes. `resolved` may still be an 8.3 alias.
     let opened = final_identity(&resolved)?;
     if !sh.allowed_roots.is_empty() && !roots_contain(&sh.allowed_roots, &opened) {
+        return Err(denied(ROOT_MSG));
+    }
+    if credential_blocked(sh, &lexical, &resolved) || credential_blocked(sh, &lexical, &opened) {
+        return Err(denied(GRANT_MSG));
+    }
+    Ok(opened)
+}
+
+/// Pure, text-only `path` inside `dir` test: no filesystem access at all.
+fn lexical_under(path: &Path, dir: &Path) -> bool {
+    let (p, d) = (norm_parts(path), norm_parts(dir));
+    !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+}
+
+/// Windows only: the same spill directory spelled with 8.3 short names
+/// (`RUNNER~1`) does not match by text. Only when the path is on the very
+/// drive of the data dir (a text comparison, so never a remote letter) the
+/// widened, on-disk comparison is allowed to decide.
+fn short_name_alias_under(path: &Path, dir: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let first = |p: &Path| {
+            p.components()
+                .next()
+                .map(|c| fold_part(&c.as_os_str().to_string_lossy()))
+        };
+        first(path).is_some() && first(path) == first(dir) && under_dir(path, dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, dir);
+        false
+    }
+}
+
+/// True when `path` is inside `dir` (component-wise, widened like
+/// `in_checkpoint_store`).
+fn under_dir(path: &Path, dir: &Path) -> bool {
+    let (Ok(path), Ok(dir)) = (widen_path(path), widen_path(dir)) else {
+        return false;
+    };
+    let (p, d) = (norm_parts(&path), norm_parts(&dir));
+    !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+}
+
+/// Like [`validate_path`] for reads, plus one read-only exemption from the
+/// allowed roots: the spill files of the CURRENT run
+/// (`<data_dir>/spill/<run>`), which the loop itself points the model at.
+/// Links must stay inside that directory and the credential/protected-file
+/// rules still apply.
+fn validate_read_path(sh: &Shared, raw: &str, run: &str) -> Result<PathBuf, ToolError> {
+    // Every cheap refusal of `validate_path` (drive confinement, roots,
+    // credentials) must run before any filesystem metadata call, so the
+    // exemption is decided on the text of the path alone first.
+    if sh.allowed_roots.is_empty() || run.is_empty() || run.contains(['/', '\\', '.']) {
+        return validate_path(sh, raw, Follow::Content);
+    }
+    let run_dir = sh.spill_dir.join(run);
+    let syntactically_in_run = lexical_absolute(raw)
+        .is_ok_and(|l| lexical_under(&l, &run_dir) || short_name_alias_under(&l, &run_dir));
+    if !syntactically_in_run {
+        return validate_path(sh, raw, Follow::Content);
+    }
+    if sh.roots_unresolved {
+        return Err(denied(ROOT_UNRESOLVED_MSG));
+    }
+    let lexical = confine_drive(&lexical_absolute(raw)?)?;
+    let ctx = ResolveCtx {
+        follow: Follow::Content,
+        roots: &[],
+        drives: &sh.drives,
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = resolve_local(&lexical, &ctx)?;
+    let opened = final_identity(&resolved)?;
+    if !under_dir(&opened, &run_dir) {
         return Err(denied(ROOT_MSG));
     }
     if credential_blocked(sh, &lexical, &resolved) || credential_blocked(sh, &lexical, &opened) {
@@ -1354,6 +1465,53 @@ fn with_checkpoint_gate<T>(sh: &Shared, f: impl FnOnce() -> T) -> T {
 
 fn current_gate() -> Option<CpGate> {
     CP_GATE.with(|slot| slot.borrow().clone())
+}
+
+struct RestoreGate(Option<CpGate>);
+
+impl Drop for RestoreGate {
+    fn drop(&mut self) {
+        CP_GATE.with(|slot| *slot.borrow_mut() = self.0.take());
+    }
+}
+
+/// Provide at least `data_dir` to checkpoint policy checks when callers invoke
+/// [`CheckpointStore`] directly outside a tool invocation.
+pub(crate) fn with_data_dir_gate<T>(data_dir: &Path, f: impl FnOnce() -> T) -> T {
+    if current_gate().is_some() {
+        return f();
+    }
+    let prev = CP_GATE.with(|slot| {
+        slot.borrow_mut().replace(CpGate {
+            data_dir: data_dir.to_path_buf(),
+            roots: Vec::new(),
+            grants: Vec::new(),
+            roots_unresolved: false,
+        })
+    });
+    let _restore = RestoreGate(prev);
+    f()
+}
+
+/// Install the same normalized policy used by the file tools for a host action.
+pub fn with_checkpoint_access<T>(
+    data_dir: &Path,
+    roots: &[PathBuf],
+    grants: &[PathBuf],
+    f: impl FnOnce() -> T,
+) -> T {
+    let (roots, roots_unresolved) = prepare_roots(roots, &DriveCache::new())
+        .map_or_else(|()| (Vec::new(), true), |roots| (roots, false));
+    let prev = CP_GATE.with(|slot| {
+        slot.borrow_mut().replace(CpGate {
+            data_dir: canonical_data_dir(data_dir),
+            roots,
+            grants: prepare_grants(grants),
+            roots_unresolved,
+        })
+    });
+    let _restore = RestoreGate(prev);
+    f()
 }
 
 fn tool_to_io(err: ToolError) -> io::Error {
@@ -2191,8 +2349,8 @@ fn read_line_range(
     Ok((kept, total))
 }
 
-fn do_read(sh: &Shared, i: &ReadIn) -> Result<String, ToolError> {
-    let path = validate_path(sh, &i.path, Follow::Content)?;
+fn do_read(sh: &Shared, run: &str, i: &ReadIn) -> Result<String, ToolError> {
+    let path = validate_read_path(sh, &i.path, run)?;
     let Some(r) = &i.range else {
         return read_text(&path);
     };
@@ -2443,15 +2601,27 @@ impl Shared {
             Ok((id, note))
         })
     }
+
+    fn record_checkpoint_after(&self, id: &str) -> Result<(), ToolError> {
+        with_checkpoint_gate(self, || {
+            self.checkpoints.record_after(id).map_err(|err| {
+                tracing::warn!(checkpoint_id = id, error = %err, "post-change checkpoint capture failed");
+                exec_err(format!("file operation completed, but after-state capture failed: {err}; checkpoint {id} keeps the previous state; restore requires explicit overwrite confirmation"))
+            })
+        })
+    }
 }
 
 fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Write)?;
     let (cp, note) = sh.checkpoint(run, "fs_write", &[(Path::new(&i.path), &p)])?;
     if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| exec_err(format!("create dirs: {e}")))?;
     }
     fs::write(&p, i.content.as_bytes()).map_err(|e| exec_err(format!("write {}: {e}", i.path)))?;
+    sh.record_checkpoint_after(&cp)?;
     Ok(format!(
         "wrote {} bytes to {} (checkpoint {cp}){note}",
         i.content.len(),
@@ -2460,6 +2630,8 @@ fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
 }
 
 fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     if i.old.is_empty() {
         return Err(ToolError::InvalidInput("old must not be empty".into()));
     }
@@ -2477,6 +2649,7 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     let updated = text.replace(&i.old, &i.new);
     fs::write(&p, updated).map_err(|e| exec_err(format!("write {}: {e}", i.path)))?;
+    sh.record_checkpoint_after(&cp)?;
     Ok(format!(
         "replaced {n} occurrence(s) in {} (checkpoint {cp}){note}",
         i.path
@@ -2502,6 +2675,8 @@ fn do_move_with(
     i: &MoveIn,
     rename: impl Fn(&Path, &Path) -> io::Result<()>,
 ) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let mut saved = None;
     let result = (|| {
         let from = validate_path(sh, &i.from, Follow::Entry)?;
@@ -2535,6 +2710,7 @@ fn do_move_with(
         }
         let warnings = relocate_safely(sh, &from, &to, rename, i.overwrite)
             .map_err(|err| io_to_tool(&err, "move failed"))?;
+        sh.record_checkpoint_after(&cp)?;
         let mut result = format!("moved {} to {} (checkpoint {cp}){note}", i.from, i.to);
         for warning in warnings {
             let _ = write!(result, "\nwarning: {warning}");
@@ -2557,6 +2733,8 @@ fn do_move_with(
 }
 
 fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Entry)?;
     let meta = fs::symlink_metadata(&p).map_err(|e| exec_err(format!("{}: {e}", i.path)))?;
     if meta.is_dir() && !meta.file_type().is_symlink() && !i.recursive {
@@ -2568,6 +2746,7 @@ fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> 
     let (cp, note) = sh.checkpoint(run, "fs_delete", &[(Path::new(&i.path), &p)])?;
     remove_tree_skip_protected(&p, &sh.data_dir, &sh.grants)
         .map_err(|e| io_to_tool(&e, "delete failed"))?;
+    sh.record_checkpoint_after(&cp)?;
     Ok(format!("deleted {} (checkpoint {cp}){note}", i.path))
 }
 
@@ -2591,6 +2770,8 @@ fn do_cp_list(sh: &Shared, run: &str) -> Result<String, ToolError> {
 }
 
 fn do_cp_restore(sh: &Shared, id: &str) -> Result<String, ToolError> {
+    let mutation_lock = file_mutations(&sh.data_dir);
+    let _mutation = mutation_lock.read();
     let (paths, safety, warnings) = with_checkpoint_gate(sh, || {
         sh.checkpoints
             .restore_with_warnings(id)
@@ -2630,7 +2811,7 @@ impl Tool for FsTool {
         let text = match self.op {
             Op::Read => {
                 let i: ReadIn = parse(input)?;
-                blocking(move || do_read(&sh, &i)).await?
+                blocking(move || do_read(&sh, &run, &i)).await?
             }
             Op::List => {
                 let i: ListIn = parse(input)?;
@@ -4113,6 +4294,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_spill_exemption_is_decided_without_touching_the_filesystem() {
+        // Neither path exists anywhere: a pure text test must still answer.
+        let dir = Path::new("Z:/no/such/data/spill/run-1");
+        assert!(lexical_under(
+            Path::new("Z:/no/such/data/spill/run-1/c.txt"),
+            dir
+        ));
+        assert!(!lexical_under(
+            Path::new("Z:/no/such/data/spill/run-2/c.txt"),
+            dir
+        ));
+        assert!(!lexical_under(Path::new("Q:/other/file.txt"), dir));
+        assert!(!lexical_under(Path::new("Z:/no/such/data/spill"), dir));
+    }
+
+    #[tokio::test]
+    async fn confined_reads_may_open_only_this_runs_spill_files() {
+        let (d, w, _t) = setup();
+        let root = w.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let t = tools_bounded(d.path(), std::slice::from_ref(&root), &[]);
+        let c = ctx(); // run-1
+        let mine = d.path().join("spill").join("run-1");
+        let other = d.path().join("spill").join("run-2");
+        fs::create_dir_all(&mine).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(mine.join("c.txt"), "spilled-data").unwrap();
+        fs::write(other.join("c.txt"), "other-run").unwrap();
+        fs::write(mine.join(".env"), "SECRET=1").unwrap();
+        let reader = get(&t, "fs_read");
+        let read = |p: PathBuf| {
+            let reader = reader.clone();
+            let c = ToolContext {
+                run_id: "run-1".into(),
+                max_inline_bytes: 1 << 20,
+                bot_id: None,
+            };
+            async move { reader.call(&c, json!({"path": p})).await }
+        };
+        let ok = text(&read(mine.join("c.txt")).await.unwrap());
+        assert!(ok.contains("spilled-data"), "{ok}");
+        for denied in [
+            other.join("c.txt"),
+            mine.join("..").join("run-2").join("c.txt"),
+            mine.join(".env"),
+        ] {
+            let err = read(denied.clone()).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{}: {err}",
+                denied.display()
+            );
+        }
+        // Read-only: writing there is still outside the roots.
+        let werr = get(&t, "fs_write")
+            .call(&c, json!({"path": mine.join("n.txt"), "content": "x"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(werr, ToolError::PermissionDenied(_)), "{werr}");
+    }
+
     #[tokio::test]
     async fn allowed_roots_block_dotdot_and_symlink_escape() {
         let (d, w, _t) = setup();
@@ -4238,6 +4481,58 @@ mod tests {
         let _ = d;
     }
 
+    #[test]
+    fn host_restore_excludes_mutating_tool_steps_until_commit() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let target = work.path().join("f.txt");
+        fs::write(&target, "current").unwrap();
+        let sh = shared_with(data.path(), Vec::new());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = try_with_exclusive_file_access(data.path(), || {
+            let path = target.display().to_string();
+            let worker = std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                let result = do_write(
+                    &sh,
+                    "run",
+                    &WriteIn {
+                        path,
+                        content: "next run".into(),
+                    },
+                );
+                done_tx.send(result).unwrap();
+            });
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap();
+            assert!(
+                done_rx
+                    .recv_timeout(std::time::Duration::from_millis(50))
+                    .is_err()
+            );
+            assert_eq!(fs::read_to_string(&target).unwrap(), "current");
+            worker
+        })
+        .unwrap();
+        worker.join().unwrap();
+        done_rx.recv().unwrap().unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "next run");
+    }
+
+    #[test]
+    fn record_checkpoint_after_reports_failure_after_mutation() {
+        let data = tempfile::tempdir().unwrap();
+        let sh = shared_with(data.path(), Vec::new());
+        let error = sh
+            .record_checkpoint_after("cp-missing")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("file operation completed"));
+        assert!(error.contains("explicit overwrite confirmation"));
+    }
+
     fn shared_with(data: &Path, grants: Vec<PathBuf>) -> Shared {
         Shared {
             checkpoints: crate::checkpoint::CheckpointStore::new(data),
@@ -4299,6 +4594,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
@@ -4441,6 +4739,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
@@ -4515,6 +4816,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
@@ -4618,6 +4922,9 @@ mod tests {
                 size: None,
                 sha256: None,
                 via_link_of: None,
+                after_existed: None,
+                after_size: None,
+                after_sha256: None,
             }],
             skipped: Vec::new(),
             links_sha256: None,
@@ -4871,6 +5178,56 @@ mod tests {
         assert!(ok.contains("ordinary"), "{ok}");
     }
 
+    /// A daemon whose data dir is reached through an 8.3 alias (GitHub
+    /// runners: `C:\Users\RUNNER~1\...`) must still read its own spill files,
+    /// whichever spelling the model is given.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn spill_files_are_readable_through_a_short_name_data_dir() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("workspace-root");
+        let data = base.path().join("praxi-bot-data-dir");
+        let mine = data.join("spill").join("run-1");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&mine).unwrap();
+        fs::write(mine.join("c.txt"), "spilled-data").unwrap();
+        let short = win_fs::short_path(&data).unwrap();
+        if short
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("praxi-bot-data-dir")
+        {
+            eprintln!("skipped: this volume does not generate 8.3 names");
+            return;
+        }
+        let c = ctx(); // run-1
+        for (tool_dir, read_dir) in [
+            (&short, &data),
+            (&short, &short),
+            (&data, &short),
+            (&data, &data),
+        ] {
+            let t = tools_bounded(tool_dir, std::slice::from_ref(&root), &[]);
+            let p = read_dir.join("spill").join("run-1").join("c.txt");
+            let ok = text(
+                &get(&t, "fs_read")
+                    .call(&c, json!({"path": &p}))
+                    .await
+                    .unwrap_or_else(|e| panic!("{}: {e}", p.display())),
+            );
+            assert!(ok.contains("spilled-data"), "{ok}");
+            // Another run's directory stays closed in every spelling.
+            let other = read_dir.join("spill").join("run-2").join("c.txt");
+            assert!(
+                get(&t, "fs_read")
+                    .call(&c, json!({"path": &other}))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn short_data_dir_still_protects_sensitive_files() {
@@ -5009,6 +5366,36 @@ mod tests {
                 .args([format!("{}:", self.0), "/d".into()])
                 .status();
         }
+    }
+
+    /// Same as the test below, but with allowed roots and a run id: the
+    /// confined spill-exemption branch must not touch the filesystem before
+    /// the text and drive checks either.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn confined_live_remote_drive_letter_is_refused_without_network_io() {
+        let _serial = crate::test_serial::WINDOWS_SHELL_TESTS.lock().await;
+        let letter = win_fs::unused_drive_letter().expect("an unused drive letter");
+        let target = r"\Device\Mup\192.0.2.1\share";
+        win_fs::define_dos_device(letter, target, false).unwrap();
+        let _guard = RemoveDos(letter, target);
+        let (d, w, _t) = setup();
+        let root = w.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let t = tools_bounded(d.path(), std::slice::from_ref(&root), &[]);
+        let c = ctx();
+        let path = format!(r"{letter}:\file.txt");
+        let started = std::time::Instant::now();
+        let err = get(&t, "fs_read")
+            .call(&c, json!({"path": path}))
+            .await
+            .unwrap_err();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
     }
 
     #[cfg(windows)]

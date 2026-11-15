@@ -144,6 +144,37 @@ fn production_redactor(sources: &RedactorSources) -> SharedRedactor {
     handle
 }
 
+/// The production redactor's secret list, read once, for a report written
+/// outside the daemon (`bot doctor --report`): every value in `store`, the
+/// API token in `data_dir` (as stored, even if malformed), the vault
+/// passphrase and credential environment variables, each with its encoded
+/// variants.  Unlike [`production_redactor`] it fails closed: a store that
+/// cannot be read is an error, never a smaller secret list.
+///
+/// # Errors
+/// The secret store cannot be listed or read.
+pub fn report_redactor(
+    data_dir: &Path,
+    store: &dyn SecretStore,
+) -> std::result::Result<SharedRedactor, secret_store::SecretError> {
+    let sources = RedactorSources {
+        store: None,
+        api_token: std::fs::read_to_string(daemon_api::token_path(data_dir))
+            .map(|t| t.trim().to_owned())
+            .unwrap_or_default(),
+        passphrase: env_passphrase(),
+        catalog_vars: catalog_env_vars(data_dir),
+    };
+    let extras: Vec<String> = sources
+        .extras()
+        .into_iter()
+        .filter(|v| !v.is_empty())
+        .collect();
+    let handle = SharedRedactor::default();
+    handle.refresh_from_store(Some(store), &extras)?;
+    Ok(handle)
+}
+
 /// A secret store that masks every value written through it from the moment
 /// it is stored (the daemon's write-only secrets route, MCP, channels), not
 /// only after the next refresh.
@@ -208,6 +239,7 @@ pub fn build_agent_with_redactor(
     build_agent_with_live_views(storage, providers, data_dir, desktop, redactor, None)
 }
 
+#[cfg(test)]
 pub fn build_agent_with_live_views(
     storage: &Arc<Storage>,
     providers: Providers,
@@ -216,6 +248,42 @@ pub fn build_agent_with_live_views(
     redactor: SharedRedactor,
     view_registry: Option<Arc<live_view::TargetRegistry>>,
 ) -> AgentLoop {
+    let skills = skill_index_with_assignments(storage, data_dir);
+    build_agent_with_skills(
+        storage,
+        providers,
+        data_dir,
+        desktop,
+        redactor,
+        view_registry,
+        false,
+        skills,
+    )
+    .expect("test agent skill wiring")
+}
+
+/// The skill index every agent loop and `/v1/skills` route of the daemon share:
+/// the catalog plus the database-backed per-bot assignment source. This is the
+/// only place that builds it, so a bot never sees an unfiltered root index.
+pub(crate) fn skill_index_with_assignments(storage: &Arc<Storage>, data_dir: &Path) -> SkillIndex {
+    let assignments = Arc::new(daemon_api::SkillAssignments::new(Arc::clone(storage)));
+    load_skills(data_dir).with_assignments(assignments as Arc<dyn skills::AssignmentSource>)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_agent_with_skills(
+    storage: &Arc<Storage>,
+    providers: Providers,
+    data_dir: &Path,
+    desktop: Option<Arc<dyn DesktopBackend>>,
+    redactor: SharedRedactor,
+    view_registry: Option<Arc<live_view::TargetRegistry>>,
+    dynamic_desktop: bool,
+    skills: SkillIndex,
+) -> Result<AgentLoop> {
+    if !skills.has_assignments() {
+        return Err("skill index must carry the per-bot assignment source".into());
+    }
     // Placeholder: `with_builtin_tools` replaces it with the loop's own gate.
     let gate = ResolverGate::new(
         PermissionResolver::new(),
@@ -225,6 +293,7 @@ pub fn build_agent_with_live_views(
     );
     let mut tools = BuiltinConfig::new(data_dir.to_path_buf(), Arc::new(gate));
     tools.desktop.clone_from(&desktop);
+    tools.dynamic_desktop = dynamic_desktop;
     tools.view_registry = view_registry;
     tools.knowledge = Some(Arc::new(
         builtin_tools::knowledge::LocalKnowledgeBackend::new(Arc::clone(storage)),
@@ -237,7 +306,7 @@ pub fn build_agent_with_live_views(
     );
     tools.browser_settings.idle_timeout = idle;
     // The discovery threshold is `LoopConfig`'s default (40).
-    AgentLoop::new(
+    Ok(AgentLoop::new(
         Arc::clone(storage),
         ToolRegistry::new(),
         providers,
@@ -252,7 +321,7 @@ pub fn build_agent_with_live_views(
     )
     .with_builtin_tools(tools)
     .with_subagents()
-    .with_skills(load_skills(data_dir))
+    .with_skills(skills)
     .with_workflows(
         WorkflowStore::new(data_dir),
         Handles {
@@ -260,7 +329,7 @@ pub fn build_agent_with_live_views(
             browser: None,
             tools: ToolRegistry::new(),
         },
-    )
+    ))
 }
 
 #[derive(Default, Deserialize)]
@@ -769,6 +838,25 @@ pub async fn run_daemon(
     .await
 }
 
+/// What `GET /v1/doctor` learns from `bot serve`: the desktop backend's
+/// capabilities and the production secret redactor (for the support report).
+/// Browsers are launched per run by the browser tools, so there is no shared
+/// session to restart (the repair stays unavailable).
+struct ServeDoctorHost {
+    desktop: Option<desktop_api::Capabilities>,
+    redactor: SharedRedactor,
+}
+
+impl daemon_api::DoctorHost for ServeDoctorHost {
+    fn desktop(&self) -> Option<desktop_api::Capabilities> {
+        self.desktop.clone()
+    }
+
+    fn redactor(&self) -> Option<SharedRedactor> {
+        Some(self.redactor.clone())
+    }
+}
+
 /// Run the daemon until a stop request (see [`shutdown_signal`]); running tool
 /// steps get `grace` to finish, everything else live is paused for the next start.
 ///
@@ -827,15 +915,24 @@ pub fn serve(
             redactor: redactor.clone(),
         }) as Arc<dyn SecretStore>
     });
+    let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
     let views = Arc::new(live_view::TargetRegistry::default());
-    let agent = build_agent_with_live_views(
+    let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
+    let effective_peer_enabled =
+        peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
+    let dynamic_desktop = effective_peer_enabled;
+    let local_desktop = desktop.clone();
+    let skill_index = skill_index_with_assignments(&storage, data_dir);
+    let agent = build_agent_with_skills(
         &storage,
         providers,
         data_dir,
         desktop,
         redactor.clone(),
         Some(Arc::clone(&views)),
-    );
+        dynamic_desktop,
+        skill_index.clone(),
+    )?;
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
@@ -850,8 +947,15 @@ pub fn serve(
     if let Ok(extra) = std::env::var(ALLOWED_ORIGINS_ENV) {
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
-    let state = AppState::with_view_registry(agent, storage, cfg, views)?;
+    let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
+    state
+        .set_skills(skill_index)
+        .map_err(|e| format!("skills wiring: {e}"))?;
     register_schedule_tools(data_dir, &state);
+    state.set_doctor_host(Arc::new(ServeDoctorHost {
+        desktop: desktop_caps,
+        redactor: redactor.clone(),
+    }));
     if let Some(host) = host {
         state.set_provider_host(host);
     }
@@ -876,17 +980,47 @@ pub fn serve(
         };
         let peer = crate::peer::start_server(
             data_dir,
-            ownership.mode == daemon_api::host::HostMode::Host,
-            *peer_enabled || *host_mode,
+            host_is_host,
+            effective_peer_enabled,
             state.clone(),
         )
         .await?;
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
         }
+        let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
+        let computer = Arc::new(crate::computer::CliComputerProvider::new(
+            host_is_host,
+            local_desktop,
+            peer.clone(),
+            local_id.clone(),
+        ));
+        agent.set_computer_provider(Arc::clone(&computer) as Arc<dyn agent_core::ComputerProvider>);
+        if crate::computer::is_machine_fingerprint(&local_id) {
+            // Without a running peer stack the paired list is unknown, not empty.
+            let paired_computers: Option<Vec<String>> = peer.as_ref().map(|net| {
+                net.devices()
+                    .into_iter()
+                    .filter(crate::computer::is_remote_desktop_candidate)
+                    .map(|device| device.id)
+                    .collect()
+            });
+            agent.reconcile_computer_identity(&local_id, paired_computers.as_deref())?;
+        } else {
+            eprintln!(
+                "warning: local computer identity unavailable this boot; skipping computer grant reconcile (nothing was changed or persisted)"
+            );
+        }
+        agent.reconcile_waiting_for_pc_runs()?;
         // A revoked pairing loses screen privileges, live sessions and takeover
         // within a couple of seconds, wherever the revoke happened.
         if let Some(net) = peer.clone() {
+            crate::computer::spawn_peer_monitor(
+                net.clone(),
+                Arc::clone(&computer),
+                agent.clone(),
+                state.downgrade(),
+            );
             let weak = state.downgrade();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(2));
@@ -1009,12 +1143,30 @@ pub fn serve(
     })
 }
 
+fn peer_enabled_for_startup(
+    data_dir: &Path,
+    host_is_host: bool,
+    peer_enabled: bool,
+    host_mode: bool,
+) -> Result<bool> {
+    crate::peer::is_enabled(data_dir, host_is_host, peer_enabled || host_mode)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::email_host::register_email;
     use provider_catalog::ProviderConfig;
     use secret_store::MemoryStore;
+
+    #[test]
+    fn host_flag_enables_dynamic_desktop_even_when_peer_config_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "[peer]\nenabled = false\n").unwrap();
+        assert!(peer_enabled_for_startup(dir.path(), true, false, true).unwrap());
+        assert!(!peer_enabled_for_startup(dir.path(), true, false, false).unwrap());
+        assert!(peer_enabled_for_startup(dir.path(), false, true, false).unwrap());
+    }
 
     const PRICED: &str = r#"
 id = "t"
@@ -1654,6 +1806,76 @@ order = [\"bing\", \"tavily\", \"bogus\", \"duckduckgo\"]
             cfg.policy
                 .check_url(&url::Url::parse("http://127.0.0.1:47000/").unwrap())
                 .is_err()
+        );
+    }
+
+    /// `serve()` builds its skill index only through
+    /// `skill_index_with_assignments`: an assignment source is attached, the
+    /// root index refuses unfiltered reads, and a `selected` bot with nothing
+    /// assigned does not see a shared skill the user withheld. A refactor that
+    /// drops the source fails here (and `AppState::set_skills` / the loop
+    /// builder refuse such an index at startup).
+    #[test]
+    fn serve_skill_index_carries_the_assignment_source_and_filters_bots() {
+        use protocol::{BotId, UserId};
+        use storage::records::{Bot, User};
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("skills").join("withheld");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            shared.join("SKILL.md"),
+            "---
+name: withheld
+description: d
+version: 1
+---
+body
+",
+        )
+        .unwrap();
+        let storage = Arc::new(Storage::open(dir.path()).unwrap());
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "b".into(),
+            config: serde_json::json!({}),
+            created_at_ms: 2,
+        };
+        storage.insert_user(&user).unwrap();
+        storage.insert_bot(&bot).unwrap();
+
+        let index = skill_index_with_assignments(&storage, dir.path());
+        assert!(index.has_assignments());
+        assert_eq!(index.list(), Vec::new(), "root index must refuse list()");
+        let id = bot.id.to_string();
+        assert!(index.for_bot(Some(&id)).unwrap().get("withheld").is_some());
+        storage
+            .set_bot_skill_assignment(bot.id, storage::SkillAssignmentMode::Selected, &[])
+            .unwrap();
+        // Same index, no explicit bump: the DB generation invalidates the cache.
+        assert!(index.for_bot(Some(&id)).unwrap().get("withheld").is_none());
+
+        // The daemon refuses to serve an index without the source.
+        let plain = load_skills(dir.path());
+        assert!(!plain.has_assignments());
+        let result = build_agent_with_skills(
+            &storage,
+            Providers::unconfigured(),
+            dir.path(),
+            None,
+            SharedRedactor::default(),
+            None,
+            false,
+            plain,
+        );
+        assert!(
+            result.is_err(),
+            "missing assignment source must return an error"
         );
     }
 }

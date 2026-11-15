@@ -7,6 +7,7 @@ import { PRODUCT_CONFIG } from "../../config/product";
 import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { UsageView } from "../UsageView";
+import { DiagnosticsCard } from "./DiagnosticsCard";
 import type { CardDef } from "./types";
 
 function VersionBlock() {
@@ -49,7 +50,7 @@ function VersionBlock() {
   );
 }
 
-/** Cards of the "Usage" and "Updates" sections. */
+/** Cards of the "Usage", "Diagnostics" and "Updates" sections. */
 export function otherCards(t: TFunction): CardDef[] {
   return [
     {
@@ -60,6 +61,15 @@ export function otherCards(t: TFunction): CardDef[] {
       description: t("usage.subtitle"),
       keywords: "tokens cost maliyet kullanim",
       node: <UsageView embedded />
+    },
+    {
+      id: "diagnostics",
+      section: "diagnostics",
+      kind: "block",
+      title: t("settingsModal.diagnostics.title"),
+      description: t("settingsModal.diagnostics.description"),
+      keywords: "doctor diagnostics health repair support report tanilama saglik onar destek rapor",
+      node: <DiagnosticsCard />
     },
     {
       id: "version",

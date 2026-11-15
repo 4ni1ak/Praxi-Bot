@@ -198,8 +198,7 @@ test("every client polls the control snapshot (not only the Tauri bridge) and fe
 
 test("Clear pause goes through the verifying runClearPause and the dock uses the same helper as the banner", () => {
   assert.match(context, /await runClearPause\(/);
-  assert.match(viewer, /needsPauseRecovery\(state, controlState\)/);
-  assert.match(viewer, /recoveryPrompt && pauseRecovery/);
+  assert.match(viewer, /visibleActions\(state, controlState, isLocalClient\)/);
   assert.match(viewer, /foreignTakeoverOwner\(state\)/);
   assert.match(viewer, /liveView\.connectionLost/);
 });

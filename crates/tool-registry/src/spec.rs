@@ -30,6 +30,60 @@ impl Default for Effect {
     }
 }
 
+/// What kind of full, current-state observation a built-in tool returns.  A
+/// newer observation of the same target makes an older one stale, so the agent
+/// loop may shorten the older copy it re-sends to the model (never the stored
+/// step output).
+///
+/// Only tools that return the whole observation are listed: diff-returning
+/// browser actions (`browser_click`, ...) are not, because their output is
+/// only meaningful next to the full snapshot they refer to.
+///
+/// Kept as a lookup ([`ObservationScope::of_builtin`]) rather than a field on
+/// [`ToolSpec`] so every existing spec literal (built-in, MCP, CLI, plugin)
+/// stays valid and unaffected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationScope {
+    /// The full page of the browser (`browser_open`, `browser_snapshot`).
+    Page,
+    /// The accessibility state of a desktop window.
+    Window,
+    /// A directory listing.
+    FsListing,
+    /// The list of open windows.
+    AppListing,
+}
+
+impl ObservationScope {
+    /// Scope for a bare tool name, without checking what is registered under
+    /// that name.  Prefer [`Self::of_builtin`].
+    #[must_use]
+    pub fn of_name(name: &str) -> Option<Self> {
+        match name {
+            "browser_open" | "browser_snapshot" => Some(Self::Page),
+            "desktop_get_state" => Some(Self::Window),
+            "fs_list" => Some(Self::FsListing),
+            "desktop_list_apps" => Some(Self::AppListing),
+            _ => None,
+        }
+    }
+
+    /// Scope of the registered tool `spec`, only when it really is the
+    /// built-in one: the name matches and so does the permission category
+    /// (a CLI, plugin or MCP tool that happens to share a bare name does not).
+    #[must_use]
+    pub fn of_builtin(spec: &ToolSpec) -> Option<Self> {
+        let scope = Self::of_name(&spec.name)?;
+        let category = match scope {
+            Self::Page => PermissionCategory::Browser,
+            Self::Window | Self::AppListing => PermissionCategory::Desktop,
+            Self::FsListing => PermissionCategory::Fs,
+        };
+        (spec.category == category).then_some(scope)
+    }
+}
+
 /// Static description of a tool, registered once at startup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -99,6 +153,49 @@ mod tests {
             platforms: vec![Platform::All],
         };
         assert_eq!(spec.effect, Effect::Read);
+    }
+
+    #[test]
+    fn observation_scopes_cover_the_full_observation_tools_only() {
+        let mk = |name: &str, category| ToolSpec {
+            name: name.into(),
+            description: "d".into(),
+            input_schema: json!({ "type": "object" }),
+            effect: Effect::Read,
+            category,
+            platforms: vec![Platform::All],
+        };
+        assert_eq!(
+            ObservationScope::of_builtin(&mk("browser_snapshot", PermissionCategory::Browser)),
+            Some(ObservationScope::Page)
+        );
+        assert_eq!(
+            ObservationScope::of_builtin(&mk("desktop_get_state", PermissionCategory::Desktop)),
+            Some(ObservationScope::Window)
+        );
+        assert_eq!(
+            ObservationScope::of_builtin(&mk("fs_list", PermissionCategory::Fs)),
+            Some(ObservationScope::FsListing)
+        );
+        assert_eq!(
+            ObservationScope::of_builtin(&mk("desktop_list_apps", PermissionCategory::Desktop)),
+            Some(ObservationScope::AppListing)
+        );
+        // Diff-returning actions and unrelated tools are not observations.
+        for n in [
+            "browser_click",
+            "browser_fill",
+            "browser_eval",
+            "fs_write_file",
+        ] {
+            assert_eq!(ObservationScope::of_name(n), None, "{n}");
+        }
+        // A colliding bare name of another kind of tool does not qualify.
+        assert_eq!(
+            ObservationScope::of_builtin(&mk("fs_list", PermissionCategory::Script)),
+            None
+        );
+        assert_eq!(ObservationScope::of_name("mcp:x/browser_snapshot"), None);
     }
 
     #[test]
