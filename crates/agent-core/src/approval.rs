@@ -736,6 +736,33 @@ impl Shared {
         Err(message)
     }
 
+    /// Whether the card for this call offers a run-scoped control grant, and
+    /// the card text for it. Offered only on a once-only card, for a tool that
+    /// is not always-ask, on a computer that has an identity, and only when the
+    /// daemon resolved an eligible target for this very call. Returns the
+    /// target (when the card carries a control block) and whether it is
+    /// grantable.
+    fn control_offer(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        details: &mut Option<Value>,
+        target: Option<ControlTarget>,
+    ) -> (Option<ControlTarget>, bool) {
+        let target = target.filter(|t| {
+            control_kind_of(name) == Some(t.kind)
+                && details.is_some()
+                && !self.always_ask(name)
+                && ctx.tool_grant_scope(name, category).is_some()
+        });
+        let grantable = target.as_ref().is_some_and(ControlTarget::eligible);
+        if let Some(t) = &target {
+            attach_control_card(details, t, grantable);
+        }
+        (target, grantable)
+    }
+
     /// Park the run in `WaitingApproval` until `approve` / `deny` is called.
     ///
     /// `Ok(permit)` means the user approved and the post-approve recheck did
@@ -743,7 +770,7 @@ impl Shared {
     /// immediately before invoking the tool: that recheck runs under
     /// [`Shared::exec_gate`] and is what creates a grant. `Err` means the
     /// call is denied (no grant, tool must not run).
-    #[allow(clippy::too_many_arguments)] // `details` joined an already wide call
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // `details` and the control target joined an already wide call
     pub(crate) async fn request_approval(
         self: &Arc<Self>,
         ctx: &Arc<RunCtx>,
@@ -781,19 +808,7 @@ impl Shared {
             ));
         }
         let once_only = details.is_some() || self.always_ask(name);
-        // A control grant is offered only on a once-only card, for a tool that
-        // is not always-ask, on a computer that has an identity, and only when
-        // the daemon resolved an eligible target for this very call.
-        let target = target.filter(|t| {
-            control_kind_of(name) == Some(t.kind)
-                && details.is_some()
-                && !self.always_ask(name)
-                && ctx.tool_grant_scope(name, category).is_some()
-        });
-        let grantable = target.as_ref().is_some_and(ControlTarget::eligible);
-        if let Some(t) = &target {
-            attach_control_card(&mut details, t, grantable);
-        }
+        let (target, grantable) = self.control_offer(ctx, name, category, &mut details, target);
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
         let prefix = computer_approval(ctx, name, category, &mut details);

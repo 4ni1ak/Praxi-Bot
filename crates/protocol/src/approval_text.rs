@@ -336,7 +336,10 @@ fn control_field(c: &Value, key: &str, max: usize) -> String {
 /// the daemon wrote. An unknown code is shown as is, scrubbed.
 fn refusal_reason(code: &str) -> (String, String) {
     let (en, tr) = match code {
-        "terminal" => ("this window is a terminal or shell", "bu pencere bir terminal veya kabuk"),
+        "terminal" => (
+            "this window is a terminal or shell",
+            "bu pencere bir terminal veya kabuk",
+        ),
         "command_app" => (
             "this app has a built-in command line",
             "bu uygulamanın yerleşik bir komut satırı var",
@@ -743,7 +746,10 @@ mod tests {
             "reason": "r"
         });
         assert!(super::control_grant_offered(&details));
-        assert_eq!(super::control_grant_program(&details).as_deref(), Some("notepad.exe"));
+        assert_eq!(
+            super::control_grant_program(&details).as_deref(),
+            Some("notepad.exe")
+        );
         let text = super::control_grant_text(&details).unwrap();
         assert!(text.contains("This task: notepad.exe"), "{text}");
         assert!(text.contains("Bu görev: notepad.exe"), "{text}");

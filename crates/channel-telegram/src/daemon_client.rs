@@ -496,7 +496,11 @@ pub fn parse_approval_callback(
     match action {
         "once" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::Once)),
         "always" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::Always)),
-        "run" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::RunControl)),
+        "run" => Some((
+            call_id,
+            ApprovalDecision::Approve,
+            ApprovalScope::RunControl,
+        )),
         "deny" => Some((call_id, ApprovalDecision::Deny, ApprovalScope::Once)),
         _ => None,
     }

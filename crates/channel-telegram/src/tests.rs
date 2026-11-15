@@ -3294,6 +3294,122 @@ async fn plain_approvals_keep_their_three_buttons() {
     );
 }
 
+fn control_card_json(offered: bool, payload: &str) -> serde_json::Value {
+    json!({
+        "kind": "egress", "reason": "this run read file a.txt and now wants to type",
+        "read": ["file a.txt"], "host": "keyboard", "payload": payload, "payload_kind": "text",
+        "control_grant": {
+            "offered": offered, "refusal": if offered { Value::Null } else { json!("terminal") },
+            "program": "notepad.exe", "image_path": "C:\\Windows\\notepad.exe",
+            "window_title": "Untitled - Notepad", "pid": 7
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_control_card_that_fits_one_message_gets_a_this_task_button() {
+    let msgs = approval_messages(Some(control_card_json(true, "hello"))).await;
+    assert_eq!(msgs.len(), 1);
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("This task: notepad.exe"), "{text}");
+    assert!(text.contains("Bu görev: notepad.exe"), "{text}");
+    let row = msgs[0]["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    let labels: Vec<&str> = row.iter().map(|b| b["text"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["Approve once", "This task: notepad.exe", "Deny"]);
+    assert!(
+        row[1]["callback_data"]
+            .as_str()
+            .unwrap()
+            .starts_with("approve:run:")
+    );
+}
+
+#[tokio::test]
+async fn a_control_card_that_does_not_offer_the_grant_has_no_this_task_button() {
+    let msgs = approval_messages(Some(control_card_json(false, "hello"))).await;
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("NO CONTROL GRANT"), "{text}");
+    let row = msgs[0]["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(row.len(), 2, "approve once and deny only");
+}
+
+#[tokio::test]
+async fn a_control_card_longer_than_one_message_offers_only_once() {
+    let long = "x".repeat(6000);
+    let msgs = approval_messages(Some(control_card_json(true, &long))).await;
+    assert!(msgs.len() >= 2);
+    let last = msgs.last().unwrap();
+    let row = last["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        row.len(),
+        2,
+        "no run-control button when the card does not fit one message"
+    );
+}
+
+#[tokio::test]
+async fn a_crafted_run_callback_is_refused_unless_the_card_offered_it() {
+    let server = MockServer::start().await;
+    mount_telegram_mocks(&server).await;
+    let bot = BotSummary {
+        id: BotId::new(),
+        name: "Mira".into(),
+    };
+    let daemon = Arc::new(FakeDaemon::new(vec![bot]));
+    let cfg = TelegramConfig::with_in_memory_token(TEST_BOT_TOKEN)
+        .with_api_base_url(server.uri())
+        .with_paired_users([PAIRED_USER_ID]);
+    let channel = TelegramChannel::new(cfg, daemon.clone()).unwrap();
+    let (run_id, call_id) = once_only_cb_args();
+    let (tx, rx) = mpsc::unbounded_channel::<Envelope>();
+    tx.send(Envelope::new(
+        0,
+        Event::ApprovalNeeded(ApprovalNeeded {
+            run_id,
+            call_id,
+            tool_name: "desktop_type".into(),
+            input: json!({}),
+            summary: "s".into(),
+            details: Some(control_card_json(false, "hello")),
+        }),
+    ))
+    .unwrap();
+    daemon.queue_run_stream(
+        run_id,
+        Box::pin(futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (item, rx))
+        })),
+    );
+    channel
+        .handle_update(
+            serde_json::from_value(text_update(1, PAIRED_USER_ID, TEST_CHAT_ID, "go")).unwrap(),
+        )
+        .await
+        .unwrap();
+    let u: Update = serde_json::from_value(callback_update(
+        10,
+        PAIRED_USER_ID,
+        TEST_CHAT_ID,
+        "cb-run",
+        &format_approval_callback(call_id, "run"),
+    ))
+    .unwrap();
+    channel.handle_update(u).await.unwrap();
+    assert!(daemon.approvals.lock().is_empty(), "no decision was sent");
+    let reqs = server.received_requests().await.unwrap();
+    assert!(
+        callback_answers(&reqs)
+            .iter()
+            .any(|a| a.to_string().contains("only be approved once"))
+    );
+}
+
 fn once_only_cb_args() -> (RunId, ToolCallId) {
     (RunId::new(), ToolCallId::new())
 }

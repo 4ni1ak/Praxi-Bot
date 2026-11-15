@@ -1102,13 +1102,12 @@ impl DesktopTool {
                     refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
                 }
             }
-            Op::Drag => {
+            Op::Drag
                 if ["from", "to"]
                     .iter()
-                    .any(|k| input.get(k).is_some_and(secure_ref))
-                {
-                    refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
-                }
+                    .any(|k| input.get(k).is_some_and(secure_ref)) =>
+            {
+                refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
             }
             _ => {}
         }

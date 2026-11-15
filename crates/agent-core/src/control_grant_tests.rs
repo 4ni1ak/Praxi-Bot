@@ -1,7 +1,7 @@
 //! The run-scoped control grant (card 243-1): after untrusted content, one
 //! card per program lets a run type into that one program, and nothing else.
 
-#![allow(clippy::too_many_lines)]
+#![allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 
 use std::collections::VecDeque;
 use std::sync::Arc;

@@ -1178,6 +1178,7 @@ impl TurnExecutor {
         Ok(json!({ "results": results }))
     }
 
+    #[allow(clippy::too_many_arguments)] // the resolved control target joined an already wide call
     async fn run_tool(
         &self,
         run: &Run,

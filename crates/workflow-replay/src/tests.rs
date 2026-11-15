@@ -1187,25 +1187,26 @@ async fn replay_passes_through_the_guard_when_a_grant_covers_the_step() {
     }
 }
 
+struct Swap(Arc<FakeDesktop>);
+#[async_trait::async_trait]
+impl builtin_tools::ToolGate for Swap {
+    async fn authorize(&self, _: &builtin_tools::GateRequest) -> Result<(), String> {
+        Ok(())
+    }
+    async fn authorize_control(
+        &self,
+        req: &builtin_tools::GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        let id = req.control.as_ref().map(|t| t.identity.clone());
+        self.0.input.lock().as_mut().unwrap().identity.pid += 1;
+        Ok(id)
+    }
+}
+
 #[tokio::test]
 async fn replay_does_not_send_when_the_window_is_not_the_granted_program() {
     let desktop = named_desktop();
     // Another program owns the window by the time the guard runs.
-    struct Swap(Arc<FakeDesktop>);
-    #[async_trait::async_trait]
-    impl builtin_tools::ToolGate for Swap {
-        async fn authorize(&self, _: &builtin_tools::GateRequest) -> Result<(), String> {
-            Ok(())
-        }
-        async fn authorize_control(
-            &self,
-            req: &builtin_tools::GateRequest,
-        ) -> Result<Option<tool_registry::ControlIdentity>, String> {
-            let id = req.control.as_ref().map(|t| t.identity.clone());
-            self.0.input.lock().as_mut().unwrap().identity.pid += 1;
-            Ok(id)
-        }
-    }
     let report = replayer(
         handles(Some(desktop.clone()), None),
         ReplayOptions::instant(),

@@ -476,7 +476,7 @@ fn approval_markup(
             .and_then(protocol::approval_text::control_grant_program)
     {
         row.push(InlineButton::new(
-            &format!("This task: {program}"),
+            format!("This task: {program}"),
             format_approval_callback(a.call_id, "run"),
         ));
     }
@@ -1015,6 +1015,7 @@ impl TelegramChannel {
     /// Show an approval request. Details a tool attaches (a schedule) are shown
     /// in full before approval is offered; if that is impossible, approval is
     /// left to the desktop app. The buttons go on the last message only.
+    #[allow(clippy::too_many_lines)] // one card: text, chunks, buttons, bookkeeping
     async fn send_approval(
         &self,
         chat_id: i64,

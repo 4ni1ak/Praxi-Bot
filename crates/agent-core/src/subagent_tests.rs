@@ -1949,17 +1949,19 @@ async fn control_grant_is_not_inherited_by_a_subagent() {
     let mut rx = lp.subscribe();
     let parent = lp.run_turn(env.chat, "go").unwrap();
 
-    let first = match until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await {
-        Event::ApprovalNeeded(a) => a,
-        _ => unreachable!(),
+    let Event::ApprovalNeeded(first) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
     };
     assert_eq!(first.run_id, parent);
     lp.approve(first.call_id, ApprovalScope::RunControl, env.user)
         .unwrap();
     // The child asks for itself: the parent's grant did not travel.
-    let second = match until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await {
-        Event::ApprovalNeeded(a) => a,
-        _ => unreachable!(),
+    let Event::ApprovalNeeded(second) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
     };
     assert_ne!(second.run_id, parent, "the card belongs to the child run");
     assert_eq!(second.tool_name, "desktop_type");
