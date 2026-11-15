@@ -67,19 +67,21 @@ fn natural_nonmatching_questions_abstain_despite_shared_stopwords() {
             "unrelated question retrieved evidence: {query}"
         );
     }
-    assert!(
-        !store
+    assert_eq!(
+        store
             .search(&SearchRequest::new("Where is the saffron snapshot?"))
             .unwrap()
             .hits
-            .is_empty()
+            .len(),
+        1
     );
-    assert!(
-        !store
+    assert_eq!(
+        store
             .search(&SearchRequest::new("saffron"))
             .unwrap()
             .hits
-            .is_empty()
+            .len(),
+        1
     );
 }
 
