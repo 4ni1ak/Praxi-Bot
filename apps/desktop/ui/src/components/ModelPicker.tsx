@@ -5,11 +5,11 @@ import { isMockMode } from "../api/mockMode";
 import {
   filterModelGroups,
   isCliDefault,
-  modelHint,
   pickerSections,
   recommendedOptions,
   type ModelGroup,
   type ModelOption,
+  type RowHint,
   type SourceGroup
 } from "../lib/modelPicker";
 import { productBrandKey, providerBrand, sourceLabel } from "../lib/modelBrand";
@@ -141,7 +141,10 @@ export function ModelPicker({
   const trigger = useRef<HTMLButtonElement | null>(null);
   // Search results: every model, grouped by source, CLI engines first.
   const shown = useMemo(() => {
-    const found = filterModelGroups(groups, query);
+    const found = filterModelGroups(
+      groups.map((g) => ({ ...g, models: g.models.filter((m) => !isCliDefault(m)) })),
+      query
+    );
     return [...found.filter((g) => g.provider.startsWith("cli:")), ...found.filter((g) => !g.provider.startsWith("cli:"))];
   }, [groups, query]);
 
@@ -204,7 +207,7 @@ export function ModelPicker({
   );
 
   const label = (m: ModelOption) =>
-    isCliDefault(m) ? t("modelPicker.cliDefault") : m.displayName;
+    isCliDefault(m) ? providerBrand(m.provider).label : m.displayName;
 
   const valueProvider = valueRef.provider;
   const valueModel = valueRef.model;
@@ -226,18 +229,17 @@ export function ModelPicker({
     }
   };
 
-  const optionRow = (m: ModelOption, opts: { rec?: boolean }) => {
+  const optionRow = (m: ModelOption, opts: { hint?: RowHint; raw?: boolean }) => {
     const active = !autoOption?.selected && m.ref === value;
     const primary = label(m);
-    // Second line: why it is recommended, or the raw id (OpenCode / OpenRouter ids name the maker).
-    const secondary = opts.rec
-      ? t(`modelPicker.hint.${modelHint(m.model)}`)
-      : !isCliDefault(m) && primary !== m.model
-        ? m.model
-        : null;
+    // Second line: why it is recommended, then the raw id (OpenCode / OpenRouter ids name the maker).
+    const secondary = [
+      opts.hint ? t(`modelPicker.hint.${opts.hint}`) : null,
+      opts.raw && !isCliDefault(m) && primary !== m.model ? m.model : null
+    ].filter(Boolean).join(" · ");
     return (
       <button
-        key={`${opts.rec ? "rec" : "row"}-${m.ref}`}
+        key={`${opts.hint ? "rec" : "row"}-${m.ref}`}
         type="button"
         role="option"
         aria-selected={active}
@@ -259,7 +261,7 @@ export function ModelPicker({
     const brand = providerBrand(g.provider);
     const isOpen = expanded.has(g.provider);
     const isFull = full.has(g.provider);
-    const rows = isFull ? [...g.featured, ...g.rest] : g.featured;
+    const recRows = g.recommended;
     return (
       <div key={g.provider} className={styles.group} role="group" aria-label={sourceLabel(g.provider)}>
         <button
@@ -277,7 +279,11 @@ export function ModelPicker({
         </button>
         {isOpen ? (
           <>
-            {rows.map((m) => optionRow(m, {}))}
+            {recRows.map((r) => optionRow(r.option, { hint: r.hint, raw: true }))}
+            {recRows.length === 0 && g.rest.length === 0 ? (
+              <p className={styles.noModels}>{t("modelPicker.noModels")}</p>
+            ) : null}
+            {isFull ? g.rest.map((m) => optionRow(m, { raw: true })) : null}
             {!isFull && g.rest.length > 0 ? (
               <button
                 type="button"
@@ -407,7 +413,7 @@ export function ModelPicker({
                   <div className={styles.groupLabel} aria-hidden="true">
                     <span>{t("modelPicker.recommended")}</span>
                   </div>
-                  {recommended.map((m) => optionRow(m, { rec: true }))}
+                  {recommended.map((r) => optionRow(r.option, { hint: r.hint }))}
                 </div>
               ) : null}
               {searching
@@ -418,7 +424,7 @@ export function ModelPicker({
                         <span>{sourceLabel(g.provider)}</span>
                         <span className={styles.groupCount}>{g.models.length}</span>
                       </div>
-                      {g.models.map((m) => optionRow(m, {}))}
+                      {g.models.filter((m) => !isCliDefault(m)).map((m) => optionRow(m, { raw: true }))}
                     </div>
                   ))
                 : (

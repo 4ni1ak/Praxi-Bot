@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProvidersDto } from "../api/types.ts";
 import { sourceLabel } from "./modelBrand.ts";
-import { engineRows, filterModelGroups, isCliDefault, isNoiseModel, modelFamily, modelGroups, modelHint, pickerSections, recommendedOptions } from "./modelPicker.ts";
+import { engineRows, filterModelGroups, isCliDefault, isNoiseModel, modelGroups, parseModel, pickerSections, recommendedOptions } from "./modelPicker.ts";
 import { foldText, matchesQuery } from "./searchText.ts";
 
 const dto = {
@@ -139,46 +139,53 @@ test("modelGroups includes enabled CLI providers with single default model and e
   );
 });
 
-test("picker sections: CLI vs API, noise hidden, aggregator curated, recommended deduped by family and source", () => {
-  const det = (id: string, rank: number | null, extra: Record<string, unknown> = {}) =>
-    ({ id, display_name: id, kind: "chat", recommended: rank !== null, recommended_rank: rank, deprecated: false, note: null, ...extra }) as never;
-  const provider = (id: string, details: unknown[]) =>
+test("recommendations: newest per family replaces older, free-first for aggregators, no CLI default row", () => {
+  const det = (id: string, extra: Record<string, unknown> = {}) =>
+    ({ id, display_name: id, kind: "chat", recommended: false, recommended_rank: null, deprecated: false, note: null, ...extra }) as never;
+  const provider = (id: string, ids: string[], free: string[] = []) =>
     ({ id, active: true, custom: false, default_model: null, enabled: true, has_key: true, is_default: false,
-      models: (details as { id: string }[]).map((m) => m.id), model_details: details }) as never;
-  const long = Array.from({ length: 60 }, (_, i) => det(`maker/model-${i}-chat`, null));
+      models: ids, model_details: ids.map((i) => det(i, free.includes(i) ? { note: "free" } : {})) }) as never;
+  const claude = ["claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-opus-4-1-20250805", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-3-5-haiku-20241022"];
   const d = {
     active: [], catalog: [], default_provider: "anthropic",
     configured: [
-      provider("anthropic", [det("claude-sonnet-5-5", 1), det("claude-3-opus-20240229", null), det("text-embedding-x", null, { kind: "embedding" })]),
-      provider("cli:claude", [det("default", 1), det("sonnet", 2)]),
-      provider("openrouter", [det("anthropic/claude-sonnet-5.5", 1), det("openai/gpt-5-mini", 2), det("google/gemini-x-preview", null), ...long])
+      provider("anthropic", claude),
+      provider("cli:claude", ["default", "haiku", "sonnet", "opus", "fable"]),
+      provider("cli:opencode", ["default", "google/gemini-2.5-pro", "opencode/grok-code", "opencode/big-pickle"], ["opencode/grok-code", "opencode/big-pickle"]),
+      provider("openrouter", ["anthropic/claude-sonnet-5.5", "meta/llama-4:free", "qwen/qwen3-235b:free", "qwen/qwen3-30b:free", ...Array.from({ length: 50 }, (_, i) => `v/m-${i}`)]),
+      provider("gemini", ["gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"])
     ]
   } as unknown as ProvidersDto;
   const groups = modelGroups(d);
   const sec = pickerSections(groups);
+  const ids = (g: { recommended: { option: { model: string } }[] }) => g.recommended.map((r) => r.option.model);
+  const api = (id: string) => sec.api.find((g) => g.provider === id)!;
+  const cli = (id: string) => sec.cli.find((g) => g.provider === id)!;
 
-  assert.deepEqual(sec.cli.map((g) => g.provider), ["cli:claude"]);
-  assert.deepEqual(sec.api.map((g) => g.provider), ["anthropic", "openrouter"]);
-  // Noise (dated snapshot, embedding) is behind "Show all"; the recommended model stays up front.
-  const anth = sec.api[0];
-  assert.deepEqual(anth.featured.map((m) => m.model), ["claude-sonnet-5-5"]);
-  assert.deepEqual(anth.rest.map((m) => m.model).sort(), ["claude-3-opus-20240229", "text-embedding-x"]);
-  // The selected model is always visible, even when it is noise.
-  assert.ok(pickerSections(groups, "anthropic/claude-3-opus-20240229").api[0].featured.some((m) => m.model === "claude-3-opus-20240229"));
-  // An aggregator lists only its curated models; everything else is behind "Show all".
-  const or = sec.api[1];
-  assert.ok(or.aggregator);
-  assert.deepEqual(or.featured.map((m) => m.model), ["anthropic/claude-sonnet-5.5", "openai/gpt-5-mini"]);
-  assert.equal(or.featured.length + or.rest.length, or.total);
-  assert.ok(isNoiseModel(or.rest.find((m) => m.model === "google/gemini-x-preview")!));
-  // The aggregator's Sonnet duplicates the direct provider's Sonnet and is dropped from Recommended.
-  const rec = recommendedOptions(groups);
-  assert.deepEqual(rec.map((m) => m.ref), ["anthropic/claude-sonnet-5-5", "cli:claude/sonnet", "openrouter/openai/gpt-5-mini"]);
-  assert.ok(!rec.some(isCliDefault));
-  assert.equal(modelFamily("anthropic/claude-sonnet-5.5:free"), modelFamily("claude-sonnet-5-5-20250929"));
-  assert.equal(modelHint("gemini-3.5-flash-lite"), "fast");
-  assert.equal(sourceLabel("gemini"), "Google API");
+  // (a) newest of each family, strongest tier first; a newer 5.x replaces the older one.
+  assert.deepEqual(ids(api("anthropic")), ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
+  assert.equal(api("anthropic").recommended[0].hint, "new");
+  assert.deepEqual(ids(cli("cli:claude")), ["fable", "opus", "sonnet", "haiku"]);
+  // No "the CLI decides" row anywhere (it stays selectable only as a stored value).
+  for (const g of [...sec.cli, ...sec.api]) {
+    assert.ok(!g.recommended.some((r) => isCliDefault(r.option)) && !g.rest.some(isCliDefault));
+  }
+  // (b) free models first for multi-vendor engines and aggregators.
+  assert.deepEqual(ids(cli("cli:opencode")).slice(0, 2).sort(), ["opencode/big-pickle", "opencode/grok-code"]);
+  assert.ok(api("openrouter").recommended.slice(0, 3).every((r) => r.hint === "free"));
+  assert.ok(api("openrouter").rest.length > 40);
+  // (c) Gemini: high-quota Flash-Lite / Flash first, Pro last.
+  assert.deepEqual(ids(api("gemini")), ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-pro"]);
+  assert.equal(api("gemini").recommended[0].hint, "quota");
+  // Top strip: one per source, CLI first, no duplicate family.
+  const strip = recommendedOptions(groups);
+  assert.equal(strip.length, 4);
+  assert.deepEqual(strip.slice(0, 2).map((r) => r.option.ref), ["cli:claude/fable", "cli:opencode/opencode/big-pickle"]);
+  // A stored CLI default stays selectable and is labelled by the engine.
+  assert.equal(modelGroups(d, "cli:claude/default").find((g) => g.provider === "cli:claude")!.models.some(isCliDefault), true);
+  assert.equal(parseModel("claude-3-5-sonnet-20241022").family, parseModel("claude-sonnet-5-5").family);
   assert.equal(sourceLabel("cli:opencode"), "OpenCode CLI");
+  assert.ok(isNoiseModel(modelGroups(d, null).find((g) => g.provider === "anthropic")!.models.find((m) => m.model === "claude-3-5-haiku-20241022")!));
 });
 
 test("engineRows: installed-not-enabled connect first, uninstalled install last, enabled hidden", () => {

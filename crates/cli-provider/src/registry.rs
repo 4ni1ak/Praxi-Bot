@@ -99,7 +99,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: Some(CLAUDE_SECURITY_FLOOR),
         install_windows: npm(&["install", "-g", "@anthropic-ai/claude-code"], true),
         install_unix: npm(&["install", "-g", "@anthropic-ai/claude-code"], true),
-        models: &["default", "sonnet", "opus", "haiku"],
+        models: &["default", "fable", "opus", "sonnet", "haiku"],
         login: "claude auth login",
         docs_url: "https://docs.anthropic.com/en/docs/claude-code/setup",
     },

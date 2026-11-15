@@ -143,7 +143,7 @@ async fn run_child_turn() {
     assert_eq!(providers["default_provider"], "cli:claude");
     assert_eq!(
         providers["configured"][0]["models"],
-        json!(["default", "sonnet", "opus", "haiku"])
+        json!(["default", "sonnet", "opus", "haiku", "fable"])
     );
 
     let profile_toml = "\

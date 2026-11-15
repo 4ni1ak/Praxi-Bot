@@ -110,12 +110,6 @@ export function filterModelGroups(
     .filter((g) => g.models.length > 0);
 }
 
-/** Most models shown in the "Recommended" group. */
-export const RECOMMENDED_MAX = 4;
-
-/** Most models an aggregator group lists before "Show all". */
-export const AGGREGATOR_FEATURED_MAX = 8;
-
 /** CLI models that mean "let the CLI choose"; the picker words them as one default row. */
 export function isCliDefault(option: Pick<ModelOption, "provider" | "model">): boolean {
   return option.provider.startsWith("cli:") && (option.model === "default" || option.model === "auto");
@@ -152,111 +146,54 @@ export function isAggregator(provider: string, modelCount: number): boolean {
   return AGGREGATORS.has(provider) || (!provider.startsWith("cli:") && modelCount > 40);
 }
 
-/** Model family for de-duplication: vendor prefix, dots, tags and date stamps removed. */
-export function modelFamily(model: string): string {
-  return model
-    .slice(model.lastIndexOf("/") + 1)
-    .toLowerCase()
-    .replace(/:.*$/, "")
-    .replace(/(-latest|-(19|20)\d{2}-\d{2}-\d{2}|-(19|20)\d{6})$/, "")
-    .replace(/[._]/g, "-");
-}
-
-export interface SourceGroup {
-  provider: string;
-  cli: boolean;
-  aggregator: boolean;
-  /** Every model of the source. */
-  total: number;
-  /** Rows shown when the group is open. */
-  featured: ModelOption[];
-  /** Rows behind "Show all" (noise, or an aggregator's long tail). */
-  rest: ModelOption[];
-}
-
-export interface PickerSections {
-  /** One group per connected coding CLI (subscription). */
-  cli: SourceGroup[];
-  /** One group per API provider (billed per use). */
-  api: SourceGroup[];
-}
-
-/** Split provider groups into the CLI and API sections and apply the noise / aggregator rules. */
-export function pickerSections(groups: ModelGroup[], current?: string | null): PickerSections {
-  const out: PickerSections = { cli: [], api: [] };
-  for (const g of groups) {
-    const cli = g.provider.startsWith("cli:");
-    const aggregator = isAggregator(g.provider, g.models.length);
-    let featured: ModelOption[];
-    if (cli) {
-      featured = g.models;
-    } else if (aggregator) {
-      const curated = g.models.filter((m) => m.recommended || m.ref === current);
-      featured = (curated.length > 0 ? curated : g.models.filter((m) => !isNoiseModel(m, current)))
-        .slice(0, Math.max(AGGREGATOR_FEATURED_MAX, curated.filter((m) => m.ref === current).length));
-      if (current && !featured.some((m) => m.ref === current)) {
-        const cur = g.models.find((m) => m.ref === current);
-        if (cur) featured = [...featured, cur];
-      }
-    } else {
-      featured = g.models.filter((m) => !isNoiseModel(m, current));
-    }
-    const shown = new Set(featured.map((m) => m.ref));
-    const rest = g.models
-      .filter((m) => !shown.has(m.ref))
-      .sort((a, b) => Number(isNoiseModel(a, current)) - Number(isNoiseModel(b, current)));
-    (cli ? out.cli : out.api).push({
-      provider: g.provider,
-      cli,
-      aggregator,
-      total: g.models.length,
-      featured,
-      rest
-    });
-  }
-  return out;
-}
-
-/**
- * Up to four recommended models, at most one per family and source.  An aggregator's copy of a
- * model that a CLI engine or a direct provider also recommends is dropped.  Round-robin over the
- * sources so one of them cannot fill the group; the "CLI decides" rows never count.
- */
-export function recommendedOptions(groups: ModelGroup[], max = RECOMMENDED_MAX): ModelOption[] {
-  const direct = new Set<string>();
-  for (const g of groups) {
-    if (!isAggregator(g.provider, g.models.length)) {
-      for (const m of g.models) {
-        if (m.recommended) direct.add(modelFamily(m.model));
-      }
-    }
-  }
-  const lists = groups.map((g) => {
-    const aggregator = isAggregator(g.provider, g.models.length);
-    const seen = new Set<string>();
-    return g.models
-      .filter((m) => m.recommended && !isCliDefault(m))
-      .sort((a, b) => (a.recommendedRank ?? 99) - (b.recommendedRank ?? 99))
-      .filter((m) => {
-        const family = modelFamily(m.model);
-        if ((aggregator && direct.has(family)) || seen.has(family)) return false;
-        seen.add(family);
-        return true;
-      });
-  });
-  const picked: ModelOption[] = [];
-  for (let round = 0; picked.length < max && lists.some((l) => l.length > round); round += 1) {
-    for (const list of lists) {
-      const m = list[round];
-      if (m && picked.length < max) {
-        picked.push(m);
-      }
-    }
-  }
-  return picked;
-}
-
 export type ModelHint = "fast" | "balanced" | "strongest";
+/** Second line under a recommended model: why it is there. */
+export type RowHint = ModelHint | "new" | "free" | "quota";
+
+export interface Recommendation {
+  option: ModelOption;
+  hint: RowHint;
+}
+
+export interface ParsedModel {
+  /** Name words without version numbers: `claude-fable-5-2` -> `claude-fable`. */
+  family: string;
+  /** Numeric parts in order: `claude-fable-5-2` -> [5, 2]; `claude-3-5-sonnet` -> [3, 5]. */
+  version: number[];
+}
+
+/** Family and version of a model id (vendor prefix, `:tag`, date stamp and `-latest` ignored). */
+export function parseModel(model: string): ParsedModel {
+  const leaf = model.slice(model.lastIndexOf("/") + 1).toLowerCase().replace(/:.*$/, "");
+  const raw = leaf.replace(/-latest$/, "").replace(/-(19|20)\d{2}-?\d{2}-?\d{2}$/, "");
+  const words: string[] = [];
+  const version: number[] = [];
+  for (const tok of raw.split(/[-_]/).filter(Boolean)) {
+    const split = /^([a-z]+)(\d+(\.\d+)*)$/.exec(tok); // llama3.2, qwen3
+    if (/^\d+(\.\d+)*$/.test(tok)) {
+      version.push(...tok.split(".").map(Number));
+    } else if (split) {
+      words.push(split[1] ?? "");
+      version.push(...(split[2] ?? "").split(".").map(Number));
+    } else {
+      words.push(tok);
+    }
+  }
+  return { family: words.join("-") || leaf, version };
+}
+
+/** Model family for de-duplication across sources. */
+export function modelFamily(model: string): string {
+  return parseModel(model).family;
+}
+
+function compareVersion(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
 
 /** One-line hint for a recommended model, from its id (the catalog carries no hint text). */
 export function modelHint(model: string): ModelHint {
@@ -268,6 +205,190 @@ export function modelHint(model: string): ModelHint {
     return "strongest";
   }
   return "balanced";
+}
+
+const TIER: Record<ModelHint, number> = { strongest: 2, balanced: 3, fast: 4 };
+
+/** Tier order: the vendor's top line (fable, opus) above the strongest class, then balanced, then fast. */
+function tierScore(model: string): number {
+  const id = model.toLowerCase();
+  return /fable/.test(id) ? 0 : /opus/.test(id) ? 1 : TIER[modelHint(model)];
+}
+
+/** Free by data: an OpenRouter-style `:free` id or a catalog note that says free. */
+export function isFreeModel(m: Pick<ModelOption, "model" | "note">): boolean {
+  return /:free$/i.test(m.model) || /(^|[^a-z])free([^a-z]|$)/i.test(m.note ?? "");
+}
+
+const usable = (m: ModelOption): boolean =>
+  (m.kind === null || CHAT_KINDS.has(m.kind)) && !m.deprecated && !isNoiseModel(m, null);
+
+/** Newest version of each family (one row per family), strongest tier first. */
+function newestPerFamily(models: ModelOption[], preferFree = false): Array<{ m: ModelOption; older: boolean }> {
+  const best = new Map<string, { m: ModelOption; v: number[]; count: number }>();
+  for (const m of models) {
+    const { family, version } = parseModel(m.model);
+    const cur = best.get(family);
+    if (!cur) {
+      best.set(family, { m, v: version, count: 1 });
+      continue;
+    }
+    cur.count += 1;
+    const d = compareVersion(version, cur.v);
+    if (d > 0 || (d === 0 && preferFree && isFreeModel(m) && !isFreeModel(cur.m))) {
+      cur.m = m;
+      cur.v = version;
+    }
+  }
+  return [...best.entries()]
+    .map(([family, e]) => ({ m: e.m, v: e.v, family, older: e.count > 1 }))
+    .sort((a, b) =>
+      (a.m.recommendedRank ?? 99) - (b.m.recommendedRank ?? 99)
+      || tierScore(a.m.model) - tierScore(b.m.model)
+      || compareVersion(b.v, a.v)
+      || a.family.localeCompare(b.family)
+    )
+    .map(({ m, older }) => ({ m, older }));
+}
+
+/** Most models a source recommends. */
+export const SOURCE_RECOMMENDED_MAX = 5;
+const FREE_RECOMMENDED_MAX = 4;
+const LOCAL_PROVIDERS = new Set(["ollama", "lmstudio"]);
+const GEMINI_PROVIDERS = new Set(["gemini", "gemini-openai-compat"]);
+
+/** (a) Vendor apps and APIs: the newest model of every family, strongest tier first. */
+function ruleNewest(models: ModelOption[]): Recommendation[] {
+  return newestPerFamily(models)
+    .slice(0, SOURCE_RECOMMENDED_MAX)
+    .map(({ m, older }) => ({ option: m, hint: older ? "new" : modelHint(m.model) }));
+}
+
+/**
+ * (b) Aggregators and multi-vendor engines: free chat models first (newest per family, catalog rank
+ * and tier decide the order); with no free model, rule (a).
+ */
+function ruleFreeFirst(models: ModelOption[]): Recommendation[] {
+  const free = newestPerFamily(models.filter(isFreeModel), true)
+    .slice(0, FREE_RECOMMENDED_MAX)
+    .map(({ m }) => ({ option: m, hint: "free" as RowHint }));
+  if (free.length >= 3) return free;
+  const taken = new Set(free.map((r) => r.option.ref));
+  const filler = ruleNewest(models.filter((m) => !taken.has(m.ref))).slice(0, 3 - free.length);
+  return [...free, ...filler];
+}
+
+const geminiClass = (id: string): number =>
+  /flash-lite|flash_lite/.test(id) ? 0 : /flash/.test(id) ? 1 : /(^|[-/])pro/.test(id) ? 3 : 2;
+
+/**
+ * (c) Gemini API (free tier): the high-quota class first - Flash-Lite, then Flash, other models,
+ * Pro last (the catalog carries no per-model quota) - newest version first within a class.
+ */
+function ruleGemini(models: ModelOption[]): Recommendation[] {
+  return newestPerFamily(models)
+    .map(({ m }) => ({ m, cls: geminiClass(m.model.toLowerCase()), v: parseModel(m.model).version }))
+    .sort((a, b) => a.cls - b.cls || compareVersion(b.v, a.v))
+    .slice(0, SOURCE_RECOMMENDED_MAX)
+    .map(({ m, cls }) => ({ option: m, hint: cls <= 1 ? "quota" : modelHint(m.model) }));
+}
+
+const sizeOf = (id: string): number => {
+  const m = /(\d+(?:\.\d+)?)b\b/i.exec(id);
+  return m ? Number(m[1]) : -1;
+};
+
+/** (d) Local providers: installed models, largest first. */
+function ruleLocal(models: ModelOption[]): Recommendation[] {
+  return [...models]
+    .sort((a, b) => sizeOf(b.model) - sizeOf(a.model) || a.displayName.localeCompare(b.displayName))
+    .slice(0, SOURCE_RECOMMENDED_MAX)
+    .map((m) => ({ option: m, hint: modelHint(m.model) }));
+}
+
+/** Recommended models of one source (never the "CLI decides" row), computed from the data. */
+export function sourceRecommendations(g: ModelGroup): Recommendation[] {
+  const models = g.models.filter((m) => !isCliDefault(m));
+  const pool = models.filter(usable);
+  const list = pool.length > 0 ? pool : models;
+  if (list.length === 0) return [];
+  const cli = g.provider.startsWith("cli:");
+  const multiVendor = cli && list.filter((m) => m.model.includes("/")).length * 2 >= list.length;
+  if (LOCAL_PROVIDERS.has(g.provider)) return ruleLocal(list);
+  if (GEMINI_PROVIDERS.has(g.provider)) return ruleGemini(list);
+  if (multiVendor || (!cli && isAggregator(g.provider, g.models.length))) return ruleFreeFirst(list);
+  return ruleNewest(list);
+}
+
+export interface SourceGroup {
+  provider: string;
+  cli: boolean;
+  aggregator: boolean;
+  /** Models of the source (without the "CLI decides" row). */
+  total: number;
+  /** Rows shown when the group is open (the selected model is pinned when not recommended). */
+  recommended: Recommendation[];
+  /** Everything else, behind "All models (N)"; noise last. */
+  rest: ModelOption[];
+}
+
+export interface PickerSections {
+  /** One group per connected coding CLI (subscription). */
+  cli: SourceGroup[];
+  /** One group per API provider (billed per use). */
+  api: SourceGroup[];
+}
+
+/** Split provider groups into the CLI and API sections with their recommended models. */
+export function pickerSections(groups: ModelGroup[], current?: string | null): PickerSections {
+  const out: PickerSections = { cli: [], api: [] };
+  for (const g of groups) {
+    const cli = g.provider.startsWith("cli:");
+    const models = g.models.filter((m) => !isCliDefault(m));
+    const recommended = sourceRecommendations(g);
+    const cur = models.find((m) => m.ref === current);
+    if (cur && !recommended.some((r) => r.option.ref === cur.ref)) {
+      recommended.unshift({ option: cur, hint: modelHint(cur.model) });
+    }
+    const shown = new Set(recommended.map((r) => r.option.ref));
+    const rest = models
+      .filter((m) => !shown.has(m.ref))
+      .sort((a, b) => Number(isNoiseModel(a, current)) - Number(isNoiseModel(b, current)));
+    (cli ? out.cli : out.api).push({
+      provider: g.provider,
+      cli,
+      aggregator: isAggregator(g.provider, g.models.length),
+      total: models.length,
+      recommended,
+      rest
+    });
+  }
+  return out;
+}
+
+/** Most models in the top "Recommended" strip. */
+export const RECOMMENDED_MAX = 4;
+
+/**
+ * The top strip: the first recommendation of up to four different sources, CLI / subscription
+ * sources first, then direct providers, aggregators last.  A model whose family the strip already
+ * has is skipped in favour of the source's next recommendation.
+ */
+export function recommendedOptions(groups: ModelGroup[], max = RECOMMENDED_MAX): Recommendation[] {
+  const rank = (g: ModelGroup) =>
+    g.provider.startsWith("cli:") ? 0 : isAggregator(g.provider, g.models.length) ? 2 : 1;
+  const ordered = groups.map((g, i) => ({ g, i })).sort((a, b) => rank(a.g) - rank(b.g) || a.i - b.i);
+  const picked: Recommendation[] = [];
+  const families = new Set<string>();
+  for (const { g } of ordered) {
+    if (picked.length >= max) break;
+    const rec = sourceRecommendations(g).find((r) => !families.has(parseModel(r.option.model).family));
+    if (rec) {
+      families.add(parseModel(rec.option.model).family);
+      picked.push(rec);
+    }
+  }
+  return picked;
 }
 
 export interface EngineRow {
