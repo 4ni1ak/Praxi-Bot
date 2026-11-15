@@ -63,6 +63,12 @@ export function ModelPicker({
     [groups, query]
   );
 
+  // "Other model id": a CLI accepts models its short list does not show.
+  const typed = query.trim();
+  const otherIds = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(typed)
+    ? groups.filter((g) => g.provider.startsWith("cli:") && !g.models.some((m) => m.model === typed))
+    : [];
+
   const close = useCallback(() => {
     setOpen(false);
     setQuery("");
@@ -151,7 +157,7 @@ export function ModelPicker({
           />
         </label>
         <div className={styles.scroll} role="listbox" aria-label={t("modelPicker.title")}>
-          {shown.length === 0 && !showAuto ? (
+          {shown.length === 0 && !showAuto && otherIds.length === 0 ? (
             <p className={styles.empty}>{t("modelPicker.empty")}</p>
           ) : (
             <>
@@ -176,6 +182,20 @@ export function ModelPicker({
                   {autoOption.selected ? <Check aria-hidden="true" /> : null}
                 </button>
               ) : null}
+              {otherIds.map((g) => (
+                <button
+                  key={`other-${g.provider}`}
+                  type="button"
+                  role="option"
+                  aria-selected={false}
+                  className={styles.option}
+                  onClick={() => pick(`${g.provider}/${typed}`)}
+                >
+                  <span className={styles.optionText}>
+                    {t("modelPicker.otherId", { id: typed, provider: g.provider.slice(4) })}
+                  </span>
+                </button>
+              ))}
               {shown.map((g) => {
                 const brand = providerBrand(g.provider);
                 return (

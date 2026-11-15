@@ -948,7 +948,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Detect installed, signed-in coding CLIs. */
+        /**
+         * Detect installed, signed-in coding CLIs. Local owner only: the rows carry
+         *     the signed-in account label (an email or organisation) and install state.
+         */
         get: operations["detect_providers"];
         put?: never;
         post?: never;
@@ -5748,6 +5751,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DetectedProviderDto"][];
+                };
+            };
+            /** @description caller is not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

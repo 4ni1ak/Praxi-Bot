@@ -936,25 +936,137 @@ const CREDENTIAL_NAMES: &[&str] = &[
     ".gemini",
     ".cursor",
     ".cursor-agent",
-    "cursor",
     ".opencode",
-    "opencode",
+    // Project-level OpenCode config can declare plugins, commands and MCP
+    // servers that run code, so it is protected in every workspace on purpose.
+    // Likewise `.claude/` (hooks, commands) and `.cursor/` (rules, MCP).
     "opencode.json",
     "opencode.jsonc",
-    "cursor-agent",
     "oauth_creds.json",
 ];
+
+/// Config and data locations of the CLIs that are plain directory names
+/// (`opencode`, `cursor`, ...) and therefore only protected at their known
+/// place, as consecutive path components (lower case). A repository that merely
+/// lives in a folder called `opencode` or `cursor` stays usable.
+const CLI_CONFIG_SEQUENCES: &[&[&str]] = &[
+    &[".config", "opencode"],
+    &[".config", "claude"],
+    &[".config", "cursor"],
+    &[".config", "cursor-agent"],
+    &[".local", "share", "opencode"],
+    &[".local", "share", "cursor-agent"],
+    &["appdata", "roaming", "opencode"],
+    &["appdata", "roaming", "cursor"],
+    &["appdata", "local", "opencode"],
+    &["appdata", "local", "cursor"],
+    &["appdata", "local", "cursor-agent"],
+    &["library", "application support", "opencode"],
+    &["library", "application support", "cursor"],
+    &["library", "application support", "claude"],
+];
+
+fn env_abs_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+fn sequence_in(parts: &[String], seq: &[&str]) -> bool {
+    parts.windows(seq.len()).any(|w| {
+        w.iter()
+            .zip(seq)
+            .all(|(part, want)| canonical_name(part) == *want)
+    })
+}
+
+/// Directories that hold the CLI executables detection and the Claude runtime
+/// search outside the user's PATH (mirrors `cli-provider`'s `augment`). A file
+/// tool must never create, replace or move anything there: the next detection
+/// or run would execute it outside the permission engine.
+fn cli_executable_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for home in ["HOME", "USERPROFILE"]
+        .iter()
+        .filter_map(|k| env_abs_dir(k))
+    {
+        for rel in [
+            ".local/bin",
+            "bin",
+            ".volta/bin",
+            ".bun/bin",
+            ".npm-global",
+            ".nvm/versions/node",
+            ".local/share/cursor-agent",
+            "AppData/Roaming/npm",
+            "AppData/Local/cursor-agent",
+        ] {
+            out.push(home.join(rel));
+        }
+    }
+    if let Some(dir) = env_abs_dir("APPDATA") {
+        out.push(dir.join("npm"));
+    }
+    if let Some(dir) = env_abs_dir("LOCALAPPDATA") {
+        out.push(dir.join("cursor-agent"));
+    }
+    if let Some(dir) = env_abs_dir("NPM_CONFIG_PREFIX") {
+        out.push(dir);
+    }
+    out
+}
+
+/// Config locations relocated by an environment variable the CLIs honour.
+fn cli_relocated_config_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(dir) = env_abs_dir("XDG_CONFIG_HOME") {
+        out.extend(["opencode", "claude", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    if let Some(dir) = env_abs_dir("XDG_DATA_HOME") {
+        out.extend(["opencode", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    for key in ["APPDATA", "LOCALAPPDATA"] {
+        if let Some(dir) = env_abs_dir(key) {
+            out.extend(["opencode", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+        }
+    }
+    out
+}
+
+fn cli_location(parts: &[String]) -> bool {
+    // The directory set only depends on the process environment, which is fixed
+    // at startup; building it per call made directory walks quadratic.
+    static DIRS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    if CLI_CONFIG_SEQUENCES
+        .iter()
+        .any(|seq| sequence_in(parts, seq))
+    {
+        return true;
+    }
+    DIRS.get_or_init(|| {
+        cli_executable_dirs()
+            .into_iter()
+            .chain(cli_relocated_config_dirs())
+            .map(|dir| norm_parts(&widen_for_compare(&dir)))
+            .collect()
+    })
+    .iter()
+    .any(|dir| parts.starts_with(dir))
+}
 
 /// Hard link to a credential file under another name (`notes.txt` → `.env`)
 /// is not detected. These tools cannot create a hard link; a second directory
 /// entry for the same file is a known limitation of the name denylist.
 fn name_is_credential(name: &str) -> bool {
     let n = name.trim_end_matches([' ', '.']).to_ascii_lowercase();
-    n == ".env" || n.starts_with(".env.") || CREDENTIAL_NAMES.contains(&n.as_str())
+    n == ".env"
+        || n.starts_with(".env.")
+        // `.claude.json.backup*` and other siblings Claude Code writes.
+        || n.starts_with(".claude.json.")
+        || CREDENTIAL_NAMES.contains(&n.as_str())
 }
 
-fn cli_home_override(path: &Path) -> bool {
-    let path = norm_parts(&widen_for_compare(path));
+fn cli_home_override(path: &[String]) -> bool {
     [
         "CODEX_HOME",
         "CLAUDE_CONFIG_DIR",
@@ -1047,7 +1159,7 @@ fn workspace_refusal_with_home(
             }
         }
     }
-    if cli_home_override(&real) {
+    if cli_home_override(&parts) {
         return Some("the workspace cannot be a CLI configuration location");
     }
     None
@@ -1060,7 +1172,10 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
             false
         }
     });
-    named || cli_home_override(path) || under_data_sensitive(path, data_dir)
+    named || {
+        let parts = norm_parts(&widen_for_compare(path));
+        cli_home_override(&parts) || cli_location(&parts) || under_data_sensitive(path, data_dir)
+    }
 }
 
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
@@ -3170,6 +3285,8 @@ mod tests {
             ".cursor/mcp.json",
             ".cursor-agent/auth.json",
             "AppData/Roaming/Cursor/User/settings.json",
+            ".claude.json.backup.1700000000",
+            ".config/claude/settings.json",
             ".config/opencode/opencode.json",
             ".opencode/plugins/local.ts",
             "project/opencode.json",
@@ -3181,6 +3298,141 @@ mod tests {
             assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
         }
         assert!(!is_protected(&dir.path().join("report.txt"), dir.path()));
+    }
+
+    #[test]
+    fn repositories_named_like_a_cli_are_not_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            "code/opencode/src/main.rs",
+            "code/opencode/README.md",
+            "src/cursor/mod.rs",
+            "work/cursor-agent/notes.txt",
+            "opencode/package.json",
+            "cursor",
+            "projects/claude/readme.md",
+            "a/.config/other/opencode/x",
+        ] {
+            assert!(
+                !is_protected(&dir.path().join(path), dir.path()),
+                "{path} must stay usable"
+            );
+        }
+    }
+
+    /// Run `name` again in a child process with `envs` set, so the test can
+    /// change HOME and friends without touching sibling tests.
+    fn rerun_with_env(name: &str, fixture: &str, root: &Path, envs: &[(&str, PathBuf)]) {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args(["--exact", name]);
+        child.env(fixture, root);
+        for (key, value) in envs {
+            child.env(key, value);
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn cli_executable_directories_are_protected() {
+        const FIXTURE: &str = "PRAXI_C250_BIN_DIR_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for path in [
+                ".local/bin/claude",
+                "bin/claude",
+                ".volta/bin/claude",
+                ".bun/bin/opencode",
+                ".npm-global/bin/claude",
+                "AppData/Roaming/npm/claude.cmd",
+                "AppData/Roaming/npm/claude.exe",
+                "AppData/Local/cursor-agent/cursor-agent.cmd",
+                ".nvm/versions/node/v22.1.0/bin/claude",
+                "prefix/bin/claude",
+                "xdg-config/opencode/opencode.json",
+                "xdg-data/opencode/auth.json",
+            ] {
+                assert!(is_protected(&root.join(path), &root), "{path}");
+            }
+            assert!(!is_protected(&root.join("docs/claude.md"), &root));
+            assert!(!is_protected(&root.join(".local/other/claude"), &root));
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::cli_executable_directories_are_protected",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+                ("APPDATA", root.path().join("AppData/Roaming")),
+                ("LOCALAPPDATA", root.path().join("AppData/Local")),
+                ("NPM_CONFIG_PREFIX", root.path().join("prefix")),
+                ("XDG_CONFIG_HOME", root.path().join("xdg-config")),
+                ("XDG_DATA_HOME", root.path().join("xdg-data")),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn file_tools_refuse_to_plant_cli_executables() {
+        const FIXTURE: &str = "PRAXI_C250_PLANT_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            let (_d, _w, t) = setup();
+            let c = ctx();
+            for rel in [".local/bin/claude", "AppData/Roaming/npm/claude.cmd"] {
+                let target = root.join(rel);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                let err = get(&t, "fs_write")
+                    .call(&c, json!({"path": &target, "content": "evil"}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                let src = root.join("planted.txt");
+                fs::write(&src, "evil").unwrap();
+                let err = get(&t, "fs_move")
+                    .call(&c, json!({"from": &src, "to": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                fs::write(&target, "real").unwrap();
+                let err = get(&t, "fs_delete")
+                    .call(&c, json!({"path": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert_eq!(fs::read_to_string(&target).unwrap(), "real");
+            }
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::file_tools_refuse_to_plant_cli_executables",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+            ],
+        );
     }
 
     #[test]
@@ -4399,10 +4651,9 @@ mod tests {
             ".gemini",
             ".cursor",
             ".opencode",
-            "opencode",
+            ".claude.json.backup",
             "opencode.json",
             "opencode.jsonc",
-            "cursor-agent",
             "oauth_creds.json",
         ] {
             let file = w.path().join(name);
@@ -5674,7 +5925,10 @@ mod workspace_refusal_tests {
         for name in [".ssh", ".aws", ".gnupg"] {
             fs::create_dir_all(home.join(name).join("sub")).unwrap();
             assert!(check(&home.join(name)).is_some(), "{name}");
-            assert!(check(&home.join(name).join("sub")).is_some(), "inside {name}");
+            assert!(
+                check(&home.join(name).join("sub")).is_some(),
+                "inside {name}"
+            );
         }
         let root = tmp.path().ancestors().last().unwrap();
         assert!(check(root).is_some(), "drive root");

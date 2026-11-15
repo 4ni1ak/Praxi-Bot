@@ -96,7 +96,7 @@ fn incompatible_schema(db: &str, found: u32, supported: u32) -> ImportError {
 /// bundle says: consent cannot travel in a file.
 fn reset_imported_engines(conn: &Connection) -> rusqlite::Result<()> {
     let rows: Vec<(String, String)> = {
-        let mut stmt = conn.prepare("SELECT id, config FROM bots")?;
+        let mut stmt = conn.prepare("SELECT id, config_json FROM bots")?;
         stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<_>>()?
     };
@@ -109,7 +109,7 @@ fn reset_imported_engines(conn: &Connection) -> rusqlite::Result<()> {
             .is_some_and(|o| o.remove("engine").is_some())
         {
             conn.execute(
-                "UPDATE bots SET config = ?2 WHERE id = ?1",
+                "UPDATE bots SET config_json = ?2 WHERE id = ?1",
                 rusqlite::params![id, value.to_string()],
             )?;
         }

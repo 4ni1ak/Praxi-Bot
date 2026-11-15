@@ -10,6 +10,7 @@ rust-version.workspace = true
 [features]
 # Deterministic echo provider (also used by the tests).
 fake-provider = []
+local-embeddings = ["memory-store/local-embeddings"]
 
 [lints]
 workspace = true
@@ -23,6 +24,8 @@ live-view = { workspace = true, features = ["openapi"] }
 agent-core = { path = "../agent-core", version = "0.1.0" }
 async-trait.workspace = true
 builtin-tools = { path = "../builtin-tools", version = "0.1.0" }
+memory-store = { path = "../memory-store", version = "0.1.0" }
+tool-registry = { path = "../tool-registry", version = "0.1.0" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 desktop-api = { path = "../desktop-api", version = "0.1.0" }
@@ -34,6 +37,7 @@ getrandom = "0.3"
 iana-time-zone = "0.1"
 parking_lot.workspace = true
 percent-encoding.workspace = true
+rusqlite.workspace = true
 permission-engine = { path = "../permission-engine", version = "0.1.0" }
 protocol.workspace = true
 provider-catalog = { path = "../provider-catalog", version = "0.1.0" }
@@ -61,7 +65,7 @@ rusqlite.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 http-body-util = "0.1"
 tempfile.workspace = true
-tool-registry = { path = "../tool-registry", version = "0.1.0" }
+wiremock.workspace = true
 workflow-replay = { path = "../workflow-replay", version = "0.1.0" }
 tower = { version = "0.5", features = ["util"] }
 

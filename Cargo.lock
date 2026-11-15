@@ -1297,6 +1297,8 @@ dependencies = [
  "futures",
  "parking_lot",
  "process-wrap",
+ "regex",
+ "secret-store",
  "serde",
  "serde_json",
  "tempfile",
@@ -1781,6 +1783,7 @@ dependencies = [
  "http-body-util",
  "iana-time-zone",
  "live-view",
+ "memory-store",
  "parking_lot",
  "peer-network",
  "percent-encoding",
@@ -1807,6 +1810,7 @@ dependencies = [
  "tower",
  "utoipa",
  "uuid",
+ "wiremock",
  "workflow-replay",
 ]
 
@@ -4222,7 +4226,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e9ec52138abedcc58dc17a7c6c0c00a2bdb4f3427c7f63fa97fd0d859155caf"
 dependencies = [
  "gtk-sys",
- "libloading",
+ "libloading 0.7.4",
  "once_cell",
 ]
 
@@ -4249,6 +4253,16 @@ checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
 dependencies = [
  "cfg-if",
  "winapi",
+]
+
+[[package]]
+name = "libloading"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
+dependencies = [
+ "cfg-if",
+ "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -4549,9 +4563,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "fastembed",
+ "ort",
  "protocol",
+ "provider-catalog",
  "regex",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4560,7 +4577,9 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tiktoken-rs",
+ "tokenizers",
  "tokio",
+ "tokio-util",
  "unicode-normalization",
  "uuid",
 ]
@@ -5649,6 +5668,7 @@ version = "2.0.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4336a1e2b38848325241c72889086886004e589b7c74f335e60a8e8db5138a0b"
 dependencies = [
+ "libloading 0.9.1",
  "ndarray",
  "ort-sys",
  "smallvec",
@@ -6224,6 +6244,7 @@ dependencies = [
  "async-trait",
  "fs4",
  "futures",
+ "httpdate",
  "reqwest 0.12.28",
  "secret-store",
  "serde",

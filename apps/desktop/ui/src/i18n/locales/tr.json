@@ -1171,7 +1171,8 @@
       "medium": "Orta",
       "high": "Yüksek",
       "max": "Maks"
-    }
+    },
+    "otherId": "\"{{id}}\" modelini {{provider}} ile kullan"
   },
   "settingsModal": {
     "title": "Ayarlar",
@@ -1275,7 +1276,8 @@
           "output_limit": "Kurulum çıktısı sınırı aştığı için kurulum durduruldu. Devam etmek için terminalinizi kullanın.",
           "install_failed": "Kurulum başarıyla tamamlanamadı. Çıktıyı kontrol edin veya komutu terminalinizden çalıştırın."
         },
-        "nativeOnly": "Kendi araçlarıyla çalışır: botun Motor ayarlarından seçin."
+        "nativeOnly": "Kendi araçlarıyla çalışır: botun Motor ayarlarından seçin.",
+        "experimental": "Deneysel: arayüz gerçek bir kurulumda doğrulanmadı."
       },
       "advanced": "Gelişmiş sağlayıcı ayarları"
     },

@@ -1171,7 +1171,8 @@
       "medium": "Medium",
       "high": "High",
       "max": "Max"
-    }
+    },
+    "otherId": "Use \"{{id}}\" with {{provider}}"
   },
   "settingsModal": {
     "title": "Settings",
@@ -1275,7 +1276,8 @@
           "output_limit": "Installer output exceeded the limit and installation was stopped. Use your terminal to continue.",
           "install_failed": "Installation did not finish successfully. Check the output or run the command in your terminal."
         },
-        "nativeOnly": "Runs with its own tools: choose this in a bot's Engine settings."
+        "nativeOnly": "Runs with its own tools: choose this in a bot's Engine settings.",
+        "experimental": "Experimental: interface not verified on a live install."
       },
       "advanced": "Advanced provider settings"
     },

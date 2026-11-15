@@ -298,7 +298,11 @@ pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
             Ask | AcceptEdits | Auto => LevelPlan {
                 offered: false,
                 enforced: false,
-                ..plan(level, Ask, "not enforceable: OpenCode allows edits and commands by default")
+                ..plan(
+                    level,
+                    Ask,
+                    "not enforceable: OpenCode allows edits and commands by default",
+                )
             },
             Full => LevelPlan {
                 acp_allow_all: true,
@@ -409,7 +413,7 @@ mod tests {
                 Driver::OpenCode,
                 Auto,
                 Ask,
-                "every permission request asks",
+                "not enforceable: OpenCode allows edits and commands by default",
                 &["acp"],
             ),
             (

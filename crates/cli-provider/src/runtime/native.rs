@@ -153,7 +153,8 @@ async fn session(
     // The bot can write into its workspace, so nothing in it may be what runs with the
     // owner's authority: PATH entries inside it are dropped (for the child too) and the
     // resolved program and shim targets must lie outside it.
-    let workspace = std::fs::canonicalize(&nt.workspace).map_err(|_| CliError::WorkspaceUnavailable)?;
+    let workspace =
+        std::fs::canonicalize(&nt.workspace).map_err(|_| CliError::WorkspaceUnavailable)?;
     let inside = |p: &std::path::Path| {
         std::fs::canonicalize(p).is_ok_and(|real| real.starts_with(&workspace))
     };
@@ -165,7 +166,10 @@ async fn session(
     let resolved = resolve_spawn(&candidate, env).map_err(|_| CliError::ShimRefused)?;
     if inside(&candidate)
         || inside(&resolved.program)
-        || resolved.args.iter().any(|a| inside(std::path::Path::new(a)))
+        || resolved
+            .args
+            .iter()
+            .any(|a| inside(std::path::Path::new(a)))
     {
         return Err(CliError::ShimRefused);
     }
@@ -610,6 +614,7 @@ impl Run<'_> {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // One linear ACP exchange.
     async fn acp(
         &self,
         stdin: &mut tokio::process::ChildStdin,
@@ -786,10 +791,15 @@ mod tests {
 
     #[test]
     fn acp_never_selects_a_remembered_grant_below_full_access() {
-        let only_always = json!([{"optionId":"a","kind":"allow_always"},{"optionId":"r","kind":"reject_once"}]);
-        assert_eq!(acp_outcome(&only_always, true, false)["outcome"], "cancelled");
+        let only_always =
+            json!([{"optionId":"a","kind":"allow_always"},{"optionId":"r","kind":"reject_once"}]);
+        assert_eq!(
+            acp_outcome(&only_always, true, false)["outcome"],
+            "cancelled"
+        );
         assert_eq!(acp_outcome(&only_always, true, true)["optionId"], "a");
-        let both = json!([{"optionId":"a","kind":"allow_always"},{"optionId":"o","kind":"allow_once"}]);
+        let both =
+            json!([{"optionId":"a","kind":"allow_always"},{"optionId":"o","kind":"allow_once"}]);
         assert_eq!(acp_outcome(&both, true, false)["optionId"], "o");
     }
 
@@ -803,6 +813,14 @@ mod tests {
         // A file change whose proposed changes were never seen cannot be approved.
         assert!(codex_card("edit", false, &json!({"itemId":"i1"}), &none).is_none());
         let seen = std::collections::HashMap::from([("i1".to_owned(), json!([{"path":"a"}]))]);
-        assert!(codex_card("edit", false, &json!({"itemId":"i1","grantRoot":"/r"}), &seen).is_some());
+        assert!(
+            codex_card(
+                "edit",
+                false,
+                &json!({"itemId":"i1","grantRoot":"/r"}),
+                &seen
+            )
+            .is_some()
+        );
     }
 }

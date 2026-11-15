@@ -25,6 +25,31 @@ pub struct PeerIdentity {
     pub role: PeerRole,
 }
 
+/// Generic JSON/TOML profile editors retain ordinary bot editing, but cannot
+/// create, replace or clear host-local knowledge settings. Omission preserves
+/// the current subtree rather than implicitly disabling an owner configuration.
+pub(crate) fn protect_knowledge_config(
+    peer: Option<&PeerIdentity>,
+    current: Option<&serde_json::Value>,
+    next: &mut serde_json::Value,
+) -> Result<(), ApiError> {
+    if peer.is_none() {
+        return Ok(());
+    }
+    if let Some(incoming) = next.get("knowledge") {
+        if Some(incoming) != current {
+            return Err(ApiError::forbidden(
+                "knowledge settings are managed by the local owner",
+            ));
+        }
+    } else if let Some(current) = current {
+        next.as_object_mut()
+            .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
+            .insert("knowledge".into(), current.clone());
+    }
+    Ok(())
+}
+
 /// Future host transfer endpoints forbidden to phones.
 pub const PHONE_DENIED_POST_PATHS: &[&str] = &["/v1/host/import", "/v1/host/handover"];
 
@@ -88,7 +113,9 @@ fn normalize_deny_path(path: &str) -> String {
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
-    if (check_path == "/v1/providers/cli" || check_path.starts_with("/v1/providers/cli/"))
+    if (check_path == "/v1/providers/cli"
+        || check_path.starts_with("/v1/providers/cli/")
+        || check_path == "/v1/providers/detected")
         || (*method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path))
     {
         return Some("host-local provider management is not allowed for peers");

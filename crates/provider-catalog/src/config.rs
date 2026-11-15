@@ -188,7 +188,38 @@ impl ProviderSettings {
         if self.cli.is_some() || entry.kind == crate::ProviderKind::Cli {
             return Err(ProviderError::CliSession);
         }
-        let key = match (&self.key, &entry.auth) {
+        let key = self.resolve_key(entry, store)?;
+        let entry = self.apply_model_caps(entry);
+        build_chat_provider(&entry, config, key)
+    }
+
+    /// Build an embedding adapter using exactly this configured provider's
+    /// endpoint and secret reference. No separate RAG API key is persisted.
+    ///
+    /// # Errors
+    /// Disabled/session providers, missing credentials, or unsupported adapters.
+    pub fn build_embedding_provider(
+        &self,
+        entry: &ProviderEntry,
+        store: &dyn SecretStore,
+        config: OpenAiCompatConfig,
+    ) -> Result<Box<dyn crate::embedding::EmbeddingProvider>, ProviderError> {
+        if !self.enabled || self.cli.is_some() || self.id != entry.id {
+            return Err(ProviderError::InvalidRequest(
+                "embedding provider is disabled or mismatched".into(),
+            ));
+        }
+        crate::embedding::endpoint_identity(&entry.base_url)?;
+        let key = self.resolve_key(entry, store)?;
+        crate::factory::build_embedding_provider(entry, config, key)
+    }
+
+    fn resolve_key(
+        &self,
+        entry: &ProviderEntry,
+        store: &dyn SecretStore,
+    ) -> Result<Option<String>, ProviderError> {
+        Ok(match (&self.key, &entry.auth) {
             (Some(r), _) => Some(
                 resolve(store, r)
                     .map_err(|e| ProviderError::Auth(e.to_string()))?
@@ -197,9 +228,7 @@ impl ProviderSettings {
             ),
             (None, Auth::None) => None,
             (None, Auth::ApiKeyEnv(var)) => Some(key_from_env(var)?),
-        };
-        let entry = self.apply_model_caps(entry);
-        build_chat_provider(&entry, config, key)
+        })
     }
 }
 

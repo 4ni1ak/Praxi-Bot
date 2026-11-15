@@ -156,19 +156,50 @@ async fn refuses_below_enforceable_levels_and_workspace_executables() {
     use cli_provider::runtime::CliError;
     // OpenCode cannot be held at Ask: the turn is refused before anything starts.
     let (dir, workspace, env) = setup();
-    let host = Arc::new(Host { allow: true, permissions: Mutex::new(Vec::new()), text: Mutex::new(String::new()) });
-    let nt = |level, workspace: &Path| NativeTurn { turn: turn(), driver: Driver::OpenCode, level, workspace: workspace.to_owned() };
-    let err = run_native_turn("fixture", &env, nt(ApprovalLevel::Ask, workspace.path()), host.clone(), CancellationToken::new()).await.unwrap_err();
+    let host = Arc::new(Host {
+        allow: true,
+        permissions: Mutex::new(Vec::new()),
+        text: Mutex::new(String::new()),
+    });
+    let nt = |level, workspace: &Path| NativeTurn {
+        turn: turn(),
+        driver: Driver::OpenCode,
+        level,
+        workspace: workspace.to_owned(),
+    };
+    let err = run_native_turn(
+        "fixture",
+        &env,
+        nt(ApprovalLevel::Ask, workspace.path()),
+        host.clone(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err, CliError::NativeToolsOpen);
     assert!(!dir.path().join("argv").exists());
     // A CLI that lives inside the workspace is never resolved or run.
     let inside = tempfile::tempdir().unwrap();
     common::install_binary(
         Path::new(env!("CARGO_BIN_EXE_native-cli-fixture")),
-        &inside.path().join(format!("fixture{}", std::env::consts::EXE_SUFFIX)),
+        &inside
+            .path()
+            .join(format!("fixture{}", std::env::consts::EXE_SUFFIX)),
     );
-    let env = PathEnv::for_test(inside.path().into()).with_env_var("FAKE_LOG", inside.path().display().to_string());
-    let err = run_native_turn("fixture", &env, nt(ApprovalLevel::Full, inside.path()), host, CancellationToken::new()).await.unwrap_err();
-    assert!(matches!(err, CliError::NotInstalled | CliError::ShimRefused), "{err:?}");
+    let env = PathEnv::for_test(inside.path().into())
+        .with_env_var("FAKE_LOG", inside.path().display().to_string());
+    let err = run_native_turn(
+        "fixture",
+        &env,
+        nt(ApprovalLevel::Full, inside.path()),
+        host,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, CliError::NotInstalled | CliError::ShimRefused),
+        "{err:?}"
+    );
     assert!(!inside.path().join("argv").exists());
 }

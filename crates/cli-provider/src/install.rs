@@ -186,17 +186,35 @@ fn emit_lines(pending: &mut Vec<u8>, chunk: &[u8], eof: bool, output: &mut impl 
     }
 }
 
+/// Installer output is untrusted and may echo credentials (npm auth lines, a
+/// proxy URL with userinfo, a token in a debug trace). Every line goes through
+/// the production redactor (`secret_store::Redactor`, the same one the agent
+/// uses) plus installer-specific rules: `key=value` pairs whose key names a
+/// credential, bearer tokens and URL userinfo. Ordinary URLs and text are kept.
 fn safe_output(bytes: &[u8]) -> String {
+    use std::sync::OnceLock;
+    static REDACTOR: OnceLock<secret_store::Redactor> = OnceLock::new();
+    static KEYED: OnceLock<regex::Regex> = OnceLock::new();
+    static USERINFO: OnceLock<regex::Regex> = OnceLock::new();
+    static BEARER: OnceLock<regex::Regex> = OnceLock::new();
+    let redactor = REDACTOR.get_or_init(secret_store::Redactor::new);
+    let keyed = KEYED.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)((?:token|password|passwd|secret|_auth|_authtoken|api[_-]?key|authorization)["']?\s*[=:]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;]+)"#,
+        )
+        .expect("valid pattern")
+    });
+    let userinfo = USERINFO.get_or_init(|| {
+        regex::Regex::new(r"(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@").expect("valid pattern")
+    });
+    let bearer = BEARER.get_or_init(|| {
+        regex::Regex::new(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+").expect("valid pattern")
+    });
     let text = String::from_utf8_lossy(bytes);
-    let lower = text.to_ascii_lowercase();
-    if [
-        "token", "password", "secret", "_auth", "api_key", "https://", "http://", "bearer ",
-    ]
-    .iter()
-    .any(|s| lower.contains(s))
-    {
-        return "[installer output redacted]\n".to_owned();
-    }
+    let text = redactor.redact(&text);
+    let text = userinfo.replace_all(&text, "${1}[REDACTED]@");
+    let text = bearer.replace_all(&text, "${1}[REDACTED]");
+    let text = keyed.replace_all(&text, "${1}[REDACTED]");
     text.chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
         .collect()
@@ -218,17 +236,54 @@ mod tests {
     }
     #[test]
     fn output_is_untrusted_and_bounded_by_runner() {
-        assert_eq!(
-            safe_output(b"token=secret"),
-            "[installer output redacted]\n"
-        );
+        assert_eq!(safe_output(b"token=secret"), "token=[REDACTED]");
         assert!(!safe_output(b"\x1b[0mhello\n").contains('\x1b'));
         let mut pending = Vec::new();
         let mut output = String::new();
-        emit_lines(&mut pending, b"se", false, &mut |s| output.push_str(&s));
-        emit_lines(&mut pending, b"cret=value\n", false, &mut |s| {
+        emit_lines(&mut pending, b"secret=va", false, &mut |s| {
             output.push_str(&s);
         });
-        assert_eq!(output, "[installer output redacted]\n");
+        emit_lines(&mut pending, b"lue\n", false, &mut |s| output.push_str(&s));
+        assert_eq!(output, "secret=[REDACTED]\n");
+    }
+    #[test]
+    fn real_secret_shapes_are_masked_but_urls_survive() {
+        let github = format!("ghp_{}", "A1b2C3d4E5".repeat(4));
+        let openai = format!("sk-{}", "abcDEF0123456789".repeat(2));
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijk";
+        for secret in [github.as_str(), openai.as_str(), jwt] {
+            let out = safe_output(format!("npm warn using {secret} here\n").as_bytes());
+            assert!(!out.contains(secret), "{out}");
+            assert!(out.contains("[REDACTED]"), "{out}");
+        }
+        // A secret split across two reads is masked once the line is whole.
+        let mut pending = Vec::new();
+        let mut output = String::new();
+        let (a, b) = github.split_at(10);
+        let mut push = |s: String| output.push_str(&s);
+        emit_lines(
+            &mut pending,
+            format!("key {a}").as_bytes(),
+            false,
+            &mut push,
+        );
+        emit_lines(&mut pending, format!("{b}\n").as_bytes(), false, &mut push);
+        assert!(!output.contains(&github), "{output}");
+        // Plain registry URLs are useful progress output and are kept.
+        let out =
+            safe_output(b"npm http fetch GET 200 https://registry.npmjs.org/opencode-ai 120ms\n");
+        assert!(
+            out.contains("https://registry.npmjs.org/opencode-ai"),
+            "{out}"
+        );
+        // Credentials embedded in a URL or header are not.
+        let out = safe_output(
+            b"proxy https://user:hunter2pass@proxy.example:8080/ Authorization: Bearer abc.def-123\n",
+        );
+        assert!(
+            !out.contains("hunter2pass") && !out.contains("abc.def-123"),
+            "{out}"
+        );
+        assert!(out.contains("proxy.example"), "{out}");
     }
 }

@@ -323,12 +323,14 @@ pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotD
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_bot(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
-    let (name, config) = resolve_bot(input)?;
+    let (name, mut config) = resolve_bot(input)?;
     if config.get("engine").is_some() {
         return Err(engine_in_profile());
     }
+    crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -405,11 +407,21 @@ pub(crate) async fn revoke_grant(
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    let mut bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("knowledge"),
+        &mut config,
+    )?;
     if preserve_runtime
         && config.get("runtime").is_none()
         && let Some(runtime) = bot.config.get("runtime")
@@ -455,7 +467,13 @@ pub(crate) async fn update_bot(
             "this bot runs a CLI with its own tools; switch it back to Praxi-governed before choosing a non-CLI model",
         ));
     }
+    if bot.config.pointer("/knowledge/embedding") != config.pointer("/knowledge/embedding") {
+        // Raw profile edits cannot revive a grant after disable/restore. Revoke
+        // first: if persisting the new profile fails, authority stays closed.
+        crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
+    }
     s.storage().update_bot(bot.id, &name, &config)?;
+    crate::knowledge_runtime::invalidate_bot(&s, bot.id);
     bot.name = name;
     bot.config = config;
     s.refresh_profile(&bot);
@@ -471,9 +489,14 @@ pub(crate) async fn delete_bot(
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
     s.storage()
         .delete_bot(bot.id)
         .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+    crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.
@@ -1242,14 +1265,18 @@ pub(crate) struct DetectProvidersQuery {
     pub refresh: Option<String>,
 }
 
-/// Detect installed, signed-in coding CLIs.
+/// Detect installed, signed-in coding CLIs. Local owner only: the rows carry
+/// the signed-in account label (an email or organisation) and install state.
 #[utoipa::path(get, path = "/v1/providers/detected", tag = "providers", security(("bearer" = [])),
     params(DetectProvidersQuery),
-    responses((status = 200, body = Vec<DetectedProviderDto>)))]
+    responses((status = 200, body = Vec<DetectedProviderDto>),
+              (status = 403, body = ErrorBody, description = "caller is not the local owner")))]
 pub(crate) async fn detect_providers(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     Query(query): Query<DetectProvidersQuery>,
 ) -> Result<Json<Vec<DetectedProviderDto>>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let refresh = query
         .refresh
         .as_deref()

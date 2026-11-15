@@ -204,6 +204,7 @@ export function DetectedAccountsBlock() {
                     </span>
                     {engine?.path ? <span className={styles.cliPath}>{engine.path}</span> : null}
                     {engine?.limitation === "native_tools_not_confined" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.nativeToolsOpen")}</span> : null}
+                    {engine?.native?.support === "experimental" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.experimental")}</span> : null}
                     {engine?.limitation === "native_only" ? <span className={styles.sub}>{t("settingsModal.ai.detected.nativeOnly")}</span> : null}
                     {engine?.limitation === "detection_only" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.detectionOnly")}</span> : null}
                     {engine?.limitation === "codex_unconfinable" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.codexBlocked")}</span> : null}
