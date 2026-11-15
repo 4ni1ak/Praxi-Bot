@@ -19,6 +19,7 @@ desktop-api = { path = "../desktop-api", version = "0.1.0" }
 fs4 = "1"
 parking_lot.workspace = true
 protocol.workspace = true
+sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true
 storage.workspace = true

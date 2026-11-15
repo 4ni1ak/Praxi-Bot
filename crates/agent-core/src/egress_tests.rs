@@ -2051,3 +2051,342 @@ async fn shell_free_document_writers_cannot_change_daemon_authority() {
             .contains("denied")
     );
 }
+
+struct AllowGate;
+
+#[async_trait::async_trait]
+impl builtin_tools::ToolGate for AllowGate {
+    async fn authorize(&self, _req: &builtin_tools::GateRequest) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+fn writer_input(name: &str, probe: &str) -> serde_json::Value {
+    match name {
+        "fs_move" => json!({"from": probe, "to": format!("{probe}.dest")}),
+        "fs_edit" => json!({"path": probe, "old": "a", "new": "b"}),
+        "fs_delete" | "checkpoint_restore" => {
+            if name == "checkpoint_restore" {
+                json!({"id": "cp-probe"})
+            } else {
+                json!({"path": probe})
+            }
+        }
+        "csv_transform" => json!({"path": probe, "output_path": format!("{probe}.csv"), "ops": []}),
+        "shell_run" => json!({"command": "echo ok"}),
+        "script_run" => json!({"code": "return 1;"}),
+        "skill_write" | "skill_publish" => json!({"name": "demo", "content": "hello"}),
+        "git_commit" => json!({"paths": ["README.md"], "message": "probe"}),
+        "git_branch" => json!({"action": "create", "name": "probe"}),
+        _ => json!({"path": probe, "content": "hello"}),
+    }
+}
+
+const KNOWN_FILE_WRITERS: &[&str] = &[
+    "fs_write",
+    "fs_edit",
+    "fs_move",
+    "fs_delete",
+    "checkpoint_restore",
+    "shell_run",
+    "script_run",
+    "skill_write",
+    "skill_publish",
+    "docx_write",
+    "xlsx_write",
+    "csv_transform",
+    "git_commit",
+    "git_branch",
+];
+
+fn install_file_writers(registry: &tool_registry::ToolRegistry, root: &std::path::Path) {
+    let builtin = builtin_tools::BuiltinConfig::new(root.to_path_buf(), Arc::new(AllowGate));
+    assert!(builtin_tools::register_builtin_tools(registry, builtin) > 10);
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(root));
+    for tool in skills::tools(&index) {
+        registry.register(tool);
+    }
+    doc_tools::register(registry, &doc_tools::DocToolsConfig::default());
+    let _ = dev_tools::register(
+        registry,
+        &dev_tools::DevToolsConfig::new(vec![root.to_path_buf()]),
+    );
+}
+
+#[tokio::test]
+async fn every_file_writer_asks_when_the_run_is_tainted() {
+    use permission_engine::Decision;
+    let env = setup();
+    let fake = Fake::new(vec![text("done")]);
+    let mut config = cfg(Policy::full());
+    config.read_tools_skip_ask = true;
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[permissions]\nallow_egress_after_reads = true\n"),
+        config,
+    );
+    let registry = lp.tool_registry();
+    install_file_writers(&registry, env.dir.path());
+    let id = lp.run_turn(env.chat, "hi").unwrap();
+    lp.wait(id).await.unwrap();
+    let run = env.storage.get_run(id).unwrap().unwrap();
+    let ctx = lp.sh.ctx(&run).unwrap();
+    let probe = std::env::temp_dir()
+        .join("praxi-tainted-write-probe.txt")
+        .display()
+        .to_string();
+    let specs = registry.list();
+    for name in KNOWN_FILE_WRITERS {
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.name == *name && spec.content.writes_files),
+            "{name} is not a registered file writer"
+        );
+    }
+    let writers: Vec<_> = specs
+        .iter()
+        .filter(|spec| spec.content.writes_files)
+        .cloned()
+        .collect();
+    assert!(writers.len() >= KNOWN_FILE_WRITERS.len());
+    for spec in &writers {
+        let input = writer_input(&spec.name, &probe);
+        let clean = lp
+            .sh
+            .decide(&ctx, &spec.name, spec.effect, spec.category, &input);
+        assert_eq!(
+            clean,
+            Decision::Allow,
+            "{} while clean: {clean:?}",
+            spec.name
+        );
+        lp.sh.grants.lock().always.push(crate::Grant {
+            bot_id: env.bot,
+            target: crate::GrantTarget::Tool(spec.name.clone()),
+            granted_at_ms: 0,
+        });
+    }
+    ctx.taint
+        .lock()
+        .note(ContentClass::untrusted(), "page example.test");
+    for spec in &writers {
+        let input = writer_input(&spec.name, &probe);
+        let tainted = lp
+            .sh
+            .decide(&ctx, &spec.name, spec.effect, spec.category, &input);
+        assert!(
+            tainted.is_ask(),
+            "{} must ask while tainted, got {tainted:?}",
+            spec.name
+        );
+    }
+    let read = specs.iter().find(|spec| spec.name == "fs_read").unwrap();
+    let read_decision = lp.sh.decide(
+        &ctx,
+        "fs_read",
+        read.effect,
+        read.category,
+        &json!({"path": &probe}),
+    );
+    assert_eq!(read_decision, Decision::Allow);
+    let browser = specs
+        .iter()
+        .find(|spec| spec.name == "browser_open")
+        .unwrap();
+    assert!(!browser.content.writes_files);
+}
+
+#[tokio::test]
+async fn a_tainted_file_write_shows_the_path_and_the_content() {
+    let env = setup();
+    let read = read_tool("fs_read", ContentClass::untrusted_private());
+    let write = Arc::new(with_class(
+        "fs_write",
+        Effect::Write,
+        PermissionCategory::Fs,
+        builtin_tools::classify("fs_write").unwrap(),
+        "wrote",
+    ));
+    let path = env.dir.path().join("notes.txt");
+    let path_text = path.display().to_string();
+    let large = format!("TAIL{}", "x".repeat(taint::FULL_REVIEW_PAYLOAD_BYTES));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "secret.txt"}))]),
+        calls(&[(
+            "c2",
+            "fs_write",
+            json!({"path": path_text, "content": format!("hello{}", '\u{00a0}')}),
+        )]),
+        calls(&[(
+            "c3",
+            "fs_write",
+            json!({"path": path_text, "content": large}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&read), t(&write)],
+        profile("[permissions]\nallow_egress_after_reads = true\n"),
+        cfg(Policy::full()),
+    );
+    lp.sh.grants.lock().always.push(crate::Grant {
+        bot_id: env.bot,
+        target: crate::GrantTarget::Tool("fs_write".into()),
+        granted_at_ms: 0,
+    });
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "write").unwrap();
+    let Event::ApprovalNeeded(card) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    let details = card.details.unwrap();
+    let reason = details["reason"].as_str().unwrap();
+    assert!(reason.contains("create or change a file"), "{reason}");
+    assert!(reason.contains(&path_text), "{reason}");
+    let payload = details["payload"].as_str().unwrap();
+    assert!(payload.contains("<U+00A0>"), "{payload}");
+    assert!(payload.contains("hello"), "{payload}");
+    assert_eq!(details["review_full_payload"], false);
+    assert_eq!(write.count.load(Ordering::SeqCst), 0);
+    let err = lp
+        .approve(card.call_id, crate::ApprovalScope::Always, env.user)
+        .unwrap_err();
+    assert!(matches!(err, crate::LoopError::OnceOnly(_)), "{err}");
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    let Event::ApprovalNeeded(card) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    let details = card.details.unwrap();
+    assert_eq!(details["review_full_payload"], true);
+    assert!(details["payload"].as_str().unwrap().contains("TAIL"));
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(write.count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_tainted_file_write_refuses_hidden_characters() {
+    let env = setup();
+    let read = read_tool("fs_read", ContentClass::untrusted_private());
+    let write = Arc::new(with_class(
+        "fs_write",
+        Effect::Write,
+        PermissionCategory::Fs,
+        builtin_tools::classify("fs_write").unwrap(),
+        "wrote",
+    ));
+    let content = format!("hello{}", '\u{202e}');
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "secret.txt"}))]),
+        calls(&[(
+            "c2",
+            "fs_write",
+            json!({"path": "notes.txt", "content": content}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&read), t(&write)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "write").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(write.count.load(Ordering::SeqCst), 0);
+    let msg = tool_messages(&fake.request(2)).join("\n");
+    assert!(msg.contains("cannot be written"), "{msg}");
+}
+
+#[tokio::test]
+async fn a_shell_redirect_into_the_data_dir_asks_and_does_not_run() {
+    let env = setup();
+    let read = read_tool("fs_read", ContentClass::untrusted_private());
+    let target = env.dir.path().join("skills").join("planted.md");
+    let command = format!("echo SECRET > \"{}\"", target.display());
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "secret.txt"}))]),
+        calls(&[("c2", "shell_run", json!({"command": command}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&read)],
+        profile("[permissions]\nallow_egress_after_reads = true\n"),
+        cfg(Policy::full()),
+    );
+    lp.tool_registry()
+        .register(builtin_tools::shell::tool(env.dir.path()));
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "redirect").unwrap();
+    let details = card_of(&until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await);
+    let payload = details["payload"].as_str().unwrap();
+    assert!(payload.contains("SECRET"), "{payload}");
+    assert!(payload.contains(&target.display().to_string()), "{payload}");
+    let reason = details["reason"].as_str().unwrap();
+    assert!(reason.contains("create or change files"), "{reason}");
+    assert!(!target.exists());
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn a_clean_origin_workflow_does_not_ask_before_its_first_search() {
+    use workflow_replay::{Handles, Step, ToolStep, Workflow, WorkflowStore};
+    let env = setup();
+    let search = egress_tool(
+        "web_search",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted_egress(),
+    );
+    let fake = Fake::new(vec![
+        calls(&[("c1", "workflow_run", json!({"name": "saved-search"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&search)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let store = WorkflowStore::new(env.dir.path());
+    let mut wf = Workflow::new("saved-search");
+    wf.steps = vec![Step::Tool(ToolStep {
+        tool: "web_search".into(),
+        input: json!({"query": "public weather"}),
+    })];
+    store.save(&wf).unwrap();
+    store.note_clean_origin("saved-search").unwrap();
+    let handles = Handles {
+        desktop: None,
+        browser: None,
+        tools: lp.tool_registry(),
+    };
+    let lp = lp.with_workflows(store, handles);
+    let run = lp.run_turn(env.chat, "use the saved search").unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(8), lp.wait(run))
+        .await
+        .expect("a clean-origin workflow asked before its first search")
+        .unwrap();
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(search.count.load(Ordering::SeqCst), 1);
+}

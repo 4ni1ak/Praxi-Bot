@@ -1,5 +1,6 @@
 //! Saved workflows: `<data_dir>/workflows/<name>.toml` plus `index.json`.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ use crate::format::{Workflow, valid_name};
 const INDEX_FILE: &str = "index.json";
 const INDEX_VERSION: u32 = 1;
 const DIRTY_FILE: &str = ".index-dirty";
+const CLEAN_LEDGER: &str = ".praxi-clean.json";
 
 /// How a workflow may be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +219,7 @@ impl WorkflowStore {
             return Err(StoreError::Io(std::io::Error::other("injected index failure")).into());
         }
         self.rebuild_index_locked()?;
+        self.drop_clean_locked(&wf.name)?;
         Ok(revision)
     }
 
@@ -231,6 +234,10 @@ impl WorkflowStore {
     }
 
     fn get_locked(&self, name: &str) -> Result<Workflow, StoreError> {
+        Ok(self.read_bytes_locked(name)?.0)
+    }
+
+    fn read_bytes_locked(&self, name: &str) -> Result<(Workflow, Vec<u8>), StoreError> {
         let path = self.path(name)?;
         match fs::symlink_metadata(&path) {
             Ok(metadata) if !metadata.is_file() => {
@@ -242,11 +249,84 @@ impl WorkflowStore {
             }
             Err(e) => return Err(e.into()),
         }
-        let workflow = Workflow::from_toml(&fs::read_to_string(path)?)?;
+        let bytes = fs::read(&path)?;
+        let text = String::from_utf8(bytes.clone()).map_err(|error| {
+            StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+        })?;
+        let workflow = Workflow::from_toml(&text)?;
         if workflow.name != name || workflow.revision == 0 {
             return Err(WorkflowError::Invalid("stored name or revision is invalid".into()).into());
         }
-        Ok(workflow)
+        Ok((workflow, bytes))
+    }
+
+    /// Load the workflow and whether this daemon saved these exact bytes from
+    /// a run that read no untrusted content.
+    ///
+    /// The hash is of the bytes just parsed. A missing ledger, a mismatched
+    /// hash, or a file this process did not stamp replays tainted.
+    ///
+    /// # Errors
+    /// Unknown name, bad file, or disk error.
+    pub fn load_for_replay(&self, name: &str) -> Result<(Workflow, bool), StoreError> {
+        self.path(name)?;
+        let _transaction = self.lock()?;
+        let (workflow, bytes) = self.read_bytes_locked(name)?;
+        let clean = self.ledger_matches(name, &bytes);
+        Ok((workflow, clean))
+    }
+
+    /// True when [`Self::load_for_replay`] would report a clean origin.
+    #[must_use]
+    pub fn replay_is_clean(&self, name: &str) -> bool {
+        self.load_for_replay(name).is_ok_and(|(_, clean)| clean)
+    }
+
+    /// Record that `name` was just saved by this daemon from a run with no
+    /// untrusted content. The stamp is the hash of the file's bytes, in a
+    /// sidecar the state bundle does not export.
+    ///
+    /// # Errors
+    /// Unknown name or a disk error.
+    pub fn note_clean_origin(&self, name: &str) -> Result<(), StoreError> {
+        let _transaction = self.lock()?;
+        let (_, bytes) = self.read_bytes_locked(name)?;
+        let mut ledger = self.read_ledger();
+        ledger.entries.insert(name.to_owned(), sha256_hex(&bytes));
+        self.write_ledger(&ledger)
+    }
+
+    fn ledger_matches(&self, name: &str, bytes: &[u8]) -> bool {
+        self.read_ledger()
+            .entries
+            .get(name)
+            .is_some_and(|stored| stored == &sha256_hex(bytes))
+    }
+
+    fn drop_clean_locked(&self, name: &str) -> Result<(), StoreError> {
+        let mut ledger = self.read_ledger();
+        if ledger.entries.remove(name).is_none() {
+            return Ok(());
+        }
+        self.write_ledger(&ledger)
+    }
+
+    fn read_ledger(&self) -> CleanLedger {
+        let path = self.dir.join(CLEAN_LEDGER);
+        match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+            Err(_) => CleanLedger::default(),
+        }
+    }
+
+    fn write_ledger(&self, ledger: &CleanLedger) -> Result<(), StoreError> {
+        fs::create_dir_all(&self.dir)?;
+        let path = self.dir.join(CLEAN_LEDGER);
+        let bytes = serde_json::to_vec(ledger)
+            .map_err(|error| StoreError::Io(std::io::Error::other(error)))?;
+        let pending = PendingWrite::new(&path, &bytes)?;
+        pending.commit(&path, false)?;
+        Ok(())
     }
 
     /// Delete by name; `false` when it did not exist.
@@ -260,11 +340,13 @@ impl WorkflowStore {
         self.mark_dirty()?;
         match fs::remove_file(&path) {
             Ok(()) => {
+                self.drop_clean_locked(name)?;
                 sync_directory(&self.dir)?;
                 self.rebuild_index_locked()?;
                 Ok(true)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.drop_clean_locked(name)?;
                 self.rebuild_index_locked()?;
                 Ok(false)
             }
@@ -444,6 +526,23 @@ fn sync_directory(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct CleanLedger {
+    entries: BTreeMap<String, String>,
+}
+
 struct PendingWrite {
     path: PathBuf,
     file: Option<fs::File>,
@@ -525,6 +624,23 @@ mod tests {
         assert!(!s.delete("a_two").unwrap());
         assert!(matches!(s.get("a_two"), Err(StoreError::NotFound(_))));
         assert_eq!(s.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_clean_stamp_matches_the_saved_bytes_and_dies_when_they_change() {
+        let d = tempfile::tempdir().unwrap();
+        let s = WorkflowStore::new(d.path());
+        s.save(&wf("kept")).unwrap();
+        assert!(!s.replay_is_clean("kept"));
+        s.note_clean_origin("kept").unwrap();
+        assert!(s.replay_is_clean("kept"));
+        let (loaded, clean) = s.load_for_replay("kept").unwrap();
+        assert!(clean);
+        assert_eq!(loaded.name, "kept");
+        s.save(&wf("kept")).unwrap();
+        assert!(!s.replay_is_clean("kept"));
+        assert!(s.delete("kept").unwrap());
+        assert!(!s.replay_is_clean("kept"));
     }
 
     #[test]
