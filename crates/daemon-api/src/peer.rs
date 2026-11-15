@@ -98,6 +98,13 @@ fn host_file_review(path: &str) -> bool {
     path.starts_with("/v1/runs/") && path.split('/').nth(4) == Some("changes")
 }
 
+/// `/v1/bots/{id}/skills` mutates a bot's prompt-trust boundary.
+fn is_bot_skills_path(path: &str) -> bool {
+    path.strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.strip_suffix("/skills"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(peer) = req.extensions().get::<PeerIdentity>().cloned() else {
         return ApiError::forbidden("paired peer identity required").into_response();
@@ -118,7 +125,9 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             || (req.method() == Method::POST
                 && PHONE_DENIED_POST_PATHS.contains(&check_path.as_str()))
             || (matches!(*req.method(), Method::POST | Method::PUT)
-                && check_path.starts_with("/v1/secrets")));
+                && check_path.starts_with("/v1/secrets"))
+            || (req.method() != Method::GET
+                && (is_bot_skills_path(&check_path) || check_path == "/v1/skills")));
     if denied {
         return ApiError::forbidden("peer role does not allow this operation").into_response();
     }

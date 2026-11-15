@@ -619,13 +619,13 @@ impl TurnExecutor {
             return (None, None);
         };
         // Per-bot resolver: learned skills of this bot (and only this bot) are
-        // listed next to the shared and bundled ones. An unusable bot id falls
-        // back to the shared view, the same scope a bot-less caller gets.
+        // listed next to the shared and bundled ones. An unusable bot id or
+        // a failed resolver gives an empty list (fail closed, never the root view).
         let bot = ctx.bot_id.to_string();
         let stable = skills::SkillContext::default();
         let block = index
             .prompt_block_for_bot(Some(&bot), &stable, &[])
-            .unwrap_or_else(|_| index.prompt_block(&stable));
+            .unwrap_or_default();
         let note = crate::compaction::turn_hint(run, || {
             let first_call = !steps
                 .iter()
@@ -654,7 +654,7 @@ impl TurnExecutor {
             };
             let listed = index
                 .for_bot(Some(&bot))
-                .map_or_else(|_| index.list(), |view| view.list());
+                .map_or_else(|_| Vec::new(), |view| view.list());
             let names: Vec<String> = listed
                 .into_iter()
                 .filter(|s| s.matches(&skill_ctx) || suggested.contains(&s.name))

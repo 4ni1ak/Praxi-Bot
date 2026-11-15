@@ -475,6 +475,160 @@
         ]
       }
     },
+    "/v1/bots/{id}/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Effective skill assignment, available catalog, and bot-learned skills for one bot.",
+        "operationId": "get_bot_skills",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotSkillsDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown bot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "skills are not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Assign shared/bundled skills to a bot (`mode: \"all\"` restores the default).\nLocal user or paired desktop only; peer phones are refused.",
+        "operationId": "put_bot_skills",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutBotSkillsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotSkillsDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "peer role not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown bot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the assignment changed since `expected_version`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid skill name or too many skills",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "skills are not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/channels": {
       "get": {
         "tags": [
@@ -3576,6 +3730,42 @@
         ]
       }
     },
+    "/v1/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Catalog of shared and bundled skills (metadata only, never bodies).",
+        "operationId": "list_skills",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillsCatalogDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "skills are not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/usage": {
       "get": {
         "tags": [
@@ -4311,6 +4501,87 @@
           }
         }
       },
+      "AssignedSkillDto": {
+        "type": "object",
+        "description": "One explicitly assigned skill name and whether it is currently installed.",
+        "required": [
+          "name",
+          "state"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Assigned skill name."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AssignedSkillState",
+            "description": "`ok` when present in catalog, `missing` otherwise."
+          }
+        }
+      },
+      "AssignedSkillState": {
+        "type": "string",
+        "description": "Availability of an assigned skill name in the current catalog.",
+        "enum": [
+          "ok",
+          "missing"
+        ]
+      },
+      "AvailableSkillDto": {
+        "type": "object",
+        "description": "Catalog skill entry annotated with whether it is assigned to the bot.",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "scope",
+          "assigned"
+        ],
+        "properties": {
+          "assigned": {
+            "type": "boolean",
+            "description": "True when this skill is visible to the bot under its current assignment."
+          },
+          "description": {
+            "type": "string",
+            "description": "One-line description from frontmatter."
+          },
+          "hub": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillHubInfoDto",
+                "description": "Hub provenance when installed through `SkillHub`, else `null`."
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique skill name."
+          },
+          "requires": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillRequiresDto",
+                "description": "Optional `when:` triggers."
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SkillScope",
+            "description": "Skill scope (`shared` or `bundled`)."
+          },
+          "version": {
+            "type": "string",
+            "description": "Skill version string."
+          }
+        }
+      },
       "BotDto": {
         "type": "object",
         "description": "Public bot representation.",
@@ -4393,6 +4664,50 @@
                 "description": "Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`\nwhen both are supplied. Omission on update preserves the stored target."
               }
             ]
+          }
+        }
+      },
+      "BotSkillsDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`.",
+        "required": [
+          "version",
+          "mode",
+          "assigned",
+          "available",
+          "own"
+        ],
+        "properties": {
+          "assigned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssignedSkillDto"
+            },
+            "description": "Explicitly assigned names when `mode == \"selected\"`."
+          },
+          "available": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailableSkillDto"
+            },
+            "description": "Shared + bundled catalog entries with `assigned` state."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SkillAssignmentModeDto",
+            "description": "Current assignment mode (`all` or `selected`)."
+          },
+          "own": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnSkillDto"
+            },
+            "description": "Skills learned by this bot (`bots/<id>/skills/`), read-only."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version of the stored assignment (`0` when none). Send it back as\n`expected_version` on `PUT` so a stale dialog gets `409` instead of\noverwriting a newer assignment.",
+            "minimum": 0
           }
         }
       },
@@ -4505,6 +4820,56 @@
           "vision": {
             "type": "boolean",
             "description": "Supports image input."
+          }
+        }
+      },
+      "CatalogSkillDto": {
+        "type": "object",
+        "description": "Catalog entry for a shared or bundled skill (metadata only, never the body).",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "scope"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "One-line description from frontmatter."
+          },
+          "hub": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillHubInfoDto",
+                "description": "Hub provenance when installed through `SkillHub`, else `null`."
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique skill name."
+          },
+          "requires": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillRequiresDto",
+                "description": "Optional `when:` triggers."
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SkillScope",
+            "description": "Skill scope (`shared` or `bundled`)."
+          },
+          "version": {
+            "type": "string",
+            "description": "Skill version string."
           }
         }
       },
@@ -7415,6 +7780,24 @@
           "completed"
         ]
       },
+      "OwnSkillDto": {
+        "type": "object",
+        "description": "A skill learned by the bot itself (per-bot scope, read-only here).",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Skill name."
+          },
+          "version": {
+            "type": "string",
+            "description": "Skill version string."
+          }
+        }
+      },
       "PairCodeDto": {
         "type": "object",
         "description": "A one-time pairing code (`POST /v1/channels/telegram/pair-code`).",
@@ -7582,6 +7965,35 @@
               "null"
             ],
             "description": "Id of the loop's default provider."
+          }
+        }
+      },
+      "PutBotSkillsInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/bots/{id}/skills`.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Version the client loaded (`BotSkillsDto::version`). When set and not\ncurrent the write is refused with `409`; omit for an unconditional write.",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SkillAssignmentModeDto",
+            "description": "Assignment mode (`all` or `selected`)."
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Skill names to assign when `mode == \"selected\"` (max 200)."
           }
         }
       },
@@ -8600,6 +9012,128 @@
           }
         }
       },
+      "SkillAssignmentModeDto": {
+        "type": "string",
+        "description": "Per-bot skill assignment mode.",
+        "enum": [
+          "all",
+          "selected"
+        ]
+      },
+      "SkillHubInfoDto": {
+        "type": "object",
+        "description": "Hub lockfile metadata for a shared skill installed via `SkillHub`.",
+        "required": [
+          "source",
+          "locked"
+        ],
+        "properties": {
+          "locked": {
+            "type": "boolean",
+            "description": "True when the on-disk tree matches the lockfile hash."
+          },
+          "source": {
+            "type": "string",
+            "description": "Provenance tag (e.g. `git:https://...`, `local:...`)."
+          }
+        }
+      },
+      "SkillIssueDto": {
+        "type": "object",
+        "description": "A non-fatal skill load problem surfaced by `SkillIndex::issues`.",
+        "required": [
+          "scope",
+          "path",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Diagnostic message."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path (or `bundled:<name>`)."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SkillIssueScope",
+            "description": "Layer where the problem occurred."
+          }
+        }
+      },
+      "SkillIssueScope": {
+        "type": "string",
+        "description": "Scope where a skill load issue occurred.",
+        "enum": [
+          "bundled",
+          "shared",
+          "bot"
+        ]
+      },
+      "SkillRequiresDto": {
+        "type": "object",
+        "description": "Auto-suggestion triggers declared in a skill's `when:` frontmatter.",
+        "required": [
+          "domains",
+          "apps",
+          "keywords"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Application names."
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Domains (e.g. `github.com`)."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Task text keywords."
+          }
+        }
+      },
+      "SkillScope": {
+        "type": "string",
+        "description": "Scope of a catalog skill (`shared` or `bundled`).",
+        "enum": [
+          "shared",
+          "bundled"
+        ]
+      },
+      "SkillsCatalogDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/skills`.",
+        "required": [
+          "skills",
+          "issues"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillIssueDto"
+            },
+            "description": "Non-fatal problems found while loading skills."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogSkillDto"
+            },
+            "description": "Shared and bundled catalog skills."
+          }
+        }
+      },
       "SourceRect": {
         "type": "object",
         "required": [
@@ -9241,6 +9775,9 @@
     },
     {
       "name": "web"
+    },
+    {
+      "name": "skills"
     },
     {
       "name": "doctor"

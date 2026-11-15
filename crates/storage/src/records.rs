@@ -190,3 +190,38 @@ pub struct EventIndexRow {
     /// The envelope's run-local `seq`.
     pub seq: u64,
 }
+
+/// How shared and bundled skills are assigned to a bot (`bot_skill_assignment`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillAssignmentMode {
+    /// All shared and bundled skills are visible (default; represented by no row).
+    All,
+    /// Only the explicitly listed shared/bundled skill names are visible.
+    Selected,
+}
+
+impl SkillAssignmentMode {
+    /// Canonical database value (`'all'` or `'selected'`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Selected => "selected",
+        }
+    }
+}
+
+/// Persisted per-bot skill assignment row (`bot_skill_assignment`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BotSkillAssignment {
+    /// Bot this assignment applies to.
+    pub bot_id: BotId,
+    /// Assignment mode.
+    pub mode: SkillAssignmentMode,
+    /// Assigned shared/bundled skill names when `mode == Selected`.
+    pub names: Vec<String>,
+    /// Last update timestamp.
+    pub updated_at_ms: i64,
+    /// Monotonic version of this row (`0` when no row exists).
+    pub version: u64,
+}

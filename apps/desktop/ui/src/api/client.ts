@@ -58,7 +58,10 @@ import type {
   WebSearchTestReport,
   RunChanges,
   RestorePreview,
-  RestoreResponse
+  RestoreResponse,
+  BotSkills,
+  PutBotSkillsInput,
+  SkillsCatalog
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -187,6 +190,17 @@ export class ApiClient {
   revokeGrant(botId: string, target: GrantTarget): Promise<void> {
     return this.request("DELETE", `/bots/${botId}/grants`, {
       body: { target }
+    });
+  }
+  listSkills(): Promise<SkillsCatalog> {
+    return this.request("GET", "/skills");
+  }
+  getBotSkills(botId: string): Promise<BotSkills> {
+    return this.request("GET", `/bots/${encodeURIComponent(botId)}/skills`);
+  }
+  putBotSkills(botId: string, body: PutBotSkillsInput): Promise<BotSkills> {
+    return this.request("PUT", `/bots/${encodeURIComponent(botId)}/skills`, {
+      body
     });
   }
 

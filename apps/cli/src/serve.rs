@@ -248,7 +248,8 @@ pub fn build_agent_with_live_views(
     redactor: SharedRedactor,
     view_registry: Option<Arc<live_view::TargetRegistry>>,
 ) -> AgentLoop {
-    build_agent_inner(
+    let skills = skill_index_with_assignments(storage, data_dir);
+    build_agent_with_skills(
         storage,
         providers,
         data_dir,
@@ -256,10 +257,21 @@ pub fn build_agent_with_live_views(
         redactor,
         view_registry,
         false,
+        skills,
     )
+    .expect("test agent skill wiring")
 }
 
-fn build_agent_inner(
+/// The skill index every agent loop and `/v1/skills` route of the daemon share:
+/// the catalog plus the database-backed per-bot assignment source. This is the
+/// only place that builds it, so a bot never sees an unfiltered root index.
+pub(crate) fn skill_index_with_assignments(storage: &Arc<Storage>, data_dir: &Path) -> SkillIndex {
+    let assignments = Arc::new(daemon_api::SkillAssignments::new(Arc::clone(storage)));
+    load_skills(data_dir).with_assignments(assignments as Arc<dyn skills::AssignmentSource>)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_agent_with_skills(
     storage: &Arc<Storage>,
     providers: Providers,
     data_dir: &Path,
@@ -267,7 +279,11 @@ fn build_agent_inner(
     redactor: SharedRedactor,
     view_registry: Option<Arc<live_view::TargetRegistry>>,
     dynamic_desktop: bool,
-) -> AgentLoop {
+    skills: SkillIndex,
+) -> Result<AgentLoop> {
+    if !skills.has_assignments() {
+        return Err("skill index must carry the per-bot assignment source".into());
+    }
     // Placeholder: `with_builtin_tools` replaces it with the loop's own gate.
     let gate = ResolverGate::new(
         PermissionResolver::new(),
@@ -287,7 +303,7 @@ fn build_agent_inner(
     );
     tools.browser_settings.idle_timeout = idle;
     // The discovery threshold is `LoopConfig`'s default (40).
-    AgentLoop::new(
+    Ok(AgentLoop::new(
         Arc::clone(storage),
         ToolRegistry::new(),
         providers,
@@ -299,7 +315,7 @@ fn build_agent_inner(
     )
     .with_builtin_tools(tools)
     .with_subagents()
-    .with_skills(load_skills(data_dir))
+    .with_skills(skills)
     .with_workflows(
         WorkflowStore::new(data_dir),
         Handles {
@@ -307,7 +323,7 @@ fn build_agent_inner(
             browser: None,
             tools: ToolRegistry::new(),
         },
-    )
+    ))
 }
 
 #[derive(Default, Deserialize)]
@@ -900,7 +916,8 @@ pub fn serve(
         peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
     let dynamic_desktop = effective_peer_enabled;
     let local_desktop = desktop.clone();
-    let agent = build_agent_inner(
+    let skill_index = skill_index_with_assignments(&storage, data_dir);
+    let agent = build_agent_with_skills(
         &storage,
         providers,
         data_dir,
@@ -908,7 +925,8 @@ pub fn serve(
         redactor.clone(),
         Some(Arc::clone(&views)),
         dynamic_desktop,
-    );
+        skill_index.clone(),
+    )?;
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
@@ -924,6 +942,9 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
+    state
+        .set_skills(skill_index)
+        .map_err(|e| format!("skills wiring: {e}"))?;
     register_schedule_tools(data_dir, &state);
     state.set_doctor_host(Arc::new(ServeDoctorHost {
         desktop: desktop_caps,
@@ -1779,6 +1800,76 @@ order = [\"bing\", \"tavily\", \"bogus\", \"duckduckgo\"]
             cfg.policy
                 .check_url(&url::Url::parse("http://127.0.0.1:47000/").unwrap())
                 .is_err()
+        );
+    }
+
+    /// `serve()` builds its skill index only through
+    /// `skill_index_with_assignments`: an assignment source is attached, the
+    /// root index refuses unfiltered reads, and a `selected` bot with nothing
+    /// assigned does not see a shared skill the user withheld. A refactor that
+    /// drops the source fails here (and `AppState::set_skills` / the loop
+    /// builder refuse such an index at startup).
+    #[test]
+    fn serve_skill_index_carries_the_assignment_source_and_filters_bots() {
+        use protocol::{BotId, UserId};
+        use storage::records::{Bot, User};
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("skills").join("withheld");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            shared.join("SKILL.md"),
+            "---
+name: withheld
+description: d
+version: 1
+---
+body
+",
+        )
+        .unwrap();
+        let storage = Arc::new(Storage::open(dir.path()).unwrap());
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "b".into(),
+            config: serde_json::json!({}),
+            created_at_ms: 2,
+        };
+        storage.insert_user(&user).unwrap();
+        storage.insert_bot(&bot).unwrap();
+
+        let index = skill_index_with_assignments(&storage, dir.path());
+        assert!(index.has_assignments());
+        assert_eq!(index.list(), Vec::new(), "root index must refuse list()");
+        let id = bot.id.to_string();
+        assert!(index.for_bot(Some(&id)).unwrap().get("withheld").is_some());
+        storage
+            .set_bot_skill_assignment(bot.id, storage::SkillAssignmentMode::Selected, &[])
+            .unwrap();
+        // Same index, no explicit bump: the DB generation invalidates the cache.
+        assert!(index.for_bot(Some(&id)).unwrap().get("withheld").is_none());
+
+        // The daemon refuses to serve an index without the source.
+        let plain = load_skills(dir.path());
+        assert!(!plain.has_assignments());
+        let result = build_agent_with_skills(
+            &storage,
+            Providers::unconfigured(),
+            dir.path(),
+            None,
+            SharedRedactor::default(),
+            None,
+            false,
+            plain,
+        );
+        assert!(
+            result.is_err(),
+            "missing assignment source must return an error"
         );
     }
 }

@@ -1,8 +1,9 @@
 //! Skill loading, precedence, the prompt index and file access.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -121,6 +122,36 @@ pub fn validate_bot_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// How shared and bundled skills are exposed to a bot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentMode {
+    /// Every shared and bundled skill is visible (default when no assignment exists).
+    All,
+    /// Only shared/bundled skills named in [`Assignment::names`] are visible.
+    Selected,
+}
+
+/// Per-bot assignment of shared and bundled skills.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assignment {
+    /// Whether all skills or only selected names are visible.
+    pub mode: AssignmentMode,
+    /// Skill names visible when `mode == AssignmentMode::Selected`.
+    pub names: BTreeSet<String>,
+}
+
+/// Source of per-bot skill assignments (typically backed by `storage`).
+pub trait AssignmentSource: Send + Sync + 'static {
+    /// Current assignment for `bot_id`, or `Ok(None)` for the default (`All`).
+    ///
+    /// # Errors
+    /// Any read/database error; callers fail closed to an empty `Selected` view.
+    fn assignment(&self, bot_id: &str) -> Result<Option<Assignment>, String>;
+
+    /// Monotonically increasing generation bumped on every assignment change.
+    fn generation(&self) -> u64;
+}
+
 #[derive(Default)]
 struct State {
     skills: BTreeMap<String, Skill>,
@@ -138,6 +169,7 @@ type Stamp = Vec<(PathBuf, Option<SystemTime>, Option<SystemTime>, u64)>;
 
 struct CachedView {
     generation: u64,
+    assignment_generation: u64,
     stamp: Stamp,
     view: SkillIndex,
 }
@@ -148,6 +180,16 @@ struct Shared {
     state: RwLock<State>,
     /// Bumped by every [`SkillIndex::reload`] of this index.
     generation: AtomicU64,
+    /// Optional per-bot assignment source.
+    assignments: Option<Arc<dyn AssignmentSource>>,
+    /// True on a root index returned by [`SkillIndex::with_assignments`];
+    /// prevents unfiltered `list`/`get`/`prompt_block_suggesting` calls from
+    /// leaking shared/bundled skills without resolving via `for_bot`.
+    requires_for_bot: bool,
+    /// Bot id bound to this view (only set for per-bot views).
+    bound_bot_id: Option<String>,
+    /// Bot ids whose assignment error/panic has already been logged once.
+    assignment_errors_logged: Mutex<HashSet<String>>,
     /// Last per-bot view handed out by [`SkillIndex::for_bot`].
     views: Mutex<HashMap<Option<String>, CachedView>>,
     racy_window: Mutex<Duration>,
@@ -335,19 +377,91 @@ impl SkillIndex {
         Self::load_resolved(paths, roots)
     }
 
+    /// Attach a per-bot [`AssignmentSource`] to this index. Views returned by
+    /// [`Self::for_bot`] filter shared and bundled skills according to the
+    /// bot's assignment before caching. Direct unfiltered reads (`list`, `get`,
+    /// `prompt_block_suggesting`) on this root index fail closed (empty).
+    #[must_use]
+    pub fn with_assignments(self, src: Arc<dyn AssignmentSource>) -> Self {
+        let index = Self {
+            inner: Arc::new(Shared {
+                paths: self.inner.paths.clone(),
+                roots: self.inner.roots.clone(),
+                state: RwLock::default(),
+                generation: AtomicU64::new(0),
+                assignments: Some(src),
+                requires_for_bot: true,
+                bound_bot_id: self.inner.bound_bot_id.clone(),
+                assignment_errors_logged: Mutex::default(),
+                views: Mutex::default(),
+                racy_window: Mutex::new(*self.inner.racy_window.lock()),
+            }),
+        };
+        index.reload();
+        index
+    }
+
+    /// True when a per-bot [`AssignmentSource`] is attached to this index.
+    #[must_use]
+    pub fn has_assignments(&self) -> bool {
+        self.inner.assignments.is_some()
+    }
+
+    /// Load the shared and bundled skill catalog (never any bot's learned
+    /// skills or per-bot filter), along with any load issues.
+    ///
+    /// # Errors
+    /// Unsafe shared/bundled scope path.
+    pub fn catalog(&self) -> Result<(Vec<Skill>, Vec<SkillIssue>), String> {
+        let view = self.for_bot(None)?;
+        Ok((view.list(), view.issues()))
+    }
+
     fn load_resolved(paths: SkillPaths, roots: SkillRoots) -> Self {
+        Self::load_resolved_with(paths, roots, None, None).0
+    }
+
+    fn load_resolved_with(
+        paths: SkillPaths,
+        roots: SkillRoots,
+        assignments: Option<Arc<dyn AssignmentSource>>,
+        bound_bot_id: Option<String>,
+    ) -> (Self, Option<String>) {
         let index = Self {
             inner: Arc::new(Shared {
                 paths,
                 roots,
                 state: RwLock::default(),
                 generation: AtomicU64::new(0),
+                assignments,
+                requires_for_bot: false,
+                bound_bot_id,
+                assignment_errors_logged: Mutex::default(),
                 views: Mutex::default(),
                 racy_window: Mutex::new(RACY_WINDOW),
             }),
         };
-        index.reload();
-        index
+        let err = index.reload_inner();
+        (index, err)
+    }
+
+    fn log_assignment_error_once(&self, bot_id: &str, err: &str) {
+        if self
+            .inner
+            .assignment_errors_logged
+            .lock()
+            .insert(bot_id.to_owned())
+        {
+            eprintln!("skills: failing closed to empty skill assignment for bot `{bot_id}`: {err}");
+        }
+    }
+
+    fn assignment_generation(&self) -> Result<u64, String> {
+        let Some(src) = &self.inner.assignments else {
+            return Ok(0);
+        };
+        catch_unwind(AssertUnwindSafe(|| src.generation()))
+            .map_err(|_| "assignment source generation() panicked".to_string())
     }
 
     /// Re-read the scopes visible to one caller. A missing id means only
@@ -360,6 +474,7 @@ impl SkillIndex {
         let paths = self.inner.roots.resolve(bot_id)?;
         let window = *self.inner.racy_window.lock();
         let generation = self.inner.generation.load(Ordering::Acquire);
+        let assignment_gen = self.assignment_generation();
         let mut stamp = Stamp::new();
         let mut racy = false;
         for dir in [&self.inner.roots.bundled, &paths.user, &paths.bot]
@@ -369,25 +484,43 @@ impl SkillIndex {
             stamp_dir(dir, window, &mut stamp, &mut racy);
         }
         let key = bot_id.map(str::to_owned);
-        if let Some(cached) = self.inner.views.lock().get(&key)
+        if let Ok(agen) = assignment_gen
+            && let Some(cached) = self.inner.views.lock().get(&key)
             && cached.generation == generation
+            && cached.assignment_generation == agen
             && cached.stamp == stamp
         {
             return Ok(cached.view.clone());
         }
-        let view = Self::load_resolved(paths, self.inner.roots.clone());
+        let (view, assign_err) = Self::load_resolved_with(
+            paths,
+            self.inner.roots.clone(),
+            self.inner.assignments.clone(),
+            key.clone(),
+        );
+        if let (Some(id), Some(err)) = (bot_id, &assign_err) {
+            self.log_assignment_error_once(id, err);
+        }
+        if let (Some(id), Err(err)) = (bot_id, &assignment_gen) {
+            self.log_assignment_error_once(id, err);
+        }
+        let post_agen = self.assignment_generation();
+        let can_cache = !racy
+            && assign_err.is_none()
+            && matches!((&assignment_gen, &post_agen), (Ok(a), Ok(b)) if a == b);
         let mut views = self.inner.views.lock();
-        if racy {
-            views.remove(&key);
-        } else {
+        if can_cache && let Ok(agen) = post_agen {
             views.insert(
                 key,
                 CachedView {
                     generation,
+                    assignment_generation: agen,
                     stamp,
                     view: view.clone(),
                 },
             );
+        } else {
+            views.remove(&key);
         }
         Ok(view)
     }
@@ -435,6 +568,10 @@ impl SkillIndex {
 
     /// Re-read all sources from disk.
     pub fn reload(&self) {
+        let _ = self.reload_inner();
+    }
+
+    fn reload_inner(&self) -> Option<String> {
         let mut all = Vec::new();
         let mut issues = Vec::new();
         for (dir, text) in BUNDLED {
@@ -460,8 +597,36 @@ impl SkillIndex {
         for s in all {
             skills.insert(s.name.clone(), s); // later source wins
         }
+        let mut assign_err = None;
+        if let (Some(bot_id), Some(src)) = (&self.inner.bound_bot_id, &self.inner.assignments) {
+            let resolved = match catch_unwind(AssertUnwindSafe(|| src.assignment(bot_id))) {
+                Ok(Ok(assignment)) => assignment,
+                Ok(Err(err)) => {
+                    assign_err = Some(err);
+                    Some(Assignment {
+                        mode: AssignmentMode::Selected,
+                        names: BTreeSet::new(),
+                    })
+                }
+                Err(_) => {
+                    assign_err = Some("assignment source panicked".to_string());
+                    Some(Assignment {
+                        mode: AssignmentMode::Selected,
+                        names: BTreeSet::new(),
+                    })
+                }
+            };
+            if let Some(Assignment {
+                mode: AssignmentMode::Selected,
+                names,
+            }) = resolved
+            {
+                skills.retain(|_, s| s.source == Source::Bot || names.contains(&s.name));
+            }
+        }
         *self.inner.state.write() = State { skills, issues };
         self.inner.generation.fetch_add(1, Ordering::AcqRel);
+        assign_err
     }
 
     fn check_bound_scope(&self) -> Result<(), String> {
@@ -481,14 +646,26 @@ impl SkillIndex {
     }
 
     /// All skills, sorted by name.
+    ///
+    /// Returns empty on a root index that has an [`AssignmentSource`] attached
+    /// without going through [`Self::for_bot`].
     #[must_use]
     pub fn list(&self) -> Vec<Skill> {
+        if self.inner.requires_for_bot {
+            return Vec::new();
+        }
         self.inner.state.read().skills.values().cloned().collect()
     }
 
     /// One skill by name.
+    ///
+    /// Returns `None` on a root index that has an [`AssignmentSource`] attached
+    /// without going through [`Self::for_bot`].
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Skill> {
+        if self.inner.requires_for_bot {
+            return None;
+        }
         self.inner.state.read().skills.get(name).cloned()
     }
 
