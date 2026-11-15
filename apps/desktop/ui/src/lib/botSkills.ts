@@ -192,3 +192,53 @@ export function isBotSkillsDirty(draft: BotSkillsDraft, dto: BotSkills): boolean
   }
   return false;
 }
+
+/** How a failed `PUT /v1/bots/{id}/skills` is presented. */
+export type SkillsSaveFailure = "conflict" | "invalid" | "error";
+
+/** `409`: someone else saved first (reload, never overwrite); `422`: the daemon refused the names. */
+export function skillsSaveFailure(status: number | null): SkillsSaveFailure {
+  if (status === 409) return "conflict";
+  if (status === 422) return "invalid";
+  return "error";
+}
+
+/**
+ * Give one more catalog skill to a bot: nothing to send while the bot uses every shared skill,
+ * otherwise the current names plus the new one.
+ */
+export function payloadWithSkill(dto: BotSkills, name: string): PutBotSkillsInput | null {
+  if (dto.mode === "all") {
+    return null;
+  }
+  const names = dto.assigned.map((a) => a.name);
+  if (names.includes(name)) {
+    return null;
+  }
+  return { mode: "selected", names: [...names, name], expected_version: dto.version };
+}
+
+/** Names the panel previews: assigned skills first by catalog order, capped, plus the rest count. */
+export function skillPreview(
+  dto: BotSkills,
+  limit: number
+): { names: string[]; more: number } {
+  const active = dto.available.filter((s) => s.assigned).map((s) => s.name);
+  const all = [...active, ...dto.own.map((o) => o.name).filter((n) => !active.includes(n))];
+  return { names: all.slice(0, limit), more: Math.max(0, all.length - limit) };
+}
+
+/**
+ * Keep an open editor's draft in step with the server: a first load or a new assignment version
+ * (someone saved, a skill was assigned from the add flow) replaces the picks, anything else
+ * keeps what the user is editing.  The search text always survives.
+ */
+export function syncSkillsDraft(
+  current: BotSkillsDraft | null,
+  dto: BotSkills
+): BotSkillsDraft {
+  if (current && current.version === dto.version) {
+    return current;
+  }
+  return { ...createBotSkillsDraft(dto), query: current?.query ?? "" };
+}
