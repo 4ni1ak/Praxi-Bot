@@ -733,6 +733,7 @@ impl Tool for B {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn bypass_vectors_are_caught() {
         // 1. Box<dyn Tool>, Vec<Arc<dyn Tool>>, dyn Tool + Send + Sync, tuple struct,
         //    generic wrapper, qualified impl tool_registry::Tool.
@@ -866,6 +867,7 @@ impl tool_registry::Tool for Good {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn tool_wrapper_trait_forwards_all_approval_hooks() {
         use crate::{Effect, ToolError, ToolSpec};
         use protocol::PermissionCategory;

@@ -216,14 +216,12 @@ impl DesktopBackend for LoginWindow {
 struct Sinks {
     approvals: Vec<ApprovalNeeded>,
     /// Name, text.
-    sinks: Vec<(&'static str, String)>,
-    /// What the model was told after each tool call (the tool results).
-    fake: Arc<Fake>,
+    parts: Vec<(&'static str, String)>,
 }
 
 impl Sinks {
     fn text(&self, name: &str) -> &str {
-        &self.sinks.iter().find(|(n, _)| *n == name).unwrap().1
+        &self.parts.iter().find(|(n, _)| *n == name).unwrap().1
     }
 }
 
@@ -281,11 +279,7 @@ fn disk(dir: &std::path::Path) -> String {
 
 impl Started {
     /// Everything stored or sent so far, as text per sink.
-    fn sinks(
-        &self,
-        approvals: Vec<ApprovalNeeded>,
-        stream: &[Event],
-    ) -> Vec<(&'static str, String)> {
+    fn sinks(&self, approvals: &[ApprovalNeeded], stream: &[Event]) -> Vec<(&'static str, String)> {
         vec![
             (
                 "approval payload",
@@ -353,11 +347,10 @@ async fn run_replies(
     }
     assert_eq!(st.lp.wait(st.run).await.unwrap(), RunState::Succeeded);
     st.lp.sh.flush_journal();
-    let sinks = st.sinks(approvals.clone(), &stream);
+    let sinks = st.sinks(&approvals, &stream);
     Sinks {
         approvals,
-        sinks,
-        fake: Arc::clone(&st.fake),
+        parts: sinks,
     }
 }
 
@@ -372,14 +365,14 @@ async fn run(
 /// The secret is nowhere; the ordinary value (positive control) is where a
 /// readable value belongs.
 fn assert_no_secret(s: &Sinks, secret: &str) {
-    for (name, text) in &s.sinks {
+    for (name, text) in &s.parts {
         assert!(!text.contains(secret), "{name} holds the secret:\n{text}");
     }
 }
 
 fn assert_masked(s: &Sinks) {
     assert_no_secret(s, SECRET);
-    for (name, text) in &s.sinks {
+    for (name, text) in &s.parts {
         assert!(!text.contains("hunter"), "{name} holds a prefix:\n{text}");
     }
     for name in [
@@ -561,7 +554,7 @@ async fn an_unapproved_secret_fill_is_masked_too_and_never_typed() {
     assert_eq!(st.lp.wait(st.run).await.unwrap(), RunState::Succeeded);
     assert!(page.fills.lock().is_empty(), "a denied fill types nothing");
     st.lp.sh.flush_journal();
-    for (name, text) in st.sinks(vec![a], &[]) {
+    for (name, text) in st.sinks(&[a], &[]) {
         assert!(!text.contains(SECRET), "{name}:\n{text}");
     }
 }
@@ -586,14 +579,14 @@ async fn no_plaintext_is_stored_while_the_approval_is_pending_nor_after_a_cancel
     // tool intent, the card row, the journal and every file on disk are
     // already written, and none holds the value.
     st.lp.sh.flush_journal();
-    for (name, text) in st.sinks(vec![a.clone()], &[]) {
+    for (name, text) in st.sinks(std::slice::from_ref(&a), &[]) {
         assert!(!text.contains(SECRET), "pending: {name}:\n{text}");
     }
     // The run is stopped mid-approval (the future is dropped): still nothing.
     st.lp.cancel(st.run).unwrap();
     let _ = st.lp.wait(st.run).await;
     st.lp.sh.flush_journal();
-    for (name, text) in st.sinks(vec![a], &[]) {
+    for (name, text) in st.sinks(&[a], &[]) {
         assert!(!text.contains(SECRET), "cancelled: {name}:\n{text}");
     }
     assert!(page.fills.lock().is_empty());

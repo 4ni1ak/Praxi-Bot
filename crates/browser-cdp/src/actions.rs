@@ -498,15 +498,14 @@ impl Page {
         let before = self.baseline().await?;
         let res = async {
             let e = self.locate(r).await?;
-            if let Some(x) = expected {
-                if e.backend_id != x.backend_id
+            if let Some(x) = expected
+                && (e.backend_id != x.backend_id
                     || e.session_id != x.session_id
                     || e.frame_id != x.frame_id
                     || e.field != x.field
-                    || e.frame_origin != x.frame_origin
-                {
-                    return Err(binding_changed());
-                }
+                    || e.frame_origin != x.frame_origin)
+            {
+                return Err(binding_changed());
             }
             self.focus_entry(&e).await?;
             self.call_on(

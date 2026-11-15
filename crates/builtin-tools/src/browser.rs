@@ -1770,19 +1770,19 @@ const UNKNOWN_FIELD: &str = "the page's field facts could not be read, so it can
 /// What was shown for each pending fill: `(run, ref, hash of text)` to the facts
 /// the view was built from. Read at dispatch, which re-reads the live field and
 /// refuses to type if it differs. In memory only; the text is never kept.
-static APPROVED_FILLS: std::sync::LazyLock<
-    parking_lot::Mutex<Vec<((String, String, u64), FieldFacts)>>,
-> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+static APPROVED_FILLS: std::sync::LazyLock<parking_lot::Mutex<Vec<(FillKey, FieldFacts)>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+
+/// `(run, ref, keyed hash of the text)`.
+type FillKey = (String, String, u64);
 
 const APPROVED_FILLS_MAX: usize = 64;
 
-fn fill_key(run: &str, r: &str, text: &str) -> (String, String, u64) {
-    use std::hash::{BuildHasher, Hash, Hasher};
+fn fill_key(run: &str, r: &str, text: &str) -> FillKey {
+    use std::hash::BuildHasher;
     static KEY: std::sync::LazyLock<std::hash::RandomState> =
         std::sync::LazyLock::new(std::hash::RandomState::new);
-    let mut h = KEY.build_hasher();
-    text.hash(&mut h);
-    (run.to_owned(), r.to_owned(), h.finish())
+    (run.to_owned(), r.to_owned(), KEY.hash_one(text))
 }
 
 fn remember_approved_fill(run: &str, r: &str, text: &str, facts: FieldFacts) {

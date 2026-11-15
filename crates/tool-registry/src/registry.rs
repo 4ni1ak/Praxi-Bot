@@ -22,7 +22,7 @@ use crate::{
 
 /// The only tools whose [`Tool::display_input`] is ever used: the built-in
 /// tools that type a value into a field (and the workflow runner that passes
-/// one on). A tool from an MCP server, an OpenAPI description, a skill or a
+/// one on). A tool from an MCP server, an `OpenAPI` description, a skill or a
 /// CLI cannot get its own view of an input into an approval, an event or a
 /// record, whatever it implements.
 pub const DISPLAY_INPUT_TOOLS: &[&str] = &[
