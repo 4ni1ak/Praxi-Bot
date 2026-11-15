@@ -11,7 +11,9 @@
     "gen:api": "openapi-typescript ../../../docs/api/openapi.json -o src/api/schema.d.ts",
     "check:i18n": "node scripts/check-i18n.mjs",
     "test": "node --test \"src/**/*.test.ts\"",
-    "check:themes": "node ../../../packages/ui/scripts/check-themes.mjs"
+    "check:themes": "node ../../../packages/ui/scripts/check-themes.mjs",
+    "check:layout": "node ../../../packages/ui/scripts/check-layout.mjs",
+    "check:layout:browser": "node scripts/check-layout-browser.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

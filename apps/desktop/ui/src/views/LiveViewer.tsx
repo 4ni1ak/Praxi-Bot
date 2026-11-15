@@ -33,7 +33,6 @@ import {
   isControlBusy,
   isActivelyOwningTakeover,
   foreignPausedTakeover,
-  needsPauseRecovery,
   summarizeTarget,
   visibleActions
 } from "../lib/liveViewState";
@@ -283,7 +282,6 @@ export function LiveViewer() {
   const targetSummary = selectedTarget ? summarizeTarget(selectedTarget) : null;
   const isReleasing = state.pendingRequest?.kind === "release";
   const otherOwner = foreignTakeoverOwner(state);
-  const pauseRecovery = needsPauseRecovery(state, controlState);
   const foreignPaused = foreignPausedTakeover(state, controlState);
   const actions = visibleActions(state, controlState, isLocalClient).dock;
 
@@ -431,6 +429,7 @@ export function LiveViewer() {
             <i className={styles.stateDot} aria-hidden="true" />
             <span>{badgeLabel}</span>
           </span>
+          {actions.includes("stop") ? (
           <Button
             variant="danger"
             size="sm"
@@ -440,6 +439,7 @@ export function LiveViewer() {
             <OctagonX />
             <span>{t("liveView.emergencyStop")}</span>
           </Button>
+          ) : null}
         </div>
       </header>
 
@@ -622,7 +622,7 @@ export function LiveViewer() {
       </div>
 
       <div className={styles.bottomDock} data-testid="live-view-bar">
-        {ownsActive || isReleasing ? (
+        {actions.includes("bitirdim") || actions.includes("retry_bitirdim") ? (
           <>
             <span className={styles.dockStatus}>
               {isReleasing
@@ -649,7 +649,7 @@ export function LiveViewer() {
               </select>
             ) : null}
             <div className={styles.dockActions}>
-              {isReleasing && state.lastError ? (
+              {actions.includes("retry_bitirdim") ? (
                 <Button
                   ref={doneButtonRef}
                   variant="primary"
@@ -687,7 +687,7 @@ export function LiveViewer() {
               {t("liveView.states.acquiring")}
             </Button>
           </>
-        ) : state.viewState === "paused" && recoveryPrompt && pauseRecovery ? (
+        ) : recoveryPrompt && actions.includes("clear_pause") ? (
           <>
             <span className={styles.dockStatus}>
               {t(`liveView.reasons.${recoveryPrompt.reason}`, {
@@ -700,11 +700,11 @@ export function LiveViewer() {
               data-testid="live-view-recover"
               onClick={() => void recoverTakeover()}
             >
-              {recoveryPrompt.mode === "reacquire"
+              {actions.includes("reacquire")
                 ? t("liveView.reacquireAction")
                 : t("liveView.clearPauseAction")}
             </Button>
-            {recoveryPrompt.mode === "reacquire" ? (
+            {actions.includes("reacquire") ? (
               <Button
                 variant="secondary"
                 size="sm"
