@@ -9,12 +9,17 @@ import {
   X,
   Zap
 } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, type BotAvatarState, type BotIdentity } from "ui";
+import { activitySections, librarySections, subagentRows } from "../lib/activityPanel";
 import { type PermissionTone, permissionTone } from "../lib/botEditor";
 import { chatActivity, chatDateLabel } from "../lib/botLanding";
 import type { PresetChoice } from "../lib/botProfile";
 import { modelLine } from "../lib/modelName";
+import { cancelRun } from "../state/appStop";
+import { useDaemon } from "../state/DaemonContext";
+import { useQuotas } from "../state/useQuotas";
 import type { BotSkillsState } from "../state/useBotSkills";
 import { BotComputerBlock } from "./BotComputerBlock";
 import { StopStatusNotice } from "./StopStatusNotice";
@@ -22,6 +27,9 @@ import styles from "./BotPanel.module.css";
 import { BotPanelSkills } from "./BotPanelSkills";
 import { BrandMark } from "./BrandMark";
 import { QuotaBlock } from "./QuotaRings";
+import { SubagentDetail } from "./SubagentDetail";
+import { SubagentList } from "./SubagentList";
+import { UpcomingBlock, useUpcoming } from "./UpcomingBlock";
 
 export interface BotPanelChat {
   id: string;
@@ -116,6 +124,18 @@ export function BotPanel({
   onAddSkill: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const { events, refreshRuns } = useDaemon();
+  const [tab, setTab] = useState<"activity" | "library">("activity");
+  const [openSub, setOpenSub] = useState<string | null>(null);
+  const subs = subagentRows(events, activeChatId);
+  const upcoming = useUpcoming(bot.id);
+  const quotas = useQuotas();
+  const activity = activitySections({ subagents: subs.length, upcoming: upcoming.rows.length, quota: quotas.length });
+  const library = librarySections({ chats: chats.length });
+  const stopSub = (id: string) => {
+    cancelRun(id);
+    void refreshRuns();
+  };
   return (
     <div className={styles.root} id="bot-panel" data-testid="bot-panel">
       <button
@@ -171,18 +191,63 @@ export function BotPanel({
         </div>
       </div>
 
-      <BotPanelSkills skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
+      <div className={styles.tabs} role="tablist" aria-label={t("botPanel.tabs.label")}>
+        {(["activity", "library"] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`bot-panel-tab-${id}`}
+            aria-selected={tab === id}
+            aria-controls="bot-panel-tabpanel"
+            tabIndex={tab === id ? 0 : -1}
+            className={styles.tab}
+            data-testid={`bot-panel-tab-${id}`}
+            onClick={() => setTab(id)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                e.preventDefault();
+                const next = id === "activity" ? "library" : "activity";
+                setTab(next);
+                document.getElementById(`bot-panel-tab-${next}`)?.focus();
+              }
+            }}
+          >
+            {t(`botPanel.tabs.${id}`)}
+          </button>
+        ))}
+      </div>
 
-      <section className={styles.section} aria-labelledby="bot-panel-chats">
+      <div className={styles.tabPanel} role="tabpanel" id="bot-panel-tabpanel" aria-labelledby={`bot-panel-tab-${tab}`}>
+        {tab === "activity" ? (
+          <>
+            <StopStatusNotice variant="panel" />
+            {activity.map((id) => {
+              switch (id) {
+                case "subagents":
+                  return <SubagentList key={id} rows={subs} onOpen={setOpenSub} onStop={stopSub} />;
+                case "upcoming":
+                  return <UpcomingBlock key={id} rows={upcoming.rows} onToggle={upcoming.toggle} />;
+                case "computer":
+                  return <BotComputerBlock key={id} />;
+                default:
+                  return <QuotaBlock key={id} />;
+              }
+            })}
+          </>
+        ) : (
+          library.map((id) =>
+            id === "skills" ? (
+              <BotPanelSkills key={id} skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
+            ) : (
+              <div key={id}>
+        <section className={styles.section} aria-labelledby="bot-panel-chats">
         <h3 className={styles.label} id="bot-panel-chats">
           {t("botPanel.chats")}
         </h3>
-        {chats.length === 0 ? (
-          <p className={styles.empty}>{t("botPanel.noChats")}</p>
-        ) : (
-          <ul className={styles.list}>
+        <ul className={styles.list}>
             {chats.map((c) => {
-              const activity = chatActivity(c.id, needs, runs);
+              const chatState = chatActivity(c.id, needs, runs);
               return (
                 <li key={c.id}>
                   <button
@@ -198,21 +263,27 @@ export function BotPanel({
                         {chatDateLabel(c.createdAtMs, i18n.language)}
                       </span>
                     </span>
-                    {activity ? (
-                      <span className={styles.chatState} data-state={activity}>
-                        {t(`bots.chatState.${activity}`)}
+                    {chatState ? (
+                      <span className={styles.chatState} data-state={chatState}>
+                        {t(`bots.chatState.${chatState}`)}
                       </span>
                     ) : null}
                   </button>
                 </li>
               );
             })}
-          </ul>
-        )}
+        </ul>
       </section>
-      <StopStatusNotice variant="panel" />
-      <BotComputerBlock />
-      <QuotaBlock />
+              </div>
+            )
+          )
+        )}
+      </div>
+      <SubagentDetail
+        run={openSub ? events.runs[openSub] : undefined}
+        onClose={() => setOpenSub(null)}
+        onStop={stopSub}
+      />
     </div>
   );
 }
