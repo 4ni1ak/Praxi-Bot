@@ -202,6 +202,725 @@
         ]
       }
     },
+    "/v1/bots/{bot}/knowledge/email-captures": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Recent successful, explicitly scoped mailbox reads available to this bot.",
+        "operationId": "email_captures",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeEmailCapture"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-approvals": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Ask policy for an owner-reviewable destination and source snapshot. Merely\nopening the card grants no authority and starts no provider request.",
+        "operationId": "request_embedding_approval",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingGrantTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingApprovalChallenge"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Confirm exactly the server snapshot the local owner reviewed. A changed\nprofile/source, expired card or replay requires a fresh owner decision.",
+        "operationId": "confirm_embedding_approval",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "approval",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-cooldown/reset": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Explicit owner recovery for a provider's shared retry delay; quota usage and\nper-source failure records remain intact.",
+        "operationId": "reset_embedding_cooldown",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-grants": {
+      "delete": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "revoke_embedding_grant",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingGrantTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/settings": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "get_settings",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSettingsDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "put_settings",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSettingsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "list_sources",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeSourceDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "create_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSourceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMutation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources/{source}": {
+      "put": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "update_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSourceChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSourceDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "delete_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources/{source}/embed": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "embed_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeEmbed"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeEmbeddingProgress"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources/{source}/reindex": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "reindex_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeReindex"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMutation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{id}": {
       "get": {
         "tags": [
@@ -2455,6 +3174,266 @@
         ]
       }
     },
+    "/v1/mcp/servers/{name}/auth/callback": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Finish a pending sign-in with a pasted redirect URL (host without a browser).",
+        "operationId": "complete_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpAuthCallback"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/cancel": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Close the one-shot listener and cancel a pending token exchange.",
+        "operationId": "cancel_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/logout": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Cancel sign-in and forget stored tokens before disconnecting.",
+        "operationId": "logout_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/start": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Start a sign-in from an authenticated local user's explicit action.",
+        "operationId": "start_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthStart"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/status": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Read authentication state, never credentials.",
+        "operationId": "mcp_auth_status",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp/servers/{name}/reconnect": {
       "post": {
         "tags": [
@@ -2649,6 +3628,17 @@
         ],
         "summary": "Configured providers, catalog entries and the models each configured\nprovider offers (fetched live, with a short timeout; failures are reported\nper provider and never fail the route).",
         "operationId": "list_providers",
+        "parameters": [
+          {
+            "name": "chat_only",
+            "in": "query",
+            "description": "Default true: omit deprecated and non-chat models. False exposes all\nkinds for advanced clients; it does not change bot execution.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -5500,12 +6490,19 @@
             "type": "boolean",
             "description": "Is the configured default."
           },
+          "model_details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelMetadataDto"
+            },
+            "description": "Presentation metadata: recommended models first by rank, then the rest\nby display name. Split on `recommended` for an \"All models\" expander.\nNo model is added just because it appears in the curated table."
+          },
           "models": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Model ids the provider reports (empty without a listing)."
+            "description": "Model ids in the same order as `model_details`. By default only current\nchat candidates are shown; `?chat_only=false` includes everything."
           },
           "models_error": {
             "type": [
@@ -6364,6 +7361,90 @@
             "description": "SMTP (sending mail); authentication only, nothing is sent."
           }
         }
+      },
+      "EmbeddingApprovalChallenge": {
+        "type": "object",
+        "required": [
+          "id",
+          "target",
+          "profile_fingerprint",
+          "provider_id",
+          "model",
+          "endpoint_identity",
+          "expires_at_ms",
+          "policy_decision"
+        ],
+        "properties": {
+          "endpoint_identity": {
+            "type": "string"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "model": {
+            "type": "string"
+          },
+          "policy_decision": {
+            "type": "string"
+          },
+          "profile_fingerprint": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/EmbeddingGrantTarget"
+          }
+        }
+      },
+      "EmbeddingGrantTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "queries"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "source_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "documents"
+                ]
+              },
+              "source_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ]
       },
       "EnableCliProviderInput": {
         "type": "object",
@@ -7330,6 +8411,571 @@
           "up"
         ]
       },
+      "KnowledgeEmailCapture": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "tool_call_id",
+          "account",
+          "created_ms"
+        ],
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tool_call_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "KnowledgeEmbed": {
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reset_retry": {
+            "type": "boolean",
+            "description": "True only for an explicit user retry. Continuation batches keep retries,\nprovider cooldowns and the shared quota ledger intact."
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeEmbeddingDto": {
+        "type": "object",
+        "required": [
+          "provider_id",
+          "model",
+          "dimensions",
+          "request_dimensions",
+          "endpoint",
+          "profile_fingerprint",
+          "query_remote",
+          "requests_per_minute",
+          "requests_per_day"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "local_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "profile_fingerprint": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "query_remote": {
+            "type": "boolean"
+          },
+          "request_dimensions": {
+            "type": "boolean"
+          },
+          "requests_per_day": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "requests_per_minute": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "KnowledgeEmbeddingInput": {
+        "type": "object",
+        "required": [
+          "provider_id",
+          "model",
+          "dimensions",
+          "requests_per_minute",
+          "requests_per_day"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "local_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Select an already installed host profile; cannot choose native files."
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "request_dimensions": {
+            "type": "boolean"
+          },
+          "requests_per_day": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "requests_per_minute": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeEmbeddingProgress": {
+        "type": "object",
+        "description": "Progress of one bounded embedding batch. The queue resumes from hashes and\nsource revisions already committed; no provider response body is exposed.",
+        "required": [
+          "status",
+          "embedded_chunks",
+          "cache_hits",
+          "remaining_chunks",
+          "skipped_chunks"
+        ],
+        "properties": {
+          "cache_hits": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "embedded_chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failure_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_attempt_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "remaining_chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped_chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/KnowledgeEmbeddingStatus"
+          }
+        }
+      },
+      "KnowledgeEmbeddingStatus": {
+        "type": "string",
+        "enum": [
+          "progress",
+          "complete",
+          "awaiting_consent",
+          "deferred",
+          "cancelled",
+          "failed"
+        ]
+      },
+      "KnowledgeFileFailure": {
+        "type": "object",
+        "description": "A skipped file never prevents the page cursor from advancing.",
+        "required": [
+          "locator",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "locator": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeIndexStatus": {
+        "type": "object",
+        "description": "A bounded indexing page. Replay starts from hashes already committed.",
+        "required": [
+          "processed",
+          "unchanged",
+          "removed",
+          "failures"
+        ],
+        "properties": {
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeFileFailure"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "removed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unchanged": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "KnowledgeLocalProfileDto": {
+        "type": "object",
+        "description": "A host-installed local model. Native file locations are never API inputs.",
+        "required": [
+          "id",
+          "label",
+          "model",
+          "dimensions"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeMutation": {
+        "type": "object",
+        "required": [
+          "source",
+          "indexing"
+        ],
+        "properties": {
+          "indexing": {
+            "$ref": "#/components/schemas/KnowledgeIndexStatus"
+          },
+          "source": {
+            "$ref": "#/components/schemas/KnowledgeSourceDto"
+          }
+        }
+      },
+      "KnowledgeReindex": {
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last relative file from the previous page; omitted starts a new scan."
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeRevision": {
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSettingsDto": {
+        "type": "object",
+        "required": [
+          "auto_retrieve",
+          "auto_retrieval_available",
+          "local_embeddings_available",
+          "local_profiles"
+        ],
+        "properties": {
+          "auto_retrieval_available": {
+            "type": "boolean"
+          },
+          "auto_retrieve": {
+            "type": "boolean"
+          },
+          "embedding": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/KnowledgeEmbeddingDto"
+              }
+            ]
+          },
+          "local_embeddings_available": {
+            "type": "boolean"
+          },
+          "local_profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeLocalProfileDto"
+            }
+          }
+        }
+      },
+      "KnowledgeSettingsInput": {
+        "type": "object",
+        "required": [
+          "auto_retrieve"
+        ],
+        "properties": {
+          "auto_retrieve": {
+            "type": "boolean"
+          },
+          "embedding": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/KnowledgeEmbeddingInput",
+                "description": "Null explicitly disables embeddings; lexical retrieval remains available."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSourceAction": {
+        "type": "string",
+        "enum": [
+          "enable",
+          "disable",
+          "revoke_remote",
+          "rename",
+          "rebind"
+        ]
+      },
+      "KnowledgeSourceChange": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/KnowledgeSourceAction"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An owner-selected replacement path, required to rebind imported files."
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSourceDto": {
+        "type": "object",
+        "description": "Source metadata; source bodies and credentials are never listed.",
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "locator",
+          "enabled",
+          "requires_path_selection",
+          "revision",
+          "documents",
+          "chunks",
+          "updated_ms"
+        ],
+        "properties": {
+          "chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "documents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KnowledgeSourceKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "locator": {
+            "type": "string"
+          },
+          "remote_profile_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requires_path_selection": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "KnowledgeSourceInput": {
+        "type": "object",
+        "description": "A user-selected source. Body fields cannot choose an owner, trust or consent.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "account": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Must equal the explicit account in the recorded `email_read` arguments."
+          },
+          "chat_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Saved text/HTML or a note; never interpreted as a source URL to fetch.\nAt most 4 MiB decoded UTF-8 input and 1 MiB extracted/indexed text.\nThe JSON envelope permits up to 24 MiB + 64 KiB for escaped input."
+          },
+          "html": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KnowledgeSourceKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute path on the daemon host, for a file or folder only."
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Email sources use a successful recorded `email_read` in this bot's run."
+          },
+          "tool_call_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSourceKind": {
+        "type": "string",
+        "description": "Source kinds accepted by user management; every kind remains untrusted data.",
+        "enum": [
+          "file",
+          "folder",
+          "saved_web",
+          "conversation",
+          "email",
+          "note",
+          "shared_brain"
+        ]
+      },
       "LatestCursor": {
         "type": "object",
         "description": "`GET /v1/events/latest`.",
@@ -7369,6 +9015,48 @@
             "type": "string"
           }
         }
+      },
+      "McpAuthCallback": {
+        "type": "object",
+        "description": "Body of `POST /v1/mcp/servers/{name}/auth/callback`.",
+        "required": [
+          "redirect_url"
+        ],
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "description": "The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "McpAuthStart": {
+        "type": "object",
+        "description": "Browser destination for a user-started, five-minute sign-in.",
+        "required": [
+          "authorization_url",
+          "expires_in"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "McpAuthState": {
+        "type": "string",
+        "description": "Authentication state, independent of transport errors.",
+        "enum": [
+          "signed_out",
+          "signing_in",
+          "signed_in",
+          "auth_required"
+        ]
       },
       "McpCatalogEntryDto": {
         "type": "object",
@@ -7450,6 +9138,17 @@
               "type": "string"
             }
           },
+          "folder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpFolderDto",
+                "description": "A folder to collect first (filesystem servers)."
+              }
+            ]
+          },
           "required_secrets": {
             "type": "array",
             "items": {
@@ -7489,6 +9188,74 @@
             "description": "Endpoint (http)."
           }
         }
+      },
+      "McpErrorKind": {
+        "type": "string",
+        "description": "Class of the last connect error of an MCP server, so a UI can show a\nlocalized \"what to do\" next to the raw `error` text.",
+        "enum": [
+          "runtime_missing",
+          "spawn",
+          "closed",
+          "timeout",
+          "config",
+          "needs_folder",
+          "other"
+        ]
+      },
+      "McpFolderDto": {
+        "type": "object",
+        "description": "A folder the user must choose when adding a catalog entry; the app appends\nit as the last argument.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Label of the folder field."
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A safe default offered to the user (their Documents folder), if there is one."
+          }
+        }
+      },
+      "McpOAuthConfig": {
+        "type": "object",
+        "description": "OAuth configuration contains no credential values.",
+        "properties": {
+          "allow_loopback_http": {
+            "type": "boolean"
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_metadata_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_secret_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The authorization server a pre-registered client is bound to;\nrequired with `client_id` / `client_secret_ref`."
+          }
+        },
+        "additionalProperties": false
       },
       "McpRequiredSecretDto": {
         "type": "object",
@@ -7610,6 +9377,17 @@
             ],
             "description": "Most recent error, if any."
           },
+          "error_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpErrorKind",
+                "description": "Class of `error`, for a localized hint."
+              }
+            ]
+          },
           "headers": {
             "type": "object",
             "description": "Plain request headers (http). Not secrets.",
@@ -7623,6 +9401,17 @@
           "name": {
             "type": "string",
             "description": "Server name (the `<server>` of `mcp:<server>/<tool>`)."
+          },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "Public OAuth identity and secret names only."
+              }
+            ]
           },
           "secret_env": {
             "type": "object",
@@ -7647,6 +9436,13 @@
           "status": {
             "$ref": "#/components/schemas/McpStatus",
             "description": "Connection state."
+          },
+          "stderr_tail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Last lines the server wrote to stderr (secret-redacted, bounded) while\nit is in an error state; empty otherwise."
           },
           "tool_allow": {
             "type": "array",
@@ -7766,6 +9562,17 @@
               "null"
             ],
             "description": "Server name; `id` is accepted as an alias.  Required on POST; on PUT the\npath wins (a different name in the body is rejected)."
+          },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "HTTP OAuth identity; client secrets are secret-store references."
+              }
+            ]
           },
           "secret_env": {
             "type": "object",
@@ -7923,6 +9730,17 @@
             ],
             "description": "Server name; `id` is accepted as an alias.  The path wins (a different\nname in the body is rejected)."
           },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "HTTP OAuth identity; null clears it."
+              }
+            ]
+          },
           "secret_env": {
             "type": [
               "object",
@@ -8000,6 +9818,7 @@
         "type": "string",
         "description": "Connection state of an MCP server.",
         "enum": [
+          "auth_required",
           "connected",
           "connecting",
           "disconnected",
@@ -8181,6 +10000,50 @@
           "steer",
           "queue"
         ]
+      },
+      "ModelMetadataDto": {
+        "type": "object",
+        "description": "Presentation only: never changes execution capabilities or configured ids.",
+        "required": [
+          "id",
+          "display_name",
+          "kind",
+          "recommended",
+          "deprecated"
+        ],
+        "properties": {
+          "deprecated": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,\n`video`, or `other`. Kind describes primary use, not input modalities."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short annotation such as `preview` or a live `OpenRouter` `free` id."
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "recommended_rank": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "Modifier": {
         "type": "string",

@@ -6,6 +6,8 @@ import {
   PALETTES, FAVORITE_THEMES, DEFAULT_CUSTOM_THEME, UI_STYLES, buildTokens, contrastRatio, deriveTheme,
   fallbackAccent, inkOn, mix, normalizeHex, paletteById
 } from '../src/themeModel.ts';
+import { buildThemeTokens, effectiveUiStyle, TEXT_TARGET } from '../src/surfaceModel.ts';
+import { checkSurfaces, FIXTURES, MUTATIONS, selfTest as selfTestSurfaces } from './surfaceCheck.mjs';
 
 // Every shipped theme must be readable.  The derivation pulls faded text, status colours and
 // accent text toward the text colour until they pass, so the hard requirement is the one
@@ -61,9 +63,39 @@ for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_TH
   process.stdout.write(`${name}: ${d.light ? 'light' : 'dark'}; text contrast >= ${lowest.toFixed(2)}:1 (bg/surface/raised)\n`);
 }
 
+// Translucent surfaces (card 244-E): the EMITTED tokens (fills, filters, scrim, modal overlay) are
+// composited over fixture backdrops by an independent CSS emulator (scripts/surfaceCheck.mjs: its own
+// saturate() matrix, Gaussian blur with mirrored edges, source-over compositing, WCAG contrast), for
+// every theme x style x chat area x transparency/blur extreme x dim x backdrop.  Primary text must reach
+// 7:1 on panels / scrim / center pane and 4.5:1 on cards, bubbles, composer and floating surfaces;
+// muted / secondary / status / accent text 4.5:1; faint text and control borders 3:1.
+const surfaces = checkSurfaces();
+const byKind = new Map();
+for (const f of surfaces.failures) {
+  const m = /^(\S+?)\/(\S+?)\/(\w+)\/.*?: (.+?) on (.+?) [\d.]+ < /.exec(f);
+  const k = m ? `${m[2]}/${m[3]}: ${m[4]} on ${m[5]}` : f;
+  byKind.set(k, (byKind.get(k) ?? 0) + 1);
+}
+if (process.env.SURFACE_SUMMARY) for (const [k, n] of [...byKind].sort((a, b) => b[1] - a[1]).slice(0, 40)) process.stdout.write(`${n}	${k}
+`);
+for (const f of surfaces.failures.slice(0, 60)) failures.push(f);
+if (surfaces.failures.length > 60) failures.push(`... and ${surfaces.failures.length - 60} more surface violations`);
+const escaped = selfTestSurfaces();
+for (const name of escaped) failures.push(`surface check self-test: mutation not caught: ${name}`);
+for (const key of ['--shell-fill', '--shell-filter', '--center-fill', '--center-scrim', '--float-fill', '--composer-fill']) {
+  assert.ok(buildThemeTokens(paletteById('obsidian'), '#b6b8fa', 'glass', true)[key], `token ${key} is emitted`);
+}
+// Platform fallbacks: reduced transparency paints solid; no backdrop-filter turns glass into tinted.
+assert.equal(effectiveUiStyle('glass', { backdropFilter: true, reducedTransparency: true }), 'solid');
+assert.equal(effectiveUiStyle('line', { backdropFilter: true, reducedTransparency: true }), 'line');
+assert.equal(effectiveUiStyle('glass', { backdropFilter: false, reducedTransparency: false }), 'tinted');
+assert.equal(effectiveUiStyle('tinted', { backdropFilter: false, reducedTransparency: false }), 'tinted');
+process.stdout.write(`surfaces: ${surfaces.checks} composited checks on the emitted tokens (${FIXTURES.length} backdrops; text >= ${TEXT_TARGET}:1 on panels); self-test: ${MUTATIONS.length} corruptions all caught
+`);
+
 // tokens.css must carry exactly the derived default theme (no stale generated CSS).
 const def = paletteById('obsidian');
-const expected = buildTokens(def, fallbackAccent(deriveTheme(def)), 'solid', false);
+const expected = buildThemeTokens(def, fallbackAccent(deriveTheme(def)), 'solid', false);
 for (const [k, v] of Object.entries(expected)) assert.ok(css.includes(`${k}: ${v};`), `tokens.css is stale: ${k} (run pnpm --dir packages/ui generate:themes)`);
 
 if (failures.length) {

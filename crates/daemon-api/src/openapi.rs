@@ -9,8 +9,9 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
-    mcp_routes, routes, skill_management, skills, sse, web, web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, host, knowledge,
+    knowledge_settings, live_view, mcp, mcp_routes, routes, skill_management, skills, sse, web,
+    web_routes,
 };
 
 struct Security;
@@ -56,6 +57,10 @@ impl Modify for Security {
         live_view::set_privileges,
         live_view::input::input,
         live_view::stream::frames,
+        knowledge::list_sources, knowledge::create_source, knowledge::update_source, knowledge::delete_source, knowledge::reindex_source, knowledge::embed_source,
+        knowledge_settings::get_settings, knowledge_settings::put_settings, knowledge::email_captures,
+        knowledge_settings::request_embedding_approval, knowledge_settings::confirm_embedding_approval,
+        knowledge_settings::revoke_embedding_grant, knowledge_settings::reset_embedding_cooldown,
         routes::list_bots,
         routes::create_bot,
         routes::get_bot,
@@ -119,6 +124,11 @@ impl Modify for Security {
         mcp_routes::reconnect_mcp_server,
         mcp_routes::list_mcp_tools,
         mcp_routes::mcp_catalog,
+        mcp_routes::start_mcp_auth,
+        mcp_routes::complete_mcp_auth,
+        mcp_routes::cancel_mcp_auth,
+        mcp_routes::mcp_auth_status,
+        mcp_routes::logout_mcp_auth,
         mcp_routes::set_secret,
         email_routes::list_email_accounts,
         email_routes::create_email_account,
@@ -142,11 +152,12 @@ impl Modify for Security {
         dto::CategoryDecisionDto, dto::ControlMode, dto::ControlStateInput,
         dto::ControlStateDto, dto::LatestCursor, dto::ControlVerdict, dto::ControlDecisionInput,
         dto::ControlDecisionResponse, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
-        dto::ConfiguredProviderDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
+        dto::ConfiguredProviderDto, dto::ModelMetadataDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
         dto::ParseSchedule, dto::ParsedSchedule, dto::AcceptedResponse, dto::ChannelDto, dto::PairCodeDto, dto::ScheduleChanged, dto::ScheduleChangeKind,
-        mcp::McpTransportKind, mcp::McpStatus, mcp::McpServerDto, mcp::McpTransportObject,
+        mcp::McpTransportKind, mcp::McpStatus, mcp::McpErrorKind, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
-        mcp::McpCatalogInstallDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
+        mcp::McpOAuthConfig, mcp::McpAuthState, mcp::McpAuthStart, mcp::McpAuthCallback,
+        mcp::McpCatalogInstallDto, mcp::McpFolderDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,

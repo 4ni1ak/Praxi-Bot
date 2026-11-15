@@ -25,6 +25,31 @@ pub struct PeerIdentity {
     pub role: PeerRole,
 }
 
+/// Generic JSON/TOML profile editors retain ordinary bot editing, but cannot
+/// create, replace or clear host-local knowledge settings. Omission preserves
+/// the current subtree rather than implicitly disabling an owner configuration.
+pub(crate) fn protect_knowledge_config(
+    peer: Option<&PeerIdentity>,
+    current: Option<&serde_json::Value>,
+    next: &mut serde_json::Value,
+) -> Result<(), ApiError> {
+    if peer.is_none() {
+        return Ok(());
+    }
+    if let Some(incoming) = next.get("knowledge") {
+        if Some(incoming) != current {
+            return Err(ApiError::forbidden(
+                "knowledge settings are managed by the local owner",
+            ));
+        }
+    } else if let Some(current) = current {
+        next.as_object_mut()
+            .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
+            .insert("knowledge".into(), current.clone());
+    }
+    Ok(())
+}
+
 /// Future host transfer endpoints forbidden to phones.
 pub const PHONE_DENIED_POST_PATHS: &[&str] = &["/v1/host/import", "/v1/host/handover"];
 
@@ -43,6 +68,16 @@ pub const PEER_DENIED_POST_PATHS: &[&str] = &["/v1/providers/cli/enable", "/v1/p
 /// desktop UI; the check list and the support report describe the host (paths,
 /// platform, provider set), so peers do not read them either.
 pub const PEER_DENIED_PREFIX_DOCTOR: &str = "/v1/doctor";
+
+/// MCP server management starts programs and names host secrets: a mutation
+/// is an action of the local user at this host, never of a paired peer.
+pub const PEER_DENIED_PREFIX_MCP: &str = "/v1/mcp";
+
+/// Whether `path` (decoded and slash-normalized) is under `/v1/mcp`.
+fn is_mcp_path(path: &str) -> bool {
+    path.strip_prefix(PEER_DENIED_PREFIX_MCP)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
 
 /// Whether `path` (decoded and slash-normalized) is a diagnostics endpoint.
 fn is_doctor_path(path: &str) -> bool {
@@ -86,8 +121,22 @@ fn normalize_deny_path(path: &str) -> String {
 }
 
 /// Why `method path` is refused to every paired peer role, if it is: the
-/// host-local provider management and diagnostics endpoints.
+/// host-local provider management, MCP management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if check_path
+        .strip_prefix("/v1/mcp/servers/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(_, rest)| rest == "auth" || rest.starts_with("auth/"))
+    {
+        return Some("MCP sign-in is a host-local user action, forbidden to peers");
+    }
+    // MCP configuration decides which secrets are sent where and which
+    // commands run on this host: create / update / delete / reconnect are
+    // host-local user actions for every peer role (no card or ADR grants a
+    // peer role MCP management).  Reading the list and tools stays allowed.
+    if *method != Method::GET && is_mcp_servers_path(check_path) {
+        return Some("MCP server management is a host-local user action, forbidden to peers");
+    }
     if !matches!(*method, Method::GET | Method::HEAD)
         && (check_path == "/v1/skills" || check_path.starts_with("/v1/skills/"))
     {
@@ -96,7 +145,31 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
     }
+    if is_mcp_path(check_path) && !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        return Some("MCP server management is only allowed for the local user");
+    }
+    if !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && check_path
+            .strip_prefix("/v1/bots/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(bot, rest)| {
+                !bot.is_empty() && (rest == "knowledge" || rest.starts_with("knowledge/"))
+            })
+    {
+        return Some("knowledge sources and embedding authority are managed by the local owner");
+    }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
+}
+
+/// An encoded `/` (`%2F`) inside a path that is under `/v1/mcp`.
+fn encoded_slash_in_mcp_path(raw: &str, decoded: &str) -> bool {
+    is_mcp_path(decoded) && raw.to_ascii_lowercase().contains("%2f")
+}
+
+/// `/v1/mcp/servers` or anything below it (decoded and slash-normalized).
+fn is_mcp_servers_path(path: &str) -> bool {
+    path.strip_prefix("/v1/mcp/servers")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// `POST /v1/control/{request_id}` answers an overlay question: local only.
@@ -124,6 +197,7 @@ fn is_bot_skills_path(path: &str) -> bool {
         .is_some_and(|id| !id.is_empty() && !id.contains('/'))
 }
 
+#[allow(clippy::too_many_lines)] // one ordered list of peer refusals
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(peer) = req.extensions().get::<PeerIdentity>().cloned() else {
         return ApiError::forbidden("paired peer identity required").into_response();
@@ -137,6 +211,11 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     let check_path = normalize_deny_path(&path);
     if let Some(why) = host_local_denial(req.method(), &check_path) {
         return ApiError::forbidden(why).into_response();
+    }
+    // An encoded `/` inside an MCP path (e.g. in the server-name segment) is
+    // never legitimate: refuse it for every method.
+    if encoded_slash_in_mcp_path(req.uri().path(), &check_path) {
+        return ApiError::forbidden("encoded slash in an MCP path").into_response();
     }
     let denied = peer.role != PeerRole::Desktop
         && (host_file_review(&check_path)

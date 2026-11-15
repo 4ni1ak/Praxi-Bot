@@ -155,8 +155,8 @@ pub(crate) fn parse_document_xml(xml: &[u8]) -> Result<Vec<Block>, ToolError> {
     Ok(blocks)
 }
 
-fn read_zip_entry(
-    zip: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+fn read_zip_entry<R: std::io::Read + std::io::Seek>(
+    zip: &mut zip::ZipArchive<R>,
     name: &str,
     limit: u64,
 ) -> Result<Vec<u8>, ToolError> {
@@ -236,6 +236,17 @@ fn bounded_table(
 pub fn run_read(cfg: &DocToolsConfig, input: Value) -> Result<Reply, ToolError> {
     let i: ReadIn = parse(input)?;
     let bytes = read_limited(cfg, &i.path)?;
+    read_bytes(cfg, &i.path, &bytes)
+}
+
+pub(crate) fn read_bytes(
+    cfg: &DocToolsConfig,
+    label: &str,
+    bytes: &[u8],
+) -> Result<Reply, ToolError> {
+    let i = ReadIn {
+        path: label.to_owned(),
+    };
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
         .map_err(|e| exec(format!("{} is not a valid .docx (zip): {e}", i.path)))?;
     let xml = read_zip_entry(
@@ -552,6 +563,62 @@ pub fn run_write(cfg: &DocToolsConfig, input: Value) -> Result<Reply, ToolError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_81_docx_source_extraction_rejects_block_and_preview_truncation() {
+        let bytes = build_docx(&[WBlock::Paragraph {
+            text: "The complete selected document must be indexed or explicitly rejected.".into(),
+            bold: false,
+        }])
+        .unwrap();
+        for cfg in [
+            DocToolsConfig {
+                max_preview_chars: 8,
+                ..DocToolsConfig::default()
+            },
+            DocToolsConfig {
+                max_cell_chars: 8,
+                ..DocToolsConfig::default()
+            },
+        ] {
+            assert!(crate::extract_bytes(&cfg, "docx", "source.docx", &bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn review_81_docx_source_keeps_all_table_cells_and_rows() {
+        let long = "Long table cell with relevant evidence beyond sixty characters: heliosphere"
+            .to_owned();
+        let mut rows = vec![vec!["Header".into()]];
+        rows.extend((0..40).map(|n| vec![format!("{long} row {n}")]));
+        let bytes = build_docx(&[WBlock::Table { rows, header: true }]).unwrap();
+        let cfg = DocToolsConfig {
+            max_preview_chars: 16_000,
+            ..DocToolsConfig::default()
+        };
+        let reply = crate::extract_bytes(&cfg, "docx", "source.docx", &bytes).unwrap();
+        assert!(
+            reply.markdown.contains("heliosphere row 39"),
+            "full source extraction must not use the 30-row/60-char preview renderer"
+        );
+    }
+
+    #[test]
+    fn authorized_bytes_do_not_reopen_the_display_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("selected.docx");
+        let cfg = DocToolsConfig::default();
+        run_write(&cfg, json!({"path":path,"blocks":[{"type":"heading","level":1,"text":"Selected source"},{"type":"paragraph","text":"Original authorized document bytes."}]})).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let reply =
+            crate::extract_bytes(&cfg, "docx", "missing-display-label.docx", &bytes).unwrap();
+        assert!(
+            reply
+                .markdown
+                .contains("Original authorized document bytes.")
+        );
+    }
 
     #[test]
     fn a_single_large_table_obeys_the_row_limit() {

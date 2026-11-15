@@ -21,15 +21,19 @@ import type {
  *   - known local desktop target -> `native.beginAction` + `native.click` + verdict;
  *   - browser / remote target -> panel-local overlay highlight + verdict
  *     (remote screen coordinates NEVER touch local desktop monitors or mouse);
- * - run lifecycle: a local-desktop run starts -> `bot_driving`; the last run ends -> `idle`;
+ *   - target scope not known yet -> wait (bounded), then refuse "retry in a moment";
+ * - run lifecycle: a local-desktop run starts -> `bot_driving`; the last one ends ->
+ *   `finish_bot_run(generation)` (a normal finish, never a Stop);
  * - legacy local control changes report via `PUT /v1/control/state`; plain
  *   heartbeats and reopens NEVER send `release: true`;
  * - while a daemon-owned takeover holds the latch, only `POST /v1/control/release`
  *   ("Bitirdim"), `POST /v1/control/override` (Stop) or `POST /v1/control/recover`
- *   touch the latch — heartbeats/reopen never clear it;
- * - transitioning out of `human_driving -> idle` ("Bitirdim" hand-back) NEVER
- *   cancels live runs; only explicit Stop from `bot_driving` / `paused` or
- *   `emergencyStop()` cancels live runs.
+ *   touch the latch — heartbeats/reopen never clear it.
+ *
+ * The bridge never decides or performs a Stop: `RunLedger` (runLedger.ts) owns run
+ * state and Stop records. Before EVERY effect (native call, daemon write) the bridge
+ * re-checks that its authority is live and that the ledger lets the run act, so a
+ * run a Stop holds, or a bridge of a replaced daemon client, never acts again.
  */
 
 export interface Rect {
@@ -40,6 +44,8 @@ export interface Rect {
 }
 
 export type TargetScope = "local_desktop" | "browser" | "remote";
+/** `unknown` until the CURRENT client's targets and the settings have loaded: never guessed. */
+export type ScopeAnswer = TargetScope | "unknown";
 
 export type ComputerTargetSetting = "this-pc" | "browser" | "remote" | "off";
 
@@ -105,6 +111,22 @@ export interface BotMeta {
   botInitials?: string;
 }
 
+/** What the bridge needs from the run ledger (`RunLedger` implements it). */
+export interface BridgeLedger {
+  mayAct(runId: string): boolean;
+  /** Raised synchronously by every Stop decision (see `RunLedger.stopEpoch`). */
+  stopEpoch(): number;
+  observeRun(runId: string, botId: string | null, processing?: boolean): void;
+  observeRunFinished(runId: string): void;
+  claimRequest(requestId: string): boolean;
+  runEntries(): readonly {
+    id: string;
+    botId: string | null;
+    phase: string;
+    processing: boolean;
+  }[];
+}
+
 export interface BridgeDeps {
   client: {
     putControlState(mode: ControlModeName, release?: boolean): Promise<unknown>;
@@ -113,20 +135,28 @@ export interface BridgeDeps {
       decision: ControlVerdict,
       reason?: string
     ): Promise<unknown>;
-    cancelRun(runId: string): Promise<unknown>;
     getControlState?(): Promise<ControlStateDto>;
-    releaseControl?(req?: ReleaseRequest): Promise<ControlStateDto>;
-    overrideControl?(): Promise<ControlStateDto>;
+    releaseControl?(req?: ReleaseRequest, signal?: AbortSignal): Promise<ControlStateDto>;
+    overrideControl?(signal?: AbortSignal): Promise<ControlStateDto>;
     recoverControl?(): Promise<ControlStateDto>;
   };
   native: {
     beginAction(rect: Rect | null, label: string, action: string): Promise<boolean>;
-    startRun(bot: BotMeta, step: string): Promise<void>;
-    stopRun(): Promise<void>;
+    /** Resolves with the native run generation it started, when known. */
+    startRun(bot: BotMeta, step: string): Promise<number | null | void>;
+    /** Normal end of the native run started at `expectedGeneration` (never a Stop). */
+    finishRun(expectedGeneration: number): Promise<void>;
     click(x: number, y: number): Promise<void>;
+    /**
+     * Fresh native read right before a local `proceed`: `true` only if native is still
+     * bot driving and no Stop was pressed (the read is also routed to the ledger, so a
+     * Stop it reveals raises the stop epoch). A failed read is `false`.
+     */
+    confirmDriving?(): Promise<boolean>;
   };
+  ledger: BridgeLedger;
   /** Resolve whether a run / bot currently targets the local PC or a browser/remote screen. */
-  resolveTargetScope?: (info: { runId?: string; botId?: string }) => TargetScope;
+  resolveTargetScope?: (info: { runId?: string; botId?: string }) => ScopeAnswer;
   /** Optional hook to render non-local action highlights inside the live-view panel. */
   panelOverlay?: {
     showAction(highlight: PanelActionHighlight): void;
@@ -138,6 +168,10 @@ export interface BridgeDeps {
   botMeta(botId: string): BotMeta;
   startingStep: string;
   now(): number;
+  /** Wait helper (tests inject a fast one). */
+  sleep?(ms: number): Promise<void>;
+  /** Bound for daemon calls on the bridge queue (default `BRIDGE_CALL_BOUND_MS`). */
+  callBoundMs?: number;
 }
 
 export interface TrackedTakeover {
@@ -154,6 +188,11 @@ export const HEARTBEAT_MS = 5000;
 export const STALE_REQUEST_MS = 15_000;
 /** Events older than the bridge (a replay of history) are ignored, minus skew. */
 const REPLAY_SLACK_MS = 2000;
+/** How long an action waits for the target scope before it is refused ("retry in a moment"). */
+export const SCOPE_WAIT_MS = 3000;
+const SCOPE_POLL_MS = 250;
+/** No daemon call may hold the bridge queue longer than this. */
+export const BRIDGE_CALL_BOUND_MS = 5000;
 
 export function refusalReason(mode: ControlModeName): string {
   switch (mode) {
@@ -166,14 +205,18 @@ export function refusalReason(mode: ControlModeName): string {
   }
 }
 
+/** The app does not know yet which screen this run uses; the bot may try again shortly. */
+export const SCOPE_UNKNOWN_REASON =
+  "The app is still loading which screen this run uses, so this action was not performed. Retry it in a moment.";
+
 function centre(r: Rect): { x: number; y: number } {
   return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
 }
 
 export class ControlBridge {
   mode: ControlModeName = "idle";
-  private readonly active = new Set<string>();
-  private readonly handled = new Set<string>();
+  /** Runs for which this bridge put native into bot_driving. */
+  private readonly driving = new Set<string>();
   private readonly startedAt: number;
   private readonly deps: BridgeDeps;
   private chain: Promise<void> = Promise.resolve();
@@ -181,15 +224,28 @@ export class ControlBridge {
   private releasingTakeover = false;
   /** Id of the takeover THIS app owns (set by the live-view controller). */
   private ownedTakeoverId: string | null = null;
+  /** Native run generation of the run this bridge started (for `finish_bot_run`). */
+  private generation: number | null = null;
+  private authority = true;
 
   constructor(deps: BridgeDeps) {
     this.deps = deps;
     this.startedAt = deps.now();
   }
 
-  /** Run ids the bridge believes are live (for tests / diagnostics). */
-  liveRuns(): string[] {
-    return [...this.active];
+  /** False after `revoke()`: no further native call, daemon write or state write. */
+  get live(): boolean {
+    return this.authority;
+  }
+
+  /** Synchronously withdraw this bridge's authority (client replaced / unmounted). */
+  revoke(): void {
+    this.authority = false;
+  }
+
+  /** Runs the bridge is currently driving native for (tests / diagnostics). */
+  drivingRuns(): string[] {
+    return [...this.driving];
   }
 
   /** Currently tracked daemon takeover (owned or peer), if any. */
@@ -208,39 +264,46 @@ export class ControlBridge {
     if (!get) {
       return this.chain;
     }
-    this.chain = this.chain
-      .then(async () => {
-        const ticket = this.deps.issueSnapshotTicket?.();
-        this.applyControlDto(await get.call(this.deps.client), ticket);
-      })
-      .catch(() => undefined);
-    return this.chain;
+    return this.enqueue(async () => {
+      const ticket = this.deps.issueSnapshotTicket?.();
+      const dto = await this.bounded(get.call(this.deps.client));
+      this.applyControlDto(dto, ticket);
+    });
   }
 
   /** Sync authoritative daemon control snapshot into the bridge. */
   syncControlState(dto: ControlStateDto): Promise<void> {
-    this.chain = this.chain
-      .then(() => {
-        this.applyControlDto(dto);
-      })
-      .catch(() => undefined);
-    return this.chain;
+    return this.enqueue(() => {
+      this.applyControlDto(dto);
+    });
   }
 
   /** Feed one daemon event; work is serialised in arrival order. */
   handleEvent(env: GlobalEnvelope): Promise<void> {
-    this.chain = this.chain
-      .then(() => this.process(env))
-      .catch(() => undefined);
-    return this.chain;
+    return this.enqueue(() => this.process(env));
   }
 
-  /** The native state machine changed (Tauri `control:state_changed`). */
-  onNativeState(mode: ControlModeName): Promise<void> {
-    this.chain = this.chain
-      .then(() => this.nativeState(mode))
-      .catch(() => undefined);
-    return this.chain;
+  /**
+   * The native state machine changed (Tauri `control:state_changed`). The host
+   * only forwards snapshots the ledger found newer (`stateRev`).
+   */
+  onNativeState(mode: ControlModeName, generation?: number): Promise<void> {
+    return this.enqueue(() => this.nativeState(mode, generation));
+  }
+
+  /**
+   * Drive native for restored local runs (after the ledger applied a run list).
+   * Restore never cancels anything; only Stop records do.
+   */
+  restoreDriving(): Promise<void> {
+    return this.enqueue(async () => {
+      const epoch = this.deps.ledger.stopEpoch();
+      for (const run of this.deps.ledger.runEntries()) {
+        if (run.phase === "tracked" && run.processing && run.botId) {
+          await this.ensureDriving(run.botId, run.id, epoch);
+        }
+      }
+    });
   }
 
   /**
@@ -250,12 +313,15 @@ export class ControlBridge {
    */
   releaseOwnedTakeover(req: ReleaseRequest): Promise<ControlStateDto | null> {
     const run = this.chain.then(async () => {
-      if (!this.deps.client.releaseControl) {
+      if (!this.deps.client.releaseControl || !this.live) {
         return null;
       }
       this.releasingTakeover = true;
       try {
-        const result = await this.deps.client.releaseControl(req);
+        const release = this.deps.client.releaseControl;
+        const result = await this.boundedAbort((signal) =>
+          release.call(this.deps.client, req, signal)
+        );
         this.applyControlDto(result);
         return result;
       } finally {
@@ -269,39 +335,65 @@ export class ControlBridge {
     return run;
   }
 
-  /** Explicit user Stop override: pauses any active takeover and cancels live runs. */
-  emergencyStop(): Promise<ControlStateDto | null> {
-    let result: ControlStateDto | null = null;
-    this.chain = this.chain
-      .then(async () => {
-        if (this.deps.client.overrideControl) {
-          try {
-            result = await this.deps.client.overrideControl();
-            this.applyControlDto(result);
-          } catch {
-            // fall through to local stop / cancel
-          }
-        }
-        await this.deps.native.stopRun().catch(() => undefined);
-        this.mode = "idle";
-        await this.cancelActiveRuns();
-      })
-      .catch(() => undefined);
-    return this.chain.then(() => result);
-  }
-
   /** Send the current mode (call every `HEARTBEAT_MS` and on connect). */
   async heartbeat(release = false): Promise<void> {
+    if (!this.live) {
+      return;
+    }
     // Heartbeats and reopens never release an owned takeover latch.
     const effectiveRelease = release && !this.hasOwnedTakeover();
     try {
-      await this.deps.client.putControlState(
-        this.mode,
-        effectiveRelease || undefined
+      await this.bounded(
+        this.deps.client.putControlState(this.mode, effectiveRelease || undefined)
       );
     } catch {
       // daemon unreachable or 409 because owned takeover holds the latch
     }
+  }
+
+  private enqueue(work: () => void | Promise<void>): Promise<void> {
+    this.chain = this.chain
+      .then(() => (this.live ? work() : undefined))
+      .catch(() => undefined);
+    return this.chain;
+  }
+
+  /** No daemon call holds the queue forever: a hung request is abandoned, not awaited. */
+  private bounded<T>(p: Promise<T>): Promise<T> {
+    const ms = this.deps.callBoundMs ?? BRIDGE_CALL_BOUND_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const limit = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("bridge call bound exceeded")), ms);
+    });
+    return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+  }
+
+  /** Like `bounded`, and the request itself is aborted when the bound is hit. */
+  private boundedAbort<T>(call: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    return this.bounded(call(controller.signal)).catch((err: unknown) => {
+      controller.abort();
+      throw err;
+    });
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return this.deps.sleep
+      ? this.deps.sleep(ms)
+      : new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /** May this bridge still affect `runId`? Checked before every effect. */
+  private mayAct(runId: string): boolean {
+    return this.live && this.deps.ledger.mayAct(runId);
+  }
+
+  /**
+   * The synchronous Stop gate: the session is live, the run may act AND no Stop was
+   * decided since the work began (`epoch`). Evaluated immediately before each effect.
+   */
+  private allowed(runId: string, epoch: number): boolean {
+    return this.mayAct(runId) && this.deps.ledger.stopEpoch() === epoch;
   }
 
   private applyTakeoverInfo(t: TakeoverInfo | null | undefined): void {
@@ -319,6 +411,9 @@ export class ControlBridge {
   }
 
   private applyControlDto(dto: ControlStateDto, ticket?: number): void {
+    if (!this.live) {
+      return; // a revoked bridge's late replies write nothing
+    }
     this.applyTakeoverInfo(dto.takeover);
     this.deps.onSnapshot?.(dto, ticket);
   }
@@ -337,48 +432,52 @@ export class ControlBridge {
     );
   }
 
-  private scopeFor(info: { runId?: string; botId?: string }): TargetScope {
+  private scopeFor(info: { runId?: string; botId?: string }): ScopeAnswer {
     return this.deps.resolveTargetScope?.(info) ?? "local_desktop";
   }
 
-  private async cancelActiveRuns(): Promise<void> {
-    const runs = [...this.active];
-    this.active.clear();
-    await Promise.all(
-      runs.map((id) => this.deps.client.cancelRun(id).catch(() => undefined))
-    );
+  /** Wait (bounded) until the scope is known; `unknown` after `SCOPE_WAIT_MS`. */
+  private async waitForScope(info: { runId?: string; botId?: string }): Promise<ScopeAnswer> {
+    let scope = this.scopeFor(info);
+    let waited = 0;
+    while (scope === "unknown" && waited < SCOPE_WAIT_MS && this.live) {
+      await this.sleep(SCOPE_POLL_MS);
+      waited += SCOPE_POLL_MS;
+      scope = this.scopeFor(info);
+    }
+    return scope;
   }
 
-  private async nativeState(mode: ControlModeName): Promise<void> {
+  private async nativeState(mode: ControlModeName, generation?: number): Promise<void> {
     const previous = this.mode;
     this.mode = mode;
+    if (generation !== undefined) {
+      this.generation = generation;
+    }
+    if (mode === "idle") {
+      // Native drives nothing any more (a Stop or a finish): nothing left to finish.
+      this.driving.clear();
+    }
 
     // While an owned takeover controls the daemon latch, a local Pause overrides
     // instead of fighting the latch, and leaving human_driving never sends legacy release:true.
     if (mode === "paused" && this.hasOwnedTakeover() && this.deps.client.overrideControl) {
       try {
-        const dto = await this.deps.client.overrideControl();
+        const override = this.deps.client.overrideControl;
+        const dto = await this.boundedAbort((signal) =>
+          override.call(this.deps.client, signal)
+        );
         this.applyControlDto(dto);
       } catch {
         // next beat / state check retries
       }
-    } else {
-      const resumed =
-        !this.hasOwnedTakeover() &&
-        (previous === "human_driving" || previous === "paused") &&
-        (mode === "idle" || mode === "bot_driving");
-      await this.heartbeat(resumed);
+      return;
     }
-
-    // Leaving `human_driving -> idle` is a hand-back ("Bitirdim"), never Stop.
-    // Only Stop (from `bot_driving` or `paused` when not ending an owned takeover) cancels runs.
-    if (
-      mode === "idle" &&
-      !this.releasingTakeover &&
-      (previous === "bot_driving" || previous === "paused")
-    ) {
-      await this.cancelActiveRuns();
-    }
+    const resumed =
+      !this.hasOwnedTakeover() &&
+      (previous === "human_driving" || previous === "paused") &&
+      (mode === "idle" || mode === "bot_driving");
+    await this.heartbeat(resumed);
   }
 
   private fresh(env: GlobalEnvelope): boolean {
@@ -388,23 +487,50 @@ export class ControlBridge {
     return env.ts_ms >= this.startedAt - REPLAY_SLACK_MS;
   }
 
-  private async ensureDriving(botId: string, runId?: string): Promise<void> {
-    if (this.scopeFor({ botId, runId }) !== "local_desktop") {
+  /** Put native into bot_driving for a LOCAL run that may act. Unknown scope never does. */
+  private async ensureDriving(botId: string, runId: string, epoch: number): Promise<void> {
+    if (!this.allowed(runId, epoch) || this.scopeFor({ botId, runId }) !== "local_desktop") {
       return;
     }
     if (this.mode === "idle") {
-      await this.deps.native.startRun(
+      const generation = await this.deps.native.startRun(
         this.deps.botMeta(botId),
         this.deps.startingStep
       );
+      if (typeof generation === "number") {
+        this.generation = generation;
+      }
       // The state machine reports bot_driving through `onNativeState`; do not
       // wait for it to decide this request.
       this.mode = "bot_driving";
+    }
+    if (this.mode === "bot_driving") {
+      this.driving.add(runId);
+    }
+  }
+
+  /** The last run this bridge drove ended normally: finish (never Stop) native. */
+  private async finishIfLast(runId: string): Promise<void> {
+    const had = this.driving.delete(runId);
+    if (!had || this.driving.size > 0 || this.mode !== "bot_driving" || !this.live) {
+      return;
+    }
+    const generation = this.generation;
+    this.mode = "idle";
+    if (generation !== null) {
+      // A no-op natively when a newer run took over the generation meanwhile.
+      await this.deps.native.finishRun(generation).catch(() => undefined);
     }
   }
 
   private async process(env: GlobalEnvelope): Promise<void> {
     const e: DaemonEvent = env.event;
+    if (e.type === "run_finished") {
+      // Terminal is always true, even from replayed history.
+      this.deps.ledger.observeRunFinished(e.run_id);
+      await this.finishIfLast(e.run_id);
+      return;
+    }
     if (!this.fresh(env)) {
       return;
     }
@@ -429,33 +555,25 @@ export class ControlBridge {
         if (this.deps.client.getControlState) {
           try {
             const ticket = this.deps.issueSnapshotTicket?.();
-            this.applyControlDto(await this.deps.client.getControlState(), ticket);
+            const dto = await this.bounded(this.deps.client.getControlState());
+            this.applyControlDto(dto, ticket);
           } catch {
             // the next refresh / heartbeat re-syncs
           }
         }
         return;
       case "run_started":
-        this.active.add(e.run_id);
-        await this.ensureDriving(e.bot_id, e.run_id);
-        return;
-      case "run_finished":
-        this.active.delete(e.run_id);
-        if (this.active.size === 0 && this.mode !== "idle") {
-          // `active` is empty, so the idle state this causes cancels nothing.
-          await this.deps.native.stopRun();
-          this.mode = "idle";
-        }
+        this.deps.ledger.observeRun(e.run_id, e.bot_id);
+        await this.ensureDriving(e.bot_id, e.run_id, this.deps.ledger.stopEpoch());
         return;
       case "control_requested":
-        if (
-          this.handled.has(e.request_id) ||
-          this.deps.now() - env.ts_ms > STALE_REQUEST_MS
-        ) {
+        if (this.deps.now() - env.ts_ms > STALE_REQUEST_MS) {
           return;
         }
-        this.handled.add(e.request_id);
-        this.active.add(e.run_id);
+        if (!this.deps.ledger.claimRequest(e.request_id)) {
+          return;
+        }
+        this.deps.ledger.observeRun(e.run_id, e.bot_id);
         await this.answer(e);
         return;
       default:
@@ -463,10 +581,50 @@ export class ControlBridge {
     }
   }
 
+  /**
+   * Post the verdict. A `proceed` is re-checked against the Stop gate synchronously,
+   * right before the request, so nothing a Stop decided meanwhile can still proceed.
+   */
+  private async decide(
+    requestId: string,
+    proceed: boolean,
+    reason: string | undefined,
+    gate: () => boolean
+  ): Promise<void> {
+    if (!this.live) {
+      return; // a revoked bridge writes nothing; the daemon times the request out
+    }
+    let verdict = proceed;
+    let why = reason;
+    if (verdict && !gate()) {
+      verdict = false;
+      why = refusalReason("idle");
+    }
+    try {
+      await this.bounded(
+        this.deps.client.decideControl(requestId, verdict ? "proceed" : "refuse", verdict ? undefined : why)
+      );
+    } catch {
+      // 404: the daemon already timed out; nothing to do
+    }
+  }
+
   private async answer(
     e: Extract<DaemonEvent, { type: "control_requested" }>
   ): Promise<void> {
-    const scope = this.scopeFor({ runId: e.run_id, botId: e.bot_id });
+    const runId = e.run_id;
+    const epoch = this.deps.ledger.stopEpoch();
+    const gate = () => this.allowed(runId, epoch);
+    if (!gate()) {
+      // Stop-held, quarantined behind an unanswered Stop, or revoked: never proceeds.
+      await this.decide(e.request_id, false, refusalReason("idle"), gate);
+      return;
+    }
+    const scope = await this.waitForScope({ runId, botId: e.bot_id });
+    if (scope === "unknown") {
+      await this.decide(e.request_id, false, SCOPE_UNKNOWN_REASON, gate);
+      return;
+    }
     if (scope !== "local_desktop") {
       // Browser and remote targets MUST NEVER highlight or click the local PC desktop.
       const takeoverBlocks =
@@ -477,10 +635,11 @@ export class ControlBridge {
       const proceed =
         this.mode !== "human_driving" &&
         this.mode !== "paused" &&
-        !takeoverBlocks;
+        !takeoverBlocks &&
+        gate();
       if (proceed) {
         this.deps.panelOverlay?.showAction({
-          runId: e.run_id,
+          runId,
           botId: e.bot_id,
           requestId: e.request_id,
           rect: e.rect,
@@ -489,49 +648,45 @@ export class ControlBridge {
           timestampMs: this.deps.now()
         });
       }
-      const blockedMode: ControlModeName =
-        this.activeTakeover?.state === "paused" || this.mode === "paused"
+      const blockedMode: ControlModeName = !gate()
+        ? "idle"
+        : this.activeTakeover?.state === "paused" || this.mode === "paused"
           ? "paused"
           : "human_driving";
-      try {
-        await this.deps.client.decideControl(
-          e.request_id,
-          proceed ? "proceed" : "refuse",
-          proceed ? undefined : refusalReason(blockedMode)
-        );
-      } catch {
-        // 404: the daemon already timed out; nothing to do
-      }
+      await this.decide(e.request_id, proceed, refusalReason(blockedMode), gate);
       return;
     }
 
-    await this.ensureDriving(e.bot_id, e.run_id);
+    await this.ensureDriving(e.bot_id, runId, epoch);
     let proceed = false;
-    try {
-      proceed = await this.deps.native.beginAction(e.rect, e.label, e.action);
-    } catch {
-      proceed = false;
+    if (gate()) {
+      try {
+        proceed = await this.deps.native.beginAction(e.rect, e.label, e.action);
+      } catch {
+        proceed = false;
+      }
     }
-    if (proceed && e.rect && e.action === "click") {
+    if (proceed && e.rect && e.action === "click" && gate()) {
       const c = centre(e.rect);
       await this.deps.native.click(c.x, c.y).catch(() => undefined);
     }
-    try {
-      await this.deps.client.decideControl(
-        e.request_id,
-        proceed ? "proceed" : "refuse",
-        proceed ? undefined : refusalReason(this.mode)
-      );
-    } catch {
-      // 404: the daemon already timed out; nothing to do
+    // The global hotkey may have stopped native while we waited: read it fresh.
+    if (proceed && gate() && this.deps.native.confirmDriving) {
+      proceed = await this.deps.native.confirmDriving().catch(() => false);
     }
+    await this.decide(
+      e.request_id,
+      proceed,
+      refusalReason(gate() ? this.mode : "idle"),
+      gate
+    );
   }
 }
 
 /**
  * Owner of the single `ControlBridge` for the live-view controller. Its
  * identity never changes, so control-state refreshes only *sync* the existing
- * bridge (its live-run set, `startedAt` and mode must survive them).
+ * bridge (its mode and takeover must survive them).
  */
 export interface BridgeRegistry {
   register(bridge: ControlBridge | null): void;

@@ -48,8 +48,13 @@ import { HelpModal } from "./components/HelpModal";
 import { BOT_COLORS, botView } from "./lib/botProfile";
 import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
+import { RunBar } from "./components/RunBar";
+import { runBarModel } from "./lib/runBar";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
+import { requestStop } from "./state/appStop";
+import { isNewerNativeSnapshot } from "./state/stopStatus";
+import { StopStatusNotice } from "./components/StopStatusNotice";
 import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
 import { LiveViewer } from "./views/LiveViewer";
 import { appearanceFromQuery } from "./lib/appearance";
@@ -87,7 +92,6 @@ import {
   resumeBotRun,
   setStopHotkey,
   simulateBotRun,
-  stopBotRun,
   subscribeOverlayEvents,
   takeTheWheel
 } from "./overlay/events";
@@ -109,6 +113,12 @@ type Route =
   | { kind: "needs" }
   | { kind: "schedules" };
 
+/**
+ * The bot home page still exists on this branch, so the chat header offers a way back to
+ * it. PR #95 removes that page: delete this constant (and the `onBack` prop) with it.
+ */
+const BOT_HOME_AVAILABLE = true;
+
 function AppShell() {
   const { t } = useTranslation();
   const {
@@ -121,12 +131,17 @@ function AppShell() {
     refreshBots,
     retry
   } = useDaemon();
-  const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
+  const { setThumbnailDemand, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
-  const [controlState, setControlState] = useState<ControlSnapshot>(
+  const [controlState, setControlStateRaw] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
+  // Native snapshots arrive from events, reads and command replies in any order:
+  // apply only a newer revision (a failed read has none and is ignored).
+  const setControlState = useCallback((snap: ControlSnapshot) => {
+    setControlStateRaw((prev) => (isNewerNativeSnapshot(prev.stateRev ?? -1, snap) ? snap : prev));
+  }, []);
   const [recordingHotkey, setRecordingHotkey] = useState<boolean>(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<SettingsSectionId | null>(
@@ -187,6 +202,18 @@ function AppShell() {
         if (screen === "settings") setSettingsOpen((params.get("section") ?? "general") as SettingsSectionId);
         if (screen === "apps") setAppsOpen(true);
         if (params.get("panel") === "1") setPanelOpen(true);
+        // Review state of the run bar: `?control=bot_driving|paused|human_driving`.
+        const ctl = params.get("control");
+        if (ctl === "bot_driving" || ctl === "paused" || ctl === "human_driving") {
+          setControlState({
+            ...INITIAL_CONTROL_SNAPSHOT,
+            mode: ctl,
+            stateRev: 1,
+            stopSeq: 0,
+            bot: { botId: "11111111-1111-4111-8111-111111111111", botName: "Atlas" },
+            currentStep: params.get("lang") === "en" ? "Comparing sources in the browser" : "Kaynakları tarayıcıda karşılaştırıyor"
+          });
+        }
         const railParam = Number(params.get("rail"));
         if (railParam > 0) setLayout((l) => ({ ...l, rail: railParam < 150 ? RAIL_MINI : Math.min(RAIL_MAX, railParam) }));
         // Review states of the other routes (mock mode only).
@@ -226,7 +253,7 @@ function AppShell() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [setControlState]);
 
   useEffect(() => {
     return subscribeOverlayEvents({
@@ -234,7 +261,7 @@ function AppShell() {
         setControlState(snapshot);
       }
     });
-  }, []);
+  }, [setControlState]);
 
   // Continuous inputs (colour pickers, sliders) apply live but persist / broadcast after a pause.
   const latestSettings = useRef<AppSettings>(settings);
@@ -291,12 +318,11 @@ function AppShell() {
       const activeHotkey = controlState.stopHotkey || settings.stopHotkey;
       if (matchesHotkeyEvent(event, activeHotkey)) {
         event.preventDefault();
-        // Plain Stop stays independent: the daemon-wide override latch is only
-        // used while a screen takeover is held (never on key repeat).
+        // One key press = one Stop decision (never on key repeat). The ledger halts
+        // native input, cancels runs and pauses a held takeover.
         if (!event.repeat) {
-          void overrideStop({ onlyIfControlled: true });
+          requestStop("hotkey");
         }
-        void stopBotRun().then(setControlState);
       }
     };
 
@@ -304,7 +330,7 @@ function AppShell() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, overrideStop]);
+  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, setControlState]);
 
   // Native title bar on / off (Tauri window decorations; no-op in a browser).
   useEffect(() => {
@@ -454,82 +480,30 @@ function AppShell() {
         .map((c) => ({ id: c.id, title: c.title ?? "", createdAtMs: c.created_at_ms }))
     : [];
 
-  const isRunActive = controlState.mode !== "idle";
   const isHumanDriving = controlState.mode === "human_driving";
-  const isPaused = controlState.mode === "paused";
-
-  const runBanner = isRunActive ? (
-    <div className={styles.runBannerWrap}>
-      <div className={styles.activeRunBanner} role="status">
-        <div className={styles.activeRunHeader}>
-          <span className={styles.botName}>
-            {controlState.bot?.botName ?? t("dev.runningLabel")}
-          </span>
-          <span
-            className={[
-              styles.activeRunBadge,
-              isHumanDriving ? styles.activeRunBadgeHuman : ""
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            {t(`widget.status.${controlState.mode}`)}
-          </span>
-        </div>
-        <p className={styles.activeRunStep}>
-          {isHumanDriving
-            ? t("widget.humanDrivingStep")
-            : controlState.currentStep || t("widget.idleStep")}
-        </p>
-        <div className={styles.activeRunControls}>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => {
-              void overrideStop({ onlyIfControlled: true });
-              void stopBotRun().then(setControlState);
-            }}
-          >
-            {t("widget.stop")}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={isHumanDriving}
-            onClick={() => {
-              if (isPaused) {
-                void resumeBotRun().then(setControlState);
-              } else {
-                void pauseBotRun().then(setControlState);
-              }
-            }}
-          >
-            {isPaused ? t("widget.resume") : t("widget.pause")}
-          </Button>
-          <Button
-            variant={isHumanDriving ? "primary" : "secondary"}
-            size="sm"
-            onClick={() => {
-              if (isHumanDriving) {
-                void giveBackControl().then(setControlState);
-              } else {
-                void takeTheWheel().then(setControlState);
-              }
-            }}
-          >
-            {isHumanDriving ? t("widget.giveBack") : t("widget.takeTheWheel")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openViewer()}
-          >
-            {t("liveView.expand")}
-          </Button>
-        </div>
-      </div>
-    </div>
-  ) : null;
+  // The chat carries its own run bar (docked on the composer); every other screen
+  // gets the same bar as a strip so Stop is never out of reach.
+  const runBanner =
+    route.kind === "chat" ? null : (
+      <RunBar
+        variant="strip"
+        model={runBarModel({ chat: "none", native: controlState.mode })}
+        botName={controlState.bot?.botName}
+        detail={controlState.mode === "idle" ? null : controlState.currentStep}
+        humanDriving={isHumanDriving}
+        onStop={() => {
+          requestStop("banner");
+        }}
+        onPause={() => void pauseBotRun().then(setControlState)}
+        onResume={() => void resumeBotRun().then(setControlState)}
+        onWheel={() =>
+          void (isHumanDriving ? giveBackControl() : takeTheWheel()).then(
+            setControlState
+          )
+        }
+        onBigView={() => openViewer()}
+      />
+    );
 
   return (
     <SidebarLayout
@@ -670,6 +644,7 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
+        {panelVisible || route.kind === "chat" ? null : <StopStatusNotice variant="main" />}
         <PausedControlBanner />
         {route.kind === "onboarding" ? (
           <OnboardingView
@@ -811,7 +786,9 @@ function AppShell() {
           <ChatView
             key={route.chatId}
             chatId={route.chatId}
-            onBack={() => setRoute({ kind: "bot", botId: route.botId })}
+            onBack={BOT_HOME_AVAILABLE ? () => setRoute({ kind: "bot", botId: route.botId }) : undefined}
+            control={controlState}
+            onControl={setControlState}
             onSwitchChat={openChat}
             showAgentRoute={settings.showAgentRoute}
             sendWith={settings.sendWith}

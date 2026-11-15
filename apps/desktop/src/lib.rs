@@ -5,10 +5,11 @@ pub mod control;
 pub mod daemon;
 pub mod listener;
 pub mod shell;
+pub mod widget_visibility;
 pub mod window_gate;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use control::{
     BotRunMeta, ControlHandle, ControlMode, ControlSnapshot, DEFAULT_PRE_ACTION_HIGHLIGHT_MS,
@@ -22,6 +23,7 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
     RunEvent, State, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent,
 };
+use widget_visibility::WidgetVisibility;
 use window_gate::{MAIN_AND_WIDGET, MAIN_ONLY, require_window};
 
 const MENU_ID_SIMULATE_RUN: &str = "dev.simulate_bot_run";
@@ -64,7 +66,7 @@ impl OverlayEventSink for TauriOverlaySink {
     }
 
     fn on_state_changed(&self, snapshot: &ControlSnapshot) {
-        sync_auxiliary_windows(&self.app, snapshot.mode);
+        sync_auxiliary_windows(&self.app, snapshot);
         let _ = self.app.emit(WIRE_EVENT_CONTROL_STATE, snapshot);
     }
 }
@@ -202,16 +204,78 @@ fn ensure_auxiliary_windows(app: &AppHandle) {
     }
 }
 
-fn sync_auxiliary_windows(app: &AppHandle, mode: ControlMode) {
+/// The widget's visibility policy state (see `widget_visibility`), shared by every update.
+type SharedWidgetVisibility = Arc<std::sync::Mutex<WidgetVisibility>>;
+
+/// Show or hide the widget from the CURRENT control state. Must run on the main thread.
+fn apply_widget_visibility(app: &AppHandle) {
+    let (Some(control), Some(vis)) = (
+        app.try_state::<ControlHandle>(),
+        app.try_state::<SharedWidgetVisibility>(),
+    ) else {
+        return;
+    };
+    let snap = control.snapshot();
+    // A poisoned lock fails open: showing the indicator is the safe direction.
+    let show = vis.lock().map_or(true, |v| {
+        v.visible(
+            snap.mode,
+            snap.stop_seq,
+            snap.stop_acked_seq,
+            Instant::now(),
+        )
+    });
+    // The widget is for when the main window is not in front (see `widget_visibility`).
+    let main_in_front = app.get_webview_window("main").is_some_and(|main| {
+        main.is_focused().unwrap_or(false) && !main.is_minimized().unwrap_or(false)
+    });
+    let show = widget_visibility::presentable(show, main_in_front);
+    if let Some(widget) = app.get_webview_window("widget") {
+        let _ = if show { widget.show() } else { widget.hide() };
+    }
+}
+
+/// After an ack the widget shows its confirmation, then hides ~4.2 s after the NEWEST
+/// ack if nothing keeps it visible. An older timer, or a Stop pressed meanwhile, never
+/// hides it: the decision is re-made on the main thread when the timer fires.
+fn hide_widget_after_confirmation(app: &AppHandle, generation: u64) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(widget_visibility::CONFIRM_LINGER).await;
+        let app_main = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let (Some(control), Some(vis)) = (
+                app_main.try_state::<ControlHandle>(),
+                app_main.try_state::<SharedWidgetVisibility>(),
+            ) else {
+                return;
+            };
+            let snap = control.snapshot();
+            let hide = vis.lock().is_ok_and(|v| {
+                v.should_hide_on_timer(
+                    generation,
+                    snap.mode,
+                    snap.stop_seq,
+                    snap.stop_acked_seq,
+                    Instant::now(),
+                )
+            });
+            if let Some(widget) = app_main.get_webview_window("widget").filter(|_| hide) {
+                let _ = widget.hide();
+            }
+        });
+    });
+}
+
+fn sync_auxiliary_windows(app: &AppHandle, snapshot: &ControlSnapshot) {
+    let mode = snapshot.mode;
     let app_clone = app.clone();
     let _ = app.run_on_main_thread(move || {
         ensure_auxiliary_windows(&app_clone);
         let monitors = collect_monitors_geometry(&app_clone);
 
+        apply_widget_visibility(&app_clone);
         if mode == ControlMode::Idle {
-            if let Some(widget) = app_clone.get_webview_window("widget") {
-                let _ = widget.hide();
-            }
             for mon in &monitors {
                 let label = format!("overlay-{}", mon.monitor_index);
                 if let Some(overlay) = app_clone.get_webview_window(&label) {
@@ -225,9 +289,6 @@ fn sync_auxiliary_windows(app: &AppHandle, mode: ControlMode) {
                     let _ = overlay.set_ignore_cursor_events(true);
                     let _ = overlay.show();
                 }
-            }
-            if let Some(widget) = app_clone.get_webview_window("widget") {
-                let _ = widget.show();
             }
         }
     });
@@ -546,11 +607,40 @@ fn finish_bot_run(
 #[allow(clippy::needless_pass_by_value)]
 fn ack_stop(
     window: Window,
+    app: AppHandle,
     control: State<'_, ControlHandle>,
+    visibility: State<'_, SharedWidgetVisibility>,
     seq: u64,
 ) -> Result<ControlSnapshot, String> {
     require_window(&window, MAIN_ONLY)?;
-    Ok(control.ack_stop(seq))
+    let snapshot = control.ack_stop(seq);
+    let generation = visibility
+        .lock()
+        .map_err(|e| e.to_string())?
+        .on_ack(Instant::now());
+    hide_widget_after_confirmation(&app, generation);
+    Ok(snapshot)
+}
+
+/// The user dismisses the widget's pending-Stop indicator (daemon unreachable, no ack
+/// coming). Acknowledges nothing; the main window keeps showing the Stop's real state.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn dismiss_stop_widget(
+    window: Window,
+    app: AppHandle,
+    control: State<'_, ControlHandle>,
+    visibility: State<'_, SharedWidgetVisibility>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
+    let snapshot = control.snapshot();
+    visibility
+        .lock()
+        .map_err(|e| e.to_string())?
+        .on_dismiss(snapshot.stop_seq);
+    let app_main = app.clone();
+    let _ = app.run_on_main_thread(move || apply_widget_visibility(&app_main));
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -926,6 +1016,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(shell::TrayState::default())
         .manage(control)
+        .manage(SharedWidgetVisibility::default())
         .manage(daemon_handle)
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -954,6 +1045,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, WindowEvent::Focused(_)) {
+                // Leaving the main window shows the widget (while a run is active); coming
+                // back hides it again, so it never sits on top of the chat or right panel.
+                apply_widget_visibility(window.app_handle());
+            }
             if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
                 // `exit` may end the process without running `RunEvent::Exit`,
                 // so stop a daemon this app started right here.
@@ -975,6 +1071,7 @@ pub fn run() {
             stop_bot_run,
             finish_bot_run,
             ack_stop,
+            dismiss_stop_widget,
             set_stop_hotkey,
             overlay_show_target,
             overlay_click,
@@ -1218,6 +1315,7 @@ mod acl_tests {
         ("stop_bot_run", "MAIN_AND_WIDGET"),
         ("finish_bot_run", "MAIN_ONLY"),
         ("ack_stop", "MAIN_ONLY"),
+        ("dismiss_stop_widget", "MAIN_AND_WIDGET"),
         ("set_stop_hotkey", "MAIN_ONLY"),
         ("overlay_show_target", "MAIN_ONLY"),
         ("overlay_click", "MAIN_ONLY"),
@@ -1365,6 +1463,7 @@ mod acl_tests {
                     "take_the_wheel",
                     "give_back_control",
                     "stop_bot_run",
+                    "dismiss_stop_widget",
                 ]),
             ),
             ("overlay-0", set(&["get_control_state"])),

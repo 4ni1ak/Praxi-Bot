@@ -1,4 +1,8 @@
+/* Calmer chat (244-D): header -> timeline (+ jump button) -> run bar -> composer.
+   Nothing here changes size when a run starts or ends; the run bar animates its own row. */
 .root {
+  --lane: calc(var(--size-avatar-sm) + var(--space-3));
+
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -10,43 +14,70 @@
 .header {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  border-bottom: var(--size-border) solid var(--color-border);
-  background-color: var(--color-background);
-}
-
-.headerText {
-  flex: 1;
-  min-width: var(--space-0);
-  display: flex;
-  flex-direction: column;
+  gap: var(--space-2);
+  min-height: var(--size-control-lg);
+  padding: var(--space-2) var(--space-6);
+  background: transparent;
 }
 
 .title {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text);
+  flex: 1;
+  min-width: var(--space-0);
+  margin: var(--space-0);
   overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.scroller {
+.scrollWrap {
+  position: relative;
+  display: flex;
   flex: 1;
   min-height: var(--space-0);
+}
+
+.scroller {
+  flex: 1;
+  min-width: var(--space-0);
+  min-height: var(--space-0);
+  padding: var(--space-4) var(--space-6) var(--space-6);
   overflow-y: auto;
-  padding: var(--space-8) var(--space-6);
+  overscroll-behavior: contain;
+  scroll-padding-block: var(--space-6);
+}
+
+.scroller:focus-visible {
+  outline: var(--size-border-thick) solid var(--color-focus);
+  outline-offset: calc(var(--size-border-thick) * -1);
 }
 
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: var(--space-3);
   max-width: var(--size-content-max);
   margin: 0 auto;
 }
 
+/* A new turn starts further down than the rows of one bot block. */
+.timeline > .userRow:not(:first-child),
+.timeline > .conversationLabel + .userRow {
+  margin-top: var(--space-4);
+}
+
+.timeline > .userRow + * {
+  margin-top: var(--space-2);
+}
+
+.conversationLabel {
+  margin: var(--space-2) var(--space-0);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
 
 .userRow {
   display: flex;
@@ -55,12 +86,10 @@
 
 .userBubble {
   max-width: 80%;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-card);
-  background-color: var(--color-surface-elevated);
-  border: var(--size-border) solid var(--color-border);
+  padding: var(--space-3) var(--space-5);
   color: var(--color-text);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -68,15 +97,19 @@
 .assistantRow {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-2);
+  gap: var(--space-3);
+}
+
+.lane {
+  flex: none;
+  width: var(--size-avatar-sm);
 }
 
 .assistantBubble {
-  flex: 1; min-width: var(--space-0); max-width: 100%;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-card);
-  background-color: transparent;
-  border: none;
+  flex: 1;
+  min-width: var(--space-0);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-0) var(--space-0);
   color: var(--color-text);
   font-size: var(--font-size-md);
   line-height: var(--line-height-chat);
@@ -88,71 +121,88 @@
   flex-direction: column;
 }
 
+/* Cards, questions, notices and the changes list sit in the bot's lane. */
+.itemRow > :not(.assistantRow),
+.routeRow,
+.rememberRow,
+.laneRow,
 .runError {
-  margin: var(--space-0);
+  margin-left: var(--lane);
+}
+
+/* The Changes gate renders nothing for a run without file changes: no empty gap either. */
+.laneRow:empty {
+  display: none;
+}
+
+.chainRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.chainRow > :last-child:not(.lane) {
+  flex: 1;
+  min-width: var(--space-0);
+}
+
+.runError {
+  margin-block: var(--space-0);
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  border: var(--size-border) solid var(--color-danger);
+  border: var(--size-border) solid color-mix(in srgb, var(--color-danger) 55%, var(--color-border));
+  border-radius: var(--radius-card);
   background-color: var(--color-danger-subtle);
-  color: var(--color-danger);
-  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
   overflow-wrap: anywhere;
 }
 
-.working {
-  display: flex;
+.jump {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  z-index: 5;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin: var(--space-0);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-}
-
-.workingDot {
-  width: var(--size-status-dot);
-  height: var(--size-status-dot);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-3);
+  transform: translateX(-50%);
+  border: var(--size-border) solid var(--color-border-strong);
   border-radius: var(--radius-pill);
-  background-color: var(--color-accent);
-  animation: pulse var(--motion-duration-pulse) var(--motion-easing-standard)
-    infinite alternate;
-}
-
-@keyframes pulse {
-  from {
-    opacity: 0.3;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .workingDot {
-    animation: none;
-  }
-}
-
-
-.modeRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.modeLabel {
+  background-color: var(--color-surface-elevated-opaque);
+  box-shadow: var(--shadow-card);
+  color: var(--color-text);
+  font: inherit;
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  animation: jumpIn var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
+.jump svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
 
+.jump:hover {
+  background-color: var(--color-surface-active);
+}
 
+.jump:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+@keyframes jumpIn {
+  from {
+    opacity: 0;
+  }
+}
 
 .error {
   margin: var(--space-0);
-  font-size: var(--font-size-xs);
   color: var(--color-danger);
+  font-size: var(--font-size-xs);
 }
 
 .empty {
@@ -215,32 +265,20 @@
 }
 
 .rememberDone {
-  font-size: var(--font-size-xs);
   color: var(--color-success);
+  font-size: var(--font-size-xs);
 }
 
-
-
-
-
-
-
-.conversationLabel { text-align: center; color: var(--color-text-muted); font-size: var(--font-size-xs); margin-bottom: var(--space-4); }
-.assistantBubble { padding-top: var(--space-0); }
-
-.header { border: none; padding: var(--space-3) var(--space-6); background: transparent; }
-.headerText { flex-direction: row; align-items: baseline; gap: var(--space-3); }
-.title { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
-.scroller { padding-top: var(--space-5); }
-.timeline { gap: var(--space-6); }
-.conversationLabel { margin-bottom: var(--space-2); }
-.userBubble { border: none; background: var(--color-surface-elevated); border-radius: var(--space-6) var(--space-6) var(--radius-sm) var(--space-6); padding: var(--space-3) var(--space-5); font-size: var(--font-size-md); }
-.assistantRow { gap: var(--space-3); }
-.assistantBubble { padding: var(--space-0); padding-top: var(--space-1); font-size: var(--font-size-md); line-height: var(--line-height-chat); }
-.itemRow > :not(.assistantRow) { margin-left: calc(var(--space-8) + var(--space-3)); }
 /* stylelint-disable-next-line unit-disallowed-list -- responsive viewport boundary */
-@media (width <= 50em) { .scroller { padding-inline: var(--space-4); } }
+@media (width <= 50em) {
+  .scroller {
+    padding-inline: var(--space-4);
+  }
 
+  .header {
+    padding-inline: var(--space-4);
+  }
+}
 
 /* Chat bubbles (card 198-A): data-bubble sets the look of both sides, data-meb the user's own bubble. */
 .userBubble,
@@ -275,9 +313,9 @@
   background-image: var(--surface-sheen);
   border: var(--size-border) solid var(--color-border);
 }
+/* No backdrop-filter on bubbles: they scroll, and a blur per bubble re-renders on every frame. */
 :global(:root[data-bubble="glass"]) .assistantBubble,
 :global(:root[data-bubble="glass"]) .userBubble {
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
   border: var(--size-border) solid color-mix(in srgb, var(--color-text) 15%, transparent);
 }
 :global(:root[data-bubble="glass"]) .assistantBubble {
@@ -285,7 +323,7 @@
   max-width: 88%;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--bubble-radius) var(--bubble-radius) var(--bubble-radius) var(--bubble-tail);
-  background-color: color-mix(in srgb, var(--color-surface-elevated-opaque) 42%, transparent);
+  background-color: var(--bubble-glass-fill);
   background-image: none;
 }
 :global(:root[data-bubble="glass"]) .userBubble {
@@ -413,11 +451,16 @@
     box-shadow var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-:global(:root[data-style="glass"]) .box {
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
-  box-shadow:
-    inset 0 var(--size-border) 0 color-mix(in srgb, var(--color-text) 10%, transparent),
-    var(--shadow-card);
+/* The composer is never under a nested blur: the pane behind it is already frosted.  Over a clear
+   chat area it gets its own readable surface (and, in the glass style, the only blur in the pane). */
+:global(:root[data-style="glass"]) .box,
+:global(:root[data-style="tinted"]) .box {
+  box-shadow: var(--float-highlight), var(--shadow-card);
+}
+
+:global(:root[data-chat="clear"]) .box {
+  background-color: var(--composer-fill);
+  backdrop-filter: var(--composer-filter);
 }
 
 .box:focus-within {
@@ -461,6 +504,53 @@
   flex: 1;
 }
 
+.dockWrap {
+  width: 100%;
+  max-width: var(--size-content-max);
+  margin: 0 auto;
+}
+
+/* "While the bot is working": Queue / Steer, inside the composer, only during a run. */
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-border-thick);
+  margin-left: var(--space-2);
+  padding: var(--size-border-thick);
+  border-radius: var(--radius-pill);
+  background-color: color-mix(in srgb, var(--color-text) 7%, transparent);
+}
+
+.modeOption {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.modeOption:hover {
+  color: var(--color-text);
+}
+
+.modeOption[aria-checked="true"] {
+  background-color: var(--color-surface-active);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
+}
+
+.modeOption:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
 .send {
   width: var(--size-control-sm);
   height: var(--size-control-sm);
@@ -492,10 +582,9 @@
   animation: menuIn var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-:global(:root[data-style="glass"]) .menu {
-  background-color: color-mix(in srgb, var(--color-surface-elevated-opaque) 72%, transparent);
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
-}
+/* The menu is rendered inside the center pane (not in a body portal), over the conversation: it keeps
+   its opaque fill in every style.  A translucent, blurred fill here would be a second blur layer under
+   the pane's own and would let message text show through the list (card 244-E: one blur per panel). */
 
 .menuHead {
   margin: var(--space-0);

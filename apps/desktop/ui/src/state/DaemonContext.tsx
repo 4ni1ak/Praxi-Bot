@@ -27,7 +27,8 @@ import {
 export type Phase = "connecting" | "ready" | "error";
 
 /** Runs in these states can still produce approvals / questions. */
-const LIVE_RUN_STATES = new Set(["pending", "running", "waiting_approval"]);
+// "pending" is not a daemon run state; "queued" runs can still ask (card 237 PR C).
+const LIVE_RUN_STATES = new Set(["queued", "running", "waiting_approval"]);
 
 type Action =
   | { type: "event"; env: GlobalEnvelope }
