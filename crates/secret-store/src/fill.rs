@@ -556,6 +556,28 @@ impl FillSecrets {
         Ok(removed)
     }
 
+    /// [`Self::check_browser`] for a field in a frame of a page: BOTH the
+    /// frame origin and the top-level page origin must be allowed, so an
+    /// allowed site embedded in (or embedding) another origin is refused. A
+    /// standing grant applies only when the two origins are the same.
+    ///
+    /// # Errors
+    /// As [`Self::check_browser`], for either origin.
+    pub fn check_browser_in(
+        &self,
+        name: &str,
+        frame_origin: Option<&str>,
+        top_origin: Option<&str>,
+    ) -> Result<Option<String>, FillError> {
+        let grant = self.check_browser(name, frame_origin)?;
+        self.check_browser(name, top_origin)?;
+        let same = matches!(
+            (frame_origin.map(canonical_origin), top_origin.map(canonical_origin)),
+            (Some(Ok(a)), Some(Ok(b))) if a == b
+        );
+        Ok(if same { grant } else { None })
+    }
+
     /// Whether the secret may be typed on the page origin `live_origin` (the
     /// origin of the FRAME that holds the receiving field, as the browser
     /// reports it). `Ok(None)` = allowed, ask the owner; `Ok(Some(id))` = a

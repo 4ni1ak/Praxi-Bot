@@ -594,13 +594,6 @@ impl Page {
                         .into(),
                 ));
             }
-            self.focus_entry(&e).await?;
-            self.call_on(
-                &e,
-                "function(){ if (this.select) { this.select(); } else {                  const r = document.createRange(); r.selectNodeContents(this);                  const s = getSelection(); s.removeAllRanges(); s.addRange(r); } }",
-                &[],
-            )
-            .await?;
             let second = self.frame_identity(&e).await?;
             if second != first || self.shared.nav_gen.load(Ordering::SeqCst) != nav {
                 return Err(Error::Element(
@@ -608,12 +601,28 @@ impl Page {
                         .into(),
                 ));
             }
-            if text.is_empty() {
-                self.key_inner("Delete").await
-            } else {
-                self.cmd("Input.insertText", json!({"text": text}))
-                    .await
-                    .map(|_| ())
+            // Written THROUGH the approved node itself (resolved by its backend
+            // id in its own frame), never with tab-wide `Input.insertText`, so a
+            // frame that steals focus cannot receive the value.
+            let status = self
+                .call_on(
+                    &e,
+                    "function(v){ if (!this.isConnected) return 'detached';                      const p = this instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype                        : this instanceof HTMLInputElement ? HTMLInputElement.prototype : null;                      const fire = () => { this.dispatchEvent(new Event('input', {bubbles: true}));                        this.dispatchEvent(new Event('change', {bubbles: true})); };                      if (p) { const d = Object.getOwnPropertyDescriptor(p, 'value');                        if (!d || !d.set) return 'unsupported'; d.set.call(this, v); fire();                        return this.value === v ? 'ok' : 'nostick'; }                      if (this.isContentEditable) { this.textContent = v; fire();                        return this.textContent === v ? 'ok' : 'nostick'; }                      return 'unsupported'; }",
+                    &[json!(text)],
+                )
+                .await?;
+            match status.as_str() {
+                Some("ok") => Ok(()),
+                Some("detached") => Err(Error::Element(
+                    "the field is no longer attached to the page; nothing was typed".into(),
+                )),
+                Some("nostick") => Err(Error::Element(
+                    "the page did not accept the value (it may only take real key events); nothing was typed with the keyboard instead"
+                        .into(),
+                )),
+                _ => Err(Error::Element(
+                    "this kind of field cannot be filled with a secret".into(),
+                )),
             }
         }
         .await;

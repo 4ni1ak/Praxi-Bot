@@ -1198,10 +1198,19 @@ pub async fn fill_with_secret(
 ) -> Result<String, String> {
     let target = driver.field_target(r).await?;
     secrets
-        .check_browser(name, target.frame_origin.as_deref())
+        .check_browser_in(
+            name,
+            target.frame_origin.as_deref(),
+            target.top_origin.as_deref(),
+        )
         .map_err(|e| e.to_string())?;
     let value = secrets.resolve_value(name).map_err(|e| e.to_string())?;
-    let accept = |origin: Option<String>| secrets.check_browser(name, origin.as_deref()).is_ok();
+    let top = target.top_origin.clone();
+    let accept = |origin: Option<String>| {
+        secrets
+            .check_browser_in(name, origin.as_deref(), top.as_deref())
+            .is_ok()
+    };
     let result = driver.fill_secret(r, value.expose(), &accept).await;
     let shown = match result {
         Ok(text) => Ok(scrub(&text, &value)),
@@ -1270,7 +1279,11 @@ impl BrowserTool {
         // Refuse here, BEFORE any approval is offered, when the live frame is
         // not on this secret's allow-list.
         let grant = secrets
-            .check_browser(&name, target.frame_origin.as_deref())
+            .check_browser_in(
+                &name,
+                target.frame_origin.as_deref(),
+                target.top_origin.as_deref(),
+            )
             .map_err(|e| refused(&e))?;
         Ok(Some((name, target, grant)))
     }

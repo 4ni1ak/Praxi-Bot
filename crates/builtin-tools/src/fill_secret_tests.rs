@@ -259,17 +259,41 @@ async fn a_cross_origin_iframe_is_checked_by_its_own_origin() {
     assert!(r.fake.typed_secrets.lock().is_empty());
     assert!(!value_was_read(&r));
 
-    // Allowed frame inside a different top page: allowed, and the card says so.
+    // Allowed frame inside a NON-allowed top-level page: refused, no card.
     let r = rig_with(&[GITHUB], Some(GITHUB), Some("https://shop.test"), false);
-    let d = tool(&r.tools, "browser_fill")
+    let t = tool(&r.tools, "browser_fill");
+    assert!(
+        t.approval_details(&ToolContext::default(), &fill_secret_input())
+            .await
+            .is_err()
+    );
+    assert!(
+        t.call(&ToolContext::default(), fill_secret_input())
+            .await
+            .is_err()
+    );
+    assert!(r.fake.typed_secrets.lock().is_empty());
+    assert!(!value_was_read(&r));
+
+    // Both origins allowed but different: a card naming both is offered, and
+    // a standing grant for the frame origin does NOT apply to the embed.
+    let gist = "https://gist.github.com";
+    let r = rig_with(&[GITHUB, gist], Some(GITHUB), Some(gist), false);
+    r.secrets.grant_create("login/github", GITHUB).unwrap();
+    let t = tool(&r.tools, "browser_fill");
+    let d = t
         .approval_details(&ToolContext::default(), &fill_secret_input())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(d["frame_origin"], GITHUB);
-    assert_eq!(d["top_origin"], "https://shop.test");
+    assert_eq!(d["top_origin"], gist);
     assert_eq!(d["frame_differs_from_top"], true);
-    assert!(d["note"].as_str().unwrap().contains("embedded frame"));
+    assert!(
+        t.standing_grant(&ToolContext::default(), &fill_secret_input())
+            .await
+            .is_none()
+    );
 }
 
 /// Guard: a field on any other origin is refused BEFORE a card exists and
