@@ -58,6 +58,7 @@ import {
   routeHoverValues
 } from "../lib/route";
 import { useDaemon } from "../state/DaemonContext";
+import { cancelRun } from "../state/appStop";
 import { useProviders } from "../state/useProviders";
 import {
   assignChildRuns,
@@ -592,8 +593,10 @@ export function ChatView({
     if (!client || !activeRunId) {
       return;
     }
+    // Through the Stop ledger: the run is held (cannot act) at once and the cancel is
+    // retried with the same stop id until the daemon reports it terminal.
+    cancelRun(activeRunId);
     try {
-      await client.cancelRun(activeRunId);
       await refreshRuns();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -647,7 +650,7 @@ export function ChatView({
     if (!client) {
       return;
     }
-    await client.cancelRun(childRunId);
+    cancelRun(childRunId);
     await refreshRuns();
   };
 
