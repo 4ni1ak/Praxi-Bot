@@ -56,6 +56,7 @@ fn durable_audit_precedes_real_spawn_and_completion_refreshes_cached_detection()
         "cursor-agent",
         "opencode",
         "gemini",
+        "agy",
     ] {
         common::install_binary(
             binary,
