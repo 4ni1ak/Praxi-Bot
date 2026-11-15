@@ -304,6 +304,11 @@ impl TurnExecutor {
             let reason = format!("token budget exhausted: {tokens} >= {max_tokens}");
             return Ok(Some(Self::guard_step(&ctx, model_steps, &reason)));
         }
+        if model_steps == 0
+            && let Some(step) = self.knowledge_step(&ctx, history)
+        {
+            return Ok(Some(step));
+        }
         let cli_session = std::iter::once(&ctx.profile.models.executor)
             .chain(&ctx.profile.models.fallback)
             .any(|m| m.starts_with("cli:"));
@@ -804,6 +809,7 @@ impl TurnExecutor {
 
         let mut slots = Vec::with_capacity(calls.len());
         let mut uuids = Vec::with_capacity(calls.len());
+        let mut knowledge_requests = std::collections::HashMap::new();
         for call in &calls {
             let call_uuid = ToolCallId::new();
             uuids.push(call_uuid);
@@ -844,6 +850,16 @@ impl TurnExecutor {
                 .spec
                 .as_ref()
                 .is_some_and(|s| s.category == PermissionCategory::Meta);
+            if resolved.name == builtin_tools::knowledge::KNOWLEDGE_SEARCH
+                && let Ok(mut request) = serde_json::from_value::<
+                    memory_store::knowledge::SearchRequest,
+                >(resolved.input.clone())
+            {
+                request.max_bytes = request
+                    .max_bytes
+                    .min(self.sh.cfg.guards.spill_threshold_bytes);
+                knowledge_requests.insert(call_uuid, request);
+            }
             let decision = match &resolved.spec {
                 Some(spec) => self.sh.decide(
                     &ctx,
@@ -958,7 +974,7 @@ impl TurnExecutor {
         let ctx_ref: &RunCtx = &ctx;
         let outcomes = futures::future::join_all(slots.into_iter().map(|slot| async move {
             match slot {
-                Slot::Done { text, is_error } => (text, is_error, None, None),
+                Slot::Done { text, is_error } => (text, is_error, None, None, None),
                 Slot::Spawn {
                     input,
                     call,
@@ -966,12 +982,12 @@ impl TurnExecutor {
                     permit,
                 } => {
                     if let Err(reason) = commit_or_deny(permit) {
-                        return (user_denied(reason), true, None, None);
+                        return (user_denied(reason), true, None, None, None);
                     }
                     let (t, e, d) = self
                         .run_subagent(run, ctx_ref, call, &model_call_id, input)
                         .await;
-                    (t, e, d, None)
+                    (t, e, d, None, None)
                 }
                 Slot::Run {
                     tool,
@@ -984,7 +1000,7 @@ impl TurnExecutor {
                     // call. A deny that landed after approval does not run the
                     // tool and does not keep a grant (`commit` stores it).
                     if let Err(reason) = commit_or_deny(permit) {
-                        return (user_denied(reason), true, None, None);
+                        return (user_denied(reason), true, None, None, None);
                     }
                     self.run_tool(run, ctx_ref, call, &tool, input, meta).await
                 }
@@ -994,10 +1010,15 @@ impl TurnExecutor {
 
         let g = &self.sh.cfg.guards;
         let mut results = Vec::with_capacity(calls.len());
-        for ((call, call_uuid), (text, is_error, duration_ms, own_spill)) in
+        for ((call, call_uuid), (text, mut is_error, duration_ms, own_spill, provenance)) in
             calls.iter().zip(uuids).zip(outcomes)
         {
-            let text = self.sh.redact(text);
+            let mut text = self.sh.redact(text);
+            let knowledge_request = knowledge_requests.get(&call_uuid);
+            if !is_error && let Some(request) = knowledge_request {
+                text = crate::knowledge::rebudget_text(&text, request);
+                is_error = text == crate::knowledge::RETRIEVAL_UNAVAILABLE;
+            }
             let output_preview = preview(&text);
             // A tool that already spilled its own output is not spilled again.
             let (mut text, spill_path) = if own_spill.is_some() {
@@ -1005,7 +1026,9 @@ impl TurnExecutor {
             } else {
                 self.spill(run, call_uuid, text)
             };
-            if call.repeat >= g.repeat_warn {
+            // Keep a knowledge result valid, budgeted JSON. The existing hard
+            // repeat-stop guard still applies; no unbudgeted footer is appended.
+            if call.repeat >= g.repeat_warn && knowledge_request.is_none() {
                 let _ = write!(
                     text,
                     "\n[warning: this exact call has now been made {} times in a row; \
@@ -1023,14 +1046,25 @@ impl TurnExecutor {
                     duration_ms,
                 }),
             );
-            results.push(ResultRec {
+            let mut result = serde_json::to_value(ResultRec {
                 id: call.id.clone(),
                 call_uuid: call_uuid.into_inner(),
                 name: call.name.clone(),
                 is_error,
                 text,
                 spill_path,
+            })
+            .map_err(xe)?;
+            let provenance = provenance.or_else(|| {
+                // Discovery delegates through use_tool. This classification
+                // comes from its resolved target, never the returned bytes.
+                (duration_ms.is_some() && knowledge_request.is_some())
+                    .then(|| tool_registry::OutputProvenance::untrusted_private("knowledge"))
             });
+            if let Some(provenance) = provenance {
+                result["fact"] = provenance.executed();
+            }
+            results.push(result);
         }
         Ok(json!({ "results": results }))
     }
@@ -1043,7 +1077,13 @@ impl TurnExecutor {
         tool: &Arc<dyn Tool>,
         input: Value,
         meta: bool,
-    ) -> (String, bool, Option<u64>, Option<String>) {
+    ) -> (
+        String,
+        bool,
+        Option<u64>,
+        Option<String>,
+        Option<tool_registry::OutputProvenance>,
+    ) {
         let g = &self.sh.cfg.guards;
         let tctx = ToolContext {
             run_id: run.id.to_string(),
@@ -1053,6 +1093,7 @@ impl TurnExecutor {
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.
         let started = std::time::Instant::now();
+        let executed = std::sync::atomic::AtomicBool::new(false);
         let control = self.sh.control.read().clone();
         let outcome = crate::control::pause_aware_timeout(
             g.tool_timeout,
@@ -1067,6 +1108,7 @@ impl TurnExecutor {
                         .await
                         .map_err(tool_registry::ToolError::Execution)?;
                 }
+                executed.store(true, std::sync::atomic::Ordering::Relaxed);
                 tool.call(&tctx, input).await
             },
         )
@@ -1085,7 +1127,11 @@ impl TurnExecutor {
                 (render_output(&out), false)
             }
         };
-        (text, is_error, Some(duration_ms), own_spill)
+        let provenance = executed
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .then(|| tool.output_provenance())
+            .flatten();
+        (text, is_error, Some(duration_ms), own_spill, provenance)
     }
 
     /// Turn the structured output of a `Meta` tool into events: a todo list
