@@ -1297,6 +1297,8 @@ dependencies = [
  "futures",
  "parking_lot",
  "process-wrap",
+ "regex",
+ "secret-store",
  "serde",
  "serde_json",
  "tempfile",
