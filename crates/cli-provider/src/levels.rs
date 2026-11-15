@@ -172,7 +172,7 @@ impl Driver {
     #[must_use]
     pub const fn support(self) -> Support {
         match self {
-            Self::Gemini => Support::Experimental,
+            Self::Gemini | Self::OpenCode => Support::Experimental,
             _ => Support::Verified,
         }
     }
@@ -206,6 +206,8 @@ pub struct LevelPlan {
     pub flags: &'static [&'static str],
     /// ACP: accept every forwarded permission request without a card.
     pub acp_allow_all: bool,
+    /// `false` when Praxi cannot make the CLI honour `applied` (the turn is refused).
+    pub enforced: bool,
 }
 
 const fn plan(requested: ApprovalLevel, applied: ApprovalLevel, native: &'static str) -> LevelPlan {
@@ -218,6 +220,7 @@ const fn plan(requested: ApprovalLevel, applied: ApprovalLevel, native: &'static
         codex: None,
         flags: &[],
         acp_allow_all: false,
+        enforced: true,
     }
 }
 
@@ -289,7 +292,14 @@ pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
             },
         },
         Driver::OpenCode => match level {
-            Ask | AcceptEdits | Auto => plan(level, Ask, "every permission request asks"),
+            // OpenCode's default policy allows edits and shell without asking, and neither
+            // `opencode --help` nor the reference shows a per-run way to impose Ask, so no
+            // level below Full is offered or started.
+            Ask | AcceptEdits | Auto => LevelPlan {
+                offered: false,
+                enforced: false,
+                ..plan(level, Ask, "not enforceable: OpenCode allows edits and commands by default")
+            },
             Full => LevelPlan {
                 acp_allow_all: true,
                 ..plan(level, Full, "permission requests approved automatically")
@@ -423,7 +433,7 @@ mod tests {
             let p = level_plan(*driver, *level);
             assert_eq!(p.applied, *applied, "{driver:?} {level:?}");
             assert_eq!(p.native, *native, "{driver:?} {level:?}");
-            assert_eq!(p.offered, level == applied);
+            assert_eq!(p.offered, level == applied && p.enforced);
             if let Some(got) = acp_args(*driver, &p, None) {
                 assert_eq!(got, *argv, "{driver:?} {level:?}");
             }
@@ -451,5 +461,7 @@ mod tests {
             ["--model", "auto", "acp"]
         );
         assert_eq!(Driver::Gemini.support(), Support::Experimental);
+        assert_eq!(Driver::OpenCode.support(), Support::Experimental);
+        assert!(!level_plan(Driver::OpenCode, Ask).enforced);
     }
 }

@@ -120,7 +120,7 @@ export function BotEngineBlock({ bot }: { bot: Bot }) {
                         <code className={styles.setting}>
                           {row.offered
                             ? t("botEngine.level.maps", { cli: name, setting: row.native_setting })
-                            : t("botEngine.level.notOffered", { cli: name, applied: row.applied })}
+                            : t("botEngine.level.notOffered", { cli: name, applied: row.applied, setting: row.native_setting })}
                         </code>
                       </span>
                     </label>

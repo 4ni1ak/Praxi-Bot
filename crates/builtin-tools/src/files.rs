@@ -989,6 +989,13 @@ pub fn workspace_refusal(dir: &Path, data_dir: &Path) -> Option<&'static str> {
     workspace_refusal_with_home(dir, data_dir, home.as_deref())
 }
 
+/// Credential and tool-configuration folders (SSH, cloud, GPG, container, CLI settings).
+/// A workspace may not be one, sit inside one, or contain one under the home folder.
+const CREDENTIAL_DIRS: [&str; 12] = [
+    ".claude", ".codex", ".gemini", ".cursor", ".config", ".local", ".ssh", ".aws", ".gnupg",
+    ".azure", ".kube", ".docker",
+];
+
 fn workspace_refusal_with_home(
     dir: &Path,
     data_dir: &Path,
@@ -1013,6 +1020,18 @@ fn workspace_refusal_with_home(
     if parts.starts_with(&data_parts) || data_parts.starts_with(&parts) {
         return Some("the workspace cannot contain or be inside Praxi's data folder");
     }
+    let named = |p: &Path| {
+        p.components().any(|c| match c {
+            Component::Normal(n) => {
+                let n = n.to_string_lossy().to_ascii_lowercase();
+                CREDENTIAL_DIRS.contains(&n.as_str()) || n == "gcloud"
+            }
+            _ => false,
+        })
+    };
+    if named(&real) || named(dir) {
+        return Some("the workspace cannot be or sit inside a credential or tool settings folder");
+    }
     if is_protected(&real, data_dir) || is_protected(dir, data_dir) {
         return Some("the workspace cannot be a credential or CLI configuration location");
     }
@@ -1022,9 +1041,7 @@ fn workspace_refusal_with_home(
             return Some("the home folder (or a folder containing it) cannot be a workspace");
         }
         // The CLIs keep credentials and configuration under these folders.
-        for name in [
-            ".claude", ".codex", ".gemini", ".cursor", ".config", ".local",
-        ] {
+        for name in CREDENTIAL_DIRS {
             if norm_parts(&widen_for_compare(&home.join(name))).starts_with(&parts) {
                 return Some("the workspace cannot contain a CLI configuration folder");
             }
@@ -5654,6 +5671,11 @@ mod workspace_refusal_tests {
         assert!(check(&home).is_some(), "home folder");
         assert!(check(tmp.path()).is_some(), "parent of home");
         assert!(check(&home.join(".claude")).is_some(), "CLI configuration");
+        for name in [".ssh", ".aws", ".gnupg"] {
+            fs::create_dir_all(home.join(name).join("sub")).unwrap();
+            assert!(check(&home.join(name)).is_some(), "{name}");
+            assert!(check(&home.join(name).join("sub")).is_some(), "inside {name}");
+        }
         let root = tmp.path().ancestors().last().unwrap();
         assert!(check(root).is_some(), "drive root");
     }

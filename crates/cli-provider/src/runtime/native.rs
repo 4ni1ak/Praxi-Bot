@@ -147,11 +147,27 @@ async fn session(
     stop: CancellationToken,
 ) -> Result<TurnUsage, CliError> {
     let driver = nt.driver;
+    if !nt.workspace.is_dir() {
+        return Err(CliError::WorkspaceUnavailable);
+    }
+    // The bot can write into its workspace, so nothing in it may be what runs with the
+    // owner's authority: PATH entries inside it are dropped (for the child too) and the
+    // resolved program and shim targets must lie outside it.
+    let workspace = std::fs::canonicalize(&nt.workspace).map_err(|_| CliError::WorkspaceUnavailable)?;
+    let inside = |p: &std::path::Path| {
+        std::fs::canonicalize(p).is_ok_and(|real| real.starts_with(&workspace))
+    };
+    let mut env = env.clone();
+    env.path_dirs.retain(|dir| !inside(dir));
+    let env = &env;
     // Only the configured command: the generic `agent` alias is not proof of Cursor.
     let candidate = find_candidate(command, env).ok_or(CliError::NotInstalled)?;
     let resolved = resolve_spawn(&candidate, env).map_err(|_| CliError::ShimRefused)?;
-    if !nt.workspace.is_dir() {
-        return Err(CliError::WorkspaceUnavailable);
+    if inside(&candidate)
+        || inside(&resolved.program)
+        || resolved.args.iter().any(|a| inside(std::path::Path::new(a)))
+    {
+        return Err(CliError::ShimRefused);
     }
     #[cfg(windows)]
     let (resolved, executable_lock) = crate::detect::lock_executable(resolved)?;
@@ -176,6 +192,10 @@ async fn session(
     let pin = binary_pin(&resolved.program).ok_or(CliError::NotInstalled)?;
     let version = native_version(driver, &resolved, env).await?;
     let plan = level_plan(driver, nt.level);
+    if !plan.enforced {
+        // Never start a CLI below a level Praxi cannot make it keep.
+        return Err(CliError::NativeToolsOpen);
+    }
     let mut claude_mode_arg = String::new();
     if driver == Driver::Claude {
         let help = crate::detect::claude_help(&resolved, env)
@@ -443,6 +463,7 @@ impl Run<'_> {
         .await?;
         let mut usage = TurnUsage::default();
         let mut thread: Option<String> = None;
+        let mut file_changes = std::collections::HashMap::<String, Value>::new();
         loop {
             let v = frames.next().await?;
             if v.get("method").is_none() && (v.get("error").is_some() || v["is_error"] == true) {
@@ -545,15 +566,17 @@ impl Run<'_> {
                     } else {
                         "shell"
                     };
-                    let input = json!({"command":p["command"],"cwd":p["cwd"],"reason":p["reason"],"server":p["server"],"tool":p["tool"]});
-                    let summary = describe(tool, &input);
-                    let allow = self
-                        .allowed(NativePermission {
-                            tool: tool.into(),
-                            summary,
-                            input,
-                        })
-                        .await;
+                    let allow = match codex_card(tool, legacy, p, &file_changes) {
+                        Some(input) => {
+                            self.allowed(NativePermission {
+                                tool: tool.into(),
+                                summary: describe(tool, &input),
+                                input,
+                            })
+                            .await
+                        }
+                        None => false,
+                    };
                     let result = if tool == "permissions" {
                         json!({"permissions":if allow {p["permissions"].clone()} else {json!({})},"scope":"turn"})
                     } else if legacy {
@@ -562,6 +585,14 @@ impl Run<'_> {
                         json!({"decision":if allow {"accept"} else {"decline"}})
                     };
                     send(stdin, json!({"jsonrpc":"2.0","id":id,"result":result})).await?;
+                }
+                "item/started" | "item/completed" => {
+                    let item = &p["item"];
+                    if item["type"] == "fileChange"
+                        && let Some(item_id) = item["id"].as_str()
+                    {
+                        file_changes.insert(item_id.to_owned(), item["changes"].clone());
+                    }
                 }
                 "mcpServer/elicitation/request" => {
                     send(
@@ -625,7 +656,11 @@ impl Run<'_> {
                                 input,
                             })
                             .await;
-                        let outcome = acp_outcome(&v["params"]["options"], allow);
+                        let outcome = acp_outcome(
+                            &v["params"]["options"],
+                            allow,
+                            self.plan.applied == ApprovalLevel::Full,
+                        );
                         send(
                             stdin,
                             json!({"jsonrpc":"2.0","id":id,"result":{"outcome":outcome}}),
@@ -685,20 +720,89 @@ impl Run<'_> {
     }
 }
 
-/// ACP permission answer: an allow or reject option the agent offered, else cancelled.
-fn acp_outcome(options: &Value, allow: bool) -> Value {
+/// ACP permission answer. Below Full only the agent's "once" options are used, so a
+/// single approval never becomes a remembered grant; without one the request is cancelled.
+fn acp_outcome(options: &Value, allow: bool, full: bool) -> Value {
     let want = if allow { "allow" } else { "reject" };
     let list = options.as_array().map_or(&[][..], Vec::as_slice);
-    let pick = list
-        .iter()
-        .find(|o| o["kind"] == format!("{want}_once"))
+    let once = list.iter().find(|o| o["kind"] == format!("{want}_once"));
+    let pick = once
         .or_else(|| {
-            list.iter()
-                .find(|o| o["kind"].as_str().is_some_and(|k| k.starts_with(want)))
+            full.then(|| {
+                list.iter()
+                    .find(|o| o["kind"].as_str().is_some_and(|k| k.starts_with(want)))
+            })
+            .flatten()
         })
         .and_then(|o| o["optionId"].as_str());
     match pick {
         Some(option_id) => json!({"outcome":"selected","optionId":option_id}),
         None => json!({"outcome":"cancelled"}),
+    }
+}
+
+/// What a Codex approval request grants, as the card must show it. `None` when the
+/// action cannot be reconstructed exactly (the request is then declined, never asked).
+fn codex_card(
+    tool: &str,
+    legacy: bool,
+    p: &Value,
+    file_changes: &std::collections::HashMap<String, Value>,
+) -> Option<Value> {
+    let input = match tool {
+        "permissions" => {
+            p["permissions"].as_object().filter(|o| !o.is_empty())?;
+            json!({"permissions":p["permissions"],"reason":p["reason"],"cwd":p["cwd"]})
+        }
+        "edit" => {
+            let changes = if legacy {
+                p["fileChanges"].clone()
+            } else {
+                file_changes.get(p["itemId"].as_str()?)?.clone()
+            };
+            if changes.is_null() {
+                return None;
+            }
+            json!({"changes":changes,"grantRoot":p["grantRoot"],"reason":p["reason"]})
+        }
+        "mcp" => {
+            p["server"].as_str()?;
+            p["tool"].as_str()?;
+            p.clone()
+        }
+        _ => {
+            if p["command"].is_null() {
+                return None;
+            }
+            p.clone()
+        }
+    };
+    (input.to_string().len() <= 64 * 1024).then_some(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acp_never_selects_a_remembered_grant_below_full_access() {
+        let only_always = json!([{"optionId":"a","kind":"allow_always"},{"optionId":"r","kind":"reject_once"}]);
+        assert_eq!(acp_outcome(&only_always, true, false)["outcome"], "cancelled");
+        assert_eq!(acp_outcome(&only_always, true, true)["optionId"], "a");
+        let both = json!([{"optionId":"a","kind":"allow_always"},{"optionId":"o","kind":"allow_once"}]);
+        assert_eq!(acp_outcome(&both, true, false)["optionId"], "o");
+    }
+
+    #[test]
+    fn codex_cards_show_the_grant_or_the_request_is_declined() {
+        let none = std::collections::HashMap::new();
+        let grant = json!({"permissions":{"fileSystem":{"write":["/etc"]}},"reason":"x"});
+        let card = codex_card("permissions", false, &grant, &none).unwrap();
+        assert_eq!(card["permissions"]["fileSystem"]["write"][0], "/etc");
+        assert!(codex_card("permissions", false, &json!({"reason":"x"}), &none).is_none());
+        // A file change whose proposed changes were never seen cannot be approved.
+        assert!(codex_card("edit", false, &json!({"itemId":"i1"}), &none).is_none());
+        let seen = std::collections::HashMap::from([("i1".to_owned(), json!([{"path":"a"}]))]);
+        assert!(codex_card("edit", false, &json!({"itemId":"i1","grantRoot":"/r"}), &seen).is_some());
     }
 }

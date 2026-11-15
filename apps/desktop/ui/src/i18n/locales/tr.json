@@ -1914,7 +1914,7 @@
         "text": "Onay istemi yok. CLI sormadan dosyaları değiştirebilir ve komut çalıştırabilir."
       },
       "maps": "{{cli}} ayarı: {{setting}}",
-      "notOffered": "{{cli}} bu kipe sahip değil; {{applied}} olarak çalışırdı."
+      "notOffered": "{{cli}} bu düzeyi sağlayamaz ({{setting}}); {{applied}} olarak çalışırdı, bu yüzden sunulmuyor."
     },
     "workspace": "Çalışma klasörü",
     "workspacePlaceholder": "Mutlak yol, örneğin C:/Projeler/uygulamam",

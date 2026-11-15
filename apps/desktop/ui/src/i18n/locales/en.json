@@ -1914,7 +1914,7 @@
         "text": "No approval prompts. The CLI can change files and run commands without asking."
       },
       "maps": "{{cli}} setting: {{setting}}",
-      "notOffered": "{{cli}} has no such mode; it would run as {{applied}}."
+      "notOffered": "{{cli}} cannot hold this level ({{setting}}); it would run as {{applied}}, so it is not offered."
     },
     "workspace": "Workspace folder",
     "workspacePlaceholder": "Absolute path, for example C:/Projects/my-app",

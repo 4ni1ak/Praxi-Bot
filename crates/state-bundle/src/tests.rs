@@ -1582,3 +1582,25 @@ async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert(
             .any(|g| g.computer.as_deref() == Some(&format!("host:{b}")))
     );
 }
+
+#[tokio::test]
+async fn imported_bots_lose_engine_settings_and_consent() {
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), true);
+    let conn = Connection::open(source.path().join("bot.db")).unwrap();
+    conn.execute(
+        "UPDATE bots SET config = ?1",
+        [r#"{"model":"fake","engine":{"mode":"native_tools","approval_level":"full","workspace":"C:/x","consent":{"native_tools_at_ms":1,"full_access_at_ms":1}}}"#],
+    )
+    .unwrap();
+    drop(conn);
+    let bytes = bundle(source.path()).await;
+    let target = tempfile::tempdir().unwrap();
+    import(target.path(), &MemoryStore::new(), bytes.as_slice(), ImportOptions::default())
+        .await
+        .unwrap();
+    let conn = Connection::open(target.path().join("bot.db")).unwrap();
+    let config: String = conn.query_row("SELECT config FROM bots", [], |r| r.get(0)).unwrap();
+    assert!(!config.contains("engine") && !config.contains("consent"), "{config}");
+    assert!(config.contains("\"model\":\"fake\""));
+}

@@ -307,6 +307,9 @@ mod tests {
             )
             .is_err()
         );
+        // OpenCode cannot be held below Full, so Ask is refused; Full needs its consent.
+        assert!(go(&input("native_tools", None, &work, true, false), &cur, "cli:opencode").is_err());
+        assert!(go(&input("native_tools", Some("full"), &work, true, true), &cur, "cli:opencode").is_ok());
         // Going back to Praxi-governed resets everything, no consent needed.
         assert_eq!(
             go(

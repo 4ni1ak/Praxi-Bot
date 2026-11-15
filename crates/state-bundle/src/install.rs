@@ -91,6 +91,32 @@ fn incompatible_schema(db: &str, found: u32, supported: u32) -> ImportError {
 /// becomes the inert `imported_note` role that is never sent to the model, and
 /// is never turned into a user message, which would carry the owner's
 /// authority. Nothing is deleted.
+/// Engine settings and consent are written only by the local owner's engine route.
+/// An imported bot comes back Praxi-governed / Ask / no consent, whatever the
+/// bundle says: consent cannot travel in a file.
+fn reset_imported_engines(conn: &Connection) -> rusqlite::Result<()> {
+    let rows: Vec<(String, String)> = {
+        let mut stmt = conn.prepare("SELECT id, config FROM bots")?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    for (id, config) in rows {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&config) else {
+            continue;
+        };
+        if value
+            .as_object_mut()
+            .is_some_and(|o| o.remove("engine").is_some())
+        {
+            conn.execute(
+                "UPDATE bots SET config = ?2 WHERE id = ?1",
+                rusqlite::params![id, value.to_string()],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn neutralise_system_messages(conn: &Connection) -> rusqlite::Result<()> {
     let rows: Vec<(String, String, String)> = {
         let mut stmt = conn.prepare(
@@ -168,6 +194,7 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
             let conn = open()?;
             validate_run_ancestry(&conn)?;
             neutralise_system_messages(&conn).map_err(|error| database_error(db, error))?;
+            reset_imported_engines(&conn).map_err(|error| database_error(db, error))?;
             drop(conn);
         }
         "schedules.db" => {
