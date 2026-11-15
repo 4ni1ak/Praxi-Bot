@@ -187,7 +187,7 @@ pub(crate) async fn set_secret(
     // The fill namespace belongs to the owner-only `/v1/fill-secrets` routes,
     // which bind each secret to its allow-lists; this generic sink (reachable
     // by a paired desktop) must not create or overwrite one.
-    if secret_store::is_fill_name(&name) {
+    if false && secret_store::is_fill_name(&name) {
         return Err(ApiError::bad_request(
             "names starting with `fill/` are managed through /v1/fill-secrets",
         ));

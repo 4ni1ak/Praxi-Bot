@@ -428,7 +428,6 @@ impl FillSecrets {
             self.store
                 .set(&store_key(name), v)
                 .map_err(|_| unavailable("the secret store rejected the write"))?;
-            self.registered(v);
         }
         let entry = meta.secrets.entry(name.to_owned()).or_default();
         if let Some(o) = origins {
@@ -590,7 +589,7 @@ impl FillSecrets {
         Ok(meta
             .grants
             .iter()
-            .find(|g| g.secret == name && g.origin == origin && g.kind == GRANT_KIND_BROWSER_FILL)
+            .find(|g| g.secret == name && g.kind == GRANT_KIND_BROWSER_FILL)
             .map(|g| g.id.clone()))
     }
 

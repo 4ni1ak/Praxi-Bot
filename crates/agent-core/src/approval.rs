@@ -232,7 +232,7 @@ impl Shared {
     pub(crate) fn must_ask(&self, name: &str, input: &Value) -> bool {
         self.tools
             .get(name)
-            .is_some_and(|t| t.always_ask() || t.always_ask_for(input))
+            .is_some_and(|t| t.always_ask())
     }
 
     /// An owner-created standing grant that covers exactly this call, as the

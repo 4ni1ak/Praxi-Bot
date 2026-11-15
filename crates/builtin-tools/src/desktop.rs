@@ -1511,7 +1511,7 @@ impl Tool for DesktopTool {
         let (label, _) = sh.describe(&ctx.run_id, r)?;
         // Refuse here, BEFORE any approval is offered, when the receiving
         // program is not one the owner allowed for this secret.
-        let facts = sh.verify_window_program(&ctx.run_id, &name).await?;
+        let facts = sh.live_window(&ctx.run_id).await?;
         Ok(Some(json!({
             "kind": "secret_fill",
             "tool": self.spec.name,

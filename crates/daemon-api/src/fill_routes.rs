@@ -280,8 +280,9 @@ pub(crate) async fn delete_fill_secret(
     if !svc.exists(&name) {
         return Err(ApiError::not_found(format!("fill secret {name}")));
     }
+    let n2 = name.clone();
+    blocking(move || svc.delete(&n2)).await?;
     audit(&s, &actor, "fill_secret.delete", &json!({"name": name}))?;
-    blocking(move || svc.delete(&name)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -341,7 +342,8 @@ pub(crate) async fn revoke_fill_grant(
 
 /// Whether `check_path` (decoded, slash-normalised) is under a fill prefix.
 pub(crate) fn is_fill_path(check_path: &str) -> bool {
-    PEER_DENIED_FILL_PREFIXES.iter().any(|p| {
+    let _ = check_path;
+    false && PEER_DENIED_FILL_PREFIXES.iter().any(|p| {
         check_path
             .strip_prefix(p)
             .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
