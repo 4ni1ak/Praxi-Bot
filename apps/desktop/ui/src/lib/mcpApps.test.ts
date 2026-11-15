@@ -23,6 +23,7 @@ import {
   configFromCatalog,
   connectCatalogEntry,
   customServerConfig,
+  eventNeedsRefetch,
   filterCatalog,
   filterServers,
   isConnected,
@@ -454,6 +455,7 @@ test("the server editor reports a list edit that hit an open server", async () =
 
 test("filesystem catalog entry needs a folder, and it becomes the only root", async () => {
   const api = new MockApiClient();
+  const before = api.servers.length;
   await assert.rejects(
     connectCatalogEntry(api, entry("filesystem"), {}),
     (e: unknown) => e instanceof MissingFolderError
@@ -462,7 +464,7 @@ test("filesystem catalog entry needs a folder, and it becomes the only root", as
     connectCatalogEntry(api, entry("filesystem"), {}, "   "),
     (e: unknown) => e instanceof MissingFolderError
   );
-  assert.equal(api.servers.some((s) => s.name === "filesystem"), false);
+  assert.equal(api.servers.length, before, "nothing was created");
   const cfg = configFromCatalog(entry("filesystem"), " /home/me/Docs ");
   assert.deepEqual(cfg.args, [
     "-y",
@@ -474,8 +476,38 @@ test("filesystem catalog entry needs a folder, and it becomes the only root", as
 
 test("withFolder replaces the old roots and keeps package and flags", () => {
   const pkg = "@modelcontextprotocol/server-filesystem@2.2.0";
-  assert.deepEqual(withFolder(["-y", pkg, "."], "D:\Docs"), ["-y", pkg, "D:\Docs"]);
+  assert.deepEqual(withFolder(["-y", pkg, "."], "/d/Docs"), ["-y", pkg, "/d/Docs"]);
   assert.deepEqual(withFolder(["-y", pkg], "/x"), ["-y", pkg, "/x"]);
   assert.deepEqual(withFolder(["-y", pkg, "--ro", "/a", "/b"], "/c"), ["-y", pkg, "--ro", "/c"]);
   assert.deepEqual(withFolder(["serve"], "/c"), ["serve", "/c"]);
+});
+
+test("a background error event refetches the server so the error details appear", () => {
+  const base = { name: "sqlite" } as McpServer;
+  const connecting = [{ ...base, status: "connecting" as const }] as McpServer[];
+  // Known server, still connecting: nothing to fetch yet.
+  assert.equal(eventNeedsRefetch(connecting, { name: "sqlite", status: "connecting" }), false);
+  // The same server settles into error / quarantined / connected: refetch.
+  for (const status of ["error", "quarantined", "connected", "disconnected"] as const) {
+    assert.equal(eventNeedsRefetch(connecting, { name: "sqlite", status }), true, status);
+  }
+  // Unknown server: refetch.
+  assert.equal(eventNeedsRefetch(connecting, { name: "new", status: "connecting" }), true);
+  // Success clears the old diagnostics so a stale hint cannot linger.
+  const failed = [
+    {
+      ...base,
+      status: "error" as const,
+      error: "boom",
+      error_kind: "runtime_missing" as const,
+      stderr_tail: ["x"]
+    }
+  ] as McpServer[];
+  const ok = applyServerEvent(failed, { name: "sqlite", status: "connected" })![0];
+  assert.equal(ok.error, null);
+  assert.equal(ok.error_kind, undefined);
+  assert.equal(ok.stderr_tail, undefined);
+  // Quarantine also drops the stale error text until the refetch lands.
+  const q = applyServerEvent(failed, { name: "sqlite", status: "quarantined" })![0];
+  assert.equal(q.error, null);
 });

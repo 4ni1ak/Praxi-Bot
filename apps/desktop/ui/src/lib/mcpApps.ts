@@ -549,7 +549,29 @@ export function applyServerEvent(
   }
   return servers.map((s) =>
     s.name === ev.name
-      ? { ...s, status: ev.status, error: ev.status === "error" ? s.error : null }
+      ? {
+          ...s,
+          status: ev.status,
+          error: ev.status === "error" ? s.error : null,
+          // Diagnostics belong to the error they explain.
+          error_kind: ev.status === "error" ? s.error_kind : undefined,
+          stderr_tail: ev.status === "error" ? s.stderr_tail : undefined
+        }
       : s
+  );
+}
+
+/**
+ * Whether the authoritative server DTO must be refetched after `ev`. The event
+ * carries only name and status, so any settled transition (error, quarantine,
+ * connected, disconnected) of a known server needs the fresh `error`,
+ * `error_kind` and `stderr_tail`; only "connecting" is final-state free.
+ */
+export function eventNeedsRefetch(
+  servers: McpServer[],
+  ev: { name: string; status: McpStatus }
+): boolean {
+  return (
+    !servers.some((s) => s.name === ev.name) || ev.status !== "connecting"
   );
 }

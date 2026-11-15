@@ -2381,6 +2381,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            folder?: null | components["schemas"]["McpFolderDto"];
             /** @description Secrets to collect first. */
             required_secrets: components["schemas"]["McpRequiredSecretDto"][];
             /** @description Environment variable -> secret name (stdio). */
@@ -2401,7 +2402,17 @@ export interface components {
          *     localized "what to do" next to the raw `error` text.
          * @enum {string}
          */
-        McpErrorKind: "runtime_missing" | "spawn" | "closed" | "timeout" | "config" | "other";
+        McpErrorKind: "runtime_missing" | "spawn" | "closed" | "timeout" | "config" | "needs_folder" | "other";
+        /**
+         * @description A folder the user must choose when adding a catalog entry; the app appends
+         *     it as the last argument.
+         */
+        McpFolderDto: {
+            /** @description Label of the folder field. */
+            label: string;
+            /** @description A safe default offered to the user (their Documents folder), if there is one. */
+            suggestion?: string | null;
+        };
         /** @description A secret the user must provide to install a catalog entry. */
         McpRequiredSecretDto: {
             /** @description Where the user can get the value. */

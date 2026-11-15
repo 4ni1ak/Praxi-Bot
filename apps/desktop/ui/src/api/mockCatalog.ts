@@ -22,7 +22,7 @@ export const MOCK_MCP_CATALOG: McpCatalogEntry[] = [
       "required_secrets": [],
       "folder": {
         "label": "Folder the bot may read and write",
-        "suggestion": "C:\Users\you\Documents"
+        "suggestion": "/home/you/Documents"
       }
     }
   },

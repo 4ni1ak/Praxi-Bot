@@ -53,6 +53,7 @@ import {
   shouldOverrideOnStop,
   type LiveViewControllerState
 } from "../lib/liveViewState.ts";
+import type { TargetsStatus } from "../lib/computerLabel.ts";
 import {
   type ClearTarget,
   runClearPause,
@@ -87,6 +88,7 @@ interface LiveViewContextValue {
   frameUrl: string | null;
   viewerOpen: boolean;
   loadingTargets: boolean;
+  targetsStatus: TargetsStatus;
   panelAction: PanelActionHighlight | null;
   recoveryPrompt: RecoveryPrompt | null;
   openViewer: (targetId?: string) => void;
@@ -149,6 +151,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   const [targets, setTargets] = useState<TargetInfo[]>([]);
   const [loadingTargets, setLoadingTargets] = useState(false);
+  const [targetsStatus, setTargetsStatus] = useState<TargetsStatus>("unknown");
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
     null
@@ -278,6 +281,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         client.getControlState().catch(() => null)
       ]);
       setTargets(nextTargets);
+      setTargetsStatus("ok");
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
         setControlStateRaw(nextCtrl);
@@ -286,6 +290,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       }
     } catch {
       // keep existing snapshot; next poll/action retries
+      setTargetsStatus("failed");
     } finally {
       setLoadingTargets(false);
     }
@@ -295,6 +300,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!client) {
       setTargets([]);
+      setTargetsStatus("unknown");
       setControlState(null);
       updateState(createInitialLiveViewState(null));
       return undefined;
@@ -1017,6 +1023,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       frameUrl,
       viewerOpen,
       loadingTargets,
+      targetsStatus,
       panelAction,
       recoveryPrompt,
       openViewer,
@@ -1047,6 +1054,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       frameUrl,
       viewerOpen,
       loadingTargets,
+      targetsStatus,
       panelAction,
       recoveryPrompt,
       openViewer,
