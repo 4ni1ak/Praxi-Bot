@@ -2401,8 +2401,8 @@ async fn listing_saved_workflows_makes_a_later_waived_shell_ask() {
 }
 
 /// A model-called `workflow_run` marks the run untrusted before its first
-/// step (workflow-replay tool.rs), so a replayed shell step asks under the
-/// waiver. The routed `/workflow` path is covered in router_tests.rs.
+/// step (the `workflow-replay` tool), so a replayed shell step asks under the
+/// waiver. The routed `/workflow` path is covered in `router_tests.rs`.
 #[tokio::test]
 async fn a_replayed_shell_step_asks_under_the_waiver() {
     use workflow_replay::{Handles, Step, ToolStep, Workflow, WorkflowStore};
