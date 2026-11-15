@@ -28,6 +28,13 @@ pub struct PeerIdentity {
 /// Future host transfer endpoints forbidden to phones.
 pub const PHONE_DENIED_POST_PATHS: &[&str] = &["/v1/host/import", "/v1/host/handover"];
 
+/// `POST /v1/runs/stop`: only phones and desktops may stop runs (and then only
+/// with scope `listed`: the handler refuses `all_existing` to every peer). The
+/// request is attributed in the audit log like an approval. Pinned here so the
+/// route stays closed to node and host peers even if the blanket role rule
+/// below is ever loosened.
+pub const PEER_RUN_STOP_PATH: &str = "/v1/runs/stop";
+
 /// Host-local provider management endpoints forbidden to ALL paired peers.
 pub const PEER_DENIED_POST_PATHS: &[&str] = &["/v1/providers/cli/enable", "/v1/providers/reload"];
 
@@ -100,6 +107,25 @@ fn answers_overlay_question(path: &str) -> bool {
         .is_some_and(|rest| uuid::Uuid::parse_str(rest).is_ok())
 }
 
+/// `POST /v1/runs/stop` from a role that may not stop runs.
+fn stop_refused(method: &Method, check_path: &str, role: PeerRole) -> bool {
+    *method == Method::POST
+        && check_path == PEER_RUN_STOP_PATH
+        && !matches!(role, PeerRole::Desktop | PeerRole::Phone)
+}
+
+// File contents and host restores require a desktop user.
+fn host_file_review(path: &str) -> bool {
+    path.starts_with("/v1/runs/") && path.split('/').nth(4) == Some("changes")
+}
+
+/// `/v1/bots/{id}/skills` mutates a bot's prompt-trust boundary.
+fn is_bot_skills_path(path: &str) -> bool {
+    path.strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.strip_suffix("/skills"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(peer) = req.extensions().get::<PeerIdentity>().cloned() else {
         return ApiError::forbidden("paired peer identity required").into_response();
@@ -115,12 +141,15 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::forbidden(why).into_response();
     }
     let denied = peer.role != PeerRole::Desktop
-        && (peer.role != PeerRole::Phone
+        && (host_file_review(&check_path)
+            || peer.role != PeerRole::Phone
             || (req.method() == Method::POST
                 && PHONE_DENIED_POST_PATHS.contains(&check_path.as_str()))
             || (matches!(*req.method(), Method::POST | Method::PUT)
-                && check_path.starts_with("/v1/secrets")));
-    if denied {
+                && check_path.starts_with("/v1/secrets"))
+            || (req.method() != Method::GET
+                && (is_bot_skills_path(&check_path) || check_path == "/v1/skills")));
+    if denied || stop_refused(req.method(), &check_path, peer.role) {
         return ApiError::forbidden("peer role does not allow this operation").into_response();
     }
     if req.method() == Method::POST && answers_overlay_question(&check_path) {
@@ -171,7 +200,8 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         && !refused_control
         && (path.starts_with("/v1/approvals/")
             || path.starts_with("/v1/questions/")
-            || path.starts_with("/v1/control/")))
+            || path.starts_with("/v1/control/")
+            || check_path == PEER_RUN_STOP_PATH))
         || control_transition
     {
         let role = if peer.role == PeerRole::Phone {
@@ -202,4 +232,32 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             &serde_json::json!({"peer_key":peer.key,"path":path,"status":response.status().as_u16()}),
         ) { return ApiError::internal(error).into_response(); }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_phone_and_desktop_may_post_run_stop() {
+        for (role, refused) in [
+            (PeerRole::Phone, false),
+            (PeerRole::Desktop, false),
+            (PeerRole::Node, true),
+            (PeerRole::Host, true),
+        ] {
+            assert_eq!(
+                stop_refused(&Method::POST, PEER_RUN_STOP_PATH, role),
+                refused,
+                "{role:?}"
+            );
+        }
+        // Other paths and methods are not this rule's business.
+        assert!(!stop_refused(&Method::POST, "/v1/runs", PeerRole::Node));
+        assert!(!stop_refused(
+            &Method::GET,
+            PEER_RUN_STOP_PATH,
+            PeerRole::Node
+        ));
+    }
 }

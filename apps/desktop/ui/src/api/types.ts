@@ -231,6 +231,14 @@ export type DaemonEvent =
       reason: string;
     }
   | {
+      type: "checkpoint_restored";
+      run_id: string;
+      checkpoint_id: string;
+      safety_checkpoint_id: string;
+      partial?: boolean;
+      restored: string[];
+    }
+  | {
       type: "control_requested";
       request_id: string;
       run_id: string;
@@ -311,3 +319,28 @@ export type WebSearchConfig = S["WebSearchConfigDto"];
 export type WebSearchConfigInput = S["WebSearchConfigInput"];
 export type WebSearchTestInput = S["WebSearchTestInput"];
 export type WebSearchTestReport = S["WebSearchTestReport"];
+
+export type ChangeKind = S["ChangeKindDto"];
+export type DiffOmittedReason = S["DiffOmittedReasonDto"];
+export type UnifiedDiff = S["UnifiedDiffDto"];
+export type FileChange = S["FileChangeDto"];
+export type RunChanges = S["RunChangesDto"];
+export type RestoreAction = S["RestoreActionDto"];
+export type RestorePreviewEntry = S["RestorePreviewEntryDto"];
+export type RestorePreview = S["RestorePreviewDto"];
+export type RestoreRequest = S["RestoreRequestDto"];
+export type RestoreResponse = S["RestoreResponseDto"];
+export type SkillAssignmentMode = S["SkillAssignmentModeDto"];
+export type SkillScope = S["SkillScope"];
+export type SkillRequires = S["SkillRequiresDto"];
+export type SkillHubInfo = S["SkillHubInfoDto"];
+export type CatalogSkill = S["CatalogSkillDto"];
+export type SkillIssueScope = S["SkillIssueScope"];
+export type SkillIssue = S["SkillIssueDto"];
+export type SkillsCatalog = S["SkillsCatalogDto"];
+export type AssignedSkillState = S["AssignedSkillState"];
+export type AssignedSkill = S["AssignedSkillDto"];
+export type AvailableSkill = S["AvailableSkillDto"];
+export type OwnSkill = S["OwnSkillDto"];
+export type BotSkills = S["BotSkillsDto"];
+export type PutBotSkillsInput = S["PutBotSkillsInput"];

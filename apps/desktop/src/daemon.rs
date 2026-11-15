@@ -81,10 +81,38 @@ fn port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
-fn base_url() -> String {
+/// The daemon the UI may talk to. The webview CSP (`connect-src` in
+/// `tauri.conf.json`) only allows loopback origins, so a `BOT_URL` that points
+/// anywhere else would be blocked by the webview with no useful error. It is
+/// refused here instead, with a message that says why.
+fn base_url() -> Result<String, String> {
     match std::env::var("BOT_URL") {
-        Ok(u) if !u.trim().is_empty() => u.trim().trim_end_matches('/').to_owned(),
-        _ => format!("http://127.0.0.1:{}", port()),
+        Ok(u) if !u.trim().is_empty() => validate_bot_url(u.trim()),
+        _ => Ok(format!("http://127.0.0.1:{}", port())),
+    }
+}
+
+/// Accepts `http://127.0.0.1:PORT`, `http://localhost:PORT` and `http://[::1]:PORT`
+/// (optionally with a path, which is dropped); everything else is an error.
+fn validate_bot_url(url: &str) -> Result<String, String> {
+    let url = url.trim_end_matches('/');
+    let loopback = host_port(url)
+        .and_then(|hp| {
+            hp.rsplit_once(':')
+                .map(|(h, p)| (h.to_owned(), p.to_owned()))
+        })
+        .is_some_and(|(host, port)| {
+            matches!(host.as_str(), "127.0.0.1" | "localhost" | "[::1]")
+                && port.parse::<u16>().is_ok()
+        });
+    if loopback {
+        Ok(url.to_owned())
+    } else {
+        Err(format!(
+            "BOT_URL must be http://127.0.0.1:PORT, http://localhost:PORT or http://[::1]:PORT \
+             (got {url}): the desktop app only connects to a daemon on this machine, \
+             because its content security policy blocks every other origin"
+        ))
     }
 }
 
@@ -373,7 +401,7 @@ pub async fn restart(handle: &DaemonHandle) -> Result<Connection, String> {
 
 /// [`connect`] with the `connecting` lock already held by the caller.
 async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
-    let url = base_url();
+    let url = base_url()?;
     let data = data_dir()?;
     if healthy(&url).await {
         check_listener(handle, &url, false).await?;
@@ -487,6 +515,34 @@ mod tests {
             Some("127.0.0.1:1")
         );
         assert_eq!(host_port("https://x"), None);
+    }
+
+    #[test]
+    fn bot_url_must_be_a_loopback_http_origin() {
+        for ok in [
+            "http://127.0.0.1:47821",
+            "http://localhost:9000/",
+            "http://[::1]:47821",
+        ] {
+            assert!(validate_bot_url(ok).is_ok(), "{ok}");
+        }
+        assert_eq!(
+            validate_bot_url("http://localhost:9000/").as_deref(),
+            Ok("http://localhost:9000")
+        );
+        for bad in [
+            "http://example.com:47821",
+            "http://192.168.1.5:47821",
+            "http://0.0.0.0:47821",
+            "https://127.0.0.1:47821",
+            "http://127.0.0.1@evil.example:80",
+            "http://127.0.0.1",
+            "http://localhost:notaport",
+            "127.0.0.1:47821",
+        ] {
+            let err = validate_bot_url(bad).expect_err(bad);
+            assert!(err.contains("BOT_URL must be"), "{bad}: {err}");
+        }
     }
 
     #[test]

@@ -42,6 +42,7 @@ scheduler = { path = "../scheduler", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+skills = { path = "../skills", version = "0.1.0" }
 storage.workspace = true
 task-runtime = { path = "../task-runtime", version = "0.1.0" }
 tokio.workspace = true

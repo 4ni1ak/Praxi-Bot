@@ -236,6 +236,35 @@
     "confirmDelete": "Silmek için tekrar tıkla",
     "chats": "Sohbetler",
     "noChats": "Henüz sohbet yok. “Yeni sohbet” ile başla.",
+    "skills": {
+      "heading": "Beceriler",
+      "loading": "Beceriler yükleniyor…",
+      "summaryAll": "Tüm ortak becerileri kullanır ({{count}})",
+      "summarySelected": "{{total}} ortak beceriden {{count}} tanesi",
+      "summaryLearned": "(+{{count}} öğrenilmiş)",
+      "summaryMissing": "Atanmış {{count}} beceri diskte bulunamıyor",
+      "chooseButton": "Beceri seç…",
+      "modalTitle": "Becerileri seç",
+      "modeLabel": "Ortak beceri erişimi",
+      "modeAll": "Tüm ortak beceriler",
+      "modeSelected": "Yalnızca seçtiklerim",
+      "searchPlaceholder": "Ad veya açıklamaya göre beceri filtrele…",
+      "missingTitle": "Kullanılamıyor",
+      "missingHint": "Atanan bu beceriler artık diskte yok. İstersen kaldırabilir ya da olduğu gibi bırakabilirsin.",
+      "removeMissing": "Kaldır",
+      "emptyCatalog": "Henüz ortak veya yerleşik beceri yüklü değil.",
+      "emptySearch": "Aramana uyan beceri yok.",
+      "ownTitle": "Bu botun kendi öğrendiği beceriler ({{count}})",
+      "tooMany": "En fazla {{max}} beceri atanabilir. Daha az beceri seç ya da \"Tüm ortak beceriler\" seçeneğini kullan.",
+      "conflict": "Bu pencere açıldıktan sonra beceriler değişti (başka bir pencere ya da cihaz kaydetti). Güncel atama yeniden yüklendi; gözden geçirip tekrar dene.",
+      "invalid": "Kaydedilemedi: {{detail}}",
+      "boundaryHint": "Bu, botun önüne konan ve beceri araçlarıyla yükleyebildiği becerileri sınırlar. Gizli bir depo değildir: dosya ya da kabuk erişimi olan bir bot, beceri klasörünü diskten yine de okuyabilir.",
+      "ownHint": "Öğrenilen beceriler bu bota aittir ve her zaman etkin kalır.",
+      "scope": {
+        "shared": "ortak",
+        "bundled": "yerleşik"
+      }
+    },
     "chatState": {
       "needs": "Senden bekliyor",
       "running": "Çalışıyor"
@@ -340,7 +369,71 @@
     "notice": {
       "modelFallback": "Model {{from}} yerine {{to}} oldu: {{reason}}",
       "error": "{{message}}",
-      "workflowDrift": "{{workflow}} iş akışı sapma gösterdi: {{reason}}"
+      "workflowDrift": "{{workflow}} iş akışı sapma gösterdi: {{reason}}",
+      "checkpointRestored": "{{checkpointId}} denetim noktasından {{count}} dosya geri yüklendi. Güvenlik denetim noktası: {{safetyId}}.",
+      "checkpointRestorePartial": "{{checkpointId}} geri alma işlemi başarısız; {{count}} dosya hâlâ değişmiş olabilir. {{safetyId}} güvenlik denetim noktasından kurtarabilirsiniz."
+    },
+    "changes": {
+      "tab": "Değişiklikler",
+      "title": "Dosya değişiklikleri ({{count}})",
+      "undoAll": "Tümünü geri al",
+      "undoFile": "Geri al",
+      "loading": "Dosya değişiklikleri yükleniyor...",
+      "loadError": "Dosya değişiklikleri yüklenemedi: {{message}}",
+      "empty": "Bu çalıştırmada izlenen bir dosya değişikliği yok.",
+      "scopeDisclaimer": "Geri alma yalnızca dosya araçlarını kapsar (fs_write, fs_edit, fs_move, fs_delete). Kabuk, web, e-posta veya masaüstü araçlarının dış etkileri otomatik olarak geri alınamaz.",
+      "modifiedSinceBadge": "Çalıştırma sonrası değişti",
+      "movedFrom": "Kaynak: {{path}}",
+      "viaLink": "Bağlantı üzerinden: {{path}}",
+      "diffStats": "+{{added}} / -{{removed}}",
+      "bytes": "{{count}} B",
+      "showDiff": "Farkı göster",
+      "hideDiff": "Farkı gizle",
+      "kind": {
+        "created": "Oluşturuldu",
+        "modified": "Değiştirildi",
+        "deleted": "Silindi",
+        "moved": "Taşındı"
+      },
+      "omitted": {
+        "binary": "İkili dosya — satır içi fark gösterilmiyor ({{before}} -> {{after}}).",
+        "too_large": "Dosya satır içi fark sınırını aşıyor ({{before}} -> {{after}}).",
+        "run_budget_exceeded": "Çalıştırma fark bütçesi aşıldı — satır içi fark gösterilmiyor ({{before}} -> {{after}}).",
+        "directory": "Klasör — satır içi fark gösterilmiyor.",
+        "symlink": "Sembolik bağlantı — satır içi fark gösterilmiyor.",
+        "modified_since": "Dosya bu çalıştırma bittikten sonra diskte değişti.",
+        "not_accessible": "Güncel dosya erişim ayarlarıyla erişilemiyor.",
+        "line_endings": "Yalnızca satır sonları değişti (LF/CRLF)."
+      },
+      "modal": {
+        "titleSingle": "{{path}} değişikliği geri alınsın mı?",
+        "titleAll": "Bu çalıştırmadaki tüm dosya değişiklikleri geri alınsın mı?",
+        "previewLoading": "Diskteki güncel dosyalar denetleniyor...",
+        "safetyNote": "Geri alma, bağlantılı tüm dosya işlemlerini etkiler; aşağıdaki yolları inceleyin. Güvenlik denetim noktası, bu geri almayı geri alabilmeniz için güncel durumu saklar.",
+        "modifiedWarning": "Bu dosyalar çalıştırmadan sonra değişti. Biliniyorsa değiştiren çalıştırma gösterilir; diğer değişiklikler size ait olabilir. Üzerine yazmadan önce onaylayın.",
+        "overwriteLabel": "Yeni değişikliklerimin üzerine yaz",
+        "unverifiedWarning": "Bazı dosyaların mevcut durumu doğrulanamadı. Değişti olarak listelenen dosyalarda doğrulanmış fark var. Değişen veya doğrulanamayan dosyaların üzerine yazmadan önce onaylayın.",
+        "unverifiedOverwriteLabel": "Değişen veya doğrulanamayan dosyaların üzerine yaz",
+        "confirm": "Geri yükle",
+        "restoring": "Geri yükleniyor...",
+        "cancel": "İptal",
+        "action": {
+          "restore": "Önceki sürümü geri yükle",
+          "delete": "Oluşturulan dosyayı sil",
+          "keep": "Bağlantıyı olduğu gibi bırak"
+        }
+      },
+      "restoreDone": "{{count}} dosya geri yüklendi. Güvenlik anlık görüntüsü kaydedildi.",
+      "restoreFailed": "Geri yüklenemedi: {{message}}",
+      "loadMore": "Daha fazla dosya yükle",
+      "safetyCheckpoint": "Güvenlik denetim noktası: {{id}}",
+      "undoUndo": "Bu geri almayı geri al",
+      "changedByRun": "Başka bir çalışma değiştirdi ({{run}})",
+      "changedOutsideRun": "Bu çalıştırma dışında değiştirildi",
+      "computerScope": "Çalıştırma bilgisayarı: {{computer}}. Bu dosya kontrol noktaları bağlı daemon’un diskindedir.",
+      "computerUnknown": "Kaydedilmemiş",
+      "couldNotVerify": "Dosyanın mevcut durumu doğrulanamadı",
+      "restorePartial": "Geri alma başarısız; aşağıdaki geri dönüş uyarısını ve güvenlik denetim noktasını inceleyin."
     },
     "route": {
       "workflow": "İş akışı: {{name}} (0 LLM çağrısı)",

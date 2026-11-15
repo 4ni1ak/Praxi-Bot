@@ -6892,7 +6892,10 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
     {
         let conn = rusqlite::Connection::open(dir.path().join("bot.db")).unwrap();
         conn.execute_batch(
-            "ALTER TABLE runs DROP COLUMN computer_node;
+            // Reconstruct v3, including removing tables introduced after it.
+            "DROP TABLE bot_skill_assignment;
+            DROP TABLE bot_skill_assignment_state;
+            ALTER TABLE runs DROP COLUMN computer_node;
             ALTER TABLE runs DROP COLUMN computer_node_name;
             ALTER TABLE runs DROP COLUMN paused_at_ms;
             ALTER TABLE runs DROP COLUMN computer_target;

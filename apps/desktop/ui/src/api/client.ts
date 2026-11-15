@@ -57,7 +57,13 @@ import type {
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
-  WebSearchTestReport
+  WebSearchTestReport,
+  RunChanges,
+  RestorePreview,
+  RestoreResponse,
+  BotSkills,
+  PutBotSkillsInput,
+  SkillsCatalog
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -188,6 +194,17 @@ export class ApiClient {
       body: { target }
     });
   }
+  listSkills(): Promise<SkillsCatalog> {
+    return this.request("GET", "/skills");
+  }
+  getBotSkills(botId: string): Promise<BotSkills> {
+    return this.request("GET", `/bots/${encodeURIComponent(botId)}/skills`);
+  }
+  putBotSkills(botId: string, body: PutBotSkillsInput): Promise<BotSkills> {
+    return this.request("PUT", `/bots/${encodeURIComponent(botId)}/skills`, {
+      body
+    });
+  }
 
   listChats(): Promise<Chat[]> {
     return this.request("GET", "/chats");
@@ -221,6 +238,32 @@ export class ApiClient {
   /** Cache the route of a succeeded run (409 when the run is not eligible). */
   rememberRun(runId: string): Promise<RememberResponse> {
     return this.request("POST", `/runs/${runId}/remember`);
+  }
+
+  /** List collapsed file changes and capped inline diffs for a run. */
+  getRunChanges(runId: string, offset = 0): Promise<RunChanges> {
+    return this.request("GET", `/runs/${encodeURIComponent(runId)}/changes`, { query: { offset, limit: 50 } });
+  }
+
+  /** Preview restoring one checkpoint or `"all"` across a run. */
+  previewRestore(runId: string, checkpointId: string): Promise<RestorePreview> {
+    return this.request(
+      "GET",
+      `/runs/${encodeURIComponent(runId)}/changes/${encodeURIComponent(checkpointId)}/preview`
+    );
+  }
+
+  /** Restore a checkpoint or `"all"` across a run (409 `modified_since` unless `force`). */
+  restoreRunChanges(
+    runId: string,
+    checkpointId: string,
+    force = false
+  ): Promise<RestoreResponse> {
+    return this.request(
+      "POST",
+      `/runs/${encodeURIComponent(runId)}/changes/${encodeURIComponent(checkpointId)}/restore`,
+      { body: { force } }
+    );
   }
 
   listApprovals(runId?: string): Promise<Approval[]> {
