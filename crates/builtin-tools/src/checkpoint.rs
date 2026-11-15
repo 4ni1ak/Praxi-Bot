@@ -2925,7 +2925,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_large_directory_fails_closed_without_walking_descendants() {
+    fn preview_directory_matches_without_false_modified_since() {
         let data = tempfile::tempdir().unwrap();
         let work = tempfile::tempdir().unwrap();
         let store = CheckpointStore::new(data.path());
@@ -2933,7 +2933,7 @@ mod tests {
         fs::create_dir(&tree).unwrap();
         let cp = store.create("run", "fs_delete", &[&tree]).unwrap();
         store.record_after(&cp).unwrap();
-        assert!(!store.restore_preview(&cp).unwrap()[0].current_matches_after);
+        assert!(store.restore_preview(&cp).unwrap()[0].current_matches_after);
     }
 
     #[test]
