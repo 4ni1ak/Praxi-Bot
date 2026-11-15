@@ -48,6 +48,7 @@ mod pdf_budget;
 mod pdf_cmap;
 mod xlsx;
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -102,7 +103,6 @@ pub fn extract_bytes(
                     "PDF source text extraction failed".into(),
                 ));
             }
-            use std::fmt::Write as _;
             let _ = write!(
                 text,
                 "\n## Page {}\n\n{}\n",
