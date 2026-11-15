@@ -1101,7 +1101,7 @@ mod tests {
             .find(|e| e.id == "filesystem")
             .unwrap();
         let folder = fs.install.folder.expect("filesystem needs a folder");
-        assert!(!folder.label.is_empty());
+        assert_ne!(folder.label, "");
         assert!(!fs.install.args.unwrap().iter().any(|a| a == "."));
         if let Some(s) = folder.suggestion {
             assert!(root_guard(dir.path())(Path::new(&s)).is_none());

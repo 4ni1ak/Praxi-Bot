@@ -215,6 +215,28 @@ async fn filesystem_server_without_a_chosen_folder_is_not_started() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// 244-A review finding 4: a child that explains itself on stderr and dies
+/// before the handshake must not lose that explanation (no sleeps here).
+#[tokio::test(flavor = "multi_thread")]
+async fn startup_failure_keeps_the_childs_stderr_explanation() {
+    for round in 0..5 {
+        let reg = ToolRegistry::new();
+        let mgr = McpManager::with_policy(reg, fast_policy(3));
+        let mut cfg = config("early");
+        if let McpTransport::Stdio { env, .. } = &mut cfg.transport {
+            env.insert("MCP_TEST_MODE".into(), "exit-with-stderr".into());
+        }
+        let err = mgr.add_server(cfg).await.unwrap_err();
+        assert_eq!(err.kind(), mcp_bridge::McpErrorKind::Closed, "{err}");
+        let tail = mgr.stderr_tail("early");
+        assert!(
+            tail.iter()
+                .any(|l| l.contains("PRAXI-EXPLAIN: runtime X is missing")),
+            "round {round}: explanation lost: {tail:?}"
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn quarantine_after_consecutive_call_failures_and_manual_reenable() {
     let reg = ToolRegistry::new();

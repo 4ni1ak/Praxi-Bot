@@ -62,8 +62,8 @@ mod tests {
 
     #[test]
     fn detects_the_filesystem_server_and_its_roots() {
-        let a = args(&["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "C:\x", "--flag"]);
-        assert_eq!(filesystem_roots(&a), Some(vec!["C:\x"]));
+        let a = args(&["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "/x", "--flag"]);
+        assert_eq!(filesystem_roots(&a), Some(vec!["/x"]));
         assert_eq!(
             filesystem_roots(&args(&["-y", "@modelcontextprotocol/server-filesystem@2.2.0"])),
             Some(vec![])

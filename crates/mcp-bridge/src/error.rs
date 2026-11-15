@@ -115,7 +115,7 @@ pub fn runtime_install_hint(command: &str) -> String {
         "npx" | "npm" | "node" => "Install Node.js (LTS) from https://nodejs.org, restart Praxi-Bot and reconnect.".to_owned(),
         "uvx" | "uv" => "Install uv (https://docs.astral.sh/uv/getting-started/installation/; on Windows: `winget install --id=astral-sh.uv -e`), restart Praxi-Bot and reconnect.".to_owned(),
         "pipx" => "Install pipx (https://pipx.pypa.io), restart Praxi-Bot and reconnect.".to_owned(),
-        "docker" => "Install and start Docker, then reconnect.".to_owned(),
+        "docker" => "Install Docker (or add its folder to PATH), restart Praxi-Bot and reconnect.".to_owned(),
         _ => format!("Install `{command}` (or give its full path in the server settings), then reconnect."),
     }
 }

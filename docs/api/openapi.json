@@ -7089,6 +7089,17 @@
               "type": "string"
             }
           },
+          "folder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpFolderDto",
+                "description": "A folder to collect first (filesystem servers)."
+              }
+            ]
+          },
           "required_secrets": {
             "type": "array",
             "items": {
@@ -7138,8 +7149,29 @@
           "closed",
           "timeout",
           "config",
+          "needs_folder",
           "other"
         ]
+      },
+      "McpFolderDto": {
+        "type": "object",
+        "description": "A folder the user must choose when adding a catalog entry; the app appends\nit as the last argument.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Label of the folder field."
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A safe default offered to the user (their Documents folder), if there is one."
+          }
+        }
       },
       "McpRequiredSecretDto": {
         "type": "object",
