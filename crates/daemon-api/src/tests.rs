@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod cli_engines;
 mod doctor;
 mod email;
 mod fill_secrets;

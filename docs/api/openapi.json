@@ -4170,6 +4170,48 @@
         ]
       }
     },
+    "/v1/providers/cli": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "path",
+            "description": "When set to 1, bypasses the in-process 60-second cache.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CliEngineDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/cli/enable": {
       "post": {
         "tags": [
@@ -4216,12 +4258,91 @@
         ]
       }
     },
+    "/v1/providers/cli/install": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Creates an expiring approval; never starts a process.",
+        "operationId": "preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliInstallApproval"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/providers/cli/install/{approval_id}/decision": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Approve once (or deny). SSE `output` is untrusted text; `done` includes a\nstable error code and follows re-detection. Disconnect cancels the owned tree.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE output and done events; denied approvals emit done only",
+            "content": {
+              "text/event-stream": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/detected": {
       "get": {
         "tags": [
           "providers"
         ],
-        "summary": "Detect installed, signed-in coding CLIs.",
+        "summary": "Detect installed, signed-in coding CLIs. Local owner only: the rows carry\nthe signed-in account label (an email or organisation) and install state.",
         "operationId": "detect_providers",
         "parameters": [
           {
@@ -4247,6 +4368,16 @@
                   "items": {
                     "$ref": "#/components/schemas/DetectedProviderDto"
                   }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "caller is not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -6671,6 +6802,158 @@
           "signed_out",
           "unknown"
         ]
+      },
+      "CliEngineDto": {
+        "type": "object",
+        "required": [
+          "detected",
+          "executable_names",
+          "version_args",
+          "auth_args",
+          "outdated",
+          "login",
+          "docs_url"
+        ],
+        "properties": {
+          "auth_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty when no safe, locally verified CLI auth-status command is known."
+          },
+          "detected": {
+            "$ref": "#/components/schemas/DetectedProviderDto"
+          },
+          "docs_url": {
+            "type": "string"
+          },
+          "executable_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "install": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CliInstallDto"
+              }
+            ]
+          },
+          "limitation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "login": {
+            "type": "string"
+          },
+          "minimum_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outdated": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CliInstallApproval": {
+        "type": "object",
+        "required": [
+          "approval_id",
+          "engine_id",
+          "command",
+          "expires_at_ms"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "command": {
+            "type": "string"
+          },
+          "engine_id": {
+            "type": "string"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CliInstallDecision": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CliInstallDto": {
+        "type": "object",
+        "required": [
+          "program",
+          "args",
+          "command",
+          "verified",
+          "executable"
+        ],
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string"
+          },
+          "executable": {
+            "type": "boolean"
+          },
+          "program": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CliInstallInput": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "Codec": {
         "type": "string",

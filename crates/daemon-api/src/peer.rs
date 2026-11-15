@@ -242,6 +242,13 @@ fn normalize_deny_path(path: &str) -> String {
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management, MCP management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if (check_path == "/v1/providers/cli"
+        || check_path.starts_with("/v1/providers/cli/")
+        || check_path == "/v1/providers/detected")
+        || (*method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path))
+    {
+        return Some("host-local provider management is not allowed for peers");
+    }
     if check_path
         .strip_prefix("/v1/mcp/servers/")
         .and_then(|rest| rest.split_once('/'))

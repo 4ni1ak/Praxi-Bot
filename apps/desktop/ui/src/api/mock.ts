@@ -698,6 +698,15 @@ export class MockApiClient extends ApiClient {
         return ok({ repair: id, detail: "done" });
       }
       case "GET /providers":
+        if (seg[1] === "cli") {
+          return ok(this.detectedProvidersList.map((detected) => ({
+            detected, executable_names: [detected.id], version_args: ["--version"], auth_args: [],
+            path: null, minimum_version: null, outdated: false,
+            login: detected.id === "opencode" ? "opencode auth login" : detected.id,
+            docs_url: "", install: null,
+            limitation: detected.id === "opencode" ? "native_tools_not_confined" : null
+          })));
+        }
         if (seg[1] === "detected") {
           const screen =
             typeof window !== "undefined"
