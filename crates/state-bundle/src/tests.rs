@@ -1474,7 +1474,7 @@ async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert(
         Providers::unconfigured(),
         LoopConfig::default(),
     );
-    agent.reconcile_computer_identity(&b, &[]).unwrap();
+    agent.reconcile_computer_identity(&b, Some(&[])).unwrap();
     let grants = agent.list_grants(bot);
     assert_eq!(grants.len(), 4);
     assert!(grants.iter().all(|g| g.inert));

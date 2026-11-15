@@ -6766,7 +6766,7 @@ async fn identity_change_marks_orphaned_grants_once_and_fails_paused_local_pc() 
         profile(""),
         cfg(Policy::full()),
     );
-    lp.reconcile_computer_identity(MACHINE_A, &["paired-offline".into()])
+    lp.reconcile_computer_identity(MACHINE_A, Some(&["paired-offline".into()]))
         .unwrap();
     assert!(lp.list_grants(env.bot).iter().all(|g| !g.inert));
     let old = lp
@@ -6795,7 +6795,7 @@ async fn identity_change_marks_orphaned_grants_once_and_fails_paused_local_pc() 
             cfg(Policy::full()),
         );
         reloaded
-            .reconcile_computer_identity(MACHINE_B, &["paired-offline".into()])
+            .reconcile_computer_identity(MACHINE_B, Some(&["paired-offline".into()]))
             .unwrap();
         let grants = reloaded.list_grants(env.bot);
         assert_eq!(grants.iter().filter(|g| g.inert).count(), 3);
@@ -6843,6 +6843,95 @@ async fn identity_change_marks_orphaned_grants_once_and_fails_paused_local_pc() 
             1
         );
     }
+}
+
+#[tokio::test]
+async fn unknown_paired_list_keeps_pc_grants_and_paused_pc_runs() {
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    seed_desktop_grant(&env, Some("pc:paired-offline"));
+    let mk = || {
+        make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(""),
+            cfg(Policy::full()),
+        )
+    };
+    let lp = mk();
+    let run = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    env.storage
+        .bind_run_computer(run, "pc", Some("paired-offline"), Some("PC"))
+        .unwrap();
+    lp.rt
+        .pause_queued(run, Some(computer_target::WAIT_FOR_PC_REASON))
+        .unwrap();
+    // Peer disabled at boot: the paired list is unknown, not empty.
+    mk().reconcile_computer_identity(MACHINE_A, None).unwrap();
+    let after = mk();
+    assert!(after.list_grants(env.bot).iter().all(|g| !g.inert));
+    assert_eq!(env.storage.get_run(run).unwrap().unwrap().state, "paused");
+    // Peer enabled later with the PC still paired: the grant matches again.
+    after
+        .reconcile_computer_identity(MACHINE_A, Some(&["paired-offline".into()]))
+        .unwrap();
+    assert!(after.sh.grants.lock().covers(
+        env.bot,
+        "desktop_write",
+        PermissionCategory::Desktop,
+        Some("pc:paired-offline")
+    ));
+    // A known list that lacks the id does mark it inert.
+    after
+        .reconcile_computer_identity(MACHINE_A, Some(&[]))
+        .unwrap();
+    assert!(after.list_grants(env.bot).iter().all(|g| g.inert));
+    assert_eq!(env.storage.get_run(run).unwrap().unwrap().state, "failed");
+}
+
+#[tokio::test]
+async fn identity_row_only_for_computer_users_without_full_audit_scan() {
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    lp.reconcile_computer_identity(MACHINE_A, None).unwrap();
+    assert!(
+        env.storage
+            .last_audit_by_action(env.user, "computer.identity")
+            .unwrap()
+            .is_none()
+    );
+    seed_desktop_grant(&env, Some(&format!("host:{MACHINE_A}")));
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    lp.reconcile_computer_identity(MACHINE_A, None).unwrap();
+    lp.reconcile_computer_identity(MACHINE_A, None).unwrap();
+    let audits = env.storage.list_audit(env.user).unwrap();
+    assert_eq!(
+        audits
+            .iter()
+            .filter(|e| e.action == "computer.identity")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]

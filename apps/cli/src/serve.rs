@@ -914,14 +914,21 @@ pub fn serve(
             local_id.clone(),
         ));
         agent.set_computer_provider(Arc::clone(&computer) as Arc<dyn agent_core::ComputerProvider>);
-        let paired_computers = peer.as_ref().map_or_else(Vec::new, |net| {
-            net.devices()
-                .into_iter()
-                .filter(crate::computer::is_remote_desktop_candidate)
-                .map(|device| device.id)
-                .collect()
-        });
-        agent.reconcile_computer_identity(&local_id, &paired_computers)?;
+        if crate::computer::is_machine_fingerprint(&local_id) {
+            // Without a running peer stack the paired list is unknown, not empty.
+            let paired_computers: Option<Vec<String>> = peer.as_ref().map(|net| {
+                net.devices()
+                    .into_iter()
+                    .filter(crate::computer::is_remote_desktop_candidate)
+                    .map(|device| device.id)
+                    .collect()
+            });
+            agent.reconcile_computer_identity(&local_id, paired_computers.as_deref())?;
+        } else {
+            eprintln!(
+                "warning: local computer identity unavailable this boot; skipping computer grant reconcile (nothing was changed or persisted)"
+            );
+        }
         agent.reconcile_waiting_for_pc_runs()?;
         // A revoked pairing loses screen privileges, live sessions and takeover
         // within a couple of seconds, wherever the revoke happened.

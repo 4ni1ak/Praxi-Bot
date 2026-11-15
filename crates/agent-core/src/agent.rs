@@ -584,12 +584,24 @@ impl AgentLoop {
     ///
     /// # Errors
     /// Fails on storage errors. Call before starting the scheduler or resuming runs.
-    pub fn reconcile_computer_identity(&self, local_id: &str, paired_ids: &[String]) -> Result<()> {
+    ///
+    /// `paired_ids` is `None` when the paired-device list is unknown (the peer
+    /// stack is not running): `pc` scopes are then left untouched, because
+    /// nothing positively says they are foreign; they simply do not match
+    /// while the PC is unreachable.
+    pub fn reconcile_computer_identity(
+        &self,
+        local_id: &str,
+        paired_ids: Option<&[String]>,
+    ) -> Result<()> {
         let valid_scope = |scope: &str| {
             scope.split_once(':').is_some_and(|(kind, id)| {
-                id == local_id || (kind == "pc" && paired_ids.iter().any(|paired| paired == id))
+                id == local_id
+                    || (kind == "pc"
+                        && paired_ids.is_none_or(|ids| ids.iter().any(|paired| paired == id)))
             })
         };
+        let mut computer_users = HashSet::new();
         let orphaned: Vec<_> = {
             let mut grants = self.sh.grants.lock();
             grants
@@ -614,6 +626,7 @@ impl AgentLoop {
             let Some(bot) = self.sh.storage.get_bot(grant.bot_id)? else {
                 continue;
             };
+            computer_users.insert(bot.user_id);
             let mut detail = grant_detail(&grant);
             detail["reason"] = serde_json::json!(
                 "computer identity no longer belongs to this daemon or a paired desktop; approve again"
@@ -626,12 +639,25 @@ impl AgentLoop {
                 &detail,
             )?;
         }
-        record_computer_identity(&self.sh.storage, local_id)?;
-        for run in self
+        let paused = self
             .sh
             .storage
-            .list_runs_by_state(RunState::Paused.as_str())?
+            .list_runs_by_state(RunState::Paused.as_str())?;
+        for run in &paused {
+            if run.computer_target.is_some() {
+                computer_users.insert(run.user_id);
+            }
+        }
         {
+            let grants = self.sh.grants.lock();
+            for grant in grants.always.iter().filter(|g| g.computer.is_some()) {
+                if let Some(bot) = self.sh.storage.get_bot(grant.bot_id)? {
+                    computer_users.insert(bot.user_id);
+                }
+            }
+        }
+        record_computer_identity(&self.sh.storage, local_id, &computer_users)?;
+        for run in paused {
             // A never-bound initial PC wait may still select its first paired PC.
             let invalid = match (run.computer_target.as_deref(), run.computer_node.as_deref()) {
                 (None, _) | (_, Some("local")) => true,
@@ -1598,14 +1624,19 @@ impl AgentLoop {
     }
 }
 
-fn record_computer_identity(storage: &Storage, local_id: &str) -> Result<()> {
+fn record_computer_identity(
+    storage: &Storage,
+    local_id: &str,
+    computer_users: &HashSet<UserId>,
+) -> Result<()> {
     for user in storage.list_users()? {
         let previous = storage
-            .list_audit(user.id)?
-            .into_iter()
-            .rev()
-            .find(|e| e.action == "computer.identity")
+            .last_audit_by_action(user.id, "computer.identity")?
             .and_then(|e| e.detail["computer"].as_str().map(str::to_owned));
+        // Users who never used computer tools get no identity row.
+        if previous.is_none() && !computer_users.contains(&user.id) {
+            continue;
+        }
         if previous.as_deref() != Some(local_id) {
             storage.append_audit(user.id, None, "system", "computer.identity",
                     &serde_json::json!({

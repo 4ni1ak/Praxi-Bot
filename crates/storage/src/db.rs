@@ -785,6 +785,26 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The newest audit row of one action for a user (indexed by `id`, no full scan).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn last_audit_by_action(
+        &self,
+        user_id: UserId,
+        action: &str,
+    ) -> Result<Option<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND action = ?2 ORDER BY id DESC LIMIT 1",
+        )?;
+        Ok(st
+            .query_map(params![user_id.to_string(), action], audit_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .next())
+    }
+
     // ---- global event order ----
 
     /// Highest `gseq` handed out so far (`0` when no event was indexed yet).

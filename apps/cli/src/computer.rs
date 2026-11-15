@@ -338,6 +338,11 @@ pub(crate) fn machine_computer_id(data_dir: &std::path::Path, net: Option<&PeerN
     }
 }
 
+/// Whether `id` is a real 64-hex endpoint fingerprint (not the unbound fallback).
+pub(crate) fn is_machine_fingerprint(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 pub(crate) fn is_remote_desktop_candidate(d: &Device) -> bool {
     let has_desktop_cap = d.capabilities.iter().any(|c| c == "desktop");
     match d.role {
@@ -403,6 +408,20 @@ pub fn spawn_peer_monitor(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unreadable_identity_key_is_not_a_fingerprint_and_recovers_next_boot() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("peer").join("identity.key");
+        // A directory in place of the key file: the read fails like a locked file.
+        std::fs::create_dir_all(&key).unwrap();
+        let id = super::machine_computer_id(dir.path(), None);
+        assert!(!super::is_machine_fingerprint(&id), "{id}");
+        std::fs::remove_dir(&key).unwrap();
+        let id = super::machine_computer_id(dir.path(), None);
+        assert!(super::is_machine_fingerprint(&id), "{id}");
+        assert_eq!(id, super::machine_computer_id(dir.path(), None));
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use agent_core::{AgentLoop, BotProfile, LoopConfig, Providers};
