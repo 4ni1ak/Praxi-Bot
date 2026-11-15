@@ -15,7 +15,8 @@ use crate::config::Guards;
 use crate::profile::BotProfile;
 use crate::router::workflow_note;
 use crate::shared::{
-    CallRec, ModelOut, ResultRec, STEP_MODEL, STEP_TOOLS, STEP_USER, STEP_WORKFLOW, schedule_id_of,
+    CallRec, ModelOut, ResultRec, STEP_MODEL, STEP_NUDGE, STEP_TOOLS, STEP_USER, STEP_WORKFLOW,
+    schedule_id_of,
 };
 
 /// Providers (OpenAI-style) reject `.` in function names; expose `a.b` as `a__b`.
@@ -70,6 +71,9 @@ pub(crate) fn tool_defs(specs: &[ToolSpec]) -> Vec<Value> {
         })
         .collect()
 }
+
+/// The one-per-turn nudge after a silent end following tool calls.
+pub(crate) const NUDGE_TEXT: &str = "You looked up tools but did not use them. Call use_tool with the tool you found, or answer the user.";
 
 /// Note appended to the closing, tool-less model call after a guard stopped the turn.
 pub(crate) const GUARD_NOTE: &str = "The turn was stopped by a safety limit ({reason}). Tools are no longer available. Summarize the progress made so far and what is left to do, in plain text.";
@@ -271,6 +275,10 @@ pub(crate) fn build_messages(
                     ));
                 }
             }
+            STEP_NUDGE => {
+                flush(&mut out, &mut outstanding);
+                out.push(Message::text(MessageRole::System, NUDGE_TEXT));
+            }
             STEP_MODEL => {
                 if status_of(step) != Some(StepStatus::Succeeded) {
                     continue;
@@ -278,6 +286,14 @@ pub(crate) fn build_messages(
                 let Some(mo) = step_output::<ModelOut>(step) else {
                     continue;
                 };
+                // A silent model step followed by a nudge is not replayed
+                // (some providers reject an empty assistant message).
+                if mo.text.trim().is_empty()
+                    && mo.tool_calls.is_empty()
+                    && steps.get(index + 1).is_some_and(|s| s.name == STEP_NUDGE)
+                {
+                    continue;
+                }
                 flush(&mut out, &mut outstanding);
                 n_model += 1;
                 outstanding = mo.tool_calls.iter().map(|c| c.id.clone()).collect();

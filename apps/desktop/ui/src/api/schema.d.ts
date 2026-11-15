@@ -931,6 +931,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_pair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_connect"];
+        delete: operations["hosts_disconnect"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp/catalog": {
         parameters: {
             query?: never;
@@ -2651,6 +2699,41 @@ export interface components {
             /** @default null */
             max_computer_runs: number | null;
         };
+        /**
+         * @description An open channel: a loopback endpoint that forwards to the host's API over
+         *     the paired connection. `token` is a bearer for that proxy only, valid while
+         *     the channel lives; it is never logged.
+         */
+        HostLinkConnection: {
+            base_url: string;
+            id: string;
+            name: string;
+            state: components["schemas"]["HostLinkState"];
+            token: string;
+        };
+        /** @description A paired host. */
+        HostLinkInfo: {
+            /** @description One short, path-free sentence for `offline` / `unreachable`. */
+            detail?: string | null;
+            /** @description Paired device key (public, not a secret). */
+            id: string;
+            /** @description Display name the host announced at pairing. */
+            name: string;
+            state: components["schemas"]["HostLinkState"];
+        };
+        /** @description `GET /v1/hosts`. */
+        HostLinkList: {
+            hosts: components["schemas"]["HostLinkInfo"][];
+            /** @description HTTP API version of this computer's daemon. */
+            local_api_version: string;
+            /** @description Version of this computer's daemon. */
+            local_version: string;
+        };
+        /**
+         * @description Connection state of one paired host as seen from this computer.
+         * @enum {string}
+         */
+        HostLinkState: "idle" | "connecting" | "connected" | "offline" | "unreachable";
         /** @enum {string} */
         HostMode: "standalone" | "host" | "client";
         HostPeer: {
@@ -3339,6 +3422,11 @@ export interface components {
              * @description Seconds until it expires.
              */
             expires_in_secs: number;
+        };
+        /** @description `POST /v1/hosts/pair`. */
+        PairHostInput: {
+            /** @description Pairing ticket printed by `bot host invite --role desktop` on the host. */
+            ticket: string;
         };
         /** @description Body of `POST /v1/schedules/parse`. */
         ParseSchedule: {
@@ -6419,6 +6507,88 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
+            };
+        };
+    };
+    hosts_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostLinkList"];
+                };
+            };
+        };
+    };
+    hosts_pair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairHostInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostLinkInfo"];
+                };
+            };
+        };
+    };
+    hosts_connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostLinkConnection"];
+                };
+            };
+        };
+    };
+    hosts_disconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

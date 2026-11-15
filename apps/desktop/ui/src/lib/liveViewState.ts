@@ -1022,10 +1022,33 @@ export function sameForeignPaused(
   );
 }
 
+/**
+ * Loopback endpoints that are NOT this computer's daemon: the guarded proxy to a
+ * paired host also listens on 127.0.0.1, but whoever uses it is a paired Desktop
+ * peer of the host, never its local user (card 252).
+ */
+const remoteLoopbackBaseUrls = new Set<string>();
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/$/, "");
+}
+
+/** Mark `baseUrl` (a loopback proxy to a paired host) as a peer connection. */
+export function markRemoteBaseUrl(baseUrl: string): () => void {
+  const key = normalizeBaseUrl(baseUrl);
+  remoteLoopbackBaseUrls.add(key);
+  return () => {
+    remoteLoopbackBaseUrls.delete(key);
+  };
+}
+
 /** Loopback (or mock) daemon URL: this client is the local user, not a paired peer. */
 export function isLocalBaseUrl(baseUrl: string): boolean {
   if (baseUrl.startsWith("mock://")) {
     return true;
+  }
+  if (remoteLoopbackBaseUrls.has(normalizeBaseUrl(baseUrl))) {
+    return false;
   }
   try {
     const host = new URL(baseUrl).hostname;

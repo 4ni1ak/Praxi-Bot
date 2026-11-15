@@ -6,6 +6,7 @@ import {
   summarizeTarget,
   visibleActions
 } from "../lib/liveViewState";
+import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
 import {
   COMPUTER_FOOTER_KEY,
   computerFooter,
@@ -36,6 +37,8 @@ function panelTone(
 
 export function BotComputerBlock() {
   const { t } = useTranslation();
+  const { activeComputerId, activeHostName } = useDaemon();
+  const onHost = activeComputerId !== LOCAL_COMPUTER;
   const {
     selectedTarget,
     targetsStatus,
@@ -108,6 +111,11 @@ export function BotComputerBlock() {
         <h3 className={styles.label} id="bot-panel-computer">
           {t("botPanel.computer")}
         </h3>
+        <span className={styles.where} data-testid="bot-computer-where" data-computer={onHost ? "host" : "local"}>
+          {onHost
+            ? t("botPanel.runsOnHost", { name: activeHostName ?? t("computerPicker.host") })
+            : t("botPanel.runsOnLocal")}
+        </span>
         <span className={styles.statusPill} data-testid="bot-computer-status">
           <i className={styles.dot} data-tone={tone} aria-hidden="true" />
           <span>{t(summaryKey)}</span>

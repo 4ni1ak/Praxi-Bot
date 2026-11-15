@@ -20,6 +20,7 @@ import {
   createInitialLiveViewState,
   foreignPausedTakeover,
   isLocalBaseUrl,
+  markRemoteBaseUrl,
   RELEASE_LEASE_MAX_MS,
   visibleActions,
   type LiveViewControllerState
@@ -543,4 +544,14 @@ test("the dock renders its buttons from visibleActions (so the state table const
   assert.match(viewer, /actions\.includes\("stop"\)/);
   assert.doesNotMatch(viewer, /ownsActive \|\| isReleasing/);
   assert.match(read("../state/LiveViewContext.tsx"), /admitSnapshot\(sequencer, ticket\)/);
+});
+
+test("a loopback proxy to a paired host is a peer connection, not the local user", () => {
+  const url = "http://127.0.0.1:54321";
+  assert.equal(isLocalBaseUrl(url), true);
+  const unmark = markRemoteBaseUrl(`${url}/`);
+  assert.equal(isLocalBaseUrl(url), false);
+  assert.equal(isLocalBaseUrl("http://127.0.0.1:54322"), true);
+  unmark();
+  assert.equal(isLocalBaseUrl(url), true);
 });

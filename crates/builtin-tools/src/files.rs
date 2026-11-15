@@ -4811,6 +4811,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_bot_cannot_grant_screen_access_by_editing_view_privileges() {
+        // `view-privileges.json` is reloaded at daemon start as live screen
+        // view/input grants for paired devices (card 252).
+        let (d, _w, t) = setup();
+        let c = ctx();
+        let file = d.path().join("view-privileges.json");
+        let original = "{}";
+        std::fs::write(&file, original).unwrap();
+        let forged = r#"{"peer:abc":{"view":true,"input":true}}"#;
+        for (tool, input) in [
+            ("fs_write", json!({"path": &file, "content": forged})),
+            (
+                "fs_edit",
+                json!({"path": &file, "old": "{}", "new": forged}),
+            ),
+            ("fs_delete", json!({"path": &file})),
+        ] {
+            let err = get(&t, tool).call(&c, input).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{tool}: {err}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    }
+
+    #[tokio::test]
     async fn a_not_yet_existing_protected_name_with_a_trailing_dot_cannot_be_created() {
         let (d, _w, t) = setup();
         let c = ctx();

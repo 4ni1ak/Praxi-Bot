@@ -1851,7 +1851,9 @@
     "chats": "Sohbetler",
     "noChats": "Henüz sohbet yok.",
     "untitled": "Yeni sohbet",
-    "computer": "Bilgisayar"
+    "computer": "Bilgisayar",
+    "runsOnHost": "{{name}} sunucusunda çalışır",
+    "runsOnLocal": "Bu bilgisayarda çalışır"
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",
@@ -2097,5 +2099,44 @@
     "dismiss": "Kapat",
     "stopAllNow": "Hepsini şimdi durdur",
     "letContinue": "Devam etsinler"
+  },
+  "computerPicker": {
+    "label": "Bilgisayar: {{name}}",
+    "menu": "Bilgisayar",
+    "host": "Sunucu",
+    "localHint": "Burada, bu PC'de çalışır",
+    "link": {
+      "idle": "Eşleşmiş, bağlı değil",
+      "connecting": "Bağlanıyor…",
+      "connected": "Bağlı",
+      "offline": "Yanıt vermiyor",
+      "unreachable": "Artık eşleşmiş değil"
+    },
+    "add": "Sunucu ekle…",
+    "stopHost": "Sunucudaki tüm çalışmaları durdur",
+    "stopHostHint": "Şu an orada çalışanları durdurur",
+    "stopNone": "Sunucuda çalışan bir şey yok.",
+    "stopFailed": "Çalışmaları durdurmak için sunucuya ulaşılamadı.",
+    "stopped": "Sunucuda {{count}} çalışma durduruldu."
+  },
+  "pairHost": {
+    "title": "Sunucu ekle",
+    "lead": "Bu bilgisayarı her zaman açık sunucunla eşleştir; ekranını izle ve orada çalışan botlarla sohbet et.",
+    "step1": "Sunucuda şunu çalıştır:",
+    "step3": "Yazdırdığı bileti aşağıya yapıştır. Bir kez çalışır ve birkaç dakikada geçerliliğini yitirir.",
+    "ticket": "Eşleştirme bileti",
+    "hint": "Bilet bir kez kullanılır ve kaydedilmez.",
+    "pair": "Eşleştir",
+    "pairing": "Eşleştiriliyor…",
+    "failed": "Eşleştirme olmadı. Sunucunun açık ve biletin yeni olduğunu kontrol et."
+  },
+  "hostState": {
+    "connecting": "{{name}} sunucusuna bağlanılıyor…",
+    "offline": "{{name}} yanıt vermiyor. Botları çalışmaya devam eder; uygulama kendiliğinden yeniden bağlanır.",
+    "notPaired": "{{name}} artık bu bilgisayarı kabul etmiyor. Yeni bir biletle yeniden eşleştir.",
+    "versionBlocking": "Bu uygulama ({{local}}) ile {{name}} ({{host}}) farklı sürümlerde. Sunucuyu kullanmadan önce ikisini aynı sürüme getir.",
+    "versionWarning": "Uygulama {{local}}, {{name}} {{host}}: küçük bir fark, her şeyin çalışması beklenir.",
+    "noModelKey": "{{name}} sunucusunda henüz model anahtarı yok. Ekranını izleyebilir ve botlarını yönetebilirsin; sunucuya bir anahtar eklenene kadar sohbetlere yanıt gelmez.",
+    "useThisComputer": "Bu bilgisayarı kullan"
   }
 }
