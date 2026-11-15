@@ -1519,7 +1519,6 @@ mod linux_x11 {
     ) -> Result<RustConnection<BoundedStream>, CaptureFailure> {
         let (stream, (family, address)) = match addr {
             ConnectAddress::Hostname(host, port) => {
-                let mut last_err = None;
                 let addrs = (*host, *port)
                     .to_socket_addrs()
                     .map_err(|_| CaptureFailure::ConnectionLost(Reason::Disconnected))?;
@@ -1529,24 +1528,18 @@ mod linux_x11 {
                     if remaining.is_zero() {
                         return Err(CaptureFailure::Unavailable(Reason::Unavailable));
                     }
-                    match TcpStream::connect_timeout(&sock_addr, remaining) {
-                        Ok(tcp) => {
-                            connected =
-                                Some(DefaultStream::from_tcp_stream(tcp).map_err(|_| {
-                                    CaptureFailure::ConnectionLost(Reason::Disconnected)
-                                })?);
-                            break;
-                        }
-                        Err(e) => last_err = Some(e),
+                    if let Ok(tcp) = TcpStream::connect_timeout(&sock_addr, remaining) {
+                        connected =
+                            Some(DefaultStream::from_tcp_stream(tcp).map_err(|_| {
+                                CaptureFailure::ConnectionLost(Reason::Disconnected)
+                            })?);
+                        break;
                     }
                 }
-                match connected {
-                    Some(res) => res,
-                    None => {
-                        let _ = last_err;
-                        return Err(CaptureFailure::ConnectionLost(Reason::Disconnected));
-                    }
-                }
+                let Some(res) = connected else {
+                    return Err(CaptureFailure::ConnectionLost(Reason::Disconnected));
+                };
+                res
             }
             ConnectAddress::Socket(path) => {
                 let unix = UnixStream::connect(path)
