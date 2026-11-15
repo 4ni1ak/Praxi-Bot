@@ -3104,6 +3104,13 @@ async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
 struct StubProvider;
 
 impl agent_core::ComputerProvider for StubProvider {
+    fn local_node(&self) -> agent_core::ComputerNode {
+        agent_core::ComputerNode {
+            id: "c".repeat(64),
+            name: "Local computer".into(),
+        }
+    }
+
     fn local(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
         None
     }

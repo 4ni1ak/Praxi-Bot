@@ -114,6 +114,7 @@ impl AgentLoop {
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
                 approval_paused: Mutex::new(HashSet::new()),
+                identity_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
                 exec_gate: Mutex::new(()),
                 #[cfg(test)]
@@ -1383,6 +1384,7 @@ impl AgentLoop {
         {
             let provider = self.sh.computer_provider.read().clone();
             if crate::shared::Shared::computer_identity_unbound(&run, provider.as_deref()) {
+                self.sh.identity_paused.lock().insert(run_id);
                 self.emit_computer_notice(run_id, COMPUTER_IDENTITY_UNBOUND_NOTICE);
                 return Ok(RunState::Paused);
             }
@@ -1470,12 +1472,15 @@ impl AgentLoop {
             // a finished marker in its log would end later followers), no
             // queued follow-up turn.
             let approval_timeout = self.sh.approval_paused.lock().remove(&run_id);
+            let identity_unbound = self.sh.identity_paused.lock().remove(&run_id);
             let wait_pc = run.as_ref().and_then(|r| r.pause_reason.as_deref())
                 == Some(computer_target::WAIT_FOR_PC_REASON);
             if let Some(ctx) = &ctx {
                 let message = if approval_timeout {
                     "run paused: nobody answered the approval request in time; resume it with \
                      POST /v1/runs/{id}/resume"
+                } else if identity_unbound {
+                    "run paused: this computer's identity could not be read; it stays paused                      and can be resumed after the next restart"
                 } else if wait_pc {
                     "run paused: waiting for PC desktop to come online"
                 } else {

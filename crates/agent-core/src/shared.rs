@@ -623,6 +623,10 @@ impl ComputerProvider for FallbackComputerProvider {
     fn browser_available(&self) -> bool {
         self.browser
     }
+
+    fn local_identity_bound(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) struct RunCtx {
@@ -666,6 +670,14 @@ impl RunCtx {
         // No node means no machine. Do not fall back to a shared `local` alias.
         let id = self.resolved_computer.node.as_ref()?.id.as_str();
         if id.is_empty() {
+            return None;
+        }
+        // A local kind is only ever scoped by a real machine fingerprint.
+        if matches!(
+            self.resolved_computer.label,
+            ComputerLabel::Host | ComputerLabel::Browser
+        ) && !is_machine_fingerprint(id)
+        {
             return None;
         }
         Some(format!("{}:{id}", self.resolved_computer.label.as_str()))
@@ -749,6 +761,8 @@ pub(crate) struct Shared {
     pub directives: Mutex<HashMap<RunId, ScheduleWork>>,
     /// Runs that paused because nobody answered an approval in time.
     pub approval_paused: Mutex<HashSet<RunId>>,
+    /// Runs left paused because this boot could not read the local identity.
+    pub identity_paused: Mutex<HashSet<RunId>>,
     /// How many approvals/questions each run has parked right now (parallel
     /// `ask_user` calls park several); the run is `WaitingApproval` while > 0.
     pub parked: Mutex<HashMap<RunId, usize>>,
@@ -824,6 +838,16 @@ pub(crate) const COMPUTER_PREPARE_TIMEOUT: std::time::Duration = std::time::Dura
 /// Run event emitted when a stored host/browser run is resumed during a boot
 /// whose local computer identity could not be read.
 pub(crate) const COMPUTER_IDENTITY_UNBOUND_NOTICE: &str = "this computer's identity could not be verified at startup; the run stays paused and can be resumed after the next restart";
+
+/// Run event for a NEW run started while the local identity is unavailable:
+/// it runs without local computer tools and nothing machine-bound is stored.
+pub(crate) const COMPUTER_IDENTITY_UNBOUND_FRESH_NOTICE: &str =
+    "this computer's identity could not be read; computer tools are unavailable until restart";
+
+/// Whether `id` is a real 64-hex machine fingerprint.
+pub(crate) fn is_machine_fingerprint(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
 
 /// Run event emitted when [`COMPUTER_PREPARE_TIMEOUT`] fires.
 pub(crate) const COMPUTER_PREPARE_TIMEOUT_NOTICE: &str =
@@ -951,6 +975,52 @@ impl Shared {
     /// Resolve a bot's computer target for a single run, honoring a previously
     /// persisted resolution label when resuming a fixed-resolution run.
     pub(crate) fn resolve_computer_for_run(
+        &self,
+        profile: &BotProfile,
+        persisted: Option<&Run>,
+    ) -> RunComputer {
+        let rc = self.resolve_computer_for_run_inner(profile, persisted);
+        let provider = self.computer_provider.read().clone();
+        Self::without_unverified_local(rc, provider.as_deref())
+    }
+
+    /// Never let a local desktop/browser carry an identity that is not a real
+    /// machine fingerprint. With no provider installed yet (fallback) the node
+    /// is dropped (tools keep working, nothing machine-bound is stored); with a
+    /// provider whose identity is unreadable the run gets no local computer.
+    fn without_unverified_local(
+        mut rc: RunComputer,
+        provider: Option<&dyn ComputerProvider>,
+    ) -> RunComputer {
+        let local_id = provider.map(|p| p.local_node().id);
+        let is_local = matches!(rc.label, ComputerLabel::Host | ComputerLabel::Browser)
+            || rc
+                .node
+                .as_ref()
+                .is_some_and(|n| local_id.as_deref() == Some(n.id.as_str()));
+        if !is_local || rc.unavailable_reason.is_some() {
+            return rc;
+        }
+        let Some(p) = provider else {
+            rc.node = None;
+            return rc;
+        };
+        let verified = p.local_identity_bound()
+            && rc
+                .node
+                .as_ref()
+                .is_none_or(|n| is_machine_fingerprint(&n.id));
+        if verified {
+            return rc;
+        }
+        let mut off = Self::offline_pc(None);
+        off.label = ComputerLabel::Off;
+        off.wait_for_pc = false;
+        off.notice = Some(COMPUTER_IDENTITY_UNBOUND_FRESH_NOTICE.into());
+        off
+    }
+
+    fn resolve_computer_for_run_inner(
         &self,
         profile: &BotProfile,
         persisted: Option<&Run>,
@@ -1128,6 +1198,18 @@ impl Shared {
     }
 
     pub(crate) fn bind_computer(&self, run_id: RunId, rc: &RunComputer) -> storage::Result<()> {
+        // Lowest common point: a local kind never persists a non-fingerprint id.
+        if matches!(rc.label, ComputerLabel::Host | ComputerLabel::Browser)
+            && rc
+                .node
+                .as_ref()
+                .is_some_and(|n| !is_machine_fingerprint(&n.id))
+        {
+            return Err(storage::StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "refusing to store a local computer id that is not a machine fingerprint",
+            )));
+        }
         self.storage.bind_run_computer(
             run_id,
             rc.label.as_str(),

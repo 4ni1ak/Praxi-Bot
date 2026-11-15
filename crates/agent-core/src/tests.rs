@@ -6428,6 +6428,12 @@ async fn computer_prepare_timeout_emits_a_run_event() {
         fn has_display(&self) -> bool {
             true
         }
+        fn local_node(&self) -> computer_target::ComputerNode {
+            computer_target::ComputerNode {
+                id: MACHINE_A.into(),
+                name: "Local computer".into(),
+            }
+        }
         fn prepare(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
             self.hits.fetch_add(1, Ordering::SeqCst);
             Box::pin(std::future::pending())
@@ -7281,4 +7287,152 @@ async fn resume_during_unbound_identity_boot_keeps_host_and_browser_runs_paused(
         let state = env.storage.get_run(run).unwrap().unwrap().state;
         assert_eq!(state, "paused");
     }
+}
+
+fn unbound_provider() -> Arc<BoundMachine> {
+    Arc::new(BoundMachine {
+        inner: MockComputerProvider {
+            local: parking_lot::RwLock::new(Some(
+                NamedDesktop::new("host") as Arc<dyn desktop_api::DesktopBackend>
+            )),
+            pc: parking_lot::RwLock::new(None),
+            is_host: true,
+            browser_available: true,
+            has_display: true,
+        },
+        id: "unbound-machine",
+        unreachable: false,
+        unbound: true,
+    })
+}
+
+/// A NEW run during a boot whose identity key was unreadable gets no local
+/// computer and persists nothing machine-bound; the next readable boot is clean.
+#[tokio::test]
+async fn fresh_runs_during_unbound_identity_boot_persist_no_local_identity() {
+    let env = setup();
+    for target in ["host", "browser", "auto"] {
+        let fake = Fake::new(vec![text("hello")]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(&format!(
+                "[runtime]
+computer = \"{target}\"
+"
+            )),
+            cfg(Policy::full()),
+        );
+        lp.set_computer_provider(unbound_provider());
+        let mut rx = lp.subscribe();
+        let run = lp.run_turn(env.chat, "hi").unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded, "{target}");
+        let row = env.storage.get_run(run).unwrap().unwrap();
+        assert_eq!(row.computer_node, None, "{target}");
+        assert_eq!(row.computer_node_name, None, "{target}");
+        assert_eq!(row.computer_target.as_deref(), Some("off"), "{target}");
+        let notice = until(&mut rx, |e| {
+            matches!(e, Event::Error(err) if err.recoverable && err.message.contains("identity could not be read"))
+        })
+        .await;
+        assert!(matches!(notice, Event::Error(_)));
+    }
+    let nodes: Vec<_> = env
+        .storage
+        .list_audit(env.user)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.detail.to_string().contains("unbound-machine"))
+        .collect();
+    assert!(nodes.is_empty(), "{nodes:?}");
+
+    // The lowest common point refuses a non-fingerprint local id outright, and
+    // never derives a grant scope from one.
+    let fake = Fake::new(vec![]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    for label in [
+        computer_target::ComputerLabel::Host,
+        computer_target::ComputerLabel::Browser,
+    ] {
+        let rc = crate::shared::RunComputer {
+            node: Some(computer_target::ComputerNode {
+                id: "unbound-machine".into(),
+                name: "Local computer".into(),
+            }),
+            unavailable_reason: None,
+            label,
+            desktop: None,
+            desktop_available: false,
+            browser: true,
+            browser_headless: None,
+            wait_for_pc: false,
+            notice: None,
+        };
+        assert!(lp.sh.bind_computer(run, &rc).is_err(), "{label:?}");
+    }
+    let row = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!((row.computer_target, row.computer_node), (None, None));
+
+    // Next boot with a readable key starts clean.
+    lp.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, false));
+    lp.reconcile_computer_identity(MACHINE_A, Some(&[]))
+        .unwrap();
+    assert!(lp.list_grants(env.bot).is_empty());
+    let fake = Fake::new(vec![text("fine")]);
+    let lp2 = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(
+            "[runtime]
+computer = \"host\"
+",
+        ),
+        cfg(Policy::full()),
+    );
+    lp2.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, false));
+    let run = lp2.run_turn(env.chat, "hi").unwrap();
+    assert_eq!(lp2.wait(run).await.unwrap(), RunState::Succeeded);
+    let row = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!(row.computer_node.as_deref(), Some(MACHINE_A));
+}
+
+/// A run started before any provider is installed (fallback) never stores the
+/// `local` alias as its computer node.
+#[tokio::test]
+async fn run_before_provider_install_stores_no_local_alias() {
+    let env = setup();
+    let fake = Fake::new(vec![text("early")]);
+    let (_, browser_t, _) = computer_test_tools();
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&browser_t)],
+        profile(
+            "[runtime]
+computer = \"browser\"
+",
+        ),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "hi").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let row = env.storage.get_run(run).unwrap().unwrap();
+    assert_ne!(row.computer_node.as_deref(), Some("local"));
+    assert_eq!(row.computer_node, None);
 }

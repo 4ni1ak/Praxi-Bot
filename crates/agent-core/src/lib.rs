@@ -34,8 +34,8 @@ mod tests;
 
 pub use agent::AgentLoop;
 pub use computer_target::{
-    ComputerLabel, ComputerProvider, ComputerTarget, Resolution, RuntimeConfig, WAIT_FOR_PC_REASON,
-    resolve as resolve_computer_target,
+    ComputerLabel, ComputerNode, ComputerProvider, ComputerTarget, Resolution, RuntimeConfig,
+    WAIT_FOR_PC_REASON, resolve as resolve_computer_target,
 };
 pub use config::{
     DEFAULT_DIRECT_TOOL_LIMIT, DEFAULT_SCHEDULE_APPROVAL_TIMEOUT, DEFAULT_WAIT_FOR_PC_TIMEOUT,
