@@ -194,7 +194,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         && (path.starts_with("/v1/approvals/")
             || path.starts_with("/v1/questions/")
             || path.starts_with("/v1/control/")
-            || path == PEER_RUN_STOP_PATH))
+            || check_path == PEER_RUN_STOP_PATH))
         || control_transition
     {
         let role = if peer.role == PeerRole::Phone {
@@ -225,4 +225,32 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             &serde_json::json!({"peer_key":peer.key,"path":path,"status":response.status().as_u16()}),
         ) { return ApiError::internal(error).into_response(); }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_phone_and_desktop_may_post_run_stop() {
+        for (role, refused) in [
+            (PeerRole::Phone, false),
+            (PeerRole::Desktop, false),
+            (PeerRole::Node, true),
+            (PeerRole::Host, true),
+        ] {
+            assert_eq!(
+                stop_refused(&Method::POST, PEER_RUN_STOP_PATH, role),
+                refused,
+                "{role:?}"
+            );
+        }
+        // Other paths and methods are not this rule's business.
+        assert!(!stop_refused(&Method::POST, "/v1/runs", PeerRole::Node));
+        assert!(!stop_refused(
+            &Method::GET,
+            PEER_RUN_STOP_PATH,
+            PeerRole::Node
+        ));
+    }
 }
