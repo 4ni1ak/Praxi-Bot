@@ -1373,7 +1373,12 @@ body
     .unwrap();
     std::fs::write(dir.join(".praxi-untrusted"), "").unwrap();
     let index = skills::SkillIndex::load(skills::SkillPaths::from_data_dir(env.dir.path(), None));
-    assert!(index.list().iter().any(|s| s.name == "open-evil-site" && s.untrusted));
+    assert!(
+        index
+            .list()
+            .iter()
+            .any(|s| s.name == "open-evil-site" && s.untrusted)
+    );
     let lp = make(
         &env.storage,
         env.bot,
@@ -1393,7 +1398,10 @@ body
         assert!(!text.contains("loop hint"), "{text}");
     }
     let sys = system_of(&reqs[0]);
-    assert!(!sys.contains("open-evil-site") && !sys.contains("evil.test"), "{sys}");
+    assert!(
+        !sys.contains("open-evil-site") && !sys.contains("evil.test"),
+        "{sys}"
+    );
     let assistant = env
         .storage
         .list_messages(env.chat)
