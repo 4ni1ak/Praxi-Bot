@@ -962,6 +962,8 @@ impl Replayer {
             DesktopActionKind::Click => None,
             DesktopActionKind::Type => Some(tool_registry::ControlKind::Type),
             DesktopActionKind::SetValue => Some(tool_registry::ControlKind::SetValue),
+            // A key step that first clicks an element is a click: it asks.
+            DesktopActionKind::Key if target.is_some() => None,
             DesktopActionKind::Key => Some(tool_registry::ControlKind::Key),
         };
         let secure_element = match (&snap, &found) {
@@ -993,49 +995,15 @@ impl Replayer {
         let guard = self.authorize_input(gate, tool, input, control).await?;
         let guard = guard.as_ref();
 
-        match d.action {
-            DesktopActionKind::Click => {
-                let t = target.ok_or_else(|| Stop::Failed("click without target".into()))?;
-                dispatch(backend, Action::Click { target: t, method }, permit, None).await?;
-            }
-            DesktopActionKind::Type => {
-                let t = target.ok_or_else(|| Stop::Failed("type without target".into()))?;
-                // Same as `desktop_type`: a real click focuses, then keys go to the focus.
-                dispatch(
-                    backend,
-                    Action::Click {
-                        target: t,
-                        method: ClickMethod::Global,
-                    },
-                    permit,
-                    guard,
-                )
-                .await?;
-                dispatch(
-                    backend,
-                    Action::TypeText {
-                        text: value.unwrap_or_default(),
-                    },
-                    permit,
-                    guard,
-                )
-                .await?;
-            }
-            DesktopActionKind::SetValue => {
-                let t = target.ok_or_else(|| Stop::Failed("set_value without target".into()))?;
-                dispatch(
-                    backend,
-                    Action::SetValue {
-                        target: t,
-                        value: value.unwrap_or_default(),
-                    },
-                    permit,
-                    guard,
-                )
-                .await?;
-            }
-            DesktopActionKind::Key => {
-                if let Some(t) = target {
+        let sent: Result<(), Stop> = async {
+            match d.action {
+                DesktopActionKind::Click => {
+                    let t = target.ok_or_else(|| Stop::Failed("click without target".into()))?;
+                    dispatch(backend, Action::Click { target: t, method }, permit, None).await?;
+                }
+                DesktopActionKind::Type => {
+                    let t = target.ok_or_else(|| Stop::Failed("type without target".into()))?;
+                    // Same as `desktop_type`: a real click focuses, then keys go to the focus.
                     dispatch(
                         backend,
                         Action::Click {
@@ -1046,19 +1014,64 @@ impl Replayer {
                         guard,
                     )
                     .await?;
+                    dispatch(
+                        backend,
+                        Action::TypeText {
+                            text: value.unwrap_or_default(),
+                        },
+                        permit,
+                        guard,
+                    )
+                    .await?;
                 }
-                let keys: Vec<String> = value
-                    .unwrap_or_default()
-                    .split('+')
-                    .map(|k| k.trim().to_owned())
-                    .filter(|k| !k.is_empty())
-                    .collect();
-                if keys.is_empty() {
-                    return Err(Stop::Failed("empty key chord".into()));
+                DesktopActionKind::SetValue => {
+                    let t =
+                        target.ok_or_else(|| Stop::Failed("set_value without target".into()))?;
+                    dispatch(
+                        backend,
+                        Action::SetValue {
+                            target: t,
+                            value: value.unwrap_or_default(),
+                        },
+                        permit,
+                        guard,
+                    )
+                    .await?;
                 }
-                dispatch(backend, Action::KeyPress { keys }, permit, guard).await?;
+                DesktopActionKind::Key => {
+                    if let Some(t) = target {
+                        dispatch(
+                            backend,
+                            Action::Click {
+                                target: t,
+                                method: ClickMethod::Global,
+                            },
+                            permit,
+                            guard,
+                        )
+                        .await?;
+                    }
+                    let keys: Vec<String> = value
+                        .unwrap_or_default()
+                        .split('+')
+                        .map(|k| k.trim().to_owned())
+                        .filter(|k| !k.is_empty())
+                        .collect();
+                    if keys.is_empty() {
+                        return Err(Stop::Failed("empty key chord".into()));
+                    }
+                    dispatch(backend, Action::KeyPress { keys }, permit, guard).await?;
+                }
             }
+            Ok(())
         }
+        .await;
+        // A guarded send that stopped or failed withdraws the run's task-wide
+        // permissions, exactly as it does on the direct tool path.
+        if sent.is_err() && guard.is_some() {
+            gate.revoke_control(&self.opts.run_id);
+        }
+        sent?;
         sleep(self.opts.action_settle).await;
         Ok(Done {
             resolved_via: found.as_ref().map(|f| f.strategy),

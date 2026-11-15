@@ -1200,19 +1200,15 @@ impl TurnExecutor {
         // permit was committed, so a grant minted by this very card counts)
         // makes the tool send through the backend's guarded path. Any other
         // call carries no guard.
-        let control_guard = target.as_ref().and_then(|t| {
+        let covers = |t: &tool_registry::ControlTarget| {
             let spec = tool.spec();
             ctx.control_covers(&spec.name, spec.category, t)
-                .then(|| t.identity.clone())
-        });
-        let tctx = ToolContext {
-            run_id: run.id.to_string(),
-            max_inline_bytes: g.spill_threshold_bytes,
-            bot_id: Some(run.bot_id.to_string()),
-            content_tainted: ctx.taint.lock().exposure.is_tainted(),
-            control_guard,
         };
-        let guarded = tctx.control_guard.is_some();
+        // Whether the permit rests on a task-wide grant. Re-read after the
+        // computer slot is held (see below): a call queued behind a failed
+        // guarded call must not keep a grant that call withdrew.
+        let rests_on_grant = target.as_ref().is_some_and(covers);
+        let guarded = std::sync::atomic::AtomicBool::new(false);
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.
         let started = std::time::Instant::now();
@@ -1230,6 +1226,26 @@ impl TurnExecutor {
                         .await
                         .map_err(tool_registry::ToolError::Execution)?;
                 }
+                // Decided with the slot held, so an earlier call's failure has
+                // already cleared the grants. A call that was covered when it was
+                // permitted but no longer is is refused, never sent unguarded.
+                let control_guard = target
+                    .as_ref()
+                    .and_then(|t| covers(t).then(|| t.identity.clone()));
+                if rests_on_grant && control_guard.is_none() {
+                    return Err(tool_registry::ToolError::Execution(
+                        "not sent: the task-wide permission was withdrawn by an earlier stopped or failed send in this run; ask again"
+                            .into(),
+                    ));
+                }
+                guarded.store(control_guard.is_some(), std::sync::atomic::Ordering::SeqCst);
+                let tctx = ToolContext {
+                    run_id: run.id.to_string(),
+                    max_inline_bytes: g.spill_threshold_bytes,
+                    bot_id: Some(run.bot_id.to_string()),
+                    content_tainted: ctx.taint.lock().exposure.is_tainted(),
+                    control_guard,
+                };
                 tool.call(&tctx, input).await
             },
         )
@@ -1238,7 +1254,9 @@ impl TurnExecutor {
         // send failed part-way, a key could not be confirmed released, a
         // timeout) withdraws every task-wide permission of this run: the next
         // call asks again, and nothing is assumed about what was delivered.
-        if guarded && !matches!(outcome, Ok(Ok(_))) {
+        if (guarded.load(std::sync::atomic::Ordering::SeqCst) || rests_on_grant)
+            && !matches!(outcome, Ok(Ok(_)))
+        {
             ctx.control_grants.lock().clear();
         }
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);

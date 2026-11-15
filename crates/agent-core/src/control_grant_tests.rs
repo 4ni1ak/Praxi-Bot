@@ -916,6 +916,8 @@ struct ReplayLike {
     gate: crate::approval::LoopGate,
     steps: Vec<(&'static str, Option<ControlTarget>)>,
     covered: AtomicUsize,
+    /// Withdraw the run's grants after the steps, as replay does when a guarded send fails.
+    revoke: bool,
 }
 
 #[async_trait]
@@ -945,6 +947,10 @@ impl Tool for ReplayLike {
             if guard.is_some() {
                 self.covered.fetch_add(1, Ordering::SeqCst);
             }
+        }
+        if self.revoke {
+            use builtin_tools::ToolGate;
+            self.gate.revoke_control(&ctx.run_id);
         }
         Ok(ToolOutput::text("replayed"))
     }
@@ -994,6 +1000,7 @@ async fn a_thirty_step_replay_costs_one_card_per_launch_grant_and_excluded_step(
         },
         steps,
         covered: AtomicUsize::new(0),
+        revoke: false,
     });
     lp.sh.tools.register(Arc::clone(&tool) as Arc<dyn Tool>);
     let mut rx = lp.subscribe();
@@ -1013,4 +1020,56 @@ async fn a_thirty_step_replay_costs_one_card_per_launch_grant_and_excluded_step(
         26,
         "all 26 steps ran under the one grant"
     );
+}
+
+#[tokio::test]
+async fn a_guarded_failure_inside_a_replay_withdraws_the_grant_for_the_next_call() {
+    let env = setup();
+    let fake = Fake::new(vec![
+        calls(&[("c0", "fs_read", json!({}))]),
+        calls(&[(
+            "c1",
+            "desktop_type",
+            json!({"index": 1, "gen": 1, "text": "a"}),
+        )]),
+        calls(&[("c2", "replay_like", json!({}))]),
+        calls(&[(
+            "c3",
+            "desktop_type",
+            json!({"index": 1, "gen": 1, "text": "a"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = control_loop(&env, &fake, false, true);
+    let ty = ControlTool::new("desktop_type", vec![ok(ControlKind::Type)]);
+    register(&lp, &[&ty]);
+    let replay = Arc::new(ReplayLike {
+        spec: ToolSpec {
+            name: "replay_like".into(),
+            description: "replay".into(),
+            input_schema: json!({"type": "object"}),
+            effect: Effect::Read,
+            category: PermissionCategory::Fs,
+            platforms: vec![Platform::All],
+            content: ContentClass::none(),
+        },
+        gate: crate::approval::LoopGate {
+            sh: Arc::downgrade(&lp.sh),
+        },
+        steps: vec![],
+        covered: AtomicUsize::new(0),
+        revoke: true,
+    });
+    lp.sh.tools.register(replay as Arc<dyn Tool>);
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let first = next_card(&mut rx).await;
+    lp.approve(first.call_id, ApprovalScope::RunControl, env.user)
+        .unwrap();
+    // The replay failed a guarded send and withdrew the grant: this asks again.
+    let again = next_card(&mut rx).await;
+    assert_eq!(control_card(&again)["offered"], true);
+    lp.approve(again.call_id, ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
 }

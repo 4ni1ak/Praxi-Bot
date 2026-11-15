@@ -1158,11 +1158,34 @@ fn named_desktop() -> Arc<FakeDesktop> {
 }
 
 #[tokio::test]
+async fn a_key_step_that_first_clicks_an_element_is_never_covered() {
+    let desktop = named_desktop();
+    let gate = CoveringGate::default();
+    let report = replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        &typed_step(DesktopActionKind::Key, "ctrl+s"),
+        &params(&json!({})),
+        &gate,
+    )
+    .await
+    .unwrap();
+    assert!(report.is_completed());
+    assert!(gate.requests.lock()[0].control.is_none(), "it asks");
+    assert!(
+        desktop.guarded.lock().is_empty(),
+        "nothing took the guarded path"
+    );
+    assert_eq!(desktop.actions.lock().len(), 2, "click and key, unguarded");
+}
+
+#[tokio::test]
 async fn replay_passes_through_the_guard_when_a_grant_covers_the_step() {
     for (kind, value, guarded) in [
         (DesktopActionKind::Type, "hello", 2),
         (DesktopActionKind::SetValue, "hello", 1),
-        (DesktopActionKind::Key, "ctrl+s", 2),
     ] {
         let desktop = named_desktop();
         let gate = CoveringGate::default();
@@ -1201,6 +1224,43 @@ impl builtin_tools::ToolGate for Swap {
         self.0.input.lock().as_mut().unwrap().identity.pid += 1;
         Ok(id)
     }
+}
+
+/// [`Swap`] that records the run-wide withdrawals.
+struct SwapSpy(Swap, parking_lot::Mutex<Vec<String>>);
+#[async_trait::async_trait]
+impl builtin_tools::ToolGate for SwapSpy {
+    async fn authorize(&self, r: &builtin_tools::GateRequest) -> Result<(), String> {
+        self.0.authorize(r).await
+    }
+    async fn authorize_control(
+        &self,
+        r: &builtin_tools::GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.0.authorize_control(r).await
+    }
+    fn revoke_control(&self, run_id: &str) {
+        self.1.lock().push(run_id.to_owned());
+    }
+}
+
+#[tokio::test]
+async fn a_guarded_failure_in_replay_withdraws_the_runs_control_grants() {
+    let desktop = named_desktop();
+    let gate = SwapSpy(Swap(desktop.clone()), parking_lot::Mutex::default());
+    let report = replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        &typed_step(DesktopActionKind::Type, "hello"),
+        &params(&json!({})),
+        &gate,
+    )
+    .await
+    .unwrap();
+    assert!(!report.is_completed());
+    assert_eq!(gate.1.lock().len(), 1, "the grant was withdrawn once");
 }
 
 #[tokio::test]
@@ -1250,7 +1310,15 @@ async fn a_replayed_win_chord_has_no_eligible_target() {
         ReplayOptions::instant(),
     )
     .replay(
-        &typed_step(DesktopActionKind::Key, "win+r"),
+        // No element: the keys go to the live focus, the covered shape of a key step.
+        &screen_wf(vec![Step::DesktopAction(DesktopAction {
+            app: None,
+            window_title_pattern: Some("*App".into()),
+            target: None,
+            action: DesktopActionKind::Key,
+            value: Some("win+r".into()),
+            method: None,
+        })]),
         &params(&json!({})),
         &gate,
     )

@@ -77,6 +77,12 @@ pub trait ToolGate: Send + Sync {
         self.authorize(req).await.map(|()| None)
     }
 
+    /// Withdraw every task-wide permission of `run_id`. A caller that sent a
+    /// guarded call itself (workflow replay) calls this when that send stopped
+    /// or failed, as the agent loop does for its own tool calls. The default
+    /// has no grants.
+    fn revoke_control(&self, _run_id: &str) {}
+
     /// Record content consumed by a composite tool before its inner calls run.
     /// Only host code supplies this classification; model input cannot clear it.
     fn note_exposure(&self, _run_id: &str, _content: ContentClass, _label: &str) {}

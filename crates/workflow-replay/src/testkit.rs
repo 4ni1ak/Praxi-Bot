@@ -107,10 +107,13 @@ impl DesktopBackend for FakeDesktop {
         guard: desktop_api::ActGuard,
     ) -> Result<ActionResult, DesktopError> {
         let now = self.input.lock().clone().ok_or_else(|| {
-            DesktopError::GuardRefused(desktop_api::Refusal::NoIdentity.code().into())
+            DesktopError::GuardRefused(format!(
+                "not sent: {}",
+                desktop_api::Refusal::NoIdentity.code()
+            ))
         })?;
         desktop_api::guard::check_guard(&guard, &now)
-            .map_err(|r| DesktopError::GuardRefused(r.code().into()))?;
+            .map_err(|r| DesktopError::GuardRefused(format!("not sent: {}", r.code())))?;
         self.guarded.lock().push(action.clone());
         self.act(action).await
     }

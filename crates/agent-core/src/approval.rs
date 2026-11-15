@@ -1316,6 +1316,18 @@ impl ToolGate for LoopGate {
         self.authorize_inner(req).await.map(|_| ())
     }
 
+    fn revoke_control(&self, run_id: &str) {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return;
+        };
+        let Some(sh) = self.sh.upgrade() else {
+            return;
+        };
+        if let Some(ctx) = sh.runs.lock().get(&protocol::RunId(id)) {
+            ctx.control_grants.lock().clear();
+        }
+    }
+
     async fn authorize_control(
         &self,
         req: &GateRequest,
