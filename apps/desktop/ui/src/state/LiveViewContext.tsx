@@ -72,6 +72,7 @@ import {
   type PanelActionHighlight
 } from "./controlBridge.ts";
 import { useDaemon } from "./DaemonContext.tsx";
+import { TakeoverStop } from "./takeoverStop.ts";
 
 const SESSION_HEARTBEAT_MS = 5000;
 const CONTROL_POLL_MS = 5000;
@@ -139,6 +140,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   const clientIdRef = useRef<string>(crypto.randomUUID());
   const controlStateRef = useRef<ControlStateDto | null>(null);
+  /** The client whose snapshot `controlStateRef` holds (the Stop override decides from it). */
+  const controlClientRef = useRef<unknown>(null);
   // One registry for the provider's lifetime: `registerBridge` keeps its identity
   // across control-state refreshes, so the bridge (and its live runs) survives them.
   const registry = useMemo(
@@ -174,10 +177,16 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     (dto: ControlStateDto | null) => {
       sequencer.markFresh();
       controlStateRef.current = dto;
+      controlClientRef.current = clientRef.current;
       setControlStateRaw(dto);
+      takeoverStopRef.current?.pump();
     },
     [sequencer]
   );
+  // The takeover half of every Stop: input halts synchronously, the override is owed
+  // until delivered through the current client (review r-94 #2, #9).
+  const takeoverStopRef = useRef<TakeoverStop<ApiClient> | null>(null);
+  const applyOverrideRef = useRef<(dto: ControlStateDto) => void>(() => {});
   const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
   const [thumbDemand, setThumbDemand] = useState<{
     active: boolean;
@@ -195,6 +204,21 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     createInitialLiveViewState(null)
   );
   const stateRef = useRef(state);
+  if (!takeoverStopRef.current) {
+    takeoverStopRef.current = new TakeoverStop<ApiClient>({
+      client: () => clientRef.current,
+      // Decided only from a snapshot of the CURRENT client; unknown otherwise.
+      controlled: () =>
+        clientRef.current !== null &&
+        controlClientRef.current === clientRef.current &&
+        controlStateRef.current !== null
+          ? shouldOverrideOnStop(stateRef.current, controlStateRef.current)
+          : null,
+      post: (c) => c.overrideControl(),
+      apply: (_c, dto) => applyOverrideRef.current(dto),
+      schedule: (fn, ms) => window.setTimeout(fn, ms)
+    });
+  }
   const updateState = useCallback(
     (
       updater:
@@ -267,6 +291,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         controlStateRef.current === null ||
         controlSnapshotKey(controlStateRef.current) !== controlSnapshotKey(dto);
       controlStateRef.current = dto;
+      controlClientRef.current = clientRef.current;
+      takeoverStopRef.current?.pump();
       if (changed) {
         setControlStateRaw(dto);
         updateState((prev) => applyControlStateDto(prev, dto));
@@ -298,7 +324,9 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       setTargets(nextTargets);
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
+        controlClientRef.current = clientRef.current;
         setControlStateRaw(nextCtrl);
+        takeoverStopRef.current?.pump();
         registry.syncControlState(nextCtrl);
         updateState((prev) => applyControlStateDto(prev, nextCtrl));
       }
@@ -312,6 +340,9 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   // Refresh targets & control snapshot on client connect and when panel/viewer opens.
   useEffect(() => {
     targetsForRef.current = null;
+    // A new client: the owed override waits for THIS client's snapshot (or goes now if forced).
+    controlClientRef.current = null;
+    takeoverStopRef.current?.pump();
     if (!client) {
       setTargets([]);
       setControlState(null);
@@ -634,7 +665,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!cur.session) {
         return;
       }
-      const body = buildSessionHeartbeat(cur);
+      // After a Stop this app no longer renews its input lease.
+      const body = takeoverStopRef.current?.inputAllowed() === false ? {} : buildSessionHeartbeat(cur);
       void client
         .heartbeatViewSession(cur.session.session_id, body)
         .catch(() => undefined);
@@ -666,7 +698,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       while (inputQueueRef.current.length > 0) {
         const cur = stateRef.current;
         const gate = canSendLiveInput(cur, Date.now());
-        if (!gate.ok) {
+        if (!gate.ok || takeoverStopRef.current?.inputAllowed() === false) {
           inputQueueRef.current.clear();
           break;
         }
@@ -716,7 +748,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const enqueueInput = useCallback(
     (event: InputEvent, flushNow = true) => {
       const gate = canSendLiveInput(stateRef.current, Date.now());
-      if (!gate.ok) {
+      if (!gate.ok || takeoverStopRef.current?.inputAllowed() === false) {
         return;
       }
       inputQueueRef.current.enqueue(event);
@@ -735,7 +767,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         return;
       }
       const gate = canSendLiveInput(stateRef.current, Date.now());
-      if (gate.ok && flushNow) {
+      if (gate.ok && flushNow && takeoverStopRef.current?.inputAllowed() !== false) {
         inputQueueRef.current.enqueue({ type: "reset" });
         void flushInputQueue();
       }
@@ -751,6 +783,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     if (!client) {
       return;
     }
+    // Taking control again is a new user decision: input may flow again.
+    takeoverStopRef.current?.resume();
     // A takeover whose response was lost is retried with the SAME request id
     // (the daemon treats it idempotently); a definitive error starts afresh.
     const requestId =
@@ -927,6 +961,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       return;
     }
     const requestId = crypto.randomUUID();
+    takeoverStopRef.current?.resume();
     const req = buildTakeoverRequest(stateRef.current, requestId, {
       reacquireTakeoverId: prompt.takeoverId
     });
@@ -947,32 +982,23 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     }
   }, [client, clearPause, controlState, refreshTargets, updateState]);
 
+  // A Stop pauses a held takeover. Input halts synchronously here; the override is
+  // owed until delivered through the CURRENT client (see takeoverStop.ts). With
+  // `onlyIfControlled` (every entry point but the viewer button) it is sent only if
+  // the current client's snapshot shows an acquiring / active takeover.
   const overrideStop = useCallback(
     async (opts: { onlyIfControlled?: boolean } = {}) => {
-      if (!client) {
-        return;
-      }
-      if (
-        opts.onlyIfControlled &&
-        !shouldOverrideOnStop(stateRef.current, controlStateRef.current)
-      ) {
-        return;
-      }
       inputQueueRef.current.clear();
-      // Runs and native are the Stop ledger's job (`requestStop`); this only pauses
-      // a takeover. It is sent directly, never queued behind the bridge.
-      try {
-        const dto = await client.overrideControl();
-        registry.syncControlState(dto);
-        setControlState(dto);
-        updateState((prev) => applyControlStateDto(prev, dto));
-        void refreshTargets();
-      } catch {
-        void refreshTargets();
-      }
+      takeoverStopRef.current?.stop(!opts.onlyIfControlled);
     },
-    [client, refreshTargets, registry, setControlState, updateState]
+    []
   );
+  applyOverrideRef.current = (dto: ControlStateDto) => {
+    registry.syncControlState(dto);
+    setControlState(dto);
+    updateState((prev) => applyControlStateDto(prev, dto));
+    void refreshTargets();
+  };
 
   const openViewer = useCallback((targetId?: string) => {
     // Never retarget while holding/acquiring control.
