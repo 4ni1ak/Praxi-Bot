@@ -16,7 +16,10 @@
 
 use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
-use rmcp::transport::auth::{AuthError, CredentialStore, StoredCredentials};
+use rmcp::transport::auth::{
+    AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
+    AuthorizationSession, CredentialStore, StoredCredentials,
+};
 use secret_store::SecretStore;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -41,7 +44,46 @@ pub fn credential_name(server: &str) -> String {
 pub struct SecretCredentialStore {
     store: Arc<dyn SecretStore>,
     name: String,
+    /// Canonical URL of the MCP server the credentials were issued for.
+    resource: String,
     registrar: Option<SecretRegistrar>,
+}
+
+/// What is written to the secret store: the credentials and the server they
+/// belong to. rmcp binds stored tokens to the issuer; the resource binding is
+/// ours, so a token is never offered to another URL configured under the
+/// same server name.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Bound {
+    resource: String,
+    credentials: StoredCredentials,
+}
+
+/// Scheme, host and port in lower case plus the path, without query or
+/// fragment: the identity of an MCP server for credential binding.
+///
+/// # Errors
+/// `url` is not an absolute `http(s)` URL.
+pub fn canonical_resource(url: &str) -> Result<String> {
+    let bad = || McpError::Config(format!("`{url}` is not an absolute http(s) URL"));
+    let uri: http::Uri = url
+        .split('#')
+        .next()
+        .unwrap_or(url)
+        .parse()
+        .map_err(|_| bad())?;
+    let scheme = uri
+        .scheme_str()
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(bad)?;
+    let authority = uri
+        .authority()
+        .map(|a| a.as_str().to_ascii_lowercase())
+        .ok_or_else(bad)?;
+    if !matches!(scheme.as_str(), "http" | "https") || authority.contains('@') {
+        return Err(bad());
+    }
+    Ok(format!("{scheme}://{authority}{}", uri.path()))
 }
 
 impl std::fmt::Debug for SecretCredentialStore {
@@ -53,18 +95,22 @@ impl std::fmt::Debug for SecretCredentialStore {
 }
 
 impl SecretCredentialStore {
-    /// Credentials of `server` in `store`.
-    #[must_use]
+    /// Credentials of `server`, reachable at `url`, in `store`.
+    ///
+    /// # Errors
+    /// `url` is not an absolute `http(s)` URL.
     pub fn new(
         store: Arc<dyn SecretStore>,
         server: &str,
+        url: &str,
         registrar: Option<SecretRegistrar>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             store,
             name: credential_name(server),
+            resource: canonical_resource(url)?,
             registrar,
-        }
+        })
     }
 
     /// Hand the token values inside `serialized` to the redactor.
@@ -76,7 +122,7 @@ impl SecretCredentialStore {
             return;
         };
         for field in ["access_token", "refresh_token", "id_token"] {
-            if let Some(token) = value["token_response"][field].as_str()
+            if let Some(token) = value["credentials"]["token_response"][field].as_str()
                 && !token.is_empty()
             {
                 registrar(token);
@@ -100,14 +146,31 @@ impl CredentialStore for SecretCredentialStore {
         else {
             return Ok(None);
         };
+        // Registered even when it is refused below: it is still a live token.
         self.register(value.expose());
-        serde_json::from_str(value.expose())
-            .map(Some)
-            .map_err(|_| store_error("decode"))
+        let bound: Bound =
+            serde_json::from_str(value.expose()).map_err(|_| store_error("decode"))?;
+        if bound.resource != self.resource {
+            // The server name now points somewhere else. These credentials
+            // belong to the old URL and must not be sent to the new one.
+            tracing::warn!(
+                secret = %self.name,
+                "stored MCP OAuth credentials belong to a different server URL; discarding them"
+            );
+            self.store
+                .delete(&self.name)
+                .map_err(|_| store_error("delete"))?;
+            return Ok(None);
+        }
+        Ok(Some(bound.credentials))
     }
 
     async fn save(&self, credentials: StoredCredentials) -> std::result::Result<(), AuthError> {
-        let serialized = serde_json::to_string(&credentials).map_err(|_| store_error("encode"))?;
+        let serialized = serde_json::to_string(&Bound {
+            resource: self.resource.clone(),
+            credentials,
+        })
+        .map_err(|_| store_error("encode"))?;
         // Before the store write: the value must be masked by the time anything
         // could log it.
         self.register(&serialized);
@@ -121,6 +184,191 @@ impl CredentialStore for SecretCredentialStore {
             .delete(&self.name)
             .map(|_| ())
             .map_err(|_| store_error("delete"))
+    }
+}
+
+/// Refuse authorization-server metadata the flow must not be run against.
+///
+/// rmcp tolerates metadata without `code_challenge_methods_supported`; the MCP
+/// authorization spec says a client must refuse to proceed then, so that is
+/// enforced here. Endpoints must be `https`; plain `http` is accepted only for
+/// a loopback host and only when the host opted in (local development).
+///
+/// # Errors
+/// [`McpError::Config`] naming the rule that was broken.
+pub fn check_metadata(
+    server: &str,
+    metadata: &AuthorizationMetadata,
+    allow_loopback_http: bool,
+) -> Result<()> {
+    let refuse = |why: &str| {
+        Err(McpError::Config(format!(
+            "server `{server}`: authorization server refused: {why}"
+        )))
+    };
+    if !metadata
+        .code_challenge_methods_supported
+        .as_ref()
+        .is_some_and(|methods| methods.iter().any(|m| m == "S256"))
+    {
+        return refuse("it does not advertise PKCE with S256");
+    }
+    for endpoint in [&metadata.authorization_endpoint, &metadata.token_endpoint] {
+        let Ok(uri) = endpoint.parse::<http::Uri>() else {
+            return refuse("an endpoint is not a valid URL");
+        };
+        let host = uri.host().unwrap_or_default().trim_matches(['[', ']']);
+        let loopback = host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        match uri.scheme_str() {
+            Some("https") => {}
+            Some("http") if loopback && allow_loopback_http => {}
+            _ => return refuse("its endpoints must use https"),
+        }
+    }
+    Ok(())
+}
+
+/// Client identity and policy of one sign-in.
+#[derive(Clone, Default)]
+pub struct SignInOptions {
+    /// Client id registered with the authorization server out of band.
+    pub client_id: Option<String>,
+    /// Secret of that client (resolved from the secret store by the host).
+    pub client_secret: Option<String>,
+    /// HTTPS URL of our Client ID Metadata Document, if one is published.
+    pub client_metadata_url: Option<String>,
+    /// `WWW-Authenticate` value of the server's 401, to seed discovery.
+    pub challenge: Option<String>,
+    /// Accept `http` endpoints on loopback (local development only).
+    pub allow_loopback_http: bool,
+}
+
+impl std::fmt::Debug for SignInOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignInOptions")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("client_metadata_url", &self.client_metadata_url)
+            .field("allow_loopback_http", &self.allow_loopback_http)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An OAuth error may quote a server response; keep it short and one line.
+fn auth_error(server: &str, error: &AuthError) -> McpError {
+    let text: String = error
+        .to_string()
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(300)
+        .collect();
+    flow_error(server, &text)
+}
+
+/// A sign-in the user started: discovery and client registration are done,
+/// the browser has to be sent to [`SignIn::authorization_url`], and
+/// [`SignIn::finish`] waits for the redirect and stores the tokens.
+///
+/// Only the host may create one, on an explicit user action. Nothing in this
+/// crate starts a sign-in on behalf of a server, a tool or a model.
+pub struct SignIn {
+    server: String,
+    session: AuthorizationSession,
+    listener: CallbackListener,
+    state: String,
+}
+
+impl std::fmt::Debug for SignIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignIn")
+            .field("server", &self.server)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SignIn {
+    /// Discover the authorization server of the MCP server at `url`, check
+    /// it, pick a client identity (pre-registered, then Client ID Metadata
+    /// Document, then dynamic registration) and open the redirect listener.
+    ///
+    /// # Errors
+    /// Discovery, policy ([`check_metadata`], rmcp's address filter) or
+    /// registration failure. Nothing is stored in that case.
+    pub async fn start(
+        server: &str,
+        url: &str,
+        store: Arc<dyn SecretStore>,
+        registrar: Option<SecretRegistrar>,
+        options: SignInOptions,
+    ) -> Result<Self> {
+        let credentials = SecretCredentialStore::new(store, server, url, registrar)?;
+        let mut manager = AuthorizationManager::new(url)
+            .await
+            .map_err(|e| auth_error(server, &e))?;
+        manager.set_credential_store(credentials);
+        let resolution = manager
+            .resolve_metadata_from_challenge(options.challenge.as_deref())
+            .await
+            .map_err(|e| auth_error(server, &e))?;
+        check_metadata(server, &resolution.metadata, options.allow_loopback_http)?;
+        manager.set_metadata(resolution.metadata);
+
+        let listener = CallbackListener::bind(server).await?;
+        let mut request =
+            AuthorizationRequest::new(listener.redirect_uri()).with_client_name("Praxi");
+        if let Some(id) = options.client_id {
+            request = request.with_preregistered_client(id);
+            if let Some(secret) = options.client_secret {
+                request = request.with_client_secret(secret);
+            }
+        }
+        if let Some(document) = options.client_metadata_url {
+            request = request.with_client_metadata_url(document);
+        }
+        if let Some(challenge) = options.challenge {
+            request = request.with_challenge(challenge);
+        }
+        let session = AuthorizationSession::new(manager, request)
+            .await
+            .map_err(|(_, e)| auth_error(server, &e))?;
+        let state = query_param(session.get_authorization_url(), "state")
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| flow_error(server, "the authorization URL carries no `state`"))?;
+        Ok(Self {
+            server: server.to_owned(),
+            session,
+            listener,
+            state,
+        })
+    }
+
+    /// The URL the user's browser must open.
+    #[must_use]
+    pub fn authorization_url(&self) -> &str {
+        self.session.get_authorization_url()
+    }
+
+    /// Wait for the redirect, exchange the code (PKCE verifier, `resource`,
+    /// RFC 9207 issuer check are rmcp's) and store the tokens.
+    ///
+    /// # Errors
+    /// Timeout, a wrong or replayed redirect, or a refused exchange.
+    pub async fn finish(self, timeout: Duration) -> Result<()> {
+        let callback = self
+            .listener
+            .wait(&self.server, &self.state, timeout)
+            .await?;
+        self.session
+            .handle_callback_with_issuer(&callback.code, &self.state, callback.issuer.as_deref())
+            .await
+            .map(|_| ())
+            .map_err(|e| auth_error(&self.server, &e))
     }
 }
 
@@ -352,7 +600,13 @@ mod tests {
             let seen = Arc::clone(&seen);
             Arc::new(move |value: &str| seen.lock().push(value.to_owned()))
         };
-        let store = SecretCredentialStore::new(backend.clone(), "notion", Some(registrar));
+        let store = SecretCredentialStore::new(
+            backend.clone(),
+            "notion",
+            "https://MCP.notion.example/mcp#frag",
+            Some(registrar.clone()),
+        )
+        .unwrap();
         assert!(store.load().await.unwrap().is_none());
 
         store
@@ -381,8 +635,29 @@ mod tests {
         assert_eq!(seen.lock().len(), 2);
 
         // Another server's credentials are a different secret.
-        let other = SecretCredentialStore::new(backend.clone(), "linear", None);
+        let other =
+            SecretCredentialStore::new(backend.clone(), "linear", "https://l.example/mcp", None)
+                .unwrap();
         assert!(other.load().await.unwrap().is_none());
+
+        // Same server name, another URL: the token is not handed out and is
+        // removed, but still registered for redaction on the way.
+        seen.lock().clear();
+        let moved = SecretCredentialStore::new(
+            backend.clone(),
+            "notion",
+            "https://attacker.example/mcp",
+            Some(registrar),
+        )
+        .unwrap();
+        assert!(moved.load().await.unwrap().is_none());
+        assert_eq!(seen.lock().len(), 2);
+        assert_eq!(backend.list_names().unwrap(), Vec::<String>::new());
+        assert!(store.load().await.unwrap().is_none());
+        store
+            .save(credentials("access-sentinel-1", "refresh-sentinel-1"))
+            .await
+            .unwrap();
 
         store.clear().await.unwrap();
         assert_eq!(backend.list_names().unwrap(), Vec::<String>::new());
@@ -416,7 +691,9 @@ mod tests {
 
     #[tokio::test]
     async fn backend_errors_never_carry_token_or_backend_text() {
-        let store = SecretCredentialStore::new(Arc::new(Failing), "s", None);
+        let store =
+            SecretCredentialStore::new(Arc::new(Failing), "s", "https://s.example/mcp", None)
+                .unwrap();
         let save = store
             .save(credentials("access-sentinel-2", "refresh-sentinel-2"))
             .await
@@ -427,6 +704,70 @@ mod tests {
             assert!(!text.contains("sentinel"), "{text}");
             assert!(text.contains("secret store"), "{text}");
         }
+    }
+
+    #[test]
+    fn resources_are_canonical_and_metadata_is_checked() {
+        assert_eq!(
+            canonical_resource("HTTPS://Mcp.Example.com:8443/mcp?x=1#f").unwrap(),
+            "https://mcp.example.com:8443/mcp"
+        );
+        for bad in [
+            "mcp.example.com/mcp",
+            "ftp://x/y",
+            "https://user:pw@x/y",
+            "",
+        ] {
+            assert!(canonical_resource(bad).is_err(), "{bad}");
+        }
+
+        let metadata = |authorize: &str, token: &str, methods: Option<&[&str]>| {
+            let mut m = AuthorizationMetadata::default();
+            m.authorization_endpoint = authorize.into();
+            m.token_endpoint = token.into();
+            m.code_challenge_methods_supported =
+                methods.map(|list| list.iter().map(|s| (*s).to_owned()).collect());
+            m
+        };
+        let s256: Option<&[&str]> = Some(&["S256"]);
+        let ok = metadata(
+            "https://as.example/authorize",
+            "https://as.example/token",
+            s256,
+        );
+        check_metadata("s", &ok, false).unwrap();
+        // The spec requires refusing a server that does not advertise PKCE.
+        for methods in [None, Some(&["plain"][..])] {
+            let m = metadata(
+                "https://as.example/authorize",
+                "https://as.example/token",
+                methods,
+            );
+            let error = check_metadata("s", &m, true).unwrap_err().to_string();
+            assert!(error.contains("S256"), "{error}");
+        }
+        for (authorize, token) in [
+            ("http://as.example/authorize", "https://as.example/token"),
+            (
+                "https://as.example/authorize",
+                "http://169.254.169.254/token",
+            ),
+            ("https://as.example/authorize", "http://10.0.0.5/token"),
+            ("file:///etc/passwd", "https://as.example/token"),
+        ] {
+            let m = metadata(authorize, token, s256);
+            assert!(
+                check_metadata("s", &m, true).is_err(),
+                "{authorize} {token}"
+            );
+        }
+        let local = metadata(
+            "http://127.0.0.1:9/authorize",
+            "http://localhost:9/token",
+            s256,
+        );
+        assert!(check_metadata("s", &local, false).is_err());
+        check_metadata("s", &local, true).unwrap();
     }
 
     async fn get(port: u16, target: &str) -> std::io::Result<String> {
