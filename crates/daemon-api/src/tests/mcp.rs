@@ -54,6 +54,8 @@ impl FakeMcp {
             enabled: input.enabled.unwrap_or(true),
             status: McpStatus::Connected,
             error: None,
+            error_kind: None,
+            stderr_tail: Vec::new(),
             tool_count: 2,
             category: input.category.clone().unwrap_or_else(|| "accounts".into()),
             trust_hints: input.trust_hints,

@@ -14,12 +14,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use daemon_api::mcp::{
-    McpCatalogEntryDto, McpCatalogInstallDto, McpRequiredSecretDto, McpServerChanged, McpServerDto,
-    McpServerInput, McpStatus, McpToolDto, McpTransportInput, McpTransportKind, McpTransportObject,
+    McpCatalogEntryDto, McpCatalogInstallDto, McpErrorKind as ErrorKindDto, McpRequiredSecretDto,
+    McpServerChanged, McpServerDto, McpServerInput, McpStatus, McpToolDto, McpTransportInput,
+    McpTransportKind, McpTransportObject,
 };
 use daemon_api::{McpControl, McpControlError};
 use mcp_bridge::{
-    CatalogEntry, McpConfigStore, McpError, McpManager, McpPolicy, McpServerConfig,
+    CatalogEntry, McpConfigStore, McpError, McpErrorKind, McpManager, McpPolicy, McpServerConfig,
     McpServerHandle, McpTransport, ServerSnapshot, ServerStatus, TomlFileStore,
 };
 use parking_lot::Mutex;
@@ -249,6 +250,15 @@ impl McpHost {
             enabled: cfg.enabled,
             status: self.status_of(&cfg.id),
             error: snap.as_ref().and_then(|s| s.last_error.clone()),
+            error_kind: snap
+                .as_ref()
+                .and_then(|s| s.last_error_kind)
+                .map(error_kind_dto),
+            stderr_tail: if snap.as_ref().is_some_and(|s| s.last_error.is_some()) {
+                error_stderr_tail(&self.manager.stderr_tail(&cfg.id))
+            } else {
+                Vec::new()
+            },
             tool_count: snap
                 .as_ref()
                 .map_or(0, |s| u32::try_from(s.tools.len()).unwrap_or(u32::MAX)),
@@ -326,6 +336,15 @@ impl McpHost {
         };
         if let Err(error) = result {
             eprintln!("warning: MCP server {id} not started: {error}");
+            // The child's own explanation (already secret-redacted).
+            for line in error_stderr_tail(&self.manager.stderr_tail(id))
+                .iter()
+                .rev()
+                .take(5)
+                .rev()
+            {
+                eprintln!("warning: MCP server {id} stderr: {line}");
+            }
         }
         self.finish_connect(id, generation);
     }
@@ -341,6 +360,41 @@ async fn poll(host: Weak<McpHost>) {
             h.announce(&n);
         }
     }
+}
+
+fn error_kind_dto(kind: McpErrorKind) -> ErrorKindDto {
+    match kind {
+        McpErrorKind::RuntimeMissing => ErrorKindDto::RuntimeMissing,
+        McpErrorKind::Spawn => ErrorKindDto::Spawn,
+        McpErrorKind::Closed => ErrorKindDto::Closed,
+        McpErrorKind::Timeout => ErrorKindDto::Timeout,
+        McpErrorKind::Config => ErrorKindDto::Config,
+        McpErrorKind::Other => ErrorKindDto::Other,
+    }
+}
+
+/// How many stderr lines / bytes the status API carries (the bridge keeps more
+/// and has already redacted every line).
+const API_STDERR_LINES: usize = 30;
+const API_STDERR_BYTES: usize = 8 * 1024;
+
+/// The last lines of `lines`, bounded in count and total size.
+fn error_stderr_tail(lines: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut bytes = 0usize;
+    for line in lines.iter().rev().take(API_STDERR_LINES) {
+        let line = line.trim_end();
+        if line.is_empty() {
+            continue;
+        }
+        if bytes + line.len() > API_STDERR_BYTES {
+            break;
+        }
+        bytes += line.len();
+        out.push(line.to_owned());
+    }
+    out.reverse();
+    out
 }
 
 fn category_name(c: PermissionCategory) -> String {
@@ -940,6 +994,36 @@ mod tests {
             seen.push(ev.status);
         }
         seen
+    }
+
+    #[tokio::test]
+    async fn missing_launcher_reports_kind_and_a_hint_in_the_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = open(dir.path());
+        let input: McpServerInput = serde_json::from_value(json!({
+            "name": "sq",
+            "transport": "stdio",
+            "command": "praxi-no-such-launcher-244a",
+            "args": ["x"],
+        }))
+        .unwrap();
+        let dto = host.add(input).await.unwrap();
+        assert_eq!(dto.status, McpStatus::Error);
+        assert_eq!(dto.error_kind, Some(ErrorKindDto::RuntimeMissing));
+        let error = dto.error.unwrap();
+        assert!(error.contains("was not found on PATH"), "{error}");
+    }
+
+    #[test]
+    fn stderr_tail_is_bounded_and_keeps_the_newest_lines_in_order() {
+        let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
+        let tail = error_stderr_tail(&lines);
+        assert_eq!(tail.len(), API_STDERR_LINES);
+        assert_eq!(tail.last().unwrap(), "line 99");
+        assert_eq!(tail.first().unwrap(), "line 70");
+        let huge = vec!["x".repeat(API_STDERR_BYTES + 1)];
+        assert_eq!(error_stderr_tail(&huge), Vec::<String>::new());
+        assert_eq!(error_stderr_tail(&["  ".to_owned()]), Vec::<String>::new());
     }
 
     #[tokio::test]

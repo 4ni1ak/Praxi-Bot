@@ -140,7 +140,7 @@ impl Modify for Security {
         dto::ControlDecisionResponse, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
         dto::ConfiguredProviderDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
         dto::ParseSchedule, dto::ParsedSchedule, dto::AcceptedResponse, dto::ChannelDto, dto::PairCodeDto, dto::ScheduleChanged, dto::ScheduleChangeKind,
-        mcp::McpTransportKind, mcp::McpStatus, mcp::McpServerDto, mcp::McpTransportObject,
+        mcp::McpTransportKind, mcp::McpStatus, mcp::McpErrorKind, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
         mcp::McpCatalogInstallDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,

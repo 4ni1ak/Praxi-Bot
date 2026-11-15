@@ -37,6 +37,26 @@ pub enum McpStatus {
     Quarantined,
 }
 
+/// Class of the last connect error of an MCP server, so a UI can show a
+/// localized "what to do" next to the raw `error` text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpErrorKind {
+    /// The launcher program (`npx`, `uvx`, ...) is not installed or not on PATH.
+    RuntimeMissing,
+    /// The process could not be started for another reason.
+    Spawn,
+    /// The process exited or closed its pipes before the handshake finished
+    /// (`stderr_tail` usually says why).
+    Closed,
+    /// No answer within the timeout.
+    Timeout,
+    /// The configuration or a referenced secret is invalid or missing.
+    Config,
+    /// Anything else.
+    Other,
+}
+
 /// A configured MCP server (`GET /v1/mcp/servers`).  The full stored config,
 /// except secret *values*: `secret_env` / `secret_headers` carry secret
 /// **names** only.
@@ -83,6 +103,13 @@ pub struct McpServerDto {
     /// Most recent error, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Class of `error`, for a localized hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<McpErrorKind>,
+    /// Last lines the server wrote to stderr (secret-redacted, bounded) while
+    /// it is in an error state; empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stderr_tail: Vec<String>,
     /// Number of tools currently registered.
     pub tool_count: u32,
     /// Permission category of every tool of the server.

@@ -7129,6 +7129,18 @@
           }
         }
       },
+      "McpErrorKind": {
+        "type": "string",
+        "description": "Class of the last connect error of an MCP server, so a UI can show a\nlocalized \"what to do\" next to the raw `error` text.",
+        "enum": [
+          "runtime_missing",
+          "spawn",
+          "closed",
+          "timeout",
+          "config",
+          "other"
+        ]
+      },
       "McpRequiredSecretDto": {
         "type": "object",
         "description": "A secret the user must provide to install a catalog entry.",
@@ -7249,6 +7261,17 @@
             ],
             "description": "Most recent error, if any."
           },
+          "error_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpErrorKind",
+                "description": "Class of `error`, for a localized hint."
+              }
+            ]
+          },
           "headers": {
             "type": "object",
             "description": "Plain request headers (http). Not secrets.",
@@ -7286,6 +7309,13 @@
           "status": {
             "$ref": "#/components/schemas/McpStatus",
             "description": "Connection state."
+          },
+          "stderr_tail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Last lines the server wrote to stderr (secret-redacted, bounded) while\nit is in an error state; empty otherwise."
           },
           "tool_allow": {
             "type": "array",
