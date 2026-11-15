@@ -1026,6 +1026,14 @@ impl AgentLoop {
     /// Persist the final answer, emit the closing events and start any queued turn.
     fn conclude(&self, run_id: RunId, res: &std::result::Result<RunState, RuntimeError>) {
         let run = self.sh.storage.get_run(run_id).ok().flatten();
+        crate::compaction::forget_turn(run_id);
+        if !matches!(res, Ok(RunState::Paused)) {
+            // A finished run's spill files are no longer reachable by the
+            // model; crashed runs are swept by age.
+            let data_dir = self.sh.storage.data_dir();
+            crate::compaction::remove_run_spill(data_dir, run_id);
+            crate::compaction::sweep_spill(data_dir, crate::compaction::SPILL_RETENTION);
+        }
         if let Some(parent) = run.as_ref().and_then(|r| r.parent_run_id) {
             self.conclude_child(run_id, parent, res);
             return;
