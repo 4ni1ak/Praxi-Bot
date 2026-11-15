@@ -268,7 +268,6 @@ pub(crate) fn resolve_parts(
 pub(crate) fn transport(store: &Store, rec: &HostRecord) -> Result<OpenSshTransport> {
     let paths = SshPaths {
         ssh: host_provision::ssh::resolve_binary("ssh")?,
-        keyscan: host_provision::ssh::resolve_binary("ssh-keyscan")?,
         known_hosts: store.known_hosts_path(),
         ssh_config: store.ssh_config_path(),
     };

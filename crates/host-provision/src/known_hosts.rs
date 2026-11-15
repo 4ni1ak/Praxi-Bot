@@ -60,6 +60,23 @@ pub fn parse_scan(text: &str) -> Vec<ScannedKey> {
         .collect()
 }
 
+/// Parse the throw-away known_hosts file `ssh` wrote on first contact
+/// (`StrictHostKeyChecking=accept-new`, unhashed): only lines for this very
+/// endpoint count (`host` on port 22, `[host]:port` otherwise).
+pub fn parse_known_hosts_scan(text: &str, host: &str, port: u16) -> Vec<ScannedKey> {
+    let name = entry_name(host, port);
+    let lines: String = text
+        .lines()
+        .filter(|l| {
+            l.split_whitespace()
+                .next()
+                .is_some_and(|hosts| hosts.split(',').any(|h| h == name))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    parse_scan(&lines)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostKeyState {
     /// Pinned earlier and the server still presents it.
@@ -96,6 +113,19 @@ impl KnownHosts {
         fs::read_to_string(&self.path)
             .map(|t| t.lines().map(str::to_owned).collect())
             .unwrap_or_default()
+    }
+
+    /// Key types already pinned for this endpoint (to ask the server for the
+    /// same type, so a changed key shows up as a mismatch).
+    pub fn pinned_types(&self, host: &str, port: u16) -> Vec<String> {
+        let mut types: Vec<String> = self
+            .pinned(&entry_name(host, port))
+            .into_iter()
+            .map(|k| k.key_type)
+            .filter(|t| !t.is_empty())
+            .collect();
+        types.dedup();
+        types
     }
 
     fn pinned(&self, name: &str) -> Vec<ScannedKey> {
@@ -187,6 +217,20 @@ mod tests {
     use super::*;
 
     const ED: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+
+    #[test]
+    fn the_scan_file_is_parsed_for_the_right_endpoint_only() {
+        let text = format!(
+            "130.61.218.49 ssh-ed25519 {ED}\n[130.61.218.49]:2222 ssh-ed25519 {ED}\nother.example ssh-ed25519 {ED}\n"
+        );
+        let default = parse_known_hosts_scan(&text, "130.61.218.49", 22);
+        assert_eq!(default.len(), 1);
+        assert!(default[0].fingerprint().starts_with("SHA256:"));
+        let custom = parse_known_hosts_scan(&text, "130.61.218.49", 2222);
+        assert_eq!(custom.len(), 1);
+        assert_eq!(parse_known_hosts_scan(&text, "130.61.218.49", 2200), []);
+        assert_eq!(parse_known_hosts_scan("", "h", 22), []);
+    }
 
     #[test]
     fn tofu_then_trusted_then_mismatch() {
