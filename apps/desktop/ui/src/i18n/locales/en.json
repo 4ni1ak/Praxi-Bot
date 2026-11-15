@@ -1823,7 +1823,20 @@
       "cancelled": "Embedding paused",
       "failed": "Embedding failed; review provider settings"
     },
-    "importHint": "Imported sources start disabled. Select and save the embedding provider again, then authorize sources and retrieval queries separately."
+    "importHint": "Imported sources start disabled. Select and save the embedding provider again, then authorize sources and retrieval queries separately.",
+    "defaultBrainName": "Shared brain",
+    "rename": "Rename",
+    "newName": "New source name",
+    "saveName": "Save name",
+    "removeTitle": "Remove “{{source}}” from the index?",
+    "removeHint": "This removes indexed text, embeddings and source permission. Your original file stays on this host.",
+    "confirmRemove": "Confirm removal",
+    "reselect": "Choose local path",
+    "reselectHint": "This source was imported. Select a path on this host to bind it again. Previous indexed content and embedding permission will be cleared.",
+    "confirmPath": "Use this path",
+    "skippedFiles": "{{count}} files skipped",
+    "fileSkipped": "Unreadable, protected or beyond an extraction limit. Other files continue indexing.",
+    "emailUnavailable": "Email discovery is unavailable: {{error}}"
   },
   "liveView": {
     "title": "Computer live view",

@@ -566,21 +566,41 @@ mod tests {
 
     #[test]
     fn review_81_docx_source_extraction_rejects_block_and_preview_truncation() {
-        let bytes = build_docx(&[WBlock::Paragraph { text: "The complete selected document must be indexed or explicitly rejected.".into(), bold: false }]).unwrap();
-        for cfg in [DocToolsConfig { max_preview_chars: 8, ..DocToolsConfig::default() }, DocToolsConfig { max_cell_chars: 8, ..DocToolsConfig::default() }] {
+        let bytes = build_docx(&[WBlock::Paragraph {
+            text: "The complete selected document must be indexed or explicitly rejected.".into(),
+            bold: false,
+        }])
+        .unwrap();
+        for cfg in [
+            DocToolsConfig {
+                max_preview_chars: 8,
+                ..DocToolsConfig::default()
+            },
+            DocToolsConfig {
+                max_cell_chars: 8,
+                ..DocToolsConfig::default()
+            },
+        ] {
             assert!(crate::extract_bytes(&cfg, "docx", "source.docx", &bytes).is_err());
         }
     }
 
     #[test]
     fn review_81_docx_source_keeps_all_table_cells_and_rows() {
-        let long = "Long table cell with relevant evidence beyond sixty characters: heliosphere".to_owned();
+        let long = "Long table cell with relevant evidence beyond sixty characters: heliosphere"
+            .to_owned();
         let mut rows = vec![vec!["Header".into()]];
         rows.extend((0..40).map(|n| vec![format!("{long} row {n}")]));
         let bytes = build_docx(&[WBlock::Table { rows, header: true }]).unwrap();
-        let cfg = DocToolsConfig { max_preview_chars: 16_000, ..DocToolsConfig::default() };
+        let cfg = DocToolsConfig {
+            max_preview_chars: 16_000,
+            ..DocToolsConfig::default()
+        };
         let reply = crate::extract_bytes(&cfg, "docx", "source.docx", &bytes).unwrap();
-        assert!(reply.markdown.contains("heliosphere row 39"), "full source extraction must not use the 30-row/60-char preview renderer");
+        assert!(
+            reply.markdown.contains("heliosphere row 39"),
+            "full source extraction must not use the 30-row/60-char preview renderer"
+        );
     }
 
     #[test]

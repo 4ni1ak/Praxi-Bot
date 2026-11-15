@@ -132,6 +132,9 @@ impl Storage {
     pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
+        // Resolve host-selected relative paths and symlinked home directories
+        // once, before any knowledge capability treats this root as trusted.
+        let data_dir = std::fs::canonicalize(data_dir)?;
         let conn = Connection::open(data_dir.join("bot.db"))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;

@@ -310,7 +310,12 @@ fn captured_email(t: &T, bot: &str, account: &str) -> (Uuid, Uuid) {
             created_at_ms: 10,
             updated_at_ms: 11,
             parent_run_id: None,
-            spec: None, computer_target: None, computer_node: None, computer_node_name: None, paused_at_ms: None, pause_reason: None,
+            spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         })
         .unwrap();
     t.state.storage().insert_step(&storage::RunStep { id:Uuid::now_v7(),run_id:run,user_id:t.state.user_id(),idx:0,name:"tools".into(),input:json!({"calls":[{"id":"mail-call","name":"email_read","arguments":json!({"account":account,"uid":1}).to_string()}]}),idempotent:true,retry:None,status:"completed".into(),attempt:1,output:Some(json!({"results":[{"id":"mail-call","call_uuid":call,"name":"email_read","is_error":false,"text":"Authorized mailbox spectrometer evidence","spill_path":null}]})),error:None,started_at_ms:10,finished_at_ms:Some(11) }).unwrap();

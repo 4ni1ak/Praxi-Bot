@@ -283,6 +283,8 @@ impl AppState {
         cfg: DaemonConfig,
         registry: Arc<::live_view::TargetRegistry>,
     ) -> Result<Self, storage::StorageError> {
+        memory_store::knowledge::brain::cleanup_stale_staging(storage.data_dir())
+            .map_err(std::io::Error::other)?;
         let user_id = if let Some(u) = storage.list_users()?.into_iter().next() {
             u.id
         } else {
@@ -865,7 +867,11 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
         .route(
             "/v1/bots/{bot}/knowledge/sources",
-            get(knowledge::list_sources).post(knowledge::create_source),
+            get(knowledge::list_sources)
+                .post(knowledge::create_source)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    knowledge::MAX_SOURCE_REQUEST_BYTES,
+                )),
         )
         .route(
             "/v1/bots/{bot}/knowledge/sources/{source}",

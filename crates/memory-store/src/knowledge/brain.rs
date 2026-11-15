@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::source_adapters::plain_directory;
+use super::source_adapters::trusted_directory;
 use super::{KnowledgeStore, Scope};
 use crate::{MemoryError, Result};
 
@@ -23,6 +23,55 @@ mod windows_publish;
 
 /// Largest complete note accepted by the approval card and disk writer.
 pub const MAX_BRAIN_BYTES: usize = 64 * 1024;
+
+/// Remove private Windows publication names left by a terminated daemon.
+/// A published note is a different directory entry and is never removed. Live
+/// Windows staging handles deny deletion, so another daemon's active write is
+/// skipped. Linux normally has no staging name because it uses `O_TMPFILE`.
+///
+/// # Errors
+/// Unsafe brain root, directory enumeration failure, or unexpected disk error.
+pub fn cleanup_stale_staging(data_dir: &Path) -> Result<usize> {
+    let state = trusted_directory(data_dir)?;
+    let brain = match state.open_dir_nofollow("brain") {
+        Ok(brain) => brain,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    let mut removed = 0;
+    for entry in brain.entries()? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(id) = name
+            .strip_prefix(".praxi-brain-")
+            .and_then(|name| name.strip_suffix(".tmp"))
+        else {
+            continue;
+        };
+        if !Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id) {
+            continue;
+        }
+        let metadata = brain.symlink_metadata(name)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        // Unlink exactly the reserved name relative to the held brain handle.
+        // Even a name replacement cannot turn this into removal of its target.
+        match brain.remove_file(name) {
+            Ok(()) => removed += 1,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound
+                ) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(removed)
+}
 
 /// Model-proposed content. No bot, root, trust, grant or absolute path field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,7 +296,7 @@ impl PreparedBrainWrite {
         if crate::contains_secret(&input.content) {
             return Err(invalid("shared brain content contains secret-like data"));
         }
-        let state = plain_directory(data_dir)?;
+        let state = trusted_directory(data_dir)?;
         match state.create_dir("brain") {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}

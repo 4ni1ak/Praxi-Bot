@@ -122,14 +122,16 @@ impl Budget {
 struct ResetBudget;
 impl Drop for ResetBudget {
     fn drop(&mut self) {
-        if let Ok(mut budget) = BUDGET.lock() {
-            *budget = None;
-        }
+        *BUDGET
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 }
 
 fn filter(id: ObjectId, object: &mut Object) -> Option<(ObjectId, Object)> {
-    let mut budget = BUDGET.lock().ok()?;
+    let mut budget = BUDGET
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let budget = budget.as_mut()?;
     (budget.object(object, 0) && budget.object_stream(object)).then(|| (id, object.clone()))
 }
@@ -297,10 +299,10 @@ fn load_with_budget(
     preflight(bytes)?;
     let _load = LOAD
         .lock()
-        .map_err(|_| exec("PDF source parser unavailable"))?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     *BUDGET
         .lock()
-        .map_err(|_| exec("PDF source budget unavailable"))? = Some(Budget {
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Budget {
         bytes: object_bytes,
         nodes: object_nodes,
         work: MAX_DECODE_WORK,
@@ -318,7 +320,7 @@ fn load_with_budget(
     );
     let exceeded = BUDGET
         .lock()
-        .map_err(|_| exec("PDF source budget unavailable"))?
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
         .is_none_or(|budget| budget.exceeded);
     if exceeded {
@@ -348,8 +350,12 @@ mod tests {
     #[test]
     fn review_81_parser_panic_does_not_poison_future_pdf_loads() {
         let panic = std::panic::catch_unwind(|| {
-            let _load = LOAD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let _budget = BUDGET.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _load = LOAD
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _budget = BUDGET
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             panic!("simulated dependency panic while accounting PDF objects");
         });
         assert!(panic.is_err());

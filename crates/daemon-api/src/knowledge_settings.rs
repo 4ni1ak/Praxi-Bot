@@ -339,7 +339,7 @@ pub(crate) async fn put_settings(
     Path(bot): Path<Uuid>,
     ApiJson(input): ApiJson<KnowledgeSettingsInput>,
 ) -> Result<Json<KnowledgeSettingsDto>, ApiError> {
-    let _authority = crate::knowledge::authority_lock(&s)
+    let authority = crate::knowledge::authority_lock(&s)
         .try_lock_owned()
         .map_err(|_| {
             ApiError::new(
@@ -348,50 +348,55 @@ pub(crate) async fn put_settings(
                 "a knowledge authority change is already running",
             )
         })?;
-    let mut bot = s.bot_of_user(BotId(bot))?;
-    let embedding = input
-        .embedding
-        .map(|settings| make_embedding(&s, settings))
-        .transpose()?;
-    let new_fingerprint = embedding.as_ref().map(profile_fingerprint).transpose()?;
-    let store = KnowledgeStore::open(
-        s.data_dir(),
-        Scope {
-            user_id: bot.user_id,
-            bot_id: bot.id,
-        },
-    )
-    .map_err(|_| ApiError::internal("knowledge index unavailable"))?;
-    for source in store
-        .list_sources()
-        .map_err(|_| ApiError::internal("knowledge sources unavailable"))?
-    {
-        if source
-            .remote_embedding
-            .as_ref()
-            .is_some_and(|grant| Some(&grant.profile_fingerprint) != new_fingerprint.as_ref())
+    crate::knowledge::blocking(move || {
+        let _authority = authority;
+        let mut bot = s.bot_of_user(BotId(bot))?;
+        let embedding = input
+            .embedding
+            .map(|settings| make_embedding(&s, settings))
+            .transpose()?;
+        let new_fingerprint = embedding.as_ref().map(profile_fingerprint).transpose()?;
+        let store = KnowledgeStore::open(
+            s.data_dir(),
+            Scope {
+                user_id: bot.user_id,
+                bot_id: bot.id,
+            },
+        )
+        .map_err(|_| ApiError::internal("knowledge index unavailable"))?;
+        for source in store
+            .list_sources()
+            .map_err(|_| ApiError::internal("knowledge sources unavailable"))?
         {
-            store
-                .update_source(
-                    source.id,
-                    source.revision,
-                    SourceUpdate {
-                        remote_embedding: Some(None),
-                        ..Default::default()
-                    },
-                )
-                .map_err(|_| {
-                    ApiError::conflict("source changed while revoking old embedding consent")
-                })?;
+            if source
+                .remote_embedding
+                .as_ref()
+                .is_some_and(|grant| Some(&grant.profile_fingerprint) != new_fingerprint.as_ref())
+            {
+                store
+                    .update_source(
+                        source.id,
+                        source.revision,
+                        SourceUpdate {
+                            remote_embedding: Some(None),
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|_| {
+                        ApiError::conflict("source changed while revoking old embedding consent")
+                    })?;
+            }
         }
-    }
-    bot.config["knowledge"] = json!({"auto_retrieve":input.auto_retrieve,"embedding":embedding});
-    if !s.storage().update_bot(bot.id, &bot.name, &bot.config)? {
-        return Err(ApiError::not_found("bot"));
-    }
-    // The authority lock also guards runtime dispatch, so no old query/model
-    // generation can remain active after the new settings become visible.
-    crate::knowledge_runtime::forget_bot(&s, bot.id);
-    s.refresh_profile(&bot);
-    Ok(Json(settings_dto(&bot)?))
+        bot.config["knowledge"] =
+            json!({"auto_retrieve":input.auto_retrieve,"embedding":embedding});
+        if !s.storage().update_bot(bot.id, &bot.name, &bot.config)? {
+            return Err(ApiError::not_found("bot"));
+        }
+        // The authority lock also guards runtime dispatch, so no old query/model
+        // generation can remain active after the new settings become visible.
+        crate::knowledge_runtime::forget_bot(&s, bot.id);
+        s.refresh_profile(&bot);
+        Ok(Json(settings_dto(&bot)?))
+    })
+    .await
 }

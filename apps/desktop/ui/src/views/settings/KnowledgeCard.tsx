@@ -29,12 +29,19 @@ export function KnowledgeCard() {
   const [html, setHtml] = useState(false);
   const [chatId, setChatId] = useState("");
   const [captures, setCaptures] = useState<KnowledgeEmailCapture[]>([]);
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [captureId, setCaptureId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [cursors, setCursors] = useState<Record<string, string>>({});
   const [grant, setGrant] = useState<KnowledgeSource | null>(null);
+  const [removing, setRemoving] = useState<KnowledgeSource | null>(null);
+  const [renaming, setRenaming] = useState<KnowledgeSource | null>(null);
+  const [renameLabel, setRenameLabel] = useState("");
+  const [rebinding, setRebinding] = useState<KnowledgeSource | null>(null);
+  const [bindingPath, setBindingPath] = useState("");
+  const [indexFailures, setIndexFailures] = useState<Record<string, { locator: string; code: string }[]>>({});
   const [embeddingProgress, setEmbeddingProgress] = useState<Record<string, KnowledgeEmbeddingProgress>>({});
   const epoch = useRef(0);
 
@@ -42,14 +49,15 @@ export function KnowledgeCard() {
     if (!client || !activeBot) return;
     const current = ++epoch.current;
     const [next, config, allChats, mail] = await Promise.all([
-      client.listKnowledgeSources(activeBot), client.getKnowledgeSettings(activeBot), client.listChats(), client.listKnowledgeEmailCaptures(activeBot)
+      client.listKnowledgeSources(activeBot), client.getKnowledgeSettings(activeBot), client.listChats(),
+      client.listKnowledgeEmailCaptures(activeBot).then((captures) => ({ captures, error: null }), (error: unknown) => ({ captures: [], error: message(error) }))
     ]);
     if (current !== epoch.current) return;
-    setSources(next); setSettings(config); setChats(allChats.filter((chat) => chat.bot_id === activeBot)); setCaptures(mail);
+    setSources(next); setSettings(config); setChats(allChats.filter((chat) => chat.bot_id === activeBot)); setCaptures(mail.captures); setEmailError(mail.error);
   }, [client, activeBot]);
 
   useEffect(() => {
-    setSources([]); setSettings(null); setGrant(null); setCursors({}); setError(null); setEmbeddingProgress({});
+    setSources([]); setSettings(null); setGrant(null); setRemoving(null); setRenaming(null); setRebinding(null); setCursors({}); setError(null); setEmailError(null); setEmbeddingProgress({}); setIndexFailures({});
     void reload().catch((e: unknown) => setError(message(e)));
     return () => { epoch.current += 1; };
   }, [reload]);
@@ -65,7 +73,7 @@ export function KnowledgeCard() {
     if (!client) return;
     const capture = captures.find((item) => item.tool_call_id === captureId);
     const result = await client.createKnowledgeSource(activeBot, {
-      kind, label, path: kind === "file" || kind === "folder" ? path : null,
+      kind, label: kind === "shared_brain" ? label.trim() || t("knowledge.defaultBrainName") : label, path: kind === "file" || kind === "folder" ? path : null,
       content: kind === "note" || kind === "saved_web" ? content : null,
       url: kind === "saved_web" ? url : null, html,
       chat_id: kind === "conversation" ? chatId : null,
@@ -73,6 +81,7 @@ export function KnowledgeCard() {
       tool_call_id: kind === "email" ? capture?.tool_call_id ?? null : null
     });
     if (result.indexing.next_cursor) setCursors((previous) => ({ ...previous, [result.source.id]: result.indexing.next_cursor! }));
+    setIndexFailures((previous) => ({ ...previous, [result.source.id]: result.indexing.failures ?? [] }));
     setNotice(t("knowledge.indexed", { count: result.indexing.processed }));
     setLabel(""); setContent("");
   });
@@ -101,18 +110,21 @@ export function KnowledgeCard() {
         {sources.map((source) => <li key={source.id} className={styles.source}>
           <strong>{source.label}</strong>
           <span className={form.hint}>{t(`knowledge.kinds.${source.kind}`)} · {t("knowledge.counts", { documents: source.documents, chunks: source.chunks })}</span>
-          {["file", "folder", "saved_web", "shared_brain"].includes(source.kind) ? <code className={styles.locator}>{source.locator}</code> : null}
+          {["file", "folder", "saved_web", "shared_brain"].includes(source.kind) && !source.requires_path_selection ? <code className={styles.locator}>{source.locator}</code> : null}
           <span className={form.hint}>{source.enabled ? t("knowledge.active") : t("knowledge.disabled")}</span>
+          {source.requires_path_selection ? <p className={form.hint}>{t("knowledge.reselectHint")}</p> : null}
+          {indexFailures[source.id]?.length ? <details><summary>{t("knowledge.skippedFiles", { count: indexFailures[source.id].length })}</summary><ul>{indexFailures[source.id].map((failure) => <li key={failure.locator}><code className={styles.locator}>{failure.locator}</code> · {t("knowledge.fileSkipped")}</li>)}</ul></details> : null}
           {embeddingProgress[source.id] ? <p role="status" className={form.hint}>
             {t(`knowledge.embeddingStatus.${embeddingProgress[source.id].status}`)} · {t("knowledge.embeddingRemaining", { count: embeddingProgress[source.id].remaining_chunks })}
             {embeddingProgress[source.id].next_attempt_ms ? <> · {t("knowledge.embeddingRetry", { time: new Date(embeddingProgress[source.id].next_attempt_ms!).toLocaleString() })}</> : null}
           </p> : null}
           <div className={styles.actions}>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void change(source, source.enabled ? "disable" : "enable")}>{t(source.enabled ? "knowledge.disable" : "knowledge.reauthorize")}</Button>
+            {source.requires_path_selection ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => { setRebinding(source); setBindingPath(""); }}>{t("knowledge.reselect")}</Button> : <Button size="sm" variant="secondary" disabled={busy} onClick={() => void change(source, source.enabled ? "disable" : "enable")}>{t(source.enabled ? "knowledge.disable" : "knowledge.reauthorize")}</Button>}
             <Button size="sm" variant="secondary" disabled={busy || !source.enabled} onClick={() => void act(async () => {
               const result = await client?.reindexKnowledgeSource(activeBot, source.id, source.revision, cursors[source.id]);
               if (!result) return;
               setCursors((previous) => { const next = { ...previous }; if (result.indexing.next_cursor) next[source.id] = result.indexing.next_cursor; else delete next[source.id]; return next; });
+              setIndexFailures((previous) => ({ ...previous, [source.id]: result.indexing.failures ?? [] }));
               setNotice(t("knowledge.indexed", { count: result.indexing.processed }));
             })}>{t(cursors[source.id] ? "knowledge.continue" : "knowledge.reindex")}</Button>
             {settings?.embedding?.provider_id !== "local-onnx" ? <Button size="sm" variant="secondary" disabled={busy || !source.enabled || !settings?.embedding} onClick={() => source.remote_profile_fingerprint ? void change(source, "revoke_remote") : setGrant(source)}>{t(source.remote_profile_fingerprint ? "knowledge.revokeRemote" : "knowledge.grantRemote")}</Button> : null}
@@ -123,11 +135,35 @@ export function KnowledgeCard() {
                 (result) => setEmbeddingProgress((previous) => ({ ...previous, [source.id]: result }))
               );
             })}>{t("knowledge.embed")}</Button>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void act(() => client!.deleteKnowledgeSource(activeBot, source.id, source.revision))}>{t("knowledge.remove")}</Button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => { setRenaming(source); setRenameLabel(source.label); }}>{t("knowledge.rename")}</Button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => setRemoving(source)}>{t("knowledge.remove")}</Button>
           </div>
         </li>)}
       </ul>
       {sources.length === 0 && settings ? <p className={form.hint}>{t("knowledge.empty")}</p> : null}
+      {removing ? <section className={styles.review} aria-label={t("knowledge.remove")}>
+        <strong>{t("knowledge.removeTitle", { source: removing.label })}</strong>
+        <p>{t("knowledge.removeHint")}</p>
+        <div className={styles.actions}>
+          <Button disabled={busy} onClick={() => void act(async () => { await client!.deleteKnowledgeSource(activeBot, removing.id, removing.revision); setRemoving(null); })}>{t("knowledge.confirmRemove")}</Button>
+          <Button variant="secondary" disabled={busy} onClick={() => setRemoving(null)}>{t("common.cancel")}</Button>
+        </div>
+      </section> : null}
+      {renaming ? <section className={styles.review} aria-label={t("knowledge.rename")}>
+        <label className={form.field}>{t("knowledge.newName")}<input className={form.input} value={renameLabel} maxLength={200} onChange={(e) => setRenameLabel(e.target.value)} /></label>
+        <div className={styles.actions}>
+          <Button disabled={busy || !renameLabel.trim()} onClick={() => void act(async () => { await client!.updateKnowledgeSource(activeBot, renaming.id, { action: "rename", expected_revision: renaming.revision, label: renameLabel.trim(), profile_fingerprint: null }); setRenaming(null); })}>{t("knowledge.saveName")}</Button>
+          <Button variant="secondary" disabled={busy} onClick={() => setRenaming(null)}>{t("common.cancel")}</Button>
+        </div>
+      </section> : null}
+      {rebinding ? <section className={styles.review} aria-label={t("knowledge.reselect")}>
+        <strong>{rebinding.label}</strong><p>{t("knowledge.reselectHint")}</p>
+        <label className={form.field}>{t("knowledge.path")}<input className={form.input} value={bindingPath} onChange={(e) => setBindingPath(e.target.value)} /></label>
+        <div className={styles.actions}>
+          <Button disabled={busy || !bindingPath.trim()} onClick={() => void act(async () => { await client!.updateKnowledgeSource(activeBot, rebinding.id, { action: "rebind", expected_revision: rebinding.revision, label: null, path: bindingPath, profile_fingerprint: null }); setRebinding(null); })}>{t("knowledge.confirmPath")}</Button>
+          <Button variant="secondary" disabled={busy} onClick={() => setRebinding(null)}>{t("common.cancel")}</Button>
+        </div>
+      </section> : null}
       {grant && settings?.embedding ? <section className={styles.review} aria-label={t("knowledge.grantRemote")}>
         <strong>{t("knowledge.consentTitle", { source: grant.label })}</strong>
         <p>{t("knowledge.consentDescription")}</p>
@@ -142,14 +178,14 @@ export function KnowledgeCard() {
         <summary>{t("knowledge.add")}</summary>
         <div className={styles.form}>
           <label className={form.field}>{t("knowledge.kind")}<select className={form.select} value={kind} onChange={(e) => setKind(e.target.value as KnowledgeSourceKind)}>{KINDS.map((item) => <option key={item} value={item}>{t(`knowledge.kinds.${item}`)}</option>)}</select></label>
-          <label className={form.field}>{t("knowledge.label")}<input className={form.input} value={label} maxLength={200} onChange={(e) => setLabel(e.target.value)} /></label>
+          <label className={form.field}>{t("knowledge.label")}<input className={form.input} value={label} placeholder={kind === "shared_brain" ? t("knowledge.defaultBrainName") : undefined} maxLength={200} onChange={(e) => setLabel(e.target.value)} /></label>
           {kind === "file" || kind === "folder" ? <label className={form.field}>{t("knowledge.path")}<input className={form.input} value={path} onChange={(e) => setPath(e.target.value)} /><span className={form.hint}>{t("knowledge.pathHint")}</span></label> : null}
           {kind === "saved_web" ? <><label className={form.field}>{t("knowledge.url")}<input className={form.input} type="url" value={url} onChange={(e) => setUrl(e.target.value)} /></label><label><input type="checkbox" checked={html} onChange={(e) => setHtml(e.target.checked)} /> {t("knowledge.html")}</label><p className={form.hint}>{t("knowledge.savedWebHint")}</p></> : null}
           {kind === "saved_web" || kind === "note" ? <label className={form.field}>{t("knowledge.content")}<textarea className={form.textarea} value={content} onChange={(e) => setContent(e.target.value)} /></label> : null}
           {kind === "conversation" ? <label className={form.field}>{t("knowledge.conversation")}<select className={form.select} value={chatId} onChange={(e) => setChatId(e.target.value)}><option value="">{t("knowledge.select")}</option>{chats.map((chat) => <option key={chat.id} value={chat.id}>{chat.title}</option>)}</select></label> : null}
-          {kind === "email" ? <><p className={form.hint}>{t("knowledge.emailHint")}</p><label className={form.field}>{t("knowledge.emailCapture")}<select className={form.select} value={captureId} onChange={(e) => setCaptureId(e.target.value)}><option value="">{t("knowledge.select")}</option>{captures.map((capture) => <option key={capture.tool_call_id} value={capture.tool_call_id}>{capture.account} · {new Date(capture.created_ms).toLocaleString()}</option>)}</select></label></> : null}
+          {kind === "email" ? <><p className={form.hint}>{t("knowledge.emailHint")}</p>{emailError ? <p role="status" className={form.error}>{t("knowledge.emailUnavailable", { error: emailError })}</p> : null}<label className={form.field}>{t("knowledge.emailCapture")}<select className={form.select} value={captureId} disabled={Boolean(emailError)} onChange={(e) => setCaptureId(e.target.value)}><option value="">{t("knowledge.select")}</option>{captures.map((capture) => <option key={capture.tool_call_id} value={capture.tool_call_id}>{capture.account} · {new Date(capture.created_ms).toLocaleString()}</option>)}</select></label></> : null}
           {kind === "shared_brain" ? <p className={form.hint}>{t("knowledge.brainHint")}</p> : null}
-          <Button disabled={busy || !label.trim()} onClick={() => void add()}>{t("knowledge.add")}</Button>
+          <Button disabled={busy || (kind !== "shared_brain" && !label.trim())} onClick={() => void add()}>{t("knowledge.add")}</Button>
         </div>
       </details>
       {settings ? <EmbeddingSettings key={activeBot + JSON.stringify(settings)} settings={settings} providerIds={providers?.configured.filter((p) => p.enabled && (p.custom || providers.catalog.some((entry) => entry.id === p.id && ["gemini", "openai_compatible"].includes(entry.kind)))).map((p) => p.id) ?? []} busy={busy} save={(value) => act(() => client!.updateKnowledgeSettings(activeBot, value))} /> : null}

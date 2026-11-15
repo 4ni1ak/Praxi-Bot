@@ -56,6 +56,123 @@ pub fn plain_directory(path: &Path) -> Result<Dir> {
     Ok(dir)
 }
 
+/// Open the canonical data directory selected at host startup. Only its root
+/// is trusted; every subsequent directory entry is still opened without links.
+///
+/// # Errors
+/// The canonical local root is missing or has acquired a symlink component.
+pub fn trusted_directory(path: &Path) -> Result<Dir> {
+    plain_directory(&normal_local_prefix(path)?)
+}
+
+fn normal_local_prefix(path: &Path) -> Result<PathBuf> {
+    if !path.is_absolute() {
+        return Err(invalid("trusted knowledge root must be absolute"));
+    }
+    #[cfg(windows)]
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        if let std::path::Prefix::VerbatimDisk(drive) = prefix.kind() {
+            let mut normalized = PathBuf::from(format!("{}:\\", char::from(drive)));
+            for part in path.components().skip(2) {
+                normalized.push(part.as_os_str());
+            }
+            return Ok(normalized);
+        }
+        if !matches!(prefix.kind(), std::path::Prefix::Disk(_)) {
+            return Err(invalid("knowledge paths must be on a local disk"));
+        }
+    }
+    Ok(path.to_owned())
+}
+
+fn canonical_source_path(path: &Path) -> Result<PathBuf> {
+    if !path.is_absolute()
+        || path.to_string_lossy().chars().any(char::is_control)
+        || path.components().any(|part| match part {
+            Component::Prefix(prefix) => !matches!(prefix.kind(), std::path::Prefix::Disk(_)),
+            Component::CurDir | Component::ParentDir => true,
+            _ => false,
+        })
+    {
+        return Err(invalid("choose an absolute local path without traversal"));
+    }
+    // Windows canonicalize uses the final handle path, expanding 8.3 aliases.
+    // Authorization still opens the original components with no-follow below.
+    normal_local_prefix(&std::fs::canonicalize(path)?)
+}
+
+fn protected_path(path: &Path) -> bool {
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|part| {
+            if let Component::Normal(name) = part {
+                Some(name.to_string_lossy().to_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect();
+    parts.iter().any(|name| {
+        matches!(
+            name.as_str(),
+            ".ssh"
+                | ".aws"
+                | ".gnupg"
+                | ".azure"
+                | ".kube"
+                | ".docker"
+                | ".mozilla"
+                | "vault"
+                | "secrets"
+                | "gcloud"
+                | "google-chrome"
+                | "google-chrome-beta"
+                | "google-chrome-unstable"
+                | "chromium"
+                | "chromium-browser"
+                | "brave-browser"
+                | "microsoft-edge"
+                | "microsoft-edge-beta"
+                | "vivaldi"
+                | "opera"
+                | "opera software"
+                | "firefox"
+                | "safari"
+                | "thunderbird"
+                | "browser"
+                | "browsers"
+                | "browser-profiles"
+                | "browser_profiles"
+        )
+    }) || parts.windows(2).any(|pair| {
+        matches!(
+            (pair[0].as_str(), pair[1].as_str()),
+            ("google", "chrome" | "chrome beta" | "chrome sxs")
+                | ("microsoft", "edge" | "edge beta" | "edge sxs")
+                | ("mozilla", "firefox")
+                | ("bravesoftware", "brave-browser")
+                | (".config", "gh" | "hub" | "op" | "1password")
+        )
+    })
+}
+
+fn path_within(path: &Path, parent: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let path: Vec<_> = path
+            .components()
+            .map(|p| p.as_os_str().to_string_lossy().to_lowercase())
+            .collect();
+        let parent: Vec<_> = parent
+            .components()
+            .map(|p| p.as_os_str().to_string_lossy().to_lowercase())
+            .collect();
+        path.starts_with(&parent)
+    }
+    #[cfg(not(windows))]
+    path.starts_with(parent)
+}
+
 fn safe_name(name: &str) -> bool {
     let lowered = name.to_ascii_lowercase();
     !name.is_empty()
@@ -63,6 +180,8 @@ fn safe_name(name: &str) -> bool {
         && !name.ends_with(['.', ' '])
         && !name.contains(['\\', ':', '\0'])
         && !name.chars().any(char::is_control)
+        && !(lowered.contains("credentials") && lowered.ends_with(".json"))
+        && !(lowered.starts_with("client_secret") && lowered.ends_with(".json"))
         && !matches!(
             lowered.as_str(),
             "api-token"
@@ -78,6 +197,15 @@ fn safe_name(name: &str) -> bool {
                 | "policy.json"
                 | "vault"
                 | "secrets"
+                | "application_default_credentials.json"
+                | "credentials.json"
+                | "credentials.toml"
+                | "secrets.json"
+                | "logins.json"
+                | "cookies.txt"
+                | "key4.db"
+                | "login data"
+                | "local state"
         )
 }
 
@@ -133,18 +261,19 @@ impl SelectedSource {
     /// # Errors
     /// Unsupported file, symlink, excessive entries/depth, or inaccessible path.
     pub fn open(path: &Path, folder: bool) -> Result<Self> {
-        if path.components().any(|part| matches!(part, Component::Normal(name) if matches!(name.to_string_lossy().to_ascii_lowercase().as_str(), ".ssh" | ".aws" | ".gnupg" | ".azure" | "vault" | "secrets"))) {
+        let canonical = canonical_source_path(path)?;
+        if protected_path(&canonical) {
             return Err(invalid("credential directories are not knowledge sources"));
         }
         if folder {
             let root = plain_directory(path)?;
             let mut files = Vec::new();
             let mut visited = 0;
-            collect(&root, "", &mut files, &mut visited, 0)?;
+            collect(&root, &canonical, "", &mut files, &mut visited, 0)?;
             files.sort();
             Ok(Self {
                 root,
-                display: path.to_owned(),
+                display: canonical,
                 files,
             })
         } else {
@@ -155,7 +284,11 @@ impl SelectedSource {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| invalid("invalid file name"))?;
-            if !safe_name(name) || !supported(path) {
+            let canonical_name = canonical
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| invalid("invalid canonical file name"))?;
+            if !safe_name(name) || !safe_name(canonical_name) || !supported(&canonical) {
                 return Err(invalid("unsupported knowledge file"));
             }
             let root = plain_directory(parent)?;
@@ -166,10 +299,46 @@ impl SelectedSource {
             }
             Ok(Self {
                 root,
-                display: parent.to_owned(),
+                display: canonical
+                    .parent()
+                    .ok_or_else(|| invalid("file has no parent"))?
+                    .to_owned(),
                 files: vec![name.to_owned()],
             })
         }
+    }
+
+    /// Open a source for a daemon host, excluding all daemon state and any
+    /// folder that contains it. The shared brain is a separate explicit grant.
+    ///
+    /// # Errors
+    /// Unsafe source, daemon-state overlap, or an invalid shared-brain binding.
+    pub fn open_on_host(
+        path: &Path,
+        folder: bool,
+        data_dir: &Path,
+        shared_brain: bool,
+    ) -> Result<Self> {
+        let selected = if shared_brain {
+            normal_local_prefix(path)?
+        } else {
+            path.to_owned()
+        };
+        let canonical = canonical_source_path(&selected)?;
+        let state = normal_local_prefix(data_dir)?;
+        let brain = state.join("brain");
+        let exact_brain =
+            folder && path_within(&canonical, &brain) && path_within(&brain, &canonical);
+        if shared_brain {
+            if !exact_brain {
+                return Err(invalid("shared brain must use this host's brain directory"));
+            }
+        } else if path_within(&canonical, &state) || path_within(&state, &canonical) {
+            return Err(invalid(
+                "daemon state and folders containing it are not knowledge sources",
+            ));
+        }
+        Self::open(&selected, folder)
     }
 
     /// Stable, relative locators for paging and removal detection.
@@ -254,6 +423,7 @@ impl SelectedSource {
 
 fn collect(
     dir: &Dir,
+    display: &Path,
     prefix: &str,
     files: &mut Vec<String>,
     visited: &mut usize,
@@ -286,9 +456,12 @@ fn collect(
         } else {
             format!("{prefix}/{name}")
         };
+        if protected_path(&display.join(&locator)) {
+            continue;
+        }
         if kind.is_dir() {
             let child = dir.open_dir_nofollow(&name)?;
-            collect(&child, &locator, files, visited, depth + 1)?;
+            collect(&child, display, &locator, files, visited, depth + 1)?;
         } else if kind.is_file() && supported(Path::new(&name)) {
             files.push(locator);
         }
@@ -301,7 +474,7 @@ fn extract(extension: &str, title: &str, bytes: &[u8]) -> Result<(String, Docume
         "pdf" | "docx" => {
             let cfg = doc_tools::DocToolsConfig {
                 max_input_bytes: MAX_SOURCE_BYTES as u64,
-                max_preview_chars: MAX_TEXT_BYTES / 4,
+                max_preview_chars: MAX_TEXT_BYTES,
                 max_rows: 2000,
                 max_cell_chars: 16_000,
                 max_output_bytes: MAX_TEXT_BYTES,
@@ -361,7 +534,28 @@ pub fn saved_web(url: &str, content: &str, html: bool) -> Result<DocumentInput> 
             "saved page needs an HTTP(S) URL without credentials",
         ));
     }
-    if crate::contains_secret(url) {
+    if parsed.query_pairs().any(|(key, value)| {
+        let key = key.to_ascii_lowercase().replace('-', "_");
+        matches!(
+            key.as_str(),
+            "key"
+                | "api_key"
+                | "apikey"
+                | "access_token"
+                | "refresh_token"
+                | "token"
+                | "auth"
+                | "authorization"
+                | "password"
+                | "passwd"
+                | "secret"
+                | "client_secret"
+                | "signature"
+                | "sig"
+                | "credential"
+        ) || crate::contains_secret(&value)
+    }) || parsed.fragment().is_some_and(crate::contains_secret)
+    {
         return Err(invalid("saved URL contains secret-like data"));
     }
     if content.len() > MAX_SOURCE_BYTES {
@@ -383,33 +577,112 @@ mod tests {
 
     #[test]
     fn review_81_saved_urls_accept_long_ordinary_paths_but_reject_query_credentials() {
-        assert!(saved_web("https://example.com/blog/2024/understanding-rust-async-await-patterns", "A source snapshot.", false).is_ok());
-        for url in ["https://example.com/?client_secret=short-secret", "https://example.com/?access_token=short-token", "https://example.com/?password=short-password"] {
-            assert!(saved_web(url, "A source snapshot.", false).is_err(), "{url}");
+        assert!(
+            saved_web(
+                "https://example.com/blog/2024/understanding-rust-async-await-patterns",
+                "A source snapshot.",
+                false
+            )
+            .is_ok()
+        );
+        for url in [
+            "https://example.com/?client_secret=short-secret",
+            "https://example.com/?access_token=short-token",
+            "https://example.com/?password=short-password",
+        ] {
+            assert!(
+                saved_web(url, "A source snapshot.", false).is_err(),
+                "{url}"
+            );
         }
     }
 
     #[test]
     fn review_81_credential_and_browser_directories_cannot_be_selected() {
         let root = tempfile::tempdir().unwrap();
-        for relative in [".kube", ".docker", ".config/gcloud", ".mozilla/firefox/profile", ".config/google-chrome/Default", "AppData/Local/Google/Chrome/User Data/Default", "AppData/Roaming/Mozilla/Firefox/Profiles/default"] {
+        for relative in [
+            ".kube",
+            ".docker",
+            ".config/gcloud",
+            ".mozilla/firefox/profile",
+            ".config/google-chrome/Default",
+            "AppData/Local/Google/Chrome/User Data/Default",
+            "AppData/Roaming/Mozilla/Firefox/Profiles/default",
+        ] {
             let folder = root.path().join(relative);
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(folder.join("selected.txt"), "private credential evidence").unwrap();
-            assert!(SelectedSource::open(&folder, true).is_err(), "selected credential directory: {relative}");
-            assert!(SelectedSource::open(&folder.join("selected.txt"), false).is_err(), "selected file in credential directory: {relative}");
+            assert!(
+                SelectedSource::open(&folder, true).is_err(),
+                "selected credential directory: {relative}"
+            );
+            assert!(
+                SelectedSource::open(&folder.join("selected.txt"), false).is_err(),
+                "selected file in credential directory: {relative}"
+            );
         }
     }
 
     #[test]
     fn review_81_protected_credential_files_are_pruned() {
         let root = tempfile::tempdir().unwrap();
-        for name in ["application_default_credentials.json", "logins.json", "credentials.json", "secrets.json", "cookies.txt"] {
+        for name in [
+            "application_default_credentials.json",
+            "logins.json",
+            "credentials.json",
+            "service-account-credentials-prod.json",
+            "client_secret_desktop.json",
+            "credentials.toml",
+            "secrets.json",
+            "cookies.txt",
+        ] {
             std::fs::write(root.path().join(name), r#"{"client_secret":"short"}"#).unwrap();
-            assert!(SelectedSource::open(&root.path().join(name), false).is_err(), "{name}");
+            assert!(
+                SelectedSource::open(&root.path().join(name), false).is_err(),
+                "{name}"
+            );
         }
         std::fs::write(root.path().join("readme.md"), "safe selected notes").unwrap();
-        assert_eq!(SelectedSource::open(root.path(), true).unwrap().files(), &["readme.md"]);
+        assert_eq!(
+            SelectedSource::open(root.path(), true).unwrap().files(),
+            &["readme.md"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[allow(unsafe_code)]
+    fn review_81_windows_short_alias_cannot_select_a_browser_profile() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+        use windows::core::PCWSTR;
+
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("browser-profiles");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("notes.txt"), "Private browser state.").unwrap();
+        let wide: Vec<u16> = folder.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut short = vec![0_u16; 32_768];
+        // SAFETY: the source is NUL-terminated and the destination slice owns
+        // its complete writable capacity; Win32 receives both lengths.
+        let count = unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(&mut short)) } as usize;
+        if count == 0 || count >= short.len() {
+            eprintln!(
+                "SKIP review_81_windows_short_alias: volume did not provide a DOS short name ({})",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        let short = PathBuf::from(String::from_utf16(&short[..count]).unwrap());
+        if !short.to_string_lossy().contains('~') {
+            eprintln!(
+                "SKIP review_81_windows_short_alias: NTFS 8.3 aliases are disabled on this test volume"
+            );
+            return;
+        }
+        assert!(SelectedSource::open(&short, true).is_err());
+        assert!(SelectedSource::open(&short.join("notes.txt"), false).is_err());
+        eprintln!("PASS review_81_windows_short_alias: generated DOS alias was rejected");
     }
 
     #[test]

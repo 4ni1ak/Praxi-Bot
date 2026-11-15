@@ -11,7 +11,9 @@ use axum::{
     extract::{Path as ApiPath, State},
 };
 use cap_fs_ext::DirExt;
-use memory_store::knowledge::source_adapters::{MAX_TEXT_BYTES, SelectedSource, saved_web};
+use memory_store::knowledge::source_adapters::{
+    MAX_SOURCE_BYTES, MAX_TEXT_BYTES, SelectedSource, saved_web,
+};
 use memory_store::knowledge::{
     DocumentFormat, DocumentInput, KnowledgeStore, NewSource, Scope, Source, SourceKind,
     SourceUpdate,
@@ -26,8 +28,14 @@ use crate::{ApiError, AppState, error::ErrorBody, routes::ApiJson};
 
 static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
+/// JSON may encode each decoded input byte as a six-byte Unicode escape.
+/// Decoded snapshots remain limited to 4 MiB and indexed text to 1 MiB.
+pub(crate) const MAX_SOURCE_REQUEST_BYTES: usize = MAX_SOURCE_BYTES * 6 + 64 * 1024;
+
 #[cfg(test)]
-pub(crate) static SOURCE_WORKER_PROBE: parking_lot::Mutex<Option<(BotId, std::sync::mpsc::Sender<std::thread::ThreadId>)>> = parking_lot::Mutex::new(None);
+pub(crate) static SOURCE_WORKER_PROBE: parking_lot::Mutex<
+    Option<(BotId, std::sync::mpsc::Sender<std::thread::ThreadId>)>,
+> = parking_lot::Mutex::new(None);
 
 pub(crate) fn authority_lock(s: &AppState) -> Arc<tokio::sync::Mutex<()>> {
     crate::knowledge_runtime::authority_lock(s)
@@ -75,10 +83,13 @@ impl From<KnowledgeSourceKind> for SourceKind {
 #[serde(deny_unknown_fields)]
 pub struct KnowledgeSourceInput {
     pub kind: KnowledgeSourceKind,
+    #[serde(default)]
     pub label: String,
     /// Absolute path on the daemon host, for a file or folder only.
     pub path: Option<String>,
     /// Saved text/HTML or a note; never interpreted as a source URL to fetch.
+    /// At most 4 MiB decoded UTF-8 input and 1 MiB extracted/indexed text.
+    /// The JSON envelope permits up to 24 MiB + 64 KiB for escaped input.
     pub content: Option<String>,
     pub url: Option<String>,
     #[serde(default)]
@@ -99,6 +110,7 @@ pub struct KnowledgeSourceDto {
     pub label: String,
     pub locator: String,
     pub enabled: bool,
+    pub requires_path_selection: bool,
     pub revision: u64,
     pub remote_profile_fingerprint: Option<String>,
     pub documents: usize,
@@ -113,6 +125,14 @@ pub struct KnowledgeIndexStatus {
     pub unchanged: usize,
     pub removed: usize,
     pub next_cursor: Option<String>,
+    pub failures: Vec<KnowledgeFileFailure>,
+}
+
+/// A skipped file never prevents the page cursor from advancing.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct KnowledgeFileFailure {
+    pub locator: String,
+    pub code: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -206,6 +226,7 @@ pub enum KnowledgeSourceAction {
     GrantRemote,
     RevokeRemote,
     Rename,
+    Rebind,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -214,6 +235,8 @@ pub struct KnowledgeSourceChange {
     pub expected_revision: u64,
     pub action: KnowledgeSourceAction,
     pub label: Option<String>,
+    /// An owner-selected replacement path, required to rebind imported files.
+    pub path: Option<String>,
     /// Required for a grant: the exact destination/model fingerprint displayed
     /// to the user. A concurrently changed provider cannot inherit the click.
     pub profile_fingerprint: Option<String>,
@@ -261,8 +284,10 @@ fn source_dto(store: &KnowledgeStore, source: Source) -> Result<KnowledgeSourceD
         id: source.id,
         kind,
         label: source.label,
-        locator: source.locator,
         enabled: source.enabled,
+        requires_path_selection: matches!(source.kind, SourceKind::File | SourceKind::Folder)
+            && source.locator == "imported:requires-path-selection",
+        locator: source.locator,
         revision: source.revision,
         remote_profile_fingerprint: source.remote_embedding.map(|g| g.profile_fingerprint),
         documents: docs.len(),
@@ -296,9 +321,7 @@ fn bounded_text(text: &str) -> Result<String, ApiError> {
 }
 
 fn safe_metadata(s: &AppState, text: &str) -> Result<(), ApiError> {
-    if memory_store::contains_secret(text)
-        || s.agent().redact_external_text(text.to_owned()) != text
-    {
+    if s.agent().redact_external_text(text.to_owned()) != text {
         return Err(ApiError::bad_request(
             "source label or locator contains a secret",
         ));
@@ -311,11 +334,9 @@ fn redact_document(s: &AppState, doc: &mut DocumentInput) -> Result<(), ApiError
     doc.content = s
         .agent()
         .redact_external_text(std::mem::take(&mut doc.content));
-    doc.title =
-        s.agent()
-            .redact_external_text(memory_store::knowledge::source_adapters::redact_source(
-                &doc.title,
-            ));
+    doc.title = s
+        .agent()
+        .redact_external_text(std::mem::take(&mut doc.title));
     Ok(())
 }
 
@@ -446,14 +467,26 @@ fn authorize_source(s: &AppState, owner: Scope, source: &Source) -> Result<(), A
     }
     match source.kind {
         SourceKind::File | SourceKind::Folder | SourceKind::SharedBrain => {
+            if matches!(source.kind, SourceKind::File | SourceKind::Folder)
+                && source.locator == "imported:requires-path-selection"
+            {
+                return Err(ApiError::conflict(
+                    "select a local file or folder path again before enabling this imported source",
+                ));
+            }
             let expected = s.data_dir().join("brain").display().to_string();
             if source.kind == SourceKind::SharedBrain && source.locator != expected {
                 return Err(ApiError::conflict(
                     "imported brain path needs a new source binding",
                 ));
             }
-            SelectedSource::open(Path::new(&source.locator), source.kind != SourceKind::File)
-                .map_err(err)?;
+            SelectedSource::open_on_host(
+                Path::new(&source.locator),
+                source.kind != SourceKind::File,
+                &s.data_dir(),
+                source.kind == SourceKind::SharedBrain,
+            )
+            .map_err(err)?;
         }
         SourceKind::Conversation => {
             conversation(s, owner, parse_chat(&source.locator)?)?;
@@ -495,9 +528,13 @@ fn reindex_inner(
     match source.kind {
         SourceKind::File | SourceKind::Folder | SourceKind::SharedBrain => {
             authorize_source(s, owner, source)?;
-            let selected =
-                SelectedSource::open(Path::new(&source.locator), source.kind != SourceKind::File)
-                    .map_err(err)?;
+            let selected = SelectedSource::open_on_host(
+                Path::new(&source.locator),
+                source.kind != SourceKind::File,
+                &s.data_dir(),
+                source.kind == SourceKind::SharedBrain,
+            )
+            .map_err(err)?;
             let page: Vec<_> = selected
                 .files()
                 .iter()
@@ -505,11 +542,42 @@ fn reindex_inner(
                 .take(32)
                 .collect();
             for name in &page {
-                let mut doc = selected.read(name).map_err(err)?;
-                redact_document(s, &mut doc)?;
-                let outcome = store
-                    .index_document(source.id, revision, &doc)
-                    .map_err(err)?;
+                let failed = |code: &str| KnowledgeFileFailure {
+                    locator: s.agent().redact_external_text((*name).clone()),
+                    code: code.to_owned(),
+                };
+                let mut doc = match selected.read(name) {
+                    Ok(doc) => doc,
+                    Err(error) if source.kind == SourceKind::File => return Err(err(error)),
+                    Err(_) => {
+                        status.failures.push(failed("unreadable_source"));
+                        continue;
+                    }
+                };
+                if let Err(error) = redact_document(s, &mut doc) {
+                    if source.kind == SourceKind::File {
+                        return Err(error);
+                    }
+                    status.failures.push(failed("unsafe_metadata"));
+                    continue;
+                }
+                let outcome = match store.index_document(source.id, revision, &doc) {
+                    Ok(outcome) => outcome,
+                    Err(error @ memory_store::MemoryError::Invalid(_))
+                        if source.kind != SourceKind::File =>
+                    {
+                        let current = store
+                            .source(source.id)
+                            .map_err(err)?
+                            .ok_or_else(|| ApiError::not_found("source removed while indexing"))?;
+                        if current.revision != revision {
+                            return Err(err(error));
+                        }
+                        status.failures.push(failed("index_rejected"));
+                        continue;
+                    }
+                    Err(error) => return Err(err(error)),
+                };
                 revision = outcome.source_revision;
                 status.processed += 1;
                 status.unchanged += usize::from(outcome.unchanged);
@@ -574,10 +642,14 @@ fn reindex_inner(
     })
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
 ) -> Result<T, ApiError> {
-    let permit = WORKERS
+    blocking_with_permit(worker_permit()?, work).await
+}
+
+pub(crate) fn worker_permit() -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
+    WORKERS
         .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
         .clone()
         .try_acquire_owned()
@@ -587,7 +659,13 @@ async fn blocking<T: Send + 'static>(
                 "knowledge_busy",
                 "a knowledge indexing worker is already running",
             )
-        })?;
+        })
+}
+
+pub(crate) async fn blocking_with_permit<T: Send + 'static>(
+    permit: tokio::sync::OwnedSemaphorePermit,
+    work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         work()
@@ -625,16 +703,28 @@ pub(crate) async fn create_source(
         let _authority = authority;
         s.agent().refresh_external_redactor();
         let kind = SourceKind::from(input.kind);
+        let label = if kind == SourceKind::SharedBrain && input.label.trim().is_empty() {
+            "Shared brain".to_owned()
+        } else {
+            input.label
+        };
         let mut document = None;
         let locator = match kind {
             SourceKind::File | SourceKind::Folder => {
                 let path = required(input.path.as_deref(), "path")?;
-                SelectedSource::open(Path::new(&path), kind == SourceKind::Folder).map_err(err)?;
+                SelectedSource::open_on_host(
+                    Path::new(&path),
+                    kind == SourceKind::Folder,
+                    &s.data_dir(),
+                    false,
+                )
+                .map_err(err)?;
                 path
             }
             SourceKind::SharedBrain => {
-                let root = memory_store::knowledge::source_adapters::plain_directory(&s.data_dir())
-                    .map_err(err)?;
+                let root =
+                    memory_store::knowledge::source_adapters::trusted_directory(&s.data_dir())
+                        .map_err(err)?;
                 match root.create_dir("brain") {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -658,7 +748,7 @@ pub(crate) async fn create_source(
                 let locator = format!("note:{}", Uuid::now_v7());
                 document = Some(DocumentInput {
                     locator: locator.clone(),
-                    title: input.label.clone(),
+                    title: label.clone(),
                     content: bounded_text(&required(input.content.as_deref(), "content")?)?,
                     format: DocumentFormat::Markdown,
                     mtime_ms: None,
@@ -686,17 +776,21 @@ pub(crate) async fn create_source(
                 serde_json::to_string(&locator).map_err(|_| ApiError::internal("email locator"))?
             }
         };
-        safe_metadata(&s, &input.label)?;
+        safe_metadata(&s, &label)?;
         safe_metadata(&s, &locator)?;
         let store = store(&s, owner)?;
         let source = store
-            .add_source(NewSource::new(kind, input.label, locator))
+            .add_source(NewSource::new(kind, label, locator))
             .map_err(err)?;
         if let Some(mut doc) = document {
-            redact_document(&s, &mut doc)?;
-            if let Err(error) = store.index_document(source.id, source.revision, &doc) {
+            if let Err(error) = redact_document(&s, &mut doc).and_then(|()| {
+                store
+                    .index_document(source.id, source.revision, &doc)
+                    .map_err(err)
+                    .map(|_| ())
+            }) {
                 let _ = store.delete_source(source.id, source.revision);
-                return Err(err(error));
+                return Err(error);
             }
             let source = store
                 .source(source.id)
@@ -710,7 +804,15 @@ pub(crate) async fn create_source(
                 },
             })
         } else {
-            reindex_inner(&s, owner, &source, None)
+            let result = reindex_inner(&s, owner, &source, None);
+            if result.is_err()
+                && let Some(current) = store.source(source.id).map_err(err)?
+            {
+                store
+                    .delete_source(current.id, current.revision)
+                    .map_err(err)?;
+            }
+            result
         }
     })
     .await?;
@@ -766,44 +868,69 @@ pub(crate) async fn update_source(
     ApiJson(input): ApiJson<KnowledgeSourceChange>,
 ) -> Result<Json<KnowledgeSourceDto>, ApiError> {
     let owner = scope(&s, bot)?;
-    let _authority = try_authority(&s)?;
-    let store = store(&s, owner)?;
-    let source = existing(&store, id, input.expected_revision)?;
-    let mut update = SourceUpdate::default();
-    match input.action {
-        KnowledgeSourceAction::Enable => {
-            authorize_source(&s, owner, &source)?;
-            update.enabled = Some(true);
-        }
-        KnowledgeSourceAction::Disable => {
-            update.enabled = Some(false);
-            update.remote_embedding = Some(None);
-        }
-        KnowledgeSourceAction::Rename => {
-            let label = required(input.label.as_deref(), "label")?;
-            safe_metadata(&s, &label)?;
-            update.label = Some(label);
-        }
-        KnowledgeSourceAction::RevokeRemote => update.remote_embedding = Some(None),
-        KnowledgeSourceAction::GrantRemote => {
-            if !source.enabled {
-                return Err(ApiError::conflict(
-                    "reauthorize the source before granting remote embeddings",
-                ));
+    let authority = try_authority(&s)?;
+    blocking(move || {
+        let _authority = authority;
+        let store = store(&s, owner)?;
+        let source = existing(&store, id, input.expected_revision)?;
+        let mut update = SourceUpdate::default();
+        match input.action {
+            KnowledgeSourceAction::Enable => {
+                authorize_source(&s, owner, &source)?;
+                update.enabled = Some(true);
             }
-            let grant = crate::knowledge_settings::source_consent(&s, bot)?;
-            if input.profile_fingerprint.as_deref() != Some(&grant.profile_fingerprint) {
-                return Err(ApiError::conflict(
-                    "embedding profile changed; review its destination again",
-                ));
+            KnowledgeSourceAction::Disable => {
+                update.enabled = Some(false);
+                update.remote_embedding = Some(None);
             }
-            update.remote_embedding = Some(Some(grant));
+            KnowledgeSourceAction::Rename => {
+                let label = required(input.label.as_deref(), "label")?;
+                safe_metadata(&s, &label)?;
+                update.label = Some(label);
+            }
+            KnowledgeSourceAction::Rebind => {
+                if !matches!(source.kind, SourceKind::File | SourceKind::Folder) {
+                    return Err(ApiError::bad_request(
+                        "choose a file or folder source to rebind",
+                    ));
+                }
+                let path = required(input.path.as_deref(), "path")?;
+                safe_metadata(&s, &path)?;
+                SelectedSource::open_on_host(
+                    Path::new(&path),
+                    source.kind == SourceKind::Folder,
+                    &s.data_dir(),
+                    false,
+                )
+                .map_err(err)?;
+                let rebound = store
+                    .rebind_source(id, input.expected_revision, path)
+                    .map_err(err)?;
+                crate::knowledge_runtime::forget_bot(&s, owner.bot_id);
+                return Ok(Json(source_dto(&store, rebound)?));
+            }
+            KnowledgeSourceAction::RevokeRemote => update.remote_embedding = Some(None),
+            KnowledgeSourceAction::GrantRemote => {
+                if !source.enabled {
+                    return Err(ApiError::conflict(
+                        "reauthorize the source before granting remote embeddings",
+                    ));
+                }
+                let grant = crate::knowledge_settings::source_consent(&s, bot)?;
+                if input.profile_fingerprint.as_deref() != Some(&grant.profile_fingerprint) {
+                    return Err(ApiError::conflict(
+                        "embedding profile changed; review its destination again",
+                    ));
+                }
+                update.remote_embedding = Some(Some(grant));
+            }
         }
-    }
-    let updated = store
-        .update_source(id, input.expected_revision, update)
-        .map_err(err)?;
-    Ok(Json(source_dto(&store, updated)?))
+        let updated = store
+            .update_source(id, input.expected_revision, update)
+            .map_err(err)?;
+        Ok(Json(source_dto(&store, updated)?))
+    })
+    .await
 }
 
 #[utoipa::path(delete, path = "/v1/bots/{bot}/knowledge/sources/{source}", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path), ("source" = Uuid, Path)), request_body = KnowledgeRevision, responses((status = 204), (status = 409, body = ErrorBody)))]
@@ -813,11 +940,15 @@ pub(crate) async fn delete_source(
     ApiJson(input): ApiJson<KnowledgeRevision>,
 ) -> Result<StatusCode, ApiError> {
     let owner = scope(&s, bot)?;
-    let _authority = try_authority(&s)?;
-    store(&s, owner)?
-        .delete_source(id, input.expected_revision)
-        .map_err(err)?;
-    Ok(StatusCode::NO_CONTENT)
+    let authority = try_authority(&s)?;
+    blocking(move || {
+        let _authority = authority;
+        store(&s, owner)?
+            .delete_source(id, input.expected_revision)
+            .map_err(err)?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
 }
 
 /// Recent successful, explicitly scoped mailbox reads available to this bot.
@@ -895,7 +1026,7 @@ pub(crate) async fn email_captures(
 }
 
 /// Rebinding/removing a mailbox revokes every copied source of that account.
-/// Called before changing mailbox authority; failures keep the old binding.
+/// Called after a confirmed mailbox binding change or removal.
 pub(crate) fn revoke_email_sources(s: &AppState, account: &str) -> Result<(), ApiError> {
     for bot in s.storage().list_bots(s.user_id())? {
         if !s
@@ -942,7 +1073,7 @@ pub(crate) fn revoke_email_sources(s: &AppState, account: &str) -> Result<(), Ap
 /// Remove only this bot's knowledge files through no-follow directory handles.
 pub(crate) fn remove_bot_index(s: &AppState, bot: &storage::Bot) -> std::io::Result<()> {
     crate::knowledge_runtime::forget_bot(s, bot.id);
-    let data = memory_store::knowledge::source_adapters::plain_directory(&s.data_dir())
+    let data = memory_store::knowledge::source_adapters::trusted_directory(&s.data_dir())
         .map_err(|_| std::io::Error::other("unsafe knowledge state directory"))?;
     let bots = match data.open_dir_nofollow("bots") {
         Ok(dir) => dir,

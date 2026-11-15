@@ -329,6 +329,28 @@ async fn skill_lock_and_publication_staging_files_are_not_bundled() {
     );
 }
 
+// Review #81-8's export claim is already prevented by the shared `.praxi-*`
+// exclusion. Keep a brain-specific proof so future root additions preserve it.
+#[tokio::test]
+async fn review_81_brain_staging_is_already_excluded_from_bundles() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    fs::create_dir(dir.path().join("brain")).unwrap();
+    fs::write(dir.path().join("brain/decision.md"), "Published decision.").unwrap();
+    fs::write(
+        dir.path()
+            .join(format!("brain/.praxi-brain-{}.tmp", uuid::Uuid::now_v7())),
+        "Private staging.",
+    )
+    .unwrap();
+    let paths: Vec<_> = unpack(&bundle(dir.path()).await)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert!(paths.iter().any(|path| path == "brain/decision.md"));
+    assert!(paths.iter().all(|path| !path.contains(".praxi-brain-")));
+}
+
 #[tokio::test]
 async fn tampered_payload_fails_sha256() {
     let dir = tempfile::tempdir().unwrap();

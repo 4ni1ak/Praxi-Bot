@@ -214,8 +214,12 @@ pub(crate) mod tests {
 
     #[test]
     fn review_81_pdf_source_extraction_rejects_preview_truncation() {
-        let bytes = make_pdf(&[&["The complete source must never become an unreported short preview."]]);
-        let cfg = DocToolsConfig { max_preview_chars: 8, ..DocToolsConfig::default() };
+        let bytes =
+            make_pdf(&[&["The complete source must never become an unreported short preview."]]);
+        let cfg = DocToolsConfig {
+            max_preview_chars: 8,
+            ..DocToolsConfig::default()
+        };
         assert!(crate::extract_bytes(&cfg, "pdf", "source.pdf", &bytes).is_err());
     }
 

@@ -95,7 +95,9 @@ impl EmailControl for FakeEmail {
     }
     async fn update(&self, name: &str, patch: Value) -> Result<EmailAccountDto, EmailControlError> {
         if self.fail_update.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(EmailControlError::Internal("simulated config write failure".into()));
+            return Err(EmailControlError::Internal(
+                "simulated config write failure".into(),
+            ));
         }
         let mut all = self.accounts.lock();
         let slot = all

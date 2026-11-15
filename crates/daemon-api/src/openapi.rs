@@ -9,8 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, knowledge, knowledge_settings, live_view, mcp,
-    mcp_routes, routes, skills, sse, web, web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, host, knowledge,
+    knowledge_settings, live_view, mcp, mcp_routes, routes, skills, sse, web, web_routes,
 };
 
 struct Security;

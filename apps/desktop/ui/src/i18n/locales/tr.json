@@ -1823,7 +1823,20 @@
       "cancelled": "Embedding duraklatıldı",
       "failed": "Embedding başarısız; sağlayıcı ayarlarını inceleyin"
     },
-    "importHint": "İçe aktarılan kaynaklar devre dışı başlar. Embedding sağlayıcısını yeniden seçip kaydedin; ardından kaynaklara ve arama sorgularına ayrı ayrı izin verin."
+    "importHint": "İçe aktarılan kaynaklar devre dışı başlar. Embedding sağlayıcısını yeniden seçip kaydedin; ardından kaynaklara ve arama sorgularına ayrı ayrı izin verin.",
+    "defaultBrainName": "Ortak beyin",
+    "rename": "Yeniden adlandır",
+    "newName": "Yeni kaynak adı",
+    "saveName": "Adı kaydet",
+    "removeTitle": "“{{source}}” dizinden kaldırılsın mı?",
+    "removeHint": "Dizindeki metin, anlamsal vektörler ve kaynak izni kaldırılır. Özgün dosyanız bu bilgisayarda kalır.",
+    "confirmRemove": "Kaldırmayı onayla",
+    "reselect": "Yerel yolu seç",
+    "reselectHint": "Bu kaynak içe aktarıldı. Yeniden bağlamak için bu bilgisayardan bir yol seçin. Eski dizin içeriği ve embedding izni temizlenir.",
+    "confirmPath": "Bu yolu kullan",
+    "skippedFiles": "{{count}} dosya atlandı",
+    "fileSkipped": "Okunamıyor, korunuyor veya metin çıkarma sınırını aşıyor. Diğer dosyalar dizinlenmeye devam eder.",
+    "emailUnavailable": "E-posta listesi alınamıyor: {{error}}"
   },
   "liveView": {
     "title": "Canlı ekran görünümü",

@@ -2,8 +2,6 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::Instant;
 
 use async_trait::async_trait;
 use memory_store::knowledge::brain::{BrainWriteInput, PreparedBrainWrite};
@@ -17,13 +15,12 @@ use uuid::Uuid;
 
 /// Shared-brain publication always requires a one-call approval.
 pub const KNOWLEDGE_BRAIN_WRITE: &str = "knowledge_brain_write";
-const MAX_PENDING: usize = 64;
-const PENDING_TTL: Duration = Duration::from_secs(5 * 60);
+const MAX_PENDING_PER_BOT: usize = 64;
 
 struct Pending {
     key: String,
     token: String,
-    created: Instant,
+    bot_id: BotId,
     write: PreparedBrainWrite,
 }
 
@@ -143,19 +140,21 @@ impl Tool for BrainTool {
         let key = Self::key(ctx, input);
         let token = Uuid::now_v7().to_string();
         let mut pending = self.pending.lock();
-        pending.retain(|p| p.created.elapsed() < PENDING_TTL);
+        // The engine's approval guard owns this entry's lifetime and calls
+        // approval_closed on denial, cancellation and run teardown. Human
+        // review is not expired by an unrelated wall-clock timer.
         // A second card cannot replace what an outstanding approval froze.
         if pending.iter().any(|p| p.key == key) {
             return Err(error("this exact brain write already awaits approval"));
         }
-        if pending.len() >= MAX_PENDING {
+        if pending.iter().filter(|p| p.bot_id == scope.bot_id).count() >= MAX_PENDING_PER_BOT {
             return Err(error("too many pending brain approvals"));
         }
         details["approval_ref"] = json!(token);
         pending.push_back(Pending {
             key,
             token,
-            created: Instant::now(),
+            bot_id: scope.bot_id,
             write,
         });
         Ok(Some(details))
@@ -173,7 +172,6 @@ impl Tool for BrainTool {
         let key = Self::key(ctx, &input);
         let approved = {
             let mut pending = self.pending.lock();
-            pending.retain(|p| p.created.elapsed() < PENDING_TTL);
             let index = pending
                 .iter()
                 .position(|p| p.key == key)
@@ -212,15 +210,65 @@ mod tests {
         let (_dir, storage, ctx, scope) = fixture();
         let other_bot = BotId::new();
         let other_run = RunId::new();
-        storage.insert_bot(&storage::Bot { id: other_bot, user_id: scope.user_id, name: "Other bot".into(), config: json!({}), created_at_ms: 1 }).unwrap();
-        storage.insert_run(&storage::Run { id: other_run, user_id: scope.user_id, bot_id: other_bot, chat_id: None, kind: "turn".into(), state: "running".into(), error: None, created_at_ms: 1, updated_at_ms: 1, parent_run_id: None, spec: None, computer_target: None, computer_node: None, computer_node_name: None, paused_at_ms: None, pause_reason: None }).unwrap();
-        let other = ToolContext { run_id: other_run.to_string(), bot_id: Some(other_bot.to_string()), ..ToolContext::default() };
+        storage
+            .insert_bot(&storage::Bot {
+                id: other_bot,
+                user_id: scope.user_id,
+                name: "Other bot".into(),
+                config: json!({}),
+                created_at_ms: 1,
+            })
+            .unwrap();
+        storage
+            .insert_run(&storage::Run {
+                id: other_run,
+                user_id: scope.user_id,
+                bot_id: other_bot,
+                chat_id: None,
+                kind: "turn".into(),
+                state: "running".into(),
+                error: None,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                parent_run_id: None,
+                spec: None,
+                computer_target: None,
+                computer_node: None,
+                computer_node_name: None,
+                paused_at_ms: None,
+                pause_reason: None,
+            })
+            .unwrap();
+        let other = ToolContext {
+            run_id: other_run.to_string(),
+            bot_id: Some(other_bot.to_string()),
+            ..ToolContext::default()
+        };
         let tool = tool(storage);
         for n in 0..64 {
-            tool.approval_details(&ctx, &json!({"filename":format!("pending-{n}.md"),"content":"A pending decision."})).await.unwrap();
+            tool.approval_details(
+                &ctx,
+                &json!({"filename":format!("pending-{n}.md"),"content":"A pending decision."}),
+            )
+            .await
+            .unwrap();
         }
-        assert!(tool.approval_details(&ctx, &json!({"filename":"one-too-many.md","content":"A pending decision."})).await.is_err());
-        assert!(tool.approval_details(&other, &json!({"filename":"other-bot.md","content":"Independent review."})).await.is_ok());
+        assert!(
+            tool.approval_details(
+                &ctx,
+                &json!({"filename":"one-too-many.md","content":"A pending decision."})
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            tool.approval_details(
+                &other,
+                &json!({"filename":"other-bot.md","content":"Independent review."})
+            )
+            .await
+            .is_ok()
+        );
     }
 
     fn fixture() -> (tempfile::TempDir, Arc<Storage>, ToolContext, Scope) {
@@ -257,7 +305,12 @@ mod tests {
                 created_at_ms: 1,
                 updated_at_ms: 1,
                 parent_run_id: None,
-                spec: None, computer_target: None, computer_node: None, computer_node_name: None, paused_at_ms: None, pause_reason: None,
+                spec: None,
+                computer_target: None,
+                computer_node: None,
+                computer_node_name: None,
+                paused_at_ms: None,
+                pause_reason: None,
             })
             .unwrap();
         (
