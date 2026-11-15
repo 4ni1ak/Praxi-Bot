@@ -89,18 +89,7 @@ impl KnowledgeEmbeddingService {
                 .pack_lexical(request, SearchMode::Lexical, cancel)
                 .await;
         }
-        let byte_budget = MAX_SCAN_BYTES.min(
-            usize::try_from(self.config.query_timeout_ms)
-                .unwrap_or(usize::MAX)
-                .saturating_mul(SCAN_BYTES_PER_MS),
-        );
-        if !dimensions_match
-            || count > self.config.max_scan_vectors
-            || count
-                .saturating_mul(self.config.profile.dimensions)
-                .saturating_mul(4)
-                > byte_budget
-        {
+        if !self.scan_feasible(count, dimensions_match) {
             return self
                 .pack_lexical(request, SearchMode::LexicalDegraded, cancel)
                 .await;
@@ -283,6 +272,20 @@ impl KnowledgeEmbeddingService {
             vector: vector.clone(),
         });
         Ok(Some(vector))
+    }
+
+    fn scan_feasible(&self, count: usize, dimensions_match: bool) -> bool {
+        let byte_budget = MAX_SCAN_BYTES.min(
+            usize::try_from(self.config.query_timeout_ms)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(SCAN_BYTES_PER_MS),
+        );
+        dimensions_match
+            && count <= self.config.max_scan_vectors
+            && count
+                .saturating_mul(self.config.profile.dimensions)
+                .saturating_mul(4)
+                <= byte_budget
     }
 
     fn vector_shape(&self, request: &SearchRequest) -> Result<(usize, bool)> {

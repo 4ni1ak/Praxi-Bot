@@ -315,9 +315,11 @@ pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotD
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_bot(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
-    let (name, config) = resolve_bot(input)?;
+    let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -399,15 +401,21 @@ pub(crate) async fn revoke_grant(
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let bot_id = BotId(id(&bid)?);
-    let _knowledge_authority = crate::knowledge::authority_lock(&s, bot_id)
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
         .lock_owned()
         .await;
-    let mut bot = s.bot_of_user(bot_id)?;
+    let mut bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("knowledge"),
+        &mut config,
+    )?;
     if preserve_runtime
         && config.get("runtime").is_none()
         && let Some(runtime) = bot.config.get("runtime")
@@ -416,6 +424,13 @@ pub(crate) async fn update_bot(
             .as_object_mut()
             .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
             .insert("runtime".into(), runtime.clone());
+    }
+    if config.get("knowledge").is_some()
+        && bot.config.pointer("/knowledge/embedding") != config.pointer("/knowledge/embedding")
+    {
+        // Even a stale profile cannot revive authority after an owner submits
+        // a changed embedding profile. Dedicated settings own the saved value.
+        crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
     }
     // Generic profile saves may contain stale snapshots. Only the dedicated
     // knowledge endpoint may update retrieval configuration or query grants.

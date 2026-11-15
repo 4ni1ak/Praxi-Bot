@@ -28,6 +28,7 @@ mod host;
 mod knowledge;
 mod knowledge_brain;
 mod mcp;
+mod peer_knowledge;
 mod schedules;
 mod skills;
 mod web;

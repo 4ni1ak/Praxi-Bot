@@ -21,8 +21,8 @@ destination and source. Challenges expire after five minutes, accept one
 confirmation, and reject changed configuration or source revision. General tool
 grants and JSON consent fields cannot supply this authority.
 
-Embedding uses the permission engine's existing `Remote` category. A global or
-bot `Remote: deny`, policy lock, or unsupported permission limit blocks the
+Embedding uses the permission engine's existing `Remote` category. An effective
+`Remote: deny` under its global/bot override rules, a policy lock, or an unsupported limit blocks the
 confirmation and dispatch. That category also governs remote computer access;
 changing it therefore affects both features. Query dispatch uses the actual
 run's Human, Schedule or Channel initiator and inherited subagent policy. A Human

@@ -300,8 +300,8 @@ revision, current host authority and cancellation.
 
 Both owner approvals and every outbound dispatch use the permission engine's
 `Remote` category. This reuses the existing remote-computer category: an
-operator's `Remote: deny` also denies embedding egress, and restrictive per-bot
-rules still clamp the global policy. The category is not an independent network
+effective `Remote: deny` also denies embedding egress, using the existing
+global/bot override rules. The category is not an independent network
 capability. A general tool/category grant never substitutes for explicit source
 or query confirmation. Unsupported permission limits cannot be turned into a
 standing embedding grant. The `Remote` decision at query dispatch uses the

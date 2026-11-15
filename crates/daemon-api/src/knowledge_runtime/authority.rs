@@ -10,9 +10,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::ToSchema;
 
-use super::*;
+use super::{
+    ApiError, AppState, BotId, Digest, KnowledgeStore, Scope, Sha256, Uuid, configured_settings,
+    invalidate_bot,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EmbeddingGrantTarget {
     Queries,
@@ -154,6 +157,10 @@ fn grantable(decision: &Decision) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Prepare a single-use owner challenge under the effective permission policy.
+///
+/// # Errors
+/// Unknown bot/source, denied policy, invalid profile or unavailable host store.
 pub fn grant_request(
     state: &AppState,
     bot: BotId,
@@ -220,6 +227,10 @@ pub fn grant_request(
     Ok(challenge)
 }
 
+/// Consume an unchanged owner challenge and persist its scoped host grant.
+///
+/// # Errors
+/// Denied policy, expired/replayed challenge, changed source/profile or storage failure.
 pub fn grant_confirm(
     state: &AppState,
     bot: BotId,
@@ -325,6 +336,10 @@ pub(crate) fn authorized(
     })
 }
 
+/// Revoke the selected host authority and cancel its admitted bot generation.
+///
+/// # Errors
+/// Host authority or source metadata could not be updated.
 pub fn revoke_grant(
     state: &AppState,
     bot: BotId,
@@ -342,36 +357,38 @@ pub fn revoke_grant(
         )
         .map_err(unavailable)?;
     }
-    if let EmbeddingGrantTarget::Documents { source_id } = target {
-        if let Ok(store) = index(state, bot) {
-            if let Some(source) = store.source(source_id).map_err(unavailable)? {
-                if source.remote_embedding.is_some() {
-                    drop(store);
-                    KnowledgeStore::open(
-                        state.data_dir(),
-                        Scope {
-                            user_id: state.user_id(),
-                            bot_id: bot,
-                        },
-                    )
-                    .map_err(unavailable)?
-                    .update_source(
-                        source_id,
-                        source.revision,
-                        SourceUpdate {
-                            remote_embedding: Some(None),
-                            ..SourceUpdate::default()
-                        },
-                    )
-                    .map_err(unavailable)?;
-                }
-            }
-        }
+    if let EmbeddingGrantTarget::Documents { source_id } = target
+        && let Ok(store) = index(state, bot)
+        && let Some(source) = store.source(source_id).map_err(unavailable)?
+        && source.remote_embedding.is_some()
+    {
+        drop(store);
+        KnowledgeStore::open(
+            state.data_dir(),
+            Scope {
+                user_id: state.user_id(),
+                bot_id: bot,
+            },
+        )
+        .map_err(unavailable)?
+        .update_source(
+            source_id,
+            source.revision,
+            SourceUpdate {
+                remote_embedding: Some(None),
+                ..SourceUpdate::default()
+            },
+        )
+        .map_err(unavailable)?;
     }
     invalidate_bot(state, bot);
     Ok(())
 }
 
+/// Revoke all host grants/challenges while retaining inactive paid vectors.
+///
+/// # Errors
+/// The host authority store could not be updated.
 pub fn revoke_bot_grants(state: &AppState, bot: BotId) -> Result<(), ApiError> {
     if let Some(conn) = open(state, false)? {
         for table in ["grants", "challenges"] {
