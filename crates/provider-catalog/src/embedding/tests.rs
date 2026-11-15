@@ -158,7 +158,10 @@ async fn malformed_vectors_indices_and_counts_are_rejected_but_gateway_alias_is_
         None,
     )
     .unwrap();
-    let response = provider.embed(request(EmbeddingTaskFormat::Plain)).await.unwrap();
+    let response = provider
+        .embed(request(EmbeddingTaskFormat::Plain))
+        .await
+        .unwrap();
     assert_eq!(response.model.as_deref(), Some("different-model"));
 }
 
@@ -340,7 +343,10 @@ async fn embedding_retry_info_preserves_long_delays_and_retry_after_header_prece
 fn durable_retry_info_handles_fractional_invalid_and_overflowing_delays() {
     let body = |delay: &str| json!({"error":{"details":[{"retryDelay":delay}]}}).to_string();
     assert_eq!(retry_info(&body("1.5s")), Some(Duration::from_millis(1500)));
-    assert_eq!(retry_info(&body("1e30s")), Some(Duration::from_secs(172_800)));
+    assert_eq!(
+        retry_info(&body("1e30s")),
+        Some(Duration::from_secs(172_800))
+    );
     for delay in ["NaNs", "infs", "-1s", "not-a-delay"] {
         assert_eq!(retry_info(&body(delay)), None);
     }

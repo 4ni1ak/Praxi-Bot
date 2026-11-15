@@ -280,6 +280,42 @@ impl AgentLoop {
         self.sh.global_policy.read().clone()
     }
 
+    /// Resolve query-embedding egress in the actual active run's policy scope.
+    /// Unknown/cross-bot run IDs fail closed. Owner source opt-in remains an
+    /// independent host requirement; generic tool grants are not consulted.
+    #[must_use]
+    pub fn embedding_egress_decision(
+        &self,
+        bot_id: BotId,
+        run_id: &str,
+    ) -> permission_engine::Decision {
+        use permission_engine::{ActionRequest, Decision};
+        let Ok(run_id) = run_id.parse::<Uuid>().map(RunId) else {
+            return Decision::Deny;
+        };
+        let Some(ctx) = self.ctx_of(run_id).filter(|ctx| ctx.bot_id == bot_id) else {
+            return Decision::Deny;
+        };
+        let _gate = self.sh.exec_gate.lock();
+        if self
+            .sh
+            .policy_locked
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Decision::Deny;
+        }
+        self.sh.resolver.resolve(
+            &self.sh.global_policy.read(),
+            ctx.bot_policy.as_ref(),
+            None,
+            &ActionRequest {
+                category: PermissionCategory::Remote,
+                raw_command: String::new(),
+                initiator: ctx.initiator,
+            },
+        )
+    }
+
     /// Replace the workspace-wide default policy.
     ///
     /// Bumps the policy revision, then denies pending approvals that the new

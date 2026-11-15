@@ -1,33 +1,66 @@
 //! Host-owned embedding dispatch. Tool arguments never select a provider or
-//! grant egress. Settings/source mutations share the authority lock with each
-//! bounded dispatch, so revocation is ordered before the next request.
+//! grant egress. Per-bot admission lanes are released before network I/O;
+//! revocation cancels the admitted generation and blocks stale publication.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
+
+mod authority;
+mod local_host;
+pub use authority::{
+    EmbeddingApprovalChallenge, EmbeddingGrantTarget, grant_confirm, grant_request,
+    revoke_bot_grants, revoke_grant,
+};
+pub use local_host::{HostLocalProfile, list_local_profiles, resolve_local_profile};
 
 use async_trait::async_trait;
 use builtin_tools::knowledge::{KnowledgeBackend, LocalKnowledgeBackend};
 use memory_store::knowledge::embedding::{
-    EmbeddingConfig, EmbeddingProfile, EmbeddingProgress, EmbeddingRuntime,
+    EmbeddingAuthorizer, EmbeddingConfig, EmbeddingProfile, EmbeddingProgress, EmbeddingRuntime,
     KnowledgeEmbeddingService,
 };
-use memory_store::knowledge::{KnowledgeStore, Scope, SearchRequest, SearchResponse};
+use memory_store::knowledge::{KnowledgeStore, Scope, SearchMode, SearchRequest, SearchResponse};
 use protocol::BotId;
 use provider_catalog::{
     EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, OpenAiCompatConfig, ProviderConfig,
     ProviderError,
 };
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, OwnedMutexGuard};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard};
+use tokio_util::sync::CancellationToken;
 use tool_registry::ToolError;
 use uuid::Uuid;
 
 use crate::{ApiError, AppState, WeakAppState};
 
 type Service = Arc<KnowledgeEmbeddingService>;
-type Prepared = (Service, OwnedMutexGuard<()>);
-type AuthorityLocks = parking_lot::Mutex<BTreeMap<PathBuf, Weak<Mutex<()>>>>;
+type Prepared = (Service, Activity);
+type AuthorityLanes = parking_lot::Mutex<BTreeMap<(PathBuf, BotId), Arc<Lane>>>;
+struct Lane {
+    gate: Arc<Mutex<()>>,
+    cancel: parking_lot::Mutex<CancellationToken>,
+    active: AtomicUsize,
+    changed: Notify,
+}
+struct Activity {
+    lane: Arc<Lane>,
+    cancel: CancellationToken,
+}
+impl Activity {
+    fn begin(lane: Arc<Lane>) -> Self {
+        lane.active.fetch_add(1, Ordering::SeqCst);
+        let cancel = lane.cancel.lock().clone();
+        Self { lane, cancel }
+    }
+}
+impl Drop for Activity {
+    fn drop(&mut self) {
+        self.lane.active.fetch_sub(1, Ordering::SeqCst);
+        self.lane.changed.notify_waiters();
+    }
+}
 
 struct CachedService {
     bot: BotId,
@@ -35,21 +68,43 @@ struct CachedService {
     service: Service,
 }
 
-/// One authority lane per data directory, shared even by multiple state handles.
-/// Independent hosts do not block one another. Idle entries retain no mutex;
-/// blocking initialization keeps its guard if the HTTP caller disconnects.
-pub(crate) fn authority_lock(state: &AppState) -> Arc<Mutex<()>> {
-    static LOCKS: OnceLock<AuthorityLocks> = OnceLock::new();
+/// One admission lane per bot. It is never held during a provider request.
+fn lane(state: &AppState, bot: BotId) -> Arc<Lane> {
+    static LANES: OnceLock<AuthorityLanes> = OnceLock::new();
     let path = state.data_dir();
     let path = std::fs::canonicalize(&path).unwrap_or(path);
-    let mut locks = LOCKS.get_or_init(AuthorityLocks::default).lock();
-    locks.retain(|_, lock| lock.strong_count() > 0);
-    if let Some(lock) = locks.get(&path).and_then(Weak::upgrade) {
-        return lock;
-    }
-    let lock = Arc::new(Mutex::new(()));
-    locks.insert(path, Arc::downgrade(&lock));
-    lock
+    let mut lanes = LANES.get_or_init(AuthorityLanes::default).lock();
+    Arc::clone(lanes.entry((path, bot)).or_insert_with(|| {
+        Arc::new(Lane {
+            gate: Arc::new(Mutex::new(())),
+            cancel: parking_lot::Mutex::new(CancellationToken::new()),
+            active: AtomicUsize::new(0),
+            changed: Notify::new(),
+        })
+    }))
+}
+pub(crate) fn authority_lock(state: &AppState, bot: BotId) -> Arc<Mutex<()>> {
+    Arc::clone(&lane(state, bot).gate)
+}
+/// Cancel admitted work and wait for database/model users to release it.
+/// Call while holding the bot authority lane, before deleting its files.
+///
+/// # Errors
+/// A blocking worker did not release its handles within the bounded deadline.
+pub async fn quiesce_bot(state: &AppState, bot: BotId) -> Result<(), ApiError> {
+    invalidate_bot(state, bot);
+    let lane = lane(state, bot);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let notified = lane.changed.notified();
+            if lane.active.load(Ordering::SeqCst) == 0 {
+                break;
+            }
+            notified.await;
+        }
+    })
+    .await
+    .map_err(|_| ApiError::conflict("knowledge worker is still releasing its handles"))
 }
 
 #[cfg(test)]
@@ -79,15 +134,25 @@ pub(crate) fn install(state: &AppState) {
     }
 }
 
-/// Drop cached database/model handles before deleting a bot's scoped index.
-/// The caller must hold [`authority_lock`] throughout cleanup.
-pub(crate) fn forget_bot(state: &AppState, bot: BotId) {
+/// Invalidate cached and in-flight work after settings or source authority changes.
+pub(crate) fn invalidate_bot(state: &AppState, bot: BotId) {
+    let lane = lane(state, bot);
+    let mut cancel = lane.cancel.lock();
+    cancel.cancel();
+    *cancel = CancellationToken::new();
+    drop(cancel);
+    evict_bot(state, bot);
+}
+fn evict_bot(state: &AppState, bot: BotId) {
     if let Some(runtime) = state.0.knowledge_runtime.get() {
         runtime.services.lock().retain(|entry| entry.bot != bot);
     }
 }
+pub(crate) fn forget_bot(state: &AppState, bot: BotId) {
+    invalidate_bot(state, bot);
+}
 
-fn settings(state: &AppState, bot: BotId) -> Result<EmbeddingConfig, ApiError> {
+fn configured_settings(state: &AppState, bot: BotId) -> Result<EmbeddingConfig, ApiError> {
     let bot = state.bot_of_user(bot)?;
     let value = bot
         .config
@@ -95,12 +160,95 @@ fn settings(state: &AppState, bot: BotId) -> Result<EmbeddingConfig, ApiError> {
         .and_then(|value| value.get("embedding"))
         .filter(|value| !value.is_null())
         .ok_or_else(|| ApiError::conflict("no embedding provider is configured"))?;
-    let config: EmbeddingConfig = serde_json::from_value(value.clone())
+    let mut config: EmbeddingConfig = serde_json::from_value(value.clone())
         .map_err(|_| ApiError::bad_request("invalid embedding settings"))?;
+    // A portable config can choose only an installed host profile ID.
+    if let Some(id) = &config.local_profile_id {
+        config.profile = resolve_local_profile(state, id)?;
+        config.account_group = "local-host".into();
+    } else if config.profile.endpoint_identity.starts_with("local-onnx:") {
+        return Err(ApiError::bad_request(
+            "local embedding requires an installed host profile ID",
+        ));
+    } else {
+        let _lock = state.providers_lock();
+        let providers = ProviderConfig::load(&provider_catalog::config_path(&state.data_dir()))
+            .map_err(|_| ApiError::unavailable("embedding providers unavailable"))?;
+        let settings = providers
+            .get(&config.profile.provider_id)
+            .ok_or_else(|| ApiError::conflict("embedding provider is unavailable"))?;
+        let entry = settings
+            .custom
+            .as_ref()
+            .or_else(|| {
+                state
+                    .provider_host()?
+                    .catalog
+                    .get(&config.profile.provider_id)
+            })
+            .ok_or_else(|| ApiError::conflict("embedding provider is unavailable"))?;
+        let identity = if let Some(key) = &settings.key {
+            format!("secret:{}", key.name())
+        } else {
+            match &entry.auth {
+                provider_catalog::Auth::ApiKeyEnv(name) => format!("env:{name}"),
+                provider_catalog::Auth::None => {
+                    format!("anonymous:{}", config.profile.endpoint_identity)
+                }
+            }
+        };
+        config.account_group = format!("host-account:{:x}", Sha256::digest(identity.as_bytes()));
+    }
+    config.query_consent = None;
     config
         .validate()
         .map_err(|_| ApiError::bad_request("invalid embedding settings"))?;
     Ok(config)
+}
+fn settings(state: &AppState, bot: BotId) -> Result<EmbeddingConfig, ApiError> {
+    let mut config = configured_settings(state, bot)?;
+    let fingerprint = config
+        .profile
+        .fingerprint()
+        .map_err(|_| ApiError::bad_request("invalid embedding profile"))?;
+    config.query_consent =
+        authority::authorized(state, bot, &EmbeddingGrantTarget::Queries, &fingerprint);
+    Ok(config)
+}
+
+struct HostAuthority {
+    state: WeakAppState,
+    bot: BotId,
+    cancel: CancellationToken,
+}
+impl EmbeddingAuthorizer for HostAuthority {
+    fn allows_document(&self, source: Uuid, profile: &str) -> bool {
+        self.allows(
+            &EmbeddingGrantTarget::Documents { source_id: source },
+            profile,
+        )
+    }
+    fn allows_query(&self, profile: &str) -> bool {
+        self.allows(&EmbeddingGrantTarget::Queries, profile)
+    }
+}
+impl HostAuthority {
+    fn allows(&self, target: &EmbeddingGrantTarget, profile: &str) -> bool {
+        if self.cancel.is_cancelled() {
+            return false;
+        }
+        let Some(state) = self.state.upgrade() else {
+            return false;
+        };
+        let Ok(config) = configured_settings(&state, self.bot) else {
+            return false;
+        };
+        config
+            .profile
+            .fingerprint()
+            .is_ok_and(|current| current == profile)
+            && authority::authorized(&state, self.bot, target, profile).is_some()
+    }
 }
 
 impl KnowledgeRuntime {
@@ -110,7 +258,8 @@ impl KnowledgeRuntime {
         bot: BotId,
         gate: OwnedMutexGuard<()>,
     ) -> Result<Prepared, ApiError> {
-        let config = settings(&state, bot).inspect_err(|_| forget_bot(&state, bot))?;
+        let config = settings(&state, bot).inspect_err(|_| evict_bot(&state, bot))?;
+        let activity = Activity::begin(lane(&state, bot));
         let bytes = serde_json::to_vec(&config)
             .map_err(|_| ApiError::bad_request("invalid embedding settings"))?;
         let key = format!("{:x}", Sha256::digest(bytes));
@@ -121,12 +270,13 @@ impl KnowledgeRuntime {
             .find(|entry| entry.bot == bot && entry.key == key)
             .map(|entry| Arc::clone(&entry.service))
         {
-            return Ok((service, gate));
+            drop(gate);
+            return Ok((service, activity));
         }
         let services = Arc::clone(&self.services);
         tokio::task::spawn_blocking(move || {
             // Release the previous model generation before loading another.
-            forget_bot(&state, bot);
+            evict_bot(&state, bot);
             let provider = provider(&state, &config)?;
             let store = Arc::new(
                 KnowledgeStore::open(
@@ -144,7 +294,12 @@ impl KnowledgeRuntime {
             );
             let service = Arc::new(
                 KnowledgeEmbeddingService::new(store, provider, ledger, config)
-                    .map_err(|_| ApiError::bad_request("embedding profile is unavailable"))?,
+                    .map_err(|_| ApiError::bad_request("embedding profile is unavailable"))?
+                    .with_authorizer(Arc::new(HostAuthority {
+                        state: state.downgrade(),
+                        bot,
+                        cancel: activity.cancel.clone(),
+                    })),
             );
             let mut cache = services.lock();
             while cache.len() >= 16 {
@@ -155,7 +310,8 @@ impl KnowledgeRuntime {
                 key,
                 service: Arc::clone(&service),
             });
-            Ok((service, gate))
+            drop(gate);
+            Ok((service, activity))
         })
         .await
         .map_err(|_| ApiError::unavailable("embedding worker unavailable"))?
@@ -164,16 +320,42 @@ impl KnowledgeRuntime {
 
 #[async_trait]
 impl KnowledgeBackend for KnowledgeRuntime {
-    fn may_egress(&self) -> bool {
-        // One registered tool serves bots whose settings can change. An
-        // optimistic static classification would bypass PR #46's pre-call gate.
-        true
+    fn may_egress(&self, bot: BotId) -> bool {
+        self.state
+            .upgrade()
+            .and_then(|state| settings(&state, bot).ok())
+            .is_some_and(|config| {
+                !config.profile.endpoint_identity.starts_with("local-onnx:")
+                    && config.query_consent.is_some()
+            })
+    }
+    fn has_enabled_sources(&self, bot: BotId) -> bool {
+        self.local.has_enabled_sources(bot)
     }
 
     async fn search(
         &self,
         bot: BotId,
         request: SearchRequest,
+    ) -> Result<SearchResponse, ToolError> {
+        self.search_inner(bot, request, None).await
+    }
+    async fn search_for_run(
+        &self,
+        bot: BotId,
+        request: SearchRequest,
+        run_id: &str,
+    ) -> Result<SearchResponse, ToolError> {
+        self.search_inner(bot, request, Some(run_id)).await
+    }
+}
+
+impl KnowledgeRuntime {
+    async fn search_inner(
+        &self,
+        bot: BotId,
+        request: SearchRequest,
+        run_id: Option<&str>,
     ) -> Result<SearchResponse, ToolError> {
         let state = self
             .state
@@ -182,13 +364,41 @@ impl KnowledgeBackend for KnowledgeRuntime {
         state
             .bot_of_user(bot)
             .map_err(|_| ToolError::Execution("knowledge bot unavailable".into()))?;
-        if let Ok(gate) = authority_lock(&state).try_lock_owned()
-            && let Ok((service, _gate)) = self.prepare(state.clone(), bot, gate).await
-            && let Ok(response) = service.search(&request, &state.shutdown_token()).await
-        {
-            return Ok(response);
+        let configured = state
+            .bot_of_user(bot)
+            .ok()
+            .and_then(|bot| {
+                bot.config
+                    .get("knowledge")
+                    .and_then(|value| value.get("embedding"))
+                    .cloned()
+            })
+            .is_some_and(|value| !value.is_null());
+        if configured {
+            let gate = authority_lock(&state, bot).lock_owned().await;
+            if let Ok((service, activity)) = self.prepare(state.clone(), bot, gate).await {
+                // Passing the generation token lets scans finish their bounded
+                // cleanup before a deletion waiter observes zero active users.
+                let query_guard = || {
+                    run_id.is_none_or(|run_id| {
+                        let decision = state.agent().embedding_egress_decision(bot, run_id);
+                        decision != permission_engine::Decision::Deny
+                            && decision.unsupported_limits().is_none()
+                    })
+                };
+                if let Ok(response) = service
+                    .search_with_query_guard(&request, &activity.cancel, &query_guard)
+                    .await
+                {
+                    return Ok(response);
+                }
+            }
         }
-        self.local.search(bot, request).await
+        let mut response = self.local.search(bot, request).await?;
+        if configured {
+            response.mode = SearchMode::LexicalDegraded;
+        }
+        Ok(response)
     }
 }
 
@@ -228,16 +438,14 @@ async fn run_embedding_batch(
     expected_revision: u64,
     reset_retry: bool,
 ) -> Result<EmbeddingProgress, ApiError> {
-    let gate = authority_lock(state)
-        .try_lock_owned()
-        .map_err(|_| ApiError::conflict("knowledge management is busy; retry shortly"))?;
     state.bot_of_user(bot)?;
+    let gate = authority_lock(state, bot).lock_owned().await;
     let runtime = state
         .0
         .knowledge_runtime
         .get()
         .ok_or_else(|| ApiError::unavailable("knowledge runtime unavailable"))?;
-    let (service, _gate) = runtime.prepare(state.clone(), bot, gate).await?;
+    let (service, activity) = runtime.prepare(state.clone(), bot, gate).await?;
     // Check the browser's revision before any egress; the embedding service
     // rechecks grants and chunk revisions before dispatch and publication.
     let store = KnowledgeStore::open(
@@ -264,7 +472,7 @@ async fn run_embedding_batch(
             .map_err(|_| ApiError::unavailable("embedding retry state unavailable"))?;
     }
     service
-        .embed_source_batch(source, &state.shutdown_token())
+        .embed_source_batch(source, &activity.cancel)
         .await
         .map_err(|_| ApiError::unavailable("embedding batch unavailable"))
 }
@@ -274,7 +482,7 @@ fn provider(
     config: &EmbeddingConfig,
 ) -> Result<Arc<dyn EmbeddingProvider>, ApiError> {
     if config.profile.endpoint_identity.starts_with("local-onnx:") {
-        return local_provider(config);
+        return local_provider(state, config);
     }
     // Fail closed on stale endpoint/provider settings, even for a cache miss.
     resolve_provider(state, &config.profile).map_err(|_| {
@@ -287,18 +495,32 @@ fn provider(
 }
 
 #[cfg(feature = "local-embeddings")]
-fn local_provider(config: &EmbeddingConfig) -> Result<Arc<dyn EmbeddingProvider>, ApiError> {
-    let artifacts = config
-        .local_artifacts
-        .as_ref()
-        .ok_or_else(|| ApiError::bad_request("local embedding artifacts are required"))?;
-    let provider = memory_store::knowledge::embedding::LocalOnnxEmbedder::load(artifacts)
+fn local_provider(
+    state: &AppState,
+    config: &EmbeddingConfig,
+) -> Result<Arc<dyn EmbeddingProvider>, ApiError> {
+    let id = config
+        .local_profile_id
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("installed local profile is required"))?;
+    let artifacts = local_host::artifacts(state, id)?;
+    if artifacts
+        .profile()
+        .map_err(|_| ApiError::bad_request("invalid local profile"))?
+        != config.profile
+    {
+        return Err(ApiError::conflict("host local embedding profile changed"));
+    }
+    let provider = memory_store::knowledge::embedding::LocalOnnxEmbedder::load(&artifacts)
         .map_err(|_| ApiError::bad_request("local embedding artifacts failed validation"))?;
     Ok(Arc::new(provider))
 }
 
 #[cfg(not(feature = "local-embeddings"))]
-fn local_provider(_: &EmbeddingConfig) -> Result<Arc<dyn EmbeddingProvider>, ApiError> {
+fn local_provider(
+    _: &AppState,
+    _: &EmbeddingConfig,
+) -> Result<Arc<dyn EmbeddingProvider>, ApiError> {
     Err(ApiError::bad_request(
         "this build does not include local embeddings",
     ))
@@ -368,6 +590,17 @@ impl EmbeddingProvider for ConfiguredProvider {
         }
         provider.embed(request).await
     }
+}
+
+/// Explicit owner recovery from a faulty provider cooldown. Local quota is kept.
+///
+/// # Errors
+/// Missing bot/provider or an unavailable quota ledger.
+pub fn reset_embedding_cooldown(state: &AppState, bot: BotId) -> Result<(), ApiError> {
+    let config = configured_settings(state, bot)?;
+    EmbeddingRuntime::open(state.data_dir())
+        .and_then(|runtime| runtime.reset_cooldown(&config.account_group))
+        .map_err(|_| ApiError::unavailable("embedding cooldown unavailable"))
 }
 
 #[cfg(test)]

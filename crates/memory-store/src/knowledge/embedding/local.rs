@@ -78,10 +78,153 @@ impl LocalEmbeddingArtifacts {
     }
 }
 
+#[cfg(any(test, feature = "local-embeddings"))]
+fn read_artifact(artifact: &PinnedEmbeddingArtifact, limit: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let meta = std::fs::symlink_metadata(&artifact.path)?;
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > limit {
+        return Err(invalid("local artifact is not a bounded regular file"));
+    }
+    let file = std::fs::File::open(&artifact.path)?;
+    if !file.metadata()?.is_file() {
+        return Err(invalid("local artifact changed while opening"));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit || format!("{:x}", Sha256::digest(&bytes)) != artifact.sha256 {
+        return Err(invalid("local artifact size or SHA-256 mismatch"));
+    }
+    Ok(bytes)
+}
+
+/// Own the verified bytes for the native library's entire process lifetime.
+/// Linux uses a sealed memfd (no writable or replaceable filesystem name).
+/// Other platforms use a private directory and a read-only open handle;
+/// Windows denies write/delete sharing while that handle remains alive.
+#[cfg(any(test, feature = "local-embeddings"))]
+struct VerifiedRuntime {
+    path: PathBuf,
+    _file: std::fs::File,
+    #[cfg(windows)]
+    _directory: tempfile::TempDir,
+}
+
+#[cfg(any(test, feature = "local-embeddings"))]
+impl VerifiedRuntime {
+    fn copy(artifact: &PinnedEmbeddingArtifact) -> Result<Self> {
+        #[cfg(not(any(target_os = "linux", windows)))]
+        return Err(invalid(
+            "verified native loading is supported only on Linux and Windows",
+        ));
+        #[cfg(any(target_os = "linux", windows))]
+        use std::io::Write;
+        #[cfg(any(target_os = "linux", windows))]
+        let bytes = read_artifact(artifact, 256 * 1024 * 1024)?;
+        #[cfg(target_os = "linux")]
+        {
+            use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, memfd_create};
+            use std::os::fd::AsRawFd;
+            let fd = memfd_create(
+                "praxi-verified-onnx",
+                MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+            )
+            .map_err(std::io::Error::from)?;
+            let mut file = std::fs::File::from(fd);
+            file.write_all(&bytes)?;
+            fcntl_add_seals(
+                &file,
+                SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+            )
+            .map_err(std::io::Error::from)?;
+            let path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+            Ok(Self { path, _file: file })
+        }
+        #[cfg(windows)]
+        {
+            let directory = tempfile::Builder::new()
+                .prefix("praxi-verified-onnx-")
+                .tempdir()?;
+            let path = directory.path().join(if cfg!(windows) {
+                "onnxruntime.dll"
+            } else {
+                "libonnxruntime.dylib"
+            });
+            let mut output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            output.write_all(&bytes)?;
+            output.sync_all()?;
+            let mut permissions = output.metadata()?.permissions();
+            permissions.set_readonly(true);
+            output.set_permissions(permissions)?;
+            drop(output);
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                options.share_mode(1); // FILE_SHARE_READ, no FILE_SHARE_WRITE/DELETE.
+            }
+            let mut file = options.open(&path)?;
+            use std::io::Read;
+            let mut frozen = Vec::new();
+            file.read_to_end(&mut frozen)?;
+            if frozen != bytes {
+                return Err(invalid("verified runtime copy changed before locking"));
+            }
+            Ok(Self {
+                path,
+                _file: file,
+                _directory: directory,
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod verified_copy_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(any(target_os = "linux", windows))]
+    fn swapping_the_original_cannot_change_the_native_load_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("library");
+        let bytes = b"trusted runtime fixture";
+        std::fs::write(&original, bytes).unwrap();
+        let artifact = PinnedEmbeddingArtifact {
+            path: original.clone(),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        };
+        let verified = VerifiedRuntime::copy(&artifact).unwrap();
+        std::fs::remove_file(&original).unwrap();
+        std::fs::write(&original, b"replaced executable bytes").unwrap();
+        assert_ne!(verified.path, original);
+        assert_eq!(std::fs::read(&verified.path).unwrap(), bytes);
+        assert!(std::fs::write(&verified.path, b"mutated verified bytes").is_err());
+        assert_eq!(std::fs::read(&verified.path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn model_and_tokenizer_bytes_are_owned_snapshots_after_verification() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("model");
+        let bytes = b"verified model bytes";
+        std::fs::write(&original, bytes).unwrap();
+        let artifact = PinnedEmbeddingArtifact {
+            path: original.clone(),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        };
+        let verified = read_artifact(&artifact, 1024).unwrap();
+        std::fs::write(original, b"different model").unwrap();
+        assert_eq!(verified, bytes);
+    }
+}
+
 #[cfg(feature = "local-embeddings")]
 mod inference {
     use std::collections::HashMap;
-    use std::io::Read;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -96,7 +239,7 @@ mod inference {
 
     use super::{
         Digest, EmbeddingProfile, EmbeddingTaskFormat, LocalEmbeddingArtifacts,
-        PinnedEmbeddingArtifact, Result, Sha256, invalid,
+        PinnedEmbeddingArtifact, Result, Sha256, VerifiedRuntime, invalid, read_artifact,
     };
 
     struct Model {
@@ -106,7 +249,7 @@ mod inference {
     type SharedModel = Arc<Mutex<Model>>;
     type ModelCache = HashMap<String, Weak<Mutex<Model>>>;
     static MODELS: OnceLock<Mutex<ModelCache>> = OnceLock::new();
-    static RUNTIME: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    static RUNTIME: OnceLock<Mutex<Option<(String, VerifiedRuntime)>>> = OnceLock::new();
     static INFERENCE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
     /// CPU-only, one inference at a time across bots, batches of two inputs.
@@ -143,7 +286,7 @@ mod inference {
             }
             // Validate every artifact before loading native code. Only the
             // byte-based local loader is used; no Hub API is invoked.
-            drop(read_artifact(&artifacts.runtime, 256 * 1024 * 1024)?);
+            let runtime_copy = VerifiedRuntime::copy(&artifacts.runtime)?;
             let model_bytes = read_artifact(&artifacts.model, 512 * 1024 * 1024)?;
             let files = TokenizerFiles {
                 tokenizer_file: read_artifact(&artifacts.tokenizer, 32 * 1024 * 1024)?,
@@ -162,19 +305,19 @@ mod inference {
                     .get_or_init(|| Mutex::new(None))
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(hash) = runtime.as_ref() {
+                if let Some((hash, _copy)) = runtime.as_ref() {
                     if hash != &artifacts.runtime.sha256 {
                         return Err(invalid("another ONNX runtime generation is already loaded"));
                     }
                 } else {
-                    let options = ort::init_from(&artifacts.runtime.path)
+                    let options = ort::init_from(&runtime_copy.path)
                         .map_err(|_| invalid("cannot load the pinned ONNX runtime library"))?;
                     if !options.with_telemetry(false).commit() {
                         return Err(invalid(
                             "ONNX runtime was initialized outside the pinned local model loader",
                         ));
                     }
-                    *runtime = Some(artifacts.runtime.sha256.clone());
+                    *runtime = Some((artifacts.runtime.sha256.clone(), runtime_copy));
                 }
             }
             let mut embedding = TextEmbedding::try_new_from_user_defined(
@@ -205,24 +348,6 @@ mod inference {
         pub fn profile(&self) -> &EmbeddingProfile {
             &self.profile
         }
-    }
-
-    fn read_artifact(artifact: &PinnedEmbeddingArtifact, limit: u64) -> Result<Vec<u8>> {
-        let meta = std::fs::symlink_metadata(&artifact.path)?;
-        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > limit {
-            return Err(invalid("local artifact is not a bounded regular file"));
-        }
-        let file = std::fs::File::open(&artifact.path)?;
-        if !file.metadata()?.is_file() {
-            return Err(invalid("local artifact changed while opening"));
-        }
-        let mut bytes = Vec::new();
-        file.take(limit + 1).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > limit || format!("{:x}", Sha256::digest(&bytes)) != artifact.sha256
-        {
-            return Err(invalid("local artifact size or SHA-256 mismatch"));
-        }
-        Ok(bytes)
     }
 
     struct CancelOnDrop(Arc<AtomicBool>);

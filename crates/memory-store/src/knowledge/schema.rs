@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::Scope;
 use crate::{MemoryError, Result};
 
-pub(super) const VERSION: u32 = 2;
+pub(super) const VERSION: u32 = 3;
 
 const INITIAL: &str = r"
 CREATE TABLE knowledge_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -89,6 +89,9 @@ pub(super) fn migrate(conn: &mut Connection, expected: Option<Scope>) -> Result<
     }
     if found < 2 {
         super::embedding::migrate(conn)?;
+    }
+    if found < 3 {
+        super::embedding::migrate_v3(conn)?;
     }
     Ok(VERSION)
 }

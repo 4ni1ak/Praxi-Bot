@@ -86,6 +86,21 @@ impl KnowledgeStore {
         self.scope
     }
 
+    /// Host grant binding, rotated on every portable index import.
+    ///
+    /// # Errors
+    /// Missing or corrupt index identity.
+    pub fn authority_epoch(&self) -> Result<String> {
+        let epoch: String = self.conn().query_row(
+            "SELECT value FROM knowledge_meta WHERE key='embedding_authority_epoch'",
+            [],
+            |row| row.get(0),
+        )?;
+        Uuid::parse_str(&epoch)
+            .map_err(|_| MemoryError::Invalid("invalid embedding authority epoch".into()))?;
+        Ok(epoch)
+    }
+
     /// Run bounded local publication while the approved sources stay unchanged.
     ///
     /// An IMMEDIATE transaction serializes source changes across connections.
@@ -171,8 +186,13 @@ impl KnowledgeStore {
         // Imported work never resumes network activity. Explicitly purge these
         // rows as well as relying on the attested grant-revocation trigger.
         tx.execute("DELETE FROM embedding_jobs", [])?;
-        tx.execute("DELETE FROM knowledge_embeddings WHERE remote=1", [])?;
-        tx.execute("DELETE FROM embedding_cache WHERE remote=1", [])?;
+        tx.execute("DELETE FROM embedding_chunk_failures", [])?;
+        tx.execute(
+            "UPDATE knowledge_meta SET value=?1 WHERE key='embedding_authority_epoch'",
+            [Uuid::now_v7().to_string()],
+        )?;
+        tx.execute("DELETE FROM knowledge_embeddings", [])?;
+        tx.execute("DELETE FROM embedding_cache", [])?;
         tx.commit()?;
         Ok(())
     }

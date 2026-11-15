@@ -11,11 +11,14 @@ use super::super::embedding_runtime::Reservation;
 use super::super::search::validate_request;
 use super::super::store::{integer_at, uuid_at};
 use super::super::{SearchHit, SearchMode, SearchRequest, SearchResponse};
-use super::index::decode_vector;
 use super::{KnowledgeEmbeddingService, QueryCacheEntry, cache_key, invalid, normalize};
 use crate::{MemoryError, Result, Trust, rrf_fuse};
 
 const CANDIDATES: usize = 256;
+// Exact scans are for bounded local corpora. A dimension-aware ceiling avoids
+// spending a query request on hundreds of MB that cannot fit the host budget.
+const MAX_SCAN_BYTES: usize = 16 * 1024 * 1024;
+const SCAN_BYTES_PER_MS: usize = 32 * 1024;
 
 struct Scored {
     id: String,
@@ -51,6 +54,21 @@ impl KnowledgeEmbeddingService {
         request: &SearchRequest,
         cancel: &CancellationToken,
     ) -> Result<SearchResponse> {
+        self.search_with_query_guard(request, cancel, &|| true)
+            .await
+    }
+
+    /// Apply the current run's initiator/subagent policy in addition to the
+    /// standing host consent. Rechecked before a cache hit, dispatch and return.
+    ///
+    /// # Errors
+    /// Invalid query, cancellation or corrupt index.
+    pub async fn search_with_query_guard(
+        &self,
+        request: &SearchRequest,
+        cancel: &CancellationToken,
+        query_guard: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<SearchResponse> {
         let search_cancel = cancel.child_token();
         let _cancel_on_drop = search_cancel.clone().drop_guard();
         let cancel = &search_cancel;
@@ -58,29 +76,50 @@ impl KnowledgeEmbeddingService {
         if cancel.is_cancelled() {
             return Err(MemoryError::Embed("knowledge search cancelled".into()));
         }
-        if request.query.trim().is_empty() || (self.provider.is_remote() && !self.may_egress()) {
+        if request.query.trim().is_empty()
+            || (self.provider.is_remote() && (!self.may_egress() || !query_guard()))
+        {
             return self
                 .pack_lexical(request, SearchMode::Lexical, cancel)
                 .await;
         }
-        let count = self.vector_count(request)?;
+        let (count, dimensions_match) = self.vector_shape(request)?;
         if count == 0 {
             return self
                 .pack_lexical(request, SearchMode::Lexical, cancel)
                 .await;
         }
-        if count > self.config.max_scan_vectors {
+        let byte_budget = MAX_SCAN_BYTES.min(
+            usize::try_from(self.config.query_timeout_ms)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(SCAN_BYTES_PER_MS),
+        );
+        if !dimensions_match
+            || count > self.config.max_scan_vectors
+            || count
+                .saturating_mul(self.config.profile.dimensions)
+                .saturating_mul(4)
+                > byte_budget
+        {
             return self
                 .pack_lexical(request, SearchMode::LexicalDegraded, cancel)
                 .await;
         }
-        let Some(query) = self.query_vector(&request.query, cancel).await? else {
+        let Some(query) = self
+            .query_vector(&request.query, cancel, query_guard)
+            .await?
+        else {
             return self
                 .pack_lexical(request, SearchMode::LexicalDegraded, cancel)
                 .await;
         };
         if cancel.is_cancelled() {
             return Err(MemoryError::Embed("knowledge search cancelled".into()));
+        }
+        if self.provider.is_remote() && (!self.may_egress() || !query_guard()) {
+            return self
+                .pack_lexical(request, SearchMode::LexicalDegraded, cancel)
+                .await;
         }
         // Re-read current source state after any network wait; a deleted source's
         // earlier lexical snapshot must not be returned by a late response.
@@ -153,7 +192,11 @@ impl KnowledgeEmbeddingService {
         &self,
         query: &str,
         cancel: &CancellationToken,
+        query_guard: &(dyn Fn() -> bool + Send + Sync),
     ) -> Result<Option<Vec<f32>>> {
+        if self.provider.is_remote() && (!self.may_egress() || !query_guard()) {
+            return Ok(None);
+        }
         let key = cache_key(EmbeddingTask::Query, query, None);
         let now = storage::now_ms();
         {
@@ -194,6 +237,9 @@ impl KnowledgeEmbeddingService {
             task: EmbeddingTask::Query,
             format: self.config.profile.format,
         };
+        if self.provider.is_remote() && (!self.may_egress() || !query_guard()) {
+            return Ok(None);
+        }
         let response = tokio::select! {
             biased;
             ()=cancel.cancelled()=>return Err(MemoryError::Embed("knowledge search cancelled".into())),
@@ -239,15 +285,22 @@ impl KnowledgeEmbeddingService {
         Ok(Some(vector))
     }
 
-    fn vector_count(&self, request: &SearchRequest) -> Result<usize> {
+    fn vector_shape(&self, request: &SearchRequest) -> Result<(usize, bool)> {
         let sources = serde_json::to_string(&request.source_ids)?;
-        let count:i64=self.store.conn().query_row(
-            "SELECT COUNT(*) FROM knowledge_embeddings e JOIN sources s ON s.id=e.source_id
+        let (count, min_dims, max_dims):(i64,Option<i64>,Option<i64>)=self.store.conn().query_row(
+            "SELECT COUNT(*),MIN(dimensions),MAX(dimensions) FROM (SELECT e.dimensions FROM knowledge_embeddings e JOIN sources s ON s.id=e.source_id
              WHERE e.profile=?1 AND s.enabled=1 AND (?2='[]' OR e.source_id IN(SELECT value FROM json_each(?2)))
              AND (e.remote=0 OR json_extract(s.remote_embedding_json,'$.profile_fingerprint')=?1)
-             AND EXISTS(SELECT 1 FROM knowledge_meta WHERE key='embedding_profile' AND value=?1)",
-            params![self.fingerprint,sources],|row|row.get(0))?;
-        usize::try_from(count).map_err(|_| invalid("embedding count overflow"))
+             AND EXISTS(SELECT 1 FROM knowledge_meta WHERE key='embedding_profile' AND value=?1) LIMIT ?3)",
+            params![self.fingerprint,sources,super::super::store::sql_int(self.config.max_scan_vectors.saturating_add(1))?],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
+        Ok((
+            usize::try_from(count).map_err(|_| invalid("embedding count overflow"))?,
+            min_dims
+                .is_none_or(|n| usize::try_from(n).ok() == Some(self.config.profile.dimensions))
+                && max_dims.is_none_or(|n| {
+                    usize::try_from(n).ok() == Some(self.config.profile.dimensions)
+                }),
+        ))
     }
 }
 
@@ -270,38 +323,40 @@ fn semantic_candidates(
                  WHERE e.profile=?1 AND s.enabled=1 AND (?2='[]' OR e.source_id IN(SELECT value FROM json_each(?2)))
                  AND (e.remote=0 OR json_extract(s.remote_embedding_json,'$.profile_fingerprint')=?1)
                  AND EXISTS(SELECT 1 FROM knowledge_meta WHERE key='embedding_profile' AND value=?1) ORDER BY e.chunk_id")?;
-        let rows = statement.query_map(params![fingerprint, sources], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                integer_at(row, 2)?,
-            ))
-        })?;
-        for (index, row) in rows.enumerate() {
+        let mut rows = statement.query(params![fingerprint, sources])?;
+        let mut index = 0;
+        while let Some(row) = rows.next()? {
             if cancel.is_cancelled() {
                 return Err(MemoryError::Embed("knowledge search cancelled".into()));
             }
             if index >= max_scan_vectors || started.elapsed() > timeout {
                 return Ok(None);
             }
-            let (id, blob, dimensions) = row?;
+            let dimensions: usize = integer_at(row, 2)?;
             if dimensions != query.len() {
                 return Ok(None);
             }
-            let Ok(vector) = decode_vector(&blob, dimensions) else {
+            let blob = row
+                .get_ref(1)?
+                .as_blob()
+                .map_err(|_| invalid("stored embedding is not a blob"))?;
+            if blob.len() != dimensions.saturating_mul(4) {
                 return Ok(None);
-            };
+            }
+            // Ingestion normalizes once. Borrow SQLite's BLOB and stream its
+            // little-endian values; no per-row allocation or renormalization.
             let similarity = query
                 .iter()
-                .zip(vector)
-                .map(|(&left, right)| f64::from(left) * f64::from(right))
+                .zip(blob.as_chunks::<4>().0)
+                .map(|(&left, right)| f64::from(left) * f64::from(f32::from_le_bytes(*right)))
                 .sum::<f64>();
+            index += 1;
             // Zero/negative matches contribute no useful semantic evidence.
             if !similarity.is_finite() || similarity <= 0. {
                 continue;
             }
             heap.push(Reverse(Scored {
-                id,
+                id: row.get(0)?,
                 score: similarity,
             }));
             if heap.len() > CANDIDATES {
