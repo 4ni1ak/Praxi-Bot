@@ -1177,6 +1177,7 @@ impl ExecPermit {
     /// `decide` and the caller's decision to invoke the tool.
     ///
     /// `Err` — do not call the tool; no grant is stored.
+    #[allow(clippy::too_many_lines)] // Recheck, grant record and audit under one gate.
     pub(crate) fn commit(mut self) -> Result<(), Option<String>> {
         let _gate = self.sh.exec_gate.lock();
         #[cfg(test)]
