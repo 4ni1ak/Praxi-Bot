@@ -4990,9 +4990,9 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["RestoreRequestDto"];
+                "application/json": null | components["schemas"]["RestoreRequestDto"];
             };
         };
         responses: {
