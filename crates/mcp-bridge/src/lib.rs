@@ -50,6 +50,7 @@ mod discovery;
 mod error;
 mod manager;
 pub mod oauth;
+pub mod oauth_net;
 mod session;
 mod tool;
 mod transport;

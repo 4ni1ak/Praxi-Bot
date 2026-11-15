@@ -39,6 +39,15 @@ impl SecretStore for MemoryStore {
 #[derive(Default)]
 #[allow(clippy::struct_excessive_bools)] // independent fixture switches
 struct Seen {
+    /// Authorization server named in the protected-resource metadata
+    /// (default: this fake itself).
+    authorization_server: Option<String>,
+    /// `registration_endpoint` advertised in the server metadata.
+    registration_endpoint: Option<String>,
+    /// Answer protected-resource discovery with a 302 to this URL.
+    discovery_redirect: Option<String>,
+    /// Answer `POST /register` with a 307 to this URL.
+    registration_redirect: Option<String>,
     /// When set, a refresh answer waits for one permit (the test decides
     /// exactly when the refreshed tokens arrive).
     refresh_gate: Option<Arc<tokio::sync::Semaphore>>,
@@ -202,12 +211,37 @@ async fn fake_authorization_server(
                         let _ = socket.shutdown().await;
                         return;
                     }
+                    let redirect = if path.contains("oauth-protected-resource") {
+                        seen.lock().discovery_redirect.clone()
+                    } else if path == "/register" {
+                        seen.lock().registration_redirect.clone()
+                    } else {
+                        None
+                    };
+                    if let Some(location) = redirect {
+                        let _ = socket
+                            .write_all(
+                                format!(
+                                    "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\n\
+                                     Content-Length: 0\r\nConnection: close\r\n\r\n"
+                                )
+                                .as_bytes(),
+                            )
+                            .await;
+                        let _ = socket.shutdown().await;
+                        return;
+                    }
                     let (status, json) = if path.contains("oauth-protected-resource") {
+                        let issuer = seen
+                            .lock()
+                            .authorization_server
+                            .clone()
+                            .unwrap_or_else(|| base.clone());
                         (
                             "200 OK",
                             serde_json::json!({
                                 "resource": format!("{base}/mcp"),
-                                "authorization_servers": [base],
+                                "authorization_servers": [issuer],
                             }),
                         )
                     } else if path.contains("oauth-authorization-server")
@@ -229,6 +263,9 @@ async fn fake_authorization_server(
                             serde_json::json!(seen.lock().cimd_supported);
                         metadata["token_endpoint_auth_methods_supported"] =
                             serde_json::json!(["client_secret_post"]);
+                        if let Some(registration) = seen.lock().registration_endpoint.clone() {
+                            metadata["registration_endpoint"] = serde_json::json!(registration);
+                        }
                         ("200 OK", metadata)
                     } else if path == "/token" {
                         let form = pairs(&body);
@@ -610,15 +647,17 @@ async fn an_authorization_server_without_pkce_is_refused_before_any_browser_step
     assert_eq!(seen.lock().token_requests.len(), 0);
     assert_eq!(store.list_names().unwrap(), Vec::<String>::new());
 
-    // Loopback http endpoints need the explicit development opt-in.
-    let (base, _, strict) = fake_authorization_server(true).await;
+    // Loopback http needs the explicit development opt-in: without it the
+    // policy client refuses discovery itself, before any request is sent.
+    let (base, strict_seen, strict) = fake_authorization_server(true).await;
     let mut opts = options();
     opts.allow_loopback_http = false;
-    let error = SignIn::start("strict", &format!("{base}/mcp"), store, None, opts)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("https"), "{error}");
+    assert!(
+        SignIn::start("strict", &format!("{base}/mcp"), store, None, opts)
+            .await
+            .is_err()
+    );
+    assert_eq!(strict_seen.lock().paths, Vec::<String>::new());
     server.abort();
     strict.abort();
 }
@@ -888,4 +927,113 @@ async fn sign_out_during_a_blocked_refresh_leaves_no_credentials() {
     );
     manager.shutdown().await;
     server.abort();
+}
+
+/// Static DNS that records every lookup: proves which client resolved what.
+#[derive(Default)]
+struct RecordingResolver {
+    table: BTreeMap<String, Vec<std::net::IpAddr>>,
+    asked: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl mcp_bridge::oauth::EndpointResolver for RecordingResolver {
+    async fn lookup(&self, host: &str, _port: u16) -> Option<Vec<std::net::IpAddr>> {
+        self.asked.lock().push(host.to_owned());
+        self.table.get(host).cloned()
+    }
+}
+
+/// Review finding 4: discovery, registration and redirect hops go through
+/// the policy client and are refused before any request when they name an
+/// internal or metadata address, by alias or literal.
+#[tokio::test(flavor = "multi_thread")]
+async fn discovery_registration_and_redirects_to_internal_hosts_are_refused_before_any_request() {
+    type Setup = fn(&mut Seen, u16);
+    let cases: [(&str, Setup, Option<&str>); 6] = [
+        (
+            "discovery alias",
+            |s, port| {
+                s.authorization_server = Some(format!("http://internal.attacker.test:{port}"));
+            },
+            Some("internal.attacker.test"),
+        ),
+        (
+            "discovery metadata literal",
+            |s, _| s.authorization_server = Some("http://169.254.169.254".into()),
+            None,
+        ),
+        (
+            "registration alias",
+            |s, port| {
+                s.registration_endpoint =
+                    Some(format!("http://imds.attacker.test:{port}/register"));
+            },
+            Some("imds.attacker.test"),
+        ),
+        (
+            // rmcp refuses a cross-origin discovery redirect itself.
+            "discovery redirect to alias",
+            |s, port| {
+                s.discovery_redirect = Some(format!(
+                    "http://internal.attacker.test:{port}/.well-known/oauth-protected-resource"
+                ));
+            },
+            None,
+        ),
+        (
+            // Registration follows redirects: every hop is vetted by us.
+            "registration redirect to alias",
+            |s, port| {
+                s.registration_endpoint = Some(format!("http://127.0.0.1:{port}/register"));
+                s.registration_redirect =
+                    Some(format!("http://internal.attacker.test:{port}/register"));
+            },
+            Some("internal.attacker.test"),
+        ),
+        (
+            "redirect to metadata literal",
+            |s, _| s.discovery_redirect = Some("http://169.254.169.254/latest/meta-data/".into()),
+            None,
+        ),
+    ];
+    for (name, setup, alias) in cases {
+        let (base, seen, server) = fake_authorization_server(true).await;
+        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+        setup(&mut seen.lock(), port);
+        let resolver = Arc::new(RecordingResolver {
+            table: BTreeMap::from([
+                (
+                    "internal.attacker.test".to_owned(),
+                    vec!["10.0.0.5".parse().unwrap()],
+                ),
+                (
+                    "imds.attacker.test".to_owned(),
+                    vec!["169.254.169.254".parse().unwrap()],
+                ),
+            ]),
+            ..RecordingResolver::default()
+        });
+        let store = Arc::new(MemoryStore::default());
+        let options = SignInOptions {
+            // No client id for the registration case: dynamic registration.
+            client_id: None,
+            allow_loopback_http: true,
+            resolver: Some(resolver.clone()),
+            ..SignInOptions::default()
+        };
+        let result =
+            SignIn::start("ssrf", &format!("{base}/mcp"), store.clone(), None, options).await;
+        assert!(result.is_err(), "{name}: the flow went ahead");
+        if let Some(alias) = alias {
+            // Our client resolved it (and refused); rmcp's own did not.
+            assert!(
+                resolver.asked.lock().iter().any(|h| h == alias),
+                "{name}: {alias} was not vetted by the policy client"
+            );
+        }
+        assert!(seen.lock().token_requests.is_empty(), "{name}");
+        assert_eq!(store.list_names().unwrap(), Vec::<String>::new(), "{name}");
+        server.abort();
+    }
 }

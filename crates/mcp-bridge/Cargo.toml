@@ -23,6 +23,9 @@ permission-engine = { path = "../permission-engine", version = "0.1.0" }
 # (`process_group(0)`, kill the group). Windows: a job object with
 # `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so npx/uvx wrapper trees die.
 process-wrap = { version = "10.0.1", features = ["tokio1"] }
+# The OAuth policy client (`oauth_net.rs`): the same reqwest and TLS stack
+# rmcp already uses (native-tls, no aws-lc), with proxies disabled.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }
 # `reqwest-native-tls` (schannel / Secure Transport / OpenSSL) instead of the
 # `reqwest` (rustls + aws-lc) feature: it avoids the OpenSSL-licensed aws-lc
 # stack, which `deny.toml` does not allow.
@@ -42,6 +45,7 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt"
 toml.workspace = true
 tool-registry = { path = "../tool-registry", version = "0.1.0" }
 tracing = "0.1"
+url.workspace = true
 
 [dev-dependencies]
 agent-router = { path = "../agent-router", version = "0.1.0" }

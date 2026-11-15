@@ -338,6 +338,22 @@ pub struct SignInOptions {
     /// Orders this flow's credential writes against sign-out (set by the
     /// manager; `None` in standalone use).
     pub guard: Option<CredentialGuard>,
+    /// DNS used by the OAuth policy client; `None` = the system resolver.
+    /// Tests inject a static table so no real lookup happens.
+    pub resolver: Option<Arc<dyn EndpointResolver>>,
+}
+
+impl SignInOptions {
+    /// The policy client every OAuth request of this flow goes through.
+    fn http_client(&self) -> Arc<crate::oauth_net::PolicyHttpClient> {
+        Arc::new(match &self.resolver {
+            Some(resolver) => crate::oauth_net::PolicyHttpClient::with_resolver(
+                self.allow_loopback_http,
+                Arc::clone(resolver),
+            ),
+            None => crate::oauth_net::PolicyHttpClient::new(self.allow_loopback_http),
+        })
+    }
 }
 
 impl std::fmt::Debug for SignInOptions {
@@ -403,7 +419,10 @@ impl SignIn {
     ) -> Result<Self> {
         let credentials = SecretCredentialStore::new(store, server, url, registrar)?
             .guarded(options.guard.as_ref());
-        let mut manager = AuthorizationManager::new(url)
+        // Every OAuth request (discovery, registration, exchange) goes through
+        // the policy client: no proxy, vetted addresses on every hop.
+        let http = options.http_client();
+        let mut manager = AuthorizationManager::new_with_oauth_http_client(url, http.clone())
             .await
             .map_err(|e| auth_error(server, &e))?;
         manager.set_credential_store(credentials);
@@ -412,7 +431,7 @@ impl SignIn {
             .await
             .map_err(|e| auth_error(server, &e))?;
         check_metadata(server, &resolution.metadata, options.allow_loopback_http)?;
-        check_endpoint_addresses(server, url, &resolution.metadata).await?;
+        check_endpoint_addresses(server, &http, &resolution.metadata).await?;
         let use_metadata_document = options.client_metadata_url.is_some()
             && resolution
                 .metadata
@@ -556,8 +575,9 @@ pub async fn stored_bearer(
             _ => false,
         }
     };
-    // rmcp's own HTTP client: its address filter stays in place.
-    let mut manager = AuthorizationManager::new(url)
+    // The policy client: no proxy, vetted addresses on every hop.
+    let http = options.http_client();
+    let mut manager = AuthorizationManager::new_with_oauth_http_client(url, http.clone())
         .await
         .map_err(|e| auth_error(server, &e))?;
     manager.set_credential_store(probe);
@@ -567,7 +587,7 @@ pub async fn stored_bearer(
         .await
         .map_err(|e| auth_error(server, &e))?;
     check_metadata(server, &resolution.metadata, options.allow_loopback_http)?;
-    check_endpoint_addresses(server, url, &resolution.metadata).await?;
+    check_endpoint_addresses(server, &http, &resolution.metadata).await?;
     manager.set_metadata(resolution.metadata);
     match manager.initialize_from_store().await {
         Ok(true) => {}
@@ -613,45 +633,15 @@ pub async fn stored_bearer(
     }
 }
 
-/// Addresses no authorization or token endpoint may have, whatever the
-/// server: link-local (cloud metadata), unspecified, multicast, broadcast.
-fn always_blocked(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_link_local() || v4.is_unspecified() || v4.is_multicast() || v4.is_broadcast()
-        }
-        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => always_blocked(std::net::IpAddr::V4(v4)),
-            None => {
-                v6.is_unspecified() || v6.is_multicast() || (v6.segments()[0] & 0xffc0) == 0xfe80
-            }
-        },
-    }
-}
-
-fn internal(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
-        }
-        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => internal(std::net::IpAddr::V4(v4)),
-            None => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
-        },
-    }
-}
-
-/// DNS lookup used for the endpoint policy, independent of the HTTP client
-/// and any configured proxy. Injectable so policy tests never use real DNS.
+/// DNS lookup used by the OAuth policy client, independent of any proxy.
+/// Injectable so policy tests never use real DNS.
 #[async_trait::async_trait]
 pub trait EndpointResolver: Send + Sync {
     /// Resolve all answers; absence or an empty answer fails closed.
     async fn lookup(&self, host: &str, port: u16) -> Option<Vec<std::net::IpAddr>>;
 }
 
-struct SystemEndpointResolver;
+pub(crate) struct SystemEndpointResolver;
 
 #[async_trait::async_trait]
 impl EndpointResolver for SystemEndpointResolver {
@@ -666,72 +656,35 @@ impl EndpointResolver for SystemEndpointResolver {
     }
 }
 
-async fn addresses(url: &str, resolver: &dyn EndpointResolver) -> Option<Vec<std::net::IpAddr>> {
-    let uri: http::Uri = url.parse().ok()?;
-    let host = uri.host()?.trim_matches(['[', ']']).to_owned();
-    if let Ok(ip) = host.parse() {
-        return Some(vec![ip]);
-    }
-    let port = uri
-        .port_u16()
-        .unwrap_or(if uri.scheme_str() == Some("http") {
-            80
-        } else {
-            443
-        });
-    resolver.lookup(&host, port).await
-}
-
-/// Resolve the authorization and token endpoints ourselves and refuse
-/// internal targets. rmcp filters the addresses its own client connects to,
-/// but not when a proxy (`HTTPS_PROXY`) does the connecting; this check does
-/// not depend on who connects. Link-local and other reserved addresses are
-/// always refused; loopback and private ones only pass when the MCP server
-/// itself is at such an address.
+/// Vet the advertised authorization, token and registration endpoints with
+/// the same policy the OAuth client enforces on every request
+/// ([`crate::oauth_net`]).  The authorization endpoint is only opened in the
+/// user's browser, so this is where it is checked.
 ///
 /// # Errors
-/// [`McpError::Config`] when an endpoint cannot be resolved or is internal.
+/// [`McpError::Config`] when an endpoint is unresolvable, uses a refused
+/// scheme or resolves to a refused address.
 pub async fn check_endpoint_addresses(
     server: &str,
-    server_url: &str,
+    client: &crate::oauth_net::PolicyHttpClient,
     metadata: &AuthorizationMetadata,
 ) -> Result<()> {
-    check_endpoint_addresses_with_resolver(server, server_url, metadata, &SystemEndpointResolver)
-        .await
-}
-
-/// [`check_endpoint_addresses`] using a supplied DNS resolver. This controls
-/// the policy lookup only; rmcp's address-filtered HTTP client is unchanged.
-///
-/// # Errors
-/// Unresolvable, reserved or disallowed private endpoint addresses.
-pub async fn check_endpoint_addresses_with_resolver(
-    server: &str,
-    server_url: &str,
-    metadata: &AuthorizationMetadata,
-    resolver: &dyn EndpointResolver,
-) -> Result<()> {
-    let refuse = |why: &str| {
-        Err(McpError::Config(format!(
-            "server `{server}`: authorization server refused: {why}"
-        )))
-    };
-    let server_internal = addresses(server_url, resolver)
-        .await
-        .is_some_and(|found| !found.is_empty() && found.iter().all(|ip| internal(*ip)));
-    for endpoint in [&metadata.authorization_endpoint, &metadata.token_endpoint] {
-        let Some(found) = addresses(endpoint, resolver)
-            .await
-            .filter(|f| !f.is_empty())
-        else {
-            return refuse("an endpoint host cannot be resolved");
-        };
-        if found.iter().any(|ip| always_blocked(*ip)) {
-            return refuse("an endpoint is at a link-local or reserved address");
-        }
-        if !server_internal && found.iter().any(|ip| internal(*ip)) {
-            return refuse("an endpoint of a public server is at a private or loopback address");
-        }
+    let endpoints = [
+        Some(&metadata.authorization_endpoint),
+        Some(&metadata.token_endpoint),
+        metadata.registration_endpoint.as_ref(),
+    ];
+    for endpoint in endpoints.into_iter().flatten() {
+        let url = reqwest::Url::parse(endpoint).map_err(|_| {
+            McpError::Config(format!(
+                "server `{server}`: authorization server refused: an endpoint is not a valid URL"
+            ))
+        })?;
+        client.vet(&url).await.map_err(|e| {
+            McpError::Config(format!(
+                "server `{server}`: authorization server refused: {e}"
+            ))
+        })?;
     }
     Ok(())
 }
@@ -1216,60 +1169,6 @@ mod tests {
         check_metadata("s", &local, true).unwrap();
     }
 
-    #[tokio::test]
-    async fn internal_authorization_endpoints_are_refused_whoever_connects() {
-        let metadata = |authorize: &str, token: &str| {
-            let mut m = AuthorizationMetadata::default();
-            m.authorization_endpoint = authorize.into();
-            m.token_endpoint = token.into();
-            m
-        };
-        let public = "https://93.184.216.34/mcp";
-        let ok = "https://93.184.216.34/authorize";
-        // Cloud metadata and other reserved targets: never, even for a
-        // server that is itself on loopback or a private network.
-        for bad in [
-            "https://169.254.169.254/latest/meta-data/",
-            "https://[::ffff:169.254.169.254]/token",
-            "https://[fe80::1]/token",
-            "https://0.0.0.0/token",
-        ] {
-            for server_url in [public, "http://127.0.0.1:9/mcp", "https://10.0.0.2/mcp"] {
-                let error = check_endpoint_addresses("s", server_url, &metadata(ok, bad))
-                    .await
-                    .unwrap_err()
-                    .to_string();
-                assert!(error.contains("link-local or reserved"), "{bad}: {error}");
-            }
-        }
-        // Private and loopback targets: not for a public server.
-        for bad in [
-            "https://10.0.0.5/token",
-            "https://192.168.1.1/token",
-            "https://172.16.0.9/token",
-            "https://100.64.0.1/token",
-            "https://127.0.0.1/token",
-            "https://[::1]/token",
-            "https://[fd00::1]/token",
-        ] {
-            let error = check_endpoint_addresses("s", public, &metadata(bad, ok))
-                .await
-                .unwrap_err()
-                .to_string();
-            assert!(error.contains("private or loopback"), "{bad}: {error}");
-        }
-        check_endpoint_addresses("s", public, &metadata(ok, ok))
-            .await
-            .unwrap();
-        check_endpoint_addresses(
-            "s",
-            "http://127.0.0.1:9/mcp",
-            &metadata("http://127.0.0.1:9/authorize", "http://127.0.0.1:9/token"),
-        )
-        .await
-        .unwrap();
-    }
-
     struct TableResolver;
 
     #[async_trait::async_trait]
@@ -1289,51 +1188,52 @@ mod tests {
         }
     }
 
+    /// Review finding 4: authorization, token and registration endpoints all
+    /// pass the transport's policy (literals, aliases, mixed answers).
     #[tokio::test]
-    async fn resolved_hostnames_and_mixed_dns_answers_are_filtered_without_real_dns() {
-        for host in [
-            "imds.attacker.test",
-            "internal.attacker.test",
-            "mixed.attacker.test",
-            "mixed-reversed.attacker.test",
-            "mapped.attacker.test",
-            "empty.test",
-            "missing.test",
+    async fn advertised_endpoints_are_vetted_like_every_request() {
+        let client =
+            crate::oauth_net::PolicyHttpClient::with_resolver(false, Arc::new(TableResolver));
+        let good = "https://public.test/oauth";
+        for bad in [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://[::ffff:169.254.169.254]/token",
+            "https://[fe80::1]/token",
+            "https://0.0.0.0/token",
+            "https://10.0.0.5/token",
+            "https://100.64.0.1/token",
+            "https://127.0.0.1/token",
+            "https://[fd00::1]/token",
+            "https://imds.attacker.test/oauth",
+            "https://internal.attacker.test/oauth",
+            "https://mixed.attacker.test/oauth",
+            "https://mixed-reversed.attacker.test/oauth",
+            "https://mapped.attacker.test/oauth",
+            "https://empty.test/oauth",
+            "https://missing.test/oauth",
+            "http://public.test/oauth",
         ] {
-            for authorization_endpoint in [true, false] {
-                let good = "https://public.test/oauth".to_owned();
-                let bad = format!("https://{host}/oauth");
-                let mut metadata = AuthorizationMetadata::default();
-                metadata.authorization_endpoint = if authorization_endpoint {
-                    bad.clone()
-                } else {
-                    good.clone()
-                };
-                metadata.token_endpoint = if authorization_endpoint { good } else { bad };
+            for slot in 0..3 {
+                let mut m = AuthorizationMetadata::default();
+                m.authorization_endpoint = if slot == 0 { bad } else { good }.into();
+                m.token_endpoint = if slot == 1 { bad } else { good }.into();
+                m.registration_endpoint = Some(if slot == 2 { bad } else { good }.into());
                 assert!(
-                    check_endpoint_addresses_with_resolver(
-                        "s",
-                        "https://public.test/mcp",
-                        &metadata,
-                        &TableResolver
-                    )
-                    .await
-                    .is_err(),
-                    "{host}"
+                    check_endpoint_addresses("s", &client, &m).await.is_err(),
+                    "{bad} in slot {slot}"
                 );
             }
         }
-        let mut metadata = AuthorizationMetadata::default();
-        metadata.authorization_endpoint = "https://public.test/authorize".into();
-        metadata.token_endpoint = "https://public.test/token".into();
-        check_endpoint_addresses_with_resolver(
-            "s",
-            "https://public.test/mcp",
-            &metadata,
-            &TableResolver,
-        )
-        .await
-        .unwrap();
+        let mut m = AuthorizationMetadata::default();
+        m.authorization_endpoint = good.into();
+        m.token_endpoint = good.into();
+        check_endpoint_addresses("s", &client, &m).await.unwrap();
+        // The loopback opt-in admits loopback http, nothing private.
+        let dev = crate::oauth_net::PolicyHttpClient::with_resolver(true, Arc::new(TableResolver));
+        m.token_endpoint = "http://127.0.0.1:9/token".into();
+        check_endpoint_addresses("s", &dev, &m).await.unwrap();
+        m.token_endpoint = "https://10.0.0.5/token".into();
+        assert!(check_endpoint_addresses("s", &dev, &m).await.is_err());
     }
 
     async fn get(port: u16, target: &str) -> std::io::Result<String> {
