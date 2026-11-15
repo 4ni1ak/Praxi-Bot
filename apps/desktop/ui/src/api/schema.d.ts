@@ -905,6 +905,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop runs: cancel a target set that is fixed at the first receipt of
+         *     `stop_id`. Idempotent per `stop_id`.
+         */
+        post: operations["stop_runs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{id}": {
         parameters: {
             query?: never;
@@ -2884,6 +2904,58 @@ export interface components {
          * @enum {string}
          */
         Status: "ok" | "warn" | "fail" | "skipped";
+        /**
+         * @description What happened to one run of a Stop's target set.
+         * @enum {string}
+         */
+        StopOutcome: "cancelled" | "already_terminal" | "not_found" | "failed";
+        /** @description One member of a Stop's target set. */
+        StopRunResult: {
+            /** @description Why the cancel failed. */
+            error?: string | null;
+            /** @description Cancel outcome. */
+            outcome: components["schemas"]["StopOutcome"];
+            /**
+             * Format: uuid
+             * @description Run id.
+             */
+            run_id: string;
+            /** @description Current run state, if the run exists. */
+            state?: string | null;
+        };
+        /** @description Body of `POST /v1/runs/stop`. */
+        StopRunsInput: {
+            /** @description Runs the caller knew about (at most 1024). Only the first receipt reads them. */
+            run_ids?: string[];
+            /** @description Which runs the Stop targets besides `run_ids`. */
+            scope: components["schemas"]["StopScope"];
+            /**
+             * Format: uuid
+             * @description One user decision to stop, minted by the caller. The daemon fixes the
+             *     target set the first time it sees this id; a repeat never changes it.
+             */
+            stop_id: string;
+        };
+        /** @description Response of `POST /v1/runs/stop`. */
+        StopRunsResponse: {
+            /** @description `true` when this call fixed the target set, `false` for a repeat. */
+            first_seen: boolean;
+            /**
+             * @description Every member of the target set. A run that is not listed was not
+             *     targeted (it was created after the first receipt).
+             */
+            results: components["schemas"]["StopRunResult"][];
+            /**
+             * Format: uuid
+             * @description Echo of the request's `stop_id`.
+             */
+            stop_id: string;
+        };
+        /**
+         * @description Which runs a Stop targets (`POST /v1/runs/stop`).
+         * @enum {string}
+         */
+        StopScope: "all_existing" | "listed";
         TakeoverAccepted: {
             /** Format: int64 */
             control_epoch: number;
@@ -4985,6 +5057,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunDto"][];
+                };
+            };
+        };
+    };
+    stop_runs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopRunsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopRunsResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description scope all_existing is for the local user only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
