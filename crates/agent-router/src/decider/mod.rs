@@ -28,10 +28,12 @@
 
 pub mod backends;
 mod day;
+pub mod resolver;
 #[cfg(test)]
 mod tests;
 
 pub use day::{DayClock, DayCounters, local_day};
+pub use resolver::{ModelResolver, ModelRule, pick_free_model};
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;

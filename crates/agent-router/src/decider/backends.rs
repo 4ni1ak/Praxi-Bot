@@ -21,6 +21,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
+use super::resolver::ModelResolver;
 use super::{DeciderError, DecisionBackend, DecisionRequest, Question};
 use crate::ladder::Classifier;
 
@@ -169,6 +170,8 @@ pub struct OpenRouterDecisions {
     api_key: String,
     model: String,
     id: String,
+    /// When set, the model comes from the resolver (a rule), not `model`.
+    resolver: Option<Arc<ModelResolver>>,
 }
 
 impl fmt::Debug for OpenRouterDecisions {
@@ -192,7 +195,17 @@ impl OpenRouterDecisions {
             api_key: api_key.into(),
             id: format!("openrouter/{model}"),
             model,
+            resolver: None,
         }
+    }
+
+    /// Take the model from `resolver` (a rule over the live model list)
+    /// instead of a fixed id. While no model resolves the backend answers
+    /// "unavailable" and the chain moves on.
+    #[must_use]
+    pub fn with_resolver(mut self, resolver: Arc<ModelResolver>) -> Self {
+        self.resolver = Some(resolver);
+        self
     }
 
     /// Override the endpoint (tests, proxies).
@@ -208,6 +221,21 @@ impl OpenRouterDecisions {
         self.id = id.into();
         self
     }
+
+    /// The model for this request: the fixed one, or the resolved one.
+    async fn model(&self) -> Result<String, DeciderError> {
+        let Some(r) = &self.resolver else {
+            return Ok(self.model.clone());
+        };
+        if r.current().is_none() {
+            // Nothing cached: resolve now (inside the decision's time cap).
+            r.refresh().await?;
+        } else if r.is_stale() {
+            r.spawn_refresh();
+        }
+        r.current()
+            .ok_or_else(|| DeciderError::BadResponse("no free model matches the rule".into()))
+    }
 }
 
 #[async_trait]
@@ -217,13 +245,19 @@ impl DecisionBackend for OpenRouterDecisions {
     }
 
     async fn decide(&self, req: &DecisionRequest) -> Result<Value, DeciderError> {
+        let model = self.model().await?;
         let body = json!({
-            "model": self.model,
+            "model": model,
             "state": req.input,
             "questions": wire_questions(req),
         });
         let url = format!("{}/decisions", self.base_url);
-        post(self.client.post(url).bearer_auth(&self.api_key), &body).await
+        let out = post(self.client.post(url).bearer_auth(&self.api_key), &body).await;
+        if let (Err(DeciderError::Http(404 | 410)), Some(r)) = (&out, &self.resolver) {
+            // The model is gone: stop using it and resolve another one.
+            r.drop_id(&model);
+        }
+        out
     }
 }
 

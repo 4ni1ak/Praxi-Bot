@@ -547,3 +547,163 @@ async fn the_daily_budget_caps_requests_and_falls_back() {
     let d2 = counted(&a, 0, &DayCounters::open(Some(file)), 3);
     assert!(d2.decide(&req(), &budget).await.answers.is_empty());
 }
+
+// ---------- resolving a free model by rule ----------
+
+fn model_entry(id: &str, prompt: &str, completion: &str, expires: Option<&str>) -> Value {
+    json!({
+        "id": id,
+        "pricing": {"prompt": prompt, "completion": completion, "request": "0"},
+        "expiration_date": expires,
+    })
+}
+
+fn rule() -> ModelRule {
+    ModelRule {
+        pattern: "*decider*:free".into(),
+        prefer: vec!["flash".into()],
+    }
+}
+
+fn list(models: Vec<Value>) -> Value {
+    json!({"data": models})
+}
+
+#[test]
+fn the_rule_picks_only_free_unexpired_matching_models() {
+    let l = list(vec![
+        model_entry("acme/decider-flash-v1.3:free", "0", "0", None),
+        model_entry("acme/decider-flash-v1.10:free", "0", "0", None),
+        model_entry("acme/decider-pro-v9:free", "0", "0", None),
+        model_entry("acme/decider-flash-v2:free", "0.000001", "0", None),
+        model_entry("acme/decider-flash-v3:free", "0", "0", Some("2026-11-15")),
+        model_entry("acme/other-flash:free", "0", "0", None),
+        model_entry("acme/decider flash:free", "0", "0", None),
+        json!({"id": "acme/decider-flash-v4:free"}),
+    ]);
+    // Preference ("flash") beats the higher version of another family, and
+    // v1.10 is newer than v1.3.
+    assert_eq!(
+        pick_free_model(&l, &rule(), "2026-11-15").as_deref(),
+        Some("acme/decider-flash-v1.10:free")
+    );
+    // An expiration date in the future is fine; today / past is not.
+    let soon = list(vec![model_entry(
+        "acme/decider-a:free",
+        "0",
+        "0",
+        Some("2026-11-16"),
+    )]);
+    assert!(pick_free_model(&soon, &rule(), "2026-11-15").is_some());
+    assert!(pick_free_model(&soon, &rule(), "2026-11-16").is_none());
+    // Nothing qualifies / malformed list.
+    assert!(pick_free_model(&list(vec![]), &rule(), "2026-11-15").is_none());
+    assert!(pick_free_model(&json!({"oops": 1}), &rule(), "2026-11-15").is_none());
+}
+
+/// The list changes (v1.3 goes, v1.4 arrives): the backend uses the new id
+/// with no code change; an empty list makes the backend unavailable so the
+/// chain moves on; a 404 drops the id and the next refresh finds another.
+#[tokio::test]
+async fn the_resolved_model_follows_the_list_and_a_404_drops_it() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("model.json");
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(list(vec![model_entry(
+            "acme/decider-flash-v1.3:free",
+            "0",
+            "0",
+            None,
+        )])))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(list(vec![
+            model_entry("acme/decider-flash-v1.3:free", "0", "0", None),
+            model_entry("acme/decider-flash-v1.4:free", "0", "0", None),
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/decisions"))
+        .and(body_partial_json(json!({"model": "acme/decider-flash-v1.3:free"})))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/decisions"))
+        .and(body_partial_json(json!({"model": "acme/decider-flash-v1.4:free"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"answers": good()})))
+        .mount(&server)
+        .await;
+
+    let resolver = Arc::new(
+        ModelResolver::new(rule(), Some(cache.clone()))
+            .with_url(format!("{}/models", server.uri()))
+            .with_today(Box::new(|| "2026-11-15".to_owned())),
+    );
+    assert_eq!(resolver.current(), None);
+    let b = OpenRouterDecisions::new("k-secret", "")
+        .with_base_url(server.uri())
+        .with_resolver(Arc::clone(&resolver));
+
+    // First call: resolves v1.3 from the list, the API says 404.
+    assert_eq!(b.decide(&req()).await, Err(DeciderError::Http(404)));
+    assert_eq!(resolver.current(), None, "the refused id was dropped");
+    // The next call resolves again; v1.3 is excluded, v1.4 is used.
+    let raw = b.decide(&req()).await.unwrap();
+    assert_eq!(validate(&req(), &raw).len(), 2);
+    assert_eq!(
+        resolver.current().as_deref(),
+        Some("acme/decider-flash-v1.4:free")
+    );
+
+    // A restart with the list unreachable still uses the last good id.
+    let offline = ModelResolver::new(rule(), Some(cache.clone())).with_url("http://127.0.0.1:9/m");
+    assert_eq!(
+        offline.current().as_deref(),
+        Some("acme/decider-flash-v1.4:free")
+    );
+    assert!(offline.refresh().await.is_err());
+    assert_eq!(
+        offline.current().as_deref(),
+        Some("acme/decider-flash-v1.4:free"),
+        "a failed refresh keeps the last known good id"
+    );
+    // A different rule does not reuse the cached id.
+    let other = ModelRule {
+        pattern: "*other*".into(),
+        prefer: vec![],
+    };
+    assert_eq!(ModelResolver::new(other, Some(cache)).current(), None);
+}
+
+#[tokio::test]
+async fn an_empty_model_list_makes_the_backend_unavailable() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(list(vec![])))
+        .mount(&server)
+        .await;
+    let resolver = Arc::new(
+        ModelResolver::new(rule(), None).with_url(format!("{}/models", server.uri())),
+    );
+    let first = OpenRouterDecisions::new("k", "")
+        .with_base_url(server.uri())
+        .with_resolver(resolver);
+    let next = fake("next", Script::Answers(good()));
+    let d = Decider::new(
+        vec![
+            (Arc::new(first) as Arc<dyn DecisionBackend>, RateLimits::UNLIMITED),
+            (Arc::clone(&next) as Arc<dyn DecisionBackend>, RateLimits::UNLIMITED),
+        ],
+        DeciderConfig::default(),
+    );
+    let out = d.decide(&req(), &TurnBudget::new(3)).await;
+    assert_eq!(out.backend.as_deref(), Some("next"));
+}
