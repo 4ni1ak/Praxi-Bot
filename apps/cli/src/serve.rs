@@ -911,6 +911,12 @@ pub fn serve(
     });
     let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
     let views = Arc::new(live_view::TargetRegistry::default());
+    // This computer's screen becomes a (lazy) view target, or the panel is told why not.
+    crate::view_targets::register_local_desktop(
+        &views,
+        desktop.as_ref(),
+        crate::view_targets::no_backend_detail,
+    );
     let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
     let effective_peer_enabled =
         peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;

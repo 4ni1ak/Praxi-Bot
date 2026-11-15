@@ -168,6 +168,7 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
             cfg.browser_settings,
             &cfg.data_dir,
             cfg.control.clone(),
+            cfg.view_registry.clone(),
         ));
     }
     all.extend(files::tools_bounded(

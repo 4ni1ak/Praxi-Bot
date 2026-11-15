@@ -156,6 +156,9 @@ pub struct CdpDriver {
     activity: Arc<std::sync::RwLock<Option<ActivityProbe>>>,
     reaper_started: std::sync::atomic::AtomicBool,
     peers: Option<(String, BrowserPeers)>,
+    /// Live-view slot of this bot's browser: idle until a session launches,
+    /// then bound to its page. Capture stays lazy (viewer-driven).
+    view: Option<Arc<browser_cdp::BrowserViewTarget>>,
 }
 
 /// Reports whether real bot work is going on (see [`CdpDriver::set_activity_probe`]).
@@ -251,6 +254,7 @@ impl CdpDriver {
             takeover_pin: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             activity: Arc::new(std::sync::RwLock::new(None)),
             reaper_started: std::sync::atomic::AtomicBool::new(false),
+            view: None,
         }
     }
 
@@ -373,6 +377,10 @@ impl CdpDriver {
                 return Err("browser_idle; call browser_open before reading the browser".into());
             }
             *guard = Some(self.launch_session(profile).await?);
+            // Watching starts nothing: binding only tells the idle slot which page to serve.
+            if let (Some(view), Some(session)) = (&self.view, guard.as_ref()) {
+                let _ = view.attach_page(&session.page);
+            }
         }
         let session = guard.as_mut().expect("session just ensured");
         session.last_work = tokio::time::Instant::now();
@@ -739,6 +747,8 @@ struct ManagedBrowsers {
     settings: BrowserSettings,
     peers: BrowserPeers,
     bots: parking_lot::Mutex<std::collections::HashMap<String, Arc<Shared>>>,
+    /// Where each bot's idle browser view target is registered.
+    views: Option<Arc<live_view::TargetRegistry>>,
 }
 
 impl Shared {
@@ -762,6 +772,18 @@ impl Shared {
             settings.profiles_root = root.join("profiles");
             let mut cdp = CdpDriver::new(settings);
             cdp.peers = Some((id.into(), Arc::clone(&managed.peers)));
+            if let Some(views) = &managed.views {
+                let pin = Arc::clone(&cdp.takeover_pin);
+                let target = browser_cdp::BrowserViewTarget::new_idle(browser_cdp::BrowserViewConfig {
+                    bot_id: uuid::Uuid::parse_str(id).ok(),
+                    takeover_pin: Some(Arc::new(move |on| {
+                        pin.store(on, std::sync::atomic::Ordering::SeqCst);
+                    })),
+                    ..browser_cdp::BrowserViewConfig::default()
+                });
+                views.register(target.clone());
+                cdp.view = Some(target);
+            }
             if let Some(gate) = self.control.clone() {
                 let bot_id = id.to_owned();
                 cdp.set_activity_probe(Arc::new(move || gate.computer_in_use_for_bot(&bot_id)));
@@ -786,6 +808,7 @@ pub fn managed_tools(
     settings: BrowserSettings,
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
+    views: Option<Arc<live_view::TargetRegistry>>,
 ) -> Vec<Arc<dyn Tool>> {
     let driver = Arc::new(CdpDriver::new(settings.clone()));
     tools_with_pool(
@@ -796,6 +819,7 @@ pub fn managed_tools(
             settings,
             peers: BrowserPeers::default(),
             bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            views,
         }),
     )
 }
@@ -2024,6 +2048,41 @@ mod tests {
         );
     }
 
+    /// 244-V: a managed bot browser gets an idle live-view target the moment the
+    /// bot is first selected; nothing is launched and nothing is captured.
+    #[test]
+    fn managed_bot_browser_registers_an_idle_view_target_without_launching() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = BrowserSettings::isolated(dir.path());
+        let registry = Arc::new(live_view::TargetRegistry::default());
+        let shared = Arc::new(Shared {
+            driver: Arc::new(CdpDriver::new(settings.clone())),
+            managed: Some(ManagedBrowsers {
+                settings,
+                peers: BrowserPeers::default(),
+                bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                views: Some(Arc::clone(&registry)),
+            }),
+            data_dir: dir.path().into(),
+            control: None,
+            observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        });
+        assert!(registry.targets().is_empty(), "nothing before a bot uses the browser");
+        let bot = "0194a1c2-0000-7000-8000-000000000001";
+        let _ = shared.for_bot(Some(bot)).unwrap();
+        let _ = shared.for_bot(Some(bot)).unwrap();
+        let targets = registry.targets();
+        assert_eq!(targets.len(), 1, "one slot per bot, not per call");
+        assert_eq!(targets[0].kind, live_view::TargetKind::Browser);
+        assert_eq!(targets[0].bot_id, uuid::Uuid::parse_str(bot).ok());
+        assert_eq!(targets[0].unavailable_reason, Some(live_view::Reason::BrowserIdle));
+        // Idle means no Chromium and no profile directory.
+        assert!(!dir.path().join("browsers").exists());
+        // A second bot gets its own slot.
+        let _ = shared.for_bot(Some("0194a1c2-0000-7000-8000-000000000002")).unwrap();
+        assert_eq!(registry.targets().len(), 2);
+    }
+
     #[test]
     fn managed_profiles_are_per_bot_and_isolated_stays_temporary() {
         let dir = tempfile::tempdir().unwrap();
@@ -2034,6 +2093,7 @@ mod tests {
                 settings,
                 peers: BrowserPeers::default(),
                 bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                views: None,
             }),
             data_dir: dir.path().into(),
             control: None,

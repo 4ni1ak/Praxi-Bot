@@ -18,6 +18,7 @@ mod prompt;
 mod remote;
 mod serve;
 mod update;
+mod view_targets;
 mod web_host;
 mod wizard;
 

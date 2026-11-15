@@ -25,6 +25,18 @@ pub struct Capabilities {
     pub reason: Option<Reason>,
 }
 
+/// A kind of screen this host cannot offer, and why. Lets the UI say
+/// "No screen: <reason>" instead of an empty panel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct TargetUnavailable {
+    pub kind: TargetKind,
+    pub host_id: String,
+    pub reason: Reason,
+    /// One short, path-free sentence for the user.
+    pub detail: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TargetInfo {

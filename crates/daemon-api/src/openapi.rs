@@ -46,6 +46,7 @@ impl Modify for Security {
         host::status, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
+        live_view::availability,
         live_view::create_session,
         live_view::update_session,
         live_view::heartbeat,

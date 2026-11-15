@@ -128,12 +128,33 @@ pub trait ViewTarget: Send + Sync {
 
 /// Injection point for existing backend instances, never a browser manager.
 #[derive(Default)]
-pub struct TargetRegistry(RwLock<BTreeMap<Uuid, Arc<dyn ViewTarget>>>);
+pub struct TargetRegistry {
+    targets: RwLock<BTreeMap<Uuid, Arc<dyn ViewTarget>>>,
+    unavailable: RwLock<Vec<TargetUnavailable>>,
+}
 impl TargetRegistry {
+    /// Record that `kind` of screen cannot be offered (replaces an earlier note
+    /// of the same kind and host). Never exposes pixels or paths.
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    pub fn note_unavailable(&self, note: TargetUnavailable) {
+        let mut all = self.unavailable.write().expect("registry poisoned");
+        all.retain(|n| !(n.kind == note.kind && n.host_id == note.host_id));
+        all.push(note);
+    }
+    /// Why some kinds of screen are missing (empty when everything is offered).
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    #[must_use]
+    pub fn unavailable(&self) -> Vec<TargetUnavailable> {
+        self.unavailable.read().expect("registry poisoned").clone()
+    }
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn register(&self, target: Arc<dyn ViewTarget>) {
-        self.0
+        self.targets
             .write()
             .expect("registry poisoned")
             .insert(target.info().target_id, target);
@@ -141,19 +162,19 @@ impl TargetRegistry {
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn remove(&self, id: Uuid) {
-        self.0.write().expect("registry poisoned").remove(&id);
+        self.targets.write().expect("registry poisoned").remove(&id);
     }
     #[must_use]
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn get(&self, id: Uuid) -> Option<Arc<dyn ViewTarget>> {
-        self.0.read().expect("registry poisoned").get(&id).cloned()
+        self.targets.read().expect("registry poisoned").get(&id).cloned()
     }
     #[must_use]
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn targets(&self) -> Vec<TargetInfo> {
-        self.0
+        self.targets
             .read()
             .expect("registry poisoned")
             .values()
