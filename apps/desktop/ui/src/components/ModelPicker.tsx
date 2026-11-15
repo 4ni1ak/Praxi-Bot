@@ -107,7 +107,8 @@ export function ModelPicker({
   thinking = false,
   placement = "bottom-end",
   testId = "model-picker",
-  engines = false
+  engines = false,
+  changeLink
 }: {
   groups: ModelGroup[];
   value: string;
@@ -122,6 +123,8 @@ export function ModelPicker({
   testId?: string;
   /** Offer "Connect"/"Install" rows for coding CLIs (off where CLI models cannot be chosen). */
   engines?: boolean;
+  /** Render the trigger as a quiet text link with this label (first run: "Change") instead of the model chip. */
+  changeLink?: string;
 }) {
   const { t } = useTranslation();
   const valueRef = useMemo(() => {
@@ -312,7 +315,7 @@ export function ModelPicker({
       <button
         ref={trigger}
         type="button"
-        className={styles.trigger}
+        className={changeLink ? styles.changeLink : styles.trigger}
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -320,19 +323,25 @@ export function ModelPicker({
         data-testid={testId}
         onClick={() => (open ? close() : openPicker())}
       >
-        {autoOption?.selected ? (
-          <Sparkles aria-hidden="true" />
-        ) : value ? (
-          <BrandMark name={productBrandKey(valueProvider, valueModel)} size={15} />
-        ) : null}
-        <span className={styles.triggerText}>
-          {autoOption?.selected
-            ? autoOption.label
-            : valueLabel ||
-              placeholder ||
-              t("modelPicker.none")}
-        </span>
-        <ChevronDown />
+        {changeLink ? (
+          changeLink
+        ) : (
+          <>
+            {autoOption?.selected ? (
+              <Sparkles aria-hidden="true" />
+            ) : value ? (
+              <BrandMark name={productBrandKey(valueProvider, valueModel)} size={15} />
+            ) : null}
+            <span className={styles.triggerText}>
+              {autoOption?.selected
+                ? autoOption.label
+                : valueLabel ||
+                  placeholder ||
+                  t("modelPicker.none")}
+            </span>
+            <ChevronDown />
+          </>
+        )}
       </button>
       <Popover
         open={open}
