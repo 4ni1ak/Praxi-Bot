@@ -35,8 +35,9 @@ mod skill;
 mod tools;
 
 pub use index::{
-    MAX_FILE_BYTES, PROMPT_BUDGET_BYTES, SKILL_FILE, SkillIndex, SkillIssue, SkillPaths,
-    SkillRoots, validate_bot_id,
+    Assignment, AssignmentMode, AssignmentMode as Mode, AssignmentSource, MAX_FILE_BYTES,
+    PROMPT_BUDGET_BYTES, SKILL_FILE, SkillIndex, SkillIssue, SkillPaths, SkillRoots,
+    validate_bot_id,
 };
 pub use scoped_store::WrittenSkill;
 pub use skill::{

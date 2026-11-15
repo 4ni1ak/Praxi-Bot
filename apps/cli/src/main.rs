@@ -5,6 +5,7 @@ mod channels;
 mod channels_tests;
 mod client;
 mod commands;
+mod computer;
 mod doctor;
 mod email_cmd;
 mod email_host;
@@ -667,6 +668,19 @@ fn run() -> Result<()> {
     }
 }
 
+/// Coding CLIs on this machine, for `bot doctor` (one probe, at most 10 s).
+fn detect_cli_accounts() -> Option<Vec<cli_provider::DetectedCli>> {
+    let rt = current_thread_runtime().ok()?;
+    rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            cli_provider::Detector::new().detect(true),
+        )
+        .await
+        .ok()
+    })
+}
+
 /// `bot doctor`: never prompts, opens the secret store read-only.
 fn run_doctor(cli: &Cli, c: &DoctorCmd, data_dir: &std::path::Path) -> Result<()> {
     let catalog = load_catalog(cli.catalog_dir.as_ref()).map_err(|e| e.to_string());
@@ -689,6 +703,8 @@ fn run_doctor(cli: &Cli, c: &DoctorCmd, data_dir: &std::path::Path) -> Result<()
             browser_cdp::Error::BrowserNotFound => None,
             other => Some(other.to_string()),
         }),
+        detected: detect_cli_accounts(),
+        desktop: serve::local_desktop(&mut |_| {}).map(|d| d.capabilities()),
     };
     let checks = doctor::run_checks(&env);
     if cli.json {
@@ -1510,3 +1526,5 @@ mod tests {
         assert!(Cli::try_parse_from(["bot", "setup", "--key-env", "X"]).is_err());
     }
 }
+#[cfg(test)]
+mod rag_wiring_tests;

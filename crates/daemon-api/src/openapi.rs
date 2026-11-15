@@ -9,7 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    dto, email, email_routes, error, host, live_view, mcp, mcp_routes, routes, sse, web, web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
+    mcp_routes, routes, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -60,6 +61,9 @@ impl Modify for Security {
         routes::get_bot,
         routes::list_grants,
         routes::revoke_grant,
+        skills::list_skills,
+        skills::get_bot_skills,
+        skills::put_bot_skills,
         routes::update_bot,
         routes::delete_bot,
         routes::list_chats,
@@ -72,8 +76,12 @@ impl Modify for Security {
         routes::list_runs,
         routes::get_run,
         routes::cancel_run,
+        crate::stop::stop_runs,
         routes::resume_run,
         routes::remember_run,
+        changes::get_run_changes,
+        changes::preview_restore,
+        changes::restore_changes,
         routes::usage,
         routes::get_control_state,
         routes::put_control_state,
@@ -87,6 +95,9 @@ impl Modify for Security {
         routes::detect_providers,
         routes::enable_cli_provider,
         routes::reload_providers,
+        doctor_routes::get_doctor,
+        doctor_routes::repair,
+        doctor_routes::report,
         routes::list_schedules,
         routes::create_schedule,
         routes::get_schedule,
@@ -118,10 +129,10 @@ impl Modify for Security {
     ),
     components(schemas(
         ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
-        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::ChatDto, dto::CreateChat,
+        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
         dto::MessageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
-        dto::DecisionResponse, dto::RunDto, dto::UsageTotals, dto::BotUsage,
+        dto::DecisionResponse, dto::RunDto, dto::StopScope, dto::StopRunsInput, dto::StopOutcome, dto::StopRunResult, dto::StopRunsResponse, dto::UsageTotals, dto::BotUsage,
         dto::UsageSummary, dto::AnswerQuestion, dto::AnswerResponse, dto::GrantDto,
         dto::GrantTargetDto, dto::RevokeGrant, dto::EffectivePolicyDto,
         dto::CategoryDecisionDto, dto::ControlMode, dto::ControlStateInput,
@@ -139,6 +150,15 @@ impl Modify for Security {
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
+        changes::CheckpointComputerDto, changes::CheckpointLocationDto, changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
+        changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,
+        changes::RestorePreviewDto, changes::RestoreRequestDto, changes::RestoreResponseDto,
+        skills::SkillScope, skills::SkillIssueScope, skills::SkillRequiresDto, skills::SkillHubInfoDto,
+        skills::CatalogSkillDto, skills::SkillIssueDto, skills::SkillsCatalogDto,
+        skills::SkillAssignmentModeDto, skills::AssignedSkillState, skills::AssignedSkillDto,
+        skills::AvailableSkillDto, skills::OwnSkillDto, skills::BotSkillsDto, skills::PutBotSkillsInput,
+        doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
+        doctor_routes::RepairResult,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
@@ -146,7 +166,8 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web")
+        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"),
+        (name = "skills"), (name = "doctor")
     )
 )]
 pub struct ApiDoc;

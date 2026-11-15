@@ -195,15 +195,20 @@
   width: var(--panel-w);
   opacity: 1;
   border-left: var(--size-border) solid var(--color-border);
+  --panel-edge: var(--size-border);
 }
 
+/* The inner column fills the panel's content box, i.e. the panel width minus its borders
+   (--panel-edge), so the panel's overflow clip never cuts its right edge (card 233).  While the
+   panel is closed it keeps the full width so the content does not reflow during the slide. */
 .panelInner {
-  width: var(--panel-w);
+  width: calc(var(--panel-w) - var(--panel-edge, var(--space-0)));
   height: 100%;
   overflow-y: auto;
 }
 
-:global(:root[data-resizing]) .panel {
+:global(:root[data-resizing]) .panel,
+:global(:root[data-window-resizing]) .panel {
   transition: none;
 }
 
@@ -218,6 +223,7 @@
 :global(:root[data-float="on"]) .panel[data-open="true"] {
   margin-left: 0;
   border: var(--size-border) solid var(--color-border);
+  --panel-edge: calc(var(--size-border) * 2);
   box-shadow: var(--shadow-card);
 }
 

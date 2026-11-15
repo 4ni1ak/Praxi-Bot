@@ -1,9 +1,11 @@
 //! Desktop shell library entry point for Tauri.
 
+pub mod command_names;
 pub mod control;
 pub mod daemon;
 pub mod listener;
 pub mod shell;
+pub mod window_gate;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,8 +20,9 @@ use daemon::{CliOutput, Connection, DaemonHandle};
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
-    RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    RunEvent, State, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent,
 };
+use window_gate::{MAIN_AND_WIDGET, MAIN_ONLY, require_window};
 
 const MENU_ID_SIMULATE_RUN: &str = "dev.simulate_bot_run";
 const MENU_ID_TOGGLE_WHEEL: &str = "dev.toggle_wheel";
@@ -416,7 +419,7 @@ fn spawn_simulated_bot_run(
 
         let final_snap = control.snapshot();
         if final_snap.run_generation == expected_gen && final_snap.mode != ControlMode::Idle {
-            control.stop_all();
+            control.finish_run(expected_gen);
             if cfg!(debug_assertions) {
                 eprintln!(
                     "[simulate_bot_run] completed all steps; overlay.clear emitted and state returned to Idle"
@@ -442,12 +445,14 @@ fn is_human_driving(control: State<'_, ControlHandle>) -> bool {
 
 #[tauri::command]
 async fn begin_action(
+    window: Window,
     control: State<'_, ControlHandle>,
     rect: Option<OverlayRect>,
     label: String,
     action: Option<String>,
     text: Option<String>,
 ) -> Result<bool, String> {
+    require_window(&window, MAIN_ONLY)?;
     let action_kind = action.unwrap_or_else(|| "click".to_string());
     Ok(match rect {
         Some(rect) => {
@@ -463,85 +468,149 @@ async fn begin_action(
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn start_bot_run(
+    window: Window,
     control: State<'_, ControlHandle>,
     bot: BotRunMeta,
     initial_step: String,
-) -> ControlSnapshot {
-    control.start_run(bot, initial_step)
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_ONLY)?;
+    Ok(control.start_run(bot, initial_step))
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn pause_bot_run(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn pause_bot_run(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.pause().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn resume_bot_run(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn resume_bot_run(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.resume().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn take_the_wheel(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn take_the_wheel(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.take_the_wheel().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn give_back_control(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn give_back_control(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.give_back().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn stop_bot_run(control: State<'_, ControlHandle>) -> ControlSnapshot {
-    control.stop_all()
+fn stop_bot_run(
+    window: Window,
+    control: State<'_, ControlHandle>,
+    token: Option<String>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
+    Ok(control.stop_user(token))
+}
+
+/// Normal end of a run (not a Stop): `* -> Idle` without raising `stopSeq`. A no-op when
+/// `expected_generation` is not the current run generation.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn finish_bot_run(
+    window: Window,
+    control: State<'_, ControlHandle>,
+    expected_generation: u64,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_ONLY)?;
+    Ok(control.finish_run(expected_generation))
+}
+
+/// Acknowledges a handled stop sequence. Silent (no event).
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn ack_stop(
+    window: Window,
+    control: State<'_, ControlHandle>,
+    seq: u64,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_ONLY)?;
+    Ok(control.ack_stop(seq))
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn set_stop_hotkey(
+    window: Window,
     control: State<'_, ControlHandle>,
     hotkey: String,
 ) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_ONLY)?;
     control.set_stop_hotkey(hotkey).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn overlay_show_target(
+    window: Window,
     control: State<'_, ControlHandle>,
     rect: OverlayRect,
     label: String,
     action: String,
     text: Option<String>,
-) {
+) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
     control.show_target(rect, label, action, text);
+    Ok(())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn overlay_click(control: State<'_, ControlHandle>, x: f64, y: f64) {
+fn overlay_click(
+    window: Window,
+    control: State<'_, ControlHandle>,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
     control.click(x, y);
+    Ok(())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn overlay_clear(control: State<'_, ControlHandle>) {
+fn overlay_clear(window: Window, control: State<'_, ControlHandle>) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
     control.clear();
+    Ok(())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn simulate_bot_run(
+    window: Window,
     app: AppHandle,
     control: State<'_, ControlHandle>,
     bot: Option<BotRunMeta>,
-) -> ControlSnapshot {
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_ONLY)?;
     spawn_simulated_bot_run(&app, control.inner().clone(), bot);
-    control.snapshot()
+    Ok(control.snapshot())
 }
 
 #[tauri::command]
@@ -554,14 +623,22 @@ fn get_monitors_geometry(app: AppHandle) -> Vec<MonitorGeometry> {
 
 /// Start the daemon if needed and return the base URL + bearer token.
 #[tauri::command]
-async fn daemon_connect(daemon: State<'_, Arc<DaemonHandle>>) -> Result<Connection, String> {
+async fn daemon_connect(
+    window: Window,
+    daemon: State<'_, Arc<DaemonHandle>>,
+) -> Result<Connection, String> {
+    require_window(&window, MAIN_ONLY)?;
     daemon::connect(&daemon).await
 }
 
 /// Stop a daemon this app started, then start it again (e.g. to pick up new
 /// providers).  A daemon started by someone else is left alone.
 #[tauri::command]
-async fn daemon_restart(daemon: State<'_, Arc<DaemonHandle>>) -> Result<Connection, String> {
+async fn daemon_restart(
+    window: Window,
+    daemon: State<'_, Arc<DaemonHandle>>,
+) -> Result<Connection, String> {
+    require_window(&window, MAIN_ONLY)?;
     daemon::restart(&daemon).await
 }
 
@@ -587,12 +664,14 @@ fn valid_provider_id(id: &str) -> bool {
 /// child's environment, never on the command line.
 #[tauri::command]
 async fn providers_cli(
+    window: Window,
     action: ProvidersAction,
     id: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
     api_key: Option<String>,
 ) -> Result<CliOutput, String> {
+    require_window(&window, MAIN_ONLY)?;
     let mut args: Vec<String> = Vec::new();
     let mut key = None;
     if let ProvidersAction::List = action {
@@ -712,7 +791,13 @@ fn write_windows_autostart(reg_key: &str, enabled: bool) -> Result<bool, String>
 /// Check whether per-user autostart (`HKCU\...\Run\Praxi-Bot`) is enabled.
 /// Off by default.
 #[tauri::command]
-fn get_autostart() -> bool {
+#[allow(clippy::needless_pass_by_value)]
+fn get_autostart(window: Window) -> Result<bool, String> {
+    require_window(&window, MAIN_ONLY)?;
+    Ok(get_autostart_impl())
+}
+
+fn get_autostart_impl() -> bool {
     #[cfg(windows)]
     {
         query_windows_autostart(&autostart_reg_key())
@@ -755,7 +840,9 @@ fn set_autostart_impl(enabled: bool) -> Result<bool, String> {
 /// # Errors
 /// Off Windows, or when the registry write/read-back disagrees with `enabled`.
 #[tauri::command]
-fn set_autostart(enabled: bool) -> Result<bool, String> {
+#[allow(clippy::needless_pass_by_value)]
+fn set_autostart(window: Window, enabled: bool) -> Result<bool, String> {
+    require_window(&window, MAIN_ONLY)?;
     set_autostart_impl(enabled)
 }
 
@@ -886,6 +973,8 @@ pub fn run() {
             take_the_wheel,
             give_back_control,
             stop_bot_run,
+            finish_bot_run,
+            ack_stop,
             set_stop_hotkey,
             overlay_show_target,
             overlay_click,
@@ -931,7 +1020,7 @@ mod tests {
     #[test]
     fn autostart_is_unsupported_off_windows() {
         assert!(!super::autostart_supported_impl());
-        assert!(!super::get_autostart());
+        assert!(!super::get_autostart_impl());
         assert_eq!(
             super::set_autostart_impl(true),
             Err("autostart is not supported on this platform".to_owned())
@@ -957,5 +1046,473 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
+    }
+}
+
+/// Card 239: every custom command is listed in the app manifest, the manifest
+/// is really handed to `tauri-build`, the capability files grant each window
+/// exactly its documented set, and the commands that must check the calling
+/// window do so.
+#[cfg(test)]
+mod acl_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use crate::command_names::COMMAND_NAMES;
+
+    fn desktop_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn read(path: &Path) -> String {
+        fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    }
+
+    fn tauri_conf() -> serde_json::Value {
+        serde_json::from_str(&read(&desktop_dir().join("tauri.conf.json")))
+            .expect("tauri.conf.json")
+    }
+
+    /// Every `*.rs` file under `dir`, recursively.
+    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
+        {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    fn source_files() -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        rust_files(&desktop_dir().join("src"), &mut files);
+        files.sort();
+        files
+    }
+
+    /// Function names that follow a `#[tauri::command...]` attribute in `src/**/*.rs`,
+    /// each with the source of its body (up to the next top-level `}`).
+    fn command_fns_in_sources() -> BTreeMap<String, String> {
+        let mut found = BTreeMap::new();
+        for path in source_files() {
+            let text = read(&path).replace("\r\n", "\n");
+            let lines: Vec<&str> = text.lines().collect();
+            for (n, line) in lines.iter().enumerate() {
+                // Only a real attribute line, not this test's own string literals.
+                if !line.trim_start().starts_with("#[tauri::command") {
+                    continue;
+                }
+                let rest = lines[n + 1..].join(
+                    "
+",
+                );
+                let fn_at = rest.find("fn ").expect("fn after #[tauri::command]");
+                let signature = &rest[fn_at + 3..];
+                let name = signature
+                    .split(['(', '<'])
+                    .next()
+                    .expect("fn name")
+                    .trim()
+                    .to_owned();
+                let end = signature
+                    .find(
+                        "
+}
+",
+                    )
+                    .map_or(signature.len(), |i| i + 3);
+                found.insert(name, signature[..end].to_owned());
+            }
+        }
+        found
+    }
+
+    /// Names inside `tauri::generate_handler![ ... ]` (module prefixes stripped).
+    fn registered_handlers() -> BTreeSet<String> {
+        let text = read(&desktop_dir().join("src").join("lib.rs"));
+        let start =
+            text.find("generate_handler![").expect("handler list") + "generate_handler![".len();
+        let end = start + text[start..].find(']').expect("end of handler list");
+        text[start..end]
+            .split(',')
+            .map(|item| item.trim().rsplit("::").next().unwrap_or("").to_owned())
+            .filter(|item| !item.is_empty())
+            .collect()
+    }
+
+    fn manifest() -> BTreeSet<String> {
+        COMMAND_NAMES.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    #[test]
+    fn build_rs_hands_the_command_list_to_the_app_manifest() {
+        // If build.rs went back to plain `tauri_build::build()`, Tauri would not
+        // create the app ACL at all and would silently allow every custom command
+        // from every window, with all other tests still green.
+        let build_rs = read(&desktop_dir().join("build.rs")).replace(char::is_whitespace, "");
+        assert!(
+            build_rs.contains("include!(\"src/command_names.rs\");"),
+            "build.rs must include src/command_names.rs"
+        );
+        assert!(
+            build_rs.contains("tauri_build::try_build("),
+            "build.rs must call tauri_build::try_build"
+        );
+        assert!(
+            build_rs.contains("AppManifest::new().commands(COMMAND_NAMES)"),
+            "build.rs must pass COMMAND_NAMES to AppManifest::commands"
+        );
+        assert!(
+            !build_rs.contains("tauri_build::build()"),
+            "plain tauri_build::build() has no app manifest"
+        );
+    }
+
+    #[test]
+    fn every_registered_command_has_a_manifest_entry() {
+        let declared: BTreeSet<String> = command_fns_in_sources().into_keys().collect();
+        let registered = registered_handlers();
+        let manifest = manifest();
+        assert_eq!(
+            COMMAND_NAMES.len(),
+            manifest.len(),
+            "duplicate entry in src/command_names.rs"
+        );
+        let missing: Vec<_> = registered.difference(&manifest).collect();
+        assert!(
+            missing.is_empty(),
+            "registered in generate_handler! but missing from COMMAND_NAMES \
+             (src/command_names.rs), so no window could call it: {missing:?}"
+        );
+        let stale: Vec<_> = manifest.difference(&registered).collect();
+        assert!(
+            stale.is_empty(),
+            "in COMMAND_NAMES but not registered: {stale:?}"
+        );
+        let unregistered: Vec<_> = declared.difference(&registered).collect();
+        assert!(
+            unregistered.is_empty(),
+            "#[tauri::command] fns missing from generate_handler!: {unregistered:?}"
+        );
+        let undeclared: Vec<_> = registered.difference(&declared).collect();
+        assert!(
+            undeclared.is_empty(),
+            "registered handlers without #[tauri::command]: {undeclared:?}"
+        );
+    }
+
+    /// Commands that must reject a call from a window they are not meant for,
+    /// with the allow-list constant they must check. Everything else must be
+    /// listed in `ACL_ONLY`, so a new command has to be classified here.
+    const GATED: &[(&str, &str)] = &[
+        ("begin_action", "MAIN_ONLY"),
+        ("start_bot_run", "MAIN_ONLY"),
+        ("pause_bot_run", "MAIN_AND_WIDGET"),
+        ("resume_bot_run", "MAIN_AND_WIDGET"),
+        ("take_the_wheel", "MAIN_AND_WIDGET"),
+        ("give_back_control", "MAIN_AND_WIDGET"),
+        ("stop_bot_run", "MAIN_AND_WIDGET"),
+        ("finish_bot_run", "MAIN_ONLY"),
+        ("ack_stop", "MAIN_ONLY"),
+        ("set_stop_hotkey", "MAIN_ONLY"),
+        ("overlay_show_target", "MAIN_ONLY"),
+        ("overlay_click", "MAIN_ONLY"),
+        ("overlay_clear", "MAIN_ONLY"),
+        ("simulate_bot_run", "MAIN_ONLY"),
+        ("daemon_connect", "MAIN_ONLY"),
+        ("daemon_restart", "MAIN_ONLY"),
+        ("providers_cli", "MAIN_ONLY"),
+        ("get_autostart", "MAIN_ONLY"),
+        ("set_autostart", "MAIN_ONLY"),
+        ("notify_show", "MAIN_ONLY"),
+        ("set_needs_count", "MAIN_ONLY"),
+        ("set_tray_labels", "MAIN_ONLY"),
+    ];
+
+    /// Read-only commands with no side effect beyond returning state; the
+    /// capability files are their only gate (and `get_control_state` is the
+    /// one command the widget and overlays use to draw).
+    const ACL_ONLY: &[&str] = &[
+        "get_control_state",
+        "is_human_driving",
+        "get_monitors_geometry",
+        "autostart_supported",
+    ];
+
+    #[test]
+    fn every_gated_command_calls_the_window_gate() {
+        let commands = command_fns_in_sources();
+        let classified: BTreeSet<String> = GATED
+            .iter()
+            .map(|(n, _)| (*n).to_owned())
+            .chain(ACL_ONLY.iter().map(|n| (*n).to_owned()))
+            .collect();
+        assert_eq!(
+            classified,
+            commands.keys().cloned().collect::<BTreeSet<_>>(),
+            "every command must be listed in GATED or ACL_ONLY"
+        );
+        for (name, allow) in GATED {
+            let body = &commands[*name];
+            let call = format!("require_window(&window, {allow})?;");
+            let body_flat = body.replace("crate::window_gate::", "");
+            assert!(
+                body_flat.contains(&call),
+                "{name} must call {call} before doing anything"
+            );
+            assert!(
+                body_flat.contains("window: Window") || body_flat.contains("window: tauri::Window"),
+                "{name} must take the calling window"
+            );
+        }
+    }
+
+    /// Enabled capability -> (id, window patterns, custom commands it allows).
+    /// Only `allow-*` permissions without a plugin prefix are app commands.
+    fn app_grants() -> Vec<(String, Vec<String>, BTreeSet<String>)> {
+        let config = tauri_conf();
+        let enabled: Vec<String> = config["app"]["security"]["capabilities"]
+            .as_array()
+            .expect("capabilities list")
+            .iter()
+            .map(|v| v.as_str().expect("capability id").to_owned())
+            .collect();
+        let mut out = Vec::new();
+        for entry in fs::read_dir(desktop_dir().join("capabilities")).expect("capabilities dir") {
+            let path = entry.expect("dir entry").path();
+            let cap: serde_json::Value =
+                serde_json::from_str(&read(&path)).expect("capability json");
+            let id = cap["identifier"].as_str().expect("identifier").to_owned();
+            if !enabled.contains(&id) {
+                continue;
+            }
+            let windows = cap["windows"]
+                .as_array()
+                .map(|w| {
+                    w.iter()
+                        .map(|v| v.as_str().expect("window").to_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let commands = cap["permissions"]
+                .as_array()
+                .expect("permissions")
+                .iter()
+                .filter_map(|p| {
+                    let id = p.as_str().or_else(|| p["identifier"].as_str())?;
+                    id.strip_prefix("allow-").map(|c| c.replace('-', "_"))
+                })
+                .collect();
+            out.push((id, windows, commands));
+        }
+        let ids: BTreeSet<_> = out.iter().map(|(id, _, _)| id.clone()).collect();
+        for want in &enabled {
+            assert!(
+                ids.contains(want),
+                "tauri.conf.json enables unknown capability {want}"
+            );
+        }
+        out
+    }
+
+    /// Window label patterns are an exact label or a `prefix*` glob.
+    fn pattern_matches(pattern: &str, label: &str) -> bool {
+        match pattern.strip_suffix('*') {
+            Some(prefix) => !prefix.contains('*') && label.starts_with(prefix),
+            None => pattern == label,
+        }
+    }
+
+    fn commands_for(label: &str) -> BTreeSet<String> {
+        let mut allowed = BTreeSet::new();
+        for (_, windows, commands) in app_grants() {
+            if windows.iter().any(|p| pattern_matches(p, label)) {
+                allowed.extend(commands);
+            }
+        }
+        allowed
+    }
+
+    fn set(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    /// Manifest commands no window calls today (no UI caller). They keep an
+    /// `allow-*` permission in the manifest but are granted to no window.
+    const UNGRANTED: &[&str] = &[
+        "is_human_driving",
+        "overlay_show_target",
+        "overlay_clear",
+        "get_monitors_geometry",
+        "autostart_supported",
+    ];
+
+    #[test]
+    fn each_window_label_may_call_exactly_its_documented_commands() {
+        let main: BTreeSet<String> = manifest().difference(&set(UNGRANTED)).cloned().collect();
+        let expected: BTreeMap<&str, BTreeSet<String>> = BTreeMap::from([
+            ("main", main),
+            (
+                "widget",
+                set(&[
+                    "get_control_state",
+                    "pause_bot_run",
+                    "resume_bot_run",
+                    "take_the_wheel",
+                    "give_back_control",
+                    "stop_bot_run",
+                ]),
+            ),
+            ("overlay-0", set(&["get_control_state"])),
+            ("overlay-3", set(&["get_control_state"])),
+            ("some-future-window", BTreeSet::new()),
+            ("", BTreeSet::new()),
+        ]);
+        for (label, want) in expected {
+            assert_eq!(
+                commands_for(label),
+                want,
+                "commands callable from window {label:?}"
+            );
+        }
+        // finish_bot_run / ack_stop are reserved for card 237 PR C and main only.
+        assert!(commands_for("main").contains("finish_bot_run"));
+        assert!(commands_for("main").contains("ack_stop"));
+    }
+
+    #[test]
+    fn capabilities_only_reference_manifest_commands_and_use_simple_window_patterns() {
+        let manifest = manifest();
+        for (id, windows, commands) in app_grants() {
+            for c in &commands {
+                assert!(
+                    manifest.contains(c),
+                    "capability {id} allows unknown command {c}"
+                );
+            }
+            for w in &windows {
+                assert!(
+                    w.matches('*').count() == usize::from(w.ends_with('*')),
+                    "capability {id}: window pattern {w:?} must be an exact label or end in *"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn widget_and_overlays_cannot_reach_the_sensitive_commands() {
+        for label in ["widget", "overlay-0"] {
+            let allowed = commands_for(label);
+            for sensitive in [
+                "start_bot_run",
+                "finish_bot_run",
+                "ack_stop",
+                "begin_action",
+                "providers_cli",
+                "get_autostart",
+                "set_autostart",
+                "daemon_connect",
+                "daemon_restart",
+                "simulate_bot_run",
+                "set_stop_hotkey",
+                "notify_show",
+                "set_needs_count",
+                "set_tray_labels",
+            ] {
+                assert!(
+                    !allowed.contains(sensitive),
+                    "{label} must not call {sensitive}"
+                );
+            }
+        }
+    }
+
+    /// Every `http(s)://` / `ws(s)://` origin in a CSP string.
+    fn origins(csp: &str) -> Vec<String> {
+        csp.split([' ', ';'])
+            .filter(|t| {
+                ["http://", "https://", "ws://", "wss://"]
+                    .iter()
+                    .any(|p| t.starts_with(p))
+            })
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn is_loopback_origin(origin: &str) -> bool {
+        let host = origin.split("://").nth(1).unwrap_or("");
+        let host = host
+            .strip_prefix("[::1]")
+            .map_or_else(|| host.split(':').next().unwrap_or(""), |_| "[::1]");
+        matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "ipc.localhost")
+    }
+
+    #[test]
+    fn csp_is_set_and_has_no_remote_scripts_or_eval() {
+        let config = tauri_conf();
+        let csp = config["app"]["security"]["csp"]
+            .as_str()
+            .expect("csp must be a string, not null");
+        assert_eq!(
+            csp,
+            "default-src 'self'; script-src 'self'; style-src 'self'; \
+             style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; \
+             font-src 'self' data:; \
+             connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* \
+             http://localhost:* http://[::1]:*; \
+             object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+        );
+        assert!(!csp.contains("unsafe-eval"));
+        let script_src = csp
+            .split("; ")
+            .find(|d| d.starts_with("script-src "))
+            .expect("script-src directive");
+        assert_eq!(
+            script_src, "script-src 'self'",
+            "no inline or remote scripts in release"
+        );
+        for origin in origins(csp) {
+            assert!(is_loopback_origin(&origin), "release CSP origin {origin}");
+        }
+    }
+
+    #[test]
+    fn dev_csp_allows_only_loopback_origins_and_no_eval() {
+        let config = tauri_conf();
+        let dev = config["app"]["security"]["devCsp"]
+            .as_str()
+            .expect("devCsp");
+        assert!(!dev.contains("unsafe-eval"));
+        assert!(!dev.contains("https:"), "dev CSP must not allow https:");
+        let found = origins(dev);
+        assert!(found.iter().any(|o| o.starts_with("ws://localhost:1420")));
+        for origin in found {
+            assert!(
+                is_loopback_origin(&origin),
+                "devCsp allows a non-loopback origin: {origin}"
+            );
+        }
+        // Bare scheme sources would allow any host.
+        for scheme in ["http:", "ws:", "wss:", "*"] {
+            assert!(
+                !dev.split([' ', ';']).any(|t| t == scheme),
+                "devCsp must not contain the bare source {scheme}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_keep_the_default_http_ipc_scheme_the_csp_assumes() {
+        // The CSP allows `http://ipc.localhost` (Windows IPC with useHttpsScheme
+        // false). Turning useHttpsScheme on would move IPC to https://ipc.localhost
+        // and the CSP would block every command; change both together.
+        let config = tauri_conf();
+        for window in config["app"]["windows"].as_array().expect("windows") {
+            assert_ne!(window["useHttpsScheme"], serde_json::json!(true));
+        }
     }
 }
