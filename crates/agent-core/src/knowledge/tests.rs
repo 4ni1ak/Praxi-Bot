@@ -127,13 +127,25 @@ fn enable(env: &Env) {
 
 async fn turn(lp: &AgentLoop, env: &Env, text: &str) -> protocol::RunId {
     let run = lp.run_turn(env.chat, text).unwrap();
-    assert_eq!(
-        tokio::time::timeout(std::time::Duration::from_secs(5), lp.wait(run))
-            .await
-            .unwrap()
-            .unwrap(),
-        RunState::Succeeded
-    );
+    // This is a functional completion bound, not a filesystem performance
+    // assertion. Allow durable SQLite/journal work on shared Windows runners.
+    let state = tokio::time::timeout(std::time::Duration::from_secs(30), lp.wait(run))
+        .await
+        .unwrap_or_else(|_| {
+            let steps: Vec<_> = env
+                .storage
+                .list_steps(run)
+                .unwrap()
+                .into_iter()
+                .map(|step| (step.idx, step.name, step.status))
+                .collect();
+            panic!(
+                "knowledge turn did not finish: state={:?}, steps={steps:?}",
+                lp.runtime().state(run)
+            );
+        })
+        .unwrap();
+    assert_eq!(state, RunState::Succeeded);
     run
 }
 
