@@ -719,7 +719,7 @@ fn cli_state(provider_id: &str, detected: Option<&[cli_provider::DetectedCli]>) 
 /// Terminal command that signs in to a coding CLI.
 fn sign_in_command(engine: &str) -> &str {
     match engine {
-        "codex" | "chatgpt-plan" => "codex login",
+        "codex" => "codex login",
         other => other,
     }
 }

@@ -113,11 +113,8 @@ async fn test_codex_status_variants() {
         Some("The installed Codex cannot disable unified_exec, so Praxi will not run it.")
     );
 
-    // chatgpt-plan follows codex installation, auth is unknown
-    let chatgpt = detected.iter().find(|c| c.id == "chatgpt-plan").unwrap();
-    assert!(chatgpt.installed);
-    assert_eq!(chatgpt.auth, AuthState::Unknown);
-    assert_eq!(chatgpt.version.as_deref(), Some("fake 1.2.3"));
+    // The same codex.cmd is never reported twice.
+    assert!(detected.iter().all(|c| c.id != "chatgpt-plan"));
 
     // Signed out: "Not logged in"
     let env = PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_SIGNED_OUT", "1");
@@ -509,13 +506,17 @@ fn npm_shim_uses_package_exe_and_js_bins_stay_refused() {
         .join("node_modules")
         .join("@anthropic-ai")
         .join("claude-code");
-    let exe = std::fs::canonicalize(package.join("bin").join("claude.exe")).unwrap();
+    let exe = cli_provider::search::plain_path(
+        std::fs::canonicalize(package.join("bin").join("claude.exe")).unwrap(),
+    );
     assert_eq!(resolved.program, exe);
     assert_eq!(resolved.args, [] as [String; 0]);
     assert!(
         resolved
             .program
-            .starts_with(std::fs::canonicalize(&package).unwrap())
+            .starts_with(cli_provider::search::plain_path(
+                std::fs::canonicalize(&package).unwrap()
+            ))
     );
 
     write_package(
@@ -605,27 +606,19 @@ fn cli_engines_catalog_marks_only_claude_runnable() {
     let ids: Vec<&str> = cli_provider::CLI_ENGINES.iter().map(|e| e.id).collect();
     assert_eq!(
         ids,
-        [
-            "claude",
-            "codex",
-            "cursor",
-            "opencode",
-            "gemini",
-            "chatgpt-plan",
-        ]
+        ["claude", "codex", "cursor", "opencode", "gemini", "agy",]
     );
     let claude = cli_provider::engine_spec("claude").expect("claude spec");
     assert!(claude.runnable);
     assert_eq!(claude.command, "claude");
 
-    for id in ["codex", "chatgpt-plan", "cursor", "opencode", "gemini"] {
+    for id in ["codex", "cursor", "opencode", "gemini", "agy"] {
         let spec = cli_provider::engine_spec(id).expect("spec exists");
         assert!(!spec.runnable, "{id} must not be runnable");
         let msg = cli_provider::enable_refusal_message(id);
         assert_ne!(msg, "", "{id} refusal message must not be empty");
     }
     assert!(cli_provider::enable_refusal_message("codex").contains("unified_exec"));
-    assert!(cli_provider::enable_refusal_message("chatgpt-plan").contains("unified_exec"));
     assert!(cli_provider::engine_spec("unknown").is_none());
     assert_ne!(cli_provider::enable_refusal_message("unknown"), "");
 }
@@ -645,4 +638,33 @@ fn explicit_and_linked_working_directory_executables_are_refused() {
         std::fs::write(&shim, "\"%~dp0payload.exe\" %*\r\n").unwrap();
         assert!(resolve_spawn(&shim, &PathEnv::for_test(dir.path().into())).is_err());
     }
+}
+
+#[test]
+fn npm_js_bin_runs_through_node_with_a_plain_path() {
+    // `@openai/codex` ships `bin/codex.js`; node cannot realpath a verbatim
+    // `\?\C:\...` script path (EISDIR lstat 'C:'), so the path handed to it is plain.
+    let temp = fixture_dir();
+    let root = temp.path();
+    write_package(
+        root,
+        "@openai/codex",
+        "@openai/codex",
+        "codex",
+        "bin/codex.js",
+        b"#!/usr/bin/env node\nconsole.log('codex')\n",
+    );
+    npm_shim(root, "codex", "@openai/codex");
+    std::fs::write(root.join("node.exe"), b"fixture").unwrap();
+    let env = PathEnv::for_test(root.to_path_buf());
+    let resolved = resolve_spawn(&root.join("codex.cmd"), &env).unwrap();
+    assert!(resolved.program.ends_with("node.exe"));
+    assert_eq!(resolved.args.len(), 1);
+    assert!(
+        resolved.args[0].ends_with("codex.js"),
+        "{:?}",
+        resolved.args
+    );
+    assert!(!resolved.args[0].starts_with(r"\?\"), "{:?}", resolved.args);
+    assert!(!resolved.program.to_string_lossy().starts_with(r"\?\"));
 }

@@ -2216,14 +2216,7 @@ async fn providers_detected_reports_six_rows() {
         .collect();
     assert_eq!(
         ids,
-        vec![
-            "claude",
-            "codex",
-            "cursor",
-            "opencode",
-            "gemini",
-            "chatgpt-plan"
-        ]
+        vec!["claude", "codex", "cursor", "opencode", "gemini", "agy"]
     );
     for row in items {
         assert_eq!(row["runnable"], false);
@@ -2896,7 +2889,7 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
 
     // CLIs with a native-tools driver can be enabled; they only run with their own tools.
-    for id in ["chatgpt-plan", "unknown"] {
+    for id in ["agy", "unknown"] {
         let r = call(
             &t,
             Method::POST,

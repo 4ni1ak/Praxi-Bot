@@ -391,3 +391,99 @@ async fn enabling_a_cli_returns_and_lists_its_registry_models() {
         .unwrap();
     assert_eq!(claude["models"], body["models"]);
 }
+
+#[tokio::test]
+async fn switching_an_engine_off_is_remembered_in_providers_toml() {
+    let t = setup();
+    let off = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/disable",
+        Some(json!({ "id": "claude" })),
+    )
+    .await;
+    assert_eq!(off.status, StatusCode::OK, "{:?}", off.json());
+    let cfg = provider_catalog::ProviderConfig::load(&provider_catalog::config_path(
+        t.state.storage().data_dir(),
+    ))
+    .unwrap();
+    assert!(!cfg.get("cli:claude").unwrap().enabled);
+    let list = call(&t, Method::GET, "/v1/providers/cli", None)
+        .await
+        .json();
+    let claude = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["detected"]["id"] == "claude")
+        .unwrap();
+    assert_eq!(claude["user_disabled"], true);
+    assert_eq!(claude["enabled"], false);
+    // Engines that are not providers cannot be switched.
+    let agy = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/disable",
+        Some(json!({ "id": "agy" })),
+    )
+    .await;
+    assert_eq!(agy.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn auto_enabling_engines_changes_no_bot_and_respects_a_switch_off() {
+    use cli_provider::AuthState::{SignedIn, SignedOut, Unknown};
+    let t = setup();
+    let created = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": PROFILE})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let path = format!("/v1/bots/{}", created.json()["id"].as_str().unwrap());
+    let before = call(&t, Method::GET, &path, None).await.json();
+    let row = |id: &str, auth, version: Option<&str>| cli_provider::DetectedCli {
+        id: id.into(),
+        display_name: id.into(),
+        installed: true,
+        version: version.map(Into::into),
+        auth,
+        account_label: None,
+        runnable: id == "claude",
+        detail: None,
+        message: None,
+    };
+    // The owner already switched Codex off: it must stay off.
+    call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/disable",
+        Some(json!({"id": "codex"})),
+    )
+    .await;
+    let rows = [
+        row("claude", SignedIn, Some("2.1.325")),
+        row("codex", SignedIn, Some("0.169.0")),
+        row("opencode", Unknown, Some("2.3.0")),
+        row("cursor", SignedOut, Some("1.0.0")),
+    ];
+    let done = crate::cli_engines::auto_enable_new(&t.state, &rows)
+        .await
+        .unwrap();
+    assert_eq!(done, ["claude", "opencode"]);
+    let cfg = provider_catalog::ProviderConfig::load(&provider_catalog::config_path(
+        t.state.storage().data_dir(),
+    ))
+    .unwrap();
+    assert!(!cfg.get("cli:codex").unwrap().enabled);
+    // Selectable only: the bot keeps its engine, level and model.
+    assert_eq!(call(&t, Method::GET, &path, None).await.json(), before);
+    assert!(
+        before["config"]["engine"]["mode"]
+            .as_str()
+            .unwrap_or("praxi")
+            != "native_tools"
+    );
+}

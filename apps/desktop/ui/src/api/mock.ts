@@ -264,7 +264,7 @@ const DETECTED_PROVIDERS: DetectedProviderDto[] = [
     id: "codex",
     display_name: "Codex",
     installed: true,
-    version: "0.104.0",
+    version: "codex-cli 0.169.0",
     auth: "signed_in",
     account_label: "chatgpt@praxi.bot",
     runnable: false,
@@ -275,23 +275,23 @@ const DETECTED_PROVIDERS: DetectedProviderDto[] = [
   {
     id: "cursor",
     display_name: "Cursor",
-    installed: true,
-    version: "0.49.2",
-    auth: "signed_out",
-    account_label: null,
-    runnable: false,
-    detail: null,
-    message: null
-  },
-  {
-    id: "opencode",
-    display_name: "OpenCode",
     installed: false,
     version: null,
     auth: "unknown",
     account_label: null,
     runnable: false,
     detail: "not_on_path",
+    message: null
+  },
+  {
+    id: "opencode",
+    display_name: "OpenCode",
+    installed: true,
+    version: "opencode v2.3.0",
+    auth: "unknown",
+    account_label: null,
+    runnable: false,
+    detail: "auth_unverified",
     message: null
   },
   {
@@ -306,18 +306,24 @@ const DETECTED_PROVIDERS: DetectedProviderDto[] = [
     message: null
   },
   {
-    id: "chatgpt-plan",
-    display_name: "ChatGPT plan",
+    id: "agy",
+    display_name: "Antigravity",
     installed: true,
-    version: "0.104.0",
+    version: "1.5.9",
     auth: "unknown",
     account_label: null,
     runnable: false,
-    detail: "codex_unconfinable",
-    message:
-      "The installed Codex cannot disable unified_exec, so Praxi will not run it."
+    detail: "auth_unverified",
+    message: null
   }
 ];
+
+const MOCK_NPM: Record<string, string> = {
+  claude: "@anthropic-ai/claude-code",
+  codex: "@openai/codex",
+  opencode: "opencode-ai",
+  gemini: "@google/gemini-cli"
+};
 
 const USAGE: UsageSummary = {
   runs: 42,
@@ -752,14 +758,23 @@ export class MockApiClient extends ApiClient {
       }
       case "GET /providers":
         if (seg[1] === "cli") {
-          return ok(this.detectedProvidersList.map((detected) => ({
-            detected, executable_names: [detected.id], version_args: ["--version"], auth_args: [],
-            path: null, minimum_version: null, outdated: false,
-            login: detected.id === "opencode" ? "opencode auth login" : detected.id,
-            docs_url: "",
-            install: detected.installed ? null : { command: "npm install -g opencode-ai", program: "npm", args: ["install", "-g", "opencode-ai"], verified: true, executable: true },
-            limitation: detected.id === "opencode" ? "native_tools_not_confined" : null
-          })));
+          return ok(this.detectedProvidersList.map((detected) => {
+            const native = ["codex", "opencode", "gemini"].includes(detected.id);
+            const entry = this.providersDto.configured.find((p) => p.id === `cli:${detected.id}`);
+            const pkg = MOCK_NPM[detected.id];
+            return {
+              detected, executable_names: [detected.id], version_args: ["--version"], auth_args: [],
+              path: detected.installed ? ["C:", "Users", "emre", "AppData", "Roaming", "npm", detected.id === "agy" ? "agy.exe" : `${detected.id}.cmd`].join(String.fromCharCode(92)) : null,
+              minimum_version: null, outdated: false,
+              login: detected.id === "claude" ? "claude auth login" : `${detected.id} login`,
+              docs_url: "https://example.com/docs",
+              install: pkg && !detected.installed ? { command: `npm install -g ${pkg}`, program: "npm", args: ["install", "-g", pkg], verified: true, executable: true } : null,
+              native: native ? { support: detected.id === "gemini" ? "experimental" : "verified", levels: [] } : null,
+              limitation: detected.runnable ? null : native ? "native_only" : "detection_only",
+              enabled: entry?.enabled ?? false,
+              user_disabled: entry ? !entry.enabled : false
+            };
+          }));
         }
         if (seg[1] === "detected") {
           const screen =
@@ -784,19 +799,27 @@ export class MockApiClient extends ApiClient {
         }
         return ok(structuredClone(this.providersDto));
       case "POST /providers": {
+        if (seg[1] === "cli" && seg[2] === "disable") {
+          const id = ((opts.body ?? {}) as { id?: string }).id ?? "";
+          const entry = this.providersDto.configured.find((p) => p.id === `cli:${id}`);
+          if (entry) {
+            entry.enabled = false;
+            entry.active = false;
+          }
+          this.providersDto.active = this.providersDto.active.filter((a) => a !== `cli:${id}`);
+          return ok(structuredClone(entry ?? { id: `cli:${id}`, enabled: false }));
+        }
         if (seg[1] === "cli" && seg[2] === "enable") {
           const body = (opts.body ?? {}) as { id?: string };
           const id = body.id ?? "";
-          if (id !== "claude") {
+          if (!["claude", "codex", "opencode", "gemini"].includes(id)) {
             throw new ApiError(
               400,
               "bad_request",
-              id === "codex" || id === "chatgpt-plan"
-                ? "The installed Codex cannot disable unified_exec, so Praxi will not run it."
-                : "This coding CLI is detected only and cannot be run in this version of Praxi."
+              "This coding CLI is detected only and cannot be run in this version of Praxi."
             );
           }
-          const providerId = "cli:claude";
+          const providerId = `cli:${id}`;
           const existing = this.providersDto.configured.find(
             (p) => p.id === providerId
           );

@@ -1103,6 +1103,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers", get(r::list_providers))
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
+        .route("/v1/providers/cli/disable", post(r::disable_cli_provider))
         .route("/v1/providers/cli", get(cli_engines::list))
         .route("/v1/providers/cli/install", post(cli_engines::preview))
         .route(

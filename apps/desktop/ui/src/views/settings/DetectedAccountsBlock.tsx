@@ -1,158 +1,243 @@
-import { Info, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, Info, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { CliEngineDto, CliInstallApproval, DetectedProviderDto } from "../../api/types";
+import type { CliEngineDto, CliInstallApproval } from "../../api/types";
 import { ApprovalCard, useCountdown } from "../../components/ChatCards";
 import { BrandIcon } from "../../components/BrandIcon";
 import { Switch } from "../../components/SettingsUi";
 import { useToast } from "../../components/Toast";
+import { configuredCliIds } from "../../lib/detectedAccounts";
 import {
-  configuredCliIds,
-  detectedRowAction,
-  signInCommand
-} from "../../lib/detectedAccounts";
+  brandOf,
+  cliStatus,
+  displayPath,
+  hasSwitch,
+  needsProviderReload,
+  shortVersion,
+  splitEngines,
+  type CliStatus
+} from "../../lib/cliCards";
 import { openExternal } from "../../lib/externalLink";
 import { useDaemon } from "../../state/DaemonContext";
 import { notifyProvidersChanged, useProviders } from "../../state/useProviders";
 import styles from "./AiPage.module.css";
 
-function brandOf(row: DetectedProviderDto): string {
-  return row.id === "chatgpt-plan" ? "codex" : row.id;
-}
+const STATUS_KEY: Record<CliStatus, string> = {
+  ready: "ready",
+  sign_in: "signIn",
+  outdated: "outdated",
+  not_installed: "notInstalled",
+  unsupported: "unsupported"
+};
 
 /**
- * "Bu bilgisayarda bulunanlar": coding CLIs the daemon found
- * (`GET /v1/providers/cli`); runnable ones are turned on with one switch
- * (`POST /v1/providers/cli/enable`).  The daemon has no "disable" route, so a
- * switch that is on stays on here.
+ * "Found on this computer": coding CLIs the daemon found (`GET /v1/providers/cli`).
+ * One compact row per engine (icon, name, one status chip, account and version, switch);
+ * path, install command, sign-in and docs sit behind "Details". The daemon switches a
+ * detected, signed-in engine on the first time it sees it; the switch writes the owner's
+ * choice back (`POST /v1/providers/cli/enable|disable`), and an engine switched off stays off.
+ * Engines that are not installed are one collapsed list at the bottom.
  */
 export function DetectedAccountsBlock() {
   const { t } = useTranslation();
   const toast = useToast();
   const { client } = useDaemon();
   const { dto, reload: reloadProviders } = useProviders();
-  const [rows, setRows] = useState<DetectedProviderDto[]>([]);
   const [engines, setEngines] = useState<CliEngineDto[]>([]);
   const [approval, setApproval] = useState<CliInstallApproval | null>(null);
   const approvalRemaining = useCountdown(approval?.expires_at_ms);
   const [installing, setInstalling] = useState(false);
-  const [installOutput, setInstallOutput] = useState("");
+  /** Installer output stays out of the page; it is only copied on request. */
+  const installOutput = useRef("");
+  const [problem, setProblem] = useState<{ message: string; details: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [enabling, setEnabling] = useState<string | null>(null);
-  const [enableError, setEnableError] = useState<string | null>(null);
-  const [showSignIn, setShowSignIn] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const enabledCli = useMemo(() => configuredCliIds(dto), [dto]);
 
   const loadDetected = useCallback(
     async (refresh: boolean) => {
       if (!client) {
-        setRows([]);
+        setEngines([]);
         setLoadError(null);
         return;
       }
       setLoading(true);
       setLoadError(null);
       try {
-        const found = await client.cliEngines(refresh);
-        setEngines(found);
-        setRows(found.map((engine) => engine.detected));
+        setEngines(await client.cliEngines(refresh));
       } catch (e) {
-        setLoadError(
-          e instanceof Error && e.message
-            ? e.message
-            : t("settingsModal.ai.detected.detectError")
-        );
+        setLoadError(e instanceof Error && e.message ? e.message : "detect_failed");
       } finally {
         setLoading(false);
       }
     },
-    [client, t]
+    [client]
   );
 
   useEffect(() => {
     void loadDetected(false);
   }, [loadDetected]);
 
+  // The daemon switches a detected, signed-in engine on the first time it sees it;
+  // pick that up in the provider list once.
+  useEffect(() => {
+    if (needsProviderReload(engines, enabledCli)) {
+      void reloadProviders();
+      notifyProvidersChanged();
+    }
+    // Only a fresh engine list can change the answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engines]);
+
+  const fail = (error: unknown) => {
+    setProblem({
+      message: t("settingsModal.ai.detected.problem"),
+      details: error instanceof Error ? error.message : String(error)
+    });
+  };
+
   const previewInstall = async (id: string) => {
     if (!client) { return; }
-    setEnableError(null);
-    setInstallOutput("");
+    setProblem(null);
+    installOutput.current = "";
     try { setApproval(await client.previewCliInstall(id)); }
-    catch (error) { setEnableError(String(error)); }
+    catch (error) { fail(error); }
   };
 
   const decideInstall = async (decision: "approve" | "deny") => {
     if (!client || !approval) { return; }
     setInstalling(true);
     try {
-      await client.decideCliInstall(approval.approval_id, decision, (text) => setInstallOutput((previous) => (previous + text).slice(-65536)));
+      await client.decideCliInstall(approval.approval_id, decision, (text) => {
+        installOutput.current = (installOutput.current + text).slice(-65536);
+      });
       setApproval(null);
       if (decision === "approve") { toast.show(t("settingsModal.ai.detected.installDone"), "success"); }
     } catch (error) {
       setApproval(null);
       const code = error instanceof Error ? error.message : "install_failed";
-      setEnableError(t(`settingsModal.ai.detected.installErrors.${code}`, {
-        defaultValue: t("settingsModal.ai.detected.installErrors.install_failed")
-      }));
+      setProblem({
+        message: t(`settingsModal.ai.detected.installErrors.${code}`, {
+          defaultValue: t("settingsModal.ai.detected.installErrors.install_failed")
+        }),
+        details: installOutput.current || code
+      });
     } finally { setInstalling(false); await loadDetected(true); }
   };
 
-  const copyCommand = async (command: string) => {
-    try { await navigator.clipboard.writeText(command); toast.show(t("settingsModal.ai.detected.copied"), "success"); }
-    catch (error) { setEnableError(String(error)); }
+  const copyText = async (text: string, done: string) => {
+    try { await navigator.clipboard.writeText(text); toast.show(done, "success"); }
+    catch (error) { fail(error); }
   };
 
-  const onEnable = async (row: DetectedProviderDto) => {
+  const onToggle = async (engine: CliEngineDto) => {
     if (!client) {
       return;
     }
+    const row = engine.detected;
     setEnabling(row.id);
-    setEnableError(null);
+    setProblem(null);
     try {
-      await client.enableCliProvider(row.id);
+      if (engine.enabled) {
+        await client.disableCliProvider(row.id);
+      } else {
+        await client.enableCliProvider(row.id);
+        toast.show(t("settingsModal.ai.detected.enabledToast", { name: row.display_name }), "success");
+      }
       await reloadProviders();
       notifyProvidersChanged();
-      toast.show(
-        t("settingsModal.ai.detected.enabledToast", { name: row.display_name }),
-        "success"
-      );
+      await loadDetected(false);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setEnableError(msg);
-      toast.show(msg, "danger");
+      fail(e);
     } finally {
       setEnabling(null);
     }
   };
 
-  const subtitle = (row: DetectedProviderDto, kind: string) => {
-    const meta = [row.account_label, row.installed ? row.version : null]
-      .filter(Boolean)
-      .join(" · ");
-    switch (kind) {
-      case "enabled":
-        return [meta, t("settingsModal.ai.detected.ready")].filter(Boolean).join(" · ");
-      case "enable":
-        // Never claim "signed in" when the daemon could not tell.
-        return [
-          meta,
-          row.auth === "signed_in"
-            ? t("settingsModal.ai.detected.authSignedIn")
-            : t("settingsModal.ai.detected.authUnknown")
-        ]
-          .filter(Boolean)
-          .join(" · ");
-      case "sign_in_hint":
-        return [meta, t("settingsModal.ai.detected.foundSignInNeeded")].filter(Boolean).join(" · ");
-      case "not_installed":
-        return t("settingsModal.ai.detected.notInstalled");
-      case "codex_unconfinable":
-        return [meta, t("settingsModal.ai.detected.codexUnconfinable")].filter(Boolean).join(" · ");
-      default:
-        return [meta, t("settingsModal.ai.detected.notRunnable")].filter(Boolean).join(" · ");
-    }
+  const { installed, available } = splitEngines(engines);
+
+  /** One compact row; everything else is behind "Details". */
+  const renderRow = (engine: CliEngineDto) => {
+    const row = engine.detected;
+    const status = cliStatus(engine);
+    const open = openId === row.id;
+    const install = engine.install;
+    const meta = [row.account_label, shortVersion(row.version)].filter(Boolean).join(" · ");
+    const note = status === "unsupported"
+      ? t("settingsModal.ai.detected.noteUnsupported")
+      : engine.native && !row.runnable ? t("settingsModal.ai.detected.noteNative") : null;
+    return (
+      <li key={row.id} className={styles.cliRow} data-testid={`detected-${row.id}`}>
+        <div className={styles.cliMain}>
+          <BrandIcon name={brandOf(row.id)} bare size={22} />
+          <div className={styles.cliName}>
+            <span className={styles.cliTitle}>
+              {row.display_name}
+              <span className={`${styles.statusChip} ${styles[`status_${status}`]}`}>
+                {t(`settingsModal.ai.detected.status.${STATUS_KEY[status]}`)}
+              </span>
+              {engine.native?.support === "experimental" ? (
+                <span className={styles.miniChip}>{t("settingsModal.ai.detected.experimentalChip")}</span>
+              ) : null}
+            </span>
+            {meta ? <span className={styles.sub}>{meta}</span> : null}
+          </div>
+          <div className={styles.ctl}>
+            {status === "not_installed" && install?.executable ? (
+              <button type="button" className={styles.pill} disabled={installing || approval !== null} onClick={() => void previewInstall(row.id)}>
+                {t("settingsModal.ai.detected.install")}
+              </button>
+            ) : null}
+            {hasSwitch(engine) ? (
+              <Switch
+                checked={engine.enabled}
+                disabled={enabling === row.id}
+                label={t("settingsModal.ai.detected.toggle", { name: row.display_name })}
+                onChange={() => void onToggle(engine)}
+              />
+            ) : null}
+            <button
+              type="button"
+              className={styles.detailsBtn}
+              aria-expanded={open}
+              aria-label={`${t("settingsModal.ai.detected.detailsToggle")}: ${row.display_name}`}
+              onClick={() => setOpenId(open ? null : row.id)}
+            >
+              <ChevronDown size={14} aria-hidden="true" className={open ? styles.chevOpen : undefined} />
+            </button>
+          </div>
+        </div>
+        {open ? (
+          <dl className={styles.cliDetails}>
+            {engine.path ? <><dt>{t("settingsModal.ai.detected.pathLabel")}</dt><dd className={styles.cliPath}>{displayPath(engine.path)}</dd></> : null}
+            {install ? <>
+              <dt>{t("settingsModal.ai.detected.installLabel")}</dt>
+              <dd>
+                <code className={styles.cliCommand}>{install.command}</code>{" "}
+                <button type="button" className={styles.textBtn} onClick={() => void copyText(install.command, t("settingsModal.ai.detected.copied"))}>
+                  {t("settingsModal.ai.detected.copyCommand")}
+                </button>
+                {!install.verified ? <span className={styles.sub}> {t("settingsModal.ai.detected.noteUnverified")}</span> : null}
+              </dd>
+            </> : null}
+            <dt>{t("settingsModal.ai.detected.loginLabel")}</dt>
+            <dd><code className={styles.code}>{engine.login}</code></dd>
+            {engine.docs_url ? <>
+              <dt>{t("settingsModal.ai.detected.docs")}</dt>
+              <dd>
+                <button type="button" className={styles.textBtn} onClick={() => void openExternal(engine.docs_url)}>
+                  {engine.docs_url.replace(/^https?:\/\//, "")}
+                </button>
+              </dd>
+            </> : null}
+            {note ? <dd className={styles.cliNote}>{note}</dd> : null}
+          </dl>
+        ) : null}
+      </li>
+    );
   };
 
   return (
@@ -176,75 +261,25 @@ export function DetectedAccountsBlock() {
           <p className={styles.errorRow}>{t("settingsModal.ai.detected.offline")}</p>
         ) : loadError ? (
           <div className={styles.errorRow} role="alert">
-            <span>
-              {t("settingsModal.ai.detected.detectError")} ({loadError})
-            </span>
+            <span>{t("settingsModal.ai.detected.detectError")}</span>
+            <span className={styles.grow} />
+            <button type="button" className={styles.textBtn} onClick={() => void copyText(loadError, t("settingsModal.ai.detected.detailsCopied"))}>
+              {t("settingsModal.ai.detected.copyDetails")}
+            </button>
             <button type="button" className={styles.pill} disabled={loading} onClick={() => void loadDetected(true)}>
               {t("settingsModal.ai.detected.retry")}
             </button>
           </div>
         ) : (
-          <ul className={styles.list}>
-            {rows.map((row) => {
-              const engine = engines.find((entry) => entry.detected.id === row.id);
-              // A CLI the confined engine cannot run can still be enabled for bots that
-              // use its own tools (chosen per bot in the Engine settings).
-              const nativeOnly = Boolean(engine?.native) && row.installed && !row.runnable;
-              const action = nativeOnly
-                ? ({ kind: enabledCli.has(`cli:${row.id}`) ? "enabled" : "enable" } as const)
-                : detectedRowAction(row, enabledCli);
-              const install = engine?.install;
-              return (
-                <li key={row.id} className={styles.item} data-testid={`detected-${row.id}`}>
-                  <BrandIcon name={brandOf(row)} bare size={22} />
-                  <div className={styles.text}>
-                    <span>{row.display_name}</span>
-                    <span className={styles.statusChip}>
-                      {t(engine?.outdated ? "settingsModal.ai.detected.outdated" : !row.installed ? "settingsModal.ai.detected.notInstalled" : row.auth === "signed_out" ? "settingsModal.ai.detected.foundSignInNeeded" : "settingsModal.ai.detected.installedVersion", { version: row.version ?? "?" })}
-                    </span>
-                    {engine?.path ? <span className={styles.cliPath}>{engine.path}</span> : null}
-                    {engine?.limitation === "native_tools_not_confined" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.nativeToolsOpen")}</span> : null}
-                    {engine?.native?.support === "experimental" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.experimental")}</span> : null}
-                    {engine?.limitation === "native_only" ? <span className={styles.sub}>{t("settingsModal.ai.detected.nativeOnly")}</span> : null}
-                    {engine?.limitation === "detection_only" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.detectionOnly")}</span> : null}
-                    {engine?.limitation === "codex_unconfinable" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.codexBlocked")}</span> : null}
-                    {row.runnable ? <span className={styles.sub}>{t("settingsModal.ai.detected.runnableEngine")}</span> : null}
-                    {install ? <>
-                      <code className={styles.cliCommand}>{install.command}</code>
-                      <span className={styles.sub}>{t(install.verified ? "settingsModal.ai.detected.commandVerified" : "settingsModal.ai.detected.commandUnverified")}</span>
-                    </> : null}
-                    <span className={`${styles.sub} ${action.kind === "codex_unconfinable" ? styles.subWarn : ""}`}>
-                      {subtitle(row, action.kind)}
-                    </span>
-                    {showSignIn === row.id ? (
-                      <span className={styles.sub}>
-                        {t("settingsModal.ai.detected.signInIn")}{" "}
-                        <code className={styles.code}>{engine?.login ?? signInCommand(row.id)}</code>
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className={styles.ctl}>
-                    {action.kind === "enable" || action.kind === "enabled" ? (
-                      <Switch
-                        checked={action.kind === "enabled"}
-                        disabled={action.kind === "enabled" || enabling === row.id}
-                        label={t("settingsModal.ai.detected.toggle", { name: row.display_name })}
-                        onChange={() => void onEnable(row)}
-                      />
-                    ) : null}
-                    {install?.executable ? (
-                      <button type="button" className={styles.pill} disabled={installing || approval !== null} onClick={() => void previewInstall(row.id)}>
-                        {t("settingsModal.ai.detected.install")}
-                      </button>
-                    ) : null}
-                    {install ? <button type="button" className={styles.textBtn} onClick={() => void copyCommand(install.command)}>{t("settingsModal.ai.detected.copyCommand")}</button> : null}
-                    <button type="button" className={styles.textBtn} aria-expanded={showSignIn === row.id} onClick={() => setShowSignIn((current) => current === row.id ? null : row.id)}>{t("settingsModal.ai.detected.howSignIn")}</button>
-                    {engine?.docs_url ? <button type="button" className={styles.textBtn} onClick={() => void openExternal(engine.docs_url)}>{t("settingsModal.ai.detected.docs")}</button> : null}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          <>
+            <ul className={styles.list}>{installed.map(renderRow)}</ul>
+            {available.length > 0 ? (
+              <details className={styles.moreEngines}>
+                <summary>{t("settingsModal.ai.detected.moreEngines", { count: available.length })}</summary>
+                <ul className={styles.list}>{available.map(renderRow)}</ul>
+              </details>
+            ) : null}
+          </>
         )}
       </div>
 
@@ -261,14 +296,16 @@ export function DetectedAccountsBlock() {
         {approvalRemaining === 0 && !installing ? <button type="button" className={styles.textBtn} onClick={() => setApproval(null)}>{t("settingsModal.ai.detected.dismissExpired")}</button> : null}
       </div> : null}
       {installing ? <p role="status" className={styles.hint}>{t("settingsModal.ai.detected.installRunning")}</p> : null}
-      {installOutput ? <pre className={styles.cliOutput} role="log" aria-label={t("settingsModal.ai.detected.installOutput")}>{installOutput}</pre> : null}
       <p className={styles.hint}>
         <Info size={12} aria-hidden="true" /> {t("settingsModal.ai.detected.description")}{" "}
         {t("settingsModal.ai.detected.termsNotice")}
       </p>
-      {enableError ? (
+      {problem ? (
         <p className={styles.error} role="alert">
-          {enableError}
+          {problem.message}{" "}
+          <button type="button" className={styles.textBtn} onClick={() => void copyText(problem.details, t("settingsModal.ai.detected.detailsCopied"))}>
+            {t("settingsModal.ai.detected.copyDetails")}
+          </button>
         </p>
       ) : null}
     </section>

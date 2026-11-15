@@ -107,6 +107,7 @@ impl Modify for Security {
         routes::list_providers,
         routes::detect_providers,
         routes::enable_cli_provider,
+        routes::disable_cli_provider,
         crate::bot_engine::put_engine,
         crate::bot_engine::kill_engine,
         routes::reload_providers,

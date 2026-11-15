@@ -1586,6 +1586,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/providers/cli/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch a coding CLI provider off and remember that: it is not turned on again
+         *     automatically when it is detected.
+         */
+        post: operations["disable_cli_provider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/providers/cli/enable": {
         parameters: {
             query?: never;
@@ -2602,6 +2622,8 @@ export interface components {
             auth_args: string[];
             detected: components["schemas"]["DetectedProviderDto"];
             docs_url: string;
+            /** @description `cli:<id>` is switched on in `providers.toml`. */
+            enabled: boolean;
             executable_names: string[];
             install?: null | components["schemas"]["CliInstallDto"];
             limitation?: string | null;
@@ -2610,6 +2632,11 @@ export interface components {
             native?: null | components["schemas"]["CliNativeDto"];
             outdated: boolean;
             path?: string | null;
+            /**
+             * @description The owner switched this engine off. Recorded as a `cli:<id>` entry with
+             *     `enabled = false` in `providers.toml`; such an engine is never auto-enabled.
+             */
+            user_disabled: boolean;
             version_args: string[];
         };
         CliInstallApproval: {
@@ -2956,7 +2983,7 @@ export interface components {
             detail?: string | null;
             /** @description Display name. */
             display_name: string;
-            /** @description Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`). */
+            /** @description Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`). */
             id: string;
             /** @description Whether the CLI binary was found on PATH and `--version` succeeded. */
             installed: boolean;
@@ -8867,6 +8894,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CliEngineDto"][];
+                };
+            };
+        };
+    };
+    disable_cli_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnableCliProviderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfiguredProviderDto"];
+                };
+            };
+            /** @description engine is unknown or never a provider */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
