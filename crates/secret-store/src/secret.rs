@@ -83,6 +83,9 @@ impl TryFrom<String> for SecretRef {
         if is_reserved_name(&name) {
             return Err(SecretError::InvalidName(name));
         }
+        if is_host_credential(&name) {
+            return Err(SecretError::InvalidName("reserved host credential".into()));
+        }
         Ok(Self(name))
     }
 }
@@ -106,6 +109,9 @@ impl SecretRef {
         if is_reserved_name(&name) || is_managed_oauth_name(&name) {
             return Err(SecretError::InvalidName(name));
         }
+        if is_host_credential(&name) {
+            return Err(SecretError::InvalidName("reserved host credential".into()));
+        }
         Ok(Self(name))
     }
 
@@ -114,6 +120,16 @@ impl SecretRef {
     pub fn name(&self) -> &str {
         &self.0
     }
+}
+
+/// Host credentials cannot be selected as provider/connector secrets or
+/// exported in a portable state bundle. The host accesses them by exact name.
+#[must_use]
+pub fn is_host_credential(name: &str) -> bool {
+    // Windows credential targets are case-insensitive. Reserve every ASCII
+    // case spelling on all backends so aliases cannot cross this boundary.
+    name.get(.."mcp-server/".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mcp-server/"))
 }
 
 impl fmt::Display for SecretRef {
@@ -225,6 +241,65 @@ pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, Se
     store
         .get(r.name())?
         .ok_or_else(|| SecretError::NotFound(r.name().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Portable Windows-like credential lookup, including case-variant enumeration.
+    // No OS keychain is accessed by this fixture.
+    #[derive(Default)]
+    struct CaseInsensitiveStore(crate::MemoryStore);
+
+    impl crate::SecretStore for CaseInsensitiveStore {
+        fn get(
+            &self,
+            name: &str,
+        ) -> std::result::Result<Option<crate::SecretValue>, crate::SecretError> {
+            crate::SecretStore::get(&self.0, &name.to_ascii_lowercase())
+        }
+        fn set(&self, name: &str, value: &str) -> std::result::Result<(), crate::SecretError> {
+            crate::SecretStore::set(&self.0, &name.to_ascii_lowercase(), value)
+        }
+        fn delete(&self, name: &str) -> std::result::Result<bool, crate::SecretError> {
+            crate::SecretStore::delete(&self.0, &name.to_ascii_lowercase())
+        }
+        fn list_names(&self) -> std::result::Result<Vec<String>, crate::SecretError> {
+            crate::SecretStore::list_names(&self.0).map(|names| {
+                names
+                    .into_iter()
+                    .map(|name| name.to_ascii_uppercase())
+                    .collect()
+            })
+        }
+    }
+
+    #[test]
+    fn host_credentials_cannot_become_provider_or_connector_references() {
+        let store = CaseInsensitiveStore::default();
+        store.set("mcp-server/token/id", "host value").unwrap();
+        store.set("mcp-server/meta/id", "host value").unwrap();
+        for name in [
+            "mcp-server/token/id",
+            "mcp-server/meta/id",
+            "MCP-SERVER/TOKEN/ID",
+            "MCP-SERVER/META/ID",
+            "McP-SeRvEr/ToKeN/Id",
+            "McP-SeRvEr/MeTa/Id",
+        ] {
+            assert_eq!(store.get(name).unwrap().unwrap().expose(), "host value");
+            assert!(SecretRef::new(name).is_err());
+            assert!(serde_json::from_value::<SecretRef>(serde_json::json!(name)).is_err());
+        }
+        let ordinary: SecretRef = serde_json::from_str("\"provider/key\"").unwrap();
+        assert_eq!(ordinary.name(), "provider/key");
+        store.set("provider/key", "ordinary value").unwrap();
+        assert_eq!(
+            resolve(&store, &ordinary).unwrap().expose(),
+            "ordinary value"
+        );
+    }
 }
 
 #[cfg(test)]

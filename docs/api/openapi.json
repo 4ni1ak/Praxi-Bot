@@ -4098,6 +4098,242 @@
         ]
       }
     },
+    "/v1/mcp-server/call": {
+      "post": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "Dispatch a scoped task/computer operation through the ordinary agent loop.",
+        "operationId": "call_tool",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpCallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-server/tokens": {
+      "post": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "Create a bot-bound token in the secret store (local owner only).",
+        "operationId": "create_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMcpToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpTokenGrant"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-server/tokens/{id}": {
+      "delete": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "Revoke a token and cancel its outstanding tasks (local owner only).",
+        "operationId": "revoke_token",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-server/tools": {
+      "get": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "List only explicitly enabled tools within the scoped token.",
+        "operationId": "list_tools",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "computer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "tasks",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportedMcpTool"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp/catalog": {
       "get": {
         "tags": [
@@ -8674,6 +8910,36 @@
           }
         }
       },
+      "CreateMcpToken": {
+        "type": "object",
+        "description": "Owner request: create a credential in the secret store. Only its id is\nreturned; `bot mcp serve` reads that one scoped credential by id.",
+        "required": [
+          "bots",
+          "scopes"
+        ],
+        "properties": {
+          "bots": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpScope"
+            },
+            "uniqueItems": true
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateSession": {
         "type": "object",
         "required": [
@@ -9458,6 +9724,32 @@
           "message": {
             "type": "string",
             "description": "Human-readable message."
+          }
+        }
+      },
+      "ExportedMcpTool": {
+        "type": "object",
+        "description": "MCP tool metadata. All returned text is untrusted data.",
+        "required": [
+          "name",
+          "description",
+          "input_schema",
+          "read_only",
+          "untrusted_output"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "input_schema": {},
+          "name": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "untrusted_output": {
+            "type": "boolean"
           }
         }
       },
@@ -11192,6 +11484,25 @@
           "auth_required"
         ]
       },
+      "McpCallInput": {
+        "type": "object",
+        "description": "One MCP operation. `bot` is bound by the stdio server's --bot setting.",
+        "required": [
+          "bot",
+          "name"
+        ],
+        "properties": {
+          "arguments": {},
+          "bot": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "McpCatalogEntryDto": {
         "type": "object",
         "description": "An entry of the curated MCP catalog (`GET /v1/mcp/catalog`).",
@@ -11415,6 +11726,14 @@
             "description": "Secret name (store it with `POST /v1/secrets/{name}`)."
           }
         }
+      },
+      "McpScope": {
+        "type": "string",
+        "description": "Independent MCP capabilities. Neither permits owner management endpoints.",
+        "enum": [
+          "mcp:tasks",
+          "mcp:computer"
+        ]
       },
       "McpServerChanged": {
         "type": "object",
@@ -11959,6 +12278,41 @@
           "error",
           "quarantined"
         ]
+      },
+      "McpTokenGrant": {
+        "type": "object",
+        "description": "Nonsecret grant, returned to the owner after storing a credential.",
+        "required": [
+          "id",
+          "bots",
+          "scopes",
+          "expires_at_ms"
+        ],
+        "properties": {
+          "bots": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpScope"
+            },
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
       },
       "McpToolDto": {
         "type": "object",
@@ -14581,6 +14935,9 @@
     },
     {
       "name": "doctor"
+    },
+    {
+      "name": "mcp-server"
     }
   ]
 }

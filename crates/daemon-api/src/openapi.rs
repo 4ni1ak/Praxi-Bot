@@ -11,7 +11,7 @@ use utoipa::{Modify, OpenApi};
 use crate::{
     changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
     fill_routes, host, host_links, knowledge, knowledge_settings, live_view, mcp, mcp_routes,
-    routes, skill_management, skills, sse, web, web_routes,
+    mcp_server, routes, skill_management, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -135,6 +135,8 @@ impl Modify for Security {
         mcp_routes::mcp_auth_status,
         mcp_routes::logout_mcp_auth,
         mcp_routes::set_secret,
+        mcp_server::create_token, mcp_server::revoke_token,
+        mcp_server::list_tools, mcp_server::call_tool,
         composio_routes::composio_status,
         composio_routes::composio_set_key,
         composio_routes::composio_remove_key,
@@ -182,6 +184,8 @@ impl Modify for Security {
         composio::ComposioConnState, composio::ComposioStatusDto, composio::ComposioKeyInput,
         composio::ComposioToolkitDto, composio::ComposioCatalogDto, composio::ComposioAppDto,
         composio::ComposioConnectDto, composio::ComposioEnabledInput, composio::ComposioDisconnectDto,
+        mcp_server::McpScope, mcp_server::McpTokenGrant, mcp_server::CreateMcpToken,
+        mcp_server::McpCallInput, mcp_server::ExportedMcpTool,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,
@@ -213,7 +217,7 @@ impl Modify for Security {
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
         (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"),
-        (name = "skills"), (name = "doctor")
+        (name = "skills"), (name = "doctor"), (name = "mcp-server")
     )
 )]
 pub struct ApiDoc;

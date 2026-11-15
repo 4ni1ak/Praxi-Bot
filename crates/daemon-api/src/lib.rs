@@ -36,6 +36,7 @@ mod knowledge_settings;
 pub mod live_view;
 pub mod mcp;
 mod mcp_routes;
+pub mod mcp_server;
 pub mod openapi;
 pub mod peer;
 pub mod policy;
@@ -192,6 +193,7 @@ struct Inner {
     knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
+    mcp_server: parking_lot::Mutex<mcp_server::McpServerBook>,
     /// Composio app connections (see [`AppState::set_composio`]).
     composio: OnceLock<Arc<dyn ComposioControl>>,
     /// E-mail account management (see [`AppState::set_email`]).
@@ -361,6 +363,7 @@ impl AppState {
             host_links: OnceLock::new(),
             knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
+            mcp_server: parking_lot::Mutex::new(mcp_server::McpServerBook::default()),
             composio: OnceLock::new(),
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
@@ -907,6 +910,13 @@ fn api_routes() -> Router<AppState> {
     use routes as r;
     use web_routes as w;
     Router::new()
+        .route("/v1/mcp-server/tokens", post(mcp_server::create_token))
+        .route(
+            "/v1/mcp-server/tokens/{id}",
+            axum::routing::delete(mcp_server::revoke_token),
+        )
+        .route("/v1/mcp-server/tools", get(mcp_server::list_tools))
+        .route("/v1/mcp-server/call", post(mcp_server::call_tool))
         .route("/v1/host", get(host::status))
         .route("/v1/hosts", get(host_links::list))
         .route("/v1/hosts/pair", post(host_links::pair))

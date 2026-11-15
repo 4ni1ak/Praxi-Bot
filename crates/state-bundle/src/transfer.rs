@@ -355,6 +355,9 @@ pub(crate) async fn receive(
         return Err(invalid("secret names mismatch"));
     }
     for name in secrets.keys() {
+        if secret_store::is_host_credential(name) {
+            return Err(invalid("host credentials cannot be imported"));
+        }
         secret_store::validate_name(name)?;
         // An imported OAuth record would plant someone else's sign-in.
         if secret_store::is_managed_oauth_name(name) {

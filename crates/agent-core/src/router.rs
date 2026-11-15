@@ -515,6 +515,7 @@ impl TurnExecutor {
     async fn route_first_counted(&self, ctx: &RunCtx, text: &str) -> Option<Decision> {
         if ctx.sub.is_some()
             || ctx.parent_run_id.is_some()
+            || ctx.initiator == protocol::InitiatorKind::ExternalAgent
             || ctx.initiator == protocol::InitiatorKind::ExternalSchedule
         {
             return None;

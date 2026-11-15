@@ -320,8 +320,21 @@ pub(crate) async fn guard(State(state): State<AppState>, mut req: Request, next:
             None if is_events_route(&req) => query_token(req.uri().query()),
             None => None,
         };
-        let ok = presented.is_some_and(|t| ct_eq(t.as_bytes(), state.token().as_bytes()));
-        if !ok {
+        let scoped = presented.filter(|t| crate::mcp_server::looks_scoped(t));
+        if let Some(token) = scoped {
+            let Some(principal) = crate::mcp_server::authenticate(&state, token) else {
+                return with_cors(ApiError::unauthorized().into_response(), origin, false);
+            };
+            if !crate::mcp_server::scoped_path_allowed(req.method(), req.uri().path()) {
+                return with_cors(
+                    ApiError::forbidden("scoped MCP token does not allow this endpoint")
+                        .into_response(),
+                    origin,
+                    false,
+                );
+            }
+            req.extensions_mut().insert(principal);
+        } else if !presented.is_some_and(|t| ct_eq(t.as_bytes(), state.token().as_bytes())) {
             return with_cors(ApiError::unauthorized().into_response(), origin, false);
         }
     }

@@ -4,6 +4,7 @@
 
 mod c225;
 mod composio_approvals;
+mod external_agent;
 mod fill_secret;
 mod planning_pause;
 mod usage;

@@ -251,6 +251,13 @@ impl TurnExecutor {
         specs: &[ToolSpec],
         cancel: &CancellationToken,
     ) -> Result<ModelOut, ExecError> {
+        // Central boundary covers primary models, fallbacks and child roles.
+        // Native CLI tools cannot honor the per-call external-agent gate.
+        if self.sh.ctx(run)?.initiator == protocol::InitiatorKind::ExternalAgent {
+            return Err(xe(
+                "native CLI sessions are not available to external agents",
+            ));
+        }
         if self.sh.ctx(run)?.initiator == protocol::InitiatorKind::ExternalSchedule {
             return Err(xe(
                 "CLI executors are unavailable for externally supplied schedules",
