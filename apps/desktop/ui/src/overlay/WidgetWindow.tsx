@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { CircleCheck, LoaderCircle, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -10,6 +11,12 @@ import {
 import { i18n } from "../i18n";
 import { useApplyAppearance } from "../state/useApplyAppearance";
 import {
+  reduceWidget,
+  WIDGET_CONFIRMED_MS,
+  WIDGET_STOP_INITIAL,
+  type WidgetView
+} from "../state/stopStatus";
+import {
   type AppSettings,
   DEFAULT_SETTINGS,
   loadSettings,
@@ -17,6 +24,7 @@ import {
 } from "../store/settingsStore";
 import {
   type ControlSnapshot,
+  dismissStopWidget,
   getControlState,
   giveBackControl,
   INITIAL_CONTROL_SNAPSHOT,
@@ -33,9 +41,35 @@ import styles from "./WidgetWindow.module.css";
 export function WidgetWindow() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
-  const [controlState, setControlState] = useState<ControlSnapshot>(
-    INITIAL_CONTROL_SNAPSHOT
-  );
+  // Every read, event and command reply goes through `reduceWidget`: modes only from
+  // newer revisions, Stop cursors only forward, a failed read is "could not confirm".
+  const [view, setView] = useState<WidgetView<ControlSnapshot>>({
+    stop: WIDGET_STOP_INITIAL,
+    lastRev: -1,
+    control: INITIAL_CONTROL_SNAPSHOT
+  });
+  const observe = useCallback((snap: ControlSnapshot | null) => {
+    const failed = snap === null || snap.stopSeq === undefined;
+    setView((prev) => reduceWidget(prev, failed ? null : snap, performance.now()));
+  }, []);
+  const controlState = view.control;
+  const stopState = view.stop;
+
+  // Native only knows whether a Stop is still unconfirmed (the main window acks it
+  // once every run it targeted is terminal). The ack emits no event: poll meanwhile.
+  useEffect(() => {
+    if (stopState.kind === "pending") {
+      const id = window.setInterval(() => {
+        void getControlState().then(observe);
+      }, 1500);
+      return () => window.clearInterval(id);
+    }
+    if (stopState.kind === "confirmed") {
+      const id = window.setTimeout(() => observe(null), WIDGET_CONFIRMED_MS + 50);
+      return () => window.clearTimeout(id);
+    }
+    return undefined;
+  }, [stopState, observe]);
 
   useEffect(() => {
     let mounted = true;
@@ -49,20 +83,20 @@ export function WidgetWindow() {
 
     void getControlState().then((snap) => {
       if (!mounted) return;
-      setControlState(snap);
+      observe(snap);
     });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [observe]);
 
   useApplyAppearance(settings, undefined, true);
 
   useEffect(() => {
     return subscribeOverlayEvents({
       onControlStateChanged: (snapshot) => {
-        setControlState(snapshot);
+        observe(snapshot);
       },
       onSettingsUpdated: (updated) => {
         setSettings(updated);
@@ -71,20 +105,23 @@ export function WidgetWindow() {
         }
       }
     });
-  }, []);
+  }, [observe]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (matchesHotkeyEvent(event, controlState.stopHotkey)) {
         event.preventDefault();
-        void stopBotRun().then(setControlState);
+        // One press = one Stop (never on key repeat).
+        if (!event.repeat) {
+          void stopBotRun().then(observe);
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [controlState.stopHotkey]);
+  }, [controlState.stopHotkey, observe]);
 
   const handleDragMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !isTauriRuntime()) {
@@ -96,17 +133,17 @@ export function WidgetWindow() {
   };
 
   const handleStop = () => {
-    void stopBotRun().then(setControlState);
+    void stopBotRun().then(observe);
   };
 
   const handlePauseToggle = () => {
     if (controlState.mode === "paused") {
       void resumeBotRun()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     } else if (controlState.mode === "bot_driving") {
       void pauseBotRun()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     }
   };
@@ -114,11 +151,11 @@ export function WidgetWindow() {
   const handleWheelToggle = () => {
     if (controlState.mode === "human_driving") {
       void giveBackControl()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     } else {
       void takeTheWheel()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     }
   };
@@ -156,6 +193,13 @@ export function WidgetWindow() {
   ]
     .filter(Boolean)
     .join(" ");
+
+  const widgetStopKey =
+    stopState.kind === "confirmed"
+      ? "widget.stopConfirmed"
+      : stopState.unknown
+        ? "widget.stopUnknown"
+        : "widget.stopPending";
 
   const stepDisplay = isHumanDriving
     ? t("widget.humanDrivingStep")
@@ -198,7 +242,35 @@ export function WidgetWindow() {
         </div>
 
         <div className={styles.stepContainer} role="status" aria-live="polite">
-          <p className={styles.stepText}>{stepDisplay}</p>
+          {stopState.kind === "none" ? (
+            <p className={styles.stepText}>{stepDisplay}</p>
+          ) : (
+            <div
+              className={styles.stopLine}
+              data-kind={stopState.kind}
+              title={t(widgetStopKey)}
+            >
+              {stopState.kind === "pending" ? (
+                <LoaderCircle aria-hidden="true" className={styles.stopSpin} />
+              ) : (
+                <CircleCheck aria-hidden="true" />
+              )}
+              <span>{t(widgetStopKey)}</span>
+              {stopState.kind === "pending" ? (
+                // No ack may ever come (daemon gone): the user can hide this window.
+                // It acknowledges nothing; the main window keeps the Stop's real state.
+                <button
+                  type="button"
+                  className={styles.stopDismiss}
+                  aria-label={t("widget.dismissStop")}
+                  title={t("widget.dismissStop")}
+                  onClick={() => void dismissStopWidget().catch(() => {})}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          )}
           {isHumanDriving && controlState.refusedActionsCount > 0 ? (
             <span className={styles.refusedInfo}>
               {t("widget.refusedBadge", {

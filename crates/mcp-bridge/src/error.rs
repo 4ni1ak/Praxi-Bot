@@ -42,6 +42,14 @@ pub enum McpError {
     /// The server is disabled in its configuration.
     #[error("MCP server `{0}` is disabled")]
     Disabled(String),
+    /// The server wants an OAuth sign-in (none stored, or it was rejected and
+    /// could not be refreshed). Only the user can fix it; it is not a failure
+    /// of the server and never counts towards a quarantine.
+    #[error(
+        "MCP server `{0}` requires authorization: sign in to it, or store an access token in \
+         the secret store and reference it under `secret_headers.Authorization`"
+    )]
+    AuthRequired(String),
     /// No server with this id is registered.
     #[error("unknown MCP server `{0}`")]
     UnknownServer(String),

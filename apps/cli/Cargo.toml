@@ -14,6 +14,7 @@ path = "src/main.rs"
 [features]
 # `bot serve --fake-provider`: deterministic echo provider (tests, demos).
 fake-provider = ["daemon-api/fake-provider"]
+local-embeddings = ["daemon-api/local-embeddings"]
 
 [dependencies]
 qrcode = { version = "0.14", default-features = false }

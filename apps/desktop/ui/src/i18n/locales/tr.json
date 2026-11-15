@@ -204,7 +204,11 @@
     "refusedBadge": "{{count}} bot eylemi reddedildi",
     "refusedBadge_other": "{{count}} bot eylemi reddedildi",
     "hotkeyHint": "Uygulamada durdur: {{hotkey}}",
-    "dragHandleAria": "Yüzen kontrol penceresini sürükle"
+    "dragHandleAria": "Yüzen kontrol penceresini sürükle",
+    "stopPending": "Durduruluyor — tüm çalışmalar doğrulanıyor…",
+    "stopConfirmed": "Durduruldu — tüm çalışmalar doğrulandı",
+    "stopUnknown": "Durduruluyor — uygulamayla henüz doğrulanamadı",
+    "dismissStop": "Durdurma göstergesini gizle (ana pencere durumu göstermeye devam eder)"
   },
   "dev": {
     "sectionTitle": "Geliştirici",
@@ -1111,7 +1115,20 @@
       "connecting": "Bağlanıyor",
       "disconnected": "Bağlı değil",
       "error": "Hata",
+      "auth_required": "Oturum açılması gerekiyor",
       "quarantined": "Karantinada"
+    },
+    "auth": {
+      "pasteLabel": "Tarayıcıdaki yönlendirme adresi",
+      "pasteSubmit": "Oturum açmayı bitir",
+      "pasteHint": "Tarayıcı başka bir bilgisayarda çalışıyorsa ve oturum açtıktan sonra hata sayfası gösteriyorsa, o sayfanın tam adresini kopyalıp buraya yapıştırın.",
+      "signIn": "Oturum aç",
+      "signOut": "Oturumu kapat",
+      "waiting": "Tarayıcıda oturum açılması bekleniyor…",
+      "signedInToast": "{{name}}: oturum açıldı",
+      "signedOutToast": "{{name}}: oturum kapatıldı",
+      "failedToast": "{{name}}: oturum açma tamamlanmadı",
+      "openFailed": "{{name}}: oturum açma sayfası tarayıcıda açılamadı"
     },
     "toolCount": "{{count}} araç",
     "toolCount_one": "{{count}} araç",
@@ -1866,5 +1883,40 @@
     "openScreen": "Ekranı aç",
     "connectionLost": "Ekran bağlantısı koptu. Yeniden bağlanılıyor…",
     "clearForeignPause": "{{owner}} duraklatmasını kaldır"
+  },
+  "stopStatus": {
+    "title": {
+      "stopping": "Durduruluyor…",
+      "unreachable": "Bu bilgisayarda durduruldu",
+      "partial": "Bazı çalışmalar durdurulamadı",
+      "expired": "Durdurma süresi doldu",
+      "unconfirmable": "Önceki durdurma doğrulanamadı",
+      "stopped": "Durduruldu",
+      "unconfirmed": "Durdurma doğrulanamadı",
+      "released": "Çalışmaların devam etmesine izin verildi"
+    },
+    "detail": {
+      "stoppingCount_one": "{{count}} çalışmadan {{stopped}} tanesi durdu; kalanların bitmesi bekleniyor.",
+      "stoppingCount_other": "{{count}} çalışmadan {{stopped}} tanesi durdu; kalanların bitmesi bekleniyor.",
+      "stoppingNone": "Daemon'dan çalışan tüm botları durdurması isteniyor…",
+      "partial": "{{count}} çalışmadan {{stopped}} tanesi durdu. Kalanlar bekletiliyor ve işlem yapamıyor; yeniden deneniyor…",
+      "expiredRetry": "Daemon bu durdurmanın kaydını artık tutmuyordu. Yalnızca hâlâ bekletilen {{held}} çalışma yeniden deneniyor; sonradan başlayan hiçbir şeye dokunulmuyor.",
+      "expiredNone": "Daemon bu durdurmanın kaydını artık tutmuyordu; bekletilen çalışmaların hiçbiri devam etmiyor.",
+      "unconfirmable": "Uygulama yeniden başlamadan önceki bir durdurma daemon'a ulaşmadı. Botlar hâlâ çalışıyorsa yeniden Durdur'a basın.",
+      "stoppedCount_one": "{{count}} çalışma durduruldu.",
+      "stoppedCount_other": "{{count}} çalışmanın tümü durduruldu.",
+      "stoppedNone": "Çalışan bot yoktu.",
+      "unreachableSweep": "Bot ve devralma girdisi burada durduruldu. Daemon'a henüz ulaşılamıyor; ulaşıldığında bu durdurma o anda açık olan TÜM çalışmaları durduracak, arada başka bir cihazdan veya bir zamanlamadan başlatılanlar dahil.",
+      "unreachableListed_one": "Bot ve devralma girdisi burada durduruldu. Daemon henüz doğrulamadı; ulaşıldığında yalnızca Durdur'a bastığınızda bilinen {{count}} çalışmayı durduracak. Yeniden deneniyor…",
+      "unreachableListed_other": "Bot ve devralma girdisi burada durduruldu. Daemon henüz doğrulamadı; ulaşıldığında yalnızca Durdur'a bastığınızda bilinen {{count}} çalışmayı durduracak. Yeniden deneniyor…",
+      "unconfirmed": "Daemon bu durdurmanın neyi durdurduğunu bildirmeden kaydını kaybetti. Hedeflenmiş olabilecek {{quarantined}} çalışma duraklatıldı ve siz karar verene kadar işlem yapamaz.",
+      "released": "Duraklatılan çalışmaların devam etmesine izin verdiniz. Hiçbir şey iptal edilmedi.",
+      "stoppingSweep": "Daemon'dan durdurması isteniyor. Bu durdurma, daemon onu aldığında açık olan TÜM çalışmaları durduracak; arada başka bir cihazdan veya bir zamanlamadan başlatılanlar dahil (Durdur'a bastığınızda uygulamanın güncel bir çalışma listesi yoktu)."
+    },
+    "notAudited": "Denetim günlüğüne kaydedilmedi",
+    "progressLabel": "Durdurulan çalışmalar",
+    "dismiss": "Kapat",
+    "stopAllNow": "Hepsini şimdi durdur",
+    "letContinue": "Devam etsinler"
   }
 }

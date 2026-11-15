@@ -98,7 +98,10 @@ fn is_mailbox_password(name: &str) -> bool {
 
 /// Select secrets explicitly; the safe default is none.
 /// `All` leaves out mailbox secrets (`email/<account>/password`, `email/<account>/api_key`); they are
-/// exported only when named in `Names`.
+/// exported only when named in `Names`.  MCP OAuth records (`mcp/<server>/oauth`,
+/// access and refresh tokens) never leave the secret store: `All` skips them
+/// and naming one is an error (there is no opt-in; sign in again on the
+/// other machine).
 #[derive(Debug, Clone, Default)]
 pub enum SecretSelection {
     #[default]
@@ -243,10 +246,16 @@ pub async fn export(
         SecretSelection::All => store
             .list_names()?
             .into_iter()
-            .filter(|n| !is_mailbox_password(n))
+            .filter(|n| !is_mailbox_password(n) && !secret_store::is_managed_oauth_name(n))
             .collect(),
         SecretSelection::Names(names) => names,
     };
+    if let Some(name) = names
+        .iter()
+        .find(|n| secret_store::is_managed_oauth_name(n))
+    {
+        return Err(secret_store::SecretError::InvalidName(name.clone()).into());
+    }
     names.sort();
     names.dedup();
     if !names.is_empty() {
