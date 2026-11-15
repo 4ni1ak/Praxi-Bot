@@ -9,7 +9,7 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, knowledge,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, fill_routes, host, knowledge,
     knowledge_settings, live_view, mcp, mcp_routes, routes, skills, sse, web, web_routes,
 };
 
@@ -125,6 +125,13 @@ impl Modify for Security {
         mcp_routes::mcp_auth_status,
         mcp_routes::logout_mcp_auth,
         mcp_routes::set_secret,
+        fill_routes::list_fill_secrets,
+        fill_routes::create_fill_secret,
+        fill_routes::update_fill_secret,
+        fill_routes::delete_fill_secret,
+        fill_routes::list_fill_grants,
+        fill_routes::create_fill_grant,
+        fill_routes::revoke_fill_grant,
         email_routes::list_email_accounts,
         email_routes::create_email_account,
         email_routes::update_email_account,
@@ -147,12 +154,12 @@ impl Modify for Security {
         dto::CategoryDecisionDto, dto::ControlMode, dto::ControlStateInput,
         dto::ControlStateDto, dto::LatestCursor, dto::ControlVerdict, dto::ControlDecisionInput,
         dto::ControlDecisionResponse, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
-        dto::ConfiguredProviderDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
+        dto::ConfiguredProviderDto, dto::ModelMetadataDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
         dto::ParseSchedule, dto::ParsedSchedule, dto::AcceptedResponse, dto::ChannelDto, dto::PairCodeDto, dto::ScheduleChanged, dto::ScheduleChangeKind,
-        mcp::McpTransportKind, mcp::McpStatus, mcp::McpServerDto, mcp::McpTransportObject,
+        mcp::McpTransportKind, mcp::McpStatus, mcp::McpErrorKind, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
         mcp::McpOAuthConfig, mcp::McpAuthState, mcp::McpAuthStart, mcp::McpAuthCallback,
-        mcp::McpCatalogInstallDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
+        mcp::McpCatalogInstallDto, mcp::McpFolderDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,
@@ -169,6 +176,8 @@ impl Modify for Security {
         skills::AvailableSkillDto, skills::OwnSkillDto, skills::BotSkillsDto, skills::PutBotSkillsInput,
         doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
         doctor_routes::RepairResult,
+        fill_routes::FillSecretDto, fill_routes::CreateFillSecret, fill_routes::UpdateFillSecret,
+        fill_routes::FillGrantDto, fill_routes::CreateFillGrant,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),

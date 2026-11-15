@@ -2700,6 +2700,397 @@
         ]
       }
     },
+    "/v1/fill-grants": {
+      "get": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "List the standing grants.",
+        "operationId": "list_fill_grants",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FillGrantDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Create a standing grant: \"this secret on this exact origin without asking\".",
+        "operationId": "create_fill_grant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFillGrant"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillGrantDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "the origin is not on the secret's allowed list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-grants/{id}": {
+      "delete": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Revoke a standing grant.",
+        "operationId": "revoke_fill_grant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Grant id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-secrets": {
+      "get": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "List the fill secrets: names and allow-lists, never values.",
+        "operationId": "list_fill_secrets",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FillSecretDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "no fill secrets in this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Create a fill secret with its allow-lists. The value is write-only.",
+        "operationId": "create_fill_secret",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFillSecret"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillSecretDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad name, value or allow-list entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the name exists; use PUT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-secrets/{name}": {
+      "put": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Change a fill secret's value and/or allow-lists.",
+        "operationId": "update_fill_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name, may contain `/`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFillSecret"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillSecretDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Delete a fill secret, its value and its standing grants.",
+        "operationId": "delete_fill_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name, may contain `/`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/health": {
       "get": {
         "tags": [
@@ -3628,6 +4019,17 @@
         ],
         "summary": "Configured providers, catalog entries and the models each configured\nprovider offers (fetched live, with a short timeout; failures are reported\nper provider and never fail the route).",
         "operationId": "list_providers",
+        "parameters": [
+          {
+            "name": "chat_only",
+            "in": "query",
+            "description": "Default true: omit deprecated and non-chat models. False exposes all\nkinds for advanced clients; it does not change bot execution.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -6171,12 +6573,19 @@
             "type": "boolean",
             "description": "Is the configured default."
           },
+          "model_details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelMetadataDto"
+            },
+            "description": "Presentation metadata: recommended models first by rank, then the rest\nby display name. Split on `recommended` for an \"All models\" expander.\nNo model is added just because it appears in the curated table."
+          },
           "models": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Model ids the provider reports (empty without a listing)."
+            "description": "Model ids in the same order as `model_details`. By default only current\nchat candidates are shown; `?chat_only=false` includes everything."
           },
           "models_error": {
             "type": [
@@ -6383,6 +6792,56 @@
               "null"
             ],
             "description": "Title (default `New chat`)."
+          }
+        }
+      },
+      "CreateFillGrant": {
+        "type": "object",
+        "description": "Body of `POST /v1/fill-grants`.",
+        "required": [
+          "secret",
+          "origin"
+        ],
+        "properties": {
+          "origin": {
+            "type": "string",
+            "description": "The exact origin; it must already be on the secret's allowed list."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The secret."
+          }
+        }
+      },
+      "CreateFillSecret": {
+        "type": "object",
+        "description": "Body of `POST /v1/fill-secrets`.",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name, letters/digits/`.`/`_`/`-` with `/` separators, at most 64 bytes."
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact origins like `https://github.com` (scheme, host, port; no wildcard)."
+          },
+          "programs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Verified desktop program identities."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value. Write-only: no route returns it."
           }
         }
       },
@@ -7237,6 +7696,77 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "FillGrantDto": {
+        "type": "object",
+        "description": "A standing grant: this secret on this exact origin without asking.",
+        "required": [
+          "id",
+          "secret",
+          "origin",
+          "created_at_ms"
+        ],
+        "properties": {
+          "created_at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time, milliseconds since the epoch.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Id used to revoke it."
+          },
+          "origin": {
+            "type": "string",
+            "description": "The exact origin."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The secret."
+          }
+        }
+      },
+      "FillSecretDto": {
+        "type": "object",
+        "description": "One fill secret as the owner sees it. Never the value.",
+        "required": [
+          "name",
+          "origins",
+          "programs",
+          "has_value",
+          "updated_at_ms"
+        ],
+        "properties": {
+          "has_value": {
+            "type": "boolean",
+            "description": "Whether a value is stored."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name the assistant writes in `secret` (for example `login/github`)."
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact web origins the secret may be typed on."
+          },
+          "programs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Verified desktop program identities the secret may be typed into."
+          },
+          "updated_at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last change, milliseconds since the epoch.",
+            "minimum": 0
           }
         }
       },
@@ -8759,6 +9289,17 @@
               "type": "string"
             }
           },
+          "folder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpFolderDto",
+                "description": "A folder to collect first (filesystem servers)."
+              }
+            ]
+          },
           "required_secrets": {
             "type": "array",
             "items": {
@@ -8796,6 +9337,39 @@
               "null"
             ],
             "description": "Endpoint (http)."
+          }
+        }
+      },
+      "McpErrorKind": {
+        "type": "string",
+        "description": "Class of the last connect error of an MCP server, so a UI can show a\nlocalized \"what to do\" next to the raw `error` text.",
+        "enum": [
+          "runtime_missing",
+          "spawn",
+          "closed",
+          "timeout",
+          "config",
+          "needs_folder",
+          "other"
+        ]
+      },
+      "McpFolderDto": {
+        "type": "object",
+        "description": "A folder the user must choose when adding a catalog entry; the app appends\nit as the last argument.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Label of the folder field."
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A safe default offered to the user (their Documents folder), if there is one."
           }
         }
       },
@@ -8954,6 +9528,17 @@
             ],
             "description": "Most recent error, if any."
           },
+          "error_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpErrorKind",
+                "description": "Class of `error`, for a localized hint."
+              }
+            ]
+          },
           "headers": {
             "type": "object",
             "description": "Plain request headers (http). Not secrets.",
@@ -9010,6 +9595,13 @@
           "status": {
             "$ref": "#/components/schemas/McpStatus",
             "description": "Connection state."
+          },
+          "stderr_tail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Last lines the server wrote to stderr (secret-redacted, bounded) while\nit is in an error state; empty otherwise."
           },
           "tool_allow": {
             "type": "array",
@@ -9589,6 +10181,50 @@
           "steer",
           "queue"
         ]
+      },
+      "ModelMetadataDto": {
+        "type": "object",
+        "description": "Presentation only: never changes execution capabilities or configured ids.",
+        "required": [
+          "id",
+          "display_name",
+          "kind",
+          "recommended",
+          "deprecated"
+        ],
+        "properties": {
+          "deprecated": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,\n`video`, or `other`. Kind describes primary use, not input modalities."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short annotation such as `preview` or a live `OpenRouter` `free` id."
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "recommended_rank": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "Modifier": {
         "type": "string",
@@ -11351,6 +11987,39 @@
           "physical_px",
           "css_px"
         ]
+      },
+      "UpdateFillSecret": {
+        "type": "object",
+        "description": "Body of `PUT /v1/fill-secrets/{name}`. Every field is optional; a value,\nwhen given, replaces the stored one.",
+        "properties": {
+          "origins": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the allowed origins."
+          },
+          "programs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the allowed programs."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New value (write-only)."
+          }
+        }
       },
       "UsageSummary": {
         "type": "object",

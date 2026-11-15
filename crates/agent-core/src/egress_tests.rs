@@ -2780,3 +2780,89 @@ async fn a_script_listing_an_untrusted_skill_taints_its_next_inner_shell() {
     );
     lp.cancel(run).unwrap();
 }
+
+/// A secret-fill tool with an owner standing grant: the grant stands in for
+/// the card in a clean run, but never in a run that read untrusted content.
+struct GrantedFill {
+    spec: tool_registry::ToolSpec,
+    count: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl tool_registry::Tool for GrantedFill {
+    fn spec(&self) -> &tool_registry::ToolSpec {
+        &self.spec
+    }
+    fn always_ask_for(&self, _input: &serde_json::Value) -> bool {
+        true
+    }
+    async fn standing_grant(
+        &self,
+        _ctx: &tool_registry::ToolContext,
+        _input: &serde_json::Value,
+    ) -> Option<tool_registry::StandingGrant> {
+        Some(tool_registry::StandingGrant {
+            id: "g1".into(),
+            label: "secret x on https://example.test".into(),
+        })
+    }
+    async fn call(
+        &self,
+        _ctx: &tool_registry::ToolContext,
+        _input: serde_json::Value,
+    ) -> Result<tool_registry::ToolOutput, tool_registry::ToolError> {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        Ok(tool_registry::ToolOutput::text("typed"))
+    }
+}
+
+#[tokio::test]
+async fn a_standing_grant_does_not_waive_the_ask_of_a_tainted_run() {
+    for tainted in [false, true] {
+        let env = setup();
+        let read = read_tool("fs_read", ContentClass::untrusted_private());
+        let fill = Arc::new(GrantedFill {
+            spec: tool_registry::ToolSpec {
+                name: "browser_fill".into(),
+                description: "fill".into(),
+                input_schema: json!({"type": "object"}),
+                effect: Effect::Write,
+                category: PermissionCategory::Browser,
+                platforms: vec![protocol::Platform::All],
+                content: builtin_tools::classify("browser_fill").unwrap(),
+            },
+            count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut script = Vec::new();
+        if tainted {
+            script.push(calls(&[("c1", "fs_read", json!({"path": "page.html"}))]));
+        }
+        script.push(calls(&[("c2", "browser_fill", json!({"secret": "x"}))]));
+        script.push(text("done"));
+        let fake = Fake::new(script);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[t(&read)],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        lp.tool_registry()
+            .register(Arc::clone(&fill) as Arc<dyn tool_registry::Tool>);
+        let mut rx = lp.subscribe();
+        let run = lp.run_turn(env.chat, "go").unwrap();
+        if tainted {
+            let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+            let Event::ApprovalNeeded(card) = &event else {
+                unreachable!()
+            };
+            assert_eq!(card.tool_name, "browser_fill");
+            assert_eq!(fill.count.load(Ordering::SeqCst), 0);
+            lp.cancel(run).unwrap();
+        } else {
+            assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+            assert_eq!(fill.count.load(Ordering::SeqCst), 1);
+        }
+    }
+}

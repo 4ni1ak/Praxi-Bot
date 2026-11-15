@@ -760,6 +760,9 @@ pub(crate) struct Shared {
     pub spawn_gate: Mutex<()>,
     /// Skills index (`AgentLoop::with_skills`).
     pub skills: OnceLock<skills::SkillIndex>,
+    /// Owner-stored fill secrets (from the builtin tool config); workflow
+    /// replay types them through the same checks as the fill tools.
+    pub fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.
@@ -1686,6 +1689,26 @@ impl Shared {
             .collect();
         specs.sort_by(|a, b| a.name.cmp(&b.name));
         specs
+    }
+
+    /// The discovery-mode prompt block for this bot, or `None` when the model
+    /// was handed its tools directly (no `find_tool` among `specs`) or the bot
+    /// may use none of the advertised families. Built from the permission-
+    /// filtered registry, independent of per-turn router hints. Unchanged
+    /// registry and policy inputs produce identical bytes across turns.
+    pub(crate) fn discovery_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        if !specs.iter().any(|s| s.name == agent_router::FIND_TOOL) {
+            return None;
+        }
+        let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
+        crate::discovery_prompt::block(
+            visible
+                .iter()
+                .filter(|s| {
+                    self.decide(ctx, &s.name, s.effect, s.category, &Value::Null) != Decision::Deny
+                })
+                .map(|s| s.name.as_str()),
+        )
     }
 
     pub fn audit(&self, ctx: &RunCtx, actor: &str, action: &str, detail: &serde_json::Value) {

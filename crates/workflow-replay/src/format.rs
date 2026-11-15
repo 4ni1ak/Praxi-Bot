@@ -182,6 +182,10 @@ pub struct DesktopAction {
     /// Click delivery (`accessibility`, `app_post`, `global`); default accessibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
+    /// NAME of an owner-stored fill secret to type instead of `value`. A
+    /// recorded step keeps only this reference; the value is never in the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
 }
 
 /// A browser step.
@@ -198,6 +202,10 @@ pub struct BrowserAction {
     /// Value template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// NAME of an owner-stored fill secret to type instead of `value` (fill
+    /// steps only). A recorded step keeps only this reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
 }
 
 /// Open a URL in the browser.
@@ -319,9 +327,12 @@ impl Step {
                 format!(
                     "desktop {}{target}{}",
                     snake(&d.action),
-                    d.value
-                        .as_ref()
-                        .map_or(String::new(), |v| format!(" value={v:?}"))
+                    d.secret.as_ref().map_or_else(
+                        || d.value
+                            .as_ref()
+                            .map_or(String::new(), |v| format!(" value={v:?}")),
+                        |n| format!(" secret={n:?}")
+                    )
                 )
             }
             Self::BrowserAction(b) => {
@@ -332,9 +343,12 @@ impl Step {
                 format!(
                     "browser {}{target}{}",
                     snake(&b.action),
-                    b.value
-                        .as_ref()
-                        .map_or(String::new(), |v| format!(" value={v:?}"))
+                    b.secret.as_ref().map_or_else(
+                        || b.value
+                            .as_ref()
+                            .map_or(String::new(), |v| format!(" value={v:?}")),
+                        |n| format!(" secret={n:?}")
+                    )
                 )
             }
             Self::Navigate(n) => format!("navigate to {}", n.url),
@@ -659,6 +673,23 @@ fn validate_step(i: usize, s: &Step) -> Result<(), WorkflowError> {
     };
     match s {
         Step::DesktopAction(d) => match d.action {
+            _ if d.secret.is_some()
+                && !(matches!(
+                    d.action,
+                    DesktopActionKind::Type | DesktopActionKind::SetValue
+                ) && d.value.is_none()
+                    && d.target.is_some()) =>
+            {
+                bad("a secret goes in a type / set_value step with a target and no value")
+            }
+            _ if d
+                .secret
+                .as_deref()
+                .is_some_and(|n| secret_store::validate_fill_name(n).is_err()) =>
+            {
+                bad("the secret name is not a valid fill secret name")
+            }
+            DesktopActionKind::Type | DesktopActionKind::SetValue if d.secret.is_some() => Ok(()),
             DesktopActionKind::Click if d.target.is_none() => bad("click needs a target"),
             DesktopActionKind::Type | DesktopActionKind::SetValue
                 if d.target.is_none() || d.value.is_none() =>
@@ -669,6 +700,21 @@ fn validate_step(i: usize, s: &Step) -> Result<(), WorkflowError> {
             _ => Ok(()),
         },
         Step::BrowserAction(b) => match b.action {
+            _ if b.secret.is_some()
+                && !(b.action == BrowserActionKind::Fill
+                    && b.value.is_none()
+                    && b.target.is_some()) =>
+            {
+                bad("a secret goes in a fill step with a target and no value")
+            }
+            _ if b
+                .secret
+                .as_deref()
+                .is_some_and(|n| secret_store::validate_fill_name(n).is_err()) =>
+            {
+                bad("the secret name is not a valid fill secret name")
+            }
+            BrowserActionKind::Fill if b.secret.is_some() => Ok(()),
             BrowserActionKind::Click if b.target.is_none() => bad("click needs a target"),
             BrowserActionKind::Fill | BrowserActionKind::Select
                 if b.target.is_none() || b.value.is_none() =>
@@ -734,6 +780,7 @@ mod tests {
             action: DesktopActionKind::Type,
             value: Some("{text}".into()),
             method: None,
+            secret: None,
         }));
         w.steps.push(Step::Tool(ToolStep {
             tool: "fs_write".into(),

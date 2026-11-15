@@ -15,15 +15,22 @@ use browser_cdp::{
     ActionResult, Browser, DialogAction, DialogOptions, LaunchOptions, Page, ScreenshotOptions,
     ScreenshotTarget, SnapshotOptions, WaitCondition,
 };
+use secret_store::{FillSecrets, sanitize_label};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tool_registry::{
-    Effect, PermissionCategory, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
+    Effect, PermissionCategory, StandingGrant, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
 };
 
 use crate::control::{ActionPermit, ControlRequest, DesktopControlGate};
+use crate::fill_secret::{Source, names_a_secret, refused, scrub, source};
 use crate::util::{exec_err, finish_text, parse, save_file, spec};
+
+pub use browser_cdp::FieldTarget;
+
+/// Why a driver cannot type a secret.
+const NO_SECRET_FILL: &str = "this browser backend cannot tell which page frame holds a field, so secrets are not typed with it";
 
 /// What `browser_wait` waits for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +86,25 @@ pub trait BrowserDriver: Send + Sync {
     }
     /// Replace the text of input `r`.
     async fn fill(&self, r: &str, text: &str) -> Result<String, String>;
+    /// Where field `r` lives right now (label, role, and the origin of the
+    /// FRAME that holds it, as the browser reports it). Backends that cannot
+    /// say refuse, so no secret is ever typed through them.
+    async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+        let _ = r;
+        Err(NO_SECRET_FILL.into())
+    }
+    /// Type `text` (an owner-stored secret) into field `r`, but only while the
+    /// field's frame origin, re-read from the browser immediately before the
+    /// text is inserted, satisfies `accept`. Never put `text` in the result.
+    async fn fill_secret(
+        &self,
+        r: &str,
+        text: &str,
+        accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+    ) -> Result<String, String> {
+        let _ = (r, text, accept);
+        Err(NO_SECRET_FILL.into())
+    }
     /// Choose option `value` in select `r`.
     async fn select(&self, r: &str, value: &str) -> Result<String, String>;
     /// Press a key or chord such as `Enter` or `Control+a`.
@@ -606,6 +632,24 @@ impl BrowserDriver for CdpDriver {
         render_action(&acted)
     }
 
+    async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+        with_session!(self, None, false, |sess| {
+            sess.page.field_target(r).await
+        })
+    }
+
+    async fn fill_secret(
+        &self,
+        r: &str,
+        text: &str,
+        accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+    ) -> Result<String, String> {
+        let acted = with_session!(self, None, false, |sess| {
+            sess.page.fill_secret(r, text, accept).await
+        })?;
+        render_action(&acted)
+    }
+
     async fn select(&self, r: &str, value: &str) -> Result<String, String> {
         let acted = with_session!(self, None, |sess| {
             sess.page.select_option(r, value).await
@@ -732,6 +776,8 @@ struct Shared {
     data_dir: PathBuf,
     control: Option<Arc<dyn DesktopControlGate>>,
     observed_epoch: Arc<std::sync::atomic::AtomicU64>,
+    /// Owner-stored secrets the fill tool may type; `None` refuses `secret`.
+    fill_secrets: Option<Arc<FillSecrets>>,
 }
 
 /// The tool context supplies the bot identity, never the model's input.
@@ -774,6 +820,7 @@ impl Shared {
                 data_dir: self.data_dir.clone(),
                 control: self.control.clone(),
                 observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                fill_secrets: self.fill_secrets.clone(),
             })
         })))
     }
@@ -787,6 +834,17 @@ pub fn managed_tools(
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
 ) -> Vec<Arc<dyn Tool>> {
+    managed_tools_with_secrets(settings, data_dir, control, None)
+}
+
+/// [`managed_tools`] whose `browser_fill` may type the owner's fill secrets.
+#[must_use]
+pub fn managed_tools_with_secrets(
+    settings: BrowserSettings,
+    data_dir: &Path,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+) -> Vec<Arc<dyn Tool>> {
     let driver = Arc::new(CdpDriver::new(settings.clone()));
     tools_with_pool(
         driver,
@@ -797,6 +855,7 @@ pub fn managed_tools(
             peers: BrowserPeers::default(),
             bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
         }),
+        fill_secrets,
     )
 }
 
@@ -814,7 +873,18 @@ pub fn tools(
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None)
+    tools_with_pool(driver, data_dir, control, None, None)
+}
+
+/// [`tools`] whose `browser_fill` may type the owner's fill secrets.
+#[must_use]
+pub fn tools_with_secrets(
+    driver: Arc<dyn BrowserDriver>,
+    data_dir: &Path,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+) -> Vec<Arc<dyn Tool>> {
+    tools_with_pool(driver, data_dir, control, None, fill_secrets)
 }
 
 fn tools_with_pool(
@@ -822,6 +892,7 @@ fn tools_with_pool(
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
     managed: Option<ManagedBrowsers>,
+    fill_secrets: Option<Arc<FillSecrets>>,
 ) -> Vec<Arc<dyn Tool>> {
     let shared = Arc::new(Shared {
         driver,
@@ -829,6 +900,7 @@ fn tools_with_pool(
         data_dir: data_dir.to_path_buf(),
         control,
         observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        fill_secrets,
     });
     let b = PermissionCategory::Browser;
     let ref_prop =
@@ -879,11 +951,12 @@ fn tools_with_pool(
             Op::Fill,
             spec(
                 "browser_fill",
-                "Replace the text of an input. Example: {\"ref\":\"e5\",\"text\":\"hello\"}",
+                "Replace the text of an input. Give exactly one of `text` (what you type) or `secret` (the name of a secret the owner stored, from secrets_list: it is typed for you and you never see the value). Example: {\"ref\":\"e5\",\"text\":\"hello\"} or {\"ref\":\"e5\",\"secret\":\"login/github\"}",
                 json!({"type":"object","properties":{
                     "ref":ref_prop,
-                    "text":{"type":"string","description":"New text."}
-                },"required":["ref","text"]}),
+                    "text":{"type":"string","description":"New text. Not with `secret`."},
+                    "secret":{"type":"string","description":"Name of an owner-stored secret to type instead of `text`."}
+                },"required":["ref"]}),
                 Effect::Write,
                 b,
             ),
@@ -1032,7 +1105,6 @@ struct BackIn {
 #[derive(Deserialize)]
 struct FillIn {
     r#ref: String,
-    text: String,
 }
 
 #[derive(Deserialize)]
@@ -1103,6 +1175,117 @@ fn check_open_url(url: &str) -> Result<(), ToolError> {
         Err(ToolError::InvalidInput(
             "browser_open only accepts full http:// or https:// URLs (or about:blank)".into(),
         ))
+    }
+}
+
+/// Type the owner's fill secret `name` into field `r`.
+///
+/// The live frame origin of the receiving field is resolved and compared with
+/// the secret's allow-list FIRST; a field that is not on the list is refused
+/// before the value is read. The value is read from the store only now, kept in
+/// memory, handed to the driver (which re-checks the frame origin immediately
+/// before inserting) and wiped on drop. Nothing returned contains it.
+///
+/// # Errors
+/// The field cannot be located, its frame origin is not on the secret's
+/// allow-list, the secret has no value, or the browser refuses; the message
+/// never contains the value.
+pub async fn fill_with_secret(
+    driver: &dyn BrowserDriver,
+    secrets: &FillSecrets,
+    r: &str,
+    name: &str,
+) -> Result<String, String> {
+    let target = driver.field_target(r).await?;
+    secrets
+        .check_browser_in(
+            name,
+            target.frame_origin.as_deref(),
+            target.top_origin.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
+    let value = secrets.resolve_value(name).map_err(|e| e.to_string())?;
+    let top = target.top_origin.clone();
+    let accept = |origin: Option<String>| {
+        secrets
+            .check_browser_in(name, origin.as_deref(), top.as_deref())
+            .is_ok()
+    };
+    let result = driver.fill_secret(r, value.expose(), &accept).await;
+    let shown = match result {
+        Ok(text) => Ok(scrub(&text, &value)),
+        Err(e) => Err(scrub(&e, &value)),
+    };
+    drop(value);
+    shown
+}
+
+impl BrowserTool {
+    fn fill_secrets(&self) -> Result<Arc<FillSecrets>, ToolError> {
+        self.shared
+            .fill_secrets
+            .clone()
+            .ok_or_else(|| exec_err("no secrets are configured on this daemon"))
+    }
+
+    /// The per-bot (and per-run mode) shared state a call runs on. The same
+    /// selection serves the call and its approval checks, so what is checked
+    /// is what will receive the text.
+    fn select_shared(&self, ctx: &ToolContext) -> Result<Arc<Shared>, ToolError> {
+        let mut shared = self.shared.for_bot(ctx.bot_id.as_deref())?;
+        if let Some(headless) = self
+            .shared
+            .control
+            .as_ref()
+            .and_then(|gate| gate.browser_headless_for_run(&ctx.run_id))
+            && let Some(driver) = shared.driver.for_headless(headless)
+        {
+            // The alternate driver is already bot-scoped. Wrapping it in
+            // `managed` would attach the other mode's profile pool.
+            shared = Arc::new(Shared {
+                driver,
+                managed: None,
+                data_dir: shared.data_dir.clone(),
+                control: shared.control.clone(),
+                observed_epoch: shared.observed_epoch.clone(),
+                fill_secrets: shared.fill_secrets.clone(),
+            });
+        }
+        Ok(shared)
+    }
+
+    /// Facts about the live receiving field of a `secret` fill, or the refusal.
+    /// Returns the secret's name, the field and the standing grant that
+    /// matches it exactly, if any.
+    async fn secret_fill_facts(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<(String, FieldTarget, Option<String>)>, ToolError> {
+        if self.op != Op::Fill {
+            return Ok(None);
+        }
+        let Source::Secret(name) = source(input, "text")? else {
+            return Ok(None);
+        };
+        let i: FillIn = parse(input.clone())?;
+        let secrets = self.fill_secrets()?;
+        let shared = self.select_shared(ctx)?;
+        let target = shared
+            .driver
+            .field_target(&i.r#ref)
+            .await
+            .map_err(exec_err)?;
+        // Refuse here, BEFORE any approval is offered, when the live frame is
+        // not on this secret's allow-list.
+        let grant = secrets
+            .check_browser_in(
+                &name,
+                target.frame_origin.as_deref(),
+                target.top_origin.as_deref(),
+            )
+            .map_err(|e| refused(&e))?;
+        Ok(Some((name, target, grant)))
     }
 }
 
@@ -1296,6 +1479,7 @@ impl BrowserTool {
                     .map_err(exec_err)?
             }
             Op::Fill => {
+                let what = source(&input, "text")?;
                 let i: FillIn = parse(input)?;
                 let permit = self.gate(run_id, "type", i.r#ref.clone()).await?;
                 if permit.needs_observation()
@@ -1323,10 +1507,21 @@ impl BrowserTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
-                permit
-                    .protect(async move { d.fill(&i.r#ref, &i.text).await })
-                    .await
-                    .map_err(exec_err)?
+                match what {
+                    Source::Text(text) => permit
+                        .protect(async move { d.fill(&i.r#ref, &text).await })
+                        .await
+                        .map_err(exec_err)?,
+                    Source::Secret(name) => {
+                        let secrets = self.fill_secrets()?;
+                        permit
+                            .protect(async move {
+                                fill_with_secret(d.as_ref(), &secrets, &i.r#ref, &name).await
+                            })
+                            .await
+                            .map_err(exec_err)?
+                    }
+                }
             }
             Op::Select => {
                 let i: SelectIn = parse(input)?;
@@ -1596,6 +1791,55 @@ impl Tool for BrowserTool {
         Some(line)
     }
 
+    /// Typing an owner-stored secret is confirmed on every call, however
+    /// permissive the policy, preset, grants or read shortcuts are.
+    fn always_ask_for(&self, input: &Value) -> bool {
+        self.op == Op::Fill && names_a_secret(input)
+    }
+
+    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant> {
+        let (name, target, grant) = self.secret_fill_facts(ctx, input).await.ok().flatten()?;
+        let id = grant?;
+        let origin = target.frame_origin?;
+        Some(StandingGrant {
+            id,
+            label: format!(
+                "secret {} on {}",
+                sanitize_label(&name, 80),
+                sanitize_label(&origin, 80)
+            ),
+        })
+    }
+
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        let Some((name, target, grant)) = self.secret_fill_facts(ctx, input).await? else {
+            return Ok(None);
+        };
+        let frame = target.frame_origin.clone().unwrap_or_default();
+        let top = target.top_origin.clone();
+        let differs = top.as_deref() != Some(frame.as_str());
+        Ok(Some(json!({
+            "kind": "secret_fill",
+            "tool": "browser_fill",
+            "secret": sanitize_label(&name, 80),
+            "field": sanitize_label(&target.name, 80),
+            "field_role": sanitize_label(&target.role, 40),
+            "frame_origin": frame,
+            "top_origin": top,
+            "frame_differs_from_top": differs,
+            "has_standing_grant": grant.is_some(),
+            "note": if differs {
+                "The field is inside an embedded frame whose origin differs from the page's: the secret goes to the frame origin shown."
+            } else {
+                "The secret value is typed by Praxi; the assistant never sees it."
+            },
+        })))
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         if self
             .shared
@@ -1607,24 +1851,7 @@ impl Tool for BrowserTool {
                 "browser is unavailable for this run's computer target",
             ));
         }
-        let mut shared = self.shared.for_bot(ctx.bot_id.as_deref())?;
-        if let Some(headless) = self
-            .shared
-            .control
-            .as_ref()
-            .and_then(|gate| gate.browser_headless_for_run(&ctx.run_id))
-            && let Some(driver) = shared.driver.for_headless(headless)
-        {
-            // The alternate driver is already bot-scoped. Wrapping it in
-            // `managed` would attach the other mode's profile pool.
-            shared = Arc::new(Shared {
-                driver,
-                managed: None,
-                data_dir: shared.data_dir.clone(),
-                control: shared.control.clone(),
-                observed_epoch: shared.observed_epoch.clone(),
-            });
-        }
+        let shared = self.select_shared(ctx)?;
         let selected = BrowserTool {
             spec: self.spec.clone(),
             op: self.op,
@@ -1651,6 +1878,19 @@ pub(crate) mod fake {
         pub on_desktop: bool,
         /// Runs inside every backend call (a human takeover landing mid-call).
         pub hook: PMutex<Option<FakeHook>>,
+        /// Where each ref lives (for `field_target`); an unknown ref errors.
+        pub targets: PMutex<std::collections::HashMap<String, FieldTarget>>,
+        /// The origin the browser reports at insertion time when it differs
+        /// from the target's (a navigation after the card was shown).
+        #[allow(clippy::option_option)]
+        // outer: "override set", inner: the reported origin
+        pub origin_at_insert: PMutex<Option<Option<String>>>,
+        /// What actually reached the page through `fill_secret`.
+        pub typed_secrets: PMutex<Vec<String>>,
+        /// The raw (pre-scrub) text `fill_secret` produced.
+        pub raw_secret_output: PMutex<String>,
+        /// Make the page echo the typed value in the action result.
+        pub echo_value: bool,
     }
 
     impl FakeBrowser {
@@ -1716,6 +1956,45 @@ pub(crate) mod fake {
         }
         async fn fill(&self, r: &str, t: &str) -> Result<String, String> {
             self.rec(&format!("fill:{r}:{t}"))
+        }
+        async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+            self.rec(&format!("field_target:{r}"))?;
+            self.targets
+                .lock()
+                .get(r)
+                .cloned()
+                .ok_or_else(|| format!("unknown ref {r}"))
+        }
+        async fn fill_secret(
+            &self,
+            r: &str,
+            text: &str,
+            accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+        ) -> Result<String, String> {
+            // The call log never carries the value.
+            self.rec(&format!("fill_secret:{r}"))?;
+            let live = match self.origin_at_insert.lock().clone() {
+                Some(o) => o,
+                None => self
+                    .targets
+                    .lock()
+                    .get(r)
+                    .and_then(|t| t.frame_origin.clone()),
+            };
+            if !accept(live) {
+                return Err(
+                    "refused: the frame is not an origin the owner allowed; nothing was typed"
+                        .into(),
+                );
+            }
+            self.typed_secrets.lock().push(text.to_owned());
+            let out = if self.echo_value {
+                format!("filled {r}; the field now shows value={text}")
+            } else {
+                format!("filled {r}")
+            };
+            self.raw_secret_output.lock().clone_from(&out);
+            Ok(out)
         }
         async fn select(&self, r: &str, v: &str) -> Result<String, String> {
             self.rec(&format!("select:{r}:{v}"))
@@ -2057,6 +2336,7 @@ mod tests {
             data_dir: dir.path().into(),
             control: None,
             observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            fill_secrets: None,
         });
         let a = shared.for_bot(Some("bot-a")).unwrap();
         let b = shared.for_bot(Some("bot-b")).unwrap();

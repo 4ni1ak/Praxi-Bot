@@ -195,23 +195,14 @@ impl Shared {
             None,
             &req,
         );
-        let class = self.content_class(ctx, name);
-        let exposure = ctx.taint.lock().exposure;
-        // `web_search` can only reach the configured search provider. Every
-        // other egress tool, including fetch, can be aimed at an arbitrary host.
-        // A click or a scroll does not carry bytes; a drag can, and
-        // `browser_click` does when `prompt_text` is set.
-        // A call that starts a program chosen by its arguments also asks after
-        // untrusted content, and the egress waiver does not cover it.
-        let must_ask = egress_must_ask(
-            exposure,
-            taint::call_can_egress(name, class, input),
-            name == "web_search",
-            ctx.profile.permissions.allow_egress_after_reads,
-        ) || executes_must_ask(exposure, class.executes);
+        let must_ask = self.gate_must_ask(ctx, name, input);
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
-        if self.always_ask(name) {
+        // The same holds for a call that types an owner-stored secret
+        // ([`Tool::always_ask_for`]): the policy level, the Full preset, read
+        // shortcuts, "this chat" / "always" grants and any run-scoped control
+        // grant sit BELOW this early return, so none of them can waive it.
+        if self.must_ask(name, input) {
             if d == Decision::Allow {
                 d = Decision::ask();
             }
@@ -264,6 +255,26 @@ impl Shared {
         }
     }
 
+    /// The taint gate for this call: egress after a read, or a program start
+    /// after untrusted content. Not a grant and not the read shortcut.
+    ///
+    /// `web_search` can only reach the configured search provider. Every other
+    /// egress tool, including fetch, can be aimed at an arbitrary host. A click
+    /// or a scroll does not carry bytes; a drag can, and `browser_click` does
+    /// when `prompt_text` is set. A call that starts a program chosen by its
+    /// arguments also asks after untrusted content, and the egress waiver does
+    /// not cover it.
+    pub(crate) fn gate_must_ask(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        let class = self.content_class(ctx, name);
+        let exposure = ctx.taint.lock().exposure;
+        egress_must_ask(
+            exposure,
+            taint::call_can_egress(name, class, input),
+            name == "web_search",
+            ctx.profile.permissions.allow_egress_after_reads,
+        ) || executes_must_ask(exposure, class.executes)
+    }
+
     /// Content class of tool `name` for this run's bot. A native step that
     /// replay or a script authorizes without a registered tool still gets its
     /// built-in class, so a launch or a shell step is never treated as a
@@ -281,10 +292,45 @@ impl Shared {
         class
     }
 
-    /// The registered tool `name` must be confirmed on every call
-    /// ([`tool_registry::Tool::always_ask`]).
-    pub(crate) fn always_ask(&self, name: &str) -> bool {
-        self.tools.get(name).is_some_and(|t| t.always_ask())
+    /// This very call must be confirmed (the tool always asks, or its
+    /// [`tool_registry::Tool::always_ask_for`] says so for this input).
+    pub(crate) fn must_ask(&self, name: &str, input: &Value) -> bool {
+        self.tools
+            .get(name)
+            .is_some_and(|t| t.always_ask() || t.always_ask_for(input))
+    }
+
+    /// An owner-created standing grant that covers exactly this call, as the
+    /// tool itself verifies it right now. Only meaningful for calls that
+    /// [`Self::must_ask`]; recorded in the audit log by id.
+    pub(crate) async fn standing_grant(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        input: &Value,
+    ) -> Option<tool_registry::StandingGrant> {
+        let tool = self.tools.get(name)?;
+        if !tool.always_ask_for(input) {
+            return None;
+        }
+        // An owner's standing grant covers the secret-fill ask. It is a grant,
+        // so it never waives the egress or executor ask of a tainted run.
+        if self.gate_must_ask(ctx, name, input) {
+            return None;
+        }
+        let tctx = tool_registry::ToolContext {
+            run_id: ctx.run_id.to_string(),
+            bot_id: Some(ctx.bot_id.to_string()),
+            ..tool_registry::ToolContext::default()
+        };
+        let grant = tool.standing_grant(&tctx, input).await?;
+        self.audit(
+            ctx,
+            "system",
+            "secret.standing_grant_used",
+            &json!({ "tool": name, "grant": grant.id, "label": grant.label }),
+        );
+        Some(grant)
     }
 
     /// Egress card for a tainted run. `None` when the run is clean, or the tool
@@ -723,13 +769,14 @@ impl Shared {
             .map_err(Some)?;
         // An always-ask tool must show the user what it does: refuse to ask
         // without details rather than fall back to the generic card.
-        if self.always_ask(name) && details.is_none() {
+        let must_ask = self.must_ask(name, input);
+        if must_ask && details.is_none() {
             return Err(Some(
                 "internal error: this tool needs approval details to be asked about; it was not run"
                     .into(),
             ));
         }
-        let once_only = details.is_some() || self.always_ask(name);
+        let once_only = details.is_some() || must_ask;
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
         let prefix = computer_approval(ctx, name, category, &mut details);
@@ -1001,7 +1048,7 @@ impl ExecPermit {
             .storage
             .decide_approval(self.approval_id, "approved");
         // Approving an always-ask tool confirms this one call only.
-        let scope = if self.sh.always_ask(&self.name) {
+        let scope = if self.sh.must_ask(&self.name, &self.input) {
             ApprovalScope::Once
         } else {
             self.scope
@@ -1222,23 +1269,31 @@ impl ToolGate for LoopGate {
                     .approval_details(&ctx, &req.tool, &req.input)
                     .await
                     .map_err(|e| format!("{}: {e}", req.tool))?;
-                sh.request_approval(
-                    &ctx,
-                    ToolCallId::new(),
-                    &req.tool,
-                    req.effect,
-                    req.category,
-                    &req.input,
-                    details,
-                )
-                .await
-                .and_then(ExecPermit::commit)
-                .map_err(|reason| {
-                    format!(
-                        "tool call was not authorized{}",
-                        reason.map_or_else(String::new, |r| format!(": {r}"))
+                if sh
+                    .standing_grant(&ctx, &req.tool, &req.input)
+                    .await
+                    .is_some()
+                {
+                    Ok(())
+                } else {
+                    sh.request_approval(
+                        &ctx,
+                        ToolCallId::new(),
+                        &req.tool,
+                        req.effect,
+                        req.category,
+                        &req.input,
+                        details,
                     )
-                })
+                    .await
+                    .and_then(ExecPermit::commit)
+                    .map_err(|reason| {
+                        format!(
+                            "permission denied by the user{}",
+                            reason.map_or_else(String::new, |r| format!(": {r}"))
+                        )
+                    })
+                }
             }
         };
         result?;

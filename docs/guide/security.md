@@ -194,7 +194,7 @@ unknown role) into the inert `imported_note` role, which is never sent to the
 model; history forwards only an allow-list of roles (user, assistant, the genuine
 control note) and ignores every other value. The daemon's own files (`bot.db`, `schedules.db`, `memory.db` with their
 WAL/SHM/journal, `control-latch.json`, `policy.json`, `host.toml`, `config.toml`,
-`mcp.toml`, `providers.toml`, `web.toml`, the Telegram state files, the
+`mcp.toml`, `providers.toml`, `web.toml`, `fill-secrets.json`, the Telegram state files, the
 `peer`, `bots`, `profiles` and `runs` folders and the bearer token) are protected
 from the bot's file tools for reading and writing, including names that differ
 only by a trailing dot or space or by a `:stream` suffix on Windows. Skills and
@@ -309,3 +309,39 @@ by clicks also remain a limitation: arbitrary page JavaScript can open a picker
 from any click, and no portable dialog identity or intercepted chooser is
 currently wired into the approval gate. The click/scroll exception should not
 be treated as an upload sandbox.
+
+## Secrets the assistant may type (fill secrets)
+
+A value is secret only if **you** stored it as one. Through the local API
+(`/v1/fill-secrets`; the Settings screen for it is a separate, later change) you store a credential under a name such as
+`login/github` together with the exact web origins (scheme, host and port; no
+wildcards) it may be typed on, and, where the computer reports a verified
+program identity, the desktop programs it may be typed into. The assistant
+sees only the names and where each may be used (`secrets_list`) and types one
+with `secret: "login/github"` instead of `text` in `browser_fill`,
+`desktop_type` or `desktop_set_value`; it never holds the value.
+
+* The value lives in your secret store under `fill/<name>`; the allow-lists live
+  in `fill-secrets.json` (no value in it). No MCP, OpenAPI, provider, e-mail or
+  skill configuration can reference a `fill/` name, and the `secret` parameter
+  can only ever read `fill/` entries, never `composio/`, `mcp/` or a provider key.
+* Typing a secret asks you **every time**, whatever the policy, the Full preset,
+  read shortcuts or an "always allow" says. The card names the secret, the field
+  and the origin of the frame that holds it (and says when that differs from the
+  page you see) or the program. A field on an origin you did not allow is refused
+  before any card exists; the origin is read from the browser for the live field,
+  and again right before the value is inserted. The one exception is a standing
+  grant you create for exactly "this secret on this origin"; it never covers
+  another origin, another secret or a desktop program, and it does not waive the
+  ask of a run that has read untrusted content (item 12): that card still appears.
+* The value is read only after you approve, held in memory, typed, and kept out
+  of events, the journal, approvals, tool steps, model history, recordings, tool
+  output and error text. If a page echoes it back, the redactor masks it.
+* Only the local owner can create, change or delete these; paired devices, bots,
+  tools, MCP servers and skills cannot.
+
+What this does **not** do: a password you paste into a chat message is ordinary
+text in that chat (storing it as a secret and removing it from the message is a
+follow-up UI step), and ordinary `text` fills are never masked: what the
+assistant typed is what you see. The memory holding the value is not excluded
+from crash dumps or swap.

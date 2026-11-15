@@ -101,6 +101,9 @@ pub struct ReplayOptions {
     /// (the user may have taken the wheel). `None` fails closed: acting steps
     /// are refused. Use [`AllowAllControl`] only where no human is at the wheel.
     pub control: Option<Arc<dyn DesktopControlGate>>,
+    /// Owner-stored fill secrets a recorded secret step may type. `None`
+    /// refuses such a step with a clear error.
+    pub fill_secrets: Option<Arc<secret_store::FillSecrets>>,
 }
 
 impl Default for ReplayOptions {
@@ -116,6 +119,7 @@ impl Default for ReplayOptions {
             action_settle: Duration::from_millis(300),
             bot_id: None,
             control: None,
+            fill_secrets: None,
         }
     }
 }
@@ -855,6 +859,15 @@ impl Replayer {
         permit: &ActionPermit,
     ) -> Result<Done, Stop> {
         let backend = &self.desktop()?;
+        if let Some(name) = &d.secret {
+            // The reference is kept in the recording, but a desktop secret is
+            // typed only live, where the program that owns the field is
+            // verified against the owner's allow-list and the approval card
+            // names the field. Replay has no such observation, so it refuses.
+            return Err(Stop::Failed(format!(
+                "this step types the secret `{name}` into a desktop program; desktop secret steps are not replayed yet. Do this step live"
+            )));
+        }
         let value = d
             .value
             .as_ref()
@@ -1007,6 +1020,24 @@ impl Replayer {
         permit: &ActionPermit,
     ) -> Result<Done, Stop> {
         let driver = self.browser()?;
+        // A secret step: the name must exist before anything else happens, so a
+        // missing secret is a clear error and never a card for a doomed call.
+        let secrets = match &b.secret {
+            Some(name) => {
+                let s = self.opts.fill_secrets.clone().ok_or_else(|| {
+                    Stop::Failed(format!(
+                        "this step types the secret `{name}` but no secrets are configured"
+                    ))
+                })?;
+                if !s.exists(name) {
+                    return Err(Stop::Failed(format!(
+                        "this step types the secret `{name}` but the owner has no secret with that name (it may have been deleted); add it again or edit the workflow"
+                    )));
+                }
+                Some(s)
+            }
+            None => None,
+        };
         let value = b
             .value
             .as_ref()
@@ -1066,7 +1097,35 @@ impl Replayer {
             _ => None,
         };
 
-        let out = if let Hit::Css(css) = &hit {
+        let out = if let (Some(secrets), Some(name)) = (&secrets, &b.secret) {
+            // Never through `browser_eval` / a CSS script: a secret goes only
+            // through the fill tool's own checks (live frame origin against the
+            // owner's allow-list, an approval card, then the typed value).
+            let Some(r) = r else {
+                return Err(Stop::Failed(
+                    "a secret step needs a field the page still shows by its recorded role and name".into(),
+                ));
+            };
+            self.authorize(
+                gate,
+                "browser_fill",
+                PermissionCategory::Browser,
+                Effect::Write,
+                json!({"ref": r, "secret": name}),
+            )
+            .await?;
+            let driver = Arc::clone(&driver);
+            let secrets = Arc::clone(secrets);
+            let name = name.clone();
+            permit
+                .protect(async move {
+                    builtin_tools::browser::fill_with_secret(driver.as_ref(), &secrets, &r, &name)
+                        .await
+                })
+                .await
+                .map_err(Stop::Failed)?
+                .map_err(Stop::Failed)?
+        } else if let Hit::Css(css) = &hit {
             let js = css_action_js(css, b.action, value.as_deref());
             self.authorize(
                 gate,
