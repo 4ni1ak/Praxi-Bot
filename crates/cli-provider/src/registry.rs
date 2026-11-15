@@ -1,0 +1,259 @@
+//! Fixed vendor descriptors. Evidence is recorded in docs/guide/cli-engines.md.
+//! No request or model text is ever interpreted as an installer command.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstallCommand {
+    pub program: &'static str,
+    pub args: &'static [&'static str],
+    /// Verified in a local vendor reference, not tested against the network.
+    pub verified: bool,
+    /// Only locally verified fixed argv may execute.
+    pub executable: bool,
+}
+
+impl InstallCommand {
+    #[must_use]
+    pub fn display(self) -> String {
+        if self.program == "powershell.exe" {
+            return format!(
+                "powershell.exe -NoProfile -Command \"{}\"",
+                self.args.last().unwrap_or(&"")
+            );
+        }
+        if self.program == "sh" {
+            return format!("sh -c '{}'", self.args.last().unwrap_or(&""));
+        }
+        std::iter::once(self.program)
+            .chain(self.args.iter().copied())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CliEngineSpec {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub command: &'static str,
+    pub aliases: &'static [&'static str],
+    pub runnable: bool,
+    pub version_args: &'static [&'static str],
+    pub auth_args: &'static [&'static str],
+    /// None means no locally verified security floor, never "any version".
+    pub minimum_version: Option<(u32, u32, u32)>,
+    pub install_windows: Option<InstallCommand>,
+    pub install_unix: Option<InstallCommand>,
+    /// Short curated list (the CLI's own `models` / `--list-models` is account-specific and
+    /// not probed); the picker also accepts any other model id the CLI takes.
+    pub models: &'static [&'static str],
+    pub login: &'static str,
+    pub docs_url: &'static str,
+}
+
+impl CliEngineSpec {
+    /// The native-tools driver for this engine, if it has one.
+    #[must_use]
+    pub fn driver(&self) -> Option<crate::levels::Driver> {
+        crate::levels::Driver::from_id(self.id)
+    }
+
+    /// Can be enabled as a provider: the confined engine runs it, or it has a
+    /// native-tools driver (which only runs with the CLI's own tools).
+    #[must_use]
+    pub fn can_enable(&self) -> bool {
+        self.runnable || self.driver().is_some()
+    }
+
+    #[must_use]
+    pub const fn install(&self) -> Option<InstallCommand> {
+        if cfg!(windows) {
+            self.install_windows
+        } else {
+            self.install_unix
+        }
+    }
+}
+
+#[allow(clippy::unnecessary_wraps)] // Descriptors use Option uniformly, including unsupported platforms.
+const fn npm(args: &'static [&'static str], verified: bool) -> Option<InstallCommand> {
+    Some(InstallCommand {
+        program: "npm",
+        args,
+        verified,
+        executable: verified,
+    })
+}
+
+/// Floor required by the native-tool confinement contract.
+pub const CLAUDE_SECURITY_FLOOR: (u32, u32, u32) = (2, 1, 257);
+
+pub const CLI_ENGINES: &[CliEngineSpec] = &[
+    CliEngineSpec {
+        id: "claude",
+        display_name: "Claude Code",
+        command: "claude",
+        aliases: &[],
+        runnable: true,
+        version_args: &["--version"],
+        auth_args: &["auth", "status", "--json"],
+        minimum_version: Some(CLAUDE_SECURITY_FLOOR),
+        install_windows: npm(&["install", "-g", "@anthropic-ai/claude-code"], true),
+        install_unix: npm(&["install", "-g", "@anthropic-ai/claude-code"], true),
+        models: &["default", "sonnet", "opus", "haiku"],
+        login: "claude auth login",
+        docs_url: "https://docs.anthropic.com/en/docs/claude-code/setup",
+    },
+    CliEngineSpec {
+        id: "codex",
+        display_name: "Codex",
+        command: "codex",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &["login", "status"],
+        minimum_version: None,
+        install_windows: npm(&["install", "-g", "@openai/codex"], true),
+        install_unix: npm(&["install", "-g", "@openai/codex"], true),
+        models: &["default", "gpt-5-codex", "gpt-5"],
+        login: "codex login",
+        docs_url: "https://github.com/openai/codex",
+    },
+    CliEngineSpec {
+        id: "cursor",
+        display_name: "Cursor",
+        command: "cursor-agent",
+        aliases: &["agent"],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &["status", "--format", "json"],
+        minimum_version: None,
+        install_windows: Some(InstallCommand {
+            program: "powershell.exe",
+            args: &[
+                "-NoProfile",
+                "-Command",
+                "irm 'https://cursor.com/install?win32=true' | iex",
+            ],
+            verified: true,
+            executable: true,
+        }),
+        install_unix: Some(InstallCommand {
+            program: "sh",
+            args: &["-c", "curl https://cursor.com/install -fsS | bash"],
+            verified: true,
+            executable: true,
+        }),
+        models: &["auto", "gpt-5.3-codex", "sonnet-4-thinking"],
+        login: "cursor-agent login",
+        docs_url: "https://cursor.com/docs/cli",
+    },
+    CliEngineSpec {
+        id: "opencode",
+        display_name: "OpenCode",
+        command: "opencode",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: npm(&["install", "-g", "opencode-ai"], true),
+        install_unix: npm(&["install", "-g", "opencode-ai"], true),
+        models: &[
+            "default",
+            "google/gemini-2.5-pro",
+            "google/gemini-2.5-flash",
+        ],
+        login: "opencode auth login",
+        docs_url: "https://opencode.ai/docs/",
+    },
+    CliEngineSpec {
+        id: "gemini",
+        display_name: "Gemini CLI",
+        command: "gemini",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: npm(&["install", "-g", "@google/gemini-cli"], false),
+        install_unix: npm(&["install", "-g", "@google/gemini-cli"], false),
+        models: &["default", "gemini-2.5-pro", "gemini-2.5-flash"],
+        login: "gemini",
+        docs_url: "https://github.com/google-gemini/gemini-cli",
+    },
+    CliEngineSpec {
+        id: "chatgpt-plan",
+        display_name: "ChatGPT plan",
+        command: "codex",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: None,
+        install_unix: None,
+        models: &[],
+        login: "codex login",
+        docs_url: "https://github.com/openai/codex",
+    },
+];
+
+#[must_use]
+pub fn engine_spec(id: &str) -> Option<&'static CliEngineSpec> {
+    CLI_ENGINES.iter().find(|spec| spec.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn registry_is_unique_and_installers_are_fixed() {
+        let mut ids = std::collections::HashSet::new();
+        for spec in CLI_ENGINES {
+            assert!(ids.insert(spec.id));
+            assert_eq!(spec.version_args, ["--version"]);
+            for install in [spec.install_windows, spec.install_unix]
+                .into_iter()
+                .flatten()
+            {
+                assert_ne!(install.args, [] as [&str; 0]);
+                if install.executable {
+                    assert!(install.verified);
+                    if install.program != "npm" {
+                        assert!(matches!(install.program, "powershell.exe" | "sh"));
+                        assert_eq!(spec.id, "cursor");
+                        assert!(
+                            install
+                                .args
+                                .last()
+                                .unwrap()
+                                .contains("https://cursor.com/install")
+                        );
+                        continue;
+                    }
+                    assert_eq!(&install.args[..2], ["install", "-g"]);
+                    assert_eq!(install.args.len(), 3);
+                    assert!(
+                        install.args[2]
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || "@/.-_".contains(c))
+                    );
+                }
+            }
+        }
+        assert!(!engine_spec("opencode").unwrap().runnable);
+    }
+
+    #[test]
+    fn every_engine_with_a_driver_offers_models_the_cli_accepts() {
+        for spec in CLI_ENGINES.iter().filter(|s| s.driver().is_some()) {
+            assert!(spec.models.len() >= 2, "{}", spec.id);
+            assert!(
+                spec.models
+                    .iter()
+                    .all(|m| !m.starts_with('-') && !m.contains(' '))
+            );
+        }
+        assert!(engine_spec("claude").unwrap().models.contains(&"haiku"));
+    }
+}

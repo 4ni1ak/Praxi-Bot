@@ -26,6 +26,10 @@ pub enum InitiatorKind {
     /// Behaves like [`InitiatorKind::Human`] unless a rule says otherwise, but
     /// never auto-approves money or never-list actions.
     Schedule,
+    /// A separately scoped external MCP agent. Never inherits human authority.
+    ExternalAgent,
+    /// A schedule supplied external trigger/precheck data; every tool needs once-only approval.
+    ExternalSchedule,
 }
 
 /// The entity that initiated an agent run, including the specific identifier.

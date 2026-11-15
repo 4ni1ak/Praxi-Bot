@@ -23,8 +23,9 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::dto::{
-    AcceptedResponse, AnswerQuestion, AnswerResponse, ApprovalDto, BotDto, BotInput, BotUsage,
-    CatalogProviderDto, CategoryDecisionDto, ChatDto, ConfiguredProviderDto, ControlDecisionInput,
+    AcceptedResponse, AnswerQuestion, AnswerResponse, ApprovalDto, BotConflictBody, BotDto,
+    BotInput, BotPatchInput, BotPatchKind, BotPatchOp, BotUsage, CatalogProviderDto,
+    CategoryDecisionDto, ChatDto, ConfiguredProviderDto, ControlDecisionInput,
     ControlDecisionResponse, ControlStateDto, ControlStateInput, CreateChat, DecideApproval,
     Decision, DecisionResponse, DeliveryKind, DetectedProviderDto, EffectivePolicyDto,
     EnableCliProviderInput, GrantDto, GrantTargetDto, Health, LatestCursor, MessageDto, Mode,
@@ -57,7 +58,7 @@ pub(crate) fn id(s: &str) -> Result<Uuid, ApiError> {
     s.parse().map_err(|_| ApiError::bad_request("malformed id"))
 }
 
-fn bot_dto(b: Bot) -> BotDto {
+pub(crate) fn bot_dto(b: Bot, version: i64) -> BotDto {
     let runtime = serde_json::from_value::<BotProfile>(b.config.clone())
         .ok()
         .map(|p| RuntimeConfigDto {
@@ -68,6 +69,7 @@ fn bot_dto(b: Bot) -> BotDto {
         name: b.name,
         config: b.config,
         created_at_ms: b.created_at_ms,
+        version,
         effective_policy: None,
         runtime,
     }
@@ -218,6 +220,14 @@ fn decide(list: &mut [ApprovalDto], call: ToolCallId, what: &str, at_ms: i64) {
     }
 }
 
+fn engine_in_profile() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "engine_owner_only",
+        "engine settings can only be changed by the local owner through the engine endpoint",
+    )
+}
+
 /// Validate a bot definition; returns `(name, config json)`.
 fn resolve_bot(input: BotInput) -> Result<(String, Value), ApiError> {
     let mut config = match (input.config, input.profile_toml) {
@@ -301,9 +311,9 @@ pub(crate) async fn health(State(s): State<AppState>) -> Json<Health> {
 pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotDto>>, ApiError> {
     Ok(Json(
         s.storage()
-            .list_bots(s.user_id())?
+            .list_bots_versioned(s.user_id())?
             .into_iter()
-            .map(bot_dto)
+            .map(|(bot, version)| bot_dto(bot, version))
             .collect(),
     ))
 }
@@ -319,6 +329,9 @@ pub(crate) async fn create_bot(
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, mut config) = resolve_bot(input)?;
+    if config.get("engine").is_some() {
+        return Err(engine_in_profile());
+    }
     crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
     crate::peer::protect_execution_config(
         peer.as_ref().map(|peer| &peer.0),
@@ -338,9 +351,17 @@ pub(crate) async fn create_bot(
         config,
         created_at_ms: now_ms(),
     };
-    s.storage().insert_bot(&bot)?;
-    s.refresh_profile(&bot);
-    Ok((StatusCode::CREATED, Json(bot_dto(bot))))
+    // New bots implicitly select all shared skills. Serialize that assignment
+    // with owner deletion's in-use check, just like explicit assignment PUT.
+    let dto = tokio::task::spawn_blocking(move || {
+        let _skill_guard = s.0.skill_mutations.lock();
+        s.storage().insert_bot(&bot)?;
+        s.refresh_profile(&bot);
+        Ok::<_, ApiError>(bot_dto(bot, 1))
+    })
+    .await
+    .map_err(|_| ApiError::internal("bot worker failed"))??;
+    Ok((StatusCode::CREATED, Json(dto)))
 }
 
 /// Get one bot, including its `effective_policy` (stored policy merged with
@@ -352,9 +373,13 @@ pub(crate) async fn get_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let (bot, version) = s
+        .storage()
+        .get_bot_versioned(BotId(id(&bid)?))?
+        .filter(|(bot, _)| bot.user_id == s.user_id())
+        .ok_or_else(|| ApiError::not_found("bot"))?;
     let effective = s.agent().effective_policy(bot.id).ok();
-    let mut dto = bot_dto(bot);
+    let mut dto = bot_dto(bot, version);
     dto.effective_policy = effective.map(effective_policy_dto);
     Ok(Json(dto))
 }
@@ -398,23 +423,28 @@ pub(crate) async fn revoke_grant(
     }
 }
 
-/// Replace a bot's name and profile.
+/// Replace a bot profile using its loaded `expected_version` (required; missing is 428).
 #[utoipa::path(put, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Bot id")),
     request_body = BotInput,
     responses((status = 200, body = BotDto), (status = 404, body = ErrorBody),
+              (status = 428, body = ErrorBody), (status = 409, body = BotConflictBody),
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
     peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
-) -> Result<Json<BotDto>, ApiError> {
+) -> Result<Json<BotDto>, BotPatchError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let expected = input.expected_version.ok_or_else(|| ApiError::new(
+        StatusCode::PRECONDITION_REQUIRED, "precondition_required",
+        "PUT requires expected_version from the profile being replaced; reload and retry explicitly",
+    ))?;
     let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
         .lock_owned()
         .await;
-    let mut bot = s.bot_of_user(bot.id)?;
+    let bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
     crate::peer::protect_knowledge_config(
@@ -428,14 +458,42 @@ pub(crate) async fn update_bot(
         Some(&bot.config),
         &mut config,
     )?;
-    if preserve_runtime
-        && config.get("runtime").is_none()
-        && let Some(runtime) = bot.config.get("runtime")
+    // Engine settings (who runs files and shell) change only through
+    // `PUT /v1/bots/{id}/engine`: an edit keeps the stored table, and a profile
+    // that carries a different one is refused.
+    match (config.get("engine"), bot.config.get("engine")) {
+        (Some(sent), stored) if Some(sent) != stored => return Err(engine_in_profile().into()),
+        _ => {}
+    }
     {
-        config
+        let obj = config
             .as_object_mut()
-            .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
-            .insert("runtime".into(), runtime.clone());
+            .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?;
+        match bot.config.get("engine") {
+            Some(engine) => {
+                obj.insert("engine".into(), engine.clone());
+            }
+            None => {
+                obj.remove("engine");
+            }
+        }
+    }
+    let after: BotProfile = serde_json::from_value(config.clone()).map_err(|e| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bad_profile",
+            e.to_string(),
+        )
+    })?;
+    if after.engine.mode == cli_provider::EngineMode::NativeTools
+        && !after.models.executor.starts_with("cli:")
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bad_engine",
+            "this bot runs a CLI with its own tools; switch it back to Praxi-governed before choosing a non-CLI model",
+        )
+        .into());
     }
     if config.get("knowledge").is_some()
         && bot.config.pointer("/knowledge/embedding") != config.pointer("/knowledge/embedding")
@@ -451,12 +509,251 @@ pub(crate) async fn update_bot(
     } else if let Some(object) = config.as_object_mut() {
         object.remove("knowledge");
     }
-    s.storage().update_bot(bot.id, &name, &config)?;
-    crate::knowledge_runtime::invalidate_bot(&s, bot.id);
-    bot.name = name;
-    bot.config = config;
-    s.refresh_profile(&bot);
-    Ok(Json(bot_dto(bot)))
+    let outcome = s.storage().patch_bot(bot.id, expected, |_, stored| {
+        if preserve_runtime
+            && config.get("runtime").is_none()
+            && let Some(runtime) = stored.get("runtime")
+        {
+            config
+                .as_object_mut()
+                .ok_or_else(|| "bad_profile:bot config must be an object".to_owned())?
+                .insert("runtime".into(), runtime.clone());
+        }
+        Ok((name, config))
+    })?;
+    profile_write_response(&s, outcome)
+}
+
+/// Why a patch cannot be applied.
+pub(crate) enum BotPatchError {
+    Api(ApiError),
+    /// The stored version is not `expected_version`.
+    Stale(Box<BotDto>),
+}
+
+impl From<ApiError> for BotPatchError {
+    fn from(e: ApiError) -> Self {
+        Self::Api(e)
+    }
+}
+
+impl From<storage::StorageError> for BotPatchError {
+    fn from(e: storage::StorageError) -> Self {
+        Self::Api(e.into())
+    }
+}
+
+impl axum::response::IntoResponse for BotPatchError {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            Self::Api(e) => e.into_response(),
+            Self::Stale(current) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": {
+                        "code": "version_conflict",
+                        "message": "the bot changed since `expected_version`",
+                    },
+                    "current": *current,
+                })),
+            )
+                .into_response(),
+        }
+    }
+}
+
+const MAX_PROFILE_DEPTH: usize = 32;
+const MAX_PROFILE_BYTES: usize = 1024 * 1024;
+const MAX_PATCH_OPS: usize = 128;
+
+/// Iterative bound on the resulting JSON, including keys and escaped strings.
+/// Checked before cloning/applying values and after each operation.
+fn check_profile_bounds(value: &Value, depth: usize) -> Result<(), String> {
+    let mut pending = vec![(value, depth)];
+    let mut bytes = 0usize;
+    while let Some((node, depth)) = pending.pop() {
+        if depth > MAX_PROFILE_DEPTH {
+            return Err("profile exceeds maximum depth (32)".into());
+        }
+        bytes = bytes.saturating_add(16);
+        match node {
+            Value::String(text) => bytes = bytes.saturating_add(text.len().saturating_mul(6)),
+            Value::Object(map) => {
+                for (key, child) in map {
+                    bytes = bytes.saturating_add(key.len().saturating_mul(6));
+                    pending.push((child, depth + 1));
+                }
+            }
+            Value::Array(array) => pending.extend(array.iter().map(|child| (child, depth + 1))),
+            _ => {}
+        }
+        if bytes > MAX_PROFILE_BYTES || pending.len() > MAX_PROFILE_BYTES / 16 {
+            return Err("profile exceeds maximum size (1 MiB escaped JSON budget)".into());
+        }
+    }
+    Ok(())
+}
+
+/// Split a JSON Pointer into object keys (RFC 6901 escapes).
+fn pointer_keys(path: &str) -> Result<Vec<String>, String> {
+    if path.len() > 4096 || path.bytes().filter(|b| *b == b'/').count() > MAX_PROFILE_DEPTH {
+        return Err("patch path exceeds maximum length (4096) or depth (32)".into());
+    }
+    let rest = path
+        .strip_prefix('/')
+        .ok_or_else(|| format!("path `{path}` must start with `/`"))?;
+    let keys: Vec<String> = rest
+        .split('/')
+        .map(|k| k.replace("~1", "/").replace("~0", "~"))
+        .collect();
+    if keys.iter().any(String::is_empty) {
+        return Err(format!("path `{path}` has an empty segment"));
+    }
+    Ok(keys)
+}
+
+/// Set (`value` is `Some`) or remove (`None`) the key path `keys` below `node`.
+fn patch_at(
+    node: &mut Value,
+    keys: &[String],
+    value: Option<&Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some((first, rest)) = keys.split_first() else {
+        return Ok(());
+    };
+    let obj = node
+        .as_object_mut()
+        .ok_or_else(|| format!("path `{path}` crosses a non-object"))?;
+    if rest.is_empty() {
+        match value {
+            Some(v) => {
+                obj.insert(first.clone(), v.clone());
+            }
+            None => {
+                obj.remove(first);
+            }
+        }
+        return Ok(());
+    }
+    match (obj.get_mut(first), value) {
+        (Some(child), _) => patch_at(child, rest, value, path),
+        (None, Some(_)) => {
+            let mut child = Value::Object(serde_json::Map::new());
+            patch_at(&mut child, rest, value, path)?;
+            obj.insert(first.clone(), child);
+            Ok(())
+        }
+        (None, None) => Ok(()),
+    }
+}
+
+/// Apply field-level ops to a profile.  Only the named keys change.
+fn apply_patch_ops(config: &mut Value, ops: &[BotPatchOp]) -> Result<(), String> {
+    check_profile_bounds(config, 0)?;
+    for op in ops {
+        let keys = pointer_keys(&op.path)?;
+        let value = (op.op == BotPatchKind::Set).then_some(&op.value);
+        patch_at(config, &keys, value, &op.path)?;
+        check_profile_bounds(config, 0)?;
+    }
+    Ok(())
+}
+
+/// Change only the listed fields of a bot, atomically, if `expected_version` is current.
+#[utoipa::path(patch, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Bot id")),
+    request_body = BotPatchInput,
+    responses((status = 200, body = BotDto), (status = 404, body = ErrorBody),
+              (status = 409, body = BotConflictBody,
+               description = "the bot changed since `expected_version`; `current` is its state now"),
+              (status = 400, body = ErrorBody, description = "patch exceeds depth, size or operation limits"),
+              (status = 422, body = ErrorBody)))]
+pub(crate) async fn patch_bot(
+    State(s): State<AppState>,
+    Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
+    ApiJson(input): ApiJson<BotPatchInput>,
+) -> Result<Json<BotDto>, BotPatchError> {
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    let bot = s.bot_of_user(bot.id)?;
+    let new_name = input.name.map(|n| n.trim().to_owned());
+    if new_name.as_deref() == Some("") {
+        return Err(ApiError::bad_request("bot name must not be empty").into());
+    }
+    let ops = input.ops;
+    if ops.len() > MAX_PATCH_OPS {
+        return Err(ApiError::bad_request("patch exceeds maximum operation count (128)").into());
+    }
+    for op in &ops {
+        if op.path.len() > 4096
+            || op.path.bytes().filter(|b| *b == b'/').count() > MAX_PROFILE_DEPTH
+        {
+            return Err(ApiError::bad_request(
+                "patch path exceeds maximum length (4096) or depth (32)",
+            )
+            .into());
+        }
+        let depth = op.path.bytes().filter(|b| *b == b'/').count();
+        check_profile_bounds(&op.value, depth).map_err(ApiError::bad_request)?;
+    }
+    {
+        // Dry run on the profile read under the authority lock. Generic profile
+        // edits never change knowledge settings (the dedicated endpoint owns them).
+        let mut next = bot.config.clone();
+        if apply_patch_ops(&mut next, &ops).is_ok() {
+            crate::peer::protect_knowledge_config(
+                peer.as_ref().map(|peer| &peer.0),
+                bot.config.get("knowledge"),
+                &mut next,
+            )?;
+            if next.get("knowledge") != bot.config.get("knowledge") {
+                return Err(ApiError::bad_request(
+                    "configure knowledge through the bot knowledge settings endpoint",
+                )
+                .into());
+            }
+        }
+    }
+    let outcome = s
+        .storage()
+        .patch_bot(bot.id, input.expected_version, |name, config| {
+            let mut next = config.clone();
+            apply_patch_ops(&mut next, &ops).map_err(|e| format!("bad_patch:{e}"))?;
+            serde_json::from_value::<BotProfile>(next.clone())
+                .map_err(|e| format!("bad_profile:invalid bot profile: {e}"))?;
+            Ok((new_name.unwrap_or_else(|| name.to_owned()), next))
+        })?;
+    profile_write_response(&s, outcome)
+}
+
+fn profile_write_response(
+    s: &AppState,
+    outcome: storage::BotPatch,
+) -> Result<Json<BotDto>, BotPatchError> {
+    match outcome {
+        storage::BotPatch::Applied { bot, version } => {
+            crate::knowledge_runtime::invalidate_bot(s, bot.id);
+            s.refresh_profile(&bot);
+            Ok(Json(bot_dto(bot, version)))
+        }
+        storage::BotPatch::Stale { bot, version } => {
+            Err(BotPatchError::Stale(Box::new(bot_dto(bot, version))))
+        }
+        storage::BotPatch::Missing => Err(ApiError::not_found("bot").into()),
+        storage::BotPatch::Rejected(why) => {
+            let (code, msg) = why.split_once(':').unwrap_or(("bad_patch", &why));
+            let code = if code == "bad_profile" {
+                "bad_profile"
+            } else {
+                "bad_patch"
+            };
+            Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, code, msg.to_owned()).into())
+        }
+    }
 }
 
 /// Delete a bot that has no chats or runs.
@@ -795,13 +1092,13 @@ fn add(t: &mut UsageTotals, u: &Usage, cost: Option<f64>) {
     if let Some(c) = cost {
         *t.cost_usd.get_or_insert(0.0) += c;
     }
-    t.prompt_tokens += u.prompt_tokens;
-    t.completion_tokens += u.completion_tokens;
-    t.cached_tokens += u.cached_tokens.unwrap_or(0);
-    t.model_calls += 1;
+    t.prompt_tokens = t.prompt_tokens.saturating_add(u.prompt_tokens);
+    t.completion_tokens = t.completion_tokens.saturating_add(u.completion_tokens);
+    t.cached_tokens = t.cached_tokens.saturating_add(u.cached_tokens.unwrap_or(0));
+    t.model_calls = t.model_calls.saturating_add(1);
 }
 
-/// Token usage summed over the model steps of all runs.
+/// Invocation usage, with legacy model-step fallback for pre-ledger runs.
 #[utoipa::path(get, path = "/v1/usage", tag = "usage", security(("bearer" = [])),
     params(UsageQuery),
     responses((status = 200, body = UsageSummary)))]
@@ -813,12 +1110,46 @@ pub(crate) async fn usage(
     let mut total = UsageTotals::default();
     let mut by_bot: BTreeMap<Uuid, UsageTotals> = BTreeMap::new();
     let mut runs = 0u64;
+    let mut by_purpose: BTreeMap<String, UsageTotals> = BTreeMap::new();
+    let ledger = agent_core::usage::calls_from_audit(&st.list_audit(s.user_id())?);
     for run in st.list_runs(s.user_id())? {
         if q.since_ms.is_some_and(|t| run.created_at_ms < t) {
             continue;
         }
         runs += 1;
+        let mut recorded_steps = std::collections::HashSet::new();
+        if let Some(calls) = ledger.get(&run.id) {
+            for call in calls {
+                if matches!(
+                    call.purpose,
+                    agent_core::CallPurpose::Executor
+                        | agent_core::CallPurpose::GuardClose
+                        | agent_core::CallPurpose::Subagent
+                ) {
+                    recorded_steps.insert(call.step_n);
+                }
+                let usage = call.tokens.unwrap_or_default();
+                // Preserve the API's existing current-price semantics.
+                let cost = call.tokens.and_then(|u| {
+                    s.agent()
+                        .price_for(&call.model)
+                        .map(|p| p.cost(u.prompt_tokens, u.completion_tokens, u.cached_tokens))
+                });
+                add(&mut total, &usage, cost);
+                add(by_bot.entry(run.bot_id.0).or_default(), &usage, cost);
+                add(
+                    by_purpose
+                        .entry(call.purpose.as_str().to_owned())
+                        .or_default(),
+                    &usage,
+                    cost,
+                );
+            }
+        }
         for step in st.list_steps(run.id)? {
+            if recorded_steps.contains(&step.idx) {
+                continue;
+            }
             let Some(u) = (step.name == "model")
                 .then_some(step.output.as_ref())
                 .flatten()
@@ -836,11 +1167,24 @@ pub(crate) async fn usage(
                 .map(|p| p.cost(u.prompt_tokens, u.completion_tokens, u.cached_tokens));
             add(&mut total, &u, cost);
             add(by_bot.entry(run.bot_id.0).or_default(), &u, cost);
+            let purpose = if run.parent_run_id.is_some() {
+                "subagent"
+            } else if step
+                .output
+                .as_ref()
+                .is_some_and(|o| o["stopped_by_guard"] == true)
+            {
+                "guard_close"
+            } else {
+                "executor"
+            };
+            add(by_purpose.entry(purpose.to_owned()).or_default(), &u, cost);
         }
     }
     Ok(Json(UsageSummary {
         runs,
         total,
+        by_purpose,
         by_bot: by_bot
             .into_iter()
             .map(|(bot_id, totals)| BotUsage { bot_id, totals })
@@ -1206,6 +1550,14 @@ pub(crate) async fn list_providers(
         .iter()
         .zip(models)
         .map(|(p, (models, models_error))| {
+            let models = if p.cli.is_some() {
+                cli_provider::engine_spec(p.id.strip_prefix("cli:").unwrap_or(""))
+                    .map_or_else(Vec::new, |spec| {
+                        spec.models.iter().map(|m| (*m).to_owned()).collect()
+                    })
+            } else {
+                models
+            };
             let model_details = crate::provider_models::for_picker(
                 s.agent(),
                 p,
@@ -1222,7 +1574,11 @@ pub(crate) async fn list_providers(
                 active: active.contains(&p.id),
                 models: model_details.iter().map(|m| m.id.clone()).collect(),
                 model_details,
-                models_error: models_error.map(|e| s.agent().redact_host_text(e)),
+                models_error: cfg
+                    .quarantined
+                    .get(&p.id)
+                    .cloned()
+                    .or_else(|| models_error.map(|e| s.agent().redact_host_text(e))),
             }
         })
         .collect();
@@ -1280,14 +1636,18 @@ pub(crate) struct DetectProvidersQuery {
     pub refresh: Option<String>,
 }
 
-/// Detect installed, signed-in coding CLIs.
+/// Detect installed, signed-in coding CLIs. Local owner only: the rows carry
+/// the signed-in account label (an email or organisation) and install state.
 #[utoipa::path(get, path = "/v1/providers/detected", tag = "providers", security(("bearer" = [])),
     params(DetectProvidersQuery),
-    responses((status = 200, body = Vec<DetectedProviderDto>)))]
+    responses((status = 200, body = Vec<DetectedProviderDto>),
+              (status = 403, body = ErrorBody, description = "caller is not the local owner")))]
 pub(crate) async fn detect_providers(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     Query(query): Query<DetectProvidersQuery>,
 ) -> Result<Json<Vec<DetectedProviderDto>>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let refresh = query
         .refresh
         .as_deref()
@@ -1378,15 +1738,21 @@ pub(crate) async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, Api
               (status = 400, body = ErrorBody, description = "engine is not runnable or unknown")))]
 pub(crate) async fn enable_cli_provider(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     ApiJson(body): ApiJson<EnableCliProviderInput>,
 ) -> Result<Json<ConfiguredProviderDto>, ApiError> {
-    let Some(spec) = cli_provider::engine_spec(&body.id).filter(|spec| spec.runnable) else {
+    crate::cli_engines::local_owner(&actor)?;
+    let Some(spec) = cli_provider::engine_spec(&body.id).filter(|spec| spec.can_enable()) else {
         return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
             &body.id,
         )));
     };
     let engine = match spec.id {
         "claude" => provider_catalog::config::CliEngine::Claude,
+        "codex" => provider_catalog::config::CliEngine::Codex,
+        "cursor" => provider_catalog::config::CliEngine::Cursor,
+        "opencode" => provider_catalog::config::CliEngine::OpenCode,
+        "gemini" => provider_catalog::config::CliEngine::Gemini,
         _ => {
             return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
                 spec.id,
@@ -1445,13 +1811,41 @@ fn schedule_dto(sc: &Schedule, has_webhook: bool) -> ScheduleDto {
         next_run_at_ms: sc.next_run_at,
         misfire_policy: sc.misfire_policy.as_str().to_owned(),
         has_webhook,
+        trigger: None,
+        precheck: sc
+            .precheck
+            .as_ref()
+            .map(|p| serde_json::to_value(p).unwrap_or(Value::Null)),
+        skipped_by_precheck: 0,
+        consecutive_errors: 0,
         origin: sc.origin.as_str().to_owned(),
     }
 }
 
 fn dto_of(s: &AppState, sc: &Schedule) -> Result<ScheduleDto, ApiError> {
-    let has = s.schedule_store()?.get_trigger(sc.id)?.is_some();
-    Ok(schedule_dto(sc, has))
+    let store = s.schedule_store()?;
+    let trigger = store.get_trigger(sc.id)?;
+    let has = matches!(trigger, Some(Trigger::Webhook { .. }));
+    let mut dto = schedule_dto(sc, has);
+    if matches!(
+        trigger,
+        Some(Trigger::FileWatch { .. } | Trigger::Email { .. })
+    ) {
+        dto.next_run_at_ms = None;
+    }
+    dto.trigger = trigger
+        .filter(|t| !matches!(t, Trigger::Webhook { .. }))
+        .map(|t| serde_json::to_value(t).unwrap_or(Value::Null));
+    let checks = store.check_state(sc)?;
+    dto.skipped_by_precheck = checks.skipped_by_precheck;
+    dto.consecutive_errors = checks.precheck_errors.max(checks.trigger_errors);
+    if let Some(value) = &mut dto.trigger {
+        redact_schedule_value(s, value);
+    }
+    if let Some(value) = &mut dto.precheck {
+        redact_schedule_value(s, value);
+    }
+    Ok(dto)
 }
 
 /// The schedule `id`, when its bot belongs to the local user.
@@ -1537,6 +1931,92 @@ fn apply_webhook(
     Ok(())
 }
 
+fn redact_schedule_value(s: &AppState, value: &mut Value) {
+    match value {
+        Value::String(text) => *text = s.0.agent.redact_host_text(text.clone()),
+        Value::Array(a) => {
+            for value in a {
+                redact_schedule_value(s, value);
+            }
+        }
+        Value::Object(o) => {
+            let previous = std::mem::take(o);
+            for (key, mut value) in previous {
+                redact_schedule_value(s, &mut value);
+                o.insert(s.0.agent.redact_host_text(key), value);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn schedule_extensions(
+    s: &AppState,
+    schedule: &mut Schedule,
+    input: &ScheduleInput,
+) -> Result<Option<Option<Trigger>>, ApiError> {
+    if input.trigger.is_some() && input.webhook_secret.is_some() {
+        return Err(bad_schedule("give trigger or webhook_secret, not both"));
+    }
+    for value in [&input.trigger, &input.precheck].into_iter().flatten() {
+        let mut shown = value.clone();
+        redact_schedule_value(s, &mut shown);
+        if shown != *value {
+            return Err(bad_schedule(
+                "schedule extension contains protected secret text",
+            ));
+        }
+    }
+    if input.trigger.is_some() || input.precheck.is_some() || schedule.precheck.is_some() {
+        for value in [
+            serde_json::to_value(&schedule.payload).unwrap_or(Value::Null),
+            Value::String(schedule.name.clone()),
+        ] {
+            let mut shown = value.clone();
+            redact_schedule_value(s, &mut shown);
+            if shown != value {
+                return Err(bad_schedule(
+                    "schedule definition contains protected secret text",
+                ));
+            }
+        }
+    }
+    if let Some(value) = &input.precheck {
+        schedule.precheck = if value.is_null() {
+            None
+        } else {
+            let check: scheduler::Precheck = serde_json::from_value(value.clone())
+                .map_err(|_| bad_schedule("invalid precheck"))?;
+            crate::schedule::validate_precheck(&s.0.agent, schedule.bot_id, &check)
+                .map_err(bad_schedule)?;
+            Some(check)
+        };
+    }
+    match &input.trigger {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(value) => {
+            let trigger: Trigger = serde_json::from_value(value.clone())
+                .map_err(|_| bad_schedule("invalid trigger"))?;
+            if matches!(trigger, Trigger::Webhook { .. }) {
+                return Err(bad_schedule(
+                    "use the existing webhook configuration for webhooks",
+                ));
+            }
+            crate::schedule::validate_trigger(
+                &s.0.agent,
+                &s.0.storage,
+                schedule.bot_id,
+                schedule.id,
+                &trigger,
+            )
+            .await
+            .map_err(bad_schedule)?;
+            Ok(Some(Some(trigger)))
+        }
+    }
+}
+
 /// List schedules.
 #[utoipa::path(get, path = "/v1/schedules", tag = "schedules", security(("bearer" = [])),
     responses((status = 200, body = Vec<ScheduleDto>)))]
@@ -1559,8 +2039,14 @@ pub(crate) async fn list_schedules(
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_schedule(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::peer::PeerIdentity>>,
     ApiJson(input): ApiJson<ScheduleInput>,
 ) -> Result<(StatusCode, Json<ScheduleDto>), ApiError> {
+    if peer.is_some() && (input.trigger.is_some() || input.precheck.is_some()) {
+        return Err(ApiError::forbidden(
+            "schedule triggers and prechecks are local-owner only",
+        ));
+    }
     let p = schedule_parts(&s, &input)?;
     let mut sc = Schedule::new(
         BotId(input.bot_id),
@@ -1575,14 +2061,25 @@ pub(crate) async fn create_schedule(
         sc.enabled = false;
         sc.next_run_at = None;
     }
+    let trigger = schedule_extensions(&s, &mut sc, &input).await?;
     let store = s.schedule_store()?;
-    store.insert(&sc)?;
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.create_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string(),"bot_id":sc.bot_id.to_string()}),
+    )?;
+    store.insert_config(&sc, trigger.flatten().as_ref())?;
     if let Err(e) = apply_webhook(&store, sc.id, input.webhook_secret.as_deref()) {
         let _ = store.delete(sc.id);
         return Err(e);
     }
     s.publish_schedule_changed(sc.id.0, ScheduleChangeKind::Created);
-    Ok((StatusCode::CREATED, Json(dto_of(&s, &sc)?)))
+    Ok((
+        StatusCode::CREATED,
+        Json(dto_of(&s, &store.get(sc.id)?.unwrap_or(sc))?),
+    ))
 }
 
 /// Get one schedule.
@@ -1606,9 +2103,23 @@ pub(crate) async fn get_schedule(
 pub(crate) async fn update_schedule(
     State(s): State<AppState>,
     Path(sid): Path<String>,
+    peer: Option<axum::Extension<crate::peer::PeerIdentity>>,
     ApiJson(input): ApiJson<ScheduleInput>,
 ) -> Result<Json<ScheduleDto>, ApiError> {
     let mut sc = schedule_of_user(&s, &sid)?;
+    if peer.is_some()
+        && (input.trigger.is_some()
+            || input.precheck.is_some()
+            || sc.precheck.is_some()
+            || matches!(
+                s.schedule_store()?.get_trigger(sc.id)?,
+                Some(Trigger::FileWatch { .. } | Trigger::Email { .. })
+            ))
+    {
+        return Err(ApiError::forbidden(
+            "schedule triggers and prechecks are local-owner only",
+        ));
+    }
     if input.bot_id != sc.bot_id.0 {
         return Err(bad_schedule("the bot of a schedule cannot be changed"));
     }
@@ -1618,16 +2129,26 @@ pub(crate) async fn update_schedule(
     sc.payload = p.payload;
     sc.misfire_policy = p.policy;
     sc.spec = p.spec;
+    let trigger = schedule_extensions(&s, &mut sc, &input).await?;
     let store = s.schedule_store()?;
-    // The user is rewriting it: a bot-made schedule becomes the user's, so the
-    // bot can no longer change what the user wrote (this also bumps the
-    // revision, which stales any approval a bot had prepared for it).
-    if sc.origin == scheduler::ScheduleOrigin::Bot {
-        store.set_origin(sc.id, scheduler::ScheduleOrigin::User)?;
-    }
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.update_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string(),"bot_id":sc.bot_id.to_string()}),
+    )?;
+    // User edits take ownership in the same revision-checked transaction.
+    sc.origin = scheduler::ScheduleOrigin::User;
     // Run progress may have changed after schedule_of_user. The store reads
     // it again and computes any re-arm under the same write transaction.
-    let (sc, was_enabled) = persist_schedule_edit(&store, &sc, input.enabled, now_ms())?;
+    let (sc, was_enabled) = persist_schedule_edit(
+        &store,
+        &sc,
+        input.enabled,
+        now_ms(),
+        trigger.as_ref().map(|t| t.as_ref()),
+    )?;
     apply_webhook(&store, sc.id, input.webhook_secret.as_deref())?;
     s.publish_schedule_changed(
         sc.id.0,
@@ -1637,20 +2158,22 @@ pub(crate) async fn update_schedule(
             ScheduleChangeKind::Toggled
         },
     );
-    Ok(Json(dto_of(&s, &sc)?))
+    Ok(Json(dto_of(&s, &store.get(sc.id)?.unwrap_or(sc))?))
 }
 
 /// Persist the PUT definition without trusting the route's runtime snapshot.
 /// Keeping this boundary separate also allows deterministic read/write race
 /// tests without a process-global hook or a real clock/sleep.
+#[allow(clippy::option_option)] // Omitted preserves, null clears, value replaces the trigger.
 fn persist_schedule_edit(
     store: &scheduler::ScheduleStore,
     definition: &Schedule,
     enabled: Option<bool>,
     now: i64,
+    trigger: Option<Option<&Trigger>>,
 ) -> Result<(Schedule, bool), ApiError> {
     store
-        .update_definition_and_rearm(definition, enabled, now)?
+        .update_config(definition, enabled, now, trigger)?
         .ok_or_else(|| ApiError::not_found(format!("schedule {}", definition.id)))
 }
 
@@ -1665,7 +2188,15 @@ pub(crate) async fn delete_schedule(
 ) -> Result<StatusCode, ApiError> {
     let sc = schedule_of_user(&s, &sid)?;
     let store = s.schedule_store()?;
-    store.remove_trigger(sc.id)?;
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.delete_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string()}),
+    )?;
+    // Foreign-key cascade removes the trigger in the same transaction; never
+    // briefly expose a deleted file/e-mail trigger as an ordinary timer.
     store.delete(sc.id)?;
     s.publish_schedule_changed(sc.id.0, ScheduleChangeKind::Deleted);
     Ok(StatusCode::NO_CONTENT)
@@ -1857,7 +2388,7 @@ mod schedule_update_tests {
             });
             read.wait();
             fired.wait();
-            let (fresh, _) = persist_schedule_edit(&store, &stale, None, 60_000).unwrap();
+            let (fresh, _) = persist_schedule_edit(&store, &stale, None, 60_000, None).unwrap();
             assert_eq!(fresh.name, "after");
             assert_eq!(fresh.payload, stale.payload);
             assert_eq!(fresh.last_run_at, Some(60_000));
@@ -1878,7 +2409,7 @@ mod schedule_update_tests {
         store.insert(&stale).unwrap();
         store.record_run_intent(stale.id, 1_000, None).unwrap();
         stale.name = "renamed".into();
-        let (fresh, _) = persist_schedule_edit(&store, &stale, None, 2_000).unwrap();
+        let (fresh, _) = persist_schedule_edit(&store, &stale, None, 2_000, None).unwrap();
         assert_eq!(fresh.last_run_at, Some(1_000));
         assert_eq!(fresh.next_run_at, None);
         assert_eq!(store.list_due(2_000).unwrap(), vec![]);
@@ -1890,12 +2421,12 @@ mod schedule_update_tests {
         let stale = schedule(ScheduleSpec::Every { seconds: 60 });
         store.insert(&stale).unwrap();
         store.set_enabled(stale.id, false, None).unwrap();
-        let (fresh, was_enabled) = persist_schedule_edit(&store, &stale, None, 10).unwrap();
+        let (fresh, was_enabled) = persist_schedule_edit(&store, &stale, None, 10, None).unwrap();
         assert!(!was_enabled);
         assert!(!fresh.enabled);
         assert_eq!(fresh.next_run_at, None);
         store.delete(stale.id).unwrap();
-        assert!(persist_schedule_edit(&store, &stale, Some(true), 20).is_err());
+        assert!(persist_schedule_edit(&store, &stale, Some(true), 20, None).is_err());
         assert!(store.get(stale.id).unwrap().is_none());
     }
 }

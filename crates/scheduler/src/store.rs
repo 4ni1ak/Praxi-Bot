@@ -33,10 +33,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0004_schedule_origin",
         include_str!("../migrations/0004_schedule_origin.sql"),
     ),
+    (
+        "0012_triggers_prechecks",
+        include_str!("../migrations/0012_triggers_prechecks.sql"),
+    ),
 ];
 
 /// Schema version produced by the newest embedded migration.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Terminal occurrence rows kept per schedule; older ones are pruned in the
 /// transaction that finishes an occurrence. Unresolved rows are never pruned.
@@ -45,7 +49,7 @@ const OCCURRENCE_HISTORY_LIMIT: i64 = 100;
 const TERMINAL_STATES: &str = "'succeeded', 'failed', 'started', 'missed', 'interrupted'";
 
 const SCHEDULE_SELECT: &str = "SELECT id, bot_id, chat_id, name, spec_json, payload_json, \
-    enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, revision, origin,     (SELECT COUNT(*) FROM occurrences o WHERE o.schedule_id = schedules.id      AND o.state IN ('missed', 'interrupted')) FROM schedules";
+    enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, revision, origin,     (SELECT COUNT(*) FROM occurrences o WHERE o.schedule_id = schedules.id      AND o.state IN ('missed', 'interrupted')), precheck_json FROM schedules";
 
 /// Type alias for [`ScheduleStore`].
 pub type Store = ScheduleStore;
@@ -153,13 +157,30 @@ impl ScheduleStore {
     /// # Errors
     /// Fails if `schedule.spec` is invalid or on SQLite/JSON errors.
     pub fn insert(&self, schedule: &Schedule) -> Result<()> {
+        self.insert_config(schedule, None)
+    }
+
+    /// Atomically insert an enabled definition and its optional event trigger.
+    /// No timer pass can observe the definition without its trigger.
+    ///
+    /// # Errors
+    /// Invalid definition/trigger or storage failure.
+    pub fn insert_config(&self, schedule: &Schedule, trigger: Option<&Trigger>) -> Result<()> {
+        if let Some(t) = trigger {
+            t.validate()?;
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         schedule.spec.validate()?;
+        if let Some(precheck) = &schedule.precheck {
+            precheck.validate()?;
+        }
         let spec_json = serde_json::to_string(&schedule.spec)?;
         let payload_json = serde_json::to_string(&schedule.payload)?;
-        self.conn().execute(
+        tx.execute(
             "INSERT INTO schedules (id, bot_id, chat_id, name, spec_json, payload_json, \
-             enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin, precheck_json) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 schedule.id.to_string(),
                 schedule.bot_id.to_string(),
@@ -173,8 +194,14 @@ impl ScheduleStore {
                 schedule.next_run_at,
                 schedule.misfire_policy.as_str(),
                 schedule.origin.as_str(),
+                schedule.precheck.as_ref().map(serde_json::to_string).transpose()?,
             ],
         )?;
+        if let Some(t) = trigger {
+            write_trigger_in(&tx, schedule.id, Some(t))?;
+        }
+        tx.commit()?;
+        drop(conn);
         self.notify();
         Ok(())
     }
@@ -189,6 +216,9 @@ impl ScheduleStore {
     /// Fails if `schedule.spec` is invalid or on SQLite/JSON errors.
     pub fn upsert(&self, schedule: &Schedule) -> Result<()> {
         schedule.spec.validate()?;
+        if let Some(precheck) = &schedule.precheck {
+            precheck.validate()?;
+        }
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(current) = get_schedule(&tx, schedule.id)? {
@@ -204,8 +234,8 @@ impl ScheduleStore {
         } else {
             tx.execute(
                 "INSERT INTO schedules (id, bot_id, chat_id, name, spec_json, payload_json, \
-                 enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin, precheck_json) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     schedule.id.to_string(),
                     schedule.bot_id.to_string(),
@@ -219,6 +249,7 @@ impl ScheduleStore {
                     schedule.next_run_at,
                     schedule.misfire_policy.as_str(),
                     schedule.origin.as_str(),
+                schedule.precheck.as_ref().map(serde_json::to_string).transpose()?,
                 ],
             )?;
         }
@@ -275,7 +306,7 @@ impl ScheduleStore {
     pub fn list_due(&self, now_ms: i64) -> Result<Vec<Schedule>> {
         let conn = self.conn();
         let mut st = conn.prepare(&format!(
-            "{SCHEDULE_SELECT} WHERE enabled = 1 AND next_run_at_ms IS NOT NULL \
+            "{SCHEDULE_SELECT} WHERE enabled = 1 AND next_run_at_ms IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schedule_triggers t WHERE t.schedule_id = schedules.id AND json_extract(t.trigger_json, '$.kind') IN ('file_watch','email')) \
              AND next_run_at_ms <= ?1 ORDER BY next_run_at_ms ASC, id ASC"
         ))?;
         let rows = st.query_map([now_ms], schedule_row)?;
@@ -289,7 +320,7 @@ impl ScheduleStore {
     pub fn nearest_next_run_at(&self) -> Result<Option<i64>> {
         let min_ts: Option<i64> = self.conn().query_row(
             "SELECT MIN(next_run_at_ms) FROM schedules \
-             WHERE enabled = 1 AND next_run_at_ms IS NOT NULL",
+             WHERE enabled = 1 AND next_run_at_ms IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schedule_triggers t WHERE t.schedule_id = schedules.id AND json_extract(t.trigger_json, '$.kind') IN ('file_watch','email'))",
             [],
             |r| r.get(0),
         )?;
@@ -308,6 +339,9 @@ impl ScheduleStore {
     /// Fails if the specification is invalid or on SQLite/JSON errors.
     pub fn update_definition(&self, schedule: &Schedule) -> Result<bool> {
         schedule.spec.validate()?;
+        if let Some(precheck) = &schedule.precheck {
+            precheck.validate()?;
+        }
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let edited = edit_in(
@@ -370,9 +404,71 @@ impl ScheduleStore {
         now_ms: i64,
     ) -> Result<Option<(Schedule, bool)>> {
         definition.spec.validate()?;
+        if let Some(check) = &definition.precheck {
+            check.validate()?;
+        }
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let edited = edit_in(&tx, definition, enabled, now_ms, None)?;
+        tx.commit()?;
+        drop(conn);
+        self.notify();
+        Ok(edited)
+    }
+
+    /// Atomically change a revision-checked definition and trigger (None keeps
+    /// it, Some(None) removes it), without a transient timer-only definition.
+    ///
+    /// # Errors
+    /// Validation or storage failure.
+    pub fn update_config(
+        &self,
+        definition: &Schedule,
+        enabled: Option<bool>,
+        now_ms: i64,
+        trigger: Option<Option<&Trigger>>,
+    ) -> Result<Option<(Schedule, bool)>> {
+        definition.spec.validate()?;
+        if let Some(p) = &definition.precheck {
+            p.validate()?;
+        }
+        if let Some(Some(t)) = trigger {
+            t.validate()?;
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = get_schedule(&tx, definition.id)?;
+        let has_source:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM schedule_triggers WHERE schedule_id=?1 AND json_extract(trigger_json,'$.kind') IN ('file_watch','email'))",[definition.id.to_string()],|row|row.get(0))?;
+        // Preserve legacy plain-timer concurrent-toggle semantics. Anything
+        // with an external source/validated precheck uses the strict revision.
+        let strict = trigger.is_some()
+            || has_source
+            || definition.precheck.is_some()
+            || current.as_ref().is_some_and(|s| s.precheck.is_some());
+        let edited = edit_in(
+            &tx,
+            definition,
+            enabled,
+            now_ms,
+            strict.then_some(definition.revision),
+        )?;
+        if edited.is_some()
+            && let Some(t) = trigger
+        {
+            write_trigger_in(&tx, definition.id, t)?;
+        }
+        if edited.is_some() && definition.origin == ScheduleOrigin::User {
+            tx.execute(
+                "UPDATE schedules SET origin='user' WHERE id=?1",
+                [definition.id.to_string()],
+            )?;
+        }
+        let edited = edited
+            .map(|(_, was_enabled)| {
+                get_schedule(&tx, definition.id).map(|row| row.map(|row| (row, was_enabled)))
+            })
+            .transpose()?
+            .flatten();
         tx.commit()?;
         drop(conn);
         self.notify();
@@ -715,19 +811,24 @@ impl ScheduleStore {
     /// # Errors
     /// Fails on SQLite/JSON errors or if `schedule_id` does not exist.
     pub fn set_trigger(&self, schedule_id: TaskId, trigger: &Trigger) -> Result<()> {
-        let Trigger::Webhook { secret } = trigger;
-        if secret.is_empty() {
-            return Err(SchedulerError::InvalidSpec(
-                "webhook secret must not be empty".into(),
-            ));
-        }
+        trigger.validate()?;
         let trigger_json = serde_json::to_string(trigger)?;
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
             "INSERT INTO schedule_triggers (schedule_id, trigger_json, created_at_ms) \
              VALUES (?1, ?2, ?3) \
              ON CONFLICT(schedule_id) DO UPDATE SET trigger_json = excluded.trigger_json",
             params![schedule_id.to_string(), trigger_json, storage::now_ms()],
         )?;
+        tx.execute(
+            "UPDATE schedules SET revision = revision + 1 WHERE id = ?1",
+            [schedule_id.to_string()],
+        )?;
+        cancel_pending(&tx, schedule_id)?;
+        tx.commit()?;
+        drop(conn);
+        self.notify();
         Ok(())
     }
 
@@ -753,12 +854,85 @@ impl ScheduleStore {
     /// # Errors
     /// Fails on SQLite errors.
     pub fn remove_trigger(&self, schedule_id: TaskId) -> Result<bool> {
-        let changed = self.conn().execute(
-            "DELETE FROM schedule_triggers WHERE schedule_id = ?1",
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
+            "DELETE FROM schedule_triggers WHERE schedule_id=?1",
             [schedule_id.to_string()],
-        )?;
-        Ok(changed > 0)
+        )? > 0;
+        if changed {
+            tx.execute(
+                "UPDATE schedules SET revision=revision+1 WHERE id=?1",
+                [schedule_id.to_string()],
+            )?;
+            cancel_pending(&tx, schedule_id)?;
+        }
+        tx.commit()?;
+        drop(conn);
+        self.notify();
+        Ok(changed)
     }
+
+    /// Runtime counters and hash baseline. Definition changes reset baselines
+    /// and error streaks, while the total skip counter stays cumulative.
+    ///
+    /// # Errors
+    /// Database or malformed state.
+    pub fn check_state(&self, schedule: &Schedule) -> Result<crate::precheck::CheckState> {
+        let conn = self.conn();
+        let raw = conn.query_row(
+            "SELECT last_hash, skipped_by_precheck, precheck_errors, trigger_errors, watch_json,revision FROM schedule_checks WHERE schedule_id=?1",
+            [schedule.id.to_string()], |r| {
+                let skipped_by_precheck=u64::try_from(r.get::<_,i64>(1)?).map_err(|e|conv_err(1,e))?;
+                if r.get::<_,i64>(5)? != schedule.revision {return Ok(crate::precheck::CheckState {skipped_by_precheck,..Default::default()});}
+                Ok(crate::precheck::CheckState {
+                    last_hash:r.get(0)?,skipped_by_precheck,precheck_errors:r.get(2)?,trigger_errors:r.get(3)?,
+                    watch:r.get::<_,Option<String>>(4)?.map(|v| serde_json::from_str(&v).map_err(|e|conv_err(4,e))).transpose()?,
+                })
+            }).optional()?;
+        Ok(raw.unwrap_or_default())
+    }
+
+    /// Commit counters only while the definition is still current. Ten errors
+    /// in either unattended phase pause the schedule atomically.
+    ///
+    /// # Errors
+    /// Database or serialization error.
+    pub fn save_check_state(
+        &self,
+        schedule: &Schedule,
+        state: &crate::precheck::CheckState,
+    ) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = get_schedule(&tx, schedule.id)?;
+        if current.is_none_or(|s| s.revision != schedule.revision) {
+            return Ok(false);
+        }
+        tx.execute("INSERT INTO schedule_checks (schedule_id,revision,last_hash,skipped_by_precheck,precheck_errors,trigger_errors,watch_json) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(schedule_id) DO UPDATE SET revision=excluded.revision,last_hash=excluded.last_hash,skipped_by_precheck=excluded.skipped_by_precheck,precheck_errors=excluded.precheck_errors,trigger_errors=excluded.trigger_errors,watch_json=excluded.watch_json",
+            params![schedule.id.to_string(), schedule.revision, state.last_hash, i64::try_from(state.skipped_by_precheck).unwrap_or(i64::MAX), state.precheck_errors, state.trigger_errors, state.watch.as_ref().map(serde_json::to_string).transpose()?])?;
+        if state.precheck_errors >= 10 || state.trigger_errors >= 10 {
+            tx.execute(
+                "UPDATE schedules SET enabled=0,next_run_at_ms=NULL WHERE id=?1",
+                [schedule.id.to_string()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+}
+
+fn write_trigger_in(conn: &Connection, id: TaskId, trigger: Option<&Trigger>) -> Result<()> {
+    if let Some(trigger) = trigger {
+        conn.execute("INSERT INTO schedule_triggers (schedule_id,trigger_json,created_at_ms) VALUES (?1,?2,?3) ON CONFLICT(schedule_id) DO UPDATE SET trigger_json=excluded.trigger_json",
+            params![id.to_string(),serde_json::to_string(trigger)?,storage::now_ms()])?;
+    } else {
+        conn.execute(
+            "DELETE FROM schedule_triggers WHERE schedule_id=?1",
+            [id.to_string()],
+        )?;
+    }
+    Ok(())
 }
 
 fn get_schedule(conn: &Connection, id: TaskId) -> Result<Option<Schedule>> {
@@ -854,7 +1028,7 @@ fn arm_from(spec: &ScheduleSpec, now_ms: i64) -> Result<Option<i64>> {
 fn update_definition_in(conn: &Connection, schedule: &Schedule) -> Result<bool> {
     let changed = conn.execute(
         "UPDATE schedules SET chat_id = ?2, name = ?3, spec_json = ?4, payload_json = ?5, \
-         enabled = ?6, misfire_policy = ?7, revision = revision + 1 \
+         enabled = ?6, misfire_policy = ?7, revision = revision + 1, precheck_json = ?9 \
          WHERE id = ?1 AND revision = ?8",
         params![
             schedule.id.to_string(),
@@ -865,6 +1039,11 @@ fn update_definition_in(conn: &Connection, schedule: &Schedule) -> Result<bool> 
             i64::from(schedule.enabled),
             schedule.misfire_policy.as_str(),
             schedule.revision,
+            schedule
+                .precheck
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
         ],
     )?;
     if changed > 0 {
@@ -958,6 +1137,12 @@ fn schedule_row(row: &Row<'_>) -> rusqlite::Result<Schedule> {
             })?
         },
         missed_occurrences: row.get(13)?,
+        precheck: row
+            .get::<_, Option<String>>(14)?
+            .map(|v| serde_json::from_str(&v).map_err(|e| conv_err(14, e)))
+            .transpose()?,
+        external_input: None,
+        precheck_failed: false,
     })
 }
 

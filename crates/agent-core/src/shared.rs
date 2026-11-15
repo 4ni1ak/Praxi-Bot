@@ -404,7 +404,9 @@ pub fn build_providers(
     let mut cli_built: Vec<String> = Vec::new();
     for s in cfg.providers.iter().filter(|p| p.enabled) {
         if let Some(CliSettings::Cli { engine, .. }) = &s.cli {
-            if cli_provider::engine_spec(engine.as_str()).is_some_and(|spec| spec.runnable) {
+            if cli_provider::engine_spec(engine.as_str())
+                .is_some_and(cli_provider::CliEngineSpec::can_enable)
+            {
                 cli_built.push(s.id.clone());
             } else {
                 warn(&format!(
@@ -707,6 +709,7 @@ pub struct SkillHints {
 }
 
 pub(crate) struct Shared {
+    pub usage: crate::usage::Ledger,
     pub storage: Arc<Storage>,
     pub tools: ToolRegistry,
     pub checkpoint_access: RwLock<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)>,
@@ -780,6 +783,9 @@ pub(crate) struct Shared {
     /// Serialises a global-policy install with the decision to execute an
     /// already-approved tool. Not held across `.await`.
     pub exec_gate: Mutex<()>,
+    /// Cancellation tokens of the native-tools engine processes running per bot,
+    /// so the owner's kill switch can end them at once.
+    pub native_runs: Mutex<HashMap<BotId, Vec<(uuid::Uuid, tokio_util::sync::CancellationToken)>>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]
@@ -873,6 +879,8 @@ pub(crate) fn kind_for(i: InitiatorKind) -> String {
         InitiatorKind::Channel => format!("{KIND_PREFIX}:channel"),
         InitiatorKind::Subagent => format!("{KIND_PREFIX}:subagent"),
         InitiatorKind::Schedule => format!("{KIND_PREFIX}:schedule"),
+        InitiatorKind::ExternalAgent => format!("{KIND_PREFIX}:external_agent"),
+        InitiatorKind::ExternalSchedule => format!("{KIND_PREFIX}:external_schedule"),
     }
 }
 
@@ -894,7 +902,8 @@ pub(crate) fn kind_for_schedule(id: TaskId) -> String {
 
 /// The schedule behind a run kind written by [`kind_for_schedule`].
 pub fn schedule_id_of(kind: &str) -> Option<TaskId> {
-    kind.strip_prefix("turn:schedule:")?
+    kind.strip_prefix("turn:schedule:")
+        .or_else(|| kind.strip_prefix("turn:external_schedule:"))?
         .parse()
         .ok()
         .map(TaskId)
@@ -905,7 +914,13 @@ pub(crate) fn initiator_of(kind: &str) -> InitiatorKind {
         Some("routine") => InitiatorKind::Routine,
         Some("channel") => InitiatorKind::Channel,
         Some("subagent") => InitiatorKind::Subagent,
+        Some(s) if s == "external_schedule" || s.starts_with("external_schedule:") => {
+            InitiatorKind::ExternalSchedule
+        }
         Some(s) if s == "schedule" || s.starts_with("schedule:") => InitiatorKind::Schedule,
+        Some(s) if s == "external_agent" || s.starts_with("external_agent:") => {
+            InitiatorKind::ExternalAgent
+        }
         _ => InitiatorKind::Human,
     }
 }

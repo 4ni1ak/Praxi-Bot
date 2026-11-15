@@ -39,7 +39,7 @@ async fn rejects_knowledge_changes(role: crate::PeerRole) {
     bot.config["knowledge"] = original.clone();
     t.state
         .storage()
-        .update_bot(bot.id, &bot.name, &bot.config)
+        .update_bot(bot.id, &bot.name, &bot.config, 1)
         .unwrap();
     let mut variants = Vec::new();
     let mut changed = original.clone();
@@ -63,12 +63,13 @@ async fn rejects_knowledge_changes(role: crate::PeerRole) {
     changed["sources"] = json!([{"remote_embedding":{"profile_fingerprint":"b".repeat(64)}}]);
     variants.push(changed);
     variants.push(json!({}));
+    let version = t.state.storage().bot_version(bot_id).unwrap().unwrap();
     for (variant, knowledge) in variants.into_iter().enumerate() {
         let mut config = bot.config.clone();
         config["knowledge"] = knowledge;
         for body in [
-            json!({"config":config}),
-            json!({"profile_toml":toml::to_string(&config).unwrap()}),
+            json!({"expected_version":version,"config":config}),
+            json!({"expected_version":version,"profile_toml":toml::to_string(&config).unwrap()}),
         ] {
             for (method, path) in [
                 (Method::POST, "/v1/bots".to_owned()),
@@ -95,10 +96,13 @@ async fn rejects_knowledge_changes(role: crate::PeerRole) {
             if !include_knowledge {
                 config.as_object_mut().unwrap().remove("knowledge");
             }
-            for body in [
-                json!({"config":config}),
-                json!({"profile_toml":toml::to_string(&config).unwrap()}),
-            ] {
+            for as_toml in [false, true] {
+                let version = t.state.storage().bot_version(bot_id).unwrap().unwrap();
+                let body = if as_toml {
+                    json!({"expected_version":version,"profile_toml":toml::to_string(&config).unwrap()})
+                } else {
+                    json!({"expected_version":version,"config":config})
+                };
                 let response =
                     peer_request(&t, role, Method::PUT, &format!("/v1/bots/{id}"), body).await;
                 assert_eq!(
@@ -112,11 +116,12 @@ async fn rejects_knowledge_changes(role: crate::PeerRole) {
             }
         }
     }
+    let version = t.state.storage().bot_version(bot_id).unwrap().unwrap();
     let owner = call(
         &t,
         Method::PUT,
         &format!("/v1/bots/{id}"),
-        Some(json!({"name":"Owner rename","config":bot.config})),
+        Some(json!({"expected_version":version,"name":"Owner rename","config":bot.config})),
     )
     .await;
     assert_eq!(owner.status, StatusCode::OK);

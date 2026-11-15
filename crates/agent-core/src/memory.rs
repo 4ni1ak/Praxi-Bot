@@ -22,6 +22,7 @@ use crate::shared::{STEP_MODEL, STEP_TOOLS, STEP_WORKFLOW, Shared, initiator_of}
 struct LoopMemoryModel {
     sh: Arc<Shared>,
     model: ModelRef,
+    ctx: Arc<crate::shared::RunCtx>,
 }
 
 impl LoopMemoryModel {
@@ -36,6 +37,13 @@ impl LoopMemoryModel {
             .read()
             .pick(&self.model)
             .map_err(|e| MemoryError::Model(e.to_string()))?;
+        let mut call = crate::usage::CallGuard::start(
+            &self.sh,
+            &self.ctx,
+            &self.model.0,
+            crate::CallPurpose::Memory,
+        )
+        .map_err(|e| MemoryError::Model(e.into()))?;
         let mut stream = provider
             .stream(req)
             .await
@@ -44,6 +52,7 @@ impl LoopMemoryModel {
         while let Some(chunk) = stream.next().await {
             match chunk.map_err(|e| MemoryError::Model(e.to_string()))? {
                 ChatChunk::TextDelta(t) => out.push_str(&t),
+                ChatChunk::Usage(u) => call.usage(&u),
                 ChatChunk::Done { .. } => break,
                 _ => {}
             }
@@ -102,6 +111,7 @@ impl MemoryModel for LoopMemoryModel {
 
 /// Everything the extraction of one finished turn needs.
 pub(crate) struct Exchange {
+    pub ctx: Arc<crate::shared::RunCtx>,
     pub user_id: UserId,
     pub bot_id: BotId,
     pub chat_id: ChatId,
@@ -173,6 +183,7 @@ impl Exchange {
                 .list_child_runs(run.id)
                 .map_or(true, |k| !k.is_empty());
         Some(Self {
+            ctx: sh.ctx(run).ok()?,
             user_id: run.user_id,
             bot_id: run.bot_id,
             chat_id,
@@ -196,6 +207,7 @@ pub(crate) async fn extract(sh: Arc<Shared>, ex: Exchange) {
         return;
     };
     let model = LoopMemoryModel {
+        ctx: ex.ctx,
         model: ModelRef(
             profile
                 .models

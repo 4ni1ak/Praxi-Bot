@@ -20,6 +20,7 @@ function policyBot(permissions?: Record<string, unknown>): Bot {
     id: "policy-bot",
     name: "Restricted",
     created_at_ms: 1,
+    version: 1,
     config: {
       bot: { id: "restricted", name: "Restricted" },
       models: { executor: "anthropic/old-model" },
@@ -149,6 +150,7 @@ test("draftFromBot and configFromDraft round-trip shape and color with legacy fa
     id: "legacy-bot-123",
     name: "Legacy",
     created_at_ms: 1,
+    version: 1,
     config: {
       bot: { id: "legacy", name: "Legacy", persona: "Helpful" },
       models: { executor: "anthropic/claude-sonnet-5-5" }
@@ -325,6 +327,7 @@ test("botView preserves stored shape when it differs from fallbackBotShape(id)",
     id: "bot-cube-0",
     name: "HeartBot",
     created_at_ms: 1,
+    version: 1,
     config: {
       bot: { id: "heartbot", name: "HeartBot", shape: "heart", color: "#4c8dff" },
       models: { executor: "anthropic/claude-sonnet-5-5" }
@@ -356,6 +359,7 @@ test("onboarding Step 4 preview shape matches configFromDraft stored shape", () 
     id: "bot-cube-0",
     name: "Atlas",
     created_at_ms: 1,
+    version: 1,
     config: {
       bot: { id: "atlas", name: "Atlas", shape: "heart", color: "#4c8dff" },
       models: { executor: "anthropic/claude-sonnet-5-5" }

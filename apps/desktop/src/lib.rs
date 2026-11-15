@@ -1,5 +1,6 @@
 //! Desktop shell library entry point for Tauri.
 
+pub mod browser;
 pub mod command_names;
 pub mod control;
 pub mod daemon;
@@ -27,6 +28,16 @@ use widget_visibility::WidgetVisibility;
 use window_gate::{MAIN_AND_WIDGET, MAIN_ONLY, require_window};
 
 const MENU_ID_SIMULATE_RUN: &str = "dev.simulate_bot_run";
+
+/// Open an approved Composio URL in the operating system browser.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+async fn open_composio_link(window: Window, href: String, dashboard: bool) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
+    tauri::async_runtime::spawn_blocking(move || browser::open_composio(&href, dashboard))
+        .await
+        .map_err(|_| "system browser opener failed".to_owned())?
+}
 const MENU_ID_TOGGLE_WHEEL: &str = "dev.toggle_wheel";
 const MENU_ID_STOP_ALL: &str = "dev.stop_all";
 
@@ -1083,6 +1094,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            open_composio_link,
             get_control_state,
             is_human_driving,
             begin_action,
@@ -1347,6 +1359,7 @@ mod acl_tests {
     /// with the allow-list constant they must check. Everything else must be
     /// listed in `ACL_ONLY`, so a new command has to be classified here.
     const GATED: &[(&str, &str)] = &[
+        ("open_composio_link", "MAIN_ONLY"),
         ("begin_action", "MAIN_ONLY"),
         ("start_bot_run", "MAIN_ONLY"),
         ("pause_bot_run", "MAIN_AND_WIDGET"),

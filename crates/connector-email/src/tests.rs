@@ -405,3 +405,28 @@ async fn hung_secret_store_times_out() {
     let err = conn.list_folders(None).await.unwrap_err();
     assert!(matches!(err, EmailError::Timeout(1)), "{err}");
 }
+
+#[tokio::test]
+async fn c225_imap_trigger_search_fetches_headers_without_message_bodies() {
+    let imap = server(Protocol::Imap).await;
+    let smtp = server(Protocol::Smtp).await;
+    let conn = connector(account(&imap, &smtp, SmtpSecurity::Implicit));
+    let result = call(
+        &conn,
+        "email_search",
+        json!({"from":"ann@example.com","subject":"Fixture","limit":100}),
+    )
+    .await;
+    assert_eq!(result["messages"].as_array().unwrap().len(), 2);
+    assert!(
+        result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m.get("body").is_none() && m.get("body_text").is_none())
+    );
+    let commands = imap.commands.lock().unwrap();
+    assert!(commands.iter().any(|c| c.contains("BODY.PEEK[HEADER]")));
+    assert!(!commands.iter().any(|c| c.contains("BODY.PEEK[]")));
+    assert!(smtp.commands.lock().unwrap().is_empty());
+}

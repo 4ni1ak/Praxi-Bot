@@ -56,6 +56,18 @@ pub const MAX_CRON_CHARS: usize = 120;
 /// See [`MAX_WHEN_CHARS`].
 pub const MAX_TZ_CHARS: usize = 64;
 
+fn event_timing(trigger: Option<&scheduler::Trigger>) -> Option<&'static str> {
+    match trigger {
+        Some(scheduler::Trigger::FileWatch { .. }) => Some(
+            "Matching file changes / Eşleşen dosya değişiklikleri (30s polling / yoklama; max 6/min)",
+        ),
+        Some(scheduler::Trigger::Email { .. }) => Some(
+            "Matching email headers / Eşleşen e-posta başlıkları (120s polling / yoklama; max 6/min)",
+        ),
+        _ => None,
+    }
+}
+
 /// Limits for schedules a bot creates (schedules made in the UI are not
 /// limited by the interval, but they count toward the per-bot maximum).
 ///
@@ -75,6 +87,8 @@ pub struct ScheduleLimits {
     /// IANA timezone used when a call names none; `None` = the system's,
     /// else UTC.
     pub timezone: Option<String>,
+    /// Explicit local workspace roots for metadata-only file triggers. Empty denies watches.
+    pub watch_roots: Vec<std::path::PathBuf>,
 }
 
 impl Default for ScheduleLimits {
@@ -83,6 +97,7 @@ impl Default for ScheduleLimits {
             max_per_bot: DEFAULT_MAX_SCHEDULES_PER_BOT,
             min_interval_secs: DEFAULT_MIN_INTERVAL_SECS,
             timezone: None,
+            watch_roots: Vec::new(),
         }
     }
 }
@@ -145,6 +160,8 @@ struct Frozen {
     made_ms: i64,
     name: String,
     prompt: String,
+    precheck: Option<scheduler::Precheck>,
+    trigger: Option<scheduler::Trigger>,
     spec: ScheduleSpec,
     tz: Tz,
     /// The schedule being changed and its revision when previewed.
@@ -167,6 +184,7 @@ pub(crate) struct DaemonScheduleHost {
     events: broadcast::Sender<ScheduleChanged>,
     limits: ScheduleLimits,
     clock: Clock,
+    agent: Option<agent_core::AgentLoop>,
     /// Serialises "count, then insert" so the quota cannot be raced.
     gate: parking_lot::Mutex<()>,
     frozen: parking_lot::Mutex<VecDeque<Frozen>>,
@@ -375,11 +393,103 @@ impl DaemonScheduleHost {
             events,
             limits,
             clock,
+            agent: None,
             gate: parking_lot::Mutex::new(()),
             frozen: parking_lot::Mutex::new(VecDeque::new()),
             #[cfg(test)]
             before_delete_hook: parking_lot::Mutex::new(None),
         }
+    }
+
+    pub(crate) fn with_agent(mut self, agent: agent_core::AgentLoop) -> Self {
+        self.agent = Some(agent);
+        self
+    }
+
+    fn extensions(
+        &self,
+        caller: &ScheduleCaller,
+        req: &ScheduleRequest,
+        current: Option<&Schedule>,
+    ) -> Result<(Option<scheduler::Precheck>, Option<scheduler::Trigger>), String> {
+        let previous_trigger = current
+            .map(|s| self.store.get_trigger(s.id))
+            .transpose()
+            .map_err(err)?
+            .flatten();
+        let precheck = match &req.precheck {
+            None => current.and_then(|s| s.precheck.clone()),
+            Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                serde_json::from_value::<scheduler::Precheck>(value.clone())
+                    .map_err(|_| "invalid precheck definition")?,
+            ),
+        };
+        let trigger = match &req.trigger {
+            None => previous_trigger,
+            Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                serde_json::from_value::<scheduler::Trigger>(value.clone())
+                    .map_err(|_| "invalid trigger definition")?,
+            ),
+        };
+        if precheck.is_some() || trigger.is_some() {
+            let agent = self
+                .agent
+                .as_ref()
+                .ok_or("schedule extension host unavailable")?;
+            let bot = Self::bot(caller)?;
+            if let Some(check) = &precheck {
+                crate::schedule::validate_precheck(agent, bot, check)?;
+            }
+            if let Some(trigger) = &trigger {
+                trigger
+                    .validate()
+                    .map_err(|_| "invalid trigger definition")?;
+                match trigger {
+                    scheduler::Trigger::Webhook { .. } => {
+                        return Err("bots cannot configure webhook secrets".into());
+                    }
+                    scheduler::Trigger::Email { .. } => agent.validate_schedule_read(
+                        bot,
+                        "email_search",
+                        &serde_json::Value::Null,
+                    )?,
+                    scheduler::Trigger::FileWatch { path, glob, .. } => {
+                        agent.validate_schedule_read(
+                            bot,
+                            "fs_list",
+                            &json!({"path":path,"glob":glob}),
+                        )?;
+                        self.storage
+                            .append_audit(
+                                self.user_id,
+                                None,
+                                "schedule",
+                                "schedule.watch_validate_intent",
+                                &json!({"bot_id":bot.to_string()}),
+                            )
+                            .map_err(|_| "schedule validation audit failed")?;
+                        let (roots, _) = agent.checkpoint_access();
+                        let roots = if roots.is_empty() {
+                            &self.limits.watch_roots
+                        } else {
+                            &roots
+                        };
+                        builtin_tools::files::watch_snapshot(
+                            self.storage.data_dir(),
+                            roots,
+                            path,
+                            glob,
+                        )
+                        .map_err(
+                            |_| "file watch requires an allowed, bounded workspace directory",
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok((precheck, trigger))
     }
 
     fn now(&self) -> i64 {
@@ -435,7 +545,10 @@ impl DaemonScheduleHost {
     /// A webhook trigger lets outsiders fire the schedule, so a bot may not
     /// edit or resume it (it may still pause or delete it).
     fn refuse_if_webhook(&self, s: &Schedule) -> Result<(), String> {
-        if self.store.get_trigger(s.id).map_err(err)?.is_some() {
+        if matches!(
+            self.store.get_trigger(s.id).map_err(err)?,
+            Some(scheduler::Trigger::Webhook { .. })
+        ) {
             return Err(format!(
                 "schedule {:?} has a webhook trigger, so only the user can edit or resume it",
                 s.name
@@ -616,6 +729,7 @@ impl DaemonScheduleHost {
                     MAX_PROMPT_CHARS,
                     true,
                 )?;
+                let (precheck, trigger) = self.extensions(caller, req, None)?;
                 self.quota(bot)?;
                 let (spec, tz) = self.spec_of(req, now)?;
                 Ok(Frozen {
@@ -625,6 +739,8 @@ impl DaemonScheduleHost {
                     made_ms: now,
                     name,
                     prompt,
+                    precheck,
+                    trigger,
                     spec,
                     tz,
                     target: None,
@@ -633,6 +749,7 @@ impl DaemonScheduleHost {
             ScheduleChange::Update { id, req } => {
                 let cur = self.own_editable(caller, id)?;
                 self.refuse_if_webhook(&cur)?;
+                let (precheck, trigger) = self.extensions(caller, req, Some(&cur))?;
                 let Payload::AgentPrompt { text } = &cur.payload else {
                     return Err(
                         "this schedule runs a workflow or tool; a bot can only pause or delete it"
@@ -663,6 +780,8 @@ impl DaemonScheduleHost {
                     made_ms: now,
                     name,
                     prompt,
+                    precheck,
+                    trigger,
                     spec,
                     tz,
                     target: Some((cur.id, cur.revision)),
@@ -694,6 +813,8 @@ impl DaemonScheduleHost {
             made_ms: now,
             name: cur.name.clone(),
             prompt: prompt_of(&cur.payload),
+            precheck: cur.precheck.clone(),
+            trigger: self.store.get_trigger(cur.id).ok().flatten(),
             spec: cur.spec.clone(),
             tz: spec_tz(&cur.spec, self.default_tz()),
             target: Some((cur.id, cur.revision)),
@@ -703,14 +824,15 @@ impl DaemonScheduleHost {
     fn view(&self, s: &Schedule) -> ScheduleView {
         let tz = spec_tz(&s.spec, self.default_tz());
         let now = self.now();
+        let timing = event_timing(self.store.get_trigger(s.id).ok().flatten().as_ref());
         ScheduleView {
             id: s.id.0.to_string(),
             name: s.name.clone(),
             prompt: prompt_of(&s.payload),
             enabled: s.enabled,
-            schedule: describe(&s.spec, tz),
+            schedule: timing.map_or_else(|| describe(&s.spec, tz), str::to_owned),
             timezone: tz.name().to_owned(),
-            next_runs: if s.enabled {
+            next_runs: if s.enabled && timing.is_none() {
                 upcoming(&s.spec, now, 3)
                     .into_iter()
                     .map(|t| local(t, tz))
@@ -733,20 +855,38 @@ impl DaemonScheduleHost {
     ) -> SchedulePreview {
         let now = self.now();
         let drop_prompt = matches!(action, "pause" | "delete");
-        let prompt = if drop_prompt {
+        let timing = event_timing(f.trigger.as_ref());
+        let mut prompt = if drop_prompt {
             String::new()
         } else {
             f.prompt.clone()
         };
+        // Existing schedule cards render this field in a scrollable pre block.
+        // Include full source here, not only in a field older UIs would ignore.
+        if !drop_prompt {
+            if let Some(check) = &f.precheck {
+                prompt.push_str("\n\n[precheck — read-only / salt okunur]\n");
+                match check {
+                    scheduler::Precheck::Script { code } => prompt.push_str(code),
+                    other @ scheduler::Precheck::HashChanged { .. } => {
+                        prompt.push_str(&serde_json::to_string_pretty(other).unwrap_or_default());
+                    }
+                }
+            }
+            if let Some(trigger) = &f.trigger {
+                prompt.push_str("\n\n[trigger / tetikleyici]\n");
+                prompt.push_str(&serde_json::to_string_pretty(trigger).unwrap_or_default());
+            }
+        }
         SchedulePreview {
             action: action.to_owned(),
             schedule_id: id.map(|i| i.0.to_string()),
             name: f.name.clone(),
             prompt_chars: prompt.chars().count(),
             prompt,
-            schedule: describe(&f.spec, f.tz),
+            schedule: timing.map_or_else(|| describe(&f.spec, f.tz), str::to_owned),
             timezone: f.tz.name().to_owned(),
-            next_runs: if drop_prompt {
+            next_runs: if drop_prompt || timing.is_some() {
                 Vec::new()
             } else {
                 upcoming(&f.spec, now, 3)
@@ -757,10 +897,11 @@ impl DaemonScheduleHost {
             approval_ref: String::new(),
             previous: before.filter(|_| action == "update").map(|b| {
                 let tz = spec_tz(&b.spec, self.default_tz());
+                let timing = event_timing(self.store.get_trigger(b.id).ok().flatten().as_ref());
                 PreviousSchedule {
                     name: b.name.clone(),
                     prompt: prompt_of(&b.payload),
-                    schedule: describe(&b.spec, tz),
+                    schedule: timing.map_or_else(|| describe(&b.spec, tz), str::to_owned),
                     timezone: tz.name().to_owned(),
                 }
             }),
@@ -783,15 +924,11 @@ impl DaemonScheduleHost {
         old: Option<&Schedule>,
     ) -> Result<(), String> {
         let run = Uuid::parse_str(&caller.run_id).ok().map(RunId);
-        let tz = spec_tz(&s.spec, self.default_tz());
-        let name: String = s.name.chars().take(MAX_NAME_CHARS).collect();
         let mut detail = json!({
             "bot_id": caller.bot_id,
             "run_id": caller.run_id,
             "schedule_id": s.id.0.to_string(),
-            "name": name,
             "change": change,
-            "schedule": describe(&s.spec, tz),
             "prompt_chars": prompt_of(&s.payload).chars().count(),
             "prompt_sha256": sha256_hex(&prompt_of(&s.payload)),
         });
@@ -799,19 +936,11 @@ impl DaemonScheduleHost {
             let p = prompt_of(&old.payload);
             o.insert("old_prompt_chars".into(), json!(p.chars().count()));
             o.insert("old_prompt_sha256".into(), json!(sha256_hex(&p)));
-            o.insert(
-                "old_name".into(),
-                json!(old.name.chars().take(MAX_NAME_CHARS).collect::<String>()),
-            );
-            o.insert(
-                "old_schedule".into(),
-                json!(describe(&old.spec, spec_tz(&old.spec, self.default_tz()))),
-            );
         }
         self.storage
             .append_audit(self.user_id, run, "bot", action, &detail)
             .map(|_| ())
-            .map_err(|e| format!("the audit log could not be written, so nothing was changed: {e}"))
+            .map_err(|_| "the audit log could not be written, so nothing was changed".to_owned())
     }
 
     /// The audit entry written before a change turned out to be wrong (the
@@ -833,15 +962,14 @@ impl DaemonScheduleHost {
             "schedule_id": s.id.0.to_string(),
             "attempted": action,
             "change": change,
-            "error": error.chars().take(300).collect::<String>(),
+            "error_code": "schedule_change_failed",
         });
         if let Err(e) =
             self.storage
                 .append_audit(self.user_id, run, "bot", "schedule.failed", &detail)
         {
-            eprintln!(
-                "daemon-api: ERROR: could not record that schedule change {change} failed ({error}): {e}"
-            );
+            let _ = (error, e);
+            eprintln!("daemon-api: could not record failed schedule change");
         }
     }
 
@@ -906,6 +1034,7 @@ impl DaemonScheduleHost {
                 text: f.prompt.clone(),
             };
         }
+        next.precheck.clone_from(&f.precheck);
         next.spec = f.spec.clone();
         if let Some(e) = enabled {
             next.enabled = e;
@@ -920,8 +1049,8 @@ impl DaemonScheduleHost {
             ));
         }
         self.audit(caller, "schedule.update", label, &next, Some(&cur))?;
-        let applied = self.store.update_definition(&next).map_err(err).and_then(|ok| {
-            if ok {
+        let applied = self.store.update_config(&next, Some(next.enabled), now, Some(f.trigger.as_ref())).map_err(err).and_then(|ok| {
+            if ok.is_some() {
                 Ok(())
             } else {
                 Err("that schedule changed or was deleted while it was being applied; nothing was applied".to_owned())
@@ -1019,8 +1148,13 @@ impl ScheduleHost for DaemonScheduleHost {
         )
         .map_err(err)?;
         sc.origin = ScheduleOrigin::Bot;
+        sc.precheck = f.precheck;
         self.audit(caller, "schedule.create", "created", &sc, None)?;
-        if let Err(e) = self.store.insert(&sc).map_err(err) {
+        if let Err(e) = self
+            .store
+            .insert_config(&sc, f.trigger.as_ref())
+            .map_err(err)
+        {
             self.audit_failed(caller, "schedule.create", "created", &sc, &e);
             return Err(e);
         }

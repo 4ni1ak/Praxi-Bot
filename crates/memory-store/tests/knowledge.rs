@@ -109,10 +109,10 @@ fn concurrent_first_open_and_source_writers_are_serialized() {
             })
             .collect();
         for worker in workers {
-            assert!(
-                worker.join().unwrap().is_ok(),
-                "parallel migration/write failed"
-            );
+            worker
+                .join()
+                .unwrap()
+                .expect("parallel migration/write failed");
         }
     });
     assert_eq!(
