@@ -416,7 +416,7 @@ fn spawn_simulated_bot_run(
 
         let final_snap = control.snapshot();
         if final_snap.run_generation == expected_gen && final_snap.mode != ControlMode::Idle {
-            control.stop_all();
+            control.finish_run(expected_gen);
             if cfg!(debug_assertions) {
                 eprintln!(
                     "[simulate_bot_run] completed all steps; overlay.clear emitted and state returned to Idle"
@@ -496,8 +496,23 @@ fn give_back_control(control: State<'_, ControlHandle>) -> Result<ControlSnapsho
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn stop_bot_run(control: State<'_, ControlHandle>) -> ControlSnapshot {
-    control.stop_all()
+fn stop_bot_run(control: State<'_, ControlHandle>, token: Option<String>) -> ControlSnapshot {
+    control.stop_user(token)
+}
+
+/// Normal end of a run (not a Stop): `* -> Idle` without raising `stopSeq`. A no-op when
+/// `expected_generation` is not the current run generation.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn finish_bot_run(control: State<'_, ControlHandle>, expected_generation: u64) -> ControlSnapshot {
+    control.finish_run(expected_generation)
+}
+
+/// Acknowledges a handled stop sequence. Silent (no event).
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn ack_stop(control: State<'_, ControlHandle>, seq: u64) -> ControlSnapshot {
+    control.ack_stop(seq)
 }
 
 #[tauri::command]
@@ -886,6 +901,8 @@ pub fn run() {
             take_the_wheel,
             give_back_control,
             stop_bot_run,
+            finish_bot_run,
+            ack_stop,
             set_stop_hotkey,
             overlay_show_target,
             overlay_click,
