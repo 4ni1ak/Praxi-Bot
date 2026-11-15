@@ -57,5 +57,5 @@ pub use config::{McpConfigStore, McpServerConfig, McpTransport, TomlFileStore};
 pub use diagnostics::ExternalRedactor;
 pub use error::{McpError, Result};
 pub use manager::{Backoff, McpManager, McpPolicy, McpServerHandle, ServerSnapshot, ServerStatus};
-pub use tool::qualified_name;
+pub use tool::{qualified_name, registered_spec};
 pub use transport::OS_ESSENTIAL_ENV;

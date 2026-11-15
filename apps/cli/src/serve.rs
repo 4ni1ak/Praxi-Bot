@@ -1043,6 +1043,62 @@ id = "unpriced"
         }
     }
 
+    struct FixtureTool(tool_registry::ToolSpec);
+
+    #[async_trait::async_trait]
+    impl tool_registry::Tool for FixtureTool {
+        fn spec(&self) -> &tool_registry::ToolSpec {
+            &self.0
+        }
+
+        async fn call(
+            &self,
+            _ctx: &tool_registry::ToolContext,
+            _input: serde_json::Value,
+        ) -> std::result::Result<tool_registry::ToolOutput, tool_registry::ToolError> {
+            Ok(tool_registry::ToolOutput::text("ok"))
+        }
+    }
+
+    fn register_runtime_egress_fixtures(registry: &tool_registry::ToolRegistry) {
+        let config = mcp_bridge::McpServerConfig::http("srv", "http://127.0.0.1:9/mcp");
+        let spec = mcp_bridge::registered_spec(
+            &config,
+            "echo",
+            "echo a prompt",
+            &serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "hidden_arg": {"type": "string"}
+                }
+            }),
+        );
+        assert!(registry.register(std::sync::Arc::new(FixtureTool(spec))));
+        let secrets: Arc<dyn secret_store::SecretStore> = Arc::new(MemoryStore::new());
+        let openapi = "\
+openapi: 3.0.0
+info: {title: t, version: '1'}
+servers: [{url: 'https://api.example.com'}]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+      responses: {'200': {description: ok}}
+";
+        let (_api, imported) = openapi_tools::import_tools(
+            openapi,
+            &openapi_tools::ImportOptions::default(),
+            &openapi_tools::OpenApiConfig::new(secrets),
+        )
+        .unwrap();
+        for tool in imported {
+            registry.register(tool);
+        }
+    }
+
     #[test]
     fn computer_limits_default_to_small_host_and_environment_overrides_host_file() {
         assert_eq!(
@@ -1324,6 +1380,30 @@ host = "smtp.example.com"
             );
         }
         assert!(audited.len() > 8, "{audited:?}");
+        register_runtime_egress_fixtures(&registry);
+        let audited = agent.audit_egress_card_schemas().unwrap();
+        for name in ["mcp:srv/echo", "listPets"] {
+            assert!(
+                audited.iter().any(|item| item == name),
+                "missing {name}: {audited:?}"
+            );
+        }
+        assert!(
+            !registry
+                .get("mcp:srv/echo")
+                .unwrap()
+                .spec()
+                .content
+                .writes_files
+        );
+        assert!(
+            !registry
+                .get("listPets")
+                .unwrap()
+                .spec()
+                .content
+                .writes_files
+        );
     }
 
     #[test]

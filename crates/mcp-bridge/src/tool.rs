@@ -62,6 +62,21 @@ pub(crate) fn spec_of(config: &McpServerConfig, tool: &McpTool) -> ToolSpec {
     }
 }
 
+/// The spec a live MCP registration would insert, without a running server.
+///
+/// Tests use this so the audit sees the same classification as `spec_of`.
+#[must_use]
+pub fn registered_spec(
+    config: &McpServerConfig,
+    name: impl Into<std::borrow::Cow<'static, str>>,
+    description: impl Into<std::borrow::Cow<'static, str>>,
+    schema: &Value,
+) -> ToolSpec {
+    let map = schema.as_object().cloned().unwrap_or_default();
+    let tool = McpTool::new(name, description, Arc::new(map));
+    spec_of(config, &tool)
+}
+
 /// A remote tool living in the registry.
 pub(crate) struct McpToolAdapter {
     spec: ToolSpec,

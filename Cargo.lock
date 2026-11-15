@@ -1256,6 +1256,7 @@ dependencies = [
  "futures-util",
  "live-view",
  "mcp-bridge",
+ "openapi-tools",
  "parking_lot",
  "peer-network",
  "permission-engine",
@@ -2241,6 +2242,7 @@ name = "doc-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "builtin-tools",
  "calamine",
  "csv",
  "lopdf",
@@ -10318,6 +10320,7 @@ dependencies = [
  "script-runtime",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "storage",
  "tempfile",
  "thiserror 2.0.21",
