@@ -11,6 +11,7 @@ struct Fake {
     calls: AtomicUsize,
     remote: bool,
     fail: AtomicBool,
+    reject_bad_chunk: AtomicBool,
     started: Notify,
     release: Notify,
     block: AtomicBool,
@@ -22,6 +23,7 @@ impl Fake {
             calls: AtomicUsize::new(0),
             remote,
             fail: AtomicBool::new(false),
+            reject_bad_chunk: AtomicBool::new(false),
             started: Notify::new(),
             release: Notify::new(),
             block: AtomicBool::new(false),
@@ -57,6 +59,9 @@ impl EmbeddingProvider for Fake {
             return Err(ProviderError::RateLimited {
                 retry_after: Some(Duration::from_secs(3600)),
             });
+        }
+        if self.reject_bad_chunk.load(Ordering::SeqCst) && request.inputs.iter().any(|input| input.text.contains("OVERSIZED_CHUNK")) {
+            return Err(ProviderError::Api { status: 400, message: "fixture oversized input".into() });
         }
         let vectors = request
             .inputs
@@ -165,6 +170,90 @@ fn count(store: &KnowledgeStore, table: &str) -> i64 {
             row.get(0)
         })
         .unwrap()
+}
+
+#[tokio::test]
+async fn repeated_rate_limits_do_not_exhaust_source_failure_attempts() {
+    let store = store();
+    let id = source(&store, "Invoice billing details.");
+    let provider = Arc::new(Fake::new(true));
+    provider.fail.store(true, Ordering::SeqCst);
+    let config = config(&provider);
+    grant(&store, id, &config.profile);
+    let runtime = Arc::new(EmbeddingRuntime::open_in_memory().unwrap());
+    let service = KnowledgeEmbeddingService::new(store.clone(), provider.clone(), runtime.clone(), config).unwrap();
+    let cancel = CancellationToken::new();
+    for _ in 0..8 {
+        let progress = service.embed_source_batch(id, &cancel).await.unwrap();
+        assert_eq!(progress.status, EmbeddingStatus::Deferred);
+        let attempts: u32 = store.conn().query_row("SELECT attempts FROM embedding_jobs", [], |row| row.get(0)).unwrap();
+        assert_eq!(attempts, 0, "rate limiting is not a source failure");
+        store.conn().execute("UPDATE embedding_jobs SET not_before_ms=0", []).unwrap();
+        runtime.conn().execute("DELETE FROM embedding_cooldown", []).unwrap();
+    }
+    provider.fail.store(false, Ordering::SeqCst);
+    assert_eq!(service.embed_source_batch(id, &cancel).await.unwrap().status, EmbeddingStatus::Complete);
+}
+
+#[tokio::test]
+async fn bad_chunk_is_isolated_and_healthy_chunk_still_embeds() {
+    let store = store();
+    let id = source(&store, "OVERSIZED_CHUNK");
+    add_document(&store, id, "two.md", "Invoice billing details.");
+    let provider = Arc::new(Fake::new(true));
+    provider.reject_bad_chunk.store(true, Ordering::SeqCst);
+    let config = config(&provider);
+    grant(&store, id, &config.profile);
+    let service = KnowledgeEmbeddingService::new(store.clone(), provider.clone(), Arc::new(EmbeddingRuntime::open_in_memory().unwrap()), config).unwrap();
+    let cancel = CancellationToken::new();
+    for _ in 0..5 {
+        let result = service.embed_source_batch(id, &cancel).await.unwrap();
+        if result.status == EmbeddingStatus::Complete { break; }
+        assert_ne!(result.status, EmbeddingStatus::Failed, "one rejected chunk poisoned the source");
+    }
+    assert_eq!(count(&store, "knowledge_embeddings"), 1);
+    let calls = provider.calls.load(Ordering::SeqCst);
+    assert_eq!(service.embed_source_batch(id, &cancel).await.unwrap().status, EmbeddingStatus::Complete);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), calls, "skipped chunks must remain durable");
+}
+
+#[tokio::test]
+async fn invalid_vector_dimensions_are_detected_before_query_quota_or_network() {
+    let store = store();
+    let id = source(&store, "Invoice billing details.");
+    let provider = Arc::new(Fake::new(true));
+    let mut config = config(&provider);
+    grant(&store, id, &config.profile);
+    config.query_consent = Some(RemoteEmbeddingConsent { profile_fingerprint: config.profile.fingerprint().unwrap(), granted_at_ms: 1 });
+    let runtime = Arc::new(EmbeddingRuntime::open_in_memory().unwrap());
+    let service = KnowledgeEmbeddingService::new(store.clone(), provider.clone(), runtime.clone(), config).unwrap();
+    let cancel = CancellationToken::new();
+    service.embed_source_batch(id, &cancel).await.unwrap();
+    store.conn().execute("UPDATE knowledge_embeddings SET dimensions=2,vector=?1", [super::index::encode_vector(&[1., 0.])]).unwrap();
+    let before: i64 = runtime.conn().query_row("SELECT COUNT(*) FROM embedding_quota", [], |row| row.get(0)).unwrap();
+    assert_eq!(service.search(&SearchRequest::new("payment"), &cancel).await.unwrap().mode, SearchMode::LexicalDegraded);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1, "unusable scan must not send a paid query");
+    let after: i64 = runtime.conn().query_row("SELECT COUNT(*) FROM embedding_quota", [], |row| row.get(0)).unwrap();
+    assert_eq!(before, after);
+}
+
+#[tokio::test]
+async fn mistaken_profile_keeps_paid_vectors_until_replacement_completes() {
+    let store = store();
+    let id = source(&store, "Invoice billing details.");
+    let provider = Arc::new(Fake::new(true));
+    let original = config(&provider);
+    grant(&store, id, &original.profile);
+    let runtime = Arc::new(EmbeddingRuntime::open_in_memory().unwrap());
+    let service = KnowledgeEmbeddingService::new(store.clone(), provider.clone(), runtime.clone(), original.clone()).unwrap();
+    service.embed_source_batch(id, &CancellationToken::new()).await.unwrap();
+    let mut typo = original.clone();
+    typo.profile.model = "misspelled-model".into();
+    KnowledgeEmbeddingService::new(store.clone(), provider.clone(), runtime.clone(), typo).unwrap();
+    assert_eq!(count(&store, "knowledge_embeddings"), 1, "profile typo erased paid vectors");
+    let restored = KnowledgeEmbeddingService::new(store.clone(), provider.clone(), runtime, original).unwrap();
+    assert_eq!(restored.embed_source_batch(id, &CancellationToken::new()).await.unwrap().status, EmbeddingStatus::Complete);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1, "restoring profile must reuse retained vectors");
 }
 
 #[tokio::test]
@@ -828,4 +917,19 @@ async fn imported_index_suspends_grants_and_discards_jobs_and_remote_vectors() {
     let source = store.source(id).unwrap().unwrap();
     assert!(!source.enabled);
     assert!(source.remote_embedding.is_none());
+}
+
+#[tokio::test]
+async fn imported_local_vectors_and_cache_are_discarded_before_reenable() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = scope();
+    let store = Arc::new(KnowledgeStore::open(dir.path(), owner).unwrap());
+    let id = source(&store, "Invoice billing details.");
+    let provider = Arc::new(Fake::new(false));
+    let service = KnowledgeEmbeddingService::new(store.clone(), provider.clone(), Arc::new(EmbeddingRuntime::open_in_memory().unwrap()), config(&provider)).unwrap();
+    service.embed_source_batch(id, &CancellationToken::new()).await.unwrap();
+    assert_eq!(count(&store, "knowledge_embeddings"), 1);
+    KnowledgeStore::prepare_import(dir.path().join("bots").join(owner.bot_id.to_string()).join("knowledge.db"), owner).unwrap();
+    assert_eq!(count(&store, "knowledge_embeddings"), 0, "imported local vectors are attacker-supplied ranking data");
+    assert_eq!(count(&store, "embedding_cache"), 0);
 }

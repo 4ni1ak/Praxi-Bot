@@ -123,7 +123,7 @@ async fn gemini_2_prefixes_each_query_without_task_type_or_aggregation() {
 }
 
 #[tokio::test]
-async fn malformed_vectors_indices_counts_and_model_are_rejected() {
+async fn malformed_vectors_indices_and_counts_are_rejected_but_gateway_alias_is_preserved() {
     let invalid_data = [
         json!([{"index":0,"embedding":[1.,0.]}]),
         json!([{"index":0,"embedding":[1.,0.]},{"index":0,"embedding":[0.,1.]}]),
@@ -158,12 +158,8 @@ async fn malformed_vectors_indices_counts_and_model_are_rejected() {
         None,
     )
     .unwrap();
-    assert!(
-        provider
-            .embed(request(EmbeddingTaskFormat::Plain))
-            .await
-            .is_err()
-    );
+    let response = provider.embed(request(EmbeddingTaskFormat::Plain)).await.unwrap();
+    assert_eq!(response.model.as_deref(), Some("different-model"));
 }
 
 #[tokio::test]
@@ -344,7 +340,7 @@ async fn embedding_retry_info_preserves_long_delays_and_retry_after_header_prece
 fn durable_retry_info_handles_fractional_invalid_and_overflowing_delays() {
     let body = |delay: &str| json!({"error":{"details":[{"retryDelay":delay}]}}).to_string();
     assert_eq!(retry_info(&body("1.5s")), Some(Duration::from_millis(1500)));
-    assert_eq!(retry_info(&body("1e30s")), Some(Duration::MAX));
+    assert_eq!(retry_info(&body("1e30s")), Some(Duration::from_secs(172_800)));
     for delay in ["NaNs", "infs", "-1s", "not-a-delay"] {
         assert_eq!(retry_info(&body(delay)), None);
     }

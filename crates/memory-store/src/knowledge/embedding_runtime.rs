@@ -226,6 +226,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn large_clock_rollback_recovers_within_one_budget_window() {
+        let runtime = EmbeddingRuntime::open_in_memory().unwrap();
+        let budget = EmbeddingBudget { requests_per_day: 1, ..EmbeddingBudget::default() };
+        let now = 1_800_000_000_000;
+        let future = now + 366 * DAY_MS;
+        assert_eq!(runtime.reserve("account", &budget, 1, 1, future).unwrap(), Reservation::Granted);
+        let Reservation::Deferred(deadline) = runtime.reserve("account", &budget, 1, 1, now).unwrap() else { panic!("reservation must remain charged") };
+        assert!(deadline <= now + DAY_MS, "clock correction trapped budget until {deadline}");
+        assert_eq!(runtime.reserve("account", &budget, 1, 1, now + DAY_MS).unwrap(), Reservation::Granted);
+    }
+
+    #[test]
+    fn impossible_provider_cooldown_is_bounded() {
+        let runtime = EmbeddingRuntime::open_in_memory().unwrap();
+        let now = storage::now_ms();
+        runtime.defer("account", i64::MAX).unwrap();
+        let Reservation::Deferred(deadline) = runtime.reserve("account", &EmbeddingBudget::default(), 1, 1, now).unwrap() else { panic!("provider cooldown expected") };
+        assert!(deadline <= now + 2 * DAY_MS, "unbounded provider cooldown");
+    }
+
+    #[test]
     fn quota_survives_restart_and_is_shared_between_workers() {
         let dir = tempfile::tempdir().unwrap();
         let budget = EmbeddingBudget {
