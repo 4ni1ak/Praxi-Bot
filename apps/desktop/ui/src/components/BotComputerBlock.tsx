@@ -182,6 +182,20 @@ export function BotComputerBlock() {
         </div>
       </button>
 
+      {panelActions.includes("open_screen") && summary?.available && !showRelease ? (
+        <div className={styles.release}>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="bot-computer-open-screen"
+            onClick={() => openViewer(selectedTarget?.target_id)}
+          >
+            <Maximize2 aria-hidden="true" />
+            {t("liveView.openScreen")}
+          </Button>
+        </div>
+      ) : null}
+
       {panelActions.includes("clear_pause") && !showRelease ? (
         <div className={styles.release} data-testid="bot-computer-paused-actions">
           {recoveryPrompt?.mode === "reacquire" ? (

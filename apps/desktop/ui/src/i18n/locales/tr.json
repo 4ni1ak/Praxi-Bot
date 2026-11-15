@@ -1958,12 +1958,24 @@
     "close": "Paneli kapat",
     "profile": "Bot profili",
     "chats": "Sohbetler",
-    "noChats": "Henüz sohbet yok.",
     "untitled": "Yeni sohbet",
     "computer": "Bilgisayar",
     "edit": "Botu düzenle",
     "runsOnHost": "{{name}} sunucusunda çalışır",
-    "runsOnLocal": "Bu bilgisayarda çalışır"
+    "runsOnLocal": "Bu bilgisayarda çalışır",
+    "tabs": { "label": "Panel bölümleri", "activity": "Etkinlik", "library": "Kitaplık" },
+    "subagents": {
+      "title": "Alt ajanlar",
+      "noTask": "Alt ajan",
+      "starting": "Başlıyor…",
+      "waitingFor": "Onayını bekliyor: {{step}}",
+      "open": "Ayrıntıları aç: {{task}}",
+      "stop": "Durdur",
+      "stopLabel": "Alt ajanı durdur: {{task}}",
+      "state": { "running": "Çalışıyor", "waiting": "Onay bekliyor", "done": "Bitti", "failed": "Başarısız", "stopped": "Durduruldu", "paused": "Duraklatıldı" },
+      "detail": { "title": "Alt ajan ayrıntıları", "task": "Görev", "steps": "Adımlar", "result": "Sonuç", "approval": "Onayını bekliyor. Sohbetten karar ver." }
+    },
+    "upcoming": { "title": "Yaklaşanlar", "paused": "Duraklatıldı", "trigger": "Bir olay olunca", "toggle": "{{name}} açık/kapalı" }
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",
