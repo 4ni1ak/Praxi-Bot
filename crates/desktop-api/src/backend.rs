@@ -82,7 +82,7 @@ pub trait DesktopBackend: Send + Sync {
         _guard: ActGuard,
     ) -> Result<ActionResult, DesktopError> {
         Err(DesktopError::GuardRefused(
-            "this computer cannot check the target window before sending input".into(),
+            "not sent: this computer cannot check the target window before sending input".into(),
         ))
     }
 

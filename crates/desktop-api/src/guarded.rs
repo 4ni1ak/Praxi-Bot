@@ -93,8 +93,18 @@ impl GuardFailure {
     /// when part of the text went out, and it says the permission is withdrawn.
     #[must_use]
     pub fn message(&self) -> String {
+        let clean_stop = self.delivered_units == 0
+            && self.release_confirmed
+            && self.os_error.is_none()
+            && self
+                .refusal
+                .is_some_and(|r| r != Refusal::ReleaseUnconfirmed);
         let mut out = if let Some(r) = self.refusal {
-            format!("stopped by the guard ({r}): {}", r.why())
+            format!(
+                "{}stopped by the guard ({r}): {}",
+                if clean_stop { "not sent: " } else { "" },
+                r.why()
+            )
         } else if let Some(e) = &self.os_error {
             format!("the send failed: {e}")
         } else {
@@ -675,5 +685,35 @@ mod tests {
         assert_eq!(probe.calls, 0);
         assert!(sink.chords.is_empty());
         assert_eq!(sink.releases, 1, "released on this exit too");
+    }
+
+    #[test]
+    fn a_partial_send_or_an_unconfirmed_release_is_never_reported_as_not_sent() {
+        let partial = GuardFailure {
+            refusal: Some(Refusal::ForegroundChanged),
+            os_error: None,
+            delivered_units: 24,
+            total_units: 60,
+            release_confirmed: true,
+        };
+        let shown = crate::DesktopError::GuardRefused(partial.message()).to_string();
+        assert!(!shown.starts_with("not sent"), "{shown}");
+        assert!(shown.contains("24 of 60"), "{shown}");
+        let stuck = GuardFailure {
+            refusal: Some(Refusal::ReleaseUnconfirmed),
+            os_error: None,
+            delivered_units: 0,
+            total_units: 0,
+            release_confirmed: false,
+        };
+        assert!(!stuck.message().starts_with("not sent"));
+        let clean = GuardFailure {
+            refusal: Some(Refusal::Elevated),
+            os_error: None,
+            delivered_units: 0,
+            total_units: 4,
+            release_confirmed: true,
+        };
+        assert!(clean.message().starts_with("not sent: "));
     }
 }

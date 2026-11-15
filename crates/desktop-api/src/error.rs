@@ -22,8 +22,10 @@ pub enum DesktopError {
     Unsupported(String),
 
     /// The window that would receive input was not the program the call was
-    /// approved for, or could not be checked. Nothing was sent.
-    #[error("not sent: {0}")]
+    /// approved for, or could not be checked, or a guarded send stopped. The
+    /// text says truthfully what was and was not delivered; it is never
+    /// prefixed here (a partial send is not "not sent").
+    #[error("{0}")]
     GuardRefused(String),
 
     /// An unrecoverable internal error.
