@@ -7479,3 +7479,76 @@ computer = \"browser\"
     assert_ne!(row.computer_node.as_deref(), Some("local"));
     assert_eq!(row.computer_node, None);
 }
+
+fn child_spec() -> Value {
+    json!({
+        "task": "t", "context": "", "tools": ["fs_read"],
+        "max_steps": 4, "token_budget": 0, "depth": 1, "spawn_key": "0:c1"
+    })
+}
+
+#[tokio::test]
+async fn a_resumed_child_must_carry_its_parents_computer_placement() {
+    let env = setup();
+    let fake = Fake::new(vec![text("never")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"browser\"\n"),
+        cfg(Policy::full()),
+    );
+    let provider = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    });
+    lp.set_computer_provider(provider);
+    let bot_profile = lp.sh.profile_for(env.bot).unwrap();
+    let resolved = lp.sh.resolve_computer_for_run(&bot_profile, None);
+    let parent = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    lp.sh.bind_computer(parent, &resolved).unwrap();
+    let child_of = |parent| {
+        lp.rt
+            .create_child_run(
+                env.user,
+                env.bot,
+                Some(env.chat),
+                "turn:subagent",
+                Some(parent),
+                Some(child_spec()),
+            )
+            .unwrap()
+    };
+    let row = |id| env.storage.get_run(id).unwrap().unwrap();
+
+    // No stored target: fails closed even though the parent is valid.
+    let child = child_of(parent);
+    let err = lp.sh.ctx(&row(child)).err().expect("NULL target must fail");
+    assert!(err.to_string().contains("identity is unknown"), "{err}");
+
+    // A stored target that is not the parent's.
+    lp.sh
+        .storage
+        .bind_run_computer(child, "pc", Some("some-other-node"), Some("Other"))
+        .unwrap();
+    let err = lp.sh.ctx(&row(child)).err().expect("mismatch must fail");
+    assert!(err.to_string().contains("does not match"), "{err}");
+
+    // A direct resume of that child fails the run instead of using the parent's computer.
+    lp.rt.pause_queued(child, None).unwrap();
+    lp.resume(child).unwrap();
+    assert_eq!(lp.wait(child).await.unwrap(), RunState::Failed);
+    assert_eq!(fake.n_requests(), 0);
+
+    // The same placement as the parent's (what a newly created child gets) is accepted.
+    let good = child_of(parent);
+    lp.sh.bind_computer(good, &resolved).unwrap();
+    assert!(lp.sh.ctx(&row(good)).is_ok());
+}

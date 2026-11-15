@@ -1154,6 +1154,33 @@ impl Shared {
         None
     }
 
+    /// Why a child run may not take the placement its parent resolved:
+    /// either row is unusable on its own (no stored target, a legacy local id,
+    /// or a host/browser id that is not this machine), or the child's stored
+    /// target or node differs from what the validated parent resolved.
+    fn child_placement_error(
+        child: &Run,
+        parent: &Run,
+        resolved: &RunComputer,
+        provider: Option<&dyn ComputerProvider>,
+    ) -> Option<String> {
+        if let Some(reason) = Self::persisted_computer_error(child, provider)
+            .or_else(|| Self::persisted_computer_error(parent, provider))
+        {
+            return Some(reason.to_owned());
+        }
+        let node = resolved.node.as_ref().map(|n| n.id.as_str());
+        if child.computer_target.as_deref() != Some(resolved.label.as_str())
+            || child.computer_node.as_deref() != node
+        {
+            return Some(
+                "Cannot resume: this sub-agent's stored computer does not match its parent's; start a new run"
+                    .to_owned(),
+            );
+        }
+        None
+    }
+
     /// A stored host/browser run that cannot be compared with this boot's local
     /// identity because the identity key was unreadable. The run stays paused
     /// (retryable on a later boot); it is neither failed nor rebound.
@@ -1338,6 +1365,20 @@ impl Shared {
                     .map_err(xe)?
                     .ok_or_else(|| xe(format!("parent run {parent_id} not found")))?;
                 let pctx = self.ctx(&parent)?;
+                // A child inherits its parent's resolved computer, but its own
+                // stored placement must agree with it. A resumed child with no
+                // stored target, a legacy id or a different node fails closed
+                // here, before anything runs, with or without startup
+                // reconciliation.
+                let provider = self.computer_provider.read().clone();
+                if let Some(reason) = Self::child_placement_error(
+                    run,
+                    &parent,
+                    &pctx.resolved_computer,
+                    provider.as_deref(),
+                ) {
+                    return Err(xe(reason));
+                }
                 let spec: SubSpec =
                     serde_json::from_value(run.spec.clone().unwrap_or(Value::Null)).map_err(xe)?;
                 let model = spec.model_for(&pctx.profile).map_err(xe)?;
