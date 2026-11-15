@@ -9,6 +9,7 @@ import type {
   ControlModeName,
   CreateSessionInput,
   DetectedProviderDto,
+  DoctorCheck,
   EmailAccount,
   EmailAccountInput,
   InputBatch,
@@ -332,6 +333,21 @@ function serverFromConfig(c: McpServerConfig, category = "other"): McpServer {
   };
 }
 
+/** Diagnostics of the mock daemon: one of each status, two fixable. */
+const DOCTOR_CHECKS: DoctorCheck[] = [
+  { id: "daemon", title: "daemon", status: "ok", detail: "running (v0.1.0-mock, API 1.0), up 3600 s", hint: null, repair: null },
+  { id: "data_dir", title: "data dir", status: "ok", detail: "~/AppData/Roaming/praxi (writable)", hint: null, repair: null },
+  { id: "unicode_path", title: "unicode paths", status: "ok", detail: "non-ASCII file names work in the data dir", hint: null, repair: null },
+  { id: "providers", title: "providers", status: "fail", detail: "openai: API key not available; anthropic: configured", hint: "`bot secrets set provider.<id>.api_key` or `bot providers add <id>` to fix the key", repair: null },
+  { id: "providers_loaded", title: "loaded providers", status: "warn", detail: "enabled but not loaded: anthropic", hint: "reload the providers; if that fails, see the providers check", repair: "reload_providers" },
+  { id: "cli_accounts", title: "cli accounts", status: "warn", detail: "ready: Claude Code; signed out: Codex", hint: "open a terminal and sign in to the CLI once (e.g. `claude`, `codex login`)", repair: null },
+  { id: "browser", title: "browser", status: "ok", detail: "C:/Program Files/Google/Chrome/Application/chrome.exe (found; not launched)", hint: null, repair: null },
+  { id: "desktop_automation", title: "desktop automation", status: "ok", detail: "windows: accessibility tree, screenshots, app launch", hint: null, repair: null },
+  { id: "peer_link", title: "peer link", status: "skipped", detail: "no peer or host link configured (optional)", hint: null, repair: null },
+  { id: "disk_space", title: "disk space", status: "ok", detail: "48211 MiB free", hint: null, repair: null },
+  { id: "clock", title: "clock", status: "ok", detail: "plausible (checked locally, not against network time)", hint: null, repair: null }
+];
+
 /**
  * An in-memory daemon: the typed client methods run unchanged against it, so
  * the UI and its tests exercise the real request paths.
@@ -344,6 +360,9 @@ export class MockApiClient extends ApiClient {
   readonly chats: Chat[] = structuredClone([...CHATS, ...BOTS.slice(1).map((b,i) => ({ id: `mock-chat-${i}`, chat_id: `mock-chat-${i}`, bot_id: b.id, title: previews[i+1], created_at_ms: NOW }))]);
   readonly messages = new Map<string, Message[]>();
   readonly secrets = new Map<string, number>();
+  readonly doctorChecks: DoctorCheck[] = structuredClone(DOCTOR_CHECKS);
+  /** Repairs run so far (tests). */
+  readonly repairs: string[] = [];
   private readonly liveView = new MockLiveViewService();
   private webSearchConfig: WebSearchConfig = {
     order: ["searxng", "brave", "tavily", "duckduckgo", "duckduckgo_lite", "bing"],
@@ -437,6 +456,31 @@ export class MockApiClient extends ApiClient {
     ];
   }
 
+  protected override async requestText(method: string, path: string): Promise<string> {
+    await Promise.resolve();
+    if (method === "GET" && path === "/doctor/report") {
+      const rows = this.doctorChecks
+        .map((c) => `| ${c.status} | ${c.title} | ${c.detail} |`)
+        .join("\n");
+      return [
+        "# Praxi diagnostics report",
+        "",
+        "- Version: 0.1.0-mock",
+        "- Platform: windows/x86_64",
+        "- Data dir: `~/AppData/Roaming/praxi`",
+        "- Config files: providers.toml",
+        "",
+        "## Checks",
+        "",
+        "| Status | Check | Detail |",
+        "| --- | --- | --- |",
+        rows,
+        ""
+      ].join("\n");
+    }
+    throw new ApiError(404, "not_found", `mock: no text route ${method} ${path}`);
+  }
+
   override async openViewFrameStream(
     sessionId: string,
     signal?: AbortSignal
@@ -504,6 +548,26 @@ export class MockApiClient extends ApiClient {
         return ok([]);
       case "GET /usage":
         return ok(USAGE);
+      case "GET /doctor": {
+        const checks = structuredClone(this.doctorChecks);
+        return ok({ ok: checks.every((c) => c.status !== "fail"), checks });
+      }
+      case "POST /doctor": {
+        const id = seg[1] === "repair" ? (seg[2] ?? "") : "";
+        if (!["create_data_dir", "reload_providers", "restart_browser"].includes(id)) {
+          throw new ApiError(404, "not_found", `repair ${id} not found`);
+        }
+        this.repairs.push(id);
+        for (const c of this.doctorChecks) {
+          if (c.repair === id) {
+            c.status = "ok";
+            c.repair = null;
+            c.hint = null;
+            c.detail = "fixed";
+          }
+        }
+        return ok({ repair: id, detail: "done" });
+      }
       case "GET /providers":
         if (seg[1] === "detected") {
           const screen =

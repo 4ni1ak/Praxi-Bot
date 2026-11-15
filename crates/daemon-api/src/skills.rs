@@ -520,21 +520,6 @@ pub(crate) async fn put_bot_skills(
     let expected_version = input.expected_version;
     let storage_for_write = Arc::clone(&storage);
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
-        let prev_names: BTreeSet<String> =
-            match storage_for_write.inspect_bot_skill_assignment(bot.id)? {
-                storage::SkillAssignmentLookup::Ok(Some(r))
-                    if r.mode == SkillAssignmentMode::Selected =>
-                {
-                    r.names.into_iter().collect()
-                }
-                _ => BTreeSet::new(),
-            };
-        let next_names: BTreeSet<String> = match mode {
-            SkillAssignmentModeDto::All => BTreeSet::new(),
-            SkillAssignmentModeDto::Selected => clean_names.iter().cloned().collect(),
-        };
-        let added: Vec<String> = next_names.difference(&prev_names).cloned().collect();
-        let removed: Vec<String> = prev_names.difference(&next_names).cloned().collect();
         let (storage_mode, mode_str, write_names): (SkillAssignmentMode, &str, Vec<String>) =
             match mode {
                 SkillAssignmentModeDto::All => (SkillAssignmentMode::All, "all", Vec::new()),
@@ -545,8 +530,6 @@ pub(crate) async fn put_bot_skills(
         let detail = serde_json::json!({
             "bot_id": bot.id.to_string(),
             "mode": mode_str,
-            "added": added,
-            "removed": removed,
         });
         storage_for_write.set_bot_skill_assignment_audited_versioned(
             user_id,

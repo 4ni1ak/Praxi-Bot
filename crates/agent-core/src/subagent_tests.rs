@@ -1024,27 +1024,22 @@ async fn selected_bot_system_prompt_excludes_unassigned_skills() {
 
 fn link_dir_for_test(target: &std::path::Path, link: &std::path::Path) -> bool {
     #[cfg(unix)]
-    let result = std::os::unix::fs::symlink(target, link);
+    let linked = std::os::unix::fs::symlink(target, link).is_ok();
     #[cfg(windows)]
-    let result = std::os::windows::fs::symlink_dir(target, link);
+    let linked = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .is_ok_and(|out| out.status.success())
+        || std::os::windows::fs::symlink_dir(target, link).is_ok();
     #[cfg(not(any(unix, windows)))]
-    let result: std::io::Result<()> = Err(std::io::ErrorKind::Unsupported.into());
-    match result {
-        Ok(()) => true,
-        Err(error)
-            if cfg!(windows)
-                && (error.kind() == std::io::ErrorKind::PermissionDenied
-                    || error.raw_os_error() == Some(1314)) =>
-        {
-            std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(link)
-                .arg(target)
-                .output()
-                .is_ok_and(|out| out.status.success())
-        }
-        Err(error) => panic!("create test symlink: {error}"),
-    }
+    let linked = false;
+    assert!(
+        linked || std::env::var_os("CI").is_none(),
+        "directory link could not be created on CI"
+    );
+    linked
 }
 
 struct SelectedOne {

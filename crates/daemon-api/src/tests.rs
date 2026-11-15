@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod doctor;
 mod email;
 mod host;
 mod mcp;
@@ -1925,6 +1926,11 @@ async fn listing_runs_writes_nothing_to_disk() {
         updated_at_ms: now,
         parent_run_id: None,
         spec: None,
+        computer_target: None,
+        computer_node: None,
+        computer_node_name: None,
+        paused_at_ms: None,
+        pause_reason: None,
     })
     .unwrap();
     st.insert_message(&storage::Message {
@@ -2958,6 +2964,79 @@ async fn peer_router_denies_provider_cli_enable_and_reload_for_all_peers() {
 }
 
 #[tokio::test]
+async fn peer_router_denies_every_doctor_route_to_every_peer_role() {
+    let t = setup();
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let h = hits.clone();
+    let data_dir = t.state.data_dir();
+    t.state.set_provider_host(crate::ProviderHost {
+        catalog: provider_catalog::Catalog::default(),
+        reload: Box::new(move || {
+            h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            agent_core::build_providers(
+                &data_dir,
+                &provider_catalog::Catalog::default(),
+                &secret_store::MemoryStore::new(),
+                &mut |_| {},
+            )
+        }),
+    });
+    let mut routes: Vec<(Method, String)> = vec![
+        (Method::GET, "/v1/doctor".into()),
+        (Method::GET, "/v1/doctor/".into()),
+        (Method::GET, "//v1//doctor".into()),
+        (Method::GET, "/v1/doctor/report".into()),
+        (Method::GET, "/v1/doctor%2Freport".into()),
+    ];
+    for r in crate::doctor::Repair::ALL {
+        let id = r.id();
+        routes.push((Method::POST, format!("/v1/doctor/repair/{id}")));
+        routes.push((Method::POST, format!("/v1/doctor/repair/{id}/")));
+        routes.push((Method::POST, format!("/v1/doctor//repair/{id}")));
+        routes.push((Method::POST, format!("/v1/doctor%2Frepair%2F{id}")));
+    }
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in &routes {
+            let mut req = Request::builder()
+                .method(method.clone())
+                .uri(path.as_str())
+                .body(Body::empty())
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role,
+            });
+            let resp = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "role={role:?} {method} {path} should be 403"
+            );
+        }
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(
+        !audit.iter().any(|a| a.action.starts_with("doctor.")),
+        "no repair may be requested by a peer"
+    );
+    // The local user still reaches the routes on the loopback router.
+    let local = call(&t, Method::GET, "/v1/doctor", None).await;
+    assert_eq!(local.status, StatusCode::OK);
+    let local = call(&t, Method::POST, "/v1/doctor/repair/reload_providers", None).await;
+    assert_eq!(local.status, StatusCode::OK, "{:?}", local.json());
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn providers_cli_enable_preserves_existing_default_model_and_model_caps() {
     let t = setup();
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
@@ -3014,4 +3093,257 @@ async fn health_includes_host_capabilities_without_starting_a_browser() {
     assert!(value["host"]["total_ram_mb"].as_u64().unwrap() > 0);
     let dto: crate::dto::Health = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(dto).unwrap(), value);
+}
+
+#[tokio::test]
+async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
+    let t = setup();
+
+    // Default bot without [runtime] exposes runtime.computer = "auto".
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": PROFILE })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    assert_eq!(r.json()["runtime"]["computer"], "auto");
+    let bot_id = r.json()["id"].as_str().unwrap().to_owned();
+    let bot_path = format!("/v1/bots/{bot_id}");
+
+    let r = call(&t, Method::GET, &bot_path, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["runtime"]["computer"], "auto");
+
+    // Round-trip all canonical values plus legacy "local" -> "pc" alias via PUT.
+    for (input, expected) in [
+        ("pc", "pc"),
+        ("host", "host"),
+        ("browser", "browser"),
+        ("off", "off"),
+        ("local", "pc"),
+        ("auto", "auto"),
+    ] {
+        let r = call(
+            &t,
+            Method::PUT,
+            &bot_path,
+            Some(json!({
+                "config": {
+                    "bot": {"id": "tester", "name": "Tester"},
+                    "models": {"executor": "fake/echo"}
+                },
+                "runtime": {"computer": input}
+            })),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{input}: {:?}", r.json());
+        assert_eq!(r.json()["runtime"]["computer"], expected);
+
+        let get_r = call(&t, Method::GET, &bot_path, None).await;
+        assert_eq!(get_r.status, StatusCode::OK);
+        assert_eq!(get_r.json()["runtime"]["computer"], expected);
+    }
+
+    // Invalid [runtime] computer returns 422 bad_profile on POST and PUT.
+    let bad_post = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"quantum\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(bad_post.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(bad_post.json()["error"]["code"], "bad_profile");
+
+    let bad_put = call(
+        &t,
+        Method::PUT,
+        &bot_path,
+        Some(json!({
+            "config": {
+                "bot": {"id": "tester", "name": "Tester"},
+                "models": {"executor": "fake/echo"}
+            },
+            "runtime": {"computer": "quantum"}
+        })),
+    )
+    .await;
+    assert_eq!(bad_put.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(bad_put.json()["error"]["code"], "bad_profile");
+}
+
+struct StubProvider;
+
+impl agent_core::ComputerProvider for StubProvider {
+    fn local_node(&self) -> agent_core::ComputerNode {
+        agent_core::ComputerNode {
+            id: "c".repeat(64),
+            name: "Local computer".into(),
+        }
+    }
+
+    fn local(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        None
+    }
+
+    fn pc(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        None
+    }
+
+    fn is_host(&self) -> bool {
+        true
+    }
+
+    fn browser_available(&self) -> bool {
+        true
+    }
+
+    fn has_display(&self) -> bool {
+        false
+    }
+
+    fn node(&self, _id: &str) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        None
+    }
+}
+
+#[tokio::test]
+async fn runs_expose_computer_target_and_waiting_for_pc_pause_reason() {
+    let t = setup();
+    t.agent.set_computer_provider(Arc::new(StubProvider));
+
+    // Bot 1: "browser" completes normally and records computer_target = "browser".
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"browser\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let bot_browser = r.json()["id"].as_str().unwrap().to_owned();
+    let chat_browser = call(
+        &t,
+        Method::POST,
+        "/v1/chats",
+        Some(json!({ "bot_id": bot_browser })),
+    )
+    .await
+    .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let run_browser = send_msg(&t, &chat_browser, "hello", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_state(&t, &run_browser, "succeeded").await;
+
+    // Bot 2: "pc" with offline PC pauses with pause_reason = "waiting_for_pc".
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"node:workstation-1\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let bot_pc = r.json()["id"].as_str().unwrap().to_owned();
+    let chat_pc = call(
+        &t,
+        Method::POST,
+        "/v1/chats",
+        Some(json!({ "bot_id": bot_pc })),
+    )
+    .await
+    .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let run_pc = send_msg(&t, &chat_pc, "wait for pc", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_state(&t, &run_pc, "paused").await;
+
+    let get_br = call(&t, Method::GET, &format!("/v1/runs/{run_browser}"), None).await;
+    assert_eq!(get_br.status, StatusCode::OK);
+    assert_eq!(get_br.json()["computer_target"], "browser");
+    assert!(get_br.json()["pause_reason"].is_null());
+
+    let get_pc = call(&t, Method::GET, &format!("/v1/runs/{run_pc}"), None).await;
+    assert_eq!(get_pc.status, StatusCode::OK);
+    assert_eq!(get_pc.json()["state"], "paused");
+    assert_eq!(get_pc.json()["computer_target"], "pc");
+    assert_eq!(get_pc.json()["pause_reason"], "waiting_for_pc");
+    assert_eq!(get_pc.json()["computer_node"], "workstation-1");
+    assert_eq!(get_pc.json()["computer_node_name"], "workstation-1");
+    assert!(get_pc.json()["paused_at_ms"].as_i64().is_some());
+
+    // GET /v1/runs list also surfaces computer_target and pause_reason.
+    let list_r = call(&t, Method::GET, "/v1/runs", None).await;
+    assert_eq!(list_r.status, StatusCode::OK);
+    let runs = list_r.json();
+    let arr = runs.as_array().unwrap();
+    let listed_pc = arr
+        .iter()
+        .find(|item| item["id"] == run_pc)
+        .expect("paused run in /v1/runs");
+    assert_eq!(listed_pc["computer_target"], "pc");
+    assert_eq!(listed_pc["pause_reason"], "waiting_for_pc");
+
+    // Cancelling the paused run clears pause_reason while keeping computer_target.
+    let cancel_r = call(&t, Method::POST, &format!("/v1/runs/{run_pc}/cancel"), None).await;
+    assert_eq!(cancel_r.status, StatusCode::OK);
+    wait_state(&t, &run_pc, "cancelled").await;
+    let get_pc_after = call(&t, Method::GET, &format!("/v1/runs/{run_pc}"), None).await;
+    assert_eq!(get_pc_after.json()["state"], "cancelled");
+    assert_eq!(get_pc_after.json()["computer_target"], "pc");
+    assert!(get_pc_after.json()["pause_reason"].is_null());
+}
+
+#[tokio::test]
+async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_override() {
+    let t = setup();
+    let created = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"pc\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let path = format!("/v1/bots/{}", created.json()["id"].as_str().unwrap());
+    let updated = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": PROFILE})),
+    )
+    .await;
+    assert_eq!(updated.status, StatusCode::OK);
+    assert_eq!(updated.json()["runtime"]["computer"], "pc");
+    let conflict = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"host\"\n"),
+            "runtime": {"computer": "pc"}
+        })),
+    )
+    .await;
+    assert_eq!(conflict.status, StatusCode::BAD_REQUEST);
+    let current = call(&t, Method::GET, &path, None).await;
+    assert_eq!(current.json()["runtime"]["computer"], "pc");
 }

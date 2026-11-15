@@ -1,5 +1,6 @@
 //! The [`Storage`] repository.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -395,6 +396,8 @@ impl Storage {
     }
 
     /// Version-checked variant of [`Self::set_bot_skill_assignment_audited`].
+    /// The audit diff is derived from the stored assignment inside the transaction;
+    /// caller-supplied `bot_id`, `mode`, `added` and `removed` are replaced.
     ///
     /// # Errors
     /// Fails with [`StorageError::Conflict`] if `expected_version` is `Some`
@@ -412,14 +415,40 @@ impl Storage {
     ) -> Result<BotSkillAssignment> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let previous = tx.query_row(
+            "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment WHERE bot_id = ?1",
+            [bot_id.to_string()],
+            skill_assignment_row,
+        ).optional();
+        let previous_names: BTreeSet<String> = match previous {
+            Ok(Some(row)) if row.mode == SkillAssignmentMode::Selected => {
+                row.names.into_iter().collect()
+            }
+            Ok(_) | Err(rusqlite::Error::FromSqlConversionFailure(..)) => BTreeSet::default(),
+            Err(error) => return Err(error.into()),
+        };
         let row = write_skill_assignment_tx(&tx, bot_id, mode, names, expected_version)?;
+        let next_names: BTreeSet<String> = row.names.iter().cloned().collect();
+        let added: Vec<_> = next_names.difference(&previous_names).collect();
+        let removed: Vec<_> = previous_names.difference(&next_names).collect();
+        let mut detail = detail.as_object().cloned().unwrap_or_default();
+        detail.insert("bot_id".into(), serde_json::json!(bot_id.to_string()));
+        detail.insert(
+            "mode".into(),
+            serde_json::json!(match mode {
+                SkillAssignmentMode::All => "all",
+                SkillAssignmentMode::Selected => "selected",
+            }),
+        );
+        detail.insert("added".into(), serde_json::json!(added));
+        detail.insert("removed".into(), serde_json::json!(removed));
         tx.execute(
             "INSERT INTO audit_log (user_id, run_id, actor, action, detail_json, ts_ms) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
             params![
                 user_id.to_string(),
                 actor,
                 "bot.skills_assigned",
-                serde_json::to_string(detail)?,
+                serde_json::to_string(&detail)?,
                 now_ms()
             ],
         )?;
@@ -594,7 +623,7 @@ impl Storage {
     /// Fails on SQLite errors.
     pub fn insert_run(&self, r: &Run) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO runs (id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO runs (id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json, computer_target, pause_reason, computer_node, computer_node_name, paused_at_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 r.id.to_string(),
                 r.user_id.to_string(),
@@ -607,6 +636,9 @@ impl Storage {
                 r.updated_at_ms,
                 r.parent_run_id.map(|p| p.to_string()),
                 r.spec.as_ref().map(serde_json::to_string).transpose()?,
+                r.computer_target,
+                r.pause_reason,
+                r.computer_node, r.computer_node_name, r.paused_at_ms,
             ],
         )?;
         Ok(())
@@ -666,19 +698,85 @@ impl Storage {
     }
 
     /// Set a run's state (and error text).  Transition legality is the
-    /// caller's responsibility.
+    /// caller's responsibility. Transitions out of `paused` clear `pause_reason`.
     ///
     /// # Errors
     /// Fails on SQLite errors or if the run does not exist.
     pub fn update_run_state(&self, id: RunId, state: &str, error: Option<&str>) -> Result<()> {
         let n = self.conn().execute(
-            "UPDATE runs SET state = ?2, error = ?3, updated_at_ms = ?4 WHERE id = ?1",
+            "UPDATE runs SET state = ?2, error = ?3, updated_at_ms = ?4, paused_at_ms = CASE WHEN ?2 = 'paused' THEN COALESCE(paused_at_ms, ?4) ELSE NULL END, pause_reason = CASE WHEN ?2 = 'paused' THEN pause_reason ELSE NULL END WHERE id = ?1",
             params![id.to_string(), state, error, now_ms()],
         )?;
         if n == 0 {
             return Err(StorageError::NotFound(format!("run {id}")));
         }
         Ok(())
+    }
+
+    /// Record the resolved computer target label (`pc`, `host`, `browser`,
+    /// `off`) fixed at run start.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or if the run does not exist.
+    pub fn set_run_computer_target(&self, id: RunId, target: Option<&str>) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE runs SET computer_target = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![id.to_string(), target, now_ms()],
+        )?;
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("run {id}")));
+        }
+        Ok(())
+    }
+
+    /// Persist label and concrete target together before any tool can run.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or if the run does not exist.
+    pub fn bind_run_computer(
+        &self,
+        id: RunId,
+        label: &str,
+        node: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE runs SET computer_target = ?2, computer_node = ?3, computer_node_name = ?4 WHERE id = ?1 AND (computer_target IS NULL OR computer_target = ?2) AND (computer_node IS NULL OR computer_node = ?3)",
+            params![id.to_string(), label, node, name],
+        )?;
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("run {id}")));
+        }
+        Ok(())
+    }
+
+    /// Update the pause reason on a paused run (e.g. `waiting_for_pc`).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or if the run does not exist.
+    pub fn set_run_pause_reason(&self, id: RunId, reason: Option<&str>) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE runs SET pause_reason = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![id.to_string(), reason, now_ms()],
+        )?;
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("run {id}")));
+        }
+        Ok(())
+    }
+
+    /// List all runs currently in `paused` state with the given `pause_reason`.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_paused_runs_with_reason(&self, reason: &str) -> Result<Vec<Run>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(&format!(
+            "{RUN_SELECT} WHERE state = 'paused' AND pause_reason = ?1 ORDER BY id"
+        ))?;
+        Ok(st
+            .query_map([reason], run_row)?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
     // ---- run_steps ----
@@ -888,6 +986,26 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The newest audit row of one action for a user (indexed by `id`, no full scan).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn last_audit_by_action(
+        &self,
+        user_id: UserId,
+        action: &str,
+    ) -> Result<Option<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND action = ?2 ORDER BY id DESC LIMIT 1",
+        )?;
+        Ok(st
+            .query_map(params![user_id.to_string(), action], audit_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .next())
+    }
+
     // ---- global event order ----
 
     /// Highest `gseq` handed out so far (`0` when no event was indexed yet).
@@ -950,7 +1068,7 @@ impl Storage {
     }
 }
 
-const RUN_SELECT: &str = "SELECT id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json FROM runs";
+const RUN_SELECT: &str = "SELECT id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json, computer_target, pause_reason, computer_node, computer_node_name, paused_at_ms FROM runs";
 const STEP_SELECT: &str = "SELECT id, run_id, user_id, idx, name, input_json, idempotent, retry_json, status, attempt, output_json, error, started_at_ms, finished_at_ms FROM run_steps";
 const APPROVAL_SELECT: &str = "SELECT id, user_id, run_id, step_id, summary, decision, requested_at_ms, decided_at_ms FROM approvals";
 
@@ -1148,6 +1266,11 @@ fn run_row(r: &Row<'_>) -> rusqlite::Result<Run> {
         updated_at_ms: r.get(8)?,
         parent_run_id: opt_uuid_at(r, 9)?.map(RunId),
         spec: opt_json_at(r, 10)?,
+        computer_target: r.get(11)?,
+        computer_node: r.get(13)?,
+        computer_node_name: r.get(14)?,
+        paused_at_ms: r.get(15)?,
+        pause_reason: r.get(12)?,
     })
 }
 
@@ -1252,6 +1375,11 @@ mod tests {
             updated_at_ms: 4,
             parent_run_id: None,
             spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         };
         f.st.insert_run(&r).unwrap();
         r
@@ -1767,5 +1895,150 @@ mod tests {
         }
         assert_eq!(st.get_bot_skill_assignment(bot.id).unwrap(), None);
         assert!(st.bot_skill_assignment_generation().unwrap() > g2);
+    }
+
+    #[test]
+    fn assignment_audit_diff_uses_current_database_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "b".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        };
+        st.insert_user(&user).unwrap();
+        st.insert_bot(&bot).unwrap();
+        st.set_bot_skill_assignment(bot.id, SkillAssignmentMode::Selected, &["stale".into()])
+            .unwrap();
+        let external = Storage::open(dir.path()).unwrap();
+        external
+            .set_bot_skill_assignment(
+                bot.id,
+                SkillAssignmentMode::Selected,
+                &["current".into(), "keep".into()],
+            )
+            .unwrap();
+        st.set_bot_skill_assignment_audited_versioned(
+            user.id,
+            bot.id,
+            SkillAssignmentMode::Selected,
+            &["next".into(), "keep".into(), "next".into()],
+            "user",
+            &json!({"added": ["stale"], "removed": [], "custom": true}),
+            None,
+        )
+        .unwrap();
+        let audit = st.list_audit(user.id).unwrap().pop().unwrap();
+        assert_eq!(audit.detail["added"], json!(["next"]));
+        assert_eq!(audit.detail["removed"], json!(["current"]));
+        assert_eq!(audit.detail["custom"], true);
+        st.set_bot_skill_assignment_audited_versioned(
+            user.id,
+            bot.id,
+            SkillAssignmentMode::All,
+            &[],
+            "user",
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        let audit = st.list_audit(user.id).unwrap().pop().unwrap();
+        assert_eq!(audit.detail["added"], json!([]));
+        assert_eq!(audit.detail["removed"], json!(["keep", "next"]));
+    }
+
+    #[test]
+    fn computer_target_and_pause_reason_persist_and_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_id;
+        {
+            let st = Storage::open(dir.path()).unwrap();
+            let u = User {
+                id: UserId::new(),
+                name: "u".into(),
+                created_at_ms: 1,
+            };
+            st.insert_user(&u).unwrap();
+            let b = Bot {
+                id: BotId::new(),
+                user_id: u.id,
+                name: "b".into(),
+                config: json!({}),
+                created_at_ms: 1,
+            };
+            st.insert_bot(&b).unwrap();
+            let r = Run {
+                id: RunId::new(),
+                user_id: u.id,
+                bot_id: b.id,
+                chat_id: None,
+                kind: "turn".into(),
+                state: "queued".into(),
+                error: None,
+                created_at_ms: 2,
+                updated_at_ms: 2,
+                parent_run_id: None,
+                spec: None,
+                computer_target: None,
+                computer_node: None,
+                computer_node_name: None,
+                paused_at_ms: None,
+                pause_reason: None,
+            };
+            run_id = r.id;
+            st.insert_run(&r).unwrap();
+            st.bind_run_computer(run_id, "pc", Some("pc-A"), Some("My PC"))
+                .unwrap();
+            st.update_run_state(run_id, "paused", None).unwrap();
+            st.set_run_pause_reason(run_id, Some("waiting_for_pc"))
+                .unwrap();
+            assert_eq!(
+                st.list_paused_runs_with_reason("waiting_for_pc")
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        let st = Storage::open(dir.path()).unwrap();
+        let got = st.get_run(run_id).unwrap().unwrap();
+        assert_eq!(got.computer_target.as_deref(), Some("pc"));
+        assert_eq!(got.pause_reason.as_deref(), Some("waiting_for_pc"));
+        assert_eq!(got.computer_node.as_deref(), Some("pc-A"));
+        assert_eq!(got.computer_node_name.as_deref(), Some("My PC"));
+        assert!(
+            st.bind_run_computer(run_id, "pc", Some("pc-B"), Some("Other PC"))
+                .is_err()
+        );
+        assert_eq!(
+            st.get_run(run_id)
+                .unwrap()
+                .unwrap()
+                .computer_node
+                .as_deref(),
+            Some("pc-A")
+        );
+        assert!(got.paused_at_ms.is_some());
+        st.conn()
+            .execute(
+                "UPDATE runs SET paused_at_ms = 123 WHERE id = ?1",
+                [run_id.to_string()],
+            )
+            .unwrap();
+        st.set_run_computer_target(run_id, Some("pc")).unwrap();
+        st.set_run_pause_reason(run_id, Some("waiting_for_pc"))
+            .unwrap();
+        st.update_run_state(run_id, "paused", None).unwrap();
+        assert_eq!(st.get_run(run_id).unwrap().unwrap().paused_at_ms, Some(123));
+        st.update_run_state(run_id, "running", None).unwrap();
+        let running = st.get_run(run_id).unwrap().unwrap();
+        assert_eq!(running.pause_reason, None);
+        assert_eq!(running.paused_at_ms, None);
     }
 }

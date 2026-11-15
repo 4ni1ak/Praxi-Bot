@@ -1458,3 +1458,83 @@ async fn all_does_not_carry_agentmail_api_keys_unless_named() {
         "an AgentMail key is in the bundle"
     );
 }
+
+// B's pre-existing key can be older than A's grants: age is never ownership.
+#[tokio::test]
+async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert() {
+    use agent_core::{AgentLoop, LoopConfig, Providers};
+    use protocol::{BotId, UserId};
+    use tool_registry::ToolRegistry;
+
+    let a = "aa".repeat(32);
+    let b = "bb".repeat(32);
+    let source = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    fs::create_dir(target.path().join("peer")).unwrap();
+    let key_path = target.path().join("peer/identity.key");
+    // A fixture for the excluded file; this test never reads key material.
+    fs::write(&key_path, "destination-only identity fixture").unwrap();
+    let older = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+    fs::File::options()
+        .write(true)
+        .open(&key_path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(older))
+        .unwrap();
+    database(source.path(), true);
+    let user = UserId("00000000-0000-0000-0000-000000000001".parse().unwrap());
+    let bot = BotId("00000000-0000-0000-0000-000000000002".parse().unwrap());
+    let storage = Arc::new(storage::Storage::open(source.path()).unwrap());
+    for scope in [
+        format!("host:{a}"),
+        format!("pc:{a}"),
+        "host:local".into(),
+        "pc:local".into(),
+    ] {
+        storage
+            .append_audit(
+                user,
+                None,
+                "user",
+                "grant.always",
+                &serde_json::json!({
+                    "bot_id": bot.to_string(), "category": "desktop", "computer": scope,
+                }),
+            )
+            .unwrap();
+    }
+    assert!(
+        fs::metadata(&key_path).unwrap().modified().unwrap()
+            < std::time::UNIX_EPOCH
+                + std::time::Duration::from_millis(
+                    u64::try_from(storage.list_audit(user).unwrap()[0].ts_ms).unwrap()
+                )
+    );
+    drop(storage);
+    let bytes = bundle(source.path()).await;
+    import(
+        target.path(),
+        &MemoryStore::new(),
+        bytes.as_slice(),
+        ImportOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fs::metadata(&key_path).unwrap().modified().unwrap(), older);
+    let storage = Arc::new(storage::Storage::open(target.path()).unwrap());
+    let agent = AgentLoop::new(
+        storage,
+        ToolRegistry::new(),
+        Providers::unconfigured(),
+        LoopConfig::default(),
+    );
+    agent.reconcile_computer_identity(&b, Some(&[])).unwrap();
+    let grants = agent.list_grants(bot);
+    assert_eq!(grants.len(), 4);
+    assert!(grants.iter().all(|g| g.inert));
+    assert!(
+        !grants
+            .iter()
+            .any(|g| g.computer.as_deref() == Some(&format!("host:{b}")))
+    );
+}

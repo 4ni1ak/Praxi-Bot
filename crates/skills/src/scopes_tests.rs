@@ -348,35 +348,22 @@ fn prompt_resolver_is_per_bot_and_botless_prompt_contains_no_private_suggestions
 
 fn link_dir(target: &Path, link: &Path) -> bool {
     #[cfg(unix)]
-    let result = std::os::unix::fs::symlink(target, link);
+    let linked = std::os::unix::fs::symlink(target, link).is_ok();
     #[cfg(windows)]
-    let result = std::os::windows::fs::symlink_dir(target, link);
+    let linked = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .is_ok_and(|out| out.status.success())
+        || std::os::windows::fs::symlink_dir(target, link).is_ok();
     #[cfg(not(any(unix, windows)))]
-    let result: std::io::Result<()> = Err(std::io::ErrorKind::Unsupported.into());
-    match result {
-        Ok(()) => true,
-        // ERROR_PRIVILEGE_NOT_HELD (1314) is not always mapped to PermissionDenied.
-        Err(error)
-            if cfg!(windows)
-                && (error.kind() == std::io::ErrorKind::PermissionDenied
-                    || error.raw_os_error() == Some(1314)) =>
-        {
-            // A junction needs no privilege and is also a reparse point.
-            let junction = std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(link)
-                .arg(target)
-                .output()
-                .is_ok_and(|out| out.status.success());
-            if !junction {
-                eprintln!(
-                    "Skipping directory link assertion: neither symlink nor junction could be created ({error})"
-                );
-            }
-            junction
-        }
-        Err(error) => panic!("create test symlink: {error}"),
-    }
+    let linked = false;
+    assert!(
+        linked || std::env::var_os("CI").is_none(),
+        "directory link could not be created on CI"
+    );
+    linked
 }
 
 #[test]
