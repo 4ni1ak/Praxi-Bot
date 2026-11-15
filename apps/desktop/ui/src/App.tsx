@@ -50,6 +50,8 @@ import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
+import { requestStop } from "./state/appStop";
+import { StopStatusNotice } from "./components/StopStatusNotice";
 import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
 import { LiveViewer } from "./views/LiveViewer";
 import { appearanceFromQuery } from "./lib/appearance";
@@ -87,7 +89,6 @@ import {
   resumeBotRun,
   setStopHotkey,
   simulateBotRun,
-  stopBotRun,
   subscribeOverlayEvents,
   takeTheWheel
 } from "./overlay/events";
@@ -121,7 +122,7 @@ function AppShell() {
     refreshBots,
     retry
   } = useDaemon();
-  const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
+  const { setThumbnailDemand, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   const [controlState, setControlState] = useState<ControlSnapshot>(
@@ -291,12 +292,11 @@ function AppShell() {
       const activeHotkey = controlState.stopHotkey || settings.stopHotkey;
       if (matchesHotkeyEvent(event, activeHotkey)) {
         event.preventDefault();
-        // Plain Stop stays independent: the daemon-wide override latch is only
-        // used while a screen takeover is held (never on key repeat).
+        // One key press = one Stop decision (never on key repeat). The ledger halts
+        // native input, cancels runs and pauses a held takeover.
         if (!event.repeat) {
-          void overrideStop({ onlyIfControlled: true });
+          requestStop("hotkey");
         }
-        void stopBotRun().then(setControlState);
       }
     };
 
@@ -304,7 +304,7 @@ function AppShell() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, overrideStop]);
+  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey]);
 
   // Native title bar on / off (Tauri window decorations; no-op in a browser).
   useEffect(() => {
@@ -486,8 +486,7 @@ function AppShell() {
             variant="danger"
             size="sm"
             onClick={() => {
-              void overrideStop({ onlyIfControlled: true });
-              void stopBotRun().then(setControlState);
+              requestStop("banner");
             }}
           >
             {t("widget.stop")}
@@ -670,6 +669,7 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
+        {panelVisible ? null : <StopStatusNotice variant="main" />}
         <PausedControlBanner />
         {route.kind === "onboarding" ? (
           <OnboardingView

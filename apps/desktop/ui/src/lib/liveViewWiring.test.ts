@@ -49,13 +49,16 @@ test("the control bridge registration keeps its identity across control-state re
   );
 });
 
-test("every global Stop call site uses the takeover-only override", () => {
-  const calls = app.match(/overrideStop\([^)]*\)/g) ?? [];
-  assert.ok(calls.length >= 2, "hotkey and banner button");
-  for (const c of calls) {
-    assert.match(c, /onlyIfControlled: true/, c);
-  }
-  assert.match(app, /!event\.repeat/, "key repeat does not re-fire the override");
+test("every global Stop call site is one ledger Stop; the takeover override is decided per origin", () => {
+  // The hotkey and the run banner make ONE Stop decision through the ledger
+  // (native halt + daemon stop + takeover override); App calls nothing else.
+  assert.doesNotMatch(app, /overrideStop\(/, "App no longer pauses the takeover itself");
+  assert.doesNotMatch(app, /stopBotRun\(/, "nor stops native itself");
+  assert.match(app, /if \(!event\.repeat\) \{\s*requestStop\("hotkey"\);/, "one press, never on key repeat");
+  assert.match(app, /requestStop\("banner"\)/);
+  assert.match(viewer, /requestStop\("viewer"\)/);
+  // The override itself is behaviour-tested through overrideOptionsFor (stopHost.test.ts).
+  assert.match(host, /ledger\.onStop\(\(rec\) => \{\s*void overrideRef\.current\(overrideOptionsFor\(rec\)\);/);
 });
 
 test("the viewer layer sits below dialogs and toasts so approvals stay answerable", () => {
@@ -190,7 +193,10 @@ test("the command palette is portaled to body and only the topmost layer handles
 // ---- fourth review ----
 
 test("every client polls the control snapshot (not only the Tauri bridge) and feeds the banner", () => {
-  assert.match(context, /getControlState\(\)\s*\.then\(\(dto\) => ingestControlSnapshot\(dto, ticket\)\)/);
+  assert.match(
+    context,
+    /getControlState\(\)\s*\.then\(\(dto\) => \{\s*if \(clientRef\.current === client\) \{\s*ingestControlSnapshot\(dto, ticket\);/
+  );
   assert.match(context, /CONTROL_POLL_MS/);
   const poll = context.slice(context.indexOf("CONTROL_POLL_MS);") - 400, context.indexOf("CONTROL_POLL_MS);") + 40);
   assert.doesNotMatch(poll, /isTauriRuntime/);

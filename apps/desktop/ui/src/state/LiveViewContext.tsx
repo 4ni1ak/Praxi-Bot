@@ -15,7 +15,7 @@ import type {
   SessionInfo,
   TargetInfo
 } from "../api/types.ts";
-import { ApiError } from "../api/client.ts";
+import { type ApiClient, ApiError } from "../api/client.ts";
 import { isMockMode } from "../api/mockMode.ts";
 import {
   applyControlStateDto,
@@ -109,6 +109,11 @@ interface LiveViewContextValue {
    * Stop never latches the whole daemon paused.
    */
   overrideStop: (opts?: { onlyIfControlled?: boolean }) => Promise<void>;
+  /**
+   * The view targets of the CURRENT daemon client, or `null` while that client's
+   * list has not loaded (an older client's list never counts).
+   */
+  currentTargets: () => { client: ApiClient; targets: readonly TargetInfo[] } | null;
   enqueueInput: (event: InputEvent, flushNow?: boolean) => void;
   resetInputState: (flushNow?: boolean) => void;
   setComposing: (composing: boolean) => void;
@@ -148,6 +153,15 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const flushAgainRef = useRef<boolean>(false);
 
   const [targets, setTargets] = useState<TargetInfo[]>([]);
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  // Targets together with the client that listed them (N7: a stale client's list
+  // can never make an unknown scope look local for the new client).
+  const targetsForRef = useRef<{ client: ApiClient; targets: TargetInfo[] } | null>(null);
+  const currentTargets = useCallback(() => {
+    const t = targetsForRef.current;
+    return t && t.client === clientRef.current ? t : null;
+  }, []);
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
@@ -277,6 +291,10 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         client.listViewTargets(),
         client.getControlState().catch(() => null)
       ]);
+      if (clientRef.current !== client) {
+        return; // a replaced client's answer changes nothing
+      }
+      targetsForRef.current = { client, targets: nextTargets };
       setTargets(nextTargets);
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
@@ -293,6 +311,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   // Refresh targets & control snapshot on client connect and when panel/viewer opens.
   useEffect(() => {
+    targetsForRef.current = null;
     if (!client) {
       setTargets([]);
       setControlState(null);
@@ -321,7 +340,11 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       const ticket = sequencer.issue();
       void client
         .getControlState()
-        .then((dto) => ingestControlSnapshot(dto, ticket))
+        .then((dto) => {
+          if (clientRef.current === client) {
+            ingestControlSnapshot(dto, ticket);
+          }
+        })
         .catch(() => undefined);
     }, CONTROL_POLL_MS);
     return () => window.clearInterval(id);
@@ -936,15 +959,13 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         return;
       }
       inputQueueRef.current.clear();
+      // Runs and native are the Stop ledger's job (`requestStop`); this only pauses
+      // a takeover. It is sent directly, never queued behind the bridge.
       try {
-        const bridge = registry.current();
-        const dto = bridge
-          ? await bridge.emergencyStop()
-          : await client.overrideControl();
-        if (dto) {
-          setControlState(dto);
-          updateState((prev) => applyControlStateDto(prev, dto));
-        }
+        const dto = await client.overrideControl();
+        registry.syncControlState(dto);
+        setControlState(dto);
+        updateState((prev) => applyControlStateDto(prev, dto));
         void refreshTargets();
       } catch {
         void refreshTargets();
@@ -1031,6 +1052,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       clearPause,
       isLocalClient,
       overrideStop,
+      currentTargets,
       enqueueInput,
       resetInputState,
       setComposing,
@@ -1061,6 +1083,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       clearPause,
       isLocalClient,
       overrideStop,
+      currentTargets,
       enqueueInput,
       resetInputState,
       setComposing,
