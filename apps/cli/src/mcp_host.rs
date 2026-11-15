@@ -1381,6 +1381,194 @@ mod tests {
         host.shutdown().await;
     }
 
+    /// Every file under `dir`, recursively (event logs, the SQLite database
+    /// holding the audit log and its WAL, `mcp.toml` ...).
+    fn files_under(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for entry in std::fs::read_dir(&d).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
+
+    fn contains(haystack: &[u8], needle: &str) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|w| w == needle.as_bytes())
+    }
+
+    /// Sign-in driven through the real daemon routes: the tokens reach the
+    /// secret store only, never an API response, the global event stream,
+    /// the audit log, a run event log or any other file of the data dir.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::too_many_lines)] // One linear daemon journey.
+    async fn daemon_sign_in_leaves_no_token_in_events_audit_or_logs() {
+        const TOKEN: &str = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+        const ACCESS: &str = "daemon-flow-access-sentinel-c31e";
+        const REFRESH: &str = "daemon-flow-refresh-sentinel-77b0";
+        let remote = fake_remote(ACCESS, REFRESH).await;
+        let base = remote.uri();
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+        config.oauth = Some(mcp_bridge::OAuthConfig {
+            client_id: Some("praxi-daemon-test".into()),
+            allow_loopback_http: true,
+            ..mcp_bridge::OAuthConfig::default()
+        });
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+
+        let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+        let redactor = agent_core::SharedRedactor::default();
+        let agent = crate::serve::build_agent_with_redactor(
+            &storage,
+            agent_core::Providers::single(Arc::new(daemon_api::fake::FakeProvider)),
+            dir.path(),
+            None,
+            redactor.clone(),
+        );
+        let secrets: Arc<dyn SecretStore> = Arc::new(secret_store::MemoryStore::new());
+        let external: mcp_bridge::ExternalRedactor = {
+            let handle = redactor.clone();
+            Arc::new(move |text| handle.redact(text))
+        };
+        let registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value| handle.register(value))
+        };
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            agent.tool_registry(),
+            Some(Arc::clone(&secrets)),
+            Some(external),
+            Some(registrar),
+            fast_policy(),
+        );
+        wait_for(&host, "remote", McpStatus::AuthRequired).await;
+        let state = daemon_api::AppState::new(
+            agent,
+            Arc::clone(&storage),
+            daemon_api::DaemonConfig::new(TOKEN),
+        )
+        .unwrap();
+        state.set_mcp(Arc::clone(&host) as Arc<dyn McpControl>);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
+        let http = reqwest::Client::new();
+        let bearer = format!("Bearer {TOKEN}");
+
+        // Record the global event stream for the whole journey.
+        let stream = Arc::new(parking_lot::Mutex::new(Vec::<u8>::new()));
+        let mut events = http
+            .get(format!("{url}/v1/events"))
+            .header("authorization", &bearer)
+            .send()
+            .await
+            .unwrap();
+        assert!(events.status().is_success(), "{}", events.status());
+        let recorder = tokio::spawn({
+            let stream = Arc::clone(&stream);
+            async move {
+                while let Ok(Some(chunk)) = events.chunk().await {
+                    stream.lock().extend_from_slice(&chunk);
+                }
+            }
+        });
+
+        let mut responses = String::new();
+        let started: serde_json::Value = {
+            let r = http
+                .post(format!("{url}/v1/mcp/servers/remote/auth/start"))
+                .header("authorization", &bearer)
+                .send()
+                .await
+                .unwrap();
+            assert!(r.status().is_success(), "{}", r.status());
+            let text = r.text().await.unwrap();
+            responses.push_str(&text);
+            serde_json::from_str(&text).unwrap()
+        };
+        let authorization_url = started["authorization_url"].as_str().unwrap();
+        let params = query_pairs(authorization_url);
+        browser_redirect(
+            authorization_url,
+            &format!("code=code-1&state={}&iss={base}", params["state"]),
+        )
+        .await
+        .unwrap();
+        wait_for(&host, "remote", McpStatus::Connected).await;
+        for path in ["/v1/mcp/servers", "/v1/mcp/servers/remote/auth/status"] {
+            let text = http
+                .get(format!("{url}{path}"))
+                .header("authorization", &bearer)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            responses.push_str(&text);
+        }
+        assert!(responses.contains("\"signed_in\""), "{responses}");
+        assert!(
+            secrets
+                .get("mcp/remote/oauth")
+                .unwrap()
+                .unwrap()
+                .expose()
+                .contains(ACCESS)
+        );
+        // Wait until the stream carried the move to `connected`.
+        tokio::time::timeout(POLL_EVERY * 3, async {
+            while !contains(&stream.lock(), "\"connected\"") {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("connected event on the global stream");
+        let r = http
+            .post(format!("{url}/v1/mcp/servers/remote/auth/logout"))
+            .header("authorization", &bearer)
+            .send()
+            .await
+            .unwrap();
+        responses.push_str(&r.text().await.unwrap());
+        host.shutdown().await;
+        recorder.abort();
+
+        let stream = stream.lock().clone();
+        assert!(contains(&stream, "mcp_server_changed"));
+        // Positive control: the scan does read the files (public client id).
+        assert!(
+            files_under(dir.path())
+                .iter()
+                .any(|f| contains(&std::fs::read(f).unwrap_or_default(), "praxi-daemon-test"))
+        );
+        for token in [ACCESS, REFRESH] {
+            assert!(!responses.contains(token), "API response carries {token}");
+            assert!(!contains(&stream, token), "event stream carries {token}");
+            for file in files_under(dir.path()) {
+                let bytes = std::fs::read(&file).unwrap_or_default();
+                assert!(
+                    !contains(&bytes, token),
+                    "{} carries {token}",
+                    file.display()
+                );
+            }
+        }
+        // The audit log lives in the SQLite database scanned above.
+    }
+
     fn stdio(name: &str, enabled: bool) -> McpServerInput {
         serde_json::from_value(json!({
             "name": name,
