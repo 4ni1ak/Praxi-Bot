@@ -12,8 +12,8 @@ pub use error::ToolError;
 pub use registry::ToolRegistry;
 // PermissionCategory and Platform are defined in `protocol` and re-exported here
 // for convenience.
-pub use spec::{Effect, ObservationScope, PermissionCategory, Platform, ToolSpec};
 pub use registry::DISPLAY_INPUT_TOOLS;
+pub use spec::{Effect, ObservationScope, PermissionCategory, Platform, ToolSpec};
 pub use tool::{
     ContentPart, MASK_MAX_CHARS, SECRET_MASK, SpillRef, Tool, ToolContext, ToolOutput, ToolWrapper,
     display_secret, is_maskable_secret, is_masked_secret, masked_secret, placeholder_refusal,

@@ -43,7 +43,9 @@ use std::sync::Arc;
 use desktop_api::DesktopBackend;
 use tool_registry::{Tool, ToolRegistry};
 
-pub use browser::{BrowserDriver, BrowserSettings, CdpDriver, FieldFacts, Wait, fill_view};
+pub use browser::{
+    BrowserDriver, BrowserSettings, CdpDriver, FieldFacts, FieldKind, Wait, fill_view, fill_view_of,
+};
 pub use checkpoint::{
     ChangeKind, Checkpoint, CheckpointEntry, CheckpointStore, DiffOmittedReason, FileChange,
     MAX_DIFF_FILE_BYTES, MAX_DIFF_RUN_BYTES, RestoreAction, RestorePreviewEntry, RestoreReport,

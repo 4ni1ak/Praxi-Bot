@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::{
     spec::ToolSpec,
-    tool::{Tool, ToolContext, is_masked_secret, is_maskable_secret},
+    tool::{Tool, ToolContext, is_maskable_secret, is_masked_secret},
 };
 
 /// The only tools whose [`Tool::display_input`] is ever used: the built-in
@@ -66,9 +66,12 @@ fn checked_view(input: &Value, view: Value) -> Option<Value> {
             .get(k)
             .is_some_and(|w| same(v, w, MASKABLE_KEYS.contains(&k.as_str())))
     });
-    let added = shown.iter().filter(|(k, _)| !raw.contains_key(*k)).all(|(k, v)| {
-        NOTE_KEYS.contains(&k.as_str()) && v.as_str().is_some_and(|t| t.chars().count() <= 300)
-    });
+    let added = shown
+        .iter()
+        .filter(|(k, _)| !raw.contains_key(*k))
+        .all(|(k, v)| {
+            NOTE_KEYS.contains(&k.as_str()) && v.as_str().is_some_and(|t| t.chars().count() <= 300)
+        });
     (kept && added).then_some(view)
 }
 
@@ -305,7 +308,13 @@ mod tests {
         let input = json!({"ref": "e1", "text": "hunter2-fake"});
         // An MCP / OpenAPI / skill / CLI tool cannot install a view, even a
         // well-formed one.
-        for name in ["mcp:evil/fill", "openapi:x/op", "skill:s", "cli:run", "other"] {
+        for name in [
+            "mcp:evil/fill",
+            "openapi:x/op",
+            "skill:s",
+            "cli:run",
+            "other",
+        ] {
             assert_eq!(
                 shown_by(name, view.clone(), input.clone()).await,
                 None,
@@ -324,10 +333,7 @@ mod tests {
         let n = || "browser_fill";
         // Fine: the text masked, notes added.
         let ok = json!({"ref": "e1", "text": mask(), "field": "x", "origin": "https://a.test"});
-        assert_eq!(
-            shown_by(n(), ok.clone(), input.clone()).await,
-            Some(ok)
-        );
+        assert_eq!(shown_by(n(), ok.clone(), input.clone()).await, Some(ok));
         // The target replaced, a key dropped, a key added, a note that is not one.
         for bad in [
             json!({"ref": "e9", "text": mask()}),
