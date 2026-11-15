@@ -315,9 +315,11 @@ pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotD
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_bot(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
-    let (name, config) = resolve_bot(input)?;
+    let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -394,11 +396,21 @@ pub(crate) async fn revoke_grant(
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    let mut bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("knowledge"),
+        &mut config,
+    )?;
     if preserve_runtime
         && config.get("runtime").is_none()
         && let Some(runtime) = bot.config.get("runtime")
@@ -408,7 +420,13 @@ pub(crate) async fn update_bot(
             .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
             .insert("runtime".into(), runtime.clone());
     }
+    if bot.config.pointer("/knowledge/embedding") != config.pointer("/knowledge/embedding") {
+        // Raw profile edits cannot revive a grant after disable/restore. Revoke
+        // first: if persisting the new profile fails, authority stays closed.
+        crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
+    }
     s.storage().update_bot(bot.id, &name, &config)?;
+    crate::knowledge_runtime::invalidate_bot(&s, bot.id);
     bot.name = name;
     bot.config = config;
     s.refresh_profile(&bot);
@@ -424,12 +442,17 @@ pub(crate) async fn delete_bot(
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
     s.storage()
         .delete_bot(bot.id)
         .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
     // The bot's browser slot, driver and screen target go with it; nothing
     // selectable or resident stays behind for a bot that no longer exists.
     s.live_view().registry.retire_bot(bot.id.0);
+    crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.

@@ -239,6 +239,20 @@ impl AgentLoop {
         names
     }
 
+    /// Mask registered secrets in external data before an authorized source
+    /// adapter persists or embeds it. Source adapters refresh the secret
+    /// snapshot once per admitted batch with [`Self::refresh_external_redactor`].
+    #[must_use]
+    pub fn redact_external_text(&self, text: String) -> String {
+        self.sh.redact(text)
+    }
+
+    /// Refresh registered secrets once before admitting an external source
+    /// batch. Individual lines can then be redacted without secret-store I/O.
+    pub fn refresh_external_redactor(&self) {
+        self.sh.refresh_redactor();
+    }
+
     /// The loop's tool registry (cheap clone). MCP servers register their
     /// tools here, so a turn can call them.
     #[must_use]
@@ -264,6 +278,62 @@ impl AgentLoop {
     #[must_use]
     pub fn global_policy(&self) -> Policy {
         self.sh.global_policy.read().clone()
+    }
+
+    /// Resolve query-embedding egress in the actual active run's policy scope.
+    /// Unknown/cross-bot run IDs fail closed. Owner source opt-in remains an
+    /// independent host requirement; generic tool grants are not consulted.
+    #[must_use]
+    pub fn embedding_egress_decision(
+        &self,
+        bot_id: BotId,
+        run_id: &str,
+    ) -> permission_engine::Decision {
+        use permission_engine::{ActionRequest, Decision};
+        let Ok(run_id) = run_id.parse::<Uuid>().map(RunId) else {
+            return Decision::Deny;
+        };
+        let _gate = self.sh.exec_gate.lock();
+        // Never reconstruct a context from a caller-supplied persisted run ID.
+        // Only a currently executing run may exercise its captured initiator
+        // and inherited subagent policy.
+        if self.rt.state(run_id).ok() != Some(RunState::Running) {
+            return Decision::Deny;
+        }
+        let Some(ctx) = self
+            .sh
+            .runs
+            .lock()
+            .get(&run_id)
+            .filter(|ctx| ctx.bot_id == bot_id)
+            .cloned()
+        else {
+            return Decision::Deny;
+        };
+        if self
+            .sh
+            .policy_locked
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Decision::Deny;
+        }
+        let Ok(current) = self.sh.profile_for(bot_id) else {
+            return Decision::Deny;
+        };
+        let policy = self.sh.global_policy.read();
+        let request = ActionRequest {
+            category: PermissionCategory::Remote,
+            raw_command: String::new(),
+            initiator: ctx.initiator,
+        };
+        self.sh
+            .resolver
+            .resolve(&policy, ctx.bot_policy.as_ref(), None, &request)
+            .stricter(
+                self.sh
+                    .resolver
+                    .resolve(&policy, current.policy().as_ref(), None, &request),
+            )
     }
 
     /// Replace the workspace-wide default policy.

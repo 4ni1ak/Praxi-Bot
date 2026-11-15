@@ -24,6 +24,7 @@ pub mod error;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
 pub mod host;
+pub mod knowledge_runtime;
 pub mod live_view;
 pub mod mcp;
 mod mcp_routes;
@@ -176,6 +177,7 @@ struct Inner {
     live_view: Arc<live_view::LiveView>,
     refresh_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
     provider_host: OnceLock<ProviderHost>,
+    knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
     /// E-mail account management (see [`AppState::set_email`]).
@@ -335,6 +337,7 @@ impl AppState {
             live_view,
             refresh_rx: parking_lot::Mutex::new(Some(refresh_rx)),
             provider_host: OnceLock::new(),
+            knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
@@ -371,6 +374,7 @@ impl AppState {
             host_config,
             state.downgrade(),
         ));
+        knowledge_runtime::install(&state);
         Ok(state)
     }
 

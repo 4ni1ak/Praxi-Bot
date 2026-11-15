@@ -1,7 +1,10 @@
 //! `/v1/mcp/*` and `POST /v1/secrets/{name}` against an in-memory `McpControl`.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
@@ -18,6 +21,7 @@ use crate::mcp::{
 
 struct FakeMcp {
     servers: Mutex<Vec<McpServerDto>>,
+    mutations: AtomicUsize,
     events: broadcast::Sender<McpServerChanged>,
 }
 
@@ -25,6 +29,7 @@ impl FakeMcp {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             servers: Mutex::new(Vec::new()),
+            mutations: AtomicUsize::new(0),
             events: broadcast::channel(16).0,
         })
     }
@@ -139,6 +144,7 @@ impl McpControl for FakeMcp {
         self.servers.lock().clone()
     }
     async fn add(&self, input: McpServerInput) -> Result<McpServerDto, McpControlError> {
+        self.mutations.fetch_add(1, Ordering::SeqCst);
         let name = input
             .name
             .clone()
@@ -157,6 +163,7 @@ impl McpControl for FakeMcp {
         Ok(dto)
     }
     async fn update(&self, name: &str, patch: Value) -> Result<McpServerDto, McpControlError> {
+        self.mutations.fetch_add(1, Ordering::SeqCst);
         let mut all = self.servers.lock();
         let slot = all
             .iter_mut()
@@ -169,6 +176,7 @@ impl McpControl for FakeMcp {
         Ok(dto)
     }
     async fn remove(&self, name: &str) -> Result<(), McpControlError> {
+        self.mutations.fetch_add(1, Ordering::SeqCst);
         let mut all = self.servers.lock();
         let before = all.len();
         all.retain(|s| s.name != name);
@@ -180,6 +188,7 @@ impl McpControl for FakeMcp {
         Ok(())
     }
     async fn reconnect(&self, name: &str) -> Result<McpServerDto, McpControlError> {
+        self.mutations.fetch_add(1, Ordering::SeqCst);
         let all = self.servers.lock();
         let dto = all
             .iter()
@@ -751,20 +760,17 @@ async fn peer_router_refuses_every_mcp_mutation_to_every_role() {
 /// Every local MCP mutation leaves an audit row (names only, never a value).
 #[tokio::test]
 async fn local_mcp_mutations_are_audited_before_acting() {
-    let (t, _fake) = with_mcp();
-    let r = call(
-        &t,
-        Method::POST,
-        "/v1/mcp/servers",
-        Some(stdio_body("files")),
-    )
-    .await;
+    let (t, fake) = with_mcp();
+    let mut body = stdio_body("files");
+    body["env"] = json!({"ENV_NAME": "env-value-244-secret"});
+    body["headers"] = json!({"Authorization": "header-value-244-secret"});
+    let r = call(&t, Method::POST, "/v1/mcp/servers", Some(body.clone())).await;
     assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
     let r = call(
         &t,
         Method::PUT,
         "/v1/mcp/servers/files",
-        Some(json!({"enabled": true})),
+        Some(json!({"enabled": true, "env": {"ENV_NAME": "updated-env-secret"}, "headers": {"Authorization": "updated-header-secret"}})),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
@@ -794,4 +800,49 @@ async fn local_mcp_mutations_are_audited_before_acting() {
     // Names only: the secret *name* is recorded, no value ever is.
     let detail = audit[0].detail.to_string();
     assert!(detail.contains("mcp/some-key") && detail.contains("API_KEY"));
+    for row in &audit {
+        for value in [
+            "env-value-244-secret",
+            "header-value-244-secret",
+            "updated-env-secret",
+            "updated-header-secret",
+        ] {
+            assert!(
+                !row.detail.to_string().contains(value),
+                "audit leaked {value}"
+            );
+        }
+    }
+    // An audit failure must stop each route BEFORE even entering McpControl.
+    // The counter catches reconnect too, whose stored configuration is unchanged.
+    fake.add(serde_json::from_value(body.clone()).unwrap())
+        .await
+        .unwrap();
+    let before = fake.mutations.load(Ordering::SeqCst);
+    let db = rusqlite::Connection::open(t._dir.path().join("bot.db")).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_mcp_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END;").unwrap();
+    for (method, path, body) in [
+        (Method::POST, "/v1/mcp/servers", Some(stdio_body("another"))),
+        (
+            Method::PUT,
+            "/v1/mcp/servers/files",
+            Some(json!({"enabled": false})),
+        ),
+        (Method::POST, "/v1/mcp/servers/files/reconnect", None),
+        (Method::DELETE, "/v1/mcp/servers/files", None),
+    ] {
+        let r = call(&t, method.clone(), path, body).await;
+        assert_eq!(
+            r.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method} {path}"
+        );
+        assert_eq!(
+            fake.mutations.load(Ordering::SeqCst),
+            before,
+            "{method} ran before audit"
+        );
+        assert_eq!(fake.list().len(), 1);
+        assert!(fake.list()[0].enabled);
+    }
 }
