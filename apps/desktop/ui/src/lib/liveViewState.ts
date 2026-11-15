@@ -1045,6 +1045,10 @@ export type UiAction =
   | "open_screen"
   | "stop";
 
+/**
+ * `stop` means the viewer header's global Stop button, which is always offered
+ * (the dock list is the set of buttons the viewer renders for a state).
+ */
 export interface VisibleActions {
   dock: UiAction[];
   panel: UiAction[];
