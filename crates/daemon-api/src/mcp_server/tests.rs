@@ -199,6 +199,22 @@ async fn scoped_tokens_are_secret_store_only_and_cannot_manage_the_daemon() {
     let f = Fixture::new().await;
     let (grant, token) = f.credential(&["mcp:tasks"]).await;
     assert!(authenticate(&f.state, token.expose()).is_some());
+    let mut forged = token.expose().to_owned();
+    let last = forged.pop().unwrap();
+    forged.push(if last == 'a' { 'b' } else { 'a' });
+    assert!(authenticate(&f.state, &forged).is_none());
+    assert_eq!(
+        request(
+            &f.app,
+            &forged,
+            Method::GET,
+            &format!("/v1/mcp-server/tools?bot={}", f.bot),
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
     assert!(
         !serde_json::to_string(&grant)
             .unwrap()
@@ -292,6 +308,16 @@ async fn every_peer_role_and_path_spelling_is_refused_before_any_handler() {
 async fn task_layer_lists_only_tasks_and_binding_prevents_other_bot_calls() {
     let f = Fixture::new().await;
     let (_, token) = f.credential(&["mcp:tasks"]).await;
+    let (status, other) = request(
+        &f.app,
+        OWNER,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml":PROFILE.replace("id='mcp-test'", "id='mcp-other'")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let other: Uuid = serde_json::from_value(other["id"].clone()).unwrap();
     let (status, list) = request(
         &f.app,
         token.expose(),
@@ -308,13 +334,18 @@ async fn task_layer_lists_only_tasks_and_binding_prevents_other_bot_calls() {
             .iter()
             .all(|t| !t["name"].as_str().unwrap().starts_with("browser_"))
     );
-    let (status, _) = f.call(&token, "browser_open", json!({})).await;
+    let (status, _) = tokio::time::timeout(
+        Duration::from_secs(3),
+        f.call(&token, "browser_open", json!({})),
+    )
+    .await
+    .expect("an unscoped computer call must fail before starting a run");
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, _) = f
         .call(
             &token,
             "task_start",
-            json!({"bot":Uuid::now_v7(),"text":"other bot"}),
+            json!({"bot":other,"text":"other bot"}),
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -323,7 +354,7 @@ async fn task_layer_lists_only_tasks_and_binding_prevents_other_bot_calls() {
         token.expose(),
         Method::POST,
         "/v1/mcp-server/call",
-        Some(json!({"bot":Uuid::now_v7(),"name":"task_start","arguments":{"text":"bad"}})),
+        Some(json!({"bot":other,"name":"task_start","arguments":{"text":"bad"}})),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -572,21 +603,42 @@ async fn audit_failure_precedes_and_prevents_token_creation_and_task_creation() 
 
 #[tokio::test(start_paused = true)]
 async fn unanswered_computer_approval_times_out_and_cancels_without_execution() {
-    let f = Fixture::new().await;
-    let (_, token) = f.credential(&["mcp:computer"]).await;
-    let mut rx = f.state.agent().subscribe();
-    let (reply, run) = tokio::join!(f.call(&token, "browser_open", json!({})), async {
-        let pending = approval(&mut rx).await;
+    for expired in [false, true] {
+        let f = Fixture::new().await;
+        let (mut grant, token) = f.credential(&["mcp:computer"]).await;
+        let mut rx = f.state.agent().subscribe();
+        let limit = if expired {
+            Duration::from_secs(1)
+        } else {
+            MCP_APPROVAL_WAIT + Duration::from_secs(5)
+        };
+        let (reply, run) = tokio::time::timeout(limit, async {
+            tokio::join!(f.call(&token, "browser_open", json!({})), async {
+                let pending = approval(&mut rx).await;
+                assert_eq!(f.hits.load(Ordering::SeqCst), 0);
+                if expired {
+                    grant.expires_at_ms = now_ms() - 1;
+                    f.store
+                        .set(
+                            &meta_name(grant.id),
+                            &serde_json::to_string(&grant).unwrap(),
+                        )
+                        .unwrap();
+                } else {
+                    tokio::time::advance(MCP_APPROVAL_WAIT + Duration::from_secs(1)).await;
+                }
+                pending.run_id
+            })
+        })
+        .await
+        .expect("deadline or credential expiry must cancel the pending approval");
+        assert_eq!(reply.0, StatusCode::REQUEST_TIMEOUT, "{}", reply.1);
+        assert_eq!(
+            f.state.agent().wait(run).await.unwrap(),
+            task_runtime::RunState::Cancelled
+        );
         assert_eq!(f.hits.load(Ordering::SeqCst), 0);
-        tokio::time::advance(MCP_APPROVAL_WAIT + Duration::from_secs(1)).await;
-        pending.run_id
-    });
-    assert_eq!(reply.0, StatusCode::REQUEST_TIMEOUT, "{}", reply.1);
-    assert_eq!(
-        f.state.agent().wait(run).await.unwrap(),
-        task_runtime::RunState::Cancelled
-    );
-    assert_eq!(f.hits.load(Ordering::SeqCst), 0);
+    }
 }
 
 #[tokio::test]
@@ -866,14 +918,66 @@ async fn result_budget_applies_to_escaped_json_and_redacts_keys_and_values() {
 fn client_credential_selection_never_falls_back_to_an_owner_token() {
     let store = secret_store::MemoryStore::new();
     store.set("api-token", OWNER).unwrap();
-    assert!(
-        client_credential(
-            &store,
-            Uuid::now_v7(),
-            None,
-            &BTreeSet::from([McpScope::Tasks])
-        )
-        .is_err()
-    );
+    let bot = Uuid::now_v7();
+    let tasks = BTreeSet::from([McpScope::Tasks]);
+    assert!(client_credential(&store, bot, None, &tasks).is_err());
     assert!(!looks_scoped(OWNER));
+    let grant = McpTokenGrant {
+        id: Uuid::now_v7(),
+        bots: vec![bot],
+        scopes: tasks.clone(),
+        expires_at_ms: now_ms() + 60_000,
+    };
+    let token = format!("praxi-mcp.{}.{}", grant.id, "a".repeat(64));
+    store
+        .set(
+            &meta_name(grant.id),
+            &serde_json::to_string(&grant).unwrap(),
+        )
+        .unwrap();
+    store.set(&token_name(grant.id), &token).unwrap();
+    assert_eq!(
+        client_credential(&store, bot, None, &tasks)
+            .unwrap()
+            .expose(),
+        token
+    );
+    assert!(client_credential(&store, Uuid::now_v7(), Some(grant.id), &tasks).is_err());
+    let computer = BTreeSet::from([McpScope::Computer]);
+    assert!(client_credential(&store, bot, Some(grant.id), &computer).is_err());
+    let wider = McpTokenGrant {
+        id: Uuid::now_v7(),
+        scopes: BTreeSet::from([McpScope::Tasks, McpScope::Computer]),
+        ..grant.clone()
+    };
+    let wider_token = format!("praxi-mcp.{}.{}", wider.id, "b".repeat(64));
+    store
+        .set(
+            &meta_name(wider.id),
+            &serde_json::to_string(&wider).unwrap(),
+        )
+        .unwrap();
+    store.set(&token_name(wider.id), &wider_token).unwrap();
+    assert_eq!(
+        client_credential(&store, bot, None, &tasks).unwrap_err(),
+        "multiple matching scoped tokens; specify --token-id"
+    );
+    assert_eq!(
+        client_credential(&store, bot, Some(grant.id), &tasks)
+            .unwrap()
+            .expose(),
+        token
+    );
+    assert_eq!(
+        client_credential(&store, bot, Some(wider.id), &tasks)
+            .unwrap()
+            .expose(),
+        wider_token
+    );
+    assert_eq!(
+        client_credential(&store, bot, None, &computer)
+            .unwrap()
+            .expose(),
+        wider_token
+    );
 }

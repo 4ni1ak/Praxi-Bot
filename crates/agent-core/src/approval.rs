@@ -174,7 +174,13 @@ impl Shared {
         let req = ActionRequest {
             category,
             raw_command,
-            initiator: ctx.initiator,
+            // Preserve the bot's existing Human policy as well as any new
+            // source-specific restrictions. External authority cannot relax it.
+            initiator: if ctx.initiator == InitiatorKind::ExternalAgent {
+                InitiatorKind::Human
+            } else {
+                ctx.initiator
+            },
         };
         let r = &self.resolver;
         if self.locked_deny(category) {
@@ -186,6 +192,24 @@ impl Shared {
             None,
             &req,
         );
+        // Resolve the source-specific policy too: a Human Allow must not
+        // bypass a base Deny or an explicit ExternalAgent Deny.
+        if ctx.initiator == InitiatorKind::ExternalAgent {
+            let source_req = ActionRequest {
+                category,
+                raw_command: req.raw_command.clone(),
+                initiator: InitiatorKind::ExternalAgent,
+            };
+            if r.resolve(
+                &self.global_policy.read(),
+                ctx.bot_policy.as_ref(),
+                None,
+                &source_req,
+            ) == Decision::Deny
+            {
+                d = Decision::Deny;
+            }
+        }
         // External agents and tools that delegate future authority require
         // confirmation every time, before grants or read shortcuts. Deny stays.
         if self.always_ask(name) || ctx.initiator == InitiatorKind::ExternalAgent {

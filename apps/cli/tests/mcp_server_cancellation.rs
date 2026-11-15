@@ -151,6 +151,7 @@ impl Fixture {
                 "--token-id",
                 &self.grant.id.to_string(),
             ])
+            .env_remove("BOT_API_TOKEN")
             .env("BOT_SECRETS_PASSPHRASE", PASSPHRASE)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

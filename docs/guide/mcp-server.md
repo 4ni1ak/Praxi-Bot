@@ -93,15 +93,20 @@ policy or change the bot's configuration.
 
 Every external-agent tool call requires **Approve once**, including reads and
 Meta tools. Existing grants, the read shortcut and a full bot policy cannot waive
-this floor. A deny remains a deny. Approve in Praxi's existing UI, CLI or Telegram
-approval flow. Persistent scopes such as Always, Always category and This chat
-are rejected for this initiator.
+this floor. The gate resolves both the bot's existing Human policy and its
+ExternalAgent policy; a deny from either wins. An explicit ExternalAgent allow
+cannot relax a Human deny, and a Human allow cannot bypass a base or
+ExternalAgent deny. When both permit the call, it still needs Approve once.
+Approve in Praxi's existing UI, CLI or Telegram approval flow. Persistent scopes
+such as Always, Always category and This chat are rejected for this initiator.
 
 This is deliberately stricter than ordinary Praxi runs. The independent native
 egress/taint work is not present on this feature's base, so this version does not
 claim to implement that separate policy. It uses a persistent external source
 and per-call approval instead. Both resumed runs and already persisted children
-retain that source. New subagent spawning is denied so the credential's run cap
+retain that source. A persisted external child's task and parent context also
+receive the fixed untrusted User-data wrapper. New subagent spawning is denied
+so the credential's run cap
 cannot be exceeded through fan-out. Native `cli:` model sessions, including
 fallbacks and child model roles, are refused because they can operate tools
 outside the host's per-call gate. Use an API-backed model for MCP tasks.

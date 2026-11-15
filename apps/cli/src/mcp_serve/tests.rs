@@ -30,6 +30,17 @@ async fn stdio_protocol_initializes_lists_calls_and_refuses_disabled_tools() {
         .expect(1)
         .mount(&daemon)
         .await;
+    // A functioning endpoint makes this a test of the local catalog guard,
+    // rather than an incidental 404 from a disabled fake daemon operation.
+    Mock::given(method("POST"))
+        .and(path("/v1/mcp-server/call"))
+        .and(body_json(
+            json!({"bot":bot,"name":"browser_open","arguments":{}}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"executed":true})))
+        .expect(0)
+        .mount(&daemon)
+        .await;
     Mock::given(method("POST"))
         .and(path("/v1/mcp-server/call"))
         .and(header("authorization", format!("Bearer {TOKEN}")))
@@ -73,11 +84,13 @@ async fn stdio_protocol_initializes_lists_calls_and_refuses_disabled_tools() {
     assert!(encoded.contains("fake-run"));
     assert!(encoded.contains("UNTRUSTED"));
     assert!(!encoded.contains(TOKEN));
-    let blocked = client
-        .call_tool(CallToolRequestParams::new("browser_eval"))
-        .await
-        .unwrap();
-    assert_eq!(blocked.is_error, Some(true));
+    for name in ["browser_open", "browser_eval"] {
+        let blocked = client
+            .call_tool(CallToolRequestParams::new(name))
+            .await
+            .unwrap();
+        assert_eq!(blocked.is_error, Some(true));
+    }
     client.cancel().await.unwrap();
     server.cancel().await.unwrap();
     daemon.verify().await;
@@ -152,7 +165,16 @@ async fn frame_and_http_byte_budgets_are_enforced() {
     );
     let daemon = MockServer::start().await;
     Mock::given(method("GET"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(129 * 1024)))
+        .and(path("/v1/mcp-server/tools"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"text":"x".repeat(129 * 1024)})),
+        )
+        .mount(&daemon)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/secrets"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"forbidden":true})))
+        .expect(0)
         .mount(&daemon)
         .await;
     let client = Client::scoped(&daemon.uri(), TOKEN.into()).unwrap();
@@ -205,13 +227,21 @@ fn general_secret_cli_cannot_read_or_replace_scoped_credentials() {
     let store = secret_store::MemoryStore::new();
     let name = "mcp-server/token/test";
     store.set(name, TOKEN).unwrap();
+    let ordinary = "provider/test";
+    store.set(ordinary, "original").unwrap();
     let mut names = Vec::new();
     crate::commands::secrets_list(&store, &mut |v| names.push(v.to_owned())).unwrap();
     assert!(!names.join(" ").contains("mcp-server"));
+    assert!(names.iter().any(|name| name == ordinary));
     assert!(
         crate::commands::secrets_set(&store, name, &secret_store::SecretValue::new("replacement"))
             .is_err()
     );
     assert!(crate::commands::secrets_delete(&store, name).is_err());
     assert_eq!(store.get(name).unwrap().unwrap().expose(), TOKEN);
+    crate::commands::secrets_set(&store, ordinary, &secret_store::SecretValue::new("updated"))
+        .unwrap();
+    assert_eq!(store.get(ordinary).unwrap().unwrap().expose(), "updated");
+    crate::commands::secrets_delete(&store, ordinary).unwrap();
+    assert!(store.get(ordinary).unwrap().is_none());
 }

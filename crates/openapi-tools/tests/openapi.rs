@@ -304,10 +304,24 @@ fn private_hosts_are_blocked_by_default() {
 #[test]
 fn invalid_secret_name_is_a_config_error() {
     let spec = parse(&ImportOptions::default());
-    let c = cfg(Auth::Bearer {
-        secret: serde_json::from_value(json!("__reserved")).unwrap(),
-    });
-    assert!(matches!(tools(&spec, &c), Err(OpenApiError::Config(_))));
+    for name in [
+        "",
+        "__reserved",
+        "mcp-server/token/test",
+        "mcp-server/meta/test",
+    ] {
+        // Invalid references are rejected before an Auth configuration or a
+        // tool can use them; deserialization must preserve SecretRef checks.
+        let error =
+            serde_json::from_value::<Auth>(json!({"type":"bearer","secret":name})).unwrap_err();
+        assert!(error.is_data());
+        assert!(error.to_string().contains("invalid secret name"));
+    }
+    let auth: Auth =
+        serde_json::from_value(json!({"type":"bearer","secret":"petstore.key"})).unwrap();
+    let enabled = tools(&spec, &cfg(auth)).unwrap();
+    assert!(!enabled.is_empty());
+    assert_eq!(enabled.len(), spec.operations.len());
 }
 
 #[test]

@@ -92,6 +92,7 @@ async fn actual_mcp_stdio_process_uses_scoped_store_credential_without_owner_tok
             "--token-id",
             &id.to_string(),
         ])
+        .env_remove("BOT_API_TOKEN")
         .env("BOT_SECRETS_PASSPHRASE", PASSPHRASE)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
