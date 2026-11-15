@@ -236,6 +236,11 @@ fn apply_widget_visibility(app: &AppHandle) {
             Instant::now(),
         )
     });
+    // The widget is for when the main window is not in front (see `widget_visibility`).
+    let main_in_front = app.get_webview_window("main").is_some_and(|main| {
+        main.is_focused().unwrap_or(false) && !main.is_minimized().unwrap_or(false)
+    });
+    let show = widget_visibility::presentable(show, main_in_front);
     if let Some(widget) = app.get_webview_window("widget") {
         let _ = if show { widget.show() } else { widget.hide() };
     }
@@ -1051,6 +1056,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, WindowEvent::Focused(_)) {
+                // Leaving the main window shows the widget (while a run is active); coming
+                // back hides it again, so it never sits on top of the chat or right panel.
+                apply_widget_visibility(window.app_handle());
+            }
             if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
                 // `exit` may end the process without running `RunEvent::Exit`,
                 // so stop a daemon this app started right here.
