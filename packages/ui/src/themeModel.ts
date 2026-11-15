@@ -18,12 +18,12 @@ export interface ThemeDef {
   accent?: string;
 }
 
-export type UiStyle = "solid" | "glass" | "line";
+export type UiStyle = "solid" | "tinted" | "glass" | "line";
 export type Corners = "sharp" | "soft" | "round";
 export type BubbleStyle = "soft" | "glass" | "line" | "plain";
 export type OwnBubble = "tint" | "accent" | "neutral";
 
-export const UI_STYLES: readonly UiStyle[] = ["solid", "glass", "line"];
+export const UI_STYLES: readonly UiStyle[] = ["solid", "tinted", "glass", "line"];
 export const CORNERS: readonly Corners[] = ["sharp", "soft", "round"];
 export const BUBBLE_STYLES: readonly BubbleStyle[] = ["soft", "glass", "line", "plain"];
 export const OWN_BUBBLES: readonly OwnBubble[] = ["tint", "accent", "neutral"];
@@ -381,7 +381,8 @@ export function buildTokens(
   let surface = d.surface;
   let elevated = d.raised;
   let border = lineWeak;
-  if (style === "glass") {
+  if (style === "glass" || style === "tinted") {
+    // Cards inside translucent panels (the panel itself is painted by the surface tokens).
     surface = alpha(d.surface, 52);
     elevated = alpha(d.raised, 55);
     border = lineMid;

@@ -12,7 +12,6 @@
 
 :global(:root[data-has-background="true"]) .card {
   background-color: var(--color-surface-overlay);
-  backdrop-filter: blur(var(--space-3));
 }
 
 .elevated {
@@ -39,11 +38,12 @@
   padding: var(--space-6);
 }
 
-/* Appearance axes: cards get a sheen (solid) or frosted glass. */
+/* Appearance axes: cards get a sheen (solid) or a light edge (glass, tinted).  Cards live inside a
+   shell panel that is already frosted, so they never blur again (card 244-E). */
 .card { background-image: var(--surface-sheen); }
 
-:global(:root[data-style="glass"]) .card {
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
+:global(:root[data-style="glass"]) .card,
+:global(:root[data-style="tinted"]) .card {
   box-shadow:
     inset 0 var(--size-border) 0 color-mix(in srgb, var(--color-text) 10%, transparent),
     var(--shadow-card);

@@ -1651,11 +1651,28 @@
       "custom": "Custom color"
     },
     "style": {
-      "title": "Style",
-      "description": "How panels, cards and menus are painted.",
+      "title": "Panel style",
+      "description": "How the sidebar, the chat area and the right panel are painted. Solid is the most readable and the lightest on the GPU.",
       "solid": "Solid",
+      "tinted": "Tinted",
       "glass": "Glass",
-      "line": "Line"
+      "line": "Line",
+      "transparency": "Transparency",
+      "transparencyHint": "Over bright backdrops panels stay as opaque as needed to keep text readable.",
+      "opaque": "Opaque",
+      "clear": "Clear",
+      "blur": "Blur",
+      "blurSoft": "Soft",
+      "blurStrong": "Strong",
+      "reduced": "Windows transparency effects are off, so panels are painted solid.",
+      "override": "Use this style anyway",
+      "overridden": "Shown although Windows transparency effects are off.",
+      "followSystem": "Follow Windows",
+      "fallback": "This system cannot blur behind windows; glass is shown as tinted."
+    },
+    "clearChat": {
+      "title": "Transparent chat area",
+      "description": "Removes the chat area's own background so the backdrop shows behind the conversation. Messages and the message box keep a readable surface."
     },
     "corners": {
       "title": "Corners",
