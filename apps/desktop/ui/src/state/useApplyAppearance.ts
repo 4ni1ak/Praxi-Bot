@@ -1,6 +1,17 @@
-import { useEffect, useState } from "react";
-import { accentFor, applyTheme, resolveTheme, subscribeSystemTheme, type Theme } from "ui";
-import { backdropIsActive } from "../lib/backdropCatalog";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  accentFor,
+  applyTheme,
+  deriveTheme,
+  resolveTheme,
+  setReducedTransparencyOverride,
+  subscribeSurfaceSupport,
+  subscribeSystemTheme,
+  type BackdropTone,
+  type Theme
+} from "ui";
+import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "../lib/backdropCatalog";
+import { dimTone, getSceneTone, plainTone, sampleImageTone, subscribeSceneTone } from "../lib/backdropTone";
 import { loadSettingsSync, type AppSettings } from "../store/settingsStore";
 
 export interface AppliedAppearance {
@@ -23,6 +34,11 @@ type FullAppearanceInput = AppearanceInput &
     | "backgroundUrl"
     | "backgroundBlur"
     | "backgroundDim"
+    | "backdropDim"
+    | "panelTransparency"
+    | "panelBlur"
+    | "transparentChat"
+    | "transparencyOverride"
   >;
 
 /** Write the appearance onto <html> (no React): also used before the first render. */
@@ -30,9 +46,11 @@ export function paintAppearance(
   settings: FullAppearanceInput | AppearanceInput,
   theme: Theme,
   accent: string,
-  full: boolean
+  full: boolean,
+  tone?: BackdropTone
 ): void {
   const f = settings as FullAppearanceInput;
+  if (full) setReducedTransparencyOverride(f.transparencyOverride === true);
   applyTheme(theme, {
     accentColor: accent,
     ...(full
@@ -42,7 +60,13 @@ export function paintAppearance(
           bubble: f.bubble,
           ownBubble: f.ownBubble,
           backdropActive: backdropIsActive(f.backdrop, f.backgroundUrl),
-          background: { url: f.backgroundUrl, blur: f.backgroundBlur, dim: f.backgroundDim }
+          background: { url: f.backgroundUrl, blur: f.backgroundBlur, dim: f.backgroundDim },
+          surface: {
+            transparency: f.panelTransparency,
+            blur: f.panelBlur,
+            transparentChat: f.transparentChat,
+            tone
+          }
         }
       : {})
   });
@@ -55,6 +79,39 @@ export function paintSavedAppearanceEarly(overlay: boolean): void {
   if (!saved) return;
   const theme = resolveTheme(saved.themeMode, saved.customTheme);
   paintAppearance(saved, theme, accentFor(saved.accentColor, theme, undefined), !overlay);
+}
+
+const noopSubscribe = () => () => {};
+
+/**
+ * What the backdrop behind the panels looks like (after its dim layers), or `undefined` while it
+ * is unknown - the surface model then assumes a pure white / black backdrop.
+ */
+function useBackdropTone(full: FullAppearanceInput | null, theme: Theme): BackdropTone | undefined {
+  const scene = full && full.backdrop !== NO_BACKDROP && full.backdrop !== CUSTOM_BACKDROP ? full.backdrop : null;
+  const imageUrl = full && !scene ? full.backgroundUrl.trim() : "";
+  const snapshot = () => (scene ? getSceneTone(scene) : null);
+  const raw = useSyncExternalStore(scene ? subscribeSceneTone : noopSubscribe, snapshot, snapshot);
+  const [image, setImage] = useState<{ url: string; tone: BackdropTone | null } | null>(null);
+  useEffect(() => {
+    if (!imageUrl) return undefined;
+    let live = true;
+    void sampleImageTone(imageUrl, window.innerWidth, window.innerHeight).then((tone) => {
+      if (live) setImage({ url: imageUrl, tone });
+    });
+    return () => {
+      live = false;
+    };
+  }, [imageUrl]);
+  if (!full) return undefined;
+  const d = deriveTheme(theme);
+  const imageDim = Number(full.backgroundDim) || 0;
+  if (scene) return raw ? dimTone(dimTone(raw, d.bg, full.backdropDim / 100), d.bg, imageDim) : undefined;
+  if (imageUrl) {
+    const tone = image?.url === imageUrl ? image.tone : null;
+    return tone ? dimTone(tone, d.bg, imageDim) : undefined;
+  }
+  return plainTone(d.bg, d.bg2);
 }
 
 /**
@@ -77,16 +134,28 @@ export function useApplyAppearance(
   overlay?: true
 ): AppliedAppearance {
   // Re-resolve `system` when the OS switches between light and dark.
-  const [, setSystemTick] = useState(0);
+  const [systemTick, setSystemTick] = useState(0);
   useEffect(() => {
     if (settings.themeMode !== "system") return undefined;
     return subscribeSystemTheme(() => setSystemTick((n) => n + 1));
   }, [settings.themeMode]);
+  // Re-paint when the OS "reduce transparency" preference flips.
+  useEffect(() => subscribeSurfaceSupport(() => setSystemTick((n) => n + 1)), []);
 
   const theme = resolveTheme(settings.themeMode, settings.customTheme);
   const accent = accentFor(settings.accentColor, theme, botColor);
   const full = overlay ? null : (settings as FullAppearanceInput);
+  // Before the shell computes its geometry (isFloatShell) in this same render.
+  if (full) setReducedTransparencyOverride(full.transparencyOverride === true);
+  const tone = useBackdropTone(full, theme);
   const dep = [
+    systemTick,
+    tone ? JSON.stringify(tone) : "",
+    full?.backdropDim,
+    full?.panelTransparency,
+    full?.panelBlur,
+    full?.transparentChat,
+    full?.transparencyOverride,
     theme.id,
     theme.bg,
     theme.text,
@@ -102,7 +171,7 @@ export function useApplyAppearance(
     full?.backgroundDim
   ];
   useEffect(() => {
-    paintAppearance(settings, theme, accent, full !== null);
+    paintAppearance(settings, theme, accent, full !== null, tone);
     // First paint is done: colour transitions may run from now on.
     const id = requestAnimationFrame(() => requestAnimationFrame(() => delete document.documentElement.dataset.booting));
     return () => cancelAnimationFrame(id);
