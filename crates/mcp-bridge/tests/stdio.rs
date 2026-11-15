@@ -147,6 +147,33 @@ async fn child_gets_only_declared_environment() {
         );
     }
     assert!(got.iter().any(|k| k == "MCP_TEST_DECLARED"));
+    // Regression (244-A): `npx.cmd` / `uvx` die at once without PATH, which
+    // surfaced as "connection closed: initialize response" in the installed app.
+    assert!(
+        got.iter().any(|k| k.eq_ignore_ascii_case("PATH")),
+        "the launcher environment must carry PATH (got: {got:?})"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_launcher_is_classified_not_retried_and_carries_an_install_hint() {
+    let reg = ToolRegistry::new();
+    let mgr = McpManager::with_policy(reg, fast_policy(3));
+    let cfg = McpServerConfig::stdio("sq", "praxi-no-such-launcher-244a", ["x"]);
+    let err = mgr.add_server(cfg).await.unwrap_err();
+    assert_eq!(err.kind(), mcp_bridge::McpErrorKind::RuntimeMissing);
+    let snap = mgr.snapshot("sq").unwrap();
+    assert_eq!(
+        snap.last_error_kind,
+        Some(mcp_bridge::McpErrorKind::RuntimeMissing)
+    );
+    // Not retried: one failure, not `max_attempts`.
+    assert_eq!(snap.consecutive_failures, 1);
+    let msg = snap.last_error.unwrap();
+    assert!(
+        msg.contains("praxi-no-such-launcher-244a") && msg.contains("was not found on PATH"),
+        "{msg}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

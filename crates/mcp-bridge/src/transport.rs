@@ -24,18 +24,39 @@ use tracing::instrument::WithSubscriber;
 use crate::{
     config::{McpServerConfig, McpTransport, refused_stdio_command},
     diagnostics::{ExternalRedactor, Redactor, StderrLog, capture_stderr},
-    error::{McpError, Result},
+    error::{McpError, Result, runtime_install_hint},
     session::{self, Session},
 };
 
 /// Environment variables that are passed to stdio children even though the
-/// config does not declare them, because the OS runtime itself breaks without
-/// them (Winsock / CRT need `SystemRoot` on Windows).  Empty on other platforms.
+/// config does not declare them, because the launchers themselves break
+/// without them: `npx.cmd` / `uvx` cannot find `node`, `npm` or Python without
+/// `PATH`, and npm / uv need the profile and temp directories for their caches.
+/// None of these carry credentials (proxy variables are deliberately left out:
+/// they may embed passwords; declare them in the server's `env` if needed).
 #[cfg(windows)]
-pub const OS_ESSENTIAL_ENV: &[&str] = &["SystemRoot", "windir"];
+pub const OS_ESSENTIAL_ENV: &[&str] = &[
+    "SystemRoot",
+    "windir",
+    "SystemDrive",
+    "PATH",
+    "PATHEXT",
+    "ComSpec",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+];
 /// See the Windows variant.
 #[cfg(not(windows))]
-pub const OS_ESSENTIAL_ENV: &[&str] = &[];
+pub const OS_ESSENTIAL_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"];
 
 /// Largest single JSON-RPC frame accepted from a server: one stdout line, or
 /// one SSE event.  Enforced while reading, before rmcp buffers or parses the
@@ -187,12 +208,23 @@ fn build_command(
     if let Some(why) = refused_stdio_command(command, args) {
         return Err(McpError::Config(format!("server `{server}`: {why}")));
     }
-    let spawn_err = |e: std::io::Error| McpError::Spawn {
-        server: server.to_owned(),
-        message: format!("`{command}`: {e}"),
-    };
-    // Resolve against the parent's PATH *before* clearing the child's env.
-    let mut cmd = which_command(command).map_err(spawn_err)?;
+    // Resolve against the parent's PATH *before* clearing the child's env. A
+    // launcher that is not installed is reported with an install hint before
+    // anything is spawned.
+    let mut cmd = which_command(command).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            McpError::RuntimeMissing {
+                server: server.to_owned(),
+                command: command.clone(),
+                hint: runtime_install_hint(command),
+            }
+        } else {
+            McpError::Spawn {
+                server: server.to_owned(),
+                message: format!("`{command}`: {e}"),
+            }
+        }
+    })?;
     cmd.env_clear();
     for key in OS_ESSENTIAL_ENV {
         if let Some(v) = std::env::var_os(key) {
@@ -394,6 +426,8 @@ pub(crate) async fn open(
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::error::McpErrorKind;
+
     use super::*;
 
     #[test]
@@ -545,7 +579,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(error, McpError::Spawn { .. }));
+        assert!(matches!(error, McpError::RuntimeMissing { .. }), "{error}");
         let message = error.to_string();
         assert!(!message.contains("environment-sentinel"));
         assert!(!message.contains("header-sentinel"));
@@ -553,7 +587,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_command_is_a_spawn_error() {
+    async fn missing_command_is_a_runtime_missing_error_with_a_hint() {
         let cfg = McpServerConfig::stdio("s", "definitely-not-a-real-binary-xyz", [""; 0]);
         let err = open(
             &cfg,
@@ -564,6 +598,34 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, McpError::Spawn { .. }), "{err}");
+        assert!(matches!(err, McpError::RuntimeMissing { .. }), "{err}");
+        assert_eq!(err.kind(), McpErrorKind::RuntimeMissing);
+        assert!(err.to_string().contains("was not found on PATH"), "{err}");
+    }
+
+    #[test]
+    fn install_hints_name_the_runtime() {
+        assert!(runtime_install_hint("npx").contains("nodejs.org"));
+        assert!(runtime_install_hint("uvx.exe").contains("astral.sh"));
+        assert!(runtime_install_hint("weird").contains("`weird`"));
+    }
+
+    #[test]
+    fn launcher_environment_carries_path_and_no_credentials() {
+        assert!(
+            OS_ESSENTIAL_ENV
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case("PATH")),
+            "npx/uvx cannot find node/python without PATH"
+        );
+        for k in OS_ESSENTIAL_ENV {
+            let u = k.to_ascii_uppercase();
+            assert!(
+                !["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "PROXY"]
+                    .iter()
+                    .any(|bad| u.contains(bad)),
+                "{k} must not be inherited"
+            );
+        }
     }
 }

@@ -16,7 +16,7 @@ use crate::{
     config::{McpServerConfig, ToolFilter},
     diagnostics::StderrLog,
     discovery::discover,
-    error::{McpError, Result},
+    error::{McpError, McpErrorKind, Result},
     session::Session,
     tool::{McpToolAdapter, qualified_name},
     transport::{open, resolve_secrets},
@@ -106,6 +106,8 @@ pub struct ServerSnapshot {
     pub tools: Vec<String>,
     /// Most recent error message.
     pub last_error: Option<String>,
+    /// Class of [`Self::last_error`] (`None` when there is no error).
+    pub last_error_kind: Option<McpErrorKind>,
 }
 
 struct State {
@@ -115,6 +117,8 @@ struct State {
     failures: u32,
     tools: Vec<String>,
     last_error: Option<String>,
+    /// Meaningful only while `last_error` is set.
+    last_error_kind: McpErrorKind,
 }
 
 /// Internal per-server state shared with the tool adapters.
@@ -192,6 +196,7 @@ impl Server {
         }
         st.failures = st.failures.saturating_add(1);
         st.last_error = Some(error.to_string());
+        st.last_error_kind = error.kind();
         if st.status == ServerStatus::Connected {
             st.status = ServerStatus::Disconnected;
         }
@@ -291,8 +296,8 @@ impl Server {
                     }
                     return Ok(session);
                 }
-                // A config error cannot be fixed by retrying.
-                Err(e @ McpError::Config(_)) => {
+                // A config error or a missing launcher cannot be fixed by retrying.
+                Err(e @ (McpError::Config(_) | McpError::RuntimeMissing { .. })) => {
                     self.record_failure(&e);
                     return Err(e);
                 }
@@ -478,6 +483,7 @@ impl Server {
             consecutive_failures: st.failures,
             tools: st.tools.clone(),
             last_error: st.last_error.clone(),
+            last_error_kind: st.last_error.as_ref().map(|_| st.last_error_kind),
         }
     }
 }
@@ -617,6 +623,7 @@ impl McpManager {
                 failures: 0,
                 tools: Vec::new(),
                 last_error: None,
+                last_error_kind: McpErrorKind::Other,
             }),
             operation: tokio::sync::Mutex::new(()),
             retired: tokio::sync::watch::channel(false).0,

@@ -20,6 +20,17 @@ pub enum McpError {
         /// Underlying error.
         message: String,
     },
+    /// The program that launches the server (`npx`, `uvx`, ...) is not
+    /// installed or not on `PATH`. Detected before anything is spawned.
+    #[error("cannot start MCP server `{server}`: `{command}` was not found on PATH. {hint}")]
+    RuntimeMissing {
+        /// Server id.
+        server: String,
+        /// The command that was not found.
+        command: String,
+        /// What the user should install (English, actionable).
+        hint: String,
+    },
     /// The MCP handshake or a request failed at the transport/protocol level.
     #[error("MCP server `{server}`: {message}")]
     Transport {
@@ -45,6 +56,57 @@ pub enum McpError {
     /// No server with this id is registered.
     #[error("unknown MCP server `{0}`")]
     UnknownServer(String),
+}
+
+/// Coarse class of a failure, for UIs that show a localized "what to do" hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpErrorKind {
+    /// The launcher program (`npx`, `uvx`, ...) is not installed.
+    RuntimeMissing,
+    /// The process could not be started for another reason.
+    Spawn,
+    /// The process exited or closed its pipes before the handshake finished.
+    Closed,
+    /// No answer within the timeout.
+    Timeout,
+    /// The configuration or a referenced secret is invalid or missing.
+    Config,
+    /// Anything else.
+    Other,
+}
+
+impl McpError {
+    /// The coarse class of this error.
+    #[must_use]
+    pub fn kind(&self) -> McpErrorKind {
+        match self {
+            Self::RuntimeMissing { .. } => McpErrorKind::RuntimeMissing,
+            Self::Spawn { .. } => McpErrorKind::Spawn,
+            Self::Timeout { .. } => McpErrorKind::Timeout,
+            Self::Config(_) => McpErrorKind::Config,
+            Self::Transport { message, .. } if message.contains("connection closed") => {
+                McpErrorKind::Closed
+            }
+            _ => McpErrorKind::Other,
+        }
+    }
+}
+
+/// An actionable English hint for a launcher program that is not installed.
+#[must_use]
+pub fn runtime_install_hint(command: &str) -> String {
+    let base = std::path::Path::new(command)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(command)
+        .to_ascii_lowercase();
+    match base.as_str() {
+        "npx" | "npm" | "node" => "Install Node.js (LTS) from https://nodejs.org, restart Praxi-Bot and reconnect.".to_owned(),
+        "uvx" | "uv" => "Install uv (https://docs.astral.sh/uv/getting-started/installation/; on Windows: `winget install --id=astral-sh.uv -e`), restart Praxi-Bot and reconnect.".to_owned(),
+        "pipx" => "Install pipx (https://pipx.pypa.io), restart Praxi-Bot and reconnect.".to_owned(),
+        "docker" => "Install and start Docker, then reconnect.".to_owned(),
+        _ => format!("Install `{command}` (or give its full path in the server settings), then reconnect."),
+    }
 }
 
 /// Result alias for this crate.
