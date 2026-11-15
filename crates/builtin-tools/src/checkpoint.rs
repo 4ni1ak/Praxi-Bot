@@ -1011,7 +1011,7 @@ fn fallback_copy(
     if expected.0 != expected_size {
         return Err(budget_err("link referent changed while copying"));
     }
-    let staged = StagedPath(adjacent_temp(at, "link-copy")?);
+    let staged = StagedPath(adjacent_temp(at, "link-copy")?, None);
     crate::files::vet_checkpoint_temporary(&staged.0, at)?;
     let copied = copy(source, &staged.0)?;
     if copied != expected_size || payload_digest(&staged.0)? != expected {
@@ -1258,7 +1258,7 @@ pub(crate) fn remove_staged(path: &Path) -> io::Result<()> {
     }
 }
 
-struct StagedPath(PathBuf);
+struct StagedPath(PathBuf, Option<(u64, String)>);
 
 impl Drop for StagedPath {
     fn drop(&mut self) {
@@ -1460,7 +1460,7 @@ fn stage_restore(
         return Ok(None);
     };
     let target = Path::new(&entry.path);
-    let staged = StagedPath(adjacent_temp(target, "restore")?);
+    let mut staged = StagedPath(adjacent_temp(target, "restore")?, None);
     crate::files::vet_checkpoint_temporary(&staged.0, target)?;
     tx.ensure_parent(&staged.0)?;
     if let Some(link) = root_link(entry, links) {
@@ -1495,6 +1495,7 @@ fn stage_restore(
     {
         return Err(budget_err("checkpoint payload changed while staging"));
     }
+    staged.1 = Some((size, digest));
     for link in links {
         let Some(suffix) = crate::files::store_rel_suffix(rel, &link.rel)? else {
             continue;
@@ -1910,6 +1911,29 @@ impl CheckpointStore {
         })
     }
 
+    /// Record the state a restore itself wrote as the after-state of safety
+    /// checkpoint `id`. Entries without a known written state stay unrecorded,
+    /// which reads back as `Unknown` and requires confirmation.
+    fn record_after_written(
+        &self,
+        id: &str,
+        written: &HashMap<String, Option<DiskState>>,
+    ) -> io::Result<()> {
+        crate::files::with_data_dir_gate(&self.data_dir, || {
+            let (dir, mut cp) = self.find(id)?;
+            for entry in &mut cp.entries {
+                if let Some(Some(state)) = written.get(&entry.path) {
+                    entry.after_existed = Some(state.existed);
+                    entry.after_size = state.size;
+                    entry.after_sha256.clone_from(&state.sha256);
+                }
+            }
+            let json = serde_json::to_vec_pretty(&cp).map_err(io::Error::other)?;
+            write_manifest(&dir.join("manifest.json"), &json)?;
+            Ok(())
+        })
+    }
+
     /// Summarize net file changes produced by `run_id`, collapsed by path.
     ///
     /// Ignores `pre-restore:*` safety checkpoints. Computes UTF-8 unified diffs
@@ -1961,7 +1985,12 @@ impl CheckpointStore {
                     }
                 }
 
-                order.retain(|key| acc.contains_key(key));
+                // Paths a restore returned to their pre-run state have nothing
+                // left to review; drop them before paging so pages stay full.
+                order.retain(|key| {
+                    acc.get(key)
+                        .is_some_and(|item| !fully_undone(item, &baselines))
+                });
                 // Reserve previous pages using manifest sizes only. Conservative
                 // overcharging (binary/unchanged files) avoids re-reading them
                 // and keeps the total diff budget across pages at 2 MiB.
@@ -2139,6 +2168,16 @@ impl CheckpointStore {
         id: &str,
         before_checkpoint: impl Fn(usize) -> io::Result<()>,
     ) -> io::Result<RestoreReport> {
+        self.restore_selection_inner(run_id, id, before_checkpoint, || {})
+    }
+
+    fn restore_selection_inner(
+        &self,
+        run_id: &str,
+        id: &str,
+        before_checkpoint: impl Fn(usize) -> io::Result<()>,
+        after_transaction: impl FnOnce(),
+    ) -> io::Result<RestoreReport> {
         crate::files::with_data_dir_gate(&self.data_dir, || {
             let mut cps = self.selected_checkpoints(run_id, id)?;
             let mut warnings = Vec::new();
@@ -2190,6 +2229,8 @@ impl CheckpointStore {
                 ..RestoreReport::default()
             };
             let mut tx = RestoreTransaction::new();
+            // What this restore wrote per path (`None` = not known exactly).
+            let mut written: HashMap<String, Option<DiskState>> = HashMap::new();
             let result = (|| {
                 for (index, cp) in cps.iter().rev().enumerate() {
                     before_checkpoint(index)?;
@@ -2200,6 +2241,11 @@ impl CheckpointStore {
                         if root_link(entry, &links)
                             .is_some_and(|link| unchanged_link(Path::new(&entry.path), link))
                         {
+                            // Nothing is written; the untouched link is the state.
+                            written.insert(
+                                entry.path.clone(),
+                                current_state_digest(Path::new(&entry.path)).ok(),
+                            );
                             continue;
                         }
                         let staged = stage_restore(
@@ -2212,12 +2258,47 @@ impl CheckpointStore {
                             &restore_link,
                         )?;
                         if entry.backup.is_some() && staged.is_none() {
+                            written.insert(
+                                entry.path.clone(),
+                                current_state_digest(Path::new(&entry.path)).ok(),
+                            );
                             continue;
                         }
+                        // The digest of what we stage is the baseline; the file is
+                        // never re-read after the rename, so an edit that lands
+                        // between the rename and the recording reads as changed.
+                        let expected = if crate::files::checkpoint_has_protected_descendant(
+                            Path::new(&entry.path),
+                        )
+                        .unwrap_or(true)
+                        {
+                            None
+                        } else if let Some(staged) = &staged {
+                            if root_link(entry, &links).is_some() {
+                                current_state_digest(&staged.0).ok()
+                            } else if links.is_empty() {
+                                staged.1.clone().map(|(size, sha256)| DiskState {
+                                    existed: true,
+                                    is_link: false,
+                                    size: Some(size),
+                                    sha256: Some(sha256),
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            Some(DiskState {
+                                existed: false,
+                                is_link: false,
+                                size: None,
+                                sha256: None,
+                            })
+                        };
                         tx.apply(
                             Path::new(&entry.path),
                             staged.as_ref().map(|p| p.0.as_path()),
                         )?;
+                        written.insert(entry.path.clone(), expected);
                         if !report.restored.contains(&entry.path) {
                             report.restored.push(entry.path.clone());
                         }
@@ -2240,12 +2321,35 @@ impl CheckpointStore {
             } else {
                 tx.finish(&mut report.warnings);
             }
-            // The safety snapshot is itself previewable and undoable. Missing
-            // hashes fail closed if this capture fails.
-            if let Err(err) = self.record_after(&report.safety_checkpoint_ids[0]) {
-                report.warnings.push(format!(
-                    "safety after-state unavailable; explicit confirmation required: {err}"
-                ));
+            after_transaction();
+            // The safety snapshot is itself previewable and undoable. After a
+            // partial restore the files may be in a mixed state, so nothing is
+            // recorded and every entry reads Unknown (confirmation required).
+            if !report.partial {
+                // Paths nested inside each other can be written by different
+                // checkpoints; their final state is not known per path.
+                let mut sorted: Vec<&String> = written.keys().collect();
+                sorted.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
+                let mut unknown: Vec<String> = Vec::new();
+                for (i, outer) in sorted.iter().enumerate() {
+                    for inner in &sorted[i + 1..] {
+                        if !Path::new(inner).starts_with(Path::new(outer)) {
+                            break;
+                        }
+                        unknown.push((*outer).clone());
+                        unknown.push((*inner).clone());
+                    }
+                }
+                for path in unknown {
+                    written.insert(path, None);
+                }
+                if let Err(err) =
+                    self.record_after_written(&report.safety_checkpoint_ids[0], &written)
+                {
+                    report.warnings.push(format!(
+                        "safety after-state unavailable; explicit confirmation required: {err}"
+                    ));
+                }
             }
             Ok(report)
         })
@@ -2588,6 +2692,30 @@ fn read_after_bytes(
         Path::new(&entry.path),
         MAX_DIFF_FILE_BYTES,
     )?))
+}
+
+/// True when a restore put `item`'s path back to the state it had before the
+/// run and the file still matches what that restore wrote.
+fn fully_undone(item: &CollapsedEntry, baselines: &HashMap<String, CheckpointEntry>) -> bool {
+    if item.is_moved || !item.extra_after_checks.is_empty() {
+        return false;
+    }
+    let Some(baseline) = baselines.get(&item.latest_entry.path) else {
+        return false;
+    };
+    // Only a restore baseline qualifies, not a run that rewrote the same bytes.
+    if baseline.after_existed == item.latest_entry.after_existed
+        && baseline.after_sha256 == item.latest_entry.after_sha256
+    {
+        return false;
+    }
+    let before = &item.before_entry;
+    let restored_to_before = baseline.after_existed == Some(before.existed)
+        && (!before.existed
+            || (baseline.after_sha256.is_some()
+                && baseline.after_sha256 == before.sha256
+                && baseline.after_size == before.size));
+    restored_to_before && matches!(matches_recorded_after(baseline), Ok(Verification::Matched))
 }
 
 fn build_file_change(
@@ -2948,18 +3076,19 @@ mod tests {
         store.record_after(&cp).unwrap();
         let report = store.restore_selection("run", &cp).unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "before");
-        assert_eq!(
-            store.changes_for_run("run").unwrap()[0].verification,
-            Verification::Matched
-        );
+        // Fully undone: no "modified" row without a diff is left to review.
+        assert_eq!(store.changes_for_run("run").unwrap().len(), 0);
         assert_eq!(
             store.restore_preview(&cp).unwrap()[0].verification,
             Verification::Matched
         );
         // Original tool history and its diff are never rewritten as a restore.
         assert_eq!(store.find(&cp).unwrap().1.entries[0].after_size, Some(5));
-        assert!(store.changes_for_run("run").unwrap()[0].text.is_none());
         fs::write(&file, "newer").unwrap();
+        // An edit after the undo brings the row back, flagged as changed.
+        let rows = store.changes_for_run("run").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].verification, Verification::Changed);
         assert_eq!(
             store.restore_preview(&cp).unwrap()[0].verification,
             Verification::Changed
@@ -2969,6 +3098,100 @@ mod tests {
                 .restore_preview(&report.safety_checkpoint_ids[0])
                 .unwrap()[0]
                 .verification,
+            Verification::Changed
+        );
+    }
+
+    #[test]
+    fn partial_restore_leaves_baseline_unknown_for_a_forceless_retry() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let a = work.path().join("a.txt");
+        let b = work.path().join("b.txt");
+        for path in [&a, &b] {
+            fs::write(path, "before").unwrap();
+            let cp = store.create("run", "fs_edit", &[path]).unwrap();
+            fs::write(path, "run edit").unwrap();
+            store.record_after(&cp).unwrap();
+        }
+        let report = store
+            .restore_selection_using("run", "all", |n| {
+                if n == 1 {
+                    Err(io::Error::other("injected second checkpoint failure"))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap();
+        assert!(report.partial);
+        // The failed restore rolled back to the pre-undo state; that state must
+        // not be recorded as an agreed baseline.
+        let safety = &store.find(&report.safety_checkpoint_ids[0]).unwrap().1;
+        assert!(safety.entries.iter().all(|e| e.after_existed.is_none()));
+        let preview = store
+            .restore_preview(&store.list("run").unwrap()[0].id)
+            .unwrap();
+        assert!(
+            preview
+                .iter()
+                .all(|e| e.verification == Verification::Unknown),
+            "{preview:?}"
+        );
+        for row in store.changes_for_run("run").unwrap() {
+            assert_eq!(row.verification, Verification::Unknown);
+        }
+    }
+
+    #[test]
+    fn restore_baseline_is_the_written_digest_not_a_reread_of_the_file() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let file = work.path().join("gap.txt");
+        fs::write(&file, "before").unwrap();
+        let cp = store.create("run", "fs_edit", &[&file]).unwrap();
+        fs::write(&file, "after").unwrap();
+        store.record_after(&cp).unwrap();
+        // An external editor wins the race between the last rename and the
+        // baseline recording.
+        let report = store
+            .restore_selection_inner(
+                "run",
+                &cp,
+                |_| Ok(()),
+                || {
+                    fs::write(&file, "edited in the gap").unwrap();
+                },
+            )
+            .unwrap();
+        assert!(!report.partial);
+        let safety = &report.safety_checkpoint_ids[0];
+        assert_eq!(
+            store.restore_preview(safety).unwrap()[0].verification,
+            Verification::Changed
+        );
+        let rows = store.changes_for_run("run").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].verification, Verification::Changed);
+    }
+
+    #[test]
+    fn restore_of_a_created_file_baselines_its_absence() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let file = work.path().join("new.txt");
+        let cp = store.create("run", "fs_write", &[&file]).unwrap();
+        fs::write(&file, "created").unwrap();
+        store.record_after(&cp).unwrap();
+        assert_eq!(store.changes_for_run("run").unwrap().len(), 1);
+        store.restore_selection("run", &cp).unwrap();
+        assert!(!file.exists());
+        assert_eq!(store.changes_for_run("run").unwrap().len(), 0);
+        fs::write(&file, "back").unwrap();
+        assert_eq!(
+            store.changes_for_run("run").unwrap()[0].verification,
             Verification::Changed
         );
     }
