@@ -21,6 +21,7 @@ pub mod control;
 pub mod desktop;
 pub mod files;
 pub mod knowledge;
+pub mod knowledge_brain;
 pub mod meta;
 pub mod schedule;
 pub mod script;

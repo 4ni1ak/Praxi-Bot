@@ -83,7 +83,9 @@ pub(crate) fn write_file(
             cfg.max_output_bytes
         )));
     }
-    builtin_tools::files::check_daemon_write(&cfg.data_dir, path)?;
+    if let Some(guard) = &cfg.write_guard {
+        guard.check(path).map_err(exec)?;
+    }
     let p = Path::new(path);
     if p.is_dir() {
         return Err(exec(format!("{path} is a directory")));

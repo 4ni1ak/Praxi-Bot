@@ -30,7 +30,8 @@ if (!chrome) {
   process.exit(mustRun ? 1 : 0);
 }
 
-// 24 cases: widths x style x theme (18), plus 6 specials.
+// 24 cases: widths x style x theme (18), plus 6 specials.  `rt=ignore`: measure the requested style
+// even when the host OS asks for reduced transparency (headless Chrome reports that setting too).
 const cases = [];
 for (const width of [760, 1400, 1920]) {
   for (const style of ['solid', 'glass', 'line']) {
@@ -122,7 +123,7 @@ try {
     for (let attempt = 0; attempt < 4 && !out.includes(probeId); attempt++) {
       out = await run(chrome, ['--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
       '--force-device-scale-factor=1', `--window-size=${c.width},900`, `--virtual-time-budget=${process.env.VTB ?? 30000}`,
-      `--user-data-dir=${join(tmp, `profile-${i}-${attempt}`)}`, '--dump-dom', `http://127.0.0.1:${port}/?mock=1&probe=${c.probe ?? 'layout'}&${c.query}`],
+      `--user-data-dir=${join(tmp, `profile-${i}-${attempt}`)}`, '--dump-dom', `http://127.0.0.1:${port}/?mock=1&probe=${c.probe ?? 'layout'}&rt=ignore&${c.query}`],
       { stdio: ['ignore', 'pipe', args.includes('--debug') ? 'inherit' : 'ignore'], timeout: CASE_TIMEOUT });
     }
     if (searchMode || contentMode) {

@@ -132,6 +132,9 @@ impl Storage {
     pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
+        // Resolve host-selected relative paths and symlinked home directories
+        // once, before any knowledge capability treats this root as trusted.
+        let data_dir = crate::paths::without_verbatim_prefix(std::fs::canonicalize(data_dir)?);
         let conn = Connection::open(data_dir.join("bot.db"))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -277,11 +280,29 @@ impl Storage {
     /// Fails on SQLite errors, in particular a foreign-key violation while
     /// chats or runs still reference the bot.
     pub fn delete_bot(&self, id: BotId) -> Result<bool> {
+        self.delete_bot_with_cleanup(id, || Ok(()))
+    }
+
+    /// Delete a bot and run bounded local cleanup before committing its removal.
+    /// Foreign-key checks run first. A cleanup error keeps the owning row, and
+    /// concurrent chat/run insertion cannot race the transaction. The closure
+    /// must not reenter this storage connection or wait for asynchronous work.
+    ///
+    /// # Errors
+    /// SQLite constraints, storage failure, or the supplied cleanup error.
+    pub fn delete_bot_with_cleanup(
+        &self,
+        id: BotId,
+        cleanup: impl FnOnce() -> Result<()>,
+    ) -> Result<bool> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let bid = id.to_string();
         tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
         let n = tx.execute("DELETE FROM bots WHERE id = ?1", [&bid])?;
+        if n > 0 {
+            cleanup()?;
+        }
         tx.commit()?;
         Ok(n > 0)
     }
@@ -873,6 +894,46 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Recent tool executions owned by one user and bot, optionally one run.
+    /// Row and aggregate JSON byte limits are checked before copying payloads
+    /// into Rust. Oversized rows are omitted; callers must not infer permission
+    /// from the absence of a record.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn knowledge_tool_steps(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        run_id: Option<RunId>,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<RunStep>> {
+        let conn = self.conn();
+        let select = STEP_SELECT.replacen(" FROM ", ", length(CAST(input_json AS BLOB)) + coalesce(length(CAST(output_json AS BLOB)), 0) + coalesce(length(CAST(retry_json AS BLOB)), 0) + coalesce(length(CAST(error AS BLOB)), 0) + length(CAST(status AS BLOB)) FROM ", 1);
+        let mut statement = conn.prepare(&format!(
+            "{select} WHERE name='tools' AND user_id=?1 AND run_id IN (SELECT id FROM runs WHERE user_id=?1 AND bot_id=?2) AND (?3 IS NULL OR run_id=?3) ORDER BY started_at_ms DESC,id DESC LIMIT ?4"
+        ))?;
+        let mut rows = statement.query(params![
+            user_id.to_string(),
+            bot_id.to_string(),
+            run_id.map(|id| id.to_string()),
+            i64::try_from(max_rows.min(200)).unwrap_or(200)
+        ])?;
+        let mut remaining = max_bytes.min(8 * 1024 * 1024);
+        let mut found = Vec::new();
+        while let Some(row) = rows.next()? {
+            let bytes =
+                usize::try_from(row.get::<_, i64>(14)?).map_err(|error| conv_err(14, error))?;
+            if bytes > remaining {
+                continue;
+            }
+            found.push(step_row(row)?);
+            remaining -= bytes;
+        }
+        Ok(found)
+    }
+
     /// Update a step's status/attempt/result.  `finished_at_ms` is set to now
     /// when `finished` is true, else cleared.
     ///
@@ -1364,6 +1425,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn data_dir_is_canonical_but_never_a_verbatim_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path().join("nested").join("..")).unwrap();
+        assert!(!st.data_dir().to_string_lossy().starts_with("\\\\?\\"));
+        assert_eq!(
+            std::fs::canonicalize(st.data_dir()).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
+    }
+
     struct Fx {
         st: Storage,
         user: User,
@@ -1590,6 +1662,42 @@ mod tests {
     }
 
     #[test]
+    fn bot_cleanup_happens_after_constraints_and_before_commit() {
+        let f = fx();
+        assert!(
+            f.st.delete_bot_with_cleanup(f.bot.id, || panic!(
+                "referenced bot must never be cleaned"
+            ))
+            .is_err()
+        );
+        let empty = Bot {
+            id: BotId::new(),
+            user_id: f.user.id,
+            name: "Empty".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        };
+        f.st.insert_bot(&empty).unwrap();
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || Err(crate::StorageError::Io(
+                std::io::Error::other("cleanup failed")
+            )))
+            .is_err()
+        );
+        assert!(f.st.get_bot(empty.id).unwrap().is_some());
+        let mut cleaned = false;
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || {
+                cleaned = true;
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert!(cleaned);
+        assert!(f.st.get_bot(empty.id).unwrap().is_none());
+    }
+
+    #[test]
     fn child_runs_persist_parent_and_spec() {
         let f = fx();
         let parent = run(&f);
@@ -1657,6 +1765,67 @@ mod tests {
         assert_eq!(got.output, Some(json!("ok")));
         assert!(got.finished_at_ms.is_some());
         assert_eq!(f.st.relabel_steps(r.id, "succeeded", "x").unwrap(), 1);
+    }
+
+    #[test]
+    fn knowledge_steps_enforce_owner_row_and_aggregate_byte_bounds() {
+        let f = fx();
+        let run = run(&f);
+        for index in 0..3 {
+            f.st.insert_step(&RunStep {
+                id: Uuid::now_v7(),
+                run_id: run.id,
+                user_id: f.user.id,
+                idx: index,
+                name: "tools".into(),
+                input: json!({}),
+                idempotent: true,
+                retry: None,
+                status: "succeeded".into(),
+                attempt: 1,
+                output: Some(json!(if index == 2 {
+                    "x".repeat(1024)
+                } else {
+                    "small".into()
+                })),
+                error: None,
+                started_at_ms: i64::from(index),
+                finished_at_ms: Some(4),
+            })
+            .unwrap();
+        }
+        let found =
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 40)
+                .unwrap();
+        assert_eq!(
+            found.len(),
+            2,
+            "oversized latest row must not consume the budget"
+        );
+        assert_eq!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 20)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 1, 40)
+                .unwrap()
+                .is_empty(),
+            "row cap applies before filtering oversized payloads"
+        );
+        for (user, bot, run) in [
+            (UserId::new(), f.bot.id, run.id),
+            (f.user.id, BotId::new(), run.id),
+            (f.user.id, f.bot.id, RunId::new()),
+        ] {
+            assert_eq!(
+                f.st.knowledge_tool_steps(user, bot, Some(run), 3, 2048)
+                    .unwrap()
+                    .len(),
+                0
+            );
+        }
     }
 
     #[test]

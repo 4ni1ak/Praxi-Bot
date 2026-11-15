@@ -3,6 +3,9 @@
 //! See the crate README for the format, trust model and swap limitations.
 
 mod install;
+mod knowledge;
+#[cfg(test)]
+mod knowledge_tests;
 mod policy;
 mod transfer;
 
