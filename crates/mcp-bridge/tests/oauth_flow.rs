@@ -435,21 +435,25 @@ async fn a_live_unauthorized_request_reconnects_and_retries_only_once_without_fa
 #[tokio::test(flavor = "multi_thread")]
 async fn sign_in_discovers_exchanges_with_pkce_and_stores_only_in_the_secret_store() {
     let (base, seen, server) = fake_authorization_server(true).await;
+    seen.lock().mcp_bearer = Some(ACCESS.into());
     let store = Arc::new(MemoryStore::default());
     let registered = Arc::new(Mutex::new(Vec::<String>::new()));
     let registrar: SecretRegistrar = {
         let registered = Arc::clone(&registered);
         Arc::new(move |value: &str| registered.lock().push(value.to_owned()))
     };
-    let sign_in = SignIn::start(
-        "e2e",
-        &format!("{base}/mcp"),
-        store.clone(),
-        Some(registrar),
-        options(),
-    )
-    .await
-    .unwrap();
+    let registry = tool_registry::ToolRegistry::new();
+    let manager = McpManager::new(registry.clone())
+        .with_secret_store(store.clone())
+        .with_secret_registrar(registrar);
+    assert!(matches!(
+        manager
+            .add_server(McpServerConfig::http("e2e", format!("{base}/mcp")))
+            .await,
+        Err(McpError::AuthRequired(_))
+    ));
+    assert!(registry.get("mcp:e2e/echo").is_none());
+    let sign_in = manager.start_sign_in("e2e", options()).await.unwrap();
     let url = sign_in.authorization_url().to_owned();
     let params = pairs(url.split_once('?').unwrap().1);
     assert!(url.starts_with(&format!("{base}/authorize?")), "{url}");
@@ -488,12 +492,42 @@ async fn sign_in_discovers_exchanges_with_pkce_and_stores_only_in_the_secret_sto
     let registered = registered.lock().clone();
     assert!(registered.contains(&ACCESS.to_owned()), "{registered:?}");
     assert!(registered.contains(&REFRESH.to_owned()), "{registered:?}");
+    assert_eq!(manager.reenable("e2e").await.unwrap(), 1);
+    let echo = registry.get("mcp:e2e/echo").unwrap();
+    // Signing in grants no permission to the server's tools.
+    assert_eq!(echo.spec().effect, tool_registry::Effect::Destructive);
+    assert_eq!(
+        echo.spec().category,
+        tool_registry::PermissionCategory::Accounts
+    );
+    let result = echo
+        .call(
+            &tool_registry::ToolContext::default(),
+            serde_json::json!({"text": "signed in"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(result).unwrap()["content"][0]["text"],
+        "signed in"
+    );
+    assert_eq!(
+        manager.snapshot("e2e").unwrap().status,
+        ServerStatus::Connected
+    );
+    assert!(
+        seen.lock()
+            .mcp_authorization
+            .iter()
+            .any(|v| v.as_deref() == Some(&format!("Bearer {ACCESS}")))
+    );
     // A replayed redirect has nowhere to go.
     assert!(
         redirect(&url, &format!("code=code-1&state={}", params["state"]))
             .await
             .is_err()
     );
+    manager.shutdown().await;
     server.abort();
 }
 
