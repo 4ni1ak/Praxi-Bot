@@ -387,6 +387,7 @@ pub async fn stored_bearer(
     url: &str,
     store: &Arc<dyn SecretStore>,
     registrar: Option<&SecretRegistrar>,
+    force_refresh: bool,
 ) -> Result<Option<String>> {
     let probe = SecretCredentialStore::new(Arc::clone(store), server, url, registrar.cloned())?;
     let stored = probe.load().await.map_err(|e| auth_error(server, &e))?;
@@ -429,7 +430,7 @@ pub async fn stored_bearer(
         Ok(false) => return Err(McpError::AuthRequired(server.to_owned())),
         Err(e) => return Err(auth_error(server, &e)),
     }
-    let token = if refresh_due {
+    let token = if force_refresh || refresh_due {
         manager
             .refresh_token()
             .await

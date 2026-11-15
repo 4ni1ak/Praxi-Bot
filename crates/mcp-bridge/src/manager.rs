@@ -71,6 +71,18 @@ const LIVENESS_PROBE: Duration = Duration::from_secs(5);
 /// listed again, so a burst of notifications costs one discovery.
 const LIST_CHANGED_DEBOUNCE: Duration = Duration::from_millis(250);
 
+fn authorization_required(error: &rmcp::transport::DynamicTransportError) -> bool {
+    use rmcp::transport::streamable_http_client::{AuthRequiredError, InsufficientScopeError};
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.error.as_ref());
+    while let Some(current) = source {
+        if current.is::<AuthRequiredError>() || current.is::<InsufficientScopeError>() {
+            return true;
+        }
+        source = current.source();
+    }
+    false
+}
+
 /// Tunables of the bridge.
 #[derive(Debug, Clone, Copy)]
 pub struct McpPolicy {
@@ -166,6 +178,8 @@ pub(crate) struct Server {
     registrar: Option<crate::oauth::SecretRegistrar>,
     /// Whether the list-changed watcher task was started.
     watching: AtomicBool,
+    /// A live HTTP request rejected its bearer, even if local expiry is later.
+    refresh_required: AtomicBool,
 }
 
 impl Server {
@@ -306,6 +320,7 @@ impl Server {
                 url,
                 store,
                 self.registrar.as_ref(),
+                self.refresh_required.swap(false, Ordering::AcqRel),
             ))
             .await
             {
@@ -429,7 +444,7 @@ impl Server {
     /// failure accounting of a tool call.
     pub(crate) async fn request<T, F, Fut>(&self, run: F) -> Result<T>
     where
-        F: FnOnce(Peer<RoleClient>) -> Fut,
+        F: FnOnce(Peer<RoleClient>) -> Fut + Clone,
         Fut: std::future::Future<Output = std::result::Result<T, ServiceError>>,
     {
         self.until_retired(self.request_inner(run)).await
@@ -437,50 +452,81 @@ impl Server {
 
     async fn request_inner<T, F, Fut>(&self, run: F) -> Result<T>
     where
-        F: FnOnce(Peer<RoleClient>) -> Fut,
+        F: FnOnce(Peer<RoleClient>) -> Fut + Clone,
         Fut: std::future::Future<Output = std::result::Result<T, ServiceError>>,
     {
-        self.check_usable()?;
-        let session = self.ensure_connected(false).await?;
-        let id = self.config.id.clone();
-        // Dropping the request future (this timeout, or the caller's own
-        // cancellation) makes rmcp send `notifications/cancelled` for it.
-        let outcome =
-            tokio::time::timeout(self.policy.call_timeout, run(session.peer().clone())).await;
-        let failure = match outcome {
-            Ok(Ok(result)) => {
-                self.record_session_success(&session).await;
-                return Ok(result);
-            }
-            // The server answered with a JSON-RPC error: it is alive.
-            Ok(Err(ServiceError::McpError(e))) => {
-                self.record_session_success(&session).await;
-                return Err(session.redactor.error(McpError::Transport {
+        let mut retried_auth = false;
+        loop {
+            self.check_usable()?;
+            let session = self.ensure_connected(false).await?;
+            let id = self.config.id.clone();
+            // Dropping the request future (this timeout, or the caller's own
+            // cancellation) makes rmcp send `notifications/cancelled` for it.
+            let outcome = tokio::time::timeout(
+                self.policy.call_timeout,
+                run.clone()(session.peer().clone()),
+            )
+            .await;
+            let failure = match outcome {
+                Ok(Ok(result)) => {
+                    self.record_session_success(&session).await;
+                    return Ok(result);
+                }
+                // The server answered with a JSON-RPC error: it is alive.
+                Ok(Err(ServiceError::McpError(e))) => {
+                    self.record_session_success(&session).await;
+                    return Err(session.redactor.error(McpError::Transport {
+                        server: id,
+                        message: e.to_string(),
+                    }));
+                }
+                Ok(Err(ServiceError::TransportSend(ref e))) if authorization_required(e) => {
+                    let error = McpError::AuthRequired(id);
+                    let mut slot = self.session.lock().await;
+                    // An old response must not drop a newer connection or force
+                    // another refresh of credentials already rotated by it.
+                    if slot
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &session))
+                    {
+                        if let Some(old) = slot.take() {
+                            old.request_close();
+                        }
+                        if retried_auth {
+                            self.note_connect_error(&error);
+                        } else {
+                            self.refresh_required.store(true, Ordering::Release);
+                        }
+                    }
+                    drop(slot);
+                    if retried_auth {
+                        return Err(error);
+                    }
+                    retried_auth = true;
+                    continue;
+                }
+                Ok(Err(e)) => McpError::Transport {
                     server: id,
                     message: e.to_string(),
-                }));
-            }
-            Ok(Err(e)) => McpError::Transport {
-                server: id,
-                message: e.to_string(),
-            },
-            Err(_) => {
-                let timeout = McpError::Timeout {
-                    server: id,
-                    seconds: self.policy.call_timeout.as_secs().max(1),
-                };
-                // One slow tool must not take the server down for the calls
-                // running next to it: the session is only dropped when the
-                // server does not answer anything any more.
-                if still_answers(&session).await {
-                    return Err(session.redactor.error(timeout));
+                },
+                Err(_) => {
+                    let timeout = McpError::Timeout {
+                        server: id,
+                        seconds: self.policy.call_timeout.as_secs().max(1),
+                    };
+                    // One slow tool must not take the server down for the calls
+                    // running next to it: the session is only dropped when the
+                    // server does not answer anything any more.
+                    if still_answers(&session).await {
+                        return Err(session.redactor.error(timeout));
+                    }
+                    timeout
                 }
-                timeout
-            }
-        };
-        let failure = session.redactor.error(failure);
-        self.fail_session(&session, &failure).await;
-        Err(failure)
+            };
+            let failure = session.redactor.error(failure);
+            self.fail_session(&session, &failure).await;
+            return Err(failure);
+        }
     }
 
     /// Connect, list the tools and (re)register the permitted ones.
@@ -898,6 +944,7 @@ impl McpManager {
             signals: Arc::default(),
             registrar: self.registrar.clone(),
             watching: AtomicBool::new(false),
+            refresh_required: AtomicBool::new(false),
             config,
         });
         {

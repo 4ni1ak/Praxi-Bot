@@ -39,6 +39,10 @@ impl SecretStore for MemoryStore {
 struct Seen {
     expires_in: Option<u64>,
     refresh_allowed: bool,
+    /// When set, speak MCP for this bearer instead of always returning 401.
+    mcp_bearer: Option<String>,
+    tool_calls: Vec<Option<String>>,
+    reject_tool_calls: bool,
     /// `code_challenge` of the authorization request (set by the test, which
     /// plays the browser).
     challenge: Option<String>,
@@ -126,14 +130,58 @@ async fn fake_authorization_server(
                     let path = head.split(' ').nth(1).unwrap_or("/").to_owned();
                     seen.lock().paths.push(path.clone());
                     if path == "/mcp" {
-                        // The protected MCP endpoint: note what credential
-                        // arrived and always ask for a sign-in.
+                        // By default this endpoint challenges every request;
+                        // session tests enable MCP for one expected bearer.
                         let authorization = head.lines().find_map(|l| {
                             let (name, value) = l.split_once(':')?;
                             name.eq_ignore_ascii_case("authorization")
                                 .then(|| value.trim().to_owned())
                         });
-                        seen.lock().mcp_authorization.push(authorization);
+                        seen.lock().mcp_authorization.push(authorization.clone());
+                        let request: serde_json::Value =
+                            serde_json::from_str(&body).unwrap_or_default();
+                        let method = request["method"].as_str().unwrap_or_default();
+                        if method == "tools/call" {
+                            seen.lock().tool_calls.push(authorization.clone());
+                        }
+                        let allowed = seen.lock().mcp_bearer.as_ref().is_some_and(|token| {
+                            authorization.as_deref() == Some(format!("Bearer {token}").as_str())
+                        });
+                        if allowed && !(method == "tools/call" && seen.lock().reject_tool_calls) {
+                            if request.get("id").is_none() {
+                                let response: &[u8] = if method.starts_with("notifications/") {
+                                    b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                } else {
+                                    b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                };
+                                let _ = socket.write_all(response).await;
+                                let _ = socket.shutdown().await;
+                                return;
+                            }
+                            let result = match method {
+                                "initialize" => serde_json::json!({
+                                    "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                                    "serverInfo": {"name": "oauth-fixture", "version": "1"},
+                                }),
+                                "server/discover" => serde_json::json!({
+                                    "resultType": "complete", "supportedVersions": ["2026-07-28"],
+                                    "capabilities": {"tools": {}}, "ttlMs": 0, "cacheScope": "private",
+                                    "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "oauth-fixture", "version": "1"}},
+                                }),
+                                "tools/list" => serde_json::json!({
+                                    "resultType": "complete", "ttlMs": 0, "cacheScope": "private",
+                                    "tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}],
+                                }),
+                                "tools/call" => serde_json::json!({
+                                    "resultType": "complete", "content": [{"type": "text", "text": request["params"]["arguments"]["text"].as_str().unwrap_or("echo")}],
+                                }),
+                                _ => serde_json::json!({"resultType": "complete"}),
+                            };
+                            let response = serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": result}).to_string();
+                            let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await;
+                            let _ = socket.shutdown().await;
+                            return;
+                        }
                         let _ = socket
                             .write_all(
                                 b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\n\
@@ -313,6 +361,72 @@ async fn expiry_and_the_sixty_second_window_refresh_before_sending_a_bearer() {
         assert!(snapshot.auth_required);
         assert_eq!(snapshot.consecutive_failures, 0);
         assert_eq!(snapshot.status, ServerStatus::Disconnected);
+        manager.shutdown().await;
+        server.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_unauthorized_request_reconnects_and_retries_only_once_without_failures() {
+    for accepted in [true, false] {
+        let (base, seen, server) = fake_authorization_server(true).await;
+        seen.lock().mcp_bearer = Some(ACCESS.into());
+        seen.lock().refresh_allowed = true;
+        let registry = tool_registry::ToolRegistry::new();
+        let manager = McpManager::with_policy(
+            registry.clone(),
+            McpPolicy {
+                quarantine_after: 1,
+                ..McpPolicy::default()
+            },
+        )
+        .with_secret_store(Arc::new(MemoryStore::default()));
+        assert!(matches!(
+            manager
+                .add_server(McpServerConfig::http("live", format!("{base}/mcp")))
+                .await,
+            Err(McpError::AuthRequired(_))
+        ));
+        finish_sign_in(
+            manager.start_sign_in("live", options()).await.unwrap(),
+            &base,
+            &seen,
+        )
+        .await;
+        assert_eq!(manager.reenable("live").await.unwrap(), 1);
+        let echo = registry.get("mcp:live/echo").unwrap();
+        let context = tool_registry::ToolContext::default();
+        echo.call(&context, serde_json::json!({"text": "before"}))
+            .await
+            .unwrap();
+        seen.lock().tool_calls.clear();
+        seen.lock().mcp_bearer = Some(REFRESHED.into());
+        if !accepted {
+            // Reconnect succeeds, but the retried tool request is still denied.
+            seen.lock().reject_tool_calls = true;
+        }
+        let call = echo
+            .call(&context, serde_json::json!({"text": "after"}))
+            .await;
+        let snapshot = manager.snapshot("live").unwrap();
+        assert_eq!(snapshot.consecutive_failures, 0, "{snapshot:?}");
+        assert_ne!(snapshot.status, ServerStatus::Quarantined);
+        let requests = seen.lock().token_requests.clone();
+        assert_eq!(requests.len(), 2, "one refresh per failed request");
+        assert_eq!(
+            seen.lock().tool_calls,
+            vec![
+                Some(format!("Bearer {ACCESS}")),
+                Some(format!("Bearer {REFRESHED}"))
+            ]
+        );
+        if accepted {
+            assert!(call.is_ok(), "{call:?}");
+            assert_eq!(snapshot.status, ServerStatus::Connected);
+        } else {
+            assert!(call.unwrap_err().to_string().contains("authorization"));
+            assert!(snapshot.auth_required);
+        }
         manager.shutdown().await;
         server.abort();
     }
