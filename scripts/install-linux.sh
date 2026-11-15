@@ -1037,7 +1037,7 @@ elif [[ "${WITHOUT_DESKTOP}" -eq 1 && -f "${UNIT_DIR}/${SLICE_NAME}" ]]; then
 fi
 
 # Host mode is sticky: a re-install without --host-mode keeps an existing host unit.
-if [[ "${HOST_MODE}" -eq 0 && -f "${UNIT_DIR}/praxi.service" ]] \n  && grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)' "${UNIT_DIR}/praxi.service"; then
+if [[ "${HOST_MODE}" -eq 0 && -f "${UNIT_DIR}/praxi.service" ]] && grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)' "${UNIT_DIR}/praxi.service"; then
   HOST_MODE=1
 fi
 SERVE_ARGS="serve"
