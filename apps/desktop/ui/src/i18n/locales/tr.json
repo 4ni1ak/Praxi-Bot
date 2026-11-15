@@ -698,6 +698,16 @@
         "done": "{{name}} çalıştırıldı",
         "failed": "{{name}} tamamlanamadı"
       }
+    },
+    "timelineLabel": "Sohbet",
+    "jumpToLatest": "En sona git",
+    "runBar": {
+      "label": "Çalışma kontrolleri",
+      "waiting": "Onayınızı bekliyor",
+      "paused": "Duraklatıldı",
+      "human": "Kontrol sizde",
+      "elapsed": "{{time}} süredir çalışıyor",
+      "stoppingDetail": "Çalışmanın bitmesi bekleniyor…"
     }
   },
   "botForm": {
