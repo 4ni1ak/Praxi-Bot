@@ -48,6 +48,30 @@ document.documentElement.dataset.windowKind = windowKind;
 
 paintSavedAppearanceEarly(windowKind !== "main");
 
+// Layout probe (card 233): same guard as state/useQuotas.ts, so production builds drop it.
+if (
+  (import.meta.env.DEV || import.meta.env.VITE_MOCK === "1") &&
+  ["layout", "search", "content"].includes(new URLSearchParams(window.location.search).get("probe") ?? "")
+) {
+  const stored = new URLSearchParams(window.location.search).get("stored");
+  if (stored) {
+    // A layout saved by an older session, read by App's first render.
+    try {
+      window.localStorage.setItem("praxi.shell.layout.v1", JSON.stringify({ rail: 264, panel: Number(stored) }));
+    } catch {
+      // Storage unavailable: the probe then runs with the defaults.
+    }
+  }
+  void import("./dev/layoutProbe")
+    .then((m) => {
+        const mode = new URLSearchParams(window.location.search).get("probe");
+        return mode === "search" ? m.runSearchProbe() : mode === "content" ? m.runContentProbe() : m.runLayoutProbe();
+      })
+    .catch((e: unknown) => {
+      document.documentElement.dataset.probeError = String(e);
+    });
+}
+
 const container = document.getElementById("root");
 if (!container) {
   throw new Error("Root container #root not found");
