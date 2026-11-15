@@ -17,7 +17,7 @@ use axum::{
 use live_view::{
     Codec, CreateSession, EffectiveProfile, Heartbeat, HumanAction, Profile, Reason,
     ReleaseRequest, SessionInfo, SessionUpdate, TakeoverAccepted, TakeoverRequest, TargetInfo,
-    TargetKind, TargetRegistry, ViewError, ViewState, ViewTarget,
+    TargetKind, TargetRegistry, TargetUnavailable, ViewError, ViewState, ViewTarget,
 };
 use parking_lot::Mutex;
 use std::{
@@ -356,7 +356,49 @@ pub(crate) async fn targets(
         )?;
         return Err(ApiError::forbidden("screen:view denied"));
     }
+    // A missing desktop is looked for again (bounded, off the request path).
+    s.live_view().registry.request_reprobe();
     Ok(Json(s.live_view().registry.targets()))
+}
+/// Which kinds of screen this host cannot offer and why (empty when none is
+/// missing), so the panel can say "No screen: <reason>". Same access rule as
+/// `GET /v1/view/targets`; no pixels, no paths.
+#[utoipa::path(get,path="/v1/view/availability",tag="view",security(("bearer"=[])),responses((status=200,body=Vec<TargetUnavailable>)))]
+pub(crate) async fn availability(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+) -> Result<Json<Vec<TargetUnavailable>>, ApiError> {
+    if !s.live_view().allowed(&actor, false) {
+        audit(
+            &s,
+            &actor,
+            "view.denied",
+            serde_json::json!({"reason":"privilege"}),
+        )?;
+        return Err(ApiError::forbidden("screen:view denied"));
+    }
+    s.live_view().registry.request_reprobe();
+    Ok(Json(s.live_view().registry.unavailable()))
+}
+/// A bot-scoped panel may only open its own bot's browser or a shared desktop.
+fn deny_foreign_bot_target(
+    s: &AppState,
+    actor: &Actor,
+    asking: Option<Uuid>,
+    info: &TargetInfo,
+) -> Result<(), ApiError> {
+    if let (Some(asking), Some(owner)) = (asking, info.bot_id)
+        && asking != owner
+    {
+        audit(
+            s,
+            actor,
+            "view.denied",
+            serde_json::json!({"target_id":info.target_id,"reason":"bot_scope"}),
+        )?;
+        return Err(ApiError::forbidden("target belongs to another bot"));
+    }
+    Ok(())
 }
 #[utoipa::path(post,path="/v1/view/sessions",tag="view",security(("bearer"=[])),request_body=CreateSession,responses((status=201,body=SessionInfo)))]
 pub(crate) async fn create_session(
@@ -380,6 +422,7 @@ pub(crate) async fn create_session(
         .get(i.target_id)
         .ok_or_else(|| ApiError::not_found("view target"))?;
     let info = target.info();
+    deny_foreign_bot_target(&s, &actor, i.bot_id, &info)?;
     if !info.capabilities.view || info.unavailable_reason.is_some() {
         audit(
             &s,

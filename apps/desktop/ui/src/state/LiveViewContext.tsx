@@ -13,7 +13,8 @@ import type {
   HumanAction,
   InputEvent,
   SessionInfo,
-  TargetInfo
+  TargetInfo,
+  TargetUnavailable
 } from "../api/types.ts";
 import { type ApiClient, ApiError } from "../api/client.ts";
 import { isMockMode } from "../api/mockMode.ts";
@@ -90,6 +91,7 @@ interface LiveViewContextValue {
   viewerOpen: boolean;
   loadingTargets: boolean;
   targetsStatus: TargetsStatus;
+  availability: TargetUnavailable[];
   panelAction: PanelActionHighlight | null;
   recoveryPrompt: RecoveryPrompt | null;
   openViewer: (targetId?: string) => void;
@@ -169,6 +171,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   }, []);
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [targetsStatus, setTargetsStatus] = useState<TargetsStatus>("unknown");
+  const [availability, setAvailability] = useState<TargetUnavailable[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
     null
@@ -329,6 +332,11 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       targetsForRef.current = { client, targets: nextTargets };
       setTargets(nextTargets);
       setTargetsStatus("ok");
+      // Why a screen is missing is optional context: its failure never hides the targets.
+      client
+        .listViewAvailability()
+        .then(setAvailability)
+        .catch(() => setAvailability([]));
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
         controlClientRef.current = clientRef.current;
@@ -360,7 +368,12 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     }
     void refreshTargets();
     return onDaemonEvent((env) => {
-      if (env.event.type === "control_state_changed") {
+      // A takeover changed, or a screen appeared / went idle / attached / closed
+      // (the bot's first browser call): refetch without reopening the panel.
+      if (
+        env.event.type === "control_state_changed" ||
+        env.event.type === "view_targets_changed"
+      ) {
         void refreshTargets();
       }
     });
@@ -396,15 +409,15 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     }
   }, [client, viewerOpen, thumbDemand.active, refreshTargets]);
 
-  const selectedTarget = useMemo(() => {
-    const botFocus =
-      thumbDemand.botId ??
-      (bots.length > 0 ? bots[0].id : null);
-    return pickDefaultTarget(targets, {
-      preferredTargetId: selectedTargetId,
-      botId: botFocus
-    });
-  }, [targets, selectedTargetId, thumbDemand.botId, bots]);
+  const botFocus = thumbDemand.botId ?? (bots.length > 0 ? bots[0].id : null);
+  const selectedTarget = useMemo(
+    () =>
+      pickDefaultTarget(targets, {
+        preferredTargetId: selectedTargetId,
+        botId: botFocus
+      }),
+    [targets, selectedTargetId, botFocus]
+  );
 
   // While holding/acquiring control the target must not follow chat/bot focus.
   useEffect(() => {
@@ -585,7 +598,10 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
             profile: isActivelyOwningTakeover(stateRef.current) ? "live" : "watch",
             codecs: selectedTarget.capabilities.codecs,
             max_width: viewerOpen ? 1600 : 960,
-            max_height: viewerOpen ? 1000 : 600
+            max_height: viewerOpen ? 1000 : 600,
+            // An automatically chosen screen is bound to the focused bot: the
+            // daemon refuses another bot's browser. An explicit pick is not.
+            ...(selectedTargetId === null && botFocus ? { bot_id: botFocus } : {})
           }),
         openStream,
         deleteSession: (id) => client.deleteViewSession(id)
@@ -1080,6 +1096,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       viewerOpen,
       loadingTargets,
       targetsStatus,
+      availability,
       panelAction,
       recoveryPrompt,
       openViewer,
@@ -1112,6 +1129,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       viewerOpen,
       loadingTargets,
       targetsStatus,
+      availability,
       panelAction,
       recoveryPrompt,
       openViewer,

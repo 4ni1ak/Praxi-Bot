@@ -56,6 +56,7 @@ export type ControlStateChanged = S["ControlStateChanged"];
 export type ReleaseResult = S["ReleaseResult"];
 export type ScreenPrivilegesInput = S["ScreenPrivilegesInput"];
 export type TargetInfo = S["TargetInfo"];
+export type TargetUnavailable = S["TargetUnavailable"];
 export type TargetKind = S["TargetKind"];
 export type ViewCapabilities = S["Capabilities"];
 export type Codec = S["Codec"];
@@ -274,6 +275,7 @@ export type DaemonEvent =
       target_id: string;
       reason?: ViewReason | null;
     }
+  | { type: "view_targets_changed" }
   | { type: "error"; run_id: string; message: string; recoverable: boolean }
   | { type: "mcp_server_changed"; name: string; status: McpStatus }
   | {
