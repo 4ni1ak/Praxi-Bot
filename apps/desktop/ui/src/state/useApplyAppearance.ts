@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   accentFor,
   applyTheme,
@@ -11,7 +11,15 @@ import {
   type Theme
 } from "ui";
 import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "../lib/backdropCatalog";
-import { dimTone, getSceneTone, plainTone, sampleImageTone, subscribeSceneTone } from "../lib/backdropTone";
+import {
+  combineDim,
+  evaluateTone,
+  getSceneSource,
+  plainTone,
+  subscribeSceneSource,
+  type ToneSource
+} from "../lib/backdropTone";
+import { useOwnImageSource } from "./useOwnImageSource";
 import { loadSettingsSync, type AppSettings } from "../store/settingsStore";
 
 export interface AppliedAppearance {
@@ -84,34 +92,29 @@ export function paintSavedAppearanceEarly(overlay: boolean): void {
 const noopSubscribe = () => () => {};
 
 /**
- * What the backdrop behind the panels looks like (after its dim layers), or `undefined` while it
- * is unknown - the surface model then assumes a pure white / black backdrop.
+ * What the backdrop behind the panels looks like (dimmed, and for glass blurred and saturated), or
+ * `undefined` while it is unknown (not drawn / sampled yet, an animated or unreadable image, a window
+ * too large to sample) - the surface model then assumes a pure white / black backdrop.
  */
 function useBackdropTone(full: FullAppearanceInput | null, theme: Theme): BackdropTone | undefined {
   const scene = full && full.backdrop !== NO_BACKDROP && full.backdrop !== CUSTOM_BACKDROP ? full.backdrop : null;
   const imageUrl = full && !scene ? full.backgroundUrl.trim() : "";
-  const snapshot = () => (scene ? getSceneTone(scene) : null);
-  const raw = useSyncExternalStore(scene ? subscribeSceneTone : noopSubscribe, snapshot, snapshot);
-  const [image, setImage] = useState<{ url: string; tone: BackdropTone | null } | null>(null);
-  useEffect(() => {
-    if (!imageUrl) return undefined;
-    let live = true;
-    void sampleImageTone(imageUrl, window.innerWidth, window.innerHeight).then((tone) => {
-      if (live) setImage({ url: imageUrl, tone });
-    });
-    return () => {
-      live = false;
-    };
-  }, [imageUrl]);
-  if (!full) return undefined;
-  const d = deriveTheme(theme);
-  const imageDim = Number(full.backgroundDim) || 0;
-  if (scene) return raw ? dimTone(dimTone(raw, d.bg, full.backdropDim / 100), d.bg, imageDim) : undefined;
-  if (imageUrl) {
-    const tone = image?.url === imageUrl ? image.tone : null;
-    return tone ? dimTone(tone, d.bg, imageDim) : undefined;
-  }
-  return plainTone(d.bg, d.bg2);
+  const snapshot = () => (scene ? getSceneSource(scene) : null);
+  const sceneSource = useSyncExternalStore(scene ? subscribeSceneSource : noopSubscribe, snapshot, snapshot);
+  const imageSource = useOwnImageSource(imageUrl);
+  const source: ToneSource | null = scene ? sceneSource : imageUrl ? imageSource : null;
+  const bg = deriveTheme(theme).bg;
+  const bg2 = deriveTheme(theme).bg2;
+  const dim = scene
+    ? combineDim(full ? full.backdropDim / 100 : 0, Number(full?.backgroundDim) || 0)
+    : combineDim(Number(full?.backgroundDim) || 0);
+  return useMemo(() => {
+    if (!full) return undefined;
+    if (!scene && !imageUrl) return plainTone(bg, bg2);
+    return source ? evaluateTone(source, { bg, dim }) : undefined;
+    // `full` is read for presence only; every value it carries is in the dependencies below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full !== null, scene, imageUrl, source, bg, bg2, dim]);
 }
 
 /**

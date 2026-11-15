@@ -15,6 +15,7 @@ import {
   buildTokens,
   contrastRatio,
   deriveTheme,
+  luminance,
   mix,
   pushContrast,
   type DerivedTheme,
@@ -36,6 +37,21 @@ export const PANEL_TRANSPARENCY_DEFAULT = 50;
 export const PANEL_BLUR_MIN = 12;
 export const PANEL_BLUR_MAX = 48;
 export const PANEL_BLUR_DEFAULT = 28;
+
+/** `saturate()` of every blurred layer (one value for all themes, so the maths below can model it). */
+export const GLASS_SATURATE = 1.8;
+/** Blur radii of the blurred layers relative to the panel blur (px = blur x factor). */
+export const COMPOSER_BLUR = 0.75;
+export const FLOAT_BLUR = 1.2;
+/**
+ * Std deviation (window px) the backdrop is blurred with when its worst region behind a blurred
+ * layer is measured.  The smallest blur any layer uses is `PANEL_BLUR_MIN x COMPOSER_BLUR`; blurring
+ * with more only lowers the maximum (heat-equation maximum principle), so measuring with that
+ * radius bounds every slider value.  Halved again as a margin for the kernel approximation and for
+ * the backdrop-filter edge handling at a panel's border, which is not modelled.
+ */
+export const EDGE_SIGMA_MARGIN = 0.5;
+export const SOFT_SIGMA_PX = PANEL_BLUR_MIN * COMPOSER_BLUR * EDGE_SIGMA_MARGIN;
 
 export interface SurfaceOptions {
   /** 0..100, see `PANEL_TRANSPARENCY_*`. */
@@ -70,6 +86,14 @@ export const parseTransparentChat = (v: unknown): boolean => v === true || v ===
 export interface ToneExtremes {
   light: string;
   dark: string;
+  /**
+   * Further colours that can be the worst case behind a translucent layer: the brightest (dark
+   * themes) / darkest (light themes) colour *after* mixing toward the theme tint at a few opacities.
+   * Composite luminance is not ordered by pixel luminance, so the plain extreme alone can under-state
+   * the floor (a saturated colour vs a gray of similar luminance).
+   */
+  lightAlt?: string[];
+  darkAlt?: string[];
 }
 
 /**
@@ -98,6 +122,9 @@ export function worstBackdrop(ext: ToneExtremes, d: Pick<DerivedTheme, "light">)
 }
 
 /* ---------- the plan ---------- */
+
+/** Contrast the floors are searched with beyond the target (absorbs 8-bit rounding of the tone colours). */
+export const CONTRAST_SLACK = 0.05;
 
 /** Primary text reaches AAA on every translucent shell layer, so muted text keeps room for 4.5:1. */
 export const TEXT_TARGET = 7;
@@ -179,6 +206,29 @@ export function paintedUiStyle(style: UiStyle): UiStyle {
   return effectiveUiStyle(style, surfaceSupport());
 }
 
+/**
+ * CSS `saturate(s)` on an sRGB colour (Filter Effects matrix, channels 0..255, clamped): what the
+ * glass layers do to the backdrop before their fill is painted.
+ */
+export function saturateRgb(r: number, g: number, b: number, s: number): [number, number, number] {
+  const clamp = (v: number) => Math.max(0, Math.min(255, v));
+  return [
+    clamp((0.213 + 0.787 * s) * r + (0.715 - 0.715 * s) * g + (0.072 - 0.072 * s) * b),
+    clamp((0.213 - 0.213 * s) * r + (0.715 + 0.285 * s) * g + (0.072 - 0.072 * s) * b),
+    clamp((0.213 - 0.213 * s) * r + (0.715 - 0.715 * s) * g + (0.072 + 0.928 * s) * b)
+  ];
+}
+
+/** `saturateRgb` on a `#rrggbb` colour. */
+export function saturateHex(hex: string, s: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = saturateRgb((n >> 16) & 255, (n >> 8) & 255, n & 255, s);
+  return `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** The dim layer a modal puts over the window (`--color-modal-backdrop`): 40 % ink on light themes, 60 % black on dark. */
+export const MODAL_OVERLAY = { light: { color: "#1a1a1a", amount: 0.4 }, dark: { color: "#000000", amount: 0.6 } };
+
 /** Panels float (padding, radius, shadow) in the glass and tinted styles or over a backdrop. */
 export function isFloatingStyle(style: UiStyle): boolean {
   return style === "glass" || style === "tinted";
@@ -238,23 +288,34 @@ export function planSurfaces(
   opts: SurfaceOptions
 ): SurfacePlan {
   const tone = opts.tone ?? WORST_TONE;
-  const peak = worstBackdrop(tone.peak, d);
-  const soft = worstBackdrop(tone.soft, d);
+  const aaa = TEXT_TARGET + CONTRAST_SLACK;
+  const aa = 4.5 + CONTRAST_SLACK;
+  // Colours that can be the worst case behind a layer: the lightest for dark themes, the darkest for light ones.
+  const candidates = (ext: ToneExtremes, pre: (c: string) => string = (c) => c): string[] =>
+    (d.light ? [ext.dark, ...(ext.darkAlt ?? [])] : [ext.light, ...(ext.lightAlt ?? [])]).map(pre);
+  /** Smallest alpha at which text reaches `target` on `tint` over every candidate. */
+  const floorOver = (ext: ToneExtremes, tint: string, target: number, pre?: (c: string) => string) =>
+    Math.max(...candidates(ext, pre).map((c) => legibleAlpha(d.text, tint, c, target)));
+  /** The layer `tint` at `a` over the candidate that hurts most (highest / lowest composite luminance). */
+  const behind = (ext: ToneExtremes, tint: string, a: number, pre?: (c: string) => string): string => {
+    const composites = candidates(ext, pre).map((c) => mix(c, tint, a));
+    return composites.reduce((w, c) => (d.light ? luminance(c) < luminance(w) : luminance(c) > luminance(w)) ? c : w);
+  };
   const t = parsePanelTransparency(opts.transparency) / 100;
   const blur = parsePanelBlur(opts.blur);
   // Dark glass is the theme's own background; light glass leans to white so Clay does not turn beige-grey.
   const tint = d.light ? mix(d.bg, "#ffffff", 0.45) : d.bg;
   const blurred = style === "glass";
   const translucent = style === "glass" || style === "tinted" || (style === "line" && backdropActive);
-  const behindShell = blurred ? soft : peak;
+  const behindShell = blurred ? tone.soft : tone.peak;
 
   let shellAlpha = 1;
   if (style === "glass" || style === "tinted") {
     const m = MATERIAL[style];
-    const floor = Math.max(m.min, legibleAlpha(d.text, tint, behindShell));
+    const floor = Math.max(m.min, floorOver(behindShell, tint, aaa));
     shellAlpha = Math.max(floor, lerp(m.max, floor, t));
   } else if (style === "line" && backdropActive) {
-    shellAlpha = Math.max(LINE_ALPHA, legibleAlpha(d.text, d.bg, peak));
+    shellAlpha = Math.max(LINE_ALPHA, floorOver(tone.peak, d.bg, aaa));
   }
   shellAlpha = round2(shellAlpha);
   // Solid and line panels keep the theme background (unchanged look); only glass / tinted lean airy.
@@ -267,34 +328,42 @@ export function planSurfaces(
   // Fine, high-contrast detail (dither, dots, grain) is noisy behind text even when the contrast
   // ratio passes; the gap between the per-pixel and the blurred extreme measures it.
   const busy = tone.detail !== undefined && contrastRatio(tone.detail.light, tone.detail.dark) >= BUSY_DETAIL;
-  const scrimAlpha = clearChat ? round2(Math.max(busy ? BUSY_SCRIM_MIN : 0, legibleAlpha(d.text, scrimTint, peak))) : 0;
+  const scrimAlpha = clearChat ? round2(Math.max(busy ? BUSY_SCRIM_MIN : 0, floorOver(tone.peak, scrimTint, aaa))) : 0;
 
   const floatTint = d.light ? mix(d.raised, "#ffffff", 0.3) : d.surface;
+  // A modal darkens what is behind it: on a light theme that is the worst case for dark text.  (On a
+  // dark theme it only helps, and a popover has no overlay, so it is left out there.)
+  const overlay = d.light ? MODAL_OVERLAY.light : null;
+  const underModal = overlay ? (c: string) => mix(c, overlay.color, overlay.amount) : undefined;
   let floatAlpha = 1;
-  if (style === "glass") floatAlpha = Math.max(0.78, shellAlpha, legibleAlpha(d.text, floatTint, soft));
-  else if (style === "tinted") floatAlpha = Math.max(0.94, shellAlpha);
+  if (style === "glass") floatAlpha = Math.max(0.78, shellAlpha, floorOver(tone.soft, floatTint, aaa, underModal));
+  else if (style === "tinted") floatAlpha = Math.max(0.94, shellAlpha, floorOver(tone.peak, floatTint, aaa, underModal));
   floatAlpha = round2(floatAlpha);
 
   // The composer keeps a readable surface of its own when the chat area is clear.
   const composerAlpha = clearChat
-    ? round2(Math.max(blurred ? 0.62 : 0.84, legibleAlpha(d.text, d.raised, blurred ? soft : peak)))
+    ? round2(Math.max(blurred ? 0.62 : 0.84, floorOver(blurred ? tone.soft : tone.peak, d.raised, aa)))
     : 1;
 
   const layers: SurfaceLayer[] = [];
   if (translucent) {
-    const shell = mix(behindShell, shellTint, shellAlpha);
+    const shell = behind(behindShell, shellTint, shellAlpha);
     layers.push({ name: `${style} panel`, color: shell, textMin: TEXT_TARGET });
     layers.push({ name: `${style} panel card`, color: mix(shell, d.surface, CARD_ALPHA.surface), textMin: 4.5 });
     layers.push({ name: `${style} panel raised card`, color: mix(shell, d.raised, CARD_ALPHA.raised), textMin: 4.5 });
   }
   if (clearChat) {
-    const scrim = mix(peak, scrimTint, scrimAlpha);
+    const scrim = behind(tone.peak, scrimTint, scrimAlpha);
     layers.push({ name: "chat scrim", color: scrim, textMin: TEXT_TARGET });
     layers.push({ name: "bubble on scrim", color: mix(scrim, d.raised, CARD_ALPHA.raised), textMin: 4.5 });
-    layers.push({ name: "composer", color: mix(blurred ? soft : peak, d.raised, composerAlpha), textMin: 4.5 });
+    layers.push({ name: "composer", color: behind(blurred ? tone.soft : tone.peak, d.raised, composerAlpha), textMin: 4.5 });
   }
   if (floatAlpha < 1) {
-    layers.push({ name: `${style} floating surface`, color: mix(blurred ? soft : peak, floatTint, floatAlpha), textMin: 4.5 });
+    layers.push({
+      name: `${style} floating surface`,
+      color: behind(blurred ? tone.soft : tone.peak, floatTint, floatAlpha, underModal),
+      textMin: 4.5
+    });
   }
 
   return {
@@ -310,7 +379,7 @@ export function planSurfaces(
     floatAlpha,
     composerAlpha,
     blur,
-    saturate: d.light ? 1.9 : 1.7,
+    saturate: GLASS_SATURATE,
     layers
   };
 }
@@ -341,17 +410,20 @@ export interface SurfaceText {
 export function surfaceText(d: DerivedTheme, accent: string, plan: SurfacePlan): SurfaceText {
   const solid = [d.bg, d.surface, d.raised, d.hover];
   const against = [...solid, ...plan.layers.map((l) => l.color)];
-  const muted = fadeOn(d.text, d.bg, 0.38, against, 4.5);
-  const push = (c: string) => pushContrast(c, d.text, against, 4.5);
+  // The same slack as the floors: the layer colours are 8-bit hex, the browser composites in float.
+  const aa = 4.5 + CONTRAST_SLACK;
+  const a3 = 3 + CONTRAST_SLACK;
+  const muted = fadeOn(d.text, d.bg, 0.38, against, aa);
+  const push = (c: string) => pushContrast(c, d.text, against, aa);
   return {
-    secondary: fadeOn(d.text, d.bg, 0.19, against, 4.5),
+    secondary: fadeOn(d.text, d.bg, 0.19, against, aa),
     muted,
-    faint: fadeOn(d.text, d.bg, 0.62, against, 3),
-    lineStrong: fadeOn(d.text, d.bg, 0.5, plan.layers.map((l) => l.color).concat([d.bg, d.surface, d.raised]), 3),
+    faint: fadeOn(d.text, d.bg, 0.62, against, a3),
+    lineStrong: fadeOn(d.text, d.bg, 0.5, plan.layers.map((l) => l.color).concat([d.bg, d.surface, d.raised]), a3),
     success: push(d.success),
     warning: push(d.warning),
     danger: push(d.danger),
-    accentText: pushContrast(accent, d.text, against, 4.5)
+    accentText: pushContrast(accent, d.text, against, aa)
   };
 }
 
@@ -374,13 +446,15 @@ function grain(light: boolean): string {
 export function surfaceTokens(d: DerivedTheme, accent: string, plan: SurfacePlan): Record<string, string> {
   const ink = d.light ? "#28283c" : "#000000";
   const glassy = plan.style === "glass" || plan.style === "tinted";
+  // Solid and line keep the pre-244-E shell treatment: the card shadow, no top highlight.
+  const classic = !glassy;
   const filter = plan.blurred ? `blur(${plan.blur}px) saturate(${plan.saturate})` : "none";
   // Hairline: white-ish on dark glass, a faint ink ring under a white edge on light glass.
   const border = glassy
     ? d.light
       ? alpha(ink, 0.11)
       : alpha("#ffffff", 0.09)
-    : alpha(d.text, 0.08);
+    : "var(--color-border)";
   const highlight = glassy
     ? `inset 0 1px 0 ${alpha("#ffffff", d.light ? 0.75 : 0.1)}, inset 0 0 0 1px ${alpha("#ffffff", d.light ? 0.22 : 0.025)}`
     : `inset 0 1px 0 ${alpha(d.text, d.light ? 0 : 0.04)}`;
@@ -392,19 +466,19 @@ export function surfaceTokens(d: DerivedTheme, accent: string, plan: SurfacePlan
     "--shell-fill": shellFill,
     "--shell-filter": filter,
     "--shell-border": border,
-    "--shell-highlight": highlight,
-    "--shell-shadow": shadow,
+    "--shell-highlight": classic ? "inset 0 0 0 transparent" : highlight,
+    "--shell-shadow": classic ? "var(--shadow-card)" : shadow,
     "--shell-grain": plan.blurred ? grain(d.light) : "none",
     "--center-fill": plan.clearChat ? "transparent" : shellFill,
     "--center-filter": plan.clearChat ? "none" : filter,
     "--center-border": plan.clearChat ? "transparent" : border,
-    "--center-highlight": plan.clearChat ? "inset 0 0 0 transparent" : highlight,
-    "--center-shadow": plan.clearChat ? "0 0 0 transparent" : shadow,
+    "--center-highlight": plan.clearChat || classic ? "inset 0 0 0 transparent" : highlight,
+    "--center-shadow": plan.clearChat ? "0 0 0 transparent" : classic ? "var(--shadow-card)" : shadow,
     "--center-scrim": plan.clearChat ? alpha(plan.scrimTint, plan.scrimAlpha) : "transparent",
     "--composer-fill": plan.clearChat ? alpha(d.raised, plan.composerAlpha) : "var(--color-surface-elevated)",
-    "--composer-filter": plan.clearChat && plan.blurred ? `blur(${Math.round(plan.blur * 0.75)}px) saturate(${plan.saturate})` : "none",
+    "--composer-filter": plan.clearChat && plan.blurred ? `blur(${Math.round(plan.blur * COMPOSER_BLUR)}px) saturate(${plan.saturate})` : "none",
     "--float-fill": alpha(plan.floatTint, plan.floatAlpha),
-    "--float-filter": plan.blurred ? `blur(${Math.round(plan.blur * 1.2)}px) saturate(${plan.saturate})` : "none",
+    "--float-filter": plan.blurred ? `blur(${Math.round(plan.blur * FLOAT_BLUR)}px) saturate(${plan.saturate})` : "none",
     "--float-border": glassy ? border : alpha(d.text, 0.14),
     "--float-highlight": glassy
       ? `inset 0 1px 0 ${alpha("#ffffff", d.light ? 0.8 : 0.12)}`

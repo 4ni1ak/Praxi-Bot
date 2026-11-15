@@ -4,6 +4,7 @@ import {
   buildThemeTokens,
   DEFAULT_SURFACE,
   effectiveUiStyle,
+  GLASS_SATURATE,
   legibleAlpha,
   parsePanelBlur,
   parsePanelTransparency,
@@ -32,7 +33,7 @@ test("token resolution: every theme x style resolves the shell, center and float
     for (const style of UI_STYLES) {
       const t = buildThemeTokens(theme(id), "#3b82f6", style, true, { ...DEFAULT_SURFACE, blur: 30 });
       const d = deriveTheme(theme(id));
-      assert.equal(t["--shell-filter"], style === "glass" ? `blur(30px) saturate(${d.light ? 1.9 : 1.7})` : "none", `${id}/${style} filter`);
+      assert.equal(t["--shell-filter"], style === "glass" ? `blur(30px) saturate(${GLASS_SATURATE})` : "none", `${id}/${style} filter`);
       assert.equal(t["--center-filter"], t["--shell-filter"], `${id}/${style}: the center pane is one of the shell panels`);
       if (style === "solid") {
         assert.equal(t["--shell-fill"], d.bg, `${id}: solid panels are opaque`);
@@ -121,4 +122,36 @@ test("stored surface values are clamped and validated", () => {
   assert.equal(parseTransparentChat(true), true);
   assert.equal(parseTransparentChat("yes"), false);
   assert.equal(parseTransparentChat(undefined), false);
+});
+
+test("Solid and Line keep the pre-244-E shell look: card shadow, no top highlight, the theme's border", () => {
+  for (const id of THEMES) {
+    for (const style of ["solid", "line"] as const) {
+      for (const backdropActive of [false, true]) {
+        const t = buildThemeTokens(theme(id), "#3b82f6", style, backdropActive, DEFAULT_SURFACE);
+        const where = `${id}/${style}/${backdropActive ? "backdrop" : "plain"}`;
+        assert.equal(t["--shell-shadow"], "var(--shadow-card)", `${where}: shell shadow`);
+        assert.equal(t["--center-shadow"], "var(--shadow-card)", `${where}: center shadow`);
+        assert.equal(t["--shell-highlight"], "inset 0 0 0 transparent", `${where}: no top highlight`);
+        assert.equal(t["--center-highlight"], "inset 0 0 0 transparent", `${where}: no top highlight (center)`);
+        assert.equal(t["--shell-border"], "var(--color-border)", `${where}: the style's own border`);
+        assert.equal(t["--shell-grain"], "none");
+      }
+    }
+    // The translucent styles are the only ones with the new material.
+    for (const style of ["tinted", "glass"] as const) {
+      const t = buildThemeTokens(theme(id), "#3b82f6", style, true, DEFAULT_SURFACE);
+      assert.notEqual(t["--shell-shadow"], "var(--shadow-card)", `${id}/${style}: layered shadow`);
+      assert.notEqual(t["--shell-highlight"], "inset 0 0 0 transparent", `${id}/${style}: top highlight`);
+    }
+  }
+});
+
+test("modal over a light theme: the floor accounts for the darkened backdrop behind the dialog", () => {
+  const d = deriveTheme(theme("clay"));
+  const tone = { peak: { light: "#000000", dark: "#000000" }, soft: { light: "#000000", dark: "#000000" } };
+  const glass = planSurfaces(d, "glass", true, { ...DEFAULT_SURFACE, transparency: 100, tone });
+  const layer = glass.layers.find((l) => l.name.includes("floating"));
+  assert.ok(layer, "floating layer");
+  assert.ok(contrastRatio(d.text, layer.color) >= 4.5, `floating surface ${contrastRatio(d.text, layer.color).toFixed(2)}`);
 });
