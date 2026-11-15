@@ -577,7 +577,7 @@ fn native_exe_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
     if !ext.eq_ignore_ascii_case("exe") {
         return None;
     }
-    existing_inside(package_dir, joined)
+    existing_inside(package_dir, &joined)
 }
 
 /// An extensionless package bin whose first line is a `node` shebang, inside the package.
@@ -586,7 +586,7 @@ fn node_launcher_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
     if joined.extension().is_some() {
         return None;
     }
-    let file = existing_inside(package_dir, joined)?;
+    let file = existing_inside(package_dir, &joined)?;
     let mut head = [0u8; 128];
     let n = std::io::Read::read(&mut std::fs::File::open(&file).ok()?, &mut head).ok()?;
     let first = std::str::from_utf8(&head[..n]).ok()?.lines().next()?;
@@ -621,12 +621,12 @@ fn join_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
 }
 
 /// `joined` must be an existing file that canonicalizes inside `package_dir`.
-fn existing_inside(package_dir: &Path, joined: PathBuf) -> Option<PathBuf> {
+fn existing_inside(package_dir: &Path, joined: &Path) -> Option<PathBuf> {
     if !joined.is_file() {
         return None;
     }
     let root = std::fs::canonicalize(package_dir).ok()?;
-    let file = std::fs::canonicalize(&joined).ok()?;
+    let file = std::fs::canonicalize(joined).ok()?;
     (file.starts_with(&root) && file != root && crate::search::trusted_candidate(&file))
         .then_some(file)
 }
