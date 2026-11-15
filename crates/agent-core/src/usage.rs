@@ -165,6 +165,18 @@ impl Drop for Activity {
 }
 
 pub(crate) fn finish(sh: &Shared, run: RunId) {
+    // Cancellation may only signal a live drive task. Its in-flight call and
+    // background accounting must finish before a summary becomes eligible.
+    if !sh
+        .storage
+        .get_run(run)
+        .ok()
+        .flatten()
+        .and_then(|r| task_runtime::RunState::parse(&r.state))
+        .is_some_and(task_runtime::RunState::is_terminal)
+    {
+        return;
+    }
     let mut state = sh.usage.0.lock();
     state.entry(run).or_default().finished = true;
     flush_summaries(sh, &mut state);

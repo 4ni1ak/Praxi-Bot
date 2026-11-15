@@ -850,6 +850,77 @@ async fn graceful_shutdown_pauses_parent_and_child_and_the_restart_adopts_the_ch
     assert_eq!(msgs.last().unwrap().content, "parent: after restart");
 }
 
+#[tokio::test]
+async fn ledger_idle_descendant_cancellation_summarizes_child_and_parent_once() {
+    let env = setup();
+    let brain = Brain::new(|req| {
+        if is_child(req) {
+            None
+        } else {
+            calls_owned(vec![spawn("c1", "research")])
+        }
+    });
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let parent = lp.run_turn(env.chat, "go").unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !brain.requests().iter().any(is_child) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the child must actually call the fake provider");
+    let child = children(&env, parent)[0].id;
+    let paused = lp.shutdown(Duration::from_millis(200)).await;
+    assert!(paused.contains(&parent) && paused.contains(&child));
+    let recovered = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    recovered.recover().unwrap();
+    recovered.cancel(parent).unwrap();
+    assert_eq!(
+        recovered.runtime().state(parent).unwrap(),
+        RunState::Cancelled
+    );
+    assert_eq!(
+        recovered.runtime().state(child).unwrap(),
+        RunState::Cancelled
+    );
+    let summary: Vec<_> = env
+        .storage
+        .list_audit(env.user)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.action == "run.usage_summary")
+        .collect();
+    assert_eq!(summary.len(), 2);
+    let parent_total = &summary
+        .iter()
+        .find(|r| r.run_id == Some(parent))
+        .unwrap()
+        .detail;
+    let child_total = &summary
+        .iter()
+        .find(|r| r.run_id == Some(child))
+        .unwrap()
+        .detail;
+    assert_eq!(parent_total["executor"]["calls"], 1);
+    assert_eq!(parent_total["subagent"]["calls"], 1);
+    assert_eq!(child_total["subagent"]["calls"], 1);
+    assert_eq!(brain.requests().len(), 2);
+}
+
 // ---------- skills ----------
 
 fn skill_loop(env: &Env, brain: &Arc<Brain>) -> AgentLoop {

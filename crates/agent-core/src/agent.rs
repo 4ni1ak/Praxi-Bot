@@ -753,6 +753,7 @@ impl AgentLoop {
                 let reason = "Cannot resume: stored computer identity is unknown or no longer belongs to this daemon or a paired desktop (identity changed or state imported); start a new run";
                 self.cancel_wait_pc_timer(run.id);
                 self.rt.fail_paused(run.id, reason)?;
+                crate::usage::finish(&self.sh, run.id);
                 self.sh.storage.append_audit(
                     run.user_id,
                     Some(run.id),
@@ -860,6 +861,7 @@ impl AgentLoop {
         self.rt.cancel(run_id)?;
         // A cancelled parent takes its subagents with it.
         self.cancel_descendants(run_id);
+        crate::usage::finish(&self.sh, run_id);
         if idle_paused {
             if let Ok(Some(run)) = self.sh.storage.get_run(run_id)
                 && let Some(chat_id) = run.chat_id
@@ -1026,6 +1028,7 @@ impl AgentLoop {
         );
         let ctx = self.ctx_of(run_id);
         if self.rt.fail_paused(run_id, &message).is_ok() {
+            crate::usage::finish(&self.sh, run_id);
             self.sh.directives.lock().remove(&run_id);
             self.sh.run_computers.lock().remove(&run_id);
             if let Some(chat_id) = run.chat_id {

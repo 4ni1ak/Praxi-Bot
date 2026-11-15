@@ -10,6 +10,82 @@ fn rows(env: &Env, action: &str) -> Vec<storage::AuditEntry> {
         .collect()
 }
 
+async fn paused_after_model_call() -> (Env, AgentLoop, Arc<Fake>, protocol::RunId) {
+    let env = setup();
+    let write = Arc::new(tool("t.write", Effect::Write, "must stay unapproved"));
+    let fake = Fake::new(vec![calls(&[("c1", "t.write", json!({}))])]);
+    let mut config = cfg(Policy::approve_destructive());
+    config.schedule_approval_timeout = Duration::from_millis(50);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&write)],
+        profile(""),
+        config,
+    );
+    let run = lp
+        .run_scheduled(
+            env.chat,
+            protocol::TaskId::new(),
+            crate::ScheduleWork::Prompt("go".into()),
+        )
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+    assert_eq!(fake.n_requests(), 1);
+    assert_eq!(write.count.load(Ordering::SeqCst), 0);
+    assert!(!lp.sh.tasks.lock().contains_key(&run));
+    assert!(rows(&env, "run.usage_summary").is_empty());
+    (env, lp, fake, run)
+}
+
+#[tokio::test(start_paused = true)]
+async fn ledger_idle_paused_cancellation_writes_one_summary_including_after_restart() {
+    for restart in [false, true] {
+        let (env, lp, fake, run) = paused_after_model_call().await;
+        let lp = if restart {
+            let recovered = make_loop(
+                &env.storage,
+                env.bot,
+                &fake,
+                &[],
+                profile(""),
+                cfg(Policy::full()),
+            );
+            recovered.recover().unwrap();
+            recovered
+        } else {
+            lp
+        };
+        lp.cancel(run).unwrap();
+        assert_eq!(lp.runtime().state(run).unwrap(), RunState::Cancelled);
+        let summary = rows(&env, "run.usage_summary");
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].run_id, Some(run));
+        assert_eq!(summary[0].detail["executor"]["calls"], 1);
+        assert_eq!(fake.n_requests(), 1);
+        crate::usage::finish(&lp.sh, run);
+        assert_eq!(rows(&env, "run.usage_summary").len(), 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn ledger_idle_wait_pc_failure_keeps_earlier_model_calls() {
+    let (env, lp, fake, run) = paused_after_model_call().await;
+    // Recover the durable state of a turn that already called a model and
+    // then lost its computer while paused. The actual timeout handler runs.
+    env.storage
+        .set_run_pause_reason(run, Some(crate::computer_target::WAIT_FOR_PC_REASON))
+        .unwrap();
+    lp.fail_waiting_pc_run(run, Duration::from_secs(60));
+    lp.fail_waiting_pc_run(run, Duration::from_secs(60));
+    assert_eq!(lp.runtime().state(run).unwrap(), RunState::Failed);
+    let summary = rows(&env, "run.usage_summary");
+    assert_eq!(summary.len(), 1);
+    assert_eq!(summary[0].detail["executor"]["calls"], 1);
+    assert_eq!(fake.n_requests(), 1);
+}
+
 #[tokio::test]
 async fn ledger_counts_four_executor_calls_even_without_token_usage() {
     let env = setup();
