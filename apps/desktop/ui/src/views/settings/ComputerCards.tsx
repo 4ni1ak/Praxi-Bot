@@ -1,16 +1,39 @@
+import { Monitor } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { Button } from "ui";
 import {
   COMPUTER_TARGETS,
+  isComputerTargetAvailable,
+  parseComputerTarget,
   type ComputerTarget
 } from "../../lib/settingsPrefs";
+import { useLiveView } from "../../state/LiveViewContext";
 import styles from "../SettingsModal.module.css";
 import { PermissionsSection } from "../SettingsSections";
 import { EmailCard } from "./EmailCard";
 import { WebSearchCard } from "./WebSearchCard";
 import type { CardDef, SettingsBridge } from "./types";
 
-/** Where the bot runs: this PC, a browser tab, a remote host (soon) or nowhere. */
+function OpenLiveViewerRow() {
+  const { t } = useTranslation();
+  const { openViewer } = useLiveView();
+  return (
+    <div>
+      <Button
+        variant="secondary"
+        size="sm"
+        data-testid="computer-open-live-view"
+        onClick={() => openViewer()}
+      >
+        <Monitor />
+        <span>{t("liveView.expand")}</span>
+      </Button>
+    </div>
+  );
+}
+
+/** The connected computer; alternate targets stay unavailable until daemon support exists. */
 export function ComputerTargetBlock({
   value,
   onChange
@@ -26,8 +49,8 @@ export function ComputerTargetBlock({
       aria-label={t("settingsModal.computer.target.title")}
     >
       {COMPUTER_TARGETS.map((target) => {
-        const soon = target === "remote";
-        const active = value === target;
+        const soon = !isComputerTargetAvailable(target);
+        const active = parseComputerTarget(value) === target;
         return (
           <button
             key={target}
@@ -84,6 +107,7 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
             value={b.settings.computerTarget}
             onChange={(computerTarget) => b.update({ computerTarget })}
           />
+          <OpenLiveViewerRow />
         </div>
       )
     },

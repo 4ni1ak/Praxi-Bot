@@ -77,8 +77,8 @@
       "tr": "Türkçe"
     },
     "hotkey": {
-      "title": "Stop All Global Hotkey",
-      "description": "Emergency shortcut that immediately cancels any active bot run across all screens.",
+      "title": "Stop All Shortcut",
+      "description": "Cancels active bot runs. In the Windows desktop app, it also works while another app has focus. On other platforms, focus Praxi-Bot first.",
       "currentLabel": "Active shortcut",
       "record": "Record Shortcut",
       "recording": "Press modifier + key...",
@@ -93,6 +93,7 @@
       "title": "Model providers",
       "description": "API keys are stored in your OS keychain. Changes are picked up by the daemon without a restart.",
       "nativeOnly": "Provider management is available in the desktop app.",
+      "localDaemonOnly": "Provider setup is available for the local daemon started by this app. For other connections, manage providers on the computer running the daemon.",
       "none": "No providers configured yet.",
       "default": "Default",
       "disabled": "Disabled",
@@ -200,7 +201,7 @@
     "idleStep": "No active bot run.",
     "refusedBadge": "{{count}} bot action refused",
     "refusedBadge_other": "{{count}} bot actions refused",
-    "hotkeyHint": "Stop all: {{hotkey}}",
+    "hotkeyHint": "Stop in app: {{hotkey}}",
     "dragHandleAria": "Drag floating control widget"
   },
   "dev": {
@@ -819,7 +820,7 @@
       "floorsTitle": "Always-on safety protections",
       "floorMoney": "Financial & payment actions always require your explicit confirmation.",
       "floorNever": "Built-in never-list: credential stores, SSH/GPG private keys, and critical OS boot files are always blocked.",
-      "floorHotkey": "Press {{hotkey}} at any time — or click “Take the wheel” in the floating widget — to stop the bot immediately.",
+      "floorHotkey": "Press {{hotkey}} with Praxi-Bot focused, or click “Stop” in the floating widget. In the Windows desktop app, the shortcut also works while another app has focus.",
       "saving": "Saving safety policy…",
       "saveError": "Could not save workspace policy: {{message}}"
     },
@@ -1155,12 +1156,12 @@
       "soon": "Soon",
       "target": {
         "title": "Where the bot runs",
-        "description": "Choose where computer and browser tools execute."
+        "description": "Only the connected computer is currently supported. Manage computer and browser access in Permissions below."
       },
       "targets": {
         "this-pc": {
-          "title": "This PC",
-          "description": "Desktop automation on this machine."
+          "title": "Connected computer",
+          "description": "Tools run on the computer connected to this app."
         },
         "browser": {
           "title": "Browser only",
@@ -1579,6 +1580,111 @@
     "profile": "Bot profile",
     "chats": "Chats",
     "noChats": "No chats yet.",
-    "untitled": "New chat"
+    "untitled": "New chat",
+    "computer": "Computer"
+  },
+  "liveView": {
+    "title": "Computer live view",
+    "expand": "Open large viewer",
+    "close": "Close viewer",
+    "refresh": "Refresh targets",
+    "backToChat": "Back",
+    "targetsLabel": "Target screen",
+    "noTargets": "No screen targets reported yet.",
+    "hostLabel": "Host: {{host}}",
+    "viewOnly": "View only",
+    "interactive": "Interactive",
+    "privacyNotice": "Screen pixels cannot be redacted (may show passwords or OTPs); this stream stays in memory only and is never sent to model providers.",
+    "globalPauseNotice": "Taking control or pausing applies globally across all bots.",
+    "focusTrapHint": "Shift+Esc exits screen keyboard focus to the Bitirdim control.",
+    "captureTab": "Capture Tab",
+    "releaseFocus": "Exit keyboard",
+    "emergencyStop": "Stop bots",
+    "watchAction": "Take control",
+    "doneAction": "Bitirdim",
+    "doneLabel": "I'm done",
+    "retryingDone": "Handing back…",
+    "retryDone": "Retry Bitirdim",
+    "outcomeHint": "What did you complete? (optional)",
+    "outcomes": {
+      "none": "Just finished",
+      "login_completed": "Logged in",
+      "application_opened": "Opened app",
+      "other": "Other step"
+    },
+    "recoverAction": "Clear pause (the bot can run again)",
+    "reacquireAction": "Reacquire control",
+    "clearPauseAction": "Clear pause",
+    "otherOwner": "Controlled by {{owner}}",
+    "stageAlt": "Live screen preview for {{target}}",
+    "stageHint": "Interactive screen canvas. Click inside to focus, Shift+Esc to return to toolbar controls.",
+    "kind": {
+      "browser": "Browser",
+      "desktop": "Desktop"
+    },
+    "states": {
+      "watch": "Watching",
+      "acquiring": "Acquiring control…",
+      "active": "You are in control",
+      "finishing": "Handing back…",
+      "paused": "Paused",
+      "unavailable": "Unavailable",
+      "closed": "Closed",
+      "disconnected": "Connection lost",
+      "stale": "No recent frames"
+    },
+    "panelSummary": {
+      "watch": "Awake · Watching live",
+      "acquiring": "Acquiring control…",
+      "active": "You have the wheel",
+      "paused": "Paused · Waiting for you",
+      "unavailable": "Idle · Not active",
+      "empty": "No active screen"
+    },
+    "reasons": {
+      "browser_idle": "Browser is idle. Send a browser task to open a session before viewing.",
+      "remote_node_live_view": "Remote host live view is not available on this connection.",
+      "unsupported": "Screen streaming is not supported for this target.",
+      "unavailable": "Screen target is currently unavailable.",
+      "expired": "The view session expired. Reopen or refresh to watch again.",
+      "revoked": "Screen access for this device was revoked.",
+      "disconnected": "The screen connection dropped and the bot is paused. Reacquire control, or clear the pause so the bot can run again.",
+      "stale": "Frames became stale. Bots stay paused until a fresh frame arrives and you recover.",
+      "geometry_changed": "Screen resolution changed. Waiting for a refreshed frame.",
+      "refresh_pending": "Waiting for the target to publish a fresh frame.",
+      "frame_budget_exceeded": "Quality reduced automatically to fit bandwidth budget.",
+      "drain_timeout": "Timed out waiting for bot screen actions to finish.",
+      "audit_failed": "Action could not be recorded in the audit log; paused safely.",
+      "reset_failed": "Could not verify input key reset cleanly; paused safely.",
+      "partial_injection": "Input could not be applied completely.",
+      "rate_limited": "Input temporarily slowed down due to rate limits.",
+      "restart": "The daemon restarted while you had control. Clear the pause when you want the bot to continue.",
+      "persistence_failed": "Control state could not be saved cleanly; paused safely.",
+      "local_override": "Stopped locally. Clear the pause when ready to continue.",
+      "stream_stale": "No recent stream frames or heartbeats arrived; input locked safely.",
+      "resync_required": "Screen geometry or sequence updated; syncing with latest frame."
+    },
+    "targetLocked": "Finish control (Bitirdim) before switching the screen target.",
+    "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
+    "reviewApprovals": "Back to chat to answer",
+    "errors": {
+      "generic": "The request failed. Check the connection and try again.",
+      "release_failed": "Could not hand control back. The bot stays paused; retry Bitirdim.",
+      "release_unconfirmed": "The daemon still reports your takeover as active. Retry Bitirdim.",
+      "takeover_failed": "Could not take control. Try again.",
+      "recover_failed": "Could not recover control. Try again.",
+      "pause_changed": "The control state changed. Check the screen and try again.",
+      "release_interrupted": "The takeover was interrupted before Bitirdim finished, so the hand-back did not complete. Clear the pause to let the bot continue, or reacquire control."
+    },
+    "reconnecting": "Reconnecting to the screen stream…",
+    "releaseOnClose": "Closing hands control back to the bot first.",
+    "dismissKeepsControl": "Closing only hides the viewer: control stays with you. Use Bitirdim or Retry in the panel.",
+    "pausedBanner": {
+      "title": "Bot paused, waiting for you",
+      "body": "A screen takeover left the bot paused. Clear the pause to let it continue, or open the screen to reacquire control."
+    },
+    "openScreen": "Open screen",
+    "connectionLost": "Connection to the screen lost. Reconnecting…",
+    "clearForeignPause": "Clear {{owner}}'s pause"
   }
 }
