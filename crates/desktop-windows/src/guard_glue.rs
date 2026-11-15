@@ -164,6 +164,9 @@ impl<A: InputApi> InputSink for Sink<A> {
 }
 
 /// The one thing a guarded action may do.
+// Only the Windows backend executes a plan; off Windows its payloads are
+// built by tests and never read.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug)]
 pub enum Plan<'a> {
     /// The focusing click, at a target resolved by the caller.
