@@ -229,9 +229,63 @@ asks. The cost is an edit that did not follow a private read.
 A shell, a script, a desktop launch and desktop input (`desktop_type`,
 `desktop_key`, `desktop_set_value`, `desktop_drag`) start a program or drive the
 keyboard on your behalf. After a run has put untrusted content in front of the
-model, each of them asks every time, once, with the full command or input on the
-card. A standing grant, the read shortcut, a Full preset and
-`allow_egress_after_reads` do not cover that ask.
+model, each of them asks, once, with the full command or input on the card. A
+standing grant, the read shortcut, a Full preset and `allow_egress_after_reads`
+do not cover that ask. Shell, script and launch always ask, on every platform.
+
+Desktop input has one exception, and only where the computer can name the
+program it is typing into: the **run-scoped control grant**.
+
+- **What it is.** On a desktop input card the app may offer "This task:
+  <program>". The card names the program, its full path and the window. Approving
+  it lets this one run type, press keys, set values and drag inside that one
+  program (the executable path, the process id and the process start time, so a
+  second copy of the program, or a recycled process id, is another program) on
+  that one computer, until the run ends. It lives in memory only: it is not saved,
+  not shared with other runs, not inherited by a sub-agent, not kept for the next
+  message, and gone when the app restarts.
+- **What it satisfies.** Both the untrusted-content ask and a plain "ask first"
+  policy for those calls, exactly as "this chat" would for an ordinary tool. A
+  deny, an "always ask" tool, usage limits and the absolute floors (money, the
+  never-list) are decided first and still win.
+- **What it never covers.** Launching a program, a shell and a script (they ask
+  every time, and their card never offers the grant); Win/Super key combinations
+  and the other launcher or window-switching shortcuts (Ctrl+Esc, Alt+Tab, Alt+Esc,
+  Ctrl+Alt+Del), under any spelling the backend accepts; typing into any other
+  program; terminals and shells; apps with a built-in command line (editors with a
+  terminal, IDEs, Explorer, Task Manager, registry and management consoles);
+  browsers driven as desktop apps (use the browser tools); password managers;
+  password fields; dialogs of any kind, including file dialogs, the Run box and
+  message boxes; elevated programs; packaged-app frames that cannot be bound to
+  one program; and system launcher and sign-in surfaces. Each of these is an
+  ordinary once-only card that says why no grant is offered.
+- **Checked again right before the input is sent.** The decision happens before
+  the input is sent, so the Windows backend checks, inside its own input thread
+  immediately before the operating-system call, that the window that would
+  receive the input is still the granted program and still not on the lists above.
+  Typed text is sent in short pieces with the same check before each piece. A
+  mismatch, an unknown window, an unreadable process or a failed lookup sends
+  nothing; the call returns "not sent" and the next attempt asks again. This
+  applies to a saved workflow's replay too. The check narrows but cannot close
+  the gap between the check and the keystroke: a window can still take the focus
+  in the milliseconds between them.
+- **What it still lets through.** Anything the granted program does with
+  keyboard input, including the program's own shortcuts and any command or macro
+  feature it has that is not on the lists above. The card says that Praxi may type
+  things it has read into the app. Approve it for programs you would let a
+  stranger type into.
+
+Where the grant exists:
+
+| Computer | Desktop input after untrusted content |
+|---|---|
+| Windows (this PC) | Asks once for "This task: <program>", then free inside that program until the run ends. Everything in the "never covers" list still asks. |
+| Windows, another computer (paired PC) | Asks on every call. A remote computer does not report process identity yet. |
+| Linux (X11) | Asks on every call. The window's process id is set by the window's own program, so it cannot name a program reliably. |
+| Linux (Wayland), macOS | Asks on every call. No desktop backend can name a program yet. |
+
+Where no grant is offered the behaviour is exactly the earlier one: each call
+asks, once, with the input on the card.
 
 What counts as untrusted here is wider than web pages. Any file read, listing or
 search (`fs_read`, `fs_list`, `fs_search`), any git read (`git_status`,
@@ -246,12 +300,15 @@ rule.
 Consequences to expect:
 - The taint lasts for the later turns of the same chat for as long as the
   messages that carry it stay in the context. A new chat starts clean.
-- After the first file read in a chat, every shell, script, launch or desktop
-  input asks, once each. A standing "always allow shell" has no effect then.
+- After the first file read in a chat, every shell, script, launch and (outside a
+  run-scoped control grant on Windows) desktop input asks, once each. A standing
+  "always allow shell" has no effect then.
 - A scheduled run that reads something and then runs a command pauses for
   approval on every firing.
-- A saved workflow replays as untrusted, so a workflow with a shell, launch or
-  desktop input step asks on every replay.
+- A saved workflow replays as untrusted, so a workflow with a shell or launch step
+  asks on every replay, and so does each desktop input step except where a
+  run-scoped control grant for that program covers it (one card per program
+  instead of one per step).
 
 The card shows the command or the input, not the files the command will run. A
 run that wrote `package.json`, a Makefile or a script earlier can have a card
