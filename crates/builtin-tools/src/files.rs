@@ -105,6 +105,67 @@ struct Shared {
     /// not be resolved. Every `fs_*` call fails until this is false.
     roots_unresolved: bool,
     drives: DriveCache,
+    /// Per-bot scope source (file access mode). `None` keeps the static roots.
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
+    /// The user's home. With a scope source it is the base for relative paths
+    /// in "This computer" mode and anchors the sensitive-location denylist.
+    home: Option<PathBuf>,
+    /// Base directory relative paths resolve against (`None`: process cwd).
+    workdir: Option<PathBuf>,
+}
+
+impl Shared {
+    /// This call's view of the shared state under the bot's file access scope.
+    fn scoped(&self, scope: &crate::FsScope) -> Self {
+        let (roots, unresolved, workdir) = match scope {
+            crate::FsScope::Computer => (Vec::new(), self.home.is_none(), self.home.clone()),
+            crate::FsScope::Folders(folders) if folders.is_empty() => (Vec::new(), true, None),
+            crate::FsScope::Folders(folders) => match prepare_roots(folders, &self.drives) {
+                Ok(roots) => {
+                    let first = roots.first().cloned();
+                    (roots, false, first)
+                }
+                Err(()) => (Vec::new(), true, None),
+            },
+        };
+        Self {
+            checkpoints: self.checkpoints.clone(),
+            spill_dir: self.spill_dir.clone(),
+            data_dir: self.data_dir.clone(),
+            allowed_roots: roots,
+            grants: self.grants.clone(),
+            roots_unresolved: unresolved,
+            drives: DriveCache::new(),
+            access: None,
+            home: self.home.clone(),
+            workdir,
+        }
+    }
+}
+
+thread_local! {
+    static BASE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+fn with_base_dir<T>(base: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            BASE_DIR.with(|b| *b.borrow_mut() = None);
+        }
+    }
+    BASE_DIR.with(|b| *b.borrow_mut() = base);
+    let _reset = Reset;
+    f()
+}
+
+/// Directory relative tool paths start from: the bot's workspace or the user's
+/// home when a file access scope is active, else the process directory.
+fn base_dir() -> Result<PathBuf, ToolError> {
+    match BASE_DIR.with(|b| b.borrow().clone()) {
+        Some(dir) => Ok(dir),
+        None => std::env::current_dir().map_err(|e| exec_err(format!("current directory: {e}"))),
+    }
 }
 
 /// One file tool.
@@ -131,6 +192,18 @@ pub(crate) fn tools_bounded(
     allowed_roots: &[PathBuf],
     grants: &[PathBuf],
 ) -> Vec<Arc<dyn Tool>> {
+    tools_scoped(data_dir, allowed_roots, grants, None, None)
+}
+
+/// Like [`tools_bounded`] with a per-bot scope source and the home directory.
+#[must_use]
+pub(crate) fn tools_scoped(
+    data_dir: &Path,
+    allowed_roots: &[PathBuf],
+    grants: &[PathBuf],
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
+    home: Option<PathBuf>,
+) -> Vec<Arc<dyn Tool>> {
     let drives = DriveCache::new();
     let (allowed_roots, roots_unresolved) = match prepare_roots(allowed_roots, &drives) {
         Ok(roots) => (roots, false),
@@ -146,6 +219,9 @@ pub(crate) fn tools_bounded(
         grants,
         roots_unresolved,
         drives,
+        workdir: home.clone(),
+        access,
+        home,
     });
     let fs = PermissionCategory::Fs;
     let defs: Vec<(Op, ToolSpec)> = vec![
@@ -623,8 +699,7 @@ fn lexical_absolute(raw: &str) -> Result<PathBuf, ToolError> {
     } else if is_root_relative(path) {
         prefix_current_drive(path)?
     } else {
-        let cwd =
-            std::env::current_dir().map_err(|e| exec_err(format!("current directory: {e}")))?;
+        let cwd = base_dir()?;
         reject_syntax(&cwd.to_string_lossy())?;
         cwd.join(path)
     };
@@ -1119,6 +1194,70 @@ fn daemon_state_name(base: &str) -> bool {
 fn credential_blocked(sh: &Shared, lexical: &Path, resolved: &Path) -> bool {
     protected_ungranted(lexical, &sh.data_dir, &sh.grants)
         || protected_ungranted(resolved, &sh.data_dir, &sh.grants)
+        || sh.home.as_deref().is_some_and(|home| {
+            sensitive_location(lexical, home) || sensitive_location(resolved, home)
+        })
+}
+
+/// Home sub-folders with credentials or CLI/agent configuration. Never grantable.
+const SENSITIVE_HOME_DIRS: &[&str] = &[
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".azure",
+    ".kube",
+    ".claude",
+    ".codex",
+    ".gemini",
+    ".opencode",
+    ".config/gh",
+    ".config/gcloud",
+    ".config/opencode",
+    ".docker",
+];
+
+/// Home-level files with credentials.
+const SENSITIVE_HOME_FILES: &[&str] = &[".netrc", ".npmrc", ".pypirc", ".git-credentials"];
+
+/// OS-critical trees (compared after folding case on Windows).
+fn os_critical_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    #[cfg(windows)]
+    {
+        let root = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        dirs.push(root);
+    }
+    #[cfg(not(windows))]
+    {
+        for d in ["/etc", "/proc", "/sys", "/dev", "/boot", "/root"] {
+            dirs.push(PathBuf::from(d));
+        }
+    }
+    dirs
+}
+
+/// Credential, CLI-config and OS-critical locations that "This computer" mode
+/// keeps refused (the user's own home folder is otherwise open).
+fn sensitive_location(path: &Path, home: &Path) -> bool {
+    let p = norm_parts(&widen_for_compare(path));
+    let h = norm_parts(&widen_for_compare(home));
+    if p.len() > h.len() && p[..h.len()] == h[..] {
+        let rel: Vec<String> = p[h.len()..].iter().map(|c| canonical_name(c)).collect();
+        for d in SENSITIVE_HOME_DIRS {
+            let parts: Vec<&str> = d.split('/').collect();
+            if rel.len() >= parts.len() && rel.iter().zip(&parts).all(|(a, b)| a == b) {
+                return true;
+            }
+        }
+        if rel.len() == 1 && SENSITIVE_HOME_FILES.contains(&rel[0].as_str()) {
+            return true;
+        }
+    }
+    os_critical_dirs().iter().any(|d| {
+        let d = norm_parts(&widen_for_compare(d));
+        !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+    })
 }
 
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
@@ -2858,48 +2997,55 @@ impl Tool for FsTool {
     }
 
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
-        if self.shared.roots_unresolved {
+        let sh = match &self.shared.access {
+            Some(access) => {
+                let scope = access.scope(ctx.bot_id.as_deref());
+                Arc::new(self.shared.scoped(&scope))
+            }
+            None => self.shared.clone(),
+        };
+        if sh.roots_unresolved {
             return Err(denied(ROOT_UNRESOLVED_MSG));
         }
-        let sh = self.shared.clone();
+        let base = sh.workdir.clone();
         let run = ctx.run_id.clone();
         let text = match self.op {
             Op::Read => {
                 let i: ReadIn = parse(input)?;
-                blocking(move || do_read(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_read(&sh, &run, &i))).await?
             }
             Op::List => {
                 let i: ListIn = parse(input)?;
-                blocking(move || do_list(&sh, &i)).await?
+                blocking(move || with_base_dir(base, || do_list(&sh, &i))).await?
             }
             Op::Search => {
                 let i: SearchIn = parse(input)?;
-                blocking(move || do_search(&sh, &i)).await?
+                blocking(move || with_base_dir(base, || do_search(&sh, &i))).await?
             }
             Op::Write => {
                 let i: WriteIn = parse(input)?;
-                blocking(move || do_write(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_write(&sh, &run, &i))).await?
             }
             Op::Edit => {
                 let i: EditIn = parse(input)?;
-                blocking(move || do_edit(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_edit(&sh, &run, &i))).await?
             }
             Op::Move => {
                 let i: MoveIn = parse(input)?;
-                blocking(move || do_move(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_move(&sh, &run, &i))).await?
             }
             Op::Delete => {
                 let i: DeleteIn = parse(input)?;
-                blocking(move || do_delete(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_delete(&sh, &run, &i))).await?
             }
             Op::CheckpointList => {
                 let i: CpListIn = parse(input)?;
                 let run = i.run.unwrap_or(run);
-                blocking(move || do_cp_list(&sh, &run)).await?
+                blocking(move || with_base_dir(base, || do_cp_list(&sh, &run))).await?
             }
             Op::CheckpointRestore => {
                 let i: CpRestoreIn = parse(input)?;
-                blocking(move || do_cp_restore(&sh, &i.id)).await?
+                blocking(move || with_base_dir(base, || do_cp_restore(&sh, &i.id))).await?
             }
         };
         Ok(finish_text(ctx, &self.shared.spill_dir, text))
@@ -4672,6 +4818,74 @@ mod tests {
         assert!(ok.contains("safe"), "in-root reparse: {ok}");
     }
 
+    struct FixedScope(crate::FsScope);
+    impl crate::FsAccessProvider for FixedScope {
+        fn scope(&self, _bot: Option<&str>) -> crate::FsScope {
+            self.0.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn file_access_modes_computer_folder_and_home_base() {
+        let data = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let sandbox = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        fs::write(home.path().join("hello.txt"), "from-home").unwrap();
+        fs::write(elsewhere.path().join("note.txt"), "outside").unwrap();
+        fs::write(data.path().join("secrets.enc"), "secret-store").unwrap();
+        fs::create_dir_all(home.path().join(".ssh")).unwrap();
+        fs::write(home.path().join(".ssh").join("config"), "secret-ssh").unwrap();
+        let make = |scope| {
+            tools_scoped(
+                data.path(),
+                &[],
+                &[],
+                Some(Arc::new(FixedScope(scope))),
+                Some(home.path().to_path_buf()),
+            )
+        };
+
+        // This computer: reads outside any folder, relative paths start in home,
+        // protected locations stay refused.
+        let t = make(crate::FsScope::Computer);
+        let read = |t: &[Arc<dyn Tool>], path: String| {
+            let tool = get(t, "fs_read");
+            let c = ctx();
+            async move { tool.call(&c, json!({ "path": path })).await }
+        };
+        let out = read(&t, p(&elsewhere, "note.txt")).await.unwrap();
+        assert!(text(&out).contains("outside"));
+        let out = read(&t, "hello.txt".into()).await.unwrap();
+        assert!(
+            text(&out).contains("from-home"),
+            "relative path must use home"
+        );
+        let err = read(
+            &t,
+            home.path()
+                .join(".ssh")
+                .join("config")
+                .display()
+                .to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+        let err = read(&t, data.path().join("secrets.enc").display().to_string())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+
+        // Folder only: outside is refused, inside works, relative = the folder.
+        fs::write(sandbox.path().join("in.txt"), "inside").unwrap();
+        let t = make(crate::FsScope::Folders(vec![sandbox.path().to_path_buf()]));
+        let err = read(&t, p(&elsewhere, "note.txt")).await.unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+        let out = read(&t, "in.txt".into()).await.unwrap();
+        assert!(text(&out).contains("inside"));
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn windows_local_files_work_and_unc_is_not_opened() {
@@ -4771,6 +4985,9 @@ mod tests {
             grants,
             roots_unresolved: false,
             drives: DriveCache::new(),
+            access: None,
+            home: None,
+            workdir: None,
         }
     }
 

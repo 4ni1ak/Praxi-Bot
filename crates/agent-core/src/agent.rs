@@ -52,6 +52,26 @@ pub struct AgentLoop {
     pub(crate) rt: Arc<Runtime>,
 }
 
+/// File access scope of a bot, read from its profile (`[files]`). A caller
+/// that is not a known bot gets no file access.
+struct LoopFsAccess {
+    sh: Weak<Shared>,
+}
+
+impl builtin_tools::FsAccessProvider for LoopFsAccess {
+    fn scope(&self, bot_id: Option<&str>) -> builtin_tools::FsScope {
+        let denied = || builtin_tools::FsScope::Folders(Vec::new());
+        let Some(sh) = self.sh.upgrade() else {
+            return denied();
+        };
+        let Some(bot) = bot_id.and_then(|b| b.parse::<Uuid>().ok()).map(BotId) else {
+            return denied();
+        };
+        sh.profile_for(bot)
+            .map_or_else(|_| denied(), |p| p.files.scope())
+    }
+}
+
 impl AgentLoop {
     /// Build a loop and reload the persisted "always allow" grant rules.
     /// Use [`Self::with_builtin_tools`] to register the built-in tool set.
@@ -186,6 +206,11 @@ impl AgentLoop {
         }));
         *self.sh.checkpoint_access.write() =
             (cfg.fs_allowed_roots.clone(), cfg.fs_granted_paths.clone());
+        if cfg.fs_access.is_none() {
+            cfg.fs_access = Some(Arc::new(LoopFsAccess {
+                sh: Arc::downgrade(&self.sh),
+            }));
+        }
         if let Some(secrets) = &cfg.fill_secrets {
             let _ = self.sh.fill_secrets.set(Arc::clone(secrets));
         }

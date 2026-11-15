@@ -47,6 +47,14 @@ export interface BotDraft {
   categories: Record<PermissionCategoryName, PermissionLevel>;
   computer: "local";
   browser: "local";
+  /** File access: "This computer" (default) or "Folder only". */
+  files: BotFilesDraft;
+}
+
+export interface BotFilesDraft {
+  mode: "computer" | "folder";
+  /** Absolute folders; only used in "folder" mode. */
+  folders: string[];
 }
 
 export const BOT_COLORS = CHARACTER_COLORS;
@@ -182,8 +190,16 @@ export function draftFromBot(bot?: Bot): BotDraft {
     preset,
     categories,
     computer: "local",
-    browser: "local"
+    browser: "local",
+    files: filesFromConfig(obj(cfg.files))
   };
+}
+
+function filesFromConfig(f: Json): BotFilesDraft {
+  const folders = Array.isArray(f.folders)
+    ? f.folders.filter((x): x is string => typeof x === "string")
+    : [];
+  return { mode: f.mode === "folder" ? "folder" : "computer", folders };
 }
 
 function slug(name: string): string {
@@ -263,11 +279,25 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
     }
   }
 
+  // `files` is written only when the form changed it: the daemon validates the
+  // folders, and an untouched value keeps the stored one.
+  const folders = draft.files.folders.map((f) => f.trim()).filter(Boolean);
+  const filesChanged =
+    initial !== undefined &&
+    JSON.stringify({ ...draft.files, folders }) !== JSON.stringify(initial.files);
+  const files =
+    filesChanged || (!initial && draft.files.mode === "folder")
+      ? draft.files.mode === "folder"
+        ? { mode: "folder", folders }
+        : { mode: "computer" }
+      : undefined;
+
   return {
     ...old,
     bot: botSection,
     models,
     ...(permissions === undefined ? {} : { permissions }),
+    ...(files === undefined ? {} : { files }),
     runtime: {
       ...obj(old.runtime),
       computer: draft.computer,

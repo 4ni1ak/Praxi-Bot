@@ -77,6 +77,41 @@ impl Default for RouterSettings {
     }
 }
 
+/// `[files]` table: what the built-in file tools may reach.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct FilesConfig {
+    /// `computer` (default) or `folder`.
+    #[serde(default)]
+    pub mode: FileAccessMode,
+    /// Folders for `folder` mode. Empty in that mode denies every file call.
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
+/// Where the file tools may go.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileAccessMode {
+    /// "This computer": anywhere the user can, protected locations excepted.
+    #[default]
+    Computer,
+    /// "Folder only": `folders` and nothing else.
+    Folder,
+}
+
+impl FilesConfig {
+    /// The scope the file tools enforce for this configuration.
+    #[must_use]
+    pub fn scope(&self) -> builtin_tools::FsScope {
+        match self.mode {
+            FileAccessMode::Computer => builtin_tools::FsScope::Computer,
+            FileAccessMode::Folder => builtin_tools::FsScope::Folders(
+                self.folders.iter().map(std::path::PathBuf::from).collect(),
+            ),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct BotSection {
     id: String,
@@ -98,6 +133,8 @@ struct Raw {
     router: RouterSettings,
     #[serde(default)]
     runtime: computer_target::RuntimeConfig,
+    #[serde(default)]
+    files: FilesConfig,
 }
 
 /// A loaded bot profile.
@@ -121,6 +158,8 @@ pub struct BotProfile {
     pub router: RouterSettings,
     /// Runtime configuration (`[runtime]`, including `computer` target).
     pub runtime: computer_target::RuntimeConfig,
+    /// File access mode (`[files]`).
+    pub files: FilesConfig,
     allow: GlobSet,
     exclude: GlobSet,
     /// Extra allow-lists a tool must also match (subagent narrowing).
@@ -172,6 +211,7 @@ impl TryFrom<Raw> for BotProfile {
             tools: r.tools,
             router: r.router,
             runtime: r.runtime,
+            files: r.files,
         })
     }
 }

@@ -35,6 +35,12 @@ const FAMILIES: &[(&[&str], &str)] = &[
     (&["spawn_"], "sub-agents"),
 ];
 
+/// Index of the `fs_` family in [`FAMILIES`].
+const FS_FAMILY: usize = 2;
+/// The one added line about file reach (fixed text, cache-stable).
+const FILES_LINE: &str = "
+File tools take absolute paths and can read anywhere on this computer this bot's file access allows, not only a working folder.";
+
 /// Most connected apps (MCP server ids) named in the block.
 const MAX_SERVERS: usize = 8;
 /// Longest server id kept (longer ids are cut).
@@ -91,6 +97,9 @@ pub(crate) fn block<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<Stri
             labels.join("; ")
         );
     }
+    if families[FS_FAMILY] {
+        out.push_str(FILES_LINE);
+    }
     if !servers.is_empty() {
         let shown: Vec<&str> = servers
             .iter()
@@ -119,6 +128,7 @@ mod tests {
                 && !b.contains("shell commands")
         );
         assert!(b.contains("call find_tool first"));
+        assert!(b.contains("absolute paths"));
     }
 
     #[test]

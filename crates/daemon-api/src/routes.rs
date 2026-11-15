@@ -320,6 +320,12 @@ pub(crate) async fn create_bot(
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, mut config) = resolve_bot(input)?;
     crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
+    crate::file_access::guard_files_config(
+        &s,
+        peer.as_ref().map(|peer| &peer.0),
+        None,
+        &mut config,
+    )?;
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -414,6 +420,12 @@ pub(crate) async fn update_bot(
     crate::peer::protect_knowledge_config(
         peer.as_ref().map(|peer| &peer.0),
         bot.config.get("knowledge"),
+        &mut config,
+    )?;
+    crate::file_access::guard_files_config(
+        &s,
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("files"),
         &mut config,
     )?;
     if preserve_runtime

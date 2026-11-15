@@ -711,6 +711,19 @@
     }
   },
   "botForm": {
+    "files": {
+      "label": "Dosyalar",
+      "computer": {
+        "name": "Bu bilgisayar",
+        "hint": "Erişebildiğin her yerdeki dosyaları okur. Korunan yerler (Praxi verisi, parolalar, CLI ayarları, sistem klasörleri) kapalı kalır. Değişiklikler izin düzeyine göre yine sorar."
+      },
+      "folder": {
+        "name": "Yalnızca klasör",
+        "hint": "Korumalı alan: yalnızca aşağıdaki klasörler. Diğer her yer reddedilir."
+      },
+      "foldersLabel": "İzinli klasörler",
+      "foldersPlaceholder": "Her satıra bir mutlak klasör yolu"
+    },
     "apps": {
       "title": "Uygulamalar",
       "hint": "Bu botun kullanabileceği bağlı uygulamalar. Tüm botlara açık bir uygulamanın seçimini kaldırırsan diğer botlarınla sınırlanır. Uygulamaları Uygulamalar ekranından yönetebilirsin.",

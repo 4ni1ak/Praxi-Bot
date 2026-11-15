@@ -4041,3 +4041,60 @@ async fn the_stop_book_is_bounded_per_actor() {
     }
     assert!(t.state.stops().lock().len() <= crate::stop::LOCAL_MAX_STOPS);
 }
+
+#[tokio::test]
+async fn only_the_owner_changes_a_bots_file_access_mode() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let uri = format!("/v1/bots/{bot}/files");
+    let r = call(&t, Method::GET, &uri, None).await;
+    assert_eq!(r.json()["mode"], "computer", "default is This computer");
+
+    let folder = tempfile::tempdir().unwrap();
+    let body = json!({"mode": "folder", "folders": [folder.path()]});
+    let r = call(&t, Method::PUT, &uri, Some(body.clone())).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["mode"], "folder");
+
+    // A paired peer is refused on the dedicated route and on the generic editor.
+    let peer_put = |uri: String, body: Value| {
+        let t = &t;
+        async move {
+            let mut req = Request::builder()
+                .method(Method::PUT)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role: crate::PeerRole::Desktop,
+            });
+            crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    assert_eq!(
+        peer_put(uri.clone(), json!({"mode": "computer"})).await,
+        StatusCode::FORBIDDEN
+    );
+    let profile: Value = serde_json::from_str(&toml_to_json_profile(
+        &call(&t, Method::GET, &format!("/v1/bots/{bot}"), None).await,
+    ))
+    .unwrap();
+    let mut changed = profile.clone();
+    changed["files"] = json!({"mode": "computer"});
+    assert_eq!(
+        peer_put(format!("/v1/bots/{bot}"), json!({"config": changed})).await,
+        StatusCode::FORBIDDEN
+    );
+    let r = call(&t, Method::GET, &uri, None).await;
+    assert_eq!(r.json()["mode"], "folder", "peer attempts changed nothing");
+}
+
+fn toml_to_json_profile(bot: &Resp) -> String {
+    bot.json()["config"].to_string()
+}

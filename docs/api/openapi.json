@@ -202,6 +202,130 @@
         ]
       }
     },
+    "/v1/bots/{bot}/files": {
+      "get": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "The bot's file access mode.",
+        "operationId": "get_files",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileAccessDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Set the bot's file access mode. Local owner only.",
+        "operationId": "put_files",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileAccessDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileAccessDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{bot}/knowledge/email-captures": {
       "get": {
         "tags": [
@@ -7595,6 +7719,27 @@
             "description": "Human-readable message."
           }
         }
+      },
+      "FileAccessDto": {
+        "type": "object",
+        "description": "A bot's file access mode.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Absolute folders for `folder` mode."
+          },
+          "mode": {
+            "type": "string",
+            "description": "`computer` (This computer, default) or `folder` (Folder only)."
+          }
+        },
+        "additionalProperties": false
       },
       "FileChangeDto": {
         "type": "object",

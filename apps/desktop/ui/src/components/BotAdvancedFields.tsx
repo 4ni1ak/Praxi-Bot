@@ -331,6 +331,50 @@ export function BotPermissionsFields({
           </label>
         ))}
       </div>
+      <div className={formStyles.field}>
+        <span className={formStyles.label} id="bot-files-label">
+          {t("botForm.files.label")}
+        </span>
+        <div role="radiogroup" aria-labelledby="bot-files-label" className={styles.presets}>
+          {(["computer", "folder"] as const).map((m) => (
+            <label
+              key={m}
+              className={[styles.preset, draft.files.mode === m ? styles.presetActive : ""]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <input
+                type="radio"
+                name="files-mode"
+                value={m}
+                checked={draft.files.mode === m}
+                onChange={() => patch({ files: { ...draft.files, mode: m } })}
+              />
+              <span className={styles.presetText}>
+                <span className={styles.presetName}>{t(`botForm.files.${m}.name`)}</span>
+                <span className={formStyles.hint}>{t(`botForm.files.${m}.hint`)}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {draft.files.mode === "folder" ? (
+          <textarea
+            className={formStyles.input}
+            rows={3}
+            aria-label={t("botForm.files.foldersLabel")}
+            placeholder={t("botForm.files.foldersPlaceholder")}
+            value={draft.files.folders.join("\n")}
+            onChange={(e) =>
+              patch({
+                files: {
+                  ...draft.files,
+                  folders: e.target.value.split("\n")
+                }
+              })
+            }
+          />
+        ) : null}
+      </div>
       {draft.preset === "custom" ? (
         <div className={styles.categories}>
           {PERMISSION_CATEGORIES.map((c: PermissionCategoryName) => (

@@ -23,6 +23,7 @@ mod email_routes;
 pub mod error;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod file_access;
 mod fill_routes;
 pub mod host;
 mod knowledge;
@@ -881,6 +882,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/view/privileges/{peer_key}", put(v::set_privileges))
         .route("/v1/openapi.json", get(openapi::serve_openapi))
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
+        .route(
+            "/v1/bots/{bot}/files",
+            get(file_access::get_files).put(file_access::put_files),
+        )
         .route(
             "/v1/bots/{bot}/knowledge/sources",
             get(knowledge::list_sources)
