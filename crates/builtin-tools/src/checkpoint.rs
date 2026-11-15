@@ -5,7 +5,7 @@
 //! to its state at checkpoint time (paths that did not exist are removed) and
 //! first takes a checkpoint of the current state so a restore can be undone.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Component, Path, PathBuf};
@@ -1945,7 +1945,10 @@ impl CheckpointStore {
         self.changes_page(run_id, 0, 100)
     }
 
-    /// Inspect at most 100 paths, doing no current-file work for other pages.
+    /// Inspect at most 100 paths. Dropping fully undone rows happens before
+    /// paging, so eligible restored paths outside the page are also hashed,
+    /// within the shared review byte and entry budget (exhaustion keeps the
+    /// row rather than dropping an unverified change).
     ///
     /// # Errors
     /// Manifest or payload I/O failures.
@@ -2168,7 +2171,14 @@ impl CheckpointStore {
         id: &str,
         before_checkpoint: impl Fn(usize) -> io::Result<()>,
     ) -> io::Result<RestoreReport> {
-        self.restore_selection_inner(run_id, id, before_checkpoint, || {})
+        self.restore_selection_inner(
+            run_id,
+            id,
+            before_checkpoint,
+            &restore_link,
+            #[cfg(test)]
+            || {},
+        )
     }
 
     fn restore_selection_inner(
@@ -2176,7 +2186,8 @@ impl CheckpointStore {
         run_id: &str,
         id: &str,
         before_checkpoint: impl Fn(usize) -> io::Result<()>,
-        after_transaction: impl FnOnce(),
+        apply_link: &impl Fn(&Path, &Path, bool) -> LinkRestore,
+        #[cfg(test)] after_transaction: impl FnOnce(),
     ) -> io::Result<RestoreReport> {
         crate::files::with_data_dir_gate(&self.data_dir, || {
             let mut cps = self.selected_checkpoints(run_id, id)?;
@@ -2255,13 +2266,13 @@ impl CheckpointStore {
                             cp.links_sha256.is_some(),
                             &mut tx,
                             &mut report.warnings,
-                            &restore_link,
+                            apply_link,
                         )?;
                         if entry.backup.is_some() && staged.is_none() {
-                            written.insert(
-                                entry.path.clone(),
-                                current_state_digest(Path::new(&entry.path)).ok(),
-                            );
+                            // Skipped restoration: the untouched current file was
+                            // not restored, so it is never an agreed baseline.
+                            // Unknown; a retry needs the overwrite confirmation.
+                            written.insert(entry.path.clone(), None);
                             continue;
                         }
                         // The digest of what we stage is the baseline; the file is
@@ -2321,6 +2332,7 @@ impl CheckpointStore {
             } else {
                 tx.finish(&mut report.warnings);
             }
+            #[cfg(test)]
             after_transaction();
             // The safety snapshot is itself previewable and undoable. After a
             // partial restore the files may be in a mixed state, so nothing is
@@ -2715,7 +2727,93 @@ fn fully_undone(item: &CollapsedEntry, baselines: &HashMap<String, CheckpointEnt
             || (baseline.after_sha256.is_some()
                 && baseline.after_sha256 == before.sha256
                 && baseline.after_size == before.size));
-    restored_to_before && matches!(matches_recorded_after(baseline), Ok(Verification::Matched))
+    restored_to_before
+        && matches!(matches_recorded_after(baseline), Ok(Verification::Matched))
+        && same_node_kind_as_before(item)
+}
+
+/// The digest format does not encode node kind (a file holding a directory's
+/// digest input has that directory's size and digest), so a digest match alone
+/// cannot prove the pre-run node is back. Compare kinds explicitly: the root
+/// kind, and for a directory every nested node against the checkpoint payload.
+/// Anything unverifiable is "not the same", so the row stays.
+fn same_node_kind_as_before(item: &CollapsedEntry) -> bool {
+    let before = &item.before_entry;
+    if !before.existed {
+        return true;
+    }
+    let path = Path::new(&item.latest_entry.path);
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if is_link(&meta) || is_reparse(&meta) || meta.is_dir() != before.is_dir {
+        return false;
+    }
+    if !before.is_dir {
+        return meta.is_file();
+    }
+    if !item.before_links.is_empty() {
+        return false;
+    }
+    let Some(payload) = before
+        .backup
+        .as_deref()
+        .and_then(|rel| crate::files::join_store_rel(&item.before_dir, rel).ok())
+    else {
+        return false;
+    };
+    let mut left = MAX_CHECKPOINT_ENTRIES;
+    same_tree_kinds(path, &payload, 0, &mut left).unwrap_or(false)
+}
+
+fn same_tree_kinds(
+    current: &Path,
+    payload: &Path,
+    depth: usize,
+    left: &mut usize,
+) -> io::Result<bool> {
+    if depth > MAX_CHECKPOINT_DEPTH {
+        return Ok(false);
+    }
+    let mut now = BTreeMap::new();
+    for child in fs::read_dir(current)? {
+        let child = child?;
+        if crate::files::vet_checkpoint_node(&child.path())?
+            == crate::files::CheckpointNode::SkipProtected
+        {
+            continue;
+        }
+        now.insert(child.file_name(), child.path());
+    }
+    let mut then = BTreeMap::new();
+    for child in fs::read_dir(payload)? {
+        let child = child?;
+        then.insert(child.file_name(), child.path());
+    }
+    if now.len() != then.len() || now.keys().ne(then.keys()) {
+        return Ok(false);
+    }
+    for (name, cur) in &now {
+        *left = left
+            .checked_sub(1)
+            .ok_or_else(|| budget_err("kind verification budget exhausted"))?;
+        let (a, b) = (
+            fs::symlink_metadata(cur)?,
+            fs::symlink_metadata(&then[name])?,
+        );
+        if is_link(&a) || is_reparse(&a) || is_link(&b) || is_reparse(&b) {
+            return Ok(false);
+        }
+        let ok = match (a.is_dir(), b.is_dir()) {
+            (true, true) => same_tree_kinds(cur, &then[name], depth + 1, left)?,
+            (false, false) => a.is_file() && b.is_file(),
+            _ => false,
+        };
+        if !ok {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn build_file_change(
@@ -3160,6 +3258,7 @@ mod tests {
                 "run",
                 &cp,
                 |_| Ok(()),
+                &restore_link,
                 || {
                     fs::write(&file, "edited in the gap").unwrap();
                 },
@@ -3174,6 +3273,113 @@ mod tests {
         let rows = store.changes_for_run("run").unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].verification, Verification::Changed);
+    }
+
+    #[test]
+    fn skipped_link_restoration_records_no_baseline() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let referent = work.path().join("referent.txt");
+        fs::write(&referent, "referent").unwrap();
+        let link = work.path().join("lnk");
+        if make_link(&referent, &link, false).is_err() {
+            eprintln!("skipping: symlink privilege unavailable");
+            return;
+        }
+        let cp = store.create("run", "fs_write", &[&link]).unwrap();
+        fs::remove_file(&link).unwrap();
+        fs::write(&link, "user work").unwrap();
+        store.record_after(&cp).unwrap();
+        // The user keeps editing after the run finished.
+        fs::write(&link, "later user work").unwrap();
+        let report = store
+            .restore_selection_inner(
+                "run",
+                &cp,
+                |_| Ok(()),
+                &|_: &Path, _: &Path, _: bool| LinkRestore::skipped("injected skip".into()),
+                || {},
+            )
+            .unwrap();
+        assert!(!report.partial);
+        assert_eq!(fs::read_to_string(&link).unwrap(), "later user work");
+        // The untouched file must NOT have become the agreed baseline.
+        let entry = &store.find(&cp).unwrap().1.entries[0];
+        assert_ne!(
+            Some(sha256_hex_of(b"later user work")),
+            entry.after_sha256,
+            "skipped restoration adopted the current file as baseline"
+        );
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Changed
+        );
+    }
+
+    fn sha256_hex_of(bytes: &[u8]) -> String {
+        let mut hash = PayloadSha256::new();
+        hash.update(bytes);
+        hash.finish()
+    }
+
+    /// Bytes of the digest input of directory `{ a: 108 x bytes }`: they are
+    /// 108 bytes long, i.e. exactly that directory's size and digest.
+    fn directory_lookalike_bytes() -> Vec<u8> {
+        let mut input = b"praxi-checkpoint-directory\0".to_vec();
+        input.extend_from_slice(&1u64.to_be_bytes());
+        input.extend_from_slice(b"a");
+        input.extend_from_slice(&108u64.to_be_bytes());
+        input.extend_from_slice(sha256_hex_of(&[b'x'; 108]).as_bytes());
+        assert_eq!(input.len(), 108);
+        input
+    }
+
+    #[test]
+    fn a_file_with_a_directorys_digest_is_not_the_restored_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let tree = work.path().join("tree");
+        fs::create_dir(&tree).unwrap();
+        fs::write(tree.join("a"), [b'x'; 108]).unwrap();
+        let cp = store.create("run", "fs_delete", &[&tree]).unwrap();
+        fs::remove_dir_all(&tree).unwrap();
+        store.record_after(&cp).unwrap();
+        store.restore_selection("run", &cp).unwrap();
+        assert!(tree.is_dir());
+        assert_eq!(store.changes_for_run("run").unwrap().len(), 0);
+        // Replace the directory by a regular file with the same size+digest.
+        fs::remove_dir_all(&tree).unwrap();
+        fs::write(&tree, directory_lookalike_bytes()).unwrap();
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Matched,
+            "premise: size and digest alone cannot tell them apart"
+        );
+        assert_eq!(
+            store.changes_for_run("run").unwrap().len(),
+            1,
+            "a directory replaced by a file must stay reviewable"
+        );
+    }
+
+    #[test]
+    fn a_nested_file_with_a_directorys_digest_is_not_the_restored_subdirectory() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let tree = work.path().join("tree");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        fs::write(tree.join("sub").join("a"), [b'x'; 108]).unwrap();
+        let cp = store.create("run", "fs_delete", &[&tree]).unwrap();
+        fs::remove_dir_all(&tree).unwrap();
+        store.record_after(&cp).unwrap();
+        store.restore_selection("run", &cp).unwrap();
+        assert_eq!(store.changes_for_run("run").unwrap().len(), 0);
+        fs::remove_dir_all(tree.join("sub")).unwrap();
+        fs::write(tree.join("sub"), directory_lookalike_bytes()).unwrap();
+        assert_eq!(store.changes_for_run("run").unwrap().len(), 1);
     }
 
     #[test]
