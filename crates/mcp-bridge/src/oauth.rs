@@ -24,6 +24,8 @@ use rmcp::transport::auth::{
 use secret_store::SecretStore;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use tracing::instrument::WithSubscriber as _;
+
 use crate::error::{McpError, Result};
 
 /// How long a user has to finish the sign-in in the browser.
@@ -402,14 +404,56 @@ impl std::fmt::Debug for SignInOptions {
 }
 
 /// An OAuth error may quote a server response; keep it short and one line.
+/// An OAuth failure as a fixed category (review finding 6).  rmcp's and
+/// oauth2's texts are never used: an authorization server can reflect the
+/// submitted refresh token, client secret, verifier or code in
+/// `error_description`, and URLs can carry codes.  Only our own policy
+/// refusals (which name a host and nothing else) are added.
 fn auth_error(server: &str, error: &AuthError) -> McpError {
-    let text: String = error
-        .to_string()
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .take(300)
-        .collect();
-    flow_error(server, &text)
+    let category = match error {
+        AuthError::AuthorizationRequired | AuthError::TokenRefreshRejected(_) => {
+            "authorization is required"
+        }
+        AuthError::AuthorizationFailed(_) => "the authorization server refused the request",
+        AuthError::TokenExchangeFailed(_) => "the authorization code was not accepted",
+        AuthError::TokenRefreshFailed(_) => "the access token could not be refreshed",
+        AuthError::CredentialStoreError(_) => "the secret store could not keep the credentials",
+        AuthError::HttpError(_) => "the authorization server could not be reached",
+        AuthError::MetadataError(_)
+        | AuthError::DiscoveryRequestFailed { .. }
+        | AuthError::ProtectedResourceMetadataInvalid { .. }
+        | AuthError::AuthorizationServersUnavailable { .. }
+        | AuthError::NoAuthorizationSupport => "authorization server discovery failed",
+        AuthError::PkceUnsupported => "the authorization server does not support PKCE (S256)",
+        AuthError::UrlError(_) => "an OAuth URL is invalid",
+        AuthError::InvalidTokenType(_) => "the token type is not supported",
+        AuthError::TokenExpired => "the token expired",
+        AuthError::InvalidScope(_) | AuthError::InsufficientScope { .. } => {
+            "the requested scope was refused"
+        }
+        AuthError::RegistrationFailed(_) => "client registration failed",
+        AuthError::AuthorizationServerMismatch { .. }
+        | AuthError::AuthorizationServerMissingIssuer { .. } => {
+            "the authorization server's issuer does not match"
+        }
+        _ => "OAuth error",
+    };
+    // Our own refusal anywhere in the source chain: its text is ours.
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(e) = source {
+        if let Some(policy) = e.downcast_ref::<crate::oauth_net::OAuthNetError>() {
+            return flow_error(server, &format!("{category}: {policy}"));
+        }
+        source = e.source();
+    }
+    flow_error(server, category)
+}
+
+/// A dispatcher that drops every event: OAuth work runs under it so a
+/// dependency's debug output (rmcp logs the authorization code and the
+/// token response) can never reach a log, whatever subscriber is installed.
+fn quiet() -> tracing::Dispatch {
+    tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default())
 }
 
 /// A sign-in the user started: discovery and client registration are done,
@@ -442,6 +486,18 @@ impl SignIn {
     /// Discovery, policy ([`check_metadata`], rmcp's address filter) or
     /// registration failure. Nothing is stored in that case.
     pub async fn start(
+        server: &str,
+        url: &str,
+        store: Arc<dyn SecretStore>,
+        registrar: Option<SecretRegistrar>,
+        options: SignInOptions,
+    ) -> Result<Self> {
+        Self::start_quietly(server, url, store, registrar, options)
+            .with_subscriber(quiet())
+            .await
+    }
+
+    async fn start_quietly(
         server: &str,
         url: &str,
         store: Arc<dyn SecretStore>,
@@ -533,6 +589,16 @@ impl SignIn {
         timeout: Duration,
         pasted: Option<tokio::sync::oneshot::Receiver<String>>,
     ) -> Result<()> {
+        self.finish_quietly(timeout, pasted)
+            .with_subscriber(quiet())
+            .await
+    }
+
+    async fn finish_quietly(
+        self,
+        timeout: Duration,
+        pasted: Option<tokio::sync::oneshot::Receiver<String>>,
+    ) -> Result<()> {
         let redirect_uri = self.listener.redirect_uri();
         let callback = match pasted {
             None => {
@@ -587,6 +653,19 @@ fn refresh_due(stored: &StoredCredentials) -> bool {
 /// (issuer changed, refresh token missing or rejected); a transport error for
 /// a transient failure of the authorization server.
 pub async fn stored_bearer(
+    server: &str,
+    url: &str,
+    store: &Arc<dyn SecretStore>,
+    registrar: Option<&SecretRegistrar>,
+    force_refresh: bool,
+    options: &SignInOptions,
+) -> Result<Option<String>> {
+    stored_bearer_quietly(server, url, store, registrar, force_refresh, options)
+        .with_subscriber(quiet())
+        .await
+}
+
+async fn stored_bearer_quietly(
     server: &str,
     url: &str,
     store: &Arc<dyn SecretStore>,

@@ -266,13 +266,20 @@ impl Server {
     }
 
     /// Count a failure; quarantine (and hide the tools) when the threshold is hit.
+    /// `error` as text through the daemon's production redactor, when one is
+    /// installed: stored errors reach `GET /v1/mcp/servers` and stderr.
+    fn redacted(&self, error: &McpError) -> String {
+        let text = error.to_string();
+        self.redactor.as_ref().map_or(text.clone(), |r| r(&text))
+    }
+
     fn record_failure(&self, error: &McpError) {
         let mut st = self.state.lock();
         if st.retired {
             return;
         }
         st.failures = st.failures.saturating_add(1);
-        st.last_error = Some(error.to_string());
+        st.last_error = Some(self.redacted(error));
         if st.status == ServerStatus::Connected {
             st.status = ServerStatus::Disconnected;
         }
@@ -431,7 +438,7 @@ impl Server {
             let mut st = self.state.lock();
             if !st.retired {
                 st.auth_required = true;
-                st.last_error = Some(error.to_string());
+                st.last_error = Some(self.redacted(error));
                 if st.status == ServerStatus::Connected {
                     st.status = ServerStatus::Disconnected;
                 }
