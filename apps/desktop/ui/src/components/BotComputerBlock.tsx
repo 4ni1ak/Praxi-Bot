@@ -6,10 +6,13 @@ import {
   summarizeTarget,
   visibleActions
 } from "../lib/liveViewState";
+import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
 import {
   COMPUTER_FOOTER_KEY,
   computerFooter,
-  computerPlaceholderKey
+  computerPanel,
+  noScreenCode,
+  type PanelText
 } from "../lib/computerLabel";
 import { useLiveView } from "../state/LiveViewContext";
 import styles from "./BotComputerBlock.module.css";
@@ -36,9 +39,12 @@ function panelTone(
 
 export function BotComputerBlock() {
   const { t } = useTranslation();
+  const { activeComputerId, activeHostName } = useDaemon();
+  const onHost = activeComputerId !== LOCAL_COMPUTER;
   const {
     selectedTarget,
     targetsStatus,
+    availability,
     state,
     frameUrl,
     panelAction,
@@ -64,17 +70,22 @@ export function BotComputerBlock() {
     Boolean(summary && !summary.available)
   );
 
-  const summaryKey = !selectedTarget
-    ? "liveView.panelSummary.empty"
-    : state.viewState === "active"
-      ? "liveView.panelSummary.active"
-      : state.viewState === "acquiring"
-        ? "liveView.panelSummary.acquiring"
-        : state.viewState === "paused"
-          ? "liveView.panelSummary.paused"
-          : summary && !summary.available
-            ? "liveView.panelSummary.unavailable"
-            : "liveView.panelSummary.watch";
+  const panel = computerPanel({
+    hasTarget: Boolean(selectedTarget),
+    available: Boolean(summary?.available),
+    reason: summary?.reason ?? null,
+    viewState: state.viewState,
+    hasFrame: Boolean(frameUrl),
+    targetsStatus,
+    noScreen: noScreenCode(availability)
+  });
+  // Header pill and preview come from one model; the reason is a code the
+  // daemon serves, worded here in the user's language.
+  const say = (text: PanelText) =>
+    t(text.key, {
+      detail: text.detailKey ? t(text.detailKey) : "",
+      defaultValue: t("liveView.reasons.unavailable")
+    });
 
   const KindIcon = selectedTarget?.kind === "browser" ? Globe : Monitor;
 
@@ -108,9 +119,14 @@ export function BotComputerBlock() {
         <h3 className={styles.label} id="bot-panel-computer">
           {t("botPanel.computer")}
         </h3>
+        <span className={styles.where} data-testid="bot-computer-where" data-computer={onHost ? "host" : "local"}>
+          {onHost
+            ? t("botPanel.runsOnHost", { name: activeHostName ?? t("computerPicker.host") })
+            : t("botPanel.runsOnLocal")}
+        </span>
         <span className={styles.statusPill} data-testid="bot-computer-status">
           <i className={styles.dot} data-tone={tone} aria-hidden="true" />
-          <span>{t(summaryKey)}</span>
+          <span>{say(panel.pill)}</span>
         </span>
       </div>
 
@@ -136,13 +152,7 @@ export function BotComputerBlock() {
           ) : (
             <div className={styles.placeholder}>
               <KindIcon aria-hidden="true" />
-              <span>
-                {summary?.reason
-                  ? t(`liveView.reasons.${summary.reason}`, {
-                      defaultValue: t("liveView.reasons.unavailable")
-                    })
-                  : t(computerPlaceholderKey(targetsStatus))}
-              </span>
+              <span>{say(panel.preview)}</span>
             </div>
           )}
           {actionPercent ? (

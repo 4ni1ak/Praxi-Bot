@@ -102,6 +102,7 @@ impl SecretRef {
     pub fn new(name: impl Into<String>) -> Result<Self, SecretError> {
         let name = name.into();
         validate_name(&name)?;
+        refuse_fill_namespace(&name)?;
         if is_reserved_name(&name) || is_managed_oauth_name(&name) {
             return Err(SecretError::InvalidName(name));
         }
@@ -134,6 +135,30 @@ pub const RESERVED_PREFIX: &str = "composio/";
 pub fn is_reserved_name(name: &str) -> bool {
     let n = name.trim_start_matches('/').to_ascii_lowercase();
     n.starts_with(RESERVED_PREFIX) || n == "composio"
+}
+
+/// Store prefix of the owner-only fill secrets (see [`crate::FillSecrets`]).
+pub const FILL_PREFIX: &str = "fill/";
+
+/// Whether `name` is in the fill namespace (ASCII case-insensitive, so a
+/// case-folding backend cannot be used to step around the prefix).
+#[must_use]
+pub fn is_fill_name(name: &str) -> bool {
+    name.get(..FILL_PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(FILL_PREFIX))
+}
+
+/// Configuration (providers, MCP, `OpenAPI`, e-mail, channels) can never name a
+/// fill secret: only the fill tools, through [`crate::FillSecrets`], read them.
+///
+/// # Errors
+/// [`SecretError::Reserved`] for a `fill/` name.
+pub fn refuse_fill_namespace(name: &str) -> Result<(), SecretError> {
+    if is_fill_name(name) {
+        Err(SecretError::Reserved(name.to_string()))
+    } else {
+        Ok(())
+    }
 }
 
 /// Validate a secret name.
@@ -184,9 +209,14 @@ pub trait SecretStore: Send + Sync {
 
 /// Resolve a [`SecretRef`] to its value. Call only at the provider / MCP boundary.
 ///
+/// A `SecretRef` can also come from deserialisation (which skips
+/// [`SecretRef::new`]), so the fill namespace is refused here as well.
+///
 /// # Errors
-/// [`SecretError::NotFound`] if the secret does not exist.
+/// [`SecretError::NotFound`] if the secret does not exist,
+/// [`SecretError::Reserved`] for a fill secret.
 pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, SecretError> {
+    refuse_fill_namespace(r.name())?;
     // A deserialized reference skipped `SecretRef::new`: check again here,
     // the one place every configured reference is resolved.
     if is_managed_oauth_name(r.name()) || is_reserved_name(r.name()) {

@@ -71,6 +71,10 @@ pub struct BotDto {
     pub config: Value,
     /// Creation time.
     pub created_at_ms: i64,
+    /// Bot revision: starts at 1; profile writes and skill assignment changes
+    /// advance it in the write transaction. Send the loaded value back as
+    /// `expected_version` to both PUT and PATCH.
+    pub version: i64,
     /// The truth about what the bot may do: its stored policy merged with its
     /// persisted "always allow" grants.  Only present in `GET /v1/bots/{id}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -164,6 +168,10 @@ pub struct AnswerResponse {
 /// one of `config` / `profile_toml` is required.
 #[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct BotInput {
+    /// Required for PUT: version of the profile being replaced. Missing is 428;
+    /// stale is 409 with the current bot. Not used when creating a bot.
+    #[serde(default)]
+    pub expected_version: Option<i64>,
     /// Display name (defaults to the profile's `[bot].name`).
     #[serde(default)]
     pub name: Option<String>,
@@ -177,6 +185,56 @@ pub struct BotInput {
     /// when both are supplied. Omission on update preserves the stored target.
     #[serde(default)]
     pub runtime: Option<RuntimeConfigDto>,
+}
+
+/// How one [`BotPatchOp`] changes the profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BotPatchKind {
+    /// Set the value at `path` (missing parent objects are created).
+    Set,
+    /// Remove the key at `path` (no effect when it is absent).
+    Unset,
+}
+
+/// One field-level change of a bot profile.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BotPatchOp {
+    /// `set` or `unset`.
+    pub op: BotPatchKind,
+    /// RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,
+    /// `/permissions/categories/fs/level`, `/runtime/computer`.  Object keys
+    /// only: a path through an array or a scalar is refused. At most 32 segments
+    /// and 4096 bytes; resulting profile depth at most 32.
+    pub path: String,
+    /// The new value (`set` only).
+    #[serde(default)]
+    pub value: Value,
+}
+
+/// `PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.
+/// Every field not named - including unknown keys - stays exactly as stored.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BotPatchInput {
+    /// The version the client loaded (`BotDto::version`).  A different current
+    /// version refuses the whole patch with `409` and returns the current bot.
+    pub expected_version: i64,
+    /// New display name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Profile changes, applied in order (at most 128). Values/result use a
+    /// conservative 1 MiB escaped JSON budget; excessive input is 400.
+    #[serde(default)]
+    pub ops: Vec<BotPatchOp>,
+}
+
+/// `409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BotConflictBody {
+    /// `version_conflict`.
+    pub error: crate::error::ErrorDetail,
+    /// The current bot, with its current version.
+    pub current: BotDto,
 }
 
 /// A chat thread.

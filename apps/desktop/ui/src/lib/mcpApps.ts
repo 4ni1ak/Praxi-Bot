@@ -503,7 +503,7 @@ export async function saveBotAndApps(
   allBotIds: string[]
 ): Promise<{ bot: Bot } & AppsResult> {
   const bot = target
-    ? await api.updateBot(target.id, input)
+    ? await api.updateBot(target.id, { ...input, expected_version: target.version })
     : await api.createBot(input);
   const apps = await applyAppsSelection(api, bot.id, initial, allowed, allBotIds);
   return { bot, ...apps };

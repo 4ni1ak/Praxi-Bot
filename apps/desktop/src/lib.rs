@@ -215,6 +215,19 @@ fn ensure_auxiliary_windows(app: &AppHandle) {
     }
 }
 
+/// Heavy start-up work that used to run inside the setup hook (i.e. on the
+/// main thread, before the event loop pumped): create the overlay/widget
+/// webviews and start the daemon, so the UI's own `daemon_connect` finds it
+/// already coming up.  Nothing here runs on, or waits for, the main thread.
+fn spawn_startup_work(app: &AppHandle, daemon: Arc<DaemonHandle>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let for_windows = app.clone();
+        let _ = tokio::task::spawn_blocking(move || ensure_auxiliary_windows(&for_windows)).await;
+        let _ = daemon::connect(&daemon).await;
+    });
+}
+
 /// The widget's visibility policy state (see `widget_visibility`), shared by every update.
 type SharedWidgetVisibility = Arc<std::sync::Mutex<WidgetVisibility>>;
 
@@ -714,9 +727,10 @@ fn simulate_bot_run(
     Ok(control.snapshot())
 }
 
+/// `async` so it never runs on the main thread (a sync command does, and the
+/// monitor query round-trips through that thread).
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-fn get_monitors_geometry(app: AppHandle) -> Vec<MonitorGeometry> {
+async fn get_monitors_geometry(app: AppHandle) -> Vec<MonitorGeometry> {
     collect_monitors_geometry(&app)
 }
 
@@ -891,11 +905,15 @@ fn write_windows_autostart(reg_key: &str, enabled: bool) -> Result<bool, String>
 
 /// Check whether per-user autostart (`HKCU\...\Run\Praxi-Bot`) is enabled.
 /// Off by default.
+///
+/// `async` + `spawn_blocking`: the lookup spawns `reg.exe`, which must not stall
+/// the main (UI) thread while the app is starting.
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-fn get_autostart(window: Window) -> Result<bool, String> {
+async fn get_autostart(window: Window) -> Result<bool, String> {
     require_window(&window, MAIN_ONLY)?;
-    Ok(get_autostart_impl())
+    tokio::task::spawn_blocking(get_autostart_impl)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn get_autostart_impl() -> bool {
@@ -917,7 +935,7 @@ fn autostart_supported_impl() -> bool {
 /// Whether autostart can be toggled on this platform (the UI disables the
 /// toggle when this is false).
 #[tauri::command]
-fn autostart_supported() -> bool {
+async fn autostart_supported() -> bool {
     autostart_supported_impl()
 }
 
@@ -941,10 +959,11 @@ fn set_autostart_impl(enabled: bool) -> Result<bool, String> {
 /// # Errors
 /// Off Windows, or when the registry write/read-back disagrees with `enabled`.
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-fn set_autostart(window: Window, enabled: bool) -> Result<bool, String> {
+async fn set_autostart(window: Window, enabled: bool) -> Result<bool, String> {
     require_window(&window, MAIN_ONLY)?;
-    set_autostart_impl(enabled)
+    tokio::task::spawn_blocking(move || set_autostart_impl(enabled))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn setup_dev_menu(app: &tauri::App, control: ControlHandle) {
@@ -1021,6 +1040,7 @@ pub fn run() {
     let control_for_setup = control.clone();
     let daemon_handle = Arc::new(DaemonHandle::default());
     let daemon_for_exit = Arc::clone(&daemon_handle);
+    let daemon_for_setup = Arc::clone(&daemon_handle);
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -1035,7 +1055,10 @@ pub fn run() {
                 app: app_handle.clone(),
             }));
 
-            ensure_auxiliary_windows(&app_handle);
+            // Overlay + widget webviews (WebView2 start-up, one per monitor) are
+            // built off the main thread so the main window paints and answers
+            // the OS from its first frame; the daemon starts in parallel.
+            spawn_startup_work(&app_handle, Arc::clone(&daemon_for_setup));
             spawn_global_hotkey_listener(control_for_setup.clone());
             setup_dev_menu(app, control_for_setup.clone());
             if let Err(e) = shell::setup_tray(&app_handle) {
@@ -1123,6 +1146,24 @@ mod tests {
         assert!(!valid_provider_id("--base-url"));
         assert!(!valid_provider_id("a b"));
         assert!(!valid_provider_id("a;b"));
+    }
+
+    /// Sync `#[tauri::command]`s run on the main thread: the ones that spawn a
+    /// process or query monitors must stay `async` (startup "not responding").
+    #[test]
+    fn blocking_commands_stay_off_the_main_thread() {
+        let src = include_str!("lib.rs");
+        for name in [
+            "get_autostart",
+            "set_autostart",
+            "autostart_supported",
+            "get_monitors_geometry",
+        ] {
+            assert!(
+                src.contains(&format!("async fn {name}(")),
+                "`{name}` must be an async command"
+            );
+        }
     }
 
     #[cfg(not(windows))]

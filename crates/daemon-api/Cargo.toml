@@ -73,3 +73,7 @@ tower = { version = "0.5", features = ["util"] }
 [[bin]]
 name = "daemon-cli-fixture"
 path = "../cli-provider/tests/fixtures/runtime_cli.rs"
+
+[[bin]]
+name = "daemon-install-fixture"
+path = "tests/fixtures/install.rs"

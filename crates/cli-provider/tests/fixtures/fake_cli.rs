@@ -32,7 +32,7 @@ fn probe_tree(args: &[String]) -> bool {
     let Ok(mode) = std::env::var("PROBE_TREE_MODE") else {
         return false;
     };
-    if args != ["--version"] {
+    if args != ["--version"] && args.first().is_none_or(|arg| arg != "install") {
         return false;
     }
     let ready = std::env::var("PROBE_TREE_READY").unwrap();
@@ -98,6 +98,37 @@ fn main() {
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "install") {
+        if probe_tree(&args) {
+            return;
+        }
+        if let Ok(dir) = std::env::var("FAKE_INSTALL_LOG") {
+            let dir = std::path::Path::new(&dir);
+            std::fs::write(
+                dir.join("install-argv"),
+                serde_json::to_string(&args).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                dir.join("install-env"),
+                serde_json::to_string(
+                    &std::env::vars().collect::<std::collections::BTreeMap<_, _>>(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        println!("fixture output");
+        std::io::stdout().flush().unwrap();
+        match std::env::var("FAKE_INSTALL_MODE").as_deref() {
+            Ok("hang") => std::thread::sleep(Duration::from_secs(60)),
+            Ok("flood") => println!("{}", "x".repeat(65537)),
+            Ok("fail") => std::process::exit(1),
+            _ => {}
+        }
+        return;
+    }
+
     if probe_tree(&args) {
         return;
     }

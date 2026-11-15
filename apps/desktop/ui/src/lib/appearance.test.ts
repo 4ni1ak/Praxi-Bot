@@ -49,11 +49,15 @@ test("old saved preferences keep working", () => {
   assert.equal(upgraded.backdrop, "none");
 });
 
-test("settings saved before the surface system load as solid, opaque chat area, OS preference respected", () => {
+test("settings saved before the surface system load as solid, open (v6) chat area, OS preference respected", () => {
   // A 198-A settings object: style and backdrop, none of the 244-E fields.
   const old = normalizeAppearance({ themeMode: "obsidian", uiStyle: "solid", backdrop: "aurora", backdropDim: 40 });
   assert.equal(old.uiStyle, "solid");
-  assert.equal(old.transparentChat, false);
+  assert.equal(old.transparentChat, true);
+  // an old explicit transparentChat:false was never a choice for the v6 look: still open
+  assert.equal(normalizeAppearance({ transparentChat: false }).transparentChat, true);
+  // only the explicit panel flag brings the center card back
+  assert.equal(normalizeAppearance({ chatPanel: true }).transparentChat, false);
   assert.equal(old.transparencyOverride, false);
   assert.equal(old.panelTransparency, DEFAULT_APPEARANCE.panelTransparency);
   assert.equal(old.panelBlur, DEFAULT_APPEARANCE.panelBlur);
@@ -91,6 +95,7 @@ test("valid new values round-trip", () => {
     panelTransparency: 80,
     panelBlur: 40,
     transparentChat: true,
+    chatPanel: false,
     transparencyOverride: true
   };
   assert.deepEqual(normalizeAppearance(stored), {

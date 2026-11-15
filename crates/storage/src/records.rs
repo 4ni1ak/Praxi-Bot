@@ -33,6 +33,29 @@ pub struct Bot {
     pub created_at_ms: i64,
 }
 
+/// Outcome of [`crate::Storage::patch_bot`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum BotPatch {
+    /// Written; `version` is the new profile version.
+    Applied {
+        /// The bot as stored now.
+        bot: Bot,
+        /// New profile version.
+        version: i64,
+    },
+    /// The stored version differs from the expected one; nothing was written.
+    Stale {
+        /// The bot as stored now.
+        bot: Bot,
+        /// Its current version.
+        version: i64,
+    },
+    /// No such bot.
+    Missing,
+    /// The change function refused the edit; nothing was written.
+    Rejected(String),
+}
+
 /// A chat thread.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chat {

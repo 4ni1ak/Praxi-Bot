@@ -111,6 +111,7 @@ impl AgentLoop {
                 rt: OnceLock::new(),
                 spawn_gate: Mutex::new(()),
                 skills: OnceLock::new(),
+                fill_secrets: OnceLock::new(),
                 skill_hints: RwLock::new(None),
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
@@ -118,6 +119,7 @@ impl AgentLoop {
                 identity_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
                 exec_gate: Mutex::new(()),
+                native_runs: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 task_reap_gate: Mutex::new(None),
                 #[cfg(test)]
@@ -185,6 +187,9 @@ impl AgentLoop {
         }));
         *self.sh.checkpoint_access.write() =
             (cfg.fs_allowed_roots.clone(), cfg.fs_granted_paths.clone());
+        if let Some(secrets) = &cfg.fill_secrets {
+            let _ = self.sh.fill_secrets.set(Arc::clone(secrets));
+        }
         let _ = builtin_tools::register_builtin_tools(&self.sh.tools, cfg);
         self
     }
@@ -364,6 +369,22 @@ impl AgentLoop {
         self.sh.price_for(model)
     }
 
+    /// Owner kill switch: end every running native-tools engine process of
+    /// `bot_id` (the whole process tree). Returns how many were signalled.
+    #[allow(clippy::must_use_candidate)] // Callers may ignore the count.
+    pub fn kill_native_runs(&self, bot_id: BotId) -> usize {
+        let runs = self
+            .sh
+            .native_runs
+            .lock()
+            .remove(&bot_id)
+            .unwrap_or_default();
+        for (_, token) in &runs {
+            token.cancel();
+        }
+        runs.len()
+    }
+
     /// Register the profile used by `bot_id` (otherwise the bot row's JSON
     /// `config` is parsed as a profile).
     pub fn add_profile(&self, bot_id: BotId, profile: BotProfile) {
@@ -400,6 +421,7 @@ impl AgentLoop {
             control: Some(Arc::new(LoopControl {
                 sh: Arc::downgrade(&self.sh),
             })),
+            fill_secrets: self.sh.fill_secrets.get().cloned(),
             ..workflow_replay::ReplayOptions::default()
         };
         let (s2, h2, o2) = (store.clone(), handles.clone(), opts.clone());

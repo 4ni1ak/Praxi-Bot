@@ -1,12 +1,16 @@
+import { createSseParser } from "./events.ts";
 import type { Connection } from "./connection";
 import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
 import type {
   AcceptedResponse,
   Approval,
   Bot,
+  BotEngineInput,
   BotInput,
   Chat,
   ConfiguredProviderDto,
+  CliEngineDto,
+  CliInstallApproval,
   ControlModeName,
   ControlStateDto,
   ControlVerdict,
@@ -19,6 +23,9 @@ import type {
   Grant,
   GrantTarget,
   Health,
+  HostLinkConnection,
+  HostLinkInfo,
+  HostLinkList,
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
@@ -58,6 +65,7 @@ import type {
   TakeoverAccepted,
   TakeoverRequest,
   TargetInfo,
+  TargetUnavailable,
   UsageSummary,
   ViewHeartbeat,
   WebSearchConfig,
@@ -68,6 +76,7 @@ import type {
   RestorePreview,
   RestoreResponse,
   BotSkills,
+  BotPatchInput,
   PutBotSkillsInput,
   SkillsCatalog,
   StopRunsInput,
@@ -80,12 +89,15 @@ export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** The parsed JSON body of the error response, when it had one (a `409` carries `current`). */
+  readonly body?: unknown;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -213,22 +225,74 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
+  }
+
+  cliEngines(refresh = false): Promise<CliEngineDto[]> {
+    return this.request("GET", "/providers/cli", { query: { refresh: refresh ? "1" : null } });
+  }
+
+  previewCliInstall(id: string): Promise<CliInstallApproval> {
+    return this.request("POST", "/providers/cli/install", { body: { id } });
+  }
+
+  async decideCliInstall(id: string, decision: "approve" | "deny", onOutput: (text: string) => void): Promise<void> {
+    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision } });
+    const reader = res.body?.getReader();
+    if (!reader) { throw new Error("Missing install stream"); }
+    let done = false;
+    let failure: string | null = null;
+    const parse = createSseParser((message) => {
+      const data = JSON.parse(message.data) as { text?: string; ok?: boolean; error?: string };
+      if (message.event === "output" && typeof data.text === "string") { onOutput(data.text); }
+      if (message.event === "done") {
+        done = true;
+        if (!data.ok && data.error !== "denied") { failure = data.error ?? "install_failed"; }
+      }
+    });
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) { break; }
+        parse(decoder.decode(chunk.value, { stream: true }));
+      }
+      parse(decoder.decode());
+      if (!done) { throw new Error("Install stream disconnected"); }
+      if (failure) { throw new Error(failure); }
+    } finally { await reader.cancel(); reader.releaseLock(); }
   }
 
   health(): Promise<Health> {
     return this.request("GET", "/health", { auth: false });
   }
 
+  /** Paired hosts and their channel state (this computer's own daemon). */
+  listHosts(): Promise<HostLinkList> {
+    return this.request("GET", "/hosts");
+  }
+  /** Pair with a host using the ticket from `bot host invite --role desktop`. */
+  pairHost(ticket: string): Promise<HostLinkInfo> {
+    return this.request("POST", "/hosts/pair", { body: { ticket } });
+  }
+  /** Open (or reuse) the guarded channel to a paired host. */
+  connectHost(id: string): Promise<HostLinkConnection> {
+    return this.request("POST", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
+  disconnectHost(id: string): Promise<void> {
+    return this.request("DELETE", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
   listBots(): Promise<Bot[]> {
     return this.request("GET", "/bots");
   }
@@ -240,6 +304,21 @@ export class ApiClient {
   }
   updateBot(id: string, input: BotInput): Promise<Bot> {
     return this.request("PUT", `/bots/${id}`, { body: input });
+  }
+  /**
+   * Change only the listed fields of a bot, atomically, if `expected_version` is still current;
+   * a stale version is a `409` whose body carries the current bot (`conflictBot`).
+   */
+  patchBot(id: string, input: BotPatchInput): Promise<Bot> {
+    return this.request("PATCH", `/bots/${id}`, { body: input });
+  }
+  /** Owner-only: engine mode, approval level and workspace of a bot. */
+  putBotEngine(id: string, input: BotEngineInput): Promise<Bot> {
+    return this.request("PUT", `/bots/${id}/engine`, { body: input });
+  }
+  /** Owner kill switch: back to Praxi-governed and end the bot's CLI processes. */
+  killBotEngine(id: string): Promise<Bot> {
+    return this.request("POST", `/bots/${id}/engine/kill`);
   }
   deleteBot(id: string): Promise<void> {
     return this.request("DELETE", `/bots/${id}`);
@@ -417,6 +496,10 @@ export class ApiClient {
   listViewTargets(): Promise<TargetInfo[]> {
     return this.request("GET", "/view/targets");
   }
+  /** Which kinds of screen this host cannot offer, and why. */
+  listViewAvailability(): Promise<TargetUnavailable[]> {
+    return this.request("GET", "/view/availability");
+  }
   createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
     return this.request("POST", "/view/sessions", { body: input });
   }
@@ -488,14 +571,16 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
   }

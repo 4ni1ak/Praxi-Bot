@@ -20,6 +20,9 @@ pub mod checkpoint;
 pub mod control;
 pub mod desktop;
 pub mod files;
+pub mod fill_secret;
+#[cfg(test)]
+mod fill_secret_tests;
 pub mod knowledge;
 pub mod knowledge_brain;
 pub mod meta;
@@ -55,7 +58,8 @@ pub use control::{
     ActionPermit, ControlRequest, DesktopControlGate, OBSERVATION_DISCARDED, PermitValidator,
 };
 pub use desktop::{DesktopSettings, SharedOcr};
-pub use files::{try_with_exclusive_file_access, with_checkpoint_access};
+pub use files::{try_with_exclusive_file_access, with_checkpoint_access, workspace_refusal};
+pub use fill_secret::{SECRETS_LIST, secrets_list_tool};
 pub use meta::{META_TOOL_NAMES, QUESTION_CARD_KIND, TODO_LIST_KIND, TodoItem, TodoStatus};
 pub use schedule::{
     PreviousSchedule, SCHEDULE_TOOL_NAMES, ScheduleCaller, ScheduleChange, ScheduleHost,
@@ -110,6 +114,10 @@ pub struct BuiltinConfig {
     /// Credential paths the host explicitly grants to `fs_*`. A grant does not
     /// permit UNC, device, or out-of-root paths.
     pub fs_granted_paths: Vec<PathBuf>,
+    /// Owner-stored fill secrets. With `Some`, `browser_fill`, `desktop_type`
+    /// and `desktop_set_value` accept `secret: "<name>"` and the model gets
+    /// `secrets_list`; with `None` a `secret` parameter is refused.
+    pub fill_secrets: Option<Arc<secret_store::FillSecrets>>,
 }
 
 impl BuiltinConfig {
@@ -135,6 +143,7 @@ impl BuiltinConfig {
             knowledge: None,
             fs_allowed_roots: Vec::new(),
             fs_granted_paths: Vec::new(),
+            fill_secrets: None,
         }
     }
 
@@ -158,22 +167,33 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     }
     let mut all: Vec<Arc<dyn Tool>> = Vec::new();
     if cfg.desktop.is_some() || cfg.dynamic_desktop {
-        all.extend(desktop::tools_dynamic(
+        all.extend(desktop::tools_dynamic_with_secrets(
             cfg.desktop,
             cfg.ocr,
             &cfg.data_dir,
             cfg.desktop_settings,
             cfg.control.clone(),
+            cfg.fill_secrets.clone(),
         ));
     }
     if let Some(driver) = cfg.browser {
-        all.extend(browser::tools(driver, &cfg.data_dir, cfg.control.clone()));
+        all.extend(browser::tools_with_secrets(
+            driver,
+            &cfg.data_dir,
+            cfg.control.clone(),
+            cfg.fill_secrets.clone(),
+        ));
     } else {
-        all.extend(browser::managed_tools(
+        all.extend(browser::managed_tools_with_secrets(
             cfg.browser_settings,
             &cfg.data_dir,
             cfg.control.clone(),
+            cfg.view_registry.clone(),
+            cfg.fill_secrets.clone(),
         ));
+    }
+    if let Some(secrets) = &cfg.fill_secrets {
+        all.push(fill_secret::secrets_list_tool(Arc::clone(secrets)));
     }
     all.extend(files::tools_bounded(
         &cfg.data_dir,
