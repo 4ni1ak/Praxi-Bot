@@ -114,6 +114,8 @@ export interface BotMeta {
 /** What the bridge needs from the run ledger (`RunLedger` implements it). */
 export interface BridgeLedger {
   mayAct(runId: string): boolean;
+  /** Raised synchronously by every Stop decision (see `RunLedger.stopEpoch`). */
+  stopEpoch(): number;
   observeRun(runId: string, botId: string | null, processing?: boolean): void;
   observeRunFinished(runId: string): void;
   claimRequest(requestId: string): boolean;
@@ -145,6 +147,12 @@ export interface BridgeDeps {
     /** Normal end of the native run started at `expectedGeneration` (never a Stop). */
     finishRun(expectedGeneration: number): Promise<void>;
     click(x: number, y: number): Promise<void>;
+    /**
+     * Fresh native read right before a local `proceed`: `true` only if native is still
+     * bot driving and no Stop was pressed (the read is also routed to the ledger, so a
+     * Stop it reveals raises the stop epoch). A failed read is `false`.
+     */
+    confirmDriving?(): Promise<boolean>;
   };
   ledger: BridgeLedger;
   /** Resolve whether a run / bot currently targets the local PC or a browser/remote screen. */
@@ -289,9 +297,10 @@ export class ControlBridge {
    */
   restoreDriving(): Promise<void> {
     return this.enqueue(async () => {
+      const epoch = this.deps.ledger.stopEpoch();
       for (const run of this.deps.ledger.runEntries()) {
         if (run.phase === "tracked" && run.processing && run.botId) {
-          await this.ensureDriving(run.botId, run.id);
+          await this.ensureDriving(run.botId, run.id, epoch);
         }
       }
     });
@@ -365,6 +374,14 @@ export class ControlBridge {
   /** May this bridge still affect `runId`? Checked before every effect. */
   private mayAct(runId: string): boolean {
     return this.live && this.deps.ledger.mayAct(runId);
+  }
+
+  /**
+   * The synchronous Stop gate: the session is live, the run may act AND no Stop was
+   * decided since the work began (`epoch`). Evaluated immediately before each effect.
+   */
+  private allowed(runId: string, epoch: number): boolean {
+    return this.mayAct(runId) && this.deps.ledger.stopEpoch() === epoch;
   }
 
   private applyTakeoverInfo(t: TakeoverInfo | null | undefined): void {
@@ -456,8 +473,8 @@ export class ControlBridge {
   }
 
   /** Put native into bot_driving for a LOCAL run that may act. Unknown scope never does. */
-  private async ensureDriving(botId: string, runId: string): Promise<void> {
-    if (!this.mayAct(runId) || this.scopeFor({ botId, runId }) !== "local_desktop") {
+  private async ensureDriving(botId: string, runId: string, epoch: number): Promise<void> {
+    if (!this.allowed(runId, epoch) || this.scopeFor({ botId, runId }) !== "local_desktop") {
       return;
     }
     if (this.mode === "idle") {
@@ -532,7 +549,7 @@ export class ControlBridge {
         return;
       case "run_started":
         this.deps.ledger.observeRun(e.run_id, e.bot_id);
-        await this.ensureDriving(e.bot_id, e.run_id);
+        await this.ensureDriving(e.bot_id, e.run_id, this.deps.ledger.stopEpoch());
         return;
       case "control_requested":
         if (this.deps.now() - env.ts_ms > STALE_REQUEST_MS) {
@@ -549,21 +566,28 @@ export class ControlBridge {
     }
   }
 
+  /**
+   * Post the verdict. A `proceed` is re-checked against the Stop gate synchronously,
+   * right before the request, so nothing a Stop decided meanwhile can still proceed.
+   */
   private async decide(
     requestId: string,
     proceed: boolean,
-    reason: string | undefined
+    reason: string | undefined,
+    gate: () => boolean
   ): Promise<void> {
     if (!this.live) {
       return; // a revoked bridge writes nothing; the daemon times the request out
     }
+    let verdict = proceed;
+    let why = reason;
+    if (verdict && !gate()) {
+      verdict = false;
+      why = refusalReason("idle");
+    }
     try {
       await this.bounded(
-        this.deps.client.decideControl(
-          requestId,
-          proceed ? "proceed" : "refuse",
-          proceed ? undefined : reason
-        )
+        this.deps.client.decideControl(requestId, verdict ? "proceed" : "refuse", verdict ? undefined : why)
       );
     } catch {
       // 404: the daemon already timed out; nothing to do
@@ -574,14 +598,16 @@ export class ControlBridge {
     e: Extract<DaemonEvent, { type: "control_requested" }>
   ): Promise<void> {
     const runId = e.run_id;
-    if (!this.mayAct(runId)) {
+    const epoch = this.deps.ledger.stopEpoch();
+    const gate = () => this.allowed(runId, epoch);
+    if (!gate()) {
       // Stop-held, quarantined behind an unanswered Stop, or revoked: never proceeds.
-      await this.decide(e.request_id, false, refusalReason("idle"));
+      await this.decide(e.request_id, false, refusalReason("idle"), gate);
       return;
     }
     const scope = await this.waitForScope({ runId, botId: e.bot_id });
     if (scope === "unknown") {
-      await this.decide(e.request_id, false, SCOPE_UNKNOWN_REASON);
+      await this.decide(e.request_id, false, SCOPE_UNKNOWN_REASON, gate);
       return;
     }
     if (scope !== "local_desktop") {
@@ -595,7 +621,7 @@ export class ControlBridge {
         this.mode !== "human_driving" &&
         this.mode !== "paused" &&
         !takeoverBlocks &&
-        this.mayAct(runId);
+        gate();
       if (proceed) {
         this.deps.panelOverlay?.showAction({
           runId,
@@ -607,36 +633,37 @@ export class ControlBridge {
           timestampMs: this.deps.now()
         });
       }
-      const blockedMode: ControlModeName = !this.mayAct(runId)
+      const blockedMode: ControlModeName = !gate()
         ? "idle"
         : this.activeTakeover?.state === "paused" || this.mode === "paused"
           ? "paused"
           : "human_driving";
-      await this.decide(e.request_id, proceed, refusalReason(blockedMode));
+      await this.decide(e.request_id, proceed, refusalReason(blockedMode), gate);
       return;
     }
 
-    await this.ensureDriving(e.bot_id, runId);
+    await this.ensureDriving(e.bot_id, runId, epoch);
     let proceed = false;
-    if (this.mayAct(runId)) {
+    if (gate()) {
       try {
         proceed = await this.deps.native.beginAction(e.rect, e.label, e.action);
       } catch {
         proceed = false;
       }
     }
-    // A Stop (or a client swap) may have happened while native answered.
-    if (!this.mayAct(runId)) {
-      proceed = false;
-    }
-    if (proceed && e.rect && e.action === "click") {
+    if (proceed && e.rect && e.action === "click" && gate()) {
       const c = centre(e.rect);
       await this.deps.native.click(c.x, c.y).catch(() => undefined);
+    }
+    // The global hotkey may have stopped native while we waited: read it fresh.
+    if (proceed && gate() && this.deps.native.confirmDriving) {
+      proceed = await this.deps.native.confirmDriving().catch(() => false);
     }
     await this.decide(
       e.request_id,
       proceed,
-      refusalReason(this.mayAct(runId) ? this.mode : "idle")
+      refusalReason(gate() ? this.mode : "idle"),
+      gate
     );
   }
 }

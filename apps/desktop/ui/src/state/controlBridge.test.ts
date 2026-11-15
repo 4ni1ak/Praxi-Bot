@@ -58,6 +58,8 @@ function setup(
   overrides: {
     startRun?: (bot: BotMeta, step: string) => Promise<number | void>;
     beginAction?: () => Promise<boolean>;
+    click?: () => Promise<void>;
+    confirmDriving?: () => Promise<boolean>;
     client?: Partial<ConstructorParameters<typeof ControlBridge>[0]["client"]>;
   } = {}
 ) {
@@ -124,7 +126,11 @@ function setup(
         calls.finish.push(generation);
         w.native.finish(generation);
       },
-      click: async (x, y) => void calls.clicks.push({ x, y })
+      click: async (x, y) => {
+        calls.clicks.push({ x, y });
+        await overrides.click?.();
+      },
+      confirmDriving: overrides.confirmDriving
     },
     ledger: w.ledger,
     resolveTargetScope: scopeResolver,
@@ -410,8 +416,7 @@ test("restore drives restored local processing runs only (never held, paused or 
   const t = setup(true, () => scope);
   t.daemon.start("live", "running");
   t.daemon.start("parked", "paused");
-  t.ledger.beginList(t.handle);
-  t.ledger.applyList(t.handle, t.daemon.list());
+  t.ledger.applyList(t.ledger.beginList(t.handle)!, t.daemon.list());
   scope = "unknown";
   await t.bridge.restoreDriving();
   assert.equal(t.calls.start.length, 0, "unknown scope: wait");
@@ -792,4 +797,71 @@ test("control_state_changed events re-read the snapshot (events carry no takeove
   assert.equal(bridge.takeover()?.id, "to-mine");
   await bridge.heartbeat(true);
   assert.equal(log.put.at(-1), false);
+});
+
+test("a Stop during the click await turns the pending proceed into a refusal (r-94 #1)", async () => {
+  let finishClick: () => void = () => {};
+  const t = setup(true, undefined, {
+    click: () => new Promise<void>((resolve) => {
+      finishClick = resolve;
+    })
+  });
+  const answered = t.feed(request("click-race", { x: 0, y: 0, width: 4, height: 4 }));
+  await flush();
+  assert.equal(t.calls.clicks.length, 1, "the click is in flight");
+  t.ledger.stopAll("banner"); // pressed while native animates the click
+  finishClick();
+  await answered;
+  assert.deepEqual(t.calls.decide.map((d) => d.decision), ["refuse"]);
+});
+
+test("a Stop that has reached native but not the ledger yet is caught by the last-moment native read", async () => {
+  let routed: (() => void) | null = null;
+  const t = setup(true, undefined, {
+    confirmDriving: async () => {
+      routed?.();
+      return false; // native says Idle: the global hotkey fired
+    }
+  });
+  routed = () => {
+    t.ledger.onNativeSnapshot(t.native.userStop(null));
+  };
+  await t.feed(request("hotkey-race", { x: 0, y: 0, width: 4, height: 4 }));
+  assert.deepEqual(t.calls.decide.map((d) => d.decision), ["refuse"]);
+  assert.equal(t.ledger.stopRecords().length, 1, "and the Stop is recorded");
+});
+
+test("any Stop decided after the action began refuses it, even one whose run set does not include it", async () => {
+  let ledgerRef: ReturnType<typeof setup>["ledger"] | null = null;
+  const t = setup(true, undefined, {
+    beginAction: async () => {
+      // the run is unknown to that Stop (seen only now), yet nothing local may proceed
+      ledgerRef?.stopAll("hotkey");
+      return true;
+    }
+  });
+  ledgerRef = t.ledger;
+  await t.feed(request("epoch", null, "key", "run-new"));
+  assert.equal(t.calls.decide[0]?.decision, "refuse");
+});
+
+test("the same key press reaching native again during an action (a joined Stop) still refuses it", async () => {
+  let pressAgain: (() => void) | null = null;
+  const t = setup(true, undefined, {
+    beginAction: async () => {
+      pressAgain?.();
+      return true;
+    }
+  });
+  t.ledger.stopAll("hotkey");
+  t.daemon.deliver(0); // answered: nothing was running
+  await flush();
+  // a run that started after that Stop may act ...
+  pressAgain = () => {
+    // ... but the global listener's copy of the same press arrives now (joins the Stop)
+    t.ledger.onNativeSnapshot(t.native.userStop(null));
+  };
+  await t.feed(request("joined", null, "key", "run-after"));
+  assert.equal(t.ledger.stopRecords().length, 1, "still one decision");
+  assert.equal(t.calls.decide.at(-1)?.decision, "refuse", "nothing local proceeds after a Stop press");
 });
