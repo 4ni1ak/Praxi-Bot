@@ -204,7 +204,9 @@
     "refusedBadge": "{{count}} bot action refused",
     "refusedBadge_other": "{{count}} bot actions refused",
     "hotkeyHint": "Stop in app: {{hotkey}}",
-    "dragHandleAria": "Drag floating control widget"
+    "dragHandleAria": "Drag floating control widget",
+    "stopPending": "Stopping — confirming every run…",
+    "stopConfirmed": "Stopped — every run confirmed"
   },
   "dev": {
     "sectionTitle": "Developer",
@@ -1849,5 +1851,31 @@
     "openScreen": "Open screen",
     "connectionLost": "Connection to the screen lost. Reconnecting…",
     "clearForeignPause": "Clear {{owner}}'s pause"
+  },
+  "stopStatus": {
+    "title": {
+      "stopping": "Stopping…",
+      "unreachable": "Stopped on this computer",
+      "partial": "Some runs could not be stopped",
+      "expired": "Stop expired",
+      "unconfirmable": "Earlier Stop not confirmed",
+      "stopped": "Stopped"
+    },
+    "detail": {
+      "stoppingCount_one": "{{stopped}} of {{count}} run stopped; waiting for the rest to end.",
+      "stoppingCount_other": "{{stopped}} of {{count}} runs stopped; waiting for the rest to end.",
+      "stoppingNone": "Asking the daemon to stop every running bot…",
+      "unreachable": "Bot and takeover input is halted here, but the daemon has not confirmed its runs yet. Retrying…",
+      "partial": "{{stopped}} of {{count}} stopped. The rest are held and cannot act; retrying…",
+      "expiredRetry": "The daemon no longer had this Stop on record. Retrying only the {{held}} runs still held; nothing started later is touched.",
+      "expiredNone": "The daemon no longer had this Stop on record; none of the runs it held is still going.",
+      "unconfirmable": "A Stop from before the app restarted never reached the daemon. Press Stop again if bots are still running.",
+      "stoppedCount_one": "{{count}} run stopped.",
+      "stoppedCount_other": "All {{count}} runs stopped.",
+      "stoppedNone": "No bot runs were going."
+    },
+    "notAudited": "Not recorded in the audit log",
+    "progressLabel": "Runs stopped",
+    "dismiss": "Dismiss"
   }
 }
