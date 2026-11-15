@@ -1,5 +1,8 @@
 //! Object-safe backend hooks. Dropping the last subscription ends capture.
-use crate::{EffectiveProfile, FrameMetadata, InputEvent, MAX_PAYLOAD, TargetInfo, ViewError};
+use crate::{
+    EffectiveProfile, FrameMetadata, InputEvent, MAX_PAYLOAD, TargetInfo, TargetUnavailable,
+    ViewError,
+};
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -168,7 +171,11 @@ impl TargetRegistry {
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn get(&self, id: Uuid) -> Option<Arc<dyn ViewTarget>> {
-        self.targets.read().expect("registry poisoned").get(&id).cloned()
+        self.targets
+            .read()
+            .expect("registry poisoned")
+            .get(&id)
+            .cloned()
     }
     #[must_use]
     /// # Panics

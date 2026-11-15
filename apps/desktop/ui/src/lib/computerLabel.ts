@@ -46,3 +46,24 @@ export function computerPlaceholderKey(status: TargetsStatus): string {
       ? "liveView.noTargets"
       : "liveView.checkingTargets";
 }
+
+/** The desktop's "why there is no screen" sentence, when the host recorded one. */
+export function noScreenDetail(
+  availability: ReadonlyArray<{ kind: string; detail: string }>
+): string | null {
+  const note = availability.find((n) => n.kind === "desktop") ?? availability[0];
+  const detail = note?.detail.trim();
+  return detail ? detail : null;
+}
+
+/**
+ * An available screen nobody is watching is "ready", not "watching live":
+ * capture only starts when a viewer subscribes.
+ */
+export function isReadyIdle(
+  viewState: string,
+  hasFrame: boolean,
+  available: boolean
+): boolean {
+  return available && viewState === "watch" && !hasFrame;
+}

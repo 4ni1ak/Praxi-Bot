@@ -774,13 +774,14 @@ impl Shared {
             cdp.peers = Some((id.into(), Arc::clone(&managed.peers)));
             if let Some(views) = &managed.views {
                 let pin = Arc::clone(&cdp.takeover_pin);
-                let target = browser_cdp::BrowserViewTarget::new_idle(browser_cdp::BrowserViewConfig {
-                    bot_id: uuid::Uuid::parse_str(id).ok(),
-                    takeover_pin: Some(Arc::new(move |on| {
-                        pin.store(on, std::sync::atomic::Ordering::SeqCst);
-                    })),
-                    ..browser_cdp::BrowserViewConfig::default()
-                });
+                let target =
+                    browser_cdp::BrowserViewTarget::new_idle(browser_cdp::BrowserViewConfig {
+                        bot_id: uuid::Uuid::parse_str(id).ok(),
+                        takeover_pin: Some(Arc::new(move |on| {
+                            pin.store(on, std::sync::atomic::Ordering::SeqCst);
+                        })),
+                        ..browser_cdp::BrowserViewConfig::default()
+                    });
                 views.register(target.clone());
                 cdp.view = Some(target);
             }
@@ -2067,7 +2068,10 @@ mod tests {
             control: None,
             observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         });
-        assert!(registry.targets().is_empty(), "nothing before a bot uses the browser");
+        assert!(
+            registry.targets().is_empty(),
+            "nothing before a bot uses the browser"
+        );
         let bot = "0194a1c2-0000-7000-8000-000000000001";
         let _ = shared.for_bot(Some(bot)).unwrap();
         let _ = shared.for_bot(Some(bot)).unwrap();
@@ -2075,11 +2079,16 @@ mod tests {
         assert_eq!(targets.len(), 1, "one slot per bot, not per call");
         assert_eq!(targets[0].kind, live_view::TargetKind::Browser);
         assert_eq!(targets[0].bot_id, uuid::Uuid::parse_str(bot).ok());
-        assert_eq!(targets[0].unavailable_reason, Some(live_view::Reason::BrowserIdle));
+        assert_eq!(
+            targets[0].unavailable_reason,
+            Some(live_view::Reason::BrowserIdle)
+        );
         // Idle means no Chromium and no profile directory.
         assert!(!dir.path().join("browsers").exists());
         // A second bot gets its own slot.
-        let _ = shared.for_bot(Some("0194a1c2-0000-7000-8000-000000000002")).unwrap();
+        let _ = shared
+            .for_bot(Some("0194a1c2-0000-7000-8000-000000000002"))
+            .unwrap();
         assert_eq!(registry.targets().len(), 2);
     }
 

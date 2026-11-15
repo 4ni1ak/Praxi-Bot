@@ -50,6 +50,7 @@ import type {
   TakeoverAccepted,
   TakeoverRequest,
   TargetInfo,
+  TargetUnavailable,
   UsageSummary,
   ViewHeartbeat,
   WebSearchConfig,
@@ -349,6 +350,10 @@ export class ApiClient {
 
   listViewTargets(): Promise<TargetInfo[]> {
     return this.request("GET", "/view/targets");
+  }
+  /** Which kinds of screen this host cannot offer, and why. */
+  listViewAvailability(): Promise<TargetUnavailable[]> {
+    return this.request("GET", "/view/availability");
   }
   createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
     return this.request("POST", "/view/sessions", { body: input });

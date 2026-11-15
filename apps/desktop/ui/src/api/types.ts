@@ -37,6 +37,7 @@ export type ControlStateChanged = S["ControlStateChanged"];
 export type ReleaseResult = S["ReleaseResult"];
 export type ScreenPrivilegesInput = S["ScreenPrivilegesInput"];
 export type TargetInfo = S["TargetInfo"];
+export type TargetUnavailable = S["TargetUnavailable"];
 export type TargetKind = S["TargetKind"];
 export type ViewCapabilities = S["Capabilities"];
 export type Codec = S["Codec"];

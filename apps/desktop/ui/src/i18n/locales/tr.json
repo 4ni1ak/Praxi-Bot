@@ -1833,6 +1833,8 @@
       "active": "Kontrol sizde",
       "paused": "Duraklatıldı · Sizi bekliyor",
       "unavailable": "Beklemede · Etkin değil",
+      "ready": "Bu bilgisayar · hazır",
+      "noScreenReason": "Ekran yok: {{detail}}",
       "empty": "Etkin ekran yok"
     },
     "reasons": {

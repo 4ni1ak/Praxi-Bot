@@ -9,7 +9,9 @@ import {
 import {
   COMPUTER_FOOTER_KEY,
   computerFooter,
-  computerPlaceholderKey
+  computerPlaceholderKey,
+  isReadyIdle,
+  noScreenDetail
 } from "../lib/computerLabel";
 import { useLiveView } from "../state/LiveViewContext";
 import styles from "./BotComputerBlock.module.css";
@@ -39,6 +41,7 @@ export function BotComputerBlock() {
   const {
     selectedTarget,
     targetsStatus,
+    availability,
     state,
     frameUrl,
     panelAction,
@@ -64,8 +67,18 @@ export function BotComputerBlock() {
     Boolean(summary && !summary.available)
   );
 
+  const whyNoScreen = noScreenDetail(availability);
+  const ready = isReadyIdle(
+    state.viewState,
+    Boolean(frameUrl),
+    Boolean(summary?.available)
+  );
   const summaryKey = !selectedTarget
-    ? "liveView.panelSummary.empty"
+    ? whyNoScreen && targetsStatus === "ok"
+      ? "liveView.panelSummary.noScreenReason"
+      : "liveView.panelSummary.empty"
+    : ready
+      ? "liveView.panelSummary.ready"
     : state.viewState === "active"
       ? "liveView.panelSummary.active"
       : state.viewState === "acquiring"
@@ -110,7 +123,7 @@ export function BotComputerBlock() {
         </h3>
         <span className={styles.statusPill} data-testid="bot-computer-status">
           <i className={styles.dot} data-tone={tone} aria-hidden="true" />
-          <span>{t(summaryKey)}</span>
+          <span>{t(summaryKey, { detail: whyNoScreen ?? "" })}</span>
         </span>
       </div>
 
@@ -141,7 +154,9 @@ export function BotComputerBlock() {
                   ? t(`liveView.reasons.${summary.reason}`, {
                       defaultValue: t("liveView.reasons.unavailable")
                     })
-                  : t(computerPlaceholderKey(targetsStatus))}
+                  : whyNoScreen && targetsStatus === "ok"
+                    ? t("liveView.panelSummary.noScreenReason", { detail: whyNoScreen })
+                    : t(computerPlaceholderKey(targetsStatus))}
               </span>
             </div>
           )}

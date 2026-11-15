@@ -1833,6 +1833,8 @@
       "active": "You have the wheel",
       "paused": "Paused · Waiting for you",
       "unavailable": "Idle · Not active",
+      "ready": "This computer · ready",
+      "noScreenReason": "No screen: {{detail}}",
       "empty": "No active screen"
     },
     "reasons": {

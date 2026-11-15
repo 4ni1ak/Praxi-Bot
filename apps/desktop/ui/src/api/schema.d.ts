@@ -1203,6 +1203,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/view/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Which kinds of screen this host cannot offer and why (empty when none is
+         *     missing), so the panel can say "No screen: <reason>". Same access rule as
+         *     `GET /v1/view/targets`; no pixels, no paths.
+         */
+        get: operations["availability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/view/privileges/{peer_key}": {
         parameters: {
             query?: never;
@@ -3374,6 +3395,17 @@ export interface components {
         };
         /** @enum {string} */
         TargetKind: "browser" | "desktop";
+        /**
+         * @description A kind of screen this host cannot offer, and why. Lets the UI say
+         *     "No screen: <reason>" instead of an empty panel.
+         */
+        TargetUnavailable: {
+            /** @description One short, path-free sentence for the user. */
+            detail: string;
+            host_id: string;
+            kind: components["schemas"]["TargetKind"];
+            reason: components["schemas"]["Reason"];
+        };
         /** @description Unified text diff payload for a single changed text file. */
         UnifiedDiffDto: {
             added_lines: number;
@@ -6177,6 +6209,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageSummary"];
+                };
+            };
+        };
+    };
+    availability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetUnavailable"][];
                 };
             };
         };

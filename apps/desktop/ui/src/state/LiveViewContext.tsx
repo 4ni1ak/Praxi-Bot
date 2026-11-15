@@ -13,7 +13,8 @@ import type {
   HumanAction,
   InputEvent,
   SessionInfo,
-  TargetInfo
+  TargetInfo,
+  TargetUnavailable
 } from "../api/types.ts";
 import { ApiError } from "../api/client.ts";
 import { isMockMode } from "../api/mockMode.ts";
@@ -89,6 +90,7 @@ interface LiveViewContextValue {
   viewerOpen: boolean;
   loadingTargets: boolean;
   targetsStatus: TargetsStatus;
+  availability: TargetUnavailable[];
   panelAction: PanelActionHighlight | null;
   recoveryPrompt: RecoveryPrompt | null;
   openViewer: (targetId?: string) => void;
@@ -152,6 +154,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const [targets, setTargets] = useState<TargetInfo[]>([]);
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [targetsStatus, setTargetsStatus] = useState<TargetsStatus>("unknown");
+  const [availability, setAvailability] = useState<TargetUnavailable[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
     null
@@ -282,6 +285,11 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       ]);
       setTargets(nextTargets);
       setTargetsStatus("ok");
+      // Why a screen is missing is optional context: its failure never hides the targets.
+      client
+        .listViewAvailability()
+        .then(setAvailability)
+        .catch(() => setAvailability([]));
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
         setControlStateRaw(nextCtrl);
@@ -1024,6 +1032,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       viewerOpen,
       loadingTargets,
       targetsStatus,
+      availability,
       panelAction,
       recoveryPrompt,
       openViewer,
@@ -1055,6 +1064,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       viewerOpen,
       loadingTargets,
       targetsStatus,
+      availability,
       panelAction,
       recoveryPrompt,
       openViewer,

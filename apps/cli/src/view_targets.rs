@@ -25,7 +25,7 @@ fn clean(detail: &str) -> String {
         .collect()
 }
 
-fn reason_detail(reason: Reason) -> &'static str {
+fn reason_detail(reason: &Reason) -> &'static str {
     match reason {
         Reason::Unsupported => "this platform has no screen capture backend",
         Reason::Unavailable => {
@@ -54,7 +54,8 @@ pub fn register_local_desktop(
         Some(backend) => match backend.live_view_target(&LiveViewOptions::new(LOCAL_HOST_ID)) {
             Ok(target) => registry.register(target),
             Err(reason) => {
-                registry.note_unavailable(note(reason, reason_detail(reason).to_owned()));
+                let detail = reason_detail(&reason).to_owned();
+                registry.note_unavailable(note(reason, detail));
             }
         },
     }
@@ -186,7 +187,7 @@ mod tests {
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].kind, TargetKind::Desktop);
         assert_eq!(targets[0].host_id, LOCAL_HOST_ID);
-        assert!(registry.unavailable().is_empty());
+        assert_eq!(registry.unavailable(), []);
         assert_eq!(backend.asked.load(Ordering::SeqCst), 1);
         // Lazy: registering subscribed nothing, so no capture was started.
         assert_eq!(source.subscribers(), 0);
@@ -198,10 +199,10 @@ mod tests {
             (Reason::Unavailable, "no active display"),
             (Reason::Unsupported, "no screen capture backend"),
         ] {
-            let backend: Arc<dyn DesktopBackend> = fake(Err(reason));
+            let backend: Arc<dyn DesktopBackend> = fake(Err(reason.clone()));
             let registry = TargetRegistry::default();
             register_local_desktop(&registry, Some(&backend), || unreachable!());
-            assert!(registry.targets().is_empty());
+            assert_eq!(registry.targets(), []);
             let notes = registry.unavailable();
             assert_eq!(notes.len(), 1);
             assert_eq!(notes[0].kind, TargetKind::Desktop);
@@ -221,7 +222,7 @@ mod tests {
         let notes = registry.unavailable();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].detail, "second");
-        assert!(registry.targets().is_empty());
+        assert_eq!(registry.targets(), []);
         register_local_desktop(&registry, None, || "y".repeat(500));
         assert!(registry.unavailable()[0].detail.len() <= MAX_DETAIL);
     }

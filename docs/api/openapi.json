@@ -3860,6 +3860,35 @@
         ]
       }
     },
+    "/v1/view/availability": {
+      "get": {
+        "tags": [
+          "view"
+        ],
+        "summary": "Which kinds of screen this host cannot offer and why (empty when none is\nmissing), so the panel can say \"No screen: <reason>\". Same access rule as\n`GET /v1/view/targets`; no pixels, no paths.",
+        "operationId": "availability",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TargetUnavailable"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/view/privileges/{peer_key}": {
       "put": {
         "tags": [
@@ -9610,6 +9639,31 @@
           "browser",
           "desktop"
         ]
+      },
+      "TargetUnavailable": {
+        "type": "object",
+        "description": "A kind of screen this host cannot offer, and why. Lets the UI say\n\"No screen: <reason>\" instead of an empty panel.",
+        "required": [
+          "kind",
+          "host_id",
+          "reason",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "One short, path-free sentence for the user."
+          },
+          "host_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/Reason"
+          }
+        }
       },
       "UnifiedDiffDto": {
         "type": "object",
