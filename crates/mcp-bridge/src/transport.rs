@@ -238,17 +238,21 @@ fn build_command(
     Ok(isolate_child(cmd))
 }
 
+/// How long a failed handshake waits for the child's last stderr lines (the
+/// pipe closes as soon as the child is gone, so this is a ceiling, not a delay).
+const STDERR_DRAIN: Duration = Duration::from_millis(500);
+
 fn forward_stderr(
     server: String,
     stderr: tokio::process::ChildStderr,
     log: Arc<StderrLog>,
     redactor: Redactor,
     diagnostics: tracing::Dispatch,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(
         async move { capture_stderr(&server, stderr, &log, &redactor).await }
             .with_subscriber(diagnostics),
-    );
+    )
 }
 
 /// Own the process tree until it has been killed and reaped. rmcp's graceful
@@ -403,10 +407,22 @@ pub(crate) async fn open(
                         server: id.to_owned(),
                         message: e.to_string(),
                     })?;
-                if let Some(pipe) = child_stderr {
-                    forward_stderr(id.to_owned(), pipe, stderr, stderr_redactor, diagnostics);
+                let capture = child_stderr.map(|pipe| {
+                    forward_stderr(id.to_owned(), pipe, stderr, stderr_redactor, diagnostics)
+                });
+                match ().serve(transport).await {
+                    Ok(session) => Ok(session),
+                    Err(e) => {
+                        // The handshake failed: the child is being reaped, so
+                        // its stderr hits EOF. Let the capture task store the
+                        // last lines (its explanation) before the session
+                        // runtime shuts down and the error is published.
+                        if let Some(task) = capture {
+                            let _ = tokio::time::timeout(STDERR_DRAIN, task).await;
+                        }
+                        Err(transport_err(id, e))
+                    }
                 }
-                ().serve(transport).await.map_err(|e| transport_err(id, e))
             }
             McpTransport::Http { url, headers } => {
                 let transport = StreamableHttpClientTransport::from_config(http_config(

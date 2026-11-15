@@ -197,6 +197,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     spawn_orphan();
     match std::env::var("MCP_TEST_MODE").as_deref() {
+        Ok("exit-with-stderr") => {
+            // Explains itself on stderr and dies before the MCP handshake.
+            eprintln!("PRAXI-EXPLAIN: runtime X is missing");
+            std::process::exit(1);
+        }
         Ok("secret-stderr") => {
             eprintln!("child secret: {}", std::env::var("API_KEY").unwrap());
         }
