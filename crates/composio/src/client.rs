@@ -1,0 +1,598 @@
+//! Plain HTTPS client for Composio's REST API.
+//!
+//! API reference (read 2026-11-15, v3.1):
+//! - <https://docs.composio.dev/reference/api-reference/tools/postToolsExecuteByToolSlug>
+//! - <https://docs.composio.dev/reference/api-reference/connected-accounts/postConnectedAccountsLink>
+//! - <https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts>
+//! - <https://docs.composio.dev/reference/api-reference/connected-accounts/deleteConnectedAccountsByNanoid>
+//! - <https://docs.composio.dev/reference/api-reference/auth-configs/postAuthConfigs>
+//! - <https://docs.composio.dev/reference/api-reference/auth-configs/getAuthConfigs>
+//!
+//! Security properties: the origin is fixed (`https://backend.composio.dev`);
+//! every URL is built from it, no URL from a response is ever requested; no
+//! redirect is followed; the key sits in a default header marked sensitive;
+//! errors are redacted and truncated; responses are capped at 1 MiB.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, RETRY_AFTER};
+use reqwest::redirect::Policy;
+use reqwest::{Client, Method, RequestBuilder, StatusCode};
+use serde_json::{Value, json};
+use url::Url;
+
+use crate::error::{ComposioError, Result};
+
+/// The one origin Praxi talks to.
+pub const API_ORIGIN: &str = "https://backend.composio.dev";
+/// Base URL of the API version in use.
+pub const API_BASE: &str = "https://backend.composio.dev/api/v3.1";
+
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_ERROR_CHARS: usize = 300;
+
+/// Masks secrets in text (the daemon's live redactor).
+pub type Redact = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
+/// State of one connected account as Composio reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Account {
+    /// Connected account id (never leaves the daemon).
+    pub id: String,
+    /// Toolkit slug.
+    pub toolkit: String,
+    /// Raw status (`ACTIVE`, `INITIATED`, `EXPIRED`, ...).
+    pub status: String,
+}
+
+/// A fresh connect link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    /// Validated https URL on Composio's domain.
+    pub redirect_url: String,
+    /// ISO timestamp.
+    pub expires_at: String,
+}
+
+/// One toolkit of Composio's catalog.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Toolkit {
+    /// Toolkit slug.
+    pub slug: String,
+    /// Display name.
+    pub name: String,
+    /// Description (untrusted text, capped).
+    pub description: String,
+    /// Category names.
+    pub categories: Vec<String>,
+    /// Number of tools, when reported.
+    pub tools_count: Option<u64>,
+}
+
+/// One page of the catalog.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolkitPage {
+    /// Toolkits in the order Composio returned them.
+    pub items: Vec<Toolkit>,
+    /// Cursor of the next page.
+    pub next_cursor: Option<String>,
+}
+
+/// One tool of a toolkit, as Composio describes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteTool {
+    /// Composio tool slug (`GITHUB_CREATE_AN_ISSUE`).
+    pub slug: String,
+    /// Description (untrusted, capped).
+    pub description: String,
+    /// Sanitized JSON schema of the inputs.
+    pub schema: Value,
+}
+
+/// Composio REST client.  Built once per key.
+#[derive(Clone)]
+pub struct ComposioClient {
+    http: Client,
+    base: Url,
+    redact: Redact,
+}
+
+impl std::fmt::Debug for ComposioClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ComposioClient(<key hidden>)")
+    }
+}
+
+/// Whether `url` is an https URL without credentials on Composio's domain.
+#[must_use]
+pub fn is_composio_https_url(url: &str) -> bool {
+    let Ok(u) = Url::parse(url) else {
+        return false;
+    };
+    u.scheme() == "https"
+        && u.username().is_empty()
+        && u.password().is_none()
+        && u.port().is_none()
+        && u.host_str().is_some_and(|h| {
+            let h = h.to_ascii_lowercase();
+            h == "composio.dev" || h.ends_with(".composio.dev")
+        })
+}
+
+impl ComposioClient {
+    /// Client for the production origin.
+    ///
+    /// # Errors
+    /// The key is not a valid header value or the HTTP client cannot be built.
+    ///
+    /// # Panics
+    /// Never: the base URL is a constant.
+    pub fn new(api_key: &str, redact: Redact) -> Result<Self> {
+        Self::build(
+            api_key,
+            Url::parse(API_BASE).expect("constant"),
+            redact,
+            true,
+        )
+    }
+
+    /// Client for a fake server in tests.  Accepts only a loopback `http` URL;
+    /// there is no way to point the client at any other host.
+    ///
+    /// # Errors
+    /// `base` is not a loopback URL.
+    pub fn for_loopback_tests(api_key: &str, base: &str, redact: Redact) -> Result<Self> {
+        let url = Url::parse(base).map_err(|e| ComposioError::Internal(e.to_string()))?;
+        let loopback = url.host_str().is_some_and(|h| {
+            h == "localhost"
+                || h.parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if !loopback || url.scheme() != "http" {
+            return Err(ComposioError::Internal(
+                "the test base URL must be http on loopback".into(),
+            ));
+        }
+        Self::build(api_key, url, redact, false)
+    }
+
+    fn build(api_key: &str, base: Url, redact: Redact, https_only: bool) -> Result<Self> {
+        let mut key = HeaderValue::from_str(api_key)
+            .map_err(|_| ComposioError::Invalid("the API key has invalid characters".into()))?;
+        key.set_sensitive(true);
+        let mut headers = HeaderMap::new();
+        headers.insert(HeaderName::from_static("x-api-key"), key);
+        let http = Client::builder()
+            .default_headers(headers)
+            .redirect(Policy::none())
+            .timeout(REQUEST_TIMEOUT)
+            .connect_timeout(Duration::from_secs(10))
+            .https_only(https_only)
+            .user_agent(concat!("praxi-bot-composio/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| ComposioError::Internal(format!("http client: {e}")))?;
+        Ok(Self { http, base, redact })
+    }
+
+    /// `base` + path segments, percent-encoded.  Segments are checked by the
+    /// callers to be `[A-Za-z0-9_-]`.
+    fn url(&self, segments: &[&str]) -> Url {
+        let mut u = self.base.clone();
+        {
+            let mut s = u.path_segments_mut().expect("http base has a path");
+            s.pop_if_empty();
+            for seg in segments {
+                s.push(seg);
+            }
+        }
+        debug_assert_eq!(u.origin(), self.base.origin());
+        u
+    }
+
+    fn clean(&self, text: &str) -> String {
+        let masked = (self.redact)(text);
+        let mut out: String = masked.chars().take(MAX_ERROR_CHARS).collect();
+        if masked.chars().count() > MAX_ERROR_CHARS {
+            out.push('…');
+        }
+        out
+    }
+
+    async fn send(&self, req: RequestBuilder) -> Result<Value> {
+        self.send_capped(req, MAX_RESPONSE_BYTES).await
+    }
+
+    async fn send_capped(&self, req: RequestBuilder, cap: usize) -> Result<Value> {
+        let mut resp = req
+            .send()
+            .await
+            .map_err(|e| ComposioError::Transport(self.clean(&e.without_url().to_string())))?;
+        let status = resp.status();
+        let retry_after = resp
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let mut body = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| ComposioError::Transport(self.clean(&e.without_url().to_string())))?
+        {
+            if body.len() + chunk.len() > cap {
+                return Err(ComposioError::Upstream(
+                    "the response is larger than the allowed size".into(),
+                ));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let json: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        match status {
+            s if s.is_success() => Ok(json),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ComposioError::Unauthorized),
+            StatusCode::TOO_MANY_REQUESTS => Err(ComposioError::RateLimited {
+                retry_after_secs: retry_after,
+            }),
+            s => {
+                let msg = json
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("request failed");
+                Err(ComposioError::Upstream(format!(
+                    "{} ({})",
+                    self.clean(msg),
+                    s.as_u16()
+                )))
+            }
+        }
+    }
+
+    /// Cheap authenticated GET used to validate a key.
+    ///
+    /// # Errors
+    /// [`ComposioError::Unauthorized`] for a rejected key.
+    pub async fn validate_key(&self) -> Result<()> {
+        let req = self
+            .http
+            .request(Method::GET, self.url(&["auth_configs"]))
+            .query(&[("limit", "1")]);
+        self.send(req).await.map(|_| ())
+    }
+
+    /// The Composio-managed auth config of `toolkit`, created when missing.
+    ///
+    /// # Errors
+    /// Transport or API errors.
+    pub async fn ensure_auth_config(&self, toolkit: &str) -> Result<String> {
+        let list = self
+            .http
+            .request(Method::GET, self.url(&["auth_configs"]))
+            .query(&[
+                ("toolkit_slug", toolkit),
+                ("is_composio_managed", "true"),
+                ("limit", "1"),
+            ]);
+        let v = self.send(list).await?;
+        if let Some(id) = v
+            .pointer("/items/0/id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(id.to_owned());
+        }
+        let create = self
+            .http
+            .request(Method::POST, self.url(&["auth_configs"]))
+            .json(&json!({
+                "toolkit": {"slug": toolkit},
+                "auth_config": {"type": "use_composio_managed_auth"}
+            }));
+        let v = self.send(create).await?;
+        v.pointer("/auth_config/id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| ComposioError::Upstream("no auth config id in the response".into()))
+    }
+
+    /// Create a hosted connect link for `user_id`.
+    ///
+    /// # Errors
+    /// API errors, or a `redirect_url` that is not https on Composio's domain.
+    pub async fn create_link(&self, auth_config_id: &str, user_id: &str) -> Result<Link> {
+        let req = self
+            .http
+            .request(Method::POST, self.url(&["connected_accounts", "link"]))
+            .json(&json!({"auth_config_id": auth_config_id, "user_id": user_id}));
+        let v = self.send(req).await?;
+        let url = v
+            .get("redirect_url")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        // The URL is only ever handed to the owner's browser, never requested
+        // here, and only when it is on Composio's own domain.
+        if !is_composio_https_url(url) {
+            return Err(ComposioError::Upstream(
+                "Composio returned a connect link outside its own domain; it was discarded".into(),
+            ));
+        }
+        Ok(Link {
+            redirect_url: url.to_owned(),
+            expires_at: v
+                .get("expires_at")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        })
+    }
+
+    /// Connected accounts of `user_id`, optionally of one toolkit.
+    ///
+    /// UNVERIFIED: array query parameters (`user_ids`, `toolkit_slugs`) are sent
+    /// as a single value; the docs do not say whether several values are
+    /// repeated or comma-joined, and one value works either way.
+    ///
+    /// # Errors
+    /// Transport or API errors.
+    pub async fn list_accounts(
+        &self,
+        user_id: &str,
+        toolkit: Option<&str>,
+    ) -> Result<Vec<Account>> {
+        let mut q = vec![("user_ids", user_id), ("limit", "100")];
+        if let Some(t) = toolkit {
+            q.push(("toolkit_slugs", t));
+        }
+        let req = self
+            .http
+            .request(Method::GET, self.url(&["connected_accounts"]))
+            .query(&q);
+        let v = self.send(req).await?;
+        Ok(v.get("items")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|i| {
+                        Some(Account {
+                            id: i.get("id")?.as_str()?.to_owned(),
+                            toolkit: i.pointer("/toolkit/slug")?.as_str()?.to_owned(),
+                            status: i.get("status")?.as_str()?.to_owned(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// One page of the toolkit catalog, most used first.
+    ///
+    /// UNVERIFIED: what a `category` value looks like (the docs list no enum;
+    /// items carry `meta.categories` as objects whose field names are not
+    /// documented, so a string or an object with `name` / `slug` is read);
+    /// whether `sort_by=usage` is the order of the website's popularity list.
+    ///
+    /// # Errors
+    /// Transport or API errors.
+    pub async fn list_toolkits(
+        &self,
+        search: Option<&str>,
+        category: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<ToolkitPage> {
+        let limit = limit.clamp(1, 100).to_string();
+        let mut q = vec![("sort_by", "usage"), ("limit", limit.as_str())];
+        if let Some(x) = search.filter(|s| !s.is_empty()) {
+            q.push(("search", x));
+        }
+        if let Some(x) = category.filter(|s| !s.is_empty()) {
+            q.push(("category", x));
+        }
+        if let Some(x) = cursor.filter(|s| !s.is_empty()) {
+            q.push(("cursor", x));
+        }
+        let req = self
+            .http
+            .request(Method::GET, self.url(&["toolkits"]))
+            .query(&q);
+        let v = self.send(req).await?;
+        let items = v
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(parse_toolkit).collect())
+            .unwrap_or_default();
+        Ok(ToolkitPage {
+            items,
+            next_cursor: v
+                .get("next_cursor")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+        })
+    }
+
+    /// The tools of one toolkit, in Composio's order.
+    ///
+    /// UNVERIFIED: the size of this answer for big toolkits (it includes every
+    /// input schema).  It is read with an 8 MiB cap, first with `limit=1000`,
+    /// then with `limit=100` when that is too large.
+    ///
+    /// # Errors
+    /// Transport or API errors.
+    pub async fn list_tools(&self, toolkit: &str) -> Result<Vec<RemoteTool>> {
+        const CAP: usize = 8 * 1024 * 1024;
+        let mut last = None;
+        for limit in ["1000", "100"] {
+            let req = self
+                .http
+                .request(Method::GET, self.url(&["tools"]))
+                .query(&[("toolkit_slug", toolkit), ("limit", limit)]);
+            match self.send_capped(req, CAP).await {
+                Ok(v) => {
+                    return Ok(v
+                        .get("items")
+                        .and_then(Value::as_array)
+                        .map(|items| items.iter().filter_map(parse_tool).collect())
+                        .unwrap_or_default());
+                }
+                Err(ComposioError::Upstream(m)) if m.contains("allowed size") => {
+                    last = Some(ComposioError::Upstream(m));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| ComposioError::Upstream("no tools".into())))
+    }
+
+    /// Delete a connected account (its Composio-side tokens).
+    ///
+    /// # Errors
+    /// API errors; `404` counts as already deleted.
+    pub async fn delete_account(&self, id: &str) -> Result<()> {
+        if !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            || id.is_empty()
+        {
+            return Err(ComposioError::Upstream("unexpected account id".into()));
+        }
+        let req = self
+            .http
+            .request(Method::DELETE, self.url(&["connected_accounts", id]));
+        match self.send(req).await {
+            Ok(_) => Ok(()),
+            Err(ComposioError::Upstream(m)) if m.ends_with("(404)") => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Execute one tool for `user_id`.  Returns the `data` of the response.
+    ///
+    /// # Errors
+    /// API errors; `successful: false` becomes [`ComposioError::Upstream`].
+    pub async fn execute(
+        &self,
+        tool_slug: &str,
+        user_id: &str,
+        version: &str,
+        arguments: &Value,
+    ) -> Result<Value> {
+        if tool_slug.is_empty()
+            || !tool_slug
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(ComposioError::Invalid("bad tool slug".into()));
+        }
+        let req = self
+            .http
+            .request(Method::POST, self.url(&["tools", "execute", tool_slug]))
+            .json(&execute_body(user_id, version, arguments));
+        let v = self.send(req).await?;
+        if v.get("successful").and_then(Value::as_bool) == Some(false) {
+            let msg = v
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("the action failed");
+            return Err(ComposioError::Upstream(self.clean(msg)));
+        }
+        Ok(v.get("data").cloned().unwrap_or(Value::Null))
+    }
+}
+
+fn parse_toolkit(i: &Value) -> Option<Toolkit> {
+    let slug = i.get("slug")?.as_str()?.to_owned();
+    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    let categories = i
+        .pointer("/meta/categories")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| {
+                    c.as_str()
+                        .or_else(|| c.get("name").and_then(Value::as_str))
+                        .or_else(|| c.get("slug").and_then(Value::as_str))
+                        .map(|s| crate::schema::clean_text(s, 40))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Toolkit {
+        name: crate::schema::clean_text(i.get("name").and_then(Value::as_str).unwrap_or(&slug), 80),
+        slug,
+        description: crate::schema::clean_text(
+            i.pointer("/meta/description")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            240,
+        ),
+        categories,
+        tools_count: i.pointer("/meta/tools_count").and_then(Value::as_u64),
+    })
+}
+
+fn parse_tool(i: &Value) -> Option<RemoteTool> {
+    let slug = i.get("slug")?.as_str()?.to_owned();
+    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(RemoteTool {
+        slug,
+        description: crate::schema::clean_text(
+            i.get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            300,
+        ),
+        schema: crate::schema::sanitize(i.get("input_parameters").unwrap_or(&Value::Null)),
+    })
+}
+
+/// Body of `POST /tools/execute/{slug}`.
+///
+/// UNVERIFIED: the docs list `connected_account_id` but do not say whether
+/// `user_id` alone resolves the right account when a user has several.  v1
+/// allows one account per app and sends only `user_id`; the live spike must
+/// confirm, and this is the one place to add `connected_account_id`.
+/// UNVERIFIED: the version pin format (docs show `00000000_00`; `latest` is
+/// the documented default on v3.1).
+fn execute_body(user_id: &str, version: &str, arguments: &Value) -> Value {
+    json!({"user_id": user_id, "version": version, "arguments": arguments})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_composio_https_hosts_are_accepted() {
+        assert!(is_composio_https_url("https://connect.composio.dev/link/x"));
+        assert!(is_composio_https_url("https://composio.dev/a"));
+        for bad in [
+            "http://connect.composio.dev/x",
+            "http://169.254.169.254/latest",
+            "https://evilcomposio.dev/x",
+            "https://composio.dev.evil.com/x",
+            "https://user:pw@connect.composio.dev/x",
+            "https://connect.composio.dev:8443/x",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert!(!is_composio_https_url(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn production_client_cannot_be_redirected_to_another_host() {
+        let r: Redact = Arc::new(str::to_owned);
+        assert!(
+            ComposioClient::for_loopback_tests("k", "https://example.com/api", r.clone()).is_err()
+        );
+        assert!(ComposioClient::for_loopback_tests("k", "http://10.0.0.5/api", r.clone()).is_err());
+        assert!(ComposioClient::for_loopback_tests("k", "http://127.0.0.1:1/api", r).is_ok());
+    }
+}

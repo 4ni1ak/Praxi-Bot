@@ -1,0 +1,774 @@
+//! The Composio service: key custody, catalog, connect flow, discovery and
+//! execution.  The daemon wraps it in `ComposioControl`; tools call into it.
+
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
+use serde::Serialize;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use tool_registry::{Tool, ToolRegistry};
+
+use crate::client::{Account, ComposioClient, Link, Redact, ToolkitPage};
+use crate::curated::{Curated, display_class, short_name};
+use crate::error::{ComposioError, Result};
+use crate::keys::KeySource;
+use crate::state::{AppConfig, FILE_NAME, StateFile};
+use crate::tool::{ActionTool, FindActionTool, RunActionTool};
+
+const DISCOVERY_TTL: Duration = Duration::from_secs(3600);
+const CATALOG_TTL: Duration = Duration::from_secs(900);
+const CATALOG_CACHE_MAX: usize = 64;
+
+/// Receives secret-free audit rows (`composio.*`).
+pub trait Audit: Send + Sync {
+    /// Record one row.
+    ///
+    /// # Errors
+    /// The row could not be stored.
+    fn record(&self, action: &str, detail: Value) -> std::result::Result<(), String>;
+}
+
+/// Connection state of an app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnState {
+    /// Nothing connected.
+    NotConnected,
+    /// A consent page was opened and sign-in is not finished.
+    Pending,
+    /// Connected; tools exist while the app is enabled.
+    Active,
+    /// The authorization ran out; reconnect.
+    Expired,
+}
+
+/// A connected (or connecting) app as shown in the Apps panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AppView {
+    /// Toolkit slug.
+    pub slug: String,
+    /// Display name.
+    pub name: String,
+    /// State.
+    pub state: ConnState,
+    /// Owner opted in.
+    pub enabled: bool,
+    /// Praxi connects this natively (or will).
+    pub native_first: bool,
+    /// Bots allowed; `None` = all.
+    pub bots: Option<Vec<String>>,
+    /// Direct tools currently registered for the model.
+    pub tools: usize,
+}
+
+/// One action discovered from Composio.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionInfo {
+    /// Composio tool slug.
+    pub tool_slug: String,
+    /// Short name inside the toolkit.
+    pub name: String,
+    /// Description (untrusted, capped).
+    pub description: String,
+    /// Sanitized input schema.
+    pub schema: Value,
+    /// Display class: `read`, `send`, `destructive`, `other`.
+    pub class: &'static str,
+}
+
+/// Everything the service needs from its embedder.
+pub struct ServiceConfig {
+    /// Where `composio.toml` lives.
+    pub data_dir: PathBuf,
+    /// The OS secret store (the key lives here only).
+    pub keys: Arc<dyn KeySource>,
+    /// Where tools are registered.
+    pub registry: ToolRegistry,
+    /// The daemon's live redactor.
+    pub redact: Redact,
+    /// Audit sink.
+    pub audit: Arc<dyn Audit>,
+    /// Tests only: a fake server on loopback.
+    pub loopback_base: Option<String>,
+}
+
+type Discovered = (Instant, Arc<Vec<ActionInfo>>);
+
+pub(crate) struct Inner {
+    keys: Arc<dyn KeySource>,
+    registry: ToolRegistry,
+    redact: Redact,
+    audit: Arc<dyn Audit>,
+    loopback_base: Option<String>,
+    path: PathBuf,
+    pub(crate) curated: Curated,
+    state: Mutex<StateFile>,
+    client: Mutex<Option<Arc<ComposioClient>>>,
+    key_present: std::sync::atomic::AtomicBool,
+    statuses: Mutex<HashMap<String, ConnState>>,
+    discovered: Mutex<HashMap<String, Discovered>>,
+    registered: Mutex<HashMap<String, Vec<String>>>,
+    catalog: Mutex<HashMap<String, (Instant, ToolkitPage)>>,
+    auth_configs: Mutex<HashMap<String, String>>,
+}
+
+/// Cheap to clone; shared by the routes and the tools.
+#[derive(Clone)]
+pub struct ComposioService(pub(crate) Arc<Inner>);
+
+fn valid_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug.len() <= 64
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+impl ComposioService {
+    /// Load the state file, note whether a key exists and register the two
+    /// native search/run tools.  Connected apps are refreshed by
+    /// [`Self::refresh_all`] (call it in the background).
+    ///
+    /// # Errors
+    /// `composio.toml` exists but is broken.
+    pub fn new(cfg: ServiceConfig) -> Result<Self> {
+        let path = cfg.data_dir.join(FILE_NAME);
+        let state = StateFile::load(&path)?;
+        let key_present = cfg.keys.present();
+        let svc = Self(Arc::new(Inner {
+            keys: cfg.keys,
+            registry: cfg.registry,
+            redact: cfg.redact,
+            audit: cfg.audit,
+            loopback_base: cfg.loopback_base,
+            path,
+            curated: Curated::builtin(),
+            state: Mutex::new(state),
+            client: Mutex::new(None),
+            key_present: key_present.into(),
+            statuses: Mutex::new(HashMap::new()),
+            discovered: Mutex::new(HashMap::new()),
+            registered: Mutex::new(HashMap::new()),
+            catalog: Mutex::new(HashMap::new()),
+            auth_configs: Mutex::new(HashMap::new()),
+        }));
+        for t in [
+            Arc::new(FindActionTool::new(svc.clone())) as Arc<dyn Tool>,
+            Arc::new(RunActionTool::new(svc.clone())) as Arc<dyn Tool>,
+        ] {
+            svc.0.registry.register(t);
+        }
+        Ok(svc)
+    }
+
+    /// The shipped table (popular row, native-first list).
+    #[must_use]
+    pub fn curated(&self) -> &Curated {
+        &self.0.curated
+    }
+
+    /// Whether a key is stored.
+    #[must_use]
+    pub fn configured(&self) -> bool {
+        self.0
+            .key_present
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn save_state(&self, change: impl FnOnce(&mut StateFile)) -> Result<()> {
+        let mut st = self.0.state.lock();
+        let mut next = st.clone();
+        change(&mut next);
+        next.save(&self.0.path)?;
+        *st = next;
+        Ok(())
+    }
+
+    fn user_id(&self) -> String {
+        self.0.state.lock().user_id.clone()
+    }
+
+    fn audit(&self, action: &str, detail: Value) {
+        if let Err(e) = self.0.audit.record(action, detail) {
+            tracing_warn(&(self.0.redact)(&e));
+        }
+    }
+
+    async fn client(&self) -> Result<Arc<ComposioClient>> {
+        if let Some(c) = self.0.client.lock().clone() {
+            return Ok(c);
+        }
+        let key = self
+            .0
+            .keys
+            .get()
+            .await?
+            .ok_or(ComposioError::NotConfigured)?;
+        let c = Arc::new(self.build_client(&key)?);
+        *self.0.client.lock() = Some(Arc::clone(&c));
+        Ok(c)
+    }
+
+    fn build_client(&self, key: &str) -> Result<ComposioClient> {
+        let redact = Arc::clone(&self.0.redact);
+        match &self.0.loopback_base {
+            Some(base) => ComposioClient::for_loopback_tests(key, base, redact),
+            None => ComposioClient::new(key, redact),
+        }
+    }
+
+    /// Validate `key` against Composio, then store it.  The key is never
+    /// returned, logged or put in an error.
+    ///
+    /// # Errors
+    /// [`ComposioError::Invalid`] for a malformed or rejected key.
+    pub async fn set_key(&self, key: &str) -> Result<()> {
+        let key = key.trim();
+        if key.is_empty()
+            || key.len() > 512
+            || key.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
+            return Err(ComposioError::Invalid(
+                "the API key must be 1 to 512 characters without spaces".into(),
+            ));
+        }
+        let client = Arc::new(self.build_client(key)?);
+        match client.validate_key().await {
+            Ok(()) => {}
+            Err(ComposioError::Unauthorized) => {
+                return Err(ComposioError::Invalid(
+                    "Composio rejected this API key".into(),
+                ));
+            }
+            Err(e) => return Err(e),
+        }
+        self.0.keys.set(key).await?;
+        *self.0.client.lock() = Some(client);
+        self.0
+            .key_present
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.save_state(|_| {})?;
+        Ok(())
+    }
+
+    /// Delete the key and hide every Composio tool.
+    ///
+    /// # Errors
+    /// The secret store failed.
+    pub async fn remove_key(&self) -> Result<()> {
+        self.0.keys.clear().await?;
+        *self.0.client.lock() = None;
+        self.0
+            .key_present
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.0.statuses.lock().clear();
+        self.0.auth_configs.lock().clear();
+        let slugs: Vec<String> = self.0.registered.lock().keys().cloned().collect();
+        for s in slugs {
+            self.unregister_app(&s);
+        }
+        Ok(())
+    }
+
+    /// One page of Composio's toolkit catalog (cached for 15 minutes).
+    ///
+    /// # Errors
+    /// Not configured, or Composio errors.
+    pub async fn toolkits(
+        &self,
+        search: Option<&str>,
+        category: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<ToolkitPage> {
+        let key = format!(
+            "{}|{}|{}|{limit}",
+            search.unwrap_or_default().to_ascii_lowercase(),
+            category.unwrap_or_default().to_ascii_lowercase(),
+            cursor.unwrap_or_default()
+        );
+        if let Some((at, page)) = self.0.catalog.lock().get(&key)
+            && at.elapsed() < CATALOG_TTL
+        {
+            return Ok(page.clone());
+        }
+        let page = self
+            .client()
+            .await?
+            .list_toolkits(search, category, cursor, limit)
+            .await?;
+        let mut cache = self.0.catalog.lock();
+        if cache.len() >= CATALOG_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(key, (Instant::now(), page.clone()));
+        Ok(page)
+    }
+
+    fn view(&self, slug: &str, cfg: &AppConfig) -> AppView {
+        let name = self
+            .0
+            .curated
+            .popular_name(slug)
+            .map_or_else(|| slug.to_owned(), str::to_owned);
+        AppView {
+            slug: slug.to_owned(),
+            name,
+            state: self
+                .0
+                .statuses
+                .lock()
+                .get(slug)
+                .copied()
+                .unwrap_or(ConnState::NotConnected),
+            enabled: cfg.enabled,
+            native_first: self.0.curated.is_native_first(slug),
+            bots: cfg.bots.clone(),
+            tools: self.0.registered.lock().get(slug).map_or(0, Vec::len),
+        }
+    }
+
+    /// Apps the owner connected or started to connect (no network).
+    #[must_use]
+    pub fn apps(&self) -> Vec<AppView> {
+        let st = self.0.state.lock().apps.clone();
+        st.iter().map(|(slug, cfg)| self.view(slug, cfg)).collect()
+    }
+
+    /// Refresh one app from Composio and return it.
+    ///
+    /// # Errors
+    /// Unknown app, not configured, Composio errors.
+    pub async fn app_status(&self, slug: &str) -> Result<AppView> {
+        let cfg = self
+            .0
+            .state
+            .lock()
+            .apps
+            .get(slug)
+            .cloned()
+            .ok_or_else(|| ComposioError::NotFound(format!("app `{slug}` is not connected")))?;
+        self.refresh(slug).await?;
+        Ok(self.view(slug, &cfg))
+    }
+
+    /// Re-read the status of every known app (startup, background).
+    pub async fn refresh_all(&self) {
+        if !self.configured() {
+            return;
+        }
+        let slugs: Vec<String> = self.0.state.lock().apps.keys().cloned().collect();
+        for s in slugs {
+            let _ = self.refresh(&s).await;
+        }
+    }
+
+    fn derive(accounts: &[Account]) -> ConnState {
+        let has = |names: &[&str]| accounts.iter().any(|a| names.contains(&a.status.as_str()));
+        if has(&["ACTIVE"]) {
+            ConnState::Active
+        } else if has(&["INITIALIZING", "INITIATED"]) {
+            ConnState::Pending
+        } else if accounts.is_empty() {
+            ConnState::NotConnected
+        } else {
+            ConnState::Expired
+        }
+    }
+
+    async fn refresh(&self, slug: &str) -> Result<()> {
+        let accounts = self
+            .client()
+            .await?
+            .list_accounts(&self.user_id(), Some(slug))
+            .await?;
+        let new = Self::derive(&accounts);
+        let old = self.0.statuses.lock().insert(slug.to_owned(), new);
+        if old != Some(new) {
+            match new {
+                ConnState::Active => self.audit("composio.connected", json!({"app": slug})),
+                ConnState::Expired => self.audit("composio.expired", json!({"app": slug})),
+                _ => {}
+            }
+        }
+        self.sync_tools(slug).await;
+        Ok(())
+    }
+
+    /// Start connecting `slug`: returns the Composio-hosted consent link.
+    /// Opting in happens here (the owner clicked Connect).
+    ///
+    /// # Errors
+    /// Invalid slug, not configured, Composio errors.
+    pub async fn connect(&self, slug: &str) -> Result<Link> {
+        if !valid_slug(slug) {
+            return Err(ComposioError::Invalid("invalid app slug".into()));
+        }
+        let client = self.client().await?;
+        let cached = self.0.auth_configs.lock().get(slug).cloned();
+        let auth_config = if let Some(id) = cached {
+            id
+        } else {
+            let id = client.ensure_auth_config(slug).await?;
+            self.0
+                .auth_configs
+                .lock()
+                .insert(slug.to_owned(), id.clone());
+            id
+        };
+        let link = client.create_link(&auth_config, &self.user_id()).await?;
+        self.save_state(|s| {
+            s.apps.entry(slug.to_owned()).or_default().enabled = true;
+        })?;
+        self.0
+            .statuses
+            .lock()
+            .insert(slug.to_owned(), ConnState::Pending);
+        Ok(link)
+    }
+
+    /// Switch an app's tools on or off.
+    ///
+    /// # Errors
+    /// Unknown app or the state file cannot be written.
+    pub async fn set_enabled(&self, slug: &str, enabled: bool) -> Result<AppView> {
+        if !self.0.state.lock().apps.contains_key(slug) {
+            return Err(ComposioError::NotFound(format!(
+                "app `{slug}` is not connected"
+            )));
+        }
+        self.save_state(|s| {
+            if let Some(a) = s.apps.get_mut(slug) {
+                a.enabled = enabled;
+            }
+        })?;
+        self.sync_tools(slug).await;
+        let cfg = self
+            .0
+            .state
+            .lock()
+            .apps
+            .get(slug)
+            .cloned()
+            .unwrap_or_default();
+        Ok(self.view(slug, &cfg))
+    }
+
+    /// Disconnect: delete the Composio-side account(s) when possible, always
+    /// forget the app locally.  Returns whether the remote side was deleted.
+    ///
+    /// # Errors
+    /// Unknown app or the state file cannot be written.
+    pub async fn disconnect(&self, slug: &str) -> Result<bool> {
+        if !self.0.state.lock().apps.contains_key(slug) {
+            return Err(ComposioError::NotFound(format!(
+                "app `{slug}` is not connected"
+            )));
+        }
+        let remote = async {
+            let client = self.client().await?;
+            for a in client.list_accounts(&self.user_id(), Some(slug)).await? {
+                client.delete_account(&a.id).await?;
+            }
+            Ok::<(), ComposioError>(())
+        }
+        .await
+        .is_ok();
+        self.save_state(|s| {
+            s.apps.remove(slug);
+        })?;
+        self.0.statuses.lock().remove(slug);
+        self.0.discovered.lock().remove(slug);
+        self.unregister_app(slug);
+        Ok(remote)
+    }
+
+    // --- discovery and tool registration --------------------------------
+
+    pub(crate) async fn discovered(&self, slug: &str) -> Result<Arc<Vec<ActionInfo>>> {
+        if let Some((at, v)) = self.0.discovered.lock().get(slug)
+            && at.elapsed() < DISCOVERY_TTL
+        {
+            return Ok(Arc::clone(v));
+        }
+        let remote = self.client().await?.list_tools(slug).await?;
+        let mut seen = std::collections::BTreeSet::new();
+        let actions: Vec<ActionInfo> = remote
+            .into_iter()
+            .filter_map(|t| {
+                let name = short_name(slug, &t.slug);
+                seen.insert(name.clone()).then(|| ActionInfo {
+                    class: display_class(&self.0.curated, &t.slug),
+                    name,
+                    description: t.description,
+                    schema: t.schema,
+                    tool_slug: t.slug,
+                })
+            })
+            .collect();
+        let v = Arc::new(actions);
+        self.0
+            .discovered
+            .lock()
+            .insert(slug.to_owned(), (Instant::now(), Arc::clone(&v)));
+        Ok(v)
+    }
+
+    /// The direct tools of an app: known read-only actions first, then
+    /// Composio's order, at most `cap_per_toolkit`.
+    fn select_direct(&self, actions: &[ActionInfo]) -> Vec<ActionInfo> {
+        let (read, rest): (Vec<_>, Vec<_>) =
+            actions.iter().cloned().partition(|a| a.class == "read");
+        read.into_iter()
+            .chain(rest)
+            .take(self.0.curated.cap_per_toolkit)
+            .collect()
+    }
+
+    fn unregister_app(&self, slug: &str) {
+        if let Some(names) = self.0.registered.lock().remove(slug) {
+            for n in names {
+                self.0.registry.unregister(&n);
+            }
+        }
+    }
+
+    /// Make the registered tools match the app: present while it is active and
+    /// enabled, gone otherwise.  A discovery failure leaves the app without
+    /// direct tools (the search tool reports the error).
+    pub(crate) async fn sync_tools(&self, slug: &str) {
+        let want = self.is_usable(slug);
+        if !want {
+            self.unregister_app(slug);
+            return;
+        }
+        let Ok(actions) = self.discovered(slug).await else {
+            self.unregister_app(slug);
+            return;
+        };
+        self.unregister_app(slug);
+        let mut names = Vec::new();
+        for a in self.select_direct(&actions) {
+            let tool = ActionTool::new(self.clone(), slug, &a);
+            let name = tool.spec_name().to_owned();
+            if self.0.registry.register(Arc::new(tool)) {
+                names.push(name);
+            }
+        }
+        self.0.registered.lock().insert(slug.to_owned(), names);
+    }
+
+    /// Active and enabled.
+    pub(crate) fn is_usable(&self, slug: &str) -> bool {
+        self.configured()
+            && self
+                .0
+                .state
+                .lock()
+                .apps
+                .get(slug)
+                .is_some_and(|a| a.enabled)
+            && self.0.statuses.lock().get(slug) == Some(&ConnState::Active)
+    }
+
+    /// Apps `bot` may use right now.
+    pub(crate) fn usable_apps(&self, bot: Option<&str>) -> Vec<String> {
+        let st = self.0.state.lock();
+        st.apps
+            .iter()
+            .filter(|(slug, cfg)| {
+                cfg.enabled
+                    && self.0.statuses.lock().get(slug.as_str()) == Some(&ConnState::Active)
+                    && bot_listed(cfg.bots.as_deref(), bot)
+            })
+            .map(|(s, _)| s.clone())
+            .collect()
+    }
+
+    pub(crate) fn app_visible_to(&self, slug: &str, bot: Option<&str>) -> bool {
+        self.configured()
+            && self.0.state.lock().apps.get(slug).is_some_and(|c| {
+                c.enabled
+                    && self.0.statuses.lock().get(slug) == Some(&ConnState::Active)
+                    && bot_listed(c.bots.as_deref(), bot)
+            })
+    }
+
+    pub(crate) fn display_name(&self, slug: &str) -> String {
+        self.0
+            .curated
+            .popular_name(slug)
+            .map_or_else(|| slug.to_owned(), str::to_owned)
+    }
+
+    /// Actions of `app` matching `query` (all words, name or description).
+    pub(crate) async fn find(
+        &self,
+        app: &str,
+        query: &str,
+        bot: Option<&str>,
+    ) -> Result<Vec<(ActionInfo, bool)>> {
+        if !self.app_visible_to(app, bot) {
+            return Err(ComposioError::NotFound(format!(
+                "app `{app}` is not connected and enabled for this bot"
+            )));
+        }
+        let actions = self.discovered(app).await?;
+        let direct: std::collections::BTreeSet<String> = self
+            .select_direct(&actions)
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        let words: Vec<String> = query
+            .to_ascii_lowercase()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        let mut scored: Vec<(usize, &ActionInfo)> = actions
+            .iter()
+            .filter_map(|a| {
+                let hay = format!("{} {}", a.name, a.description.to_ascii_lowercase());
+                let hits = words.iter().filter(|w| hay.contains(w.as_str())).count();
+                (words.is_empty() || hits == words.len()).then_some((hits, a))
+            })
+            .collect();
+        scored.sort_by_key(|a| std::cmp::Reverse(a.0));
+        Ok(scored
+            .into_iter()
+            .take(8)
+            .map(|(_, a)| (a.clone(), direct.contains(&a.name)))
+            .collect())
+    }
+
+    /// Look one action up for a call (also used by the approval card).
+    pub(crate) async fn action(
+        &self,
+        app: &str,
+        name: &str,
+        bot: Option<&str>,
+    ) -> Result<ActionInfo> {
+        if !self.app_visible_to(app, bot) {
+            return Err(ComposioError::NotFound(format!(
+                "app `{app}` is not connected and enabled for this bot"
+            )));
+        }
+        self.discovered(app)
+            .await?
+            .iter()
+            .find(|a| a.name == name)
+            .cloned()
+            .ok_or_else(|| {
+                ComposioError::NotFound(format!(
+                    "app `{app}` has no action `{name}`; use apps_find_action"
+                ))
+            })
+    }
+
+    /// Run one validated action.  Two audit rows: `started` before the call
+    /// leaves, the final status after.  The row carries a hash of the
+    /// arguments, never the arguments.
+    pub(crate) async fn run(
+        &self,
+        app: &str,
+        action: &ActionInfo,
+        run_id: &str,
+        bot: Option<&str>,
+        args: &Value,
+    ) -> Result<Value> {
+        let hash = format!("{:x}", Sha256::digest(args.to_string().as_bytes()));
+        let row = |status: &str, bytes: usize| {
+            json!({"app": app, "action": action.name, "class": action.class, "bot": bot,
+                   "run": run_id, "status": status, "args_sha256": hash, "bytes": bytes})
+        };
+        self.0
+            .audit
+            .record("composio.call", row("started", 0))
+            .map_err(|_| {
+                ComposioError::Internal("audit log unavailable; the call was not sent".into())
+            })?;
+        let version = "latest";
+        let out = async {
+            self.client()
+                .await?
+                .execute(&action.tool_slug, &self.user_id(), version, args)
+                .await
+        }
+        .await;
+        match &out {
+            Ok(v) => self.audit("composio.call", row("ok", v.to_string().len())),
+            Err(_) => self.audit("composio.call", row("error", 0)),
+        }
+        if matches!(out, Err(ComposioError::Unauthorized)) {
+            self.audit("composio.key_rejected", json!({}));
+        }
+        out
+    }
+
+    /// Names of the directly registered tools of `app` (tests, status).
+    #[must_use]
+    pub fn registered_tools(&self, app: &str) -> Vec<String> {
+        self.0
+            .registered
+            .lock()
+            .get(app)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Directory of `composio.toml` (tests).
+    #[must_use]
+    pub fn state_path(&self) -> &Path {
+        &self.0.path
+    }
+
+    /// The configured bots map, for export/tests.
+    #[must_use]
+    pub fn bots_of(&self) -> BTreeMap<String, Option<Vec<String>>> {
+        self.0
+            .state
+            .lock()
+            .apps
+            .iter()
+            .map(|(k, v)| (k.clone(), v.bots.clone()))
+            .collect()
+    }
+}
+
+/// `None` allows every bot (and callers without one); a list allows only its
+/// members; an empty list allows nobody.
+pub(crate) fn bot_listed(bots: Option<&[String]>, bot: Option<&str>) -> bool {
+    match bots {
+        None => true,
+        Some(list) => bot.is_some_and(|b| list.iter().any(|x| x == b)),
+    }
+}
+
+fn tracing_warn(msg: &str) {
+    eprintln!("warning: composio audit: {msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bot_rules_match_the_mcp_ones() {
+        assert!(bot_listed(None, None));
+        assert!(!bot_listed(Some(&[]), Some("a")));
+        assert!(!bot_listed(Some(&["a".into()]), None));
+        assert!(bot_listed(Some(&["a".into()]), Some("a")));
+    }
+
+    #[test]
+    fn slugs_are_restricted() {
+        assert!(valid_slug("instagram"));
+        assert!(valid_slug("microsoft_teams"));
+        for bad in ["", "A", "a/b", "a b", "../x", "a?b"] {
+            assert!(!valid_slug(bad), "{bad}");
+        }
+    }
+}

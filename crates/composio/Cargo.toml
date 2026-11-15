@@ -1,0 +1,31 @@
+[package]
+name = "composio"
+description = "Composio app connections: a small REST client, a curated action manifest and agent tools."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+secret-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+toml.workspace = true
+tool-registry = { path = "../tool-registry", version = "0.1.0" }
+url.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+wiremock.workspace = true

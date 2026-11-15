@@ -39,6 +39,7 @@ members = [
     "crates/connector-email",
     "crates/web-tools",
     "crates/openapi-tools",
+    "crates/composio",
     "apps/cli",
     "apps/desktop",
     "apps/node-agent",
