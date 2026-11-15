@@ -55,6 +55,11 @@ pub struct CliEngineDto {
     pub docs_url: String,
     pub install: Option<CliInstallDto>,
     pub limitation: Option<String>,
+    /// `cli:<id>` is switched on in `providers.toml`.
+    pub enabled: bool,
+    /// The owner switched this engine off. Recorded as a `cli:<id>` entry with
+    /// `enabled = false` in `providers.toml`; such an engine is never auto-enabled.
+    pub user_disabled: bool,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -112,6 +117,7 @@ fn audit(s: &AppState, action: &str, detail: &serde_json::Value) -> Result<(), A
 
 #[utoipa::path(get, path = "/v1/providers/cli", tag = "providers", security(("bearer" = [])),
     params(crate::routes::DetectProvidersQuery), responses((status = 200, body = Vec<CliEngineDto>)))]
+#[allow(clippy::too_many_lines)] // one flat DTO mapping
 pub(crate) async fn list(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -126,6 +132,15 @@ pub(crate) async fn list(
                 .is_some_and(|r| r == "1" || r == "true"),
         )
         .await;
+    let auto_enabled = auto_enable_new(&s, &rows).await?;
+    let configured =
+        provider_catalog::ProviderConfig::load(&provider_catalog::config_path(&s.data_dir())).ok();
+    let entry_enabled = |id: &str| {
+        configured
+            .as_ref()
+            .and_then(|cfg| cfg.get(&format!("cli:{id}")))
+            .map(|p| p.enabled)
+    };
     let rows = rows
         .into_iter()
         .map(|mut detected| {
@@ -150,7 +165,10 @@ pub(crate) async fn list(
                 detected.runnable = false;
                 detected.detail = Some("version_unverified".into());
             }
+            let entry = entry_enabled(&detected.id);
             CliEngineDto {
+                enabled: entry.unwrap_or(false) || auto_enabled.contains(&detected.id),
+                user_disabled: entry == Some(false),
                 executable_names: std::iter::once(spec.command)
                     .chain(spec.aliases.iter().copied())
                     .flat_map(|name| {
@@ -216,6 +234,50 @@ pub(crate) async fn list(
         })
         .collect();
     Ok(Json(rows))
+}
+
+/// A detected, signed-in engine the confined runner can run is switched on the first
+/// time it is seen. "Seen" is the `cli:<id>` entry in `providers.toml`: the owner's
+/// switch-off writes `enabled = false` there, so it is never turned on again.
+async fn auto_enable_new(
+    s: &AppState,
+    rows: &[cli_provider::DetectedCli],
+) -> Result<Vec<String>, ApiError> {
+    let path = provider_catalog::config_path(&s.data_dir());
+    let Ok(cfg) = provider_catalog::ProviderConfig::load(&path) else {
+        return Ok(Vec::new());
+    };
+    let mut done = Vec::new();
+    for row in rows {
+        let Some(spec) = cli_provider::engine_spec(&row.id) else {
+            continue;
+        };
+        let eligible = spec.runnable
+            && row.installed
+            && row.runnable
+            && row.auth == cli_provider::AuthState::SignedIn
+            && spec.minimum_version.is_none_or(|min| {
+                row.version
+                    .as_deref()
+                    .and_then(numeric_version)
+                    .is_some_and(|version| version >= min)
+            })
+            && cfg.get(&format!("cli:{}", spec.id)).is_none();
+        let Some(engine) = crate::routes::cli_engine_kind(spec.id).filter(|_| eligible) else {
+            continue;
+        };
+        let st = s.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::routes::persist_cli_enable(&st, spec, engine, true)
+        })
+        .await
+        .map_err(ApiError::internal)??;
+        done.push(spec.id.to_owned());
+    }
+    if !done.is_empty() && s.provider_host().is_some() {
+        let _ = crate::routes::reload_from_host(s).await?;
+    }
+    Ok(done)
 }
 
 fn numeric_version(text: &str) -> Option<(u32, u32, u32)> {

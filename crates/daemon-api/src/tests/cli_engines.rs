@@ -391,3 +391,41 @@ async fn enabling_a_cli_returns_and_lists_its_registry_models() {
         .unwrap();
     assert_eq!(claude["models"], body["models"]);
 }
+
+#[tokio::test]
+async fn switching_an_engine_off_is_remembered_in_providers_toml() {
+    let t = setup();
+    let off = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/disable",
+        Some(json!({ "id": "claude" })),
+    )
+    .await;
+    assert_eq!(off.status, StatusCode::OK, "{:?}", off.json());
+    let cfg = provider_catalog::ProviderConfig::load(&provider_catalog::config_path(
+        t.state.storage().data_dir(),
+    ))
+    .unwrap();
+    assert!(!cfg.get("cli:claude").unwrap().enabled);
+    let list = call(&t, Method::GET, "/v1/providers/cli", None)
+        .await
+        .json();
+    let claude = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["detected"]["id"] == "claude")
+        .unwrap();
+    assert_eq!(claude["user_disabled"], true);
+    assert_eq!(claude["enabled"], false);
+    // Engines that are not providers cannot be switched.
+    let agy = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/disable",
+        Some(json!({ "id": "agy" })),
+    )
+    .await;
+    assert_eq!(agy.status, StatusCode::BAD_REQUEST);
+}

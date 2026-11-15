@@ -1674,10 +1674,26 @@ fn cli_registry_models(engine_id: &str) -> Vec<String> {
     })
 }
 
-fn persist_cli_enable(
+/// Registry id to the provider-catalog engine kind (`None`: never a provider).
+pub(crate) fn cli_engine_kind(id: &str) -> Option<provider_catalog::config::CliEngine> {
+    use provider_catalog::config::CliEngine;
+    Some(match id {
+        "claude" => CliEngine::Claude,
+        "codex" => CliEngine::Codex,
+        "cursor" => CliEngine::Cursor,
+        "opencode" => CliEngine::OpenCode,
+        "gemini" => CliEngine::Gemini,
+        _ => return None,
+    })
+}
+
+/// Write the `cli:<id>` entry of `providers.toml`. The entry is also the memory of the
+/// owner's choice: an engine with an entry (on or off) is never auto-enabled again.
+pub(crate) fn persist_cli_enable(
     s: &AppState,
     spec: &cli_provider::CliEngineSpec,
     engine: provider_catalog::config::CliEngine,
+    enabled: bool,
 ) -> Result<ConfiguredProviderDto, ApiError> {
     let provider_id = format!("cli:{}", spec.id);
     let _guard = s.providers_lock();
@@ -1692,7 +1708,7 @@ fn persist_cli_enable(
         .map_err(|e| ApiError::internal(format!("providers.toml: {e}")))?;
     let existing = cfg.get(&provider_id).cloned();
     let mut settings = provider_catalog::ProviderSettings::new(&provider_id, now_ms());
-    settings.enabled = true;
+    settings.enabled = enabled;
     if let Some(old) = existing {
         settings.default_model = old.default_model;
         settings.model_caps = old.model_caps;
@@ -1714,7 +1730,11 @@ fn persist_cli_enable(
             s.user_id(),
             None,
             "user",
-            "provider.cli_enable",
+            if enabled {
+                "provider.cli_enable"
+            } else {
+                "provider.cli_disable"
+            },
             &serde_json::json!({ "id": &provider_id, "engine": spec.id }),
         )
         .map_err(ApiError::internal)?;
@@ -1767,20 +1787,43 @@ pub(crate) async fn enable_cli_provider(
             &body.id,
         )));
     };
-    let engine = match spec.id {
-        "claude" => provider_catalog::config::CliEngine::Claude,
-        "codex" => provider_catalog::config::CliEngine::Codex,
-        "cursor" => provider_catalog::config::CliEngine::Cursor,
-        "opencode" => provider_catalog::config::CliEngine::OpenCode,
-        "gemini" => provider_catalog::config::CliEngine::Gemini,
-        _ => {
-            return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
-                spec.id,
-            )));
-        }
+    let Some(engine) = cli_engine_kind(spec.id) else {
+        return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
+            spec.id,
+        )));
     };
     let st = s.clone();
-    let dto = tokio::task::spawn_blocking(move || persist_cli_enable(&st, spec, engine))
+    let dto = tokio::task::spawn_blocking(move || persist_cli_enable(&st, spec, engine, true))
+        .await
+        .map_err(ApiError::internal)??;
+    if s.provider_host().is_some() {
+        let _ = reload_from_host(&s).await?;
+    }
+    Ok(Json(dto))
+}
+
+/// Switch a coding CLI provider off and remember that: it is not turned on again
+/// automatically when it is detected.
+#[utoipa::path(post, path = "/v1/providers/cli/disable", tag = "providers",
+    security(("bearer" = [])),
+    request_body = EnableCliProviderInput,
+    responses((status = 200, body = ConfiguredProviderDto),
+              (status = 400, body = ErrorBody, description = "engine is unknown or never a provider")))]
+pub(crate) async fn disable_cli_provider(
+    State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
+    ApiJson(body): ApiJson<EnableCliProviderInput>,
+) -> Result<Json<ConfiguredProviderDto>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
+    let Some((spec, engine)) = cli_provider::engine_spec(&body.id)
+        .and_then(|spec| cli_engine_kind(spec.id).map(|engine| (spec, engine)))
+    else {
+        return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
+            &body.id,
+        )));
+    };
+    let st = s.clone();
+    let dto = tokio::task::spawn_blocking(move || persist_cli_enable(&st, spec, engine, false))
         .await
         .map_err(ApiError::internal)??;
     if s.provider_host().is_some() {

@@ -5251,6 +5251,52 @@
         ]
       }
     },
+    "/v1/providers/cli/disable": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Switch a coding CLI provider off and remember that: it is not turned on again\nautomatically when it is detected.",
+        "operationId": "disable_cli_provider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnableCliProviderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfiguredProviderDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "engine is unknown or never a provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/cli/enable": {
       "post": {
         "tags": [
@@ -8289,7 +8335,9 @@
           "auth_args",
           "outdated",
           "login",
-          "docs_url"
+          "docs_url",
+          "enabled",
+          "user_disabled"
         ],
         "properties": {
           "auth_args": {
@@ -8304,6 +8352,10 @@
           },
           "docs_url": {
             "type": "string"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`cli:<id>` is switched on in `providers.toml`."
           },
           "executable_names": {
             "type": "array",
@@ -8355,6 +8407,10 @@
               "string",
               "null"
             ]
+          },
+          "user_disabled": {
+            "type": "boolean",
+            "description": "The owner switched this engine off. Recorded as a `cli:<id>` entry with\n`enabled = false` in `providers.toml`; such an engine is never auto-enabled."
           },
           "version_args": {
             "type": "array",
@@ -9237,7 +9293,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`)."
+            "description": "Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`)."
           },
           "installed": {
             "type": "boolean",

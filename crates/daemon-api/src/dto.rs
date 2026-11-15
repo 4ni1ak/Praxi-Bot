@@ -733,7 +733,7 @@ impl From<cli_provider::AuthState> for CliAuthState {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DetectedProviderDto {
-    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`).
+    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`).
     pub id: String,
     /// Display name.
     pub display_name: String,

@@ -51,7 +51,7 @@ pub use crate::registry::{CLI_ENGINES, CliEngineSpec, engine_spec};
 #[must_use]
 pub fn enable_refusal_message(id: &str) -> &'static str {
     match id {
-        "codex" | "chatgpt-plan" => CODEX_UNCONFINABLE_MESSAGE,
+        "codex" => CODEX_UNCONFINABLE_MESSAGE,
         _ if engine_spec(id).is_some() => UNRUNNABLE_CLI_MESSAGE,
         _ => UNKNOWN_CLI_MESSAGE,
     }
@@ -69,7 +69,7 @@ pub enum AuthState {
 /// A detected coding CLI engine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DetectedCli {
-    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`).
+    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`).
     pub id: String,
     /// Display name.
     pub display_name: String,
@@ -255,12 +255,16 @@ pub fn find_candidate(argv0: &str, env: &PathEnv) -> Option<PathBuf> {
                 dir.join(format!("{argv0}{ext}"))
             };
             if candidate.is_file() && crate::search::trusted_candidate(&candidate) {
-                return std::fs::canonicalize(candidate).ok();
+                return std::fs::canonicalize(candidate)
+                    .ok()
+                    .map(crate::search::plain_path);
             }
         }
         let direct = dir.join(argv0);
         if direct.is_file() && crate::search::trusted_candidate(&direct) {
-            return std::fs::canonicalize(direct).ok();
+            return std::fs::canonicalize(direct)
+                .ok()
+                .map(crate::search::plain_path);
         }
     }
     None
@@ -285,7 +289,9 @@ pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand,
     if !resolved.program.is_absolute() || !crate::search::trusted_candidate(&resolved.program) {
         return Err(ShimError::Refused);
     }
-    resolved.program = std::fs::canonicalize(resolved.program).map_err(|_| ShimError::Refused)?;
+    resolved.program = std::fs::canonicalize(resolved.program)
+        .map(crate::search::plain_path)
+        .map_err(|_| ShimError::Refused)?;
     Ok(resolved)
 }
 
@@ -367,8 +373,8 @@ fn cursor_file_shim(candidate: &Path, text: &str, env: &PathEnv) -> Option<Resol
     } else {
         return None;
     };
-    let dir = std::fs::canonicalize(candidate.parent()?).ok()?;
-    let script = std::fs::canonicalize(dir.join(script_name)).ok()?;
+    let dir = crate::search::plain_path(std::fs::canonicalize(candidate.parent()?).ok()?);
+    let script = crate::search::plain_path(std::fs::canonicalize(dir.join(script_name)).ok()?);
     if script.parent() != Some(dir.as_path()) || !crate::search::trusted_candidate(&script) {
         return None;
     }
@@ -580,10 +586,16 @@ fn native_exe_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
     existing_inside(package_dir, &joined)
 }
 
-/// An extensionless package bin whose first line is a `node` shebang, inside the package.
+/// A package bin inside the package that node runs: an extensionless file or a
+/// `.js`/`.mjs`/`.cjs` file (`@openai/codex` ships `bin/codex.js`), whose first line is a
+/// `node` shebang.
 fn node_launcher_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
     let joined = join_inside(package_dir, bin_rel)?;
-    if joined.extension().is_some() {
+    if joined
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| !is_js_extension(&format!("x.{e}")))
+    {
         return None;
     }
     let file = existing_inside(package_dir, &joined)?;
@@ -628,7 +640,7 @@ fn existing_inside(package_dir: &Path, joined: &Path) -> Option<PathBuf> {
     let root = std::fs::canonicalize(package_dir).ok()?;
     let file = std::fs::canonicalize(joined).ok()?;
     (file.starts_with(&root) && file != root && crate::search::trusted_candidate(&file))
-        .then_some(file)
+        .then(|| crate::search::plain_path(file))
 }
 
 fn find_node_executable(near: &Path, env: &PathEnv) -> Option<PathBuf> {
@@ -816,8 +828,9 @@ pub(crate) fn lock_executable(
     use std::os::windows::fs::OpenOptionsExt;
     use windows::Win32::Storage::FileSystem::FILE_SHARE_READ;
 
-    resolved.program =
-        std::fs::canonicalize(&resolved.program).map_err(|_| CliError::BinaryChanged)?;
+    resolved.program = std::fs::canonicalize(&resolved.program)
+        .map(crate::search::plain_path)
+        .map_err(|_| CliError::BinaryChanged)?;
     let file = std::fs::OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ.0)
@@ -1165,30 +1178,16 @@ impl Detector {
     }
 
     async fn detect_fresh(&self) -> Vec<DetectedCli> {
-        let (claude, codex, cursor, opencode, gemini) = tokio::join!(
+        let (claude, codex, cursor, opencode, gemini, agy) = tokio::join!(
             self.probe_claude(),
             self.probe_codex(),
             self.probe_cursor(),
             self.probe_opencode(),
             self.probe_gemini(),
+            self.probe_agy(),
         );
 
-        let chatgpt_plan = {
-            let spec = engine_spec("chatgpt-plan").expect("chatgpt-plan in CLI_ENGINES");
-            DetectedCli {
-                id: spec.id.to_owned(),
-                display_name: spec.display_name.to_owned(),
-                installed: codex.installed,
-                version: codex.version.clone(),
-                auth: AuthState::Unknown,
-                account_label: None,
-                runnable: spec.runnable,
-                detail: codex.detail.clone(),
-                message: codex.message.clone(),
-            }
-        };
-
-        vec![claude, codex, cursor, opencode, gemini, chatgpt_plan]
+        vec![claude, codex, cursor, opencode, gemini, agy]
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1550,6 +1549,16 @@ impl Detector {
         cli
     }
 
+    /// Antigravity CLI: version only. It has no auth-status command, and its login
+    /// files are never read, so sign-in stays unknown.
+    async fn probe_agy(&self) -> DetectedCli {
+        let (mut cli, resolved) = self.probe_engine_version("agy").await;
+        if cli.installed && resolved.is_some() && cli.detail.is_none() {
+            cli.detail = Some("auth_unverified".to_owned());
+        }
+        cli
+    }
+
     async fn probe_gemini(&self) -> DetectedCli {
         let (mut cli, resolved) = self.probe_engine_version("gemini").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
@@ -1825,7 +1834,7 @@ mod tests {
         assert_eq!(resolved.program, shell);
         assert_eq!(
             resolved.args.last().unwrap(),
-            &std::fs::canonicalize(script).unwrap().to_string_lossy()
+            &crate::search::plain_path(std::fs::canonicalize(script).unwrap()).to_string_lossy()
         );
         assert!(cursor_file_shim(&shim, &format!("{text} -Command evil"), &env).is_none());
         assert!(
@@ -2251,7 +2260,10 @@ mod tests {
             args: vec![],
         };
         let (resolved, lease) = lock_executable(resolved).unwrap();
-        assert_eq!(resolved.program, std::fs::canonicalize(&path).unwrap());
+        assert_eq!(
+            resolved.program,
+            crate::search::plain_path(std::fs::canonicalize(&path).unwrap())
+        );
         assert!(std::fs::OpenOptions::new().write(true).open(&path).is_err());
         assert!(std::fs::rename(&path, &moved).is_err());
         assert!(std::fs::File::open(&path).is_ok());

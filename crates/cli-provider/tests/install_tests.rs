@@ -141,10 +141,16 @@ fn windows_npm_cmd_is_unwrapped_with_fixed_script_and_never_a_batch_runtime() {
     std::fs::write(&node, b"fixture").unwrap();
     let env = PathEnv::for_test(dir.path().into());
     let resolved = resolve_installer(&env).unwrap();
-    assert_eq!(resolved.program, std::fs::canonicalize(&node).unwrap());
+    assert_eq!(
+        resolved.program,
+        cli_provider::search::plain_path(std::fs::canonicalize(&node).unwrap())
+    );
     assert_eq!(
         resolved.args,
-        [std::fs::canonicalize(script).unwrap().to_string_lossy()]
+        [
+            cli_provider::search::plain_path(std::fs::canonicalize(script).unwrap())
+                .to_string_lossy()
+        ]
     );
     std::fs::remove_file(node).unwrap();
     std::fs::write(dir.path().join("node.cmd"), b"@echo off\r\nevil").unwrap();

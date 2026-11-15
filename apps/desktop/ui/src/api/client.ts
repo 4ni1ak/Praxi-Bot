@@ -605,6 +605,12 @@ export class ApiClient {
       body: { id }
     });
   }
+  /** Switch a coding CLI off; the daemon remembers it and never turns it on again by itself. */
+  disableCliProvider(id: string): Promise<ConfiguredProviderDto> {
+    return this.request("POST", "/providers/cli/disable", {
+      body: { id }
+    });
+  }
   // ---- MCP servers & secrets -------------------------------------------
 
   listMcpServers(): Promise<McpServer[]> {

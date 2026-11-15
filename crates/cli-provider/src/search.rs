@@ -2,6 +2,30 @@
 use crate::{CliEngineSpec, PathEnv};
 use std::path::{Path, PathBuf};
 
+/// Drop the verbatim prefix that `canonicalize` adds on Windows (dunce-style).
+/// Node and many CLIs cannot `realpath` such a path (`EISDIR: lstat 'C:'`), and it is
+/// noise to show. The UNC form becomes a plain `\\server\share` path; anything that is
+/// not a plain drive or UNC form is returned unchanged. A no-op off Windows.
+#[must_use]
+pub fn plain_path(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let mut chars = rest.chars();
+        if chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && chars.next() == Some(':')
+            && matches!(chars.next(), Some('\\') | None)
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    path
+}
+
 pub(crate) fn trusted_directory(dir: &Path) -> bool {
     dir.is_absolute() && trusted_candidate(dir)
 }
@@ -51,6 +75,8 @@ pub(crate) fn augment(env: &mut PathEnv) {
     }
     if let Some(local) = &env.local_app_data {
         env.path_dirs.push(local.join("cursor-agent"));
+        // Antigravity CLI (`agy`) installs here on Windows.
+        env.path_dirs.push(local.join("agy/bin"));
         env.path_dirs.push(local.join("Microsoft/WinGet/Links"));
     }
     if let Some(roaming) = env.env_vars.get("APPDATA") {
@@ -119,6 +145,17 @@ mod tests {
         }
     }
     #[test]
+    fn verbatim_prefix_is_removed_only_for_drive_and_unc_paths() {
+        let p = |s: &str| plain_path(PathBuf::from(s));
+        assert_eq!(
+            p(r"\\?\C:\Users\a\x.cmd"),
+            PathBuf::from(r"C:\Users\a\x.cmd")
+        );
+        assert_eq!(p(r"\\?\UNC\srv\share\x"), PathBuf::from(r"\\srv\share\x"));
+        assert_eq!(p(r"\\?\Volume{1}\x"), PathBuf::from(r"\\?\Volume{1}\x"));
+        assert_eq!(p("/usr/bin/x"), PathBuf::from("/usr/bin/x"));
+    }
+    #[test]
     fn scoop_shims_are_searched_under_home() {
         let mut env =
             PathEnv::for_test(std::env::temp_dir()).with_home(std::env::temp_dir().join("h"));
@@ -137,10 +174,8 @@ mod tests {
         let mut env = env;
         env.path_dirs.push(vendor.clone());
         let found = find_engine(crate::engine_spec("cursor").unwrap(), &env).unwrap();
-        assert_eq!(
-            found.parent(),
-            Some(std::fs::canonicalize(vendor).unwrap().as_path())
-        );
+        let vendor = plain_path(std::fs::canonicalize(vendor).unwrap());
+        assert_eq!(found.parent(), Some(vendor.as_path()));
     }
 
     #[test]

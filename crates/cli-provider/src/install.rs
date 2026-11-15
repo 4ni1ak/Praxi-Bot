@@ -44,7 +44,12 @@ pub fn resolve_installer(env: &PathEnv) -> Result<ResolvedCommand, &'static str>
         }
         return Ok(ResolvedCommand {
             program: node,
-            args: vec![script.to_string_lossy().into_owned()],
+            // Node cannot realpath a verbatim (extended-length) script path: EISDIR lstat C:.
+            args: vec![
+                crate::search::plain_path(script)
+                    .to_string_lossy()
+                    .into_owned(),
+            ],
         });
     }
     resolve_spawn(&candidate, env).map_err(|_| "npm_shim_refused")
@@ -227,7 +232,7 @@ mod tests {
     async fn unverified_commands_cannot_execute() {
         let dir = tempfile::tempdir().unwrap();
         let env = PathEnv::for_test(dir.path().into());
-        for id in ["gemini", "chatgpt-plan", "npm;whoami"] {
+        for id in ["gemini", "agy", "npm;whoami"] {
             assert_eq!(
                 run_install(id, &env, dir.path(), INSTALL_TIMEOUT, |_| {}).await,
                 Err("copy_only")

@@ -61,7 +61,11 @@ pub const PHONE_DENIED_POST_PATHS: &[&str] = &["/v1/host/import", "/v1/host/hand
 pub const PEER_RUN_STOP_PATH: &str = "/v1/runs/stop";
 
 /// Host-local provider management endpoints forbidden to ALL paired peers.
-pub const PEER_DENIED_POST_PATHS: &[&str] = &["/v1/providers/cli/enable", "/v1/providers/reload"];
+pub const PEER_DENIED_POST_PATHS: &[&str] = &[
+    "/v1/providers/cli/enable",
+    "/v1/providers/cli/disable",
+    "/v1/providers/reload",
+];
 
 /// Host-local diagnostics forbidden to ALL paired peers, for every method.
 /// Repairs (`/v1/doctor/repair/*`) are actions of the user at this host's

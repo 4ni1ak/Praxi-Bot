@@ -181,10 +181,12 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         login: "gemini",
         docs_url: "https://github.com/google-gemini/gemini-cli",
     },
+    // Antigravity CLI. Headless mode exists (`agy -p <prompt> --output-format stream-json`,
+    // `--model`, `--mode`) but no driver parses it yet, so it is detected only.
     CliEngineSpec {
-        id: "chatgpt-plan",
-        display_name: "ChatGPT plan",
-        command: "codex",
+        id: "agy",
+        display_name: "Antigravity",
+        command: "agy",
         aliases: &[],
         runnable: false,
         version_args: &["--version"],
@@ -193,8 +195,8 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         install_windows: None,
         install_unix: None,
         models: &[],
-        login: "codex login",
-        docs_url: "https://github.com/openai/codex",
+        login: "agy",
+        docs_url: "https://antigravity.google/docs",
     },
 ];
 
