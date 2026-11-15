@@ -386,9 +386,9 @@ export function readShellContract(
   if (!/\*\s*,\s*\*::before\s*,\s*\*::after\s*\{[^}]*box-sizing:\s*border-box/.test(stripComments(src.globalCss))) {
     fail(FILE.global, "*, *::before, *::after box-sizing", "border-box", undefined);
   }
-  // float flag of the theme engine: glass or a backdrop.
-  if (!/root\.dataset\.float\s*=\s*backdropActive\s*\|\|\s*style\s*===\s*"glass"/.test(src.themeTs)) {
-    fail(FILE.theme, "data-float", 'backdropActive || style === "glass"', undefined);
+  // float flag of the theme engine: glass, tinted (card 244-E) or a backdrop.
+  if (!/root\.dataset\.float\s*=\s*backdropActive\s*\|\|\s*style\s*===\s*"glass"\s*\|\|\s*style\s*===\s*"tinted"/.test(src.themeTs)) {
+    fail(FILE.theme, "data-float", 'backdropActive || style === "glass" || style === "tinted"', undefined);
   }
   // `--panel-w` is the panel's target width, set by the component from the `width` prop.
   if (src.sidebarTsx !== undefined && !/"--panel-w":\s*`\$\{width\}px`/.test(src.sidebarTsx)) {

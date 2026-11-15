@@ -1178,6 +1178,48 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
     }
 }
 
+/// Whether `root` must not be handed out as a whole folder (for example to a
+/// filesystem MCP server): it is, contains or lies inside the daemon's data
+/// directory, or it is or contains a credential-named entry on its own path.
+/// Same rules as the bot's file tools (`is_protected`), plus the containment
+/// test the file tools do not need for single files.
+#[must_use]
+pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
+    if is_protected(root, data_dir) {
+        return true;
+    }
+    let r = norm_parts(&widen_for_compare(root));
+    let d = norm_parts(&widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf()));
+    let n = r.len().min(d.len());
+    r[..n] == d[..n]
+}
+
+/// Resolve an existing local folder using the file tools' reparse-safe walk.
+/// Network/device syntax and drive mappings are classified before metadata;
+/// ambiguous parent traversal is refused rather than normalized across links.
+///
+/// # Errors
+/// The folder is relative, missing, remote, or cannot be safely resolved.
+pub fn resolve_local_folder(path: &Path) -> Result<PathBuf, ToolError> {
+    reject_syntax(&path.to_string_lossy())?;
+    if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
+        return Err(denied("choose an absolute folder without parent traversal"));
+    }
+    let lexical = lexical_absolute(&path.to_string_lossy())?;
+    let ctx = ResolveCtx {
+        follow: Follow::Content,
+        roots: &[],
+        drives: &DriveCache::new(),
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = final_identity(&resolve_local(&lexical, &ctx)?)?;
+    if !resolved.is_dir() {
+        return Err(denied("choose an existing folder"));
+    }
+    Ok(resolved)
+}
+
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
 /// device path) still gets its directory widened: the final name is appended
 /// unchanged. Comparing the raw spelling (`x\..ot.db::$DATA`, an 8.3
@@ -1253,14 +1295,26 @@ const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
 ///   redirect a stored password) and `email-secret-cleanup.json` (pending
 ///   secret deletions after an account change).
 /// - `schedule.toml` (limits for bot-created schedules).
+/// - `fill-secrets.json` (the allowed origins / programs and standing grants of
+///   the owner's fill secrets: editing it would widen where a secret is typed).
+/// - `knowledge-host.json` (pins the native embedding library path and SHA),
+///   `knowledge-authority.db` (owner egress grants) and `knowledge-runtime.db`
+///   (embedding quota/cooldown ledger), with the same sidecars.
 /// - the atomic-write temp files (`.tmp*`) of any of them.
 ///
 /// Deliberately NOT listed: `skills.lock.json` / `skills-usage.json` (counters
 /// and a lockfile for bot-writable skills; no authority) and logs.
 fn daemon_state_name(base: &str) -> bool {
-    const DATABASES: [&str; 3] = ["bot.db", "schedules.db", "memory.db"];
-    const FILES: [&str; 12] = [
+    const DATABASES: [&str; 5] = [
+        "bot.db",
+        "schedules.db",
+        "memory.db",
+        "knowledge-authority.db",
+        "knowledge-runtime.db",
+    ];
+    const FILES: [&str; 15] = [
         "control-latch.json",
+        "view-privileges.json",
         "policy.json",
         "host.toml",
         "config.toml",
@@ -1272,6 +1326,8 @@ fn daemon_state_name(base: &str) -> bool {
         "email.toml",
         "email-secret-cleanup.json",
         "schedule.toml",
+        "fill-secrets.json",
+        "knowledge-host.json",
     ];
     DATABASES.iter().any(|s| {
         base == *s
@@ -4373,6 +4429,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mcp_folder_resolver_classifies_links_before_following() {
+        let base = tempfile::tempdir().unwrap();
+        let link = base.path().join("remote-link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("//192.0.2.1/share/dir", &link).unwrap();
+        #[cfg(unix)]
+        assert!(resolve_local_folder(&link).is_err());
+        #[cfg(windows)]
+        {
+            let target = base.path().ancestors().last().unwrap();
+            link_dir(target, &link).unwrap();
+            assert_eq!(
+                resolve_local_folder(&link).unwrap(),
+                resolve_local_folder(target).unwrap()
+            );
+        }
+        assert!(resolve_local_folder(Path::new(r"\\192.0.2.1\share\dir")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mcp_folder_resolver_expands_case_and_short_credential_data_install_aliases() {
+        let base = tempfile::tempdir().unwrap();
+        let data = base.path().join("daemon-data-directory");
+        let install = base.path().join("application-install-directory");
+        for name in [
+            ".ssh",
+            ".docker",
+            "daemon-data-directory",
+            "application-install-directory",
+        ] {
+            let path = base.path().join(name);
+            fs::create_dir(&path).unwrap();
+        }
+        for path in [
+            &data,
+            &install,
+            &base.path().join(".ssh"),
+            &base.path().join(".docker"),
+        ] {
+            let short = win_fs::short_path(path).unwrap();
+            let canonical = resolve_local_folder(&short).unwrap();
+            assert_eq!(
+                norm_parts(&canonical),
+                norm_parts(&resolve_local_folder(path).unwrap())
+            );
+            if path == &data || path == &install {
+                assert!(is_protected_root(
+                    &canonical,
+                    &resolve_local_folder(path).unwrap()
+                ));
+            } else {
+                assert_eq!(canonical.file_name(), path.file_name());
+            }
+            let upper = PathBuf::from(path.display().to_string().to_ascii_uppercase());
+            assert_eq!(
+                norm_parts(&resolve_local_folder(&upper).unwrap()),
+                norm_parts(&canonical)
+            );
+        }
+    }
+
     /// Directory symlink, or a junction on Windows (no extra privilege).
     fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
         #[cfg(unix)]
@@ -4483,9 +4602,22 @@ mod tests {
             "email.toml.tmp",
             "email.toml.bak",
             "email-secret-cleanup.json",
+            "fill-secrets.json",
+            "fill-secrets.json.tmp",
             "email-secret-cleanup.json.tmp",
             "schedule.toml",
             "schedule.toml.bak",
+            "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
+            "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
         ] {
             let file = d.path().join(name);
             fs::write(&file, secret).unwrap();
@@ -4517,6 +4649,104 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn knowledge_state_files_resist_every_file_tool_and_cannot_be_checkpointed() {
+        let (d, w, t) = setup();
+        let c = ctx();
+        let names = [
+            "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
+            "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
+        ];
+        assert_eq!(names.len(), 11);
+        for name in names {
+            let file = d.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            let own = w.path().join("own.txt");
+            fs::write(&own, "mine").unwrap();
+            for (tool, input) in [
+                ("fs_read", json!({"path": &file})),
+                ("fs_write", json!({"path": &file, "content": "evil"})),
+                (
+                    "fs_edit",
+                    json!({"path": &file, "old": "pinned", "new": "evil"}),
+                ),
+                ("fs_move", json!({"from": &file, "to": w.path().join("x")})),
+                (
+                    "fs_move",
+                    json!({"from": &own, "to": &file, "overwrite": true}),
+                ),
+                ("fs_delete", json!({"path": &file})),
+            ] {
+                let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{tool} {name}: {err}"
+                );
+                assert!(!err.to_string().contains("pinned"), "{tool} {name}");
+                assert_eq!(
+                    fs::read_to_string(&file).unwrap(),
+                    "pinned",
+                    "{tool} {name}"
+                );
+                assert_eq!(fs::read_to_string(&own).unwrap(), "mine", "{tool} {name}");
+            }
+            // `CheckpointStore::create` vets every named path with the same
+            // protection and refuses an ungranted protected file outright, so
+            // no checkpoint exists that could later write the file back.
+            let store = crate::checkpoint::CheckpointStore::new(d.path());
+            let err = store
+                .create("run-cp", "fs_write", &[file.as_path()])
+                .expect_err(name);
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{name}");
+            assert_eq!(err.to_string(), GRANT_MSG, "{name}");
+            assert!(
+                store.list("run-cp").unwrap().is_empty(),
+                "{name}: a refused create must leave no checkpoint"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn state_files_stay_protected_when_reached_through_a_symlinked_data_dir() {
+        let real = tempfile::tempdir().unwrap();
+        let alias_parent = tempfile::tempdir().unwrap();
+        let alias = alias_parent.path().join("data-link");
+        std::os::unix::fs::symlink(real.path(), &alias).unwrap();
+        // The daemon hands the file tools the canonical data dir (what
+        // `Storage::open` resolves); the bot may name it through the alias.
+        let t = tools(&fs::canonicalize(&alias).unwrap());
+        let c = ctx();
+        for name in ["knowledge-host.json", "bot.db"] {
+            let file = real.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            for path in [alias.join(name), file.clone()] {
+                for (tool, input) in [
+                    ("fs_read", json!({"path": &path})),
+                    ("fs_write", json!({"path": &path, "content": "evil"})),
+                    ("fs_delete", json!({"path": &path})),
+                ] {
+                    let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                    assert!(
+                        matches!(err, ToolError::PermissionDenied(_)),
+                        "{tool} {}: {err}",
+                        path.display()
+                    );
+                }
+            }
+            assert_eq!(fs::read_to_string(&file).unwrap(), "pinned");
+        }
     }
 
     #[tokio::test]
@@ -4609,6 +4839,33 @@ mod tests {
             d.path()
         ));
         assert!(!is_protected(&d.path().join("notes.txt."), d.path()));
+    }
+
+    #[tokio::test]
+    async fn a_bot_cannot_grant_screen_access_by_editing_view_privileges() {
+        // `view-privileges.json` is reloaded at daemon start as live screen
+        // view/input grants for paired devices (card 252).
+        let (d, _w, t) = setup();
+        let c = ctx();
+        let file = d.path().join("view-privileges.json");
+        let original = "{}";
+        std::fs::write(&file, original).unwrap();
+        let forged = r#"{"peer:abc":{"view":true,"input":true}}"#;
+        for (tool, input) in [
+            ("fs_write", json!({"path": &file, "content": forged})),
+            (
+                "fs_edit",
+                json!({"path": &file, "old": "{}", "new": forged}),
+            ),
+            ("fs_delete", json!({"path": &file})),
+        ] {
+            let err = get(&t, tool).call(&c, input).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{tool}: {err}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
     }
 
     #[tokio::test]

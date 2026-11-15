@@ -1,5 +1,6 @@
 import { createSseParser } from "./events.ts";
 import type { Connection } from "./connection";
+import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
 import type {
   AcceptedResponse,
   Approval,
@@ -22,6 +23,9 @@ import type {
   Grant,
   GrantTarget,
   Health,
+  HostLinkConnection,
+  HostLinkInfo,
+  HostLinkList,
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
@@ -29,6 +33,8 @@ import type {
   InputBatch,
   InputResult,
   McpCatalogEntry,
+  McpAuthState,
+  McpAuthStart,
   McpServer,
   McpServerPatch,
   McpServerConfig,
@@ -54,6 +60,7 @@ import type {
   TakeoverAccepted,
   TakeoverRequest,
   TargetInfo,
+  TargetUnavailable,
   UsageSummary,
   ViewHeartbeat,
   WebSearchConfig,
@@ -64,8 +71,11 @@ import type {
   RestorePreview,
   RestoreResponse,
   BotSkills,
+  BotPatchInput,
   PutBotSkillsInput,
-  SkillsCatalog
+  SkillsCatalog,
+  StopRunsInput,
+  StopRunsResponse
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -74,12 +84,15 @@ export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** The parsed JSON body of the error response, when it had one (a `409` carries `current`). */
+  readonly body?: unknown;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -90,6 +103,55 @@ type Query = Record<string, string | number | null | undefined>;
  * shapes come from the generated OpenAPI types (see `types.ts`).
  */
 export class ApiClient {
+  listKnowledgeEmailCaptures(bot: string): Promise<KnowledgeEmailCapture[]> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/email-captures`);
+  }
+  listKnowledgeSources(bot: string): Promise<KnowledgeSource[]> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/sources`);
+  }
+
+  createKnowledgeSource(bot: string, body: KnowledgeSourceInput): Promise<KnowledgeMutation> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/sources`, { body });
+  }
+
+  updateKnowledgeSource(bot: string, source: string, body: KnowledgeSourceChange): Promise<KnowledgeSource> {
+    return this.request("PUT", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}`, { body });
+  }
+
+  deleteKnowledgeSource(bot: string, source: string, expectedRevision: number): Promise<void> {
+    return this.request("DELETE", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}`, { body: { expected_revision: expectedRevision } });
+  }
+
+  reindexKnowledgeSource(bot: string, source: string, expectedRevision: number, cursor?: string): Promise<KnowledgeMutation> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}/reindex`, { body: { expected_revision: expectedRevision, cursor: cursor ?? null } });
+  }
+
+  embedKnowledgeSource(bot: string, source: string, expectedRevision: number, resetRetry = false): Promise<KnowledgeEmbeddingProgress> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/sources/${encodeURIComponent(source)}/embed`, { body: { expected_revision: expectedRevision, reset_retry: resetRetry } });
+  }
+
+  getKnowledgeSettings(bot: string): Promise<KnowledgeSettings> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/settings`);
+  }
+
+  updateKnowledgeSettings(bot: string, body: KnowledgeSettingsInput): Promise<KnowledgeSettings> {
+    return this.request("PUT", `/bots/${encodeURIComponent(bot)}/knowledge/settings`, { body });
+  }
+  requestKnowledgeEmbeddingApproval(bot: string, body: KnowledgeEmbeddingGrantTarget): Promise<KnowledgeEmbeddingApproval> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-approvals`, { body });
+  }
+
+  confirmKnowledgeEmbeddingApproval(bot: string, approval: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-approvals/${encodeURIComponent(approval)}/confirm`);
+  }
+
+  revokeKnowledgeEmbeddingGrant(bot: string, body: KnowledgeEmbeddingGrantTarget): Promise<void> {
+    return this.request("DELETE", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-grants`, { body });
+  }
+
+  resetKnowledgeEmbeddingCooldown(bot: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-cooldown/reset`);
+  }
   readonly baseUrl: string;
   private readonly token: string;
 
@@ -106,7 +168,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -125,7 +187,7 @@ export class ApiClient {
   private async send(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -145,7 +207,8 @@ export class ApiClient {
       res = await fetch(url, {
         method,
         headers,
-        body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        signal: opts.signal
       });
     } catch (e) {
       throw new ApiError(
@@ -157,14 +220,16 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
   }
@@ -208,6 +273,21 @@ export class ApiClient {
     return this.request("GET", "/health", { auth: false });
   }
 
+  /** Paired hosts and their channel state (this computer's own daemon). */
+  listHosts(): Promise<HostLinkList> {
+    return this.request("GET", "/hosts");
+  }
+  /** Pair with a host using the ticket from `bot host invite --role desktop`. */
+  pairHost(ticket: string): Promise<HostLinkInfo> {
+    return this.request("POST", "/hosts/pair", { body: { ticket } });
+  }
+  /** Open (or reuse) the guarded channel to a paired host. */
+  connectHost(id: string): Promise<HostLinkConnection> {
+    return this.request("POST", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
+  disconnectHost(id: string): Promise<void> {
+    return this.request("DELETE", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
   listBots(): Promise<Bot[]> {
     return this.request("GET", "/bots");
   }
@@ -219,6 +299,13 @@ export class ApiClient {
   }
   updateBot(id: string, input: BotInput): Promise<Bot> {
     return this.request("PUT", `/bots/${id}`, { body: input });
+  }
+  /**
+   * Change only the listed fields of a bot, atomically, if `expected_version` is still current;
+   * a stale version is a `409` whose body carries the current bot (`conflictBot`).
+   */
+  patchBot(id: string, input: BotPatchInput): Promise<Bot> {
+    return this.request("PATCH", `/bots/${id}`, { body: input });
   }
   /** Owner-only: engine mode, approval level and workspace of a bot. */
   putBotEngine(id: string, input: BotEngineInput): Promise<Bot> {
@@ -275,6 +362,13 @@ export class ApiClient {
   }
   cancelRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/cancel`);
+  }
+  /**
+   * One user Stop (`POST /v1/runs/stop`). Idempotent per `stop_id`: the daemon fixes the
+   * target set on first receipt, so a retry must reuse the same id. `signal` bounds one attempt.
+   */
+  stopRuns(body: StopRunsInput, signal?: AbortSignal): Promise<StopRunsResponse> {
+    return this.request("POST", "/runs/stop", { body, signal });
   }
   resumeRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/resume`);
@@ -370,12 +464,12 @@ export class ApiClient {
     });
   }
   /** Release an owned screen takeover or clear a legacy latch. */
-  releaseControl(req?: ReleaseRequest): Promise<ControlStateDto> {
-    return this.request("POST", "/control/release", req ? { body: req } : {});
+  releaseControl(req?: ReleaseRequest, signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/release", req ? { body: req, signal } : { signal });
   }
   /** Local Stop override: interrupts any active takeover and keeps the pause latch. */
-  overrideControl(): Promise<ControlStateDto> {
-    return this.request("POST", "/control/override");
+  overrideControl(signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/override", { signal });
   }
   /** Local user recovery: clears an interrupted/recovered latch after key reset. */
   recoverControl(): Promise<ControlStateDto> {
@@ -396,6 +490,10 @@ export class ApiClient {
 
   listViewTargets(): Promise<TargetInfo[]> {
     return this.request("GET", "/view/targets");
+  }
+  /** Which kinds of screen this host cannot offer, and why. */
+  listViewAvailability(): Promise<TargetUnavailable[]> {
+    return this.request("GET", "/view/availability");
   }
   createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
     return this.request("POST", "/view/sessions", { body: input });
@@ -468,14 +566,16 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
   }
@@ -530,6 +630,24 @@ export class ApiClient {
   }
   mcpCatalog(): Promise<McpCatalogEntry[]> {
     return this.request("GET", "/mcp/catalog");
+  }
+  startMcpAuth(name: string): Promise<McpAuthStart> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/start`);
+  }
+  /** Finish a sign-in with the redirect address pasted from the browser (headless daemon). */
+  completeMcpAuth(name: string, redirectUrl: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/callback`, {
+      body: { redirect_url: redirectUrl }
+    });
+  }
+  cancelMcpAuth(name: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/cancel`);
+  }
+  mcpAuthStatus(name: string): Promise<McpAuthState> {
+    return this.request("GET", `/mcp/servers/${encodeURIComponent(name)}/auth/status`);
+  }
+  logoutMcpAuth(name: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/logout`);
   }
   /** Store a secret (write-only: the daemon never returns the value). */
   setSecret(name: string, value: string): Promise<void> {

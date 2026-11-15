@@ -2,7 +2,7 @@
   {
     "id": "filesystem",
     "name": "Filesystem",
-    "description": "Read, write and search files inside a folder you choose (edit the last argument).",
+    "description": "Read, write and search files inside one folder you choose.",
     "category": "fs",
     "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
     "icon": null,
@@ -11,10 +11,12 @@
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-filesystem@2.2.0",
-        "."
+        "@modelcontextprotocol/server-filesystem@2.2.0"
       ],
-      "required_secrets": []
+      "required_secrets": [],
+      "folder": {
+        "label": "Folder the bot may read and write"
+      }
     }
   },
   {

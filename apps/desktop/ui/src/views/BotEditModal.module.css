@@ -1,0 +1,148 @@
+/* Edit bot: section list on the left, the dialog column (header / scrolling body / footer) on
+   the right.  Below the narrow breakpoint the list becomes a tab strip on top. */
+
+.shell {
+  flex: 1;
+  display: flex;
+  min-width: var(--space-0);
+  min-height: var(--space-0);
+}
+
+.nav {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: calc(var(--size-sidebar-width) * 0.8);
+  min-height: var(--space-0);
+  padding: var(--space-5) var(--space-3);
+  overflow-y: auto;
+  border-right: var(--size-border) solid var(--color-border);
+}
+
+.navBot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: var(--space-0);
+  padding: var(--space-0) var(--space-2);
+}
+
+.navBotName {
+  min-width: var(--space-0);
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--size-control-md);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.tab > svg {
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.tab:hover {
+  background-color: color-mix(in srgb, var(--color-text) 5%, transparent);
+  color: var(--color-text);
+}
+
+.tab:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.tabActive,
+.tabActive:hover {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text);
+}
+
+.tabLabel {
+  flex: 1;
+  min-width: var(--space-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mark {
+  flex: none;
+  width: var(--size-status-dot);
+  height: var(--size-status-dot);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent);
+}
+
+.markProblem {
+  background-color: var(--color-warning);
+}
+
+/* stylelint-disable-next-line unit-disallowed-list -- desktop window resize boundary */
+@media (width <= 52em) {
+  .shell { flex-direction: column; }
+
+  .nav {
+    width: auto;
+    gap: var(--space-0);
+    padding: var(--space-2) var(--space-3) var(--space-0);
+    overflow: visible;
+    border-right: none;
+    border-bottom: var(--size-border) solid var(--color-border);
+  }
+
+  .navBot { display: none; }
+
+  .tabs {
+    flex-direction: row;
+    gap: var(--space-1);
+    padding-bottom: var(--space-2);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tab { flex: none; }
+  .tabLabel { flex: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab {
+    transition: none;
+  }
+}
+
+.noticeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}

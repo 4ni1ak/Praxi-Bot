@@ -23,14 +23,19 @@ import {
   configFromCatalog,
   connectCatalogEntry,
   customServerConfig,
+  eventNeedsRefetch,
   filterCatalog,
   filterServers,
   isConnected,
+  MissingFolderError,
   MissingSecretError,
+  McpBrowserOpenError,
   secretStoreName,
+  signInMcpServer,
   splitArgs,
   statusTone,
-  toggleBotInScope
+  toggleBotInScope,
+  withFolder
 } from "./mcpApps.ts";
 
 const entry = (id: string): McpCatalogEntry => {
@@ -383,12 +388,13 @@ test("saving a bot: a failing server list after create reports failure and a ret
   const api = new MockApiClient();
   let creates = 0;
   const updates: string[] = [];
-  const made = { id: "new-bot-uuid", name: "N" } as unknown as import("../api/types.ts").Bot;
+  const made = { id: "new-bot-uuid", name: "N", version: 7 } as unknown as import("../api/types.ts").Bot;
   api.createBot = async () => {
     creates += 1;
     return made;
   };
-  api.updateBot = async (id) => {
+  api.updateBot = async (id, payload) => {
+    assert.equal(payload.expected_version, 7);
     updates.push(id);
     return made;
   };
@@ -448,4 +454,118 @@ test("the server editor reports a list edit that hit an open server", async () =
   assert.equal(applied, false);
   assert.equal(server.bots, null, "the server is not silently converted to a list");
   assert.equal(scopeApplied(opened, { mode: "all" }, server), true);
+});
+
+test("filesystem catalog entry needs a folder, and it becomes the only root", async () => {
+  const api = new MockApiClient();
+  const before = api.servers.length;
+  await assert.rejects(
+    connectCatalogEntry(api, entry("filesystem"), {}),
+    (e: unknown) => e instanceof MissingFolderError
+  );
+  await assert.rejects(
+    connectCatalogEntry(api, entry("filesystem"), {}, "   "),
+    (e: unknown) => e instanceof MissingFolderError
+  );
+  assert.equal(api.servers.length, before, "nothing was created");
+  const cfg = configFromCatalog(entry("filesystem"), " /home/me/Docs ");
+  assert.deepEqual(cfg.args, [
+    "-y",
+    "@modelcontextprotocol/server-filesystem@2.2.0",
+    "/home/me/Docs"
+  ]);
+  assert.ok(!cfg.args?.includes("."));
+});
+
+test("withFolder replaces the old roots and keeps package and flags", () => {
+  const pkg = "@modelcontextprotocol/server-filesystem@2.2.0";
+  assert.deepEqual(withFolder(["-y", pkg, "."], "/d/Docs"), ["-y", pkg, "/d/Docs"]);
+  assert.deepEqual(withFolder(["-y", pkg], "/x"), ["-y", pkg, "/x"]);
+  assert.deepEqual(withFolder(["-y", pkg, "--ro", "/a", "/b"], "/c"), ["-y", pkg, "--ro", "/c"]);
+  assert.deepEqual(withFolder(["serve"], "/c"), ["serve", "/c"]);
+});
+
+test("a background error event refetches the server so the error details appear", () => {
+  const base = { name: "sqlite" } as McpServer;
+  const connecting = [{ ...base, status: "connecting" as const }] as McpServer[];
+  // Known server, still connecting: nothing to fetch yet.
+  assert.equal(eventNeedsRefetch(connecting, { name: "sqlite", status: "connecting" }), false);
+  // The same server settles into error / quarantined / connected: refetch.
+  for (const status of ["error", "quarantined", "connected", "disconnected"] as const) {
+    assert.equal(eventNeedsRefetch(connecting, { name: "sqlite", status }), true, status);
+  }
+  // Unknown server: refetch.
+  assert.equal(eventNeedsRefetch(connecting, { name: "new", status: "connecting" }), true);
+  // Success clears the old diagnostics so a stale hint cannot linger.
+  const failed = [
+    {
+      ...base,
+      status: "error" as const,
+      error: "boom",
+      error_kind: "runtime_missing" as const,
+      stderr_tail: ["x"]
+    }
+  ] as McpServer[];
+  const ok = applyServerEvent(failed, { name: "sqlite", status: "connected" })![0];
+  assert.equal(ok.error, null);
+  assert.equal(ok.error_kind, undefined);
+  assert.equal(ok.stderr_tail, undefined);
+  // Quarantine also drops the stale error text until the refetch lands.
+  const q = applyServerEvent(failed, { name: "sqlite", status: "quarantined" })![0];
+  assert.equal(q.error, null);
+});
+
+test("sign-in opens the daemon's URL and polls until the callback finished", async () => {
+  const calls: string[] = [];
+  const states = ["signing_in", "signing_in", "signed_in"] as const;
+  let polled = 0;
+  const api = {
+    startMcpAuth: async (name: string) => {
+      calls.push(`start ${name}`);
+      return { authorization_url: "https://auth.example/authorize?state=s", expires_in: 300 };
+    },
+    mcpAuthStatus: async () => states[polled++],
+    cancelMcpAuth: async () => {
+      calls.push("cancel");
+      return "signed_out" as const;
+    }
+  };
+  const opened: string[] = [];
+  const result = await signInMcpServer(api, "linear", (u) => opened.push(u) > 0, {
+    sleep: async () => {}
+  });
+  assert.equal(result, "signed_in");
+  assert.deepEqual(opened, ["https://auth.example/authorize?state=s"]);
+  assert.deepEqual(calls, ["start linear"]);
+  assert.equal(polled, 3);
+});
+
+test("sign-in cancels the daemon flow when the browser cannot open or the user stops", async () => {
+  const calls: string[] = [];
+  const api = {
+    startMcpAuth: async () => ({ authorization_url: "https://auth.example/a", expires_in: 300 }),
+    mcpAuthStatus: async () => "signing_in" as const,
+    cancelMcpAuth: async () => {
+      calls.push("cancel");
+      return "auth_required" as const;
+    }
+  };
+  await assert.rejects(
+    signInMcpServer(api, "x", () => false, { sleep: async () => {} }),
+    (e: unknown) => e instanceof McpBrowserOpenError
+  );
+  assert.deepEqual(calls, ["cancel"]);
+  const signal = { aborted: false };
+  let polls = 0;
+  const result = await signInMcpServer(api, "x", () => true, {
+    signal,
+    sleep: async () => {
+      polls += 1;
+      if (polls === 3) {
+        signal.aborted = true;
+      }
+    }
+  });
+  assert.equal(result, "auth_required");
+  assert.deepEqual(calls, ["cancel", "cancel"]);
 });

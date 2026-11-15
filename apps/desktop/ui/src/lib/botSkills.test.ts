@@ -202,3 +202,87 @@ test("MockApiClient getBotSkills and putBotSkills round-trip and validate", asyn
   const backToAll = await client.putBotSkills(atlas.id, { mode: "all" });
   assert.equal(backToAll.mode, "all");
 });
+
+test("save failures are classified by status", async () => {
+  const { skillsSaveFailure } = await import("./botSkills.ts");
+  assert.equal(skillsSaveFailure(409), "conflict");
+  assert.equal(skillsSaveFailure(422), "invalid");
+  assert.equal(skillsSaveFailure(500), "error");
+  assert.equal(skillsSaveFailure(null), "error");
+});
+
+test("adding a catalog skill to a bot only writes when the bot picks its skills", async () => {
+  const { payloadWithSkill } = await import("./botSkills.ts");
+  // "all": the new skill is already visible, nothing to write.
+  assert.equal(payloadWithSkill(SAMPLE_BOT_SKILLS, "invoice-check"), null);
+  const selected: BotSkills = {
+    ...SAMPLE_BOT_SKILLS,
+    version: 4,
+    mode: "selected",
+    assigned: [{ name: "code-review", state: "ok" }]
+  };
+  assert.deepEqual(payloadWithSkill(selected, "invoice-check"), {
+    mode: "selected",
+    names: ["code-review", "invoice-check"],
+    expected_version: 4
+  });
+  assert.equal(payloadWithSkill(selected, "code-review"), null);
+});
+
+test("the panel preview lists active skills, then learned ones, with a rest count", async () => {
+  const { skillPreview } = await import("./botSkills.ts");
+  assert.deepEqual(skillPreview(SAMPLE_BOT_SKILLS, 2), {
+    names: ["code-review", "github-triage"],
+    more: 1
+  });
+  assert.deepEqual(skillPreview(SAMPLE_BOT_SKILLS, 5), {
+    names: ["code-review", "github-triage", "atlas-standup"],
+    more: 0
+  });
+  const none: BotSkills = {
+    ...SAMPLE_BOT_SKILLS,
+    available: SAMPLE_BOT_SKILLS.available.map((s) => ({ ...s, assigned: false })),
+    own: []
+  };
+  assert.deepEqual(skillPreview(none, 3), { names: [], more: 0 });
+});
+
+test("the skills UI goes through the tested helpers", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
+  const hook = read("../state/useBotSkills.ts");
+  assert.match(hook, /skillsSaveFailure\(/);
+  const editor = read("../components/SkillsEditor.tsx");
+  for (const fn of ["switchSkillMode(", "toggleDraftSkill(", "filterAvailableSkills(", "removeMissingDraftSkill("]) {
+    assert.ok(editor.includes(fn), `SkillsEditor uses ${fn}`);
+  }
+  const modal = read("../components/SkillsModal.tsx");
+  assert.match(hook, /syncSkillsDraft\(/);
+  for (const fn of ["buildPutSkillsPayload(", "exceedsSkillLimit(", "isBotSkillsDirty(", "useSkillsDraft("]) {
+    assert.ok(modal.includes(fn), `SkillsModal uses ${fn}`);
+  }
+  const panel = read("../components/BotPanelSkills.tsx");
+  assert.match(panel, /summarizeBotSkills\(/);
+  assert.match(panel, /skillPreview\(/);
+});
+
+test("an open skills draft survives a catalog refresh but not a newer assignment", async () => {
+  const { syncSkillsDraft } = await import("./botSkills.ts");
+  const first = syncSkillsDraft(null, SAMPLE_BOT_SKILLS);
+  assert.equal(first.mode, "all");
+  let edited = switchSkillMode(first, "selected", SAMPLE_BOT_SKILLS.available);
+  edited = { ...toggleDraftSkill(edited, "github-triage", false), query: "code" };
+  // Same version (only the catalog was re-read): the edit is kept as is.
+  assert.equal(syncSkillsDraft(edited, { ...SAMPLE_BOT_SKILLS }), edited);
+  // A newer assignment replaces the picks and keeps the search text.
+  const newer: BotSkills = {
+    ...SAMPLE_BOT_SKILLS,
+    version: 9,
+    mode: "selected",
+    assigned: [{ name: "github-triage", state: "ok" }]
+  };
+  const synced = syncSkillsDraft(edited, newer);
+  assert.equal(synced.version, 9);
+  assert.deepEqual([...synced.selected], ["github-triage"]);
+  assert.equal(synced.query, "code");
+});

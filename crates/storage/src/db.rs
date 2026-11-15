@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::error::{Result, StorageError};
 use crate::migrate;
 use crate::records::{
-    Approval, AuditEntry, Bot, BotSkillAssignment, Chat, EventIndexRow, Message, Run, RunStep,
-    SkillAssignmentMode, User,
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, EventIndexRow, Message, Run,
+    RunStep, SkillAssignmentMode, User,
 };
 
 /// Current Unix time in milliseconds.
@@ -92,7 +92,7 @@ impl Storage {
         migrate::migrate(&mut conn)?;
         for select in [
             "SELECT id, name, created_at_ms FROM users",
-            "SELECT id, user_id, name, config_json, created_at_ms FROM bots",
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots",
             "SELECT id, user_id, bot_id, title, created_at_ms FROM chats",
             "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages",
             RUN_SELECT,
@@ -114,6 +114,20 @@ impl Storage {
                 let _ = skill_assignment_row(row)?;
             }
         }
+        let version_column_valid: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('bots') WHERE name='version' AND upper(type)='INTEGER' AND \"notnull\"=1)",
+            [], |r| r.get(0),
+        )?;
+        let malformed_version: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bots WHERE typeof(version) != 'integer' OR version < 1)",
+            [],
+            |r| r.get(0),
+        )?;
+        if !version_column_valid || malformed_version {
+            return Err(StorageError::Conflict(
+                "invalid bots.version: required positive INTEGER NOT NULL".into(),
+            ));
+        }
         if conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
             return Err(rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
@@ -132,6 +146,9 @@ impl Storage {
     pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
+        // Resolve host-selected relative paths and symlinked home directories
+        // once, before any knowledge capability treats this root as trusted.
+        let data_dir = crate::paths::without_verbatim_prefix(std::fs::canonicalize(data_dir)?);
         let conn = Connection::open(data_dir.join("bot.db"))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -258,16 +275,138 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Replace a bot's name and configuration.  Returns `false` if it does not exist.
+    /// Replace a profile only when its revision still matches the caller's snapshot.
     ///
     /// # Errors
     /// Fails on SQLite/JSON errors.
-    pub fn update_bot(&self, id: BotId, name: &str, config: &Value) -> Result<bool> {
-        let n = self.conn().execute(
-            "UPDATE bots SET name = ?2, config_json = ?3 WHERE id = ?1",
-            params![id.to_string(), name, serde_json::to_string(config)?],
+    pub fn update_bot(
+        &self,
+        id: BotId,
+        name: &str,
+        config: &Value,
+        expected_version: i64,
+    ) -> Result<BotPatch> {
+        self.patch_bot(id, expected_version, |_, _| {
+            Ok((name.to_owned(), config.clone()))
+        })
+    }
+
+    /// Read a profile and revision in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn get_bot_versioned(&self, id: BotId) -> Result<Option<(Bot, i64)>> {
+        Ok(self.conn().query_row(
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+            [id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)),
+        ).optional()?)
+    }
+
+    /// Read a user's profiles and revisions in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn list_bots_versioned(&self, user_id: UserId) -> Result<Vec<(Bot, i64)>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE user_id = ?1 ORDER BY id")?;
+        Ok(st
+            .query_map([user_id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The profile version of a bot (bumped by every write), `None` if it does not exist.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_version(&self, id: BotId) -> Result<Option<i64>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The profile versions of all of a user's bots.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_versions(&self, user_id: UserId) -> Result<std::collections::HashMap<BotId, i64>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, version FROM bots WHERE user_id = ?1")?;
+        let rows = st.query_map([user_id.to_string()], |r| {
+            Ok((BotId(uuid_at(r, 0)?), r.get::<_, i64>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Change a bot's name and profile atomically if its version is still
+    /// `expected_version`.  `apply` receives the stored name and profile and
+    /// returns the new ones (or a refusal); it runs inside the transaction, so
+    /// no other write can land between the read and the write.  The version is
+    /// bumped on success.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn patch_bot<F>(&self, id: BotId, expected_version: i64, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        self.write_bot(id, Some(expected_version), apply)
+    }
+
+    /// Atomically derive the next name/profile from the stored one and write it,
+    /// advancing the bot revision, WITHOUT a version precondition. For writers
+    /// that own one field (the dedicated knowledge settings) and must not
+    /// overwrite the rest of a profile with a stale full copy.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn modify_bot<F>(&self, id: BotId, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        self.write_bot(id, None, apply)
+    }
+
+    fn write_bot<F>(&self, id: BotId, expected_version: Option<i64>, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let stored = tx
+            .query_row(
+                "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| Ok((bot_row(r)?, r.get::<_, i64>(5)?)),
+            )
+            .optional()?;
+        let Some((bot, version)) = stored else {
+            return Ok(BotPatch::Missing);
+        };
+        if expected_version.is_some_and(|expected| expected != version) {
+            return Ok(BotPatch::Stale { bot, version });
+        }
+        let (name, config) = match apply(&bot.name, &bot.config) {
+            Ok(next) => next,
+            Err(why) => return Ok(BotPatch::Rejected(why)),
+        };
+        tx.execute(
+            "UPDATE bots SET name = ?2, config_json = ?3, version = version + 1 WHERE id = ?1",
+            params![id.to_string(), name, serde_json::to_string(&config)?],
         )?;
-        Ok(n > 0)
+        tx.commit()?;
+        Ok(BotPatch::Applied {
+            bot: Bot {
+                name,
+                config,
+                ..bot
+            },
+            version: version + 1,
+        })
     }
 
     /// Delete a bot and its skill assignment row in the same transaction.
@@ -277,11 +416,29 @@ impl Storage {
     /// Fails on SQLite errors, in particular a foreign-key violation while
     /// chats or runs still reference the bot.
     pub fn delete_bot(&self, id: BotId) -> Result<bool> {
+        self.delete_bot_with_cleanup(id, || Ok(()))
+    }
+
+    /// Delete a bot and run bounded local cleanup before committing its removal.
+    /// Foreign-key checks run first. A cleanup error keeps the owning row, and
+    /// concurrent chat/run insertion cannot race the transaction. The closure
+    /// must not reenter this storage connection or wait for asynchronous work.
+    ///
+    /// # Errors
+    /// SQLite constraints, storage failure, or the supplied cleanup error.
+    pub fn delete_bot_with_cleanup(
+        &self,
+        id: BotId,
+        cleanup: impl FnOnce() -> Result<()>,
+    ) -> Result<bool> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let bid = id.to_string();
         tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
         let n = tx.execute("DELETE FROM bots WHERE id = ?1", [&bid])?;
+        if n > 0 {
+            cleanup()?;
+        }
         tx.commit()?;
         Ok(n > 0)
     }
@@ -870,6 +1027,46 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Recent tool executions owned by one user and bot, optionally one run.
+    /// Row and aggregate JSON byte limits are checked before copying payloads
+    /// into Rust. Oversized rows are omitted; callers must not infer permission
+    /// from the absence of a record.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn knowledge_tool_steps(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        run_id: Option<RunId>,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<RunStep>> {
+        let conn = self.conn();
+        let select = STEP_SELECT.replacen(" FROM ", ", length(CAST(input_json AS BLOB)) + coalesce(length(CAST(output_json AS BLOB)), 0) + coalesce(length(CAST(retry_json AS BLOB)), 0) + coalesce(length(CAST(error AS BLOB)), 0) + length(CAST(status AS BLOB)) FROM ", 1);
+        let mut statement = conn.prepare(&format!(
+            "{select} WHERE name='tools' AND user_id=?1 AND run_id IN (SELECT id FROM runs WHERE user_id=?1 AND bot_id=?2) AND (?3 IS NULL OR run_id=?3) ORDER BY started_at_ms DESC,id DESC LIMIT ?4"
+        ))?;
+        let mut rows = statement.query(params![
+            user_id.to_string(),
+            bot_id.to_string(),
+            run_id.map(|id| id.to_string()),
+            i64::try_from(max_rows.min(200)).unwrap_or(200)
+        ])?;
+        let mut remaining = max_bytes.min(8 * 1024 * 1024);
+        let mut found = Vec::new();
+        while let Some(row) = rows.next()? {
+            let bytes =
+                usize::try_from(row.get::<_, i64>(14)?).map_err(|error| conv_err(14, error))?;
+            if bytes > remaining {
+                continue;
+            }
+            found.push(step_row(row)?);
+            remaining -= bytes;
+        }
+        Ok(found)
+    }
+
     /// Update a step's status/attempt/result.  `finished_at_ms` is set to now
     /// when `finished` is true, else cleared.
     ///
@@ -1358,6 +1555,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn data_dir_is_canonical_but_never_a_verbatim_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path().join("nested").join("..")).unwrap();
+        assert!(!st.data_dir().to_string_lossy().starts_with("\\\\?\\"));
+        assert_eq!(
+            std::fs::canonicalize(st.data_dir()).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
+    }
+
     struct Fx {
         st: Storage,
         user: User,
@@ -1548,18 +1756,156 @@ mod tests {
     }
 
     #[test]
+    fn patch_bot_is_atomic_and_versioned() {
+        let f = fx();
+        let v0 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        // A plain replace bumps the version too, so a patch built on the old one is stale.
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "n", &json!({"a": 1}), v0)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
+        let v1 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        assert_eq!(v1, v0 + 1);
+        match f
+            .st
+            .patch_bot(f.bot.id, v0, |_, _| Ok(("x".into(), json!({}))))
+            .unwrap()
+        {
+            BotPatch::Stale { bot, version } => {
+                assert_eq!(version, v1);
+                assert_eq!(bot.name, "n");
+            }
+            other => panic!("expected stale, got {other:?}"),
+        }
+        assert_eq!(f.st.get_bot(f.bot.id).unwrap().unwrap().name, "n");
+        match f
+            .st
+            .patch_bot(f.bot.id, v1, |name, cfg| {
+                let mut c = cfg.clone();
+                c["b"] = json!(2);
+                Ok((format!("{name}!"), c))
+            })
+            .unwrap()
+        {
+            BotPatch::Applied { bot, version } => {
+                assert_eq!(version, v1 + 1);
+                assert_eq!(
+                    (bot.name.as_str(), bot.config),
+                    ("n!", json!({"a": 1, "b": 2}))
+                );
+            }
+            other => panic!("expected applied, got {other:?}"),
+        }
+        // A refusal writes nothing and keeps the version.
+        assert_eq!(
+            f.st.patch_bot(f.bot.id, v1 + 1, |_, _| Err("no".into()))
+                .unwrap(),
+            BotPatch::Rejected("no".into())
+        );
+        assert_eq!(f.st.bot_version(f.bot.id).unwrap(), Some(v1 + 1));
+        assert_eq!(
+            f.st.patch_bot(BotId::new(), 1, |_, _| Err("x".into()))
+                .unwrap(),
+            BotPatch::Missing
+        );
+        assert_eq!(f.st.bot_versions(f.user.id).unwrap()[&f.bot.id], v1 + 1);
+    }
+
+    #[test]
+    fn review95_all_profile_and_skill_writers_bump_one_bot_revision_transactionally() {
+        let f = fx();
+        let bid = f.bot.id.to_string();
+        let assert_revision = |expected| {
+            assert_eq!(
+                f.st.get_bot_versioned(f.bot.id).unwrap().unwrap().1,
+                expected
+            );
+        };
+        assert_revision(1);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["one".into()])
+            .unwrap();
+        assert_revision(2);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["two".into()])
+            .unwrap();
+        assert_revision(3);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::All, &[])
+            .unwrap();
+        assert_revision(4);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &[])
+            .unwrap();
+        assert_revision(5);
+        f.st.delete_bot_skill_assignment(f.bot.id).unwrap();
+        assert_revision(6);
+        assert!(!f.st.delete_bot_skill_assignment(f.bot.id).unwrap());
+        assert_revision(6); // No changed assignment, no revision.
+        {
+            let mut conn = f.st.conn();
+            let tx = conn.transaction().unwrap();
+            tx.execute("UPDATE bots SET config_json='{}' WHERE id=?1", [&bid])
+                .unwrap();
+            assert_eq!(
+                tx.query_row("SELECT version FROM bots WHERE id=?1", [&bid], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                7
+            );
+            // Rollback includes both the profile and its revision.
+        }
+        assert_revision(6);
+        f.st.conn()
+            .execute("UPDATE bots SET name='sql writer' WHERE id=?1", [&bid])
+            .unwrap();
+        assert_revision(7);
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "stale", &json!({}), 6).unwrap(),
+            BotPatch::Stale { version: 7, .. }
+        ));
+        assert_revision(7);
+        let list = f.st.list_bots_versioned(f.user.id).unwrap();
+        assert_eq!(list[0].1, 7);
+        assert_eq!(list[0].0.name, "sql writer");
+    }
+
+    #[test]
+    fn review95_modify_bot_changes_one_field_of_the_stored_profile_and_bumps_the_revision() {
+        let f = fx();
+        f.st.update_bot(f.bot.id, "n", &json!({"a": 1, "b": 2}), 1)
+            .unwrap();
+        // A concurrent profile write lands before the dedicated writer runs.
+        let out =
+            f.st.modify_bot(f.bot.id, |name, stored| {
+                let mut next = stored.clone();
+                next["knowledge"] = json!({"auto_retrieve": true});
+                Ok((name.to_owned(), next))
+            })
+            .unwrap();
+        assert!(matches!(out, BotPatch::Applied { version: 3, .. }));
+        let (bot, v) = f.st.get_bot_versioned(f.bot.id).unwrap().unwrap();
+        assert_eq!(v, 3);
+        assert_eq!(
+            bot.config,
+            json!({"a": 1, "b": 2, "knowledge": {"auto_retrieve": true}})
+        );
+    }
+
+    #[test]
     fn update_and_delete_bot() {
         let f = fx();
-        assert!(
-            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}))
-                .unwrap()
-        );
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}), 1)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
         let got = f.st.get_bot(f.bot.id).unwrap().unwrap();
         assert_eq!(
             (got.name.as_str(), got.config),
             ("renamed", json!({"a": 1}))
         );
-        assert!(!f.st.update_bot(BotId::new(), "x", &json!({})).unwrap());
+        assert_eq!(
+            f.st.update_bot(BotId::new(), "x", &json!({}), 1).unwrap(),
+            BotPatch::Missing
+        );
         // The fixture chat still references the bot.
         assert!(f.st.delete_bot(f.bot.id).is_err());
         let spare = Bot {
@@ -1572,6 +1918,42 @@ mod tests {
         f.st.insert_bot(&spare).unwrap();
         assert!(f.st.delete_bot(spare.id).unwrap());
         assert!(!f.st.delete_bot(spare.id).unwrap());
+    }
+
+    #[test]
+    fn bot_cleanup_happens_after_constraints_and_before_commit() {
+        let f = fx();
+        assert!(
+            f.st.delete_bot_with_cleanup(f.bot.id, || panic!(
+                "referenced bot must never be cleaned"
+            ))
+            .is_err()
+        );
+        let empty = Bot {
+            id: BotId::new(),
+            user_id: f.user.id,
+            name: "Empty".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        };
+        f.st.insert_bot(&empty).unwrap();
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || Err(crate::StorageError::Io(
+                std::io::Error::other("cleanup failed")
+            )))
+            .is_err()
+        );
+        assert!(f.st.get_bot(empty.id).unwrap().is_some());
+        let mut cleaned = false;
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || {
+                cleaned = true;
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert!(cleaned);
+        assert!(f.st.get_bot(empty.id).unwrap().is_none());
     }
 
     #[test]
@@ -1642,6 +2024,67 @@ mod tests {
         assert_eq!(got.output, Some(json!("ok")));
         assert!(got.finished_at_ms.is_some());
         assert_eq!(f.st.relabel_steps(r.id, "succeeded", "x").unwrap(), 1);
+    }
+
+    #[test]
+    fn knowledge_steps_enforce_owner_row_and_aggregate_byte_bounds() {
+        let f = fx();
+        let run = run(&f);
+        for index in 0..3 {
+            f.st.insert_step(&RunStep {
+                id: Uuid::now_v7(),
+                run_id: run.id,
+                user_id: f.user.id,
+                idx: index,
+                name: "tools".into(),
+                input: json!({}),
+                idempotent: true,
+                retry: None,
+                status: "succeeded".into(),
+                attempt: 1,
+                output: Some(json!(if index == 2 {
+                    "x".repeat(1024)
+                } else {
+                    "small".into()
+                })),
+                error: None,
+                started_at_ms: i64::from(index),
+                finished_at_ms: Some(4),
+            })
+            .unwrap();
+        }
+        let found =
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 40)
+                .unwrap();
+        assert_eq!(
+            found.len(),
+            2,
+            "oversized latest row must not consume the budget"
+        );
+        assert_eq!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 20)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 1, 40)
+                .unwrap()
+                .is_empty(),
+            "row cap applies before filtering oversized payloads"
+        );
+        for (user, bot, run) in [
+            (UserId::new(), f.bot.id, run.id),
+            (f.user.id, BotId::new(), run.id),
+            (f.user.id, f.bot.id, RunId::new()),
+        ] {
+            assert_eq!(
+                f.st.knowledge_tool_steps(user, bot, Some(run), 3, 2048)
+                    .unwrap()
+                    .len(),
+                0
+            );
+        }
     }
 
     #[test]

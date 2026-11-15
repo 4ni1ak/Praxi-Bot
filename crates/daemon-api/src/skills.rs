@@ -1,6 +1,7 @@
 //! Skill catalog and per-bot skill assignment routes (`/v1/skills`,
 //! `/v1/bots/{id}/skills`), plus [`SkillAssignments`].
 
+use sha2::Digest;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
@@ -125,6 +126,9 @@ pub struct CatalogSkillDto {
     pub description: String,
     /// Skill version string.
     pub version: String,
+    /// Hex SHA-256 of the Markdown body (the part after the frontmatter, trimmed): lets a
+    /// client tell whether the catalog lists the file it just wrote or an older one.
+    pub body_sha256: String,
     /// Skill scope (`shared` or `bundled`).
     pub scope: SkillScope,
     /// Optional `when:` triggers.
@@ -301,6 +305,7 @@ fn catalog_entry(
         name: skill.name.clone(),
         description: skill.description.clone(),
         version: skill.version.clone(),
+        body_sha256: format!("{:x}", sha2::Sha256::digest(skill.body.as_bytes())),
         scope,
         requires,
         hub,

@@ -124,7 +124,7 @@ fn summary(e: &EngineSettings) -> Value {
     })
 }
 
-fn store(s: &AppState, bot: &mut storage::Bot, settings: &EngineSettings) -> Result<(), ApiError> {
+fn store(s: &AppState, bot: &mut storage::Bot, settings: &EngineSettings) -> Result<i64, ApiError> {
     let obj = bot
         .config
         .as_object_mut()
@@ -133,15 +133,33 @@ fn store(s: &AppState, bot: &mut storage::Bot, settings: &EngineSettings) -> Res
         "engine".into(),
         serde_json::to_value(settings).map_err(ApiError::internal)?,
     );
-    s.storage()
-        .update_bot(bot.id, &bot.name, &bot.config)
-        .map_err(ApiError::internal)?;
-    s.refresh_profile(bot);
-    Ok(())
+    let (_, current) = s
+        .storage()
+        .get_bot_versioned(bot.id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("bot"))?;
+    match s
+        .storage()
+        .update_bot(bot.id, &bot.name, &bot.config, current)
+        .map_err(ApiError::internal)?
+    {
+        storage::BotPatch::Applied {
+            bot: stored,
+            version,
+        } => {
+            s.refresh_profile(&stored);
+            *bot = stored;
+            Ok(version)
+        }
+        storage::BotPatch::Stale { .. } => Err(ApiError::conflict(
+            "the bot changed while the engine was being saved; retry",
+        )),
+        _ => Err(ApiError::not_found("bot")),
+    }
 }
 
-fn dto(bot: storage::Bot) -> BotDto {
-    crate::routes::bot_dto(bot)
+fn dto(bot: storage::Bot, version: i64) -> BotDto {
+    crate::routes::bot_dto(bot, version)
 }
 
 /// Set a bot's engine mode, approval level and workspace (local owner only).
@@ -184,11 +202,11 @@ pub(crate) async fn put_engine(
             }),
         )
         .map_err(ApiError::internal)?;
-    store(&s, &mut bot, &next)?;
+    let version = store(&s, &mut bot, &next)?;
     if next.mode == EngineMode::PraxiGoverned {
         s.agent().kill_native_runs(bot.id);
     }
-    Ok(Json(dto(bot)))
+    Ok(Json(dto(bot, version)))
 }
 
 /// Kill switch: back to Praxi-governed and end the bot's running CLI processes.
@@ -213,8 +231,8 @@ pub(crate) async fn kill_engine(
             &json!({"bot_id": bot.id.to_string(), "processes": killed}),
         )
         .map_err(ApiError::internal)?;
-    store(&s, &mut bot, &EngineSettings::default())?;
-    Ok(Json(dto(bot)))
+    let version = store(&s, &mut bot, &EngineSettings::default())?;
+    Ok(Json(dto(bot, version)))
 }
 
 #[cfg(test)]

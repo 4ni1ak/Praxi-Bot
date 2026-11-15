@@ -868,10 +868,49 @@ pub(crate) fn apply_sanitized_env(cmd: &mut tokio::process::Command, env: &PathE
         "CODEX_HOME",
         "CLAUDE_CONFIG_DIR",
     ] {
-        if let Some(value) = env.env_vars.get(key) {
+        if let Some(value) = env.env_vars.get(key)
+            && !is_secret_env(key, value)
+        {
             cmd.env(key, value);
         }
     }
+}
+
+/// Whether an inherited variable must not reach a coding CLI: its name says
+/// it holds a credential, or its value is a URL with an embedded password
+/// (`DATABASE_URL=postgres://user:pw@host/db`, an authenticated proxy).
+pub(crate) fn is_secret_env(name: &str, value: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    let named = [
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "CREDENTIAL",
+        "PASSWORD",
+        "PASSWD",
+        "PASSPHRASE",
+        "COOKIE",
+        "PRIVATE",
+    ]
+    .iter()
+    .any(|part| upper.contains(part))
+        // `PGPASS`, `SMTP_PASS`, `NPM_CONFIG__AUTH`, `DOCKER_AUTH_CONFIG`, ...
+        // but not `GIT_AUTHOR_NAME` or the X11 `XAUTHORITY` file path.
+        || upper.split('_').any(|word| {
+            matches!(word, "PASS" | "PWD" | "AUTH" | "PAT" | "DSN") && upper != "PWD"
+        })
+        || upper.ends_with("PASS");
+    named || url_has_password(value)
+}
+
+fn url_has_password(value: &str) -> bool {
+    let Some((_, rest)) = value.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    authority
+        .rsplit_once('@')
+        .is_some_and(|(userinfo, _)| userinfo.contains(':'))
 }
 
 async fn run_process_probe(
@@ -1793,6 +1832,62 @@ mod tests {
         assert_eq!(vars.get("LANG"), Some(&Some("C.UTF-8".into())));
     }
 
+    #[test]
+    fn credential_named_and_credential_valued_variables_are_not_inherited() {
+        for (name, value) in [
+            ("PGPASSWORD", "x"),
+            ("MYSQL_PWD", "x"),
+            ("SMTP_PASS", "x"),
+            ("NPM_CONFIG__AUTH", "x"),
+            ("DOCKER_AUTH_CONFIG", "{}"),
+            ("GH_PAT", "x"),
+            ("SENTRY_DSN", "x"),
+            ("SESSION_COOKIE", "x"),
+            ("SSH_PRIVATE", "x"),
+            ("GPG_PASSPHRASE", "x"),
+            (
+                "DATABASE_URL",
+                "postgres://app:hunter2@db.internal:5432/app",
+            ),
+            ("HTTPS_PROXY", "http://user:pw@proxy:3128"),
+            ("OPENAI_API_KEY", "x"),
+        ] {
+            assert!(is_secret_env(name, value), "{name} must be dropped");
+        }
+        for (name, value) in [
+            ("PWD", "/home/me"),
+            ("OLDPWD", "/tmp"),
+            ("GIT_AUTHOR_NAME", "Me"),
+            ("XAUTHORITY", "/run/user/1000/.Xauthority"),
+            ("HTTPS_PROXY", "http://proxy:3128"),
+            ("CODEX_HOME", "/home/me/.codex"),
+            ("LANG", "en_US.UTF-8"),
+            ("EDITOR", "vim://not-a-credential@host"),
+        ] {
+            assert!(!is_secret_env(name, value), "{name} must be kept");
+        }
+        let mut cmd = tokio::process::Command::new("unused");
+        let env = PathEnv::for_test(PathBuf::from("."))
+            .with_env_var("PGPASSWORD", "leak-sentinel")
+            .with_env_var("DATABASE_URL", "postgres://u:leak-sentinel@h/db")
+            .with_env_var("CODEX_HOME", "kept");
+        apply_sanitized_env(&mut cmd, &env);
+        let passed: Vec<String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| format!("{}={}", k.to_string_lossy(), v.to_string_lossy()))
+            })
+            .collect();
+        assert!(
+            passed.iter().any(|kv| kv == "CODEX_HOME=kept"),
+            "{passed:?}"
+        );
+        assert!(
+            !passed.iter().any(|kv| kv.contains("leak-sentinel")),
+            "{passed:?}"
+        );
+    }
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Poll};
