@@ -946,7 +946,11 @@ impl McpManager {
         // save, so the delete below is final.
         let existed = server
             .credentials
-            .revoke(|| store.delete(&crate::oauth::credential_name(id)))
+            .revoke(|| {
+                let client = store.delete(&crate::oauth::registered_client_name(id));
+                let tokens = store.delete(&crate::oauth::credential_name(id));
+                client.and(tokens)
+            })
             .map_err(|_| McpError::Store("cannot delete OAuth credentials".to_owned()))?;
         server.drop_session().await;
         let mut state = server.state.lock();

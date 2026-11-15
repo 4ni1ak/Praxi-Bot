@@ -43,6 +43,66 @@ pub fn credential_name(server: &str) -> String {
     format!("mcp/{server}/oauth")
 }
 
+/// Secret-store name of the client identity a server's authorization server
+/// issued by dynamic registration (review finding 10): kept so a refresh
+/// after a restart can authenticate as the same confidential client.
+#[must_use]
+pub fn registered_client_name(server: &str) -> String {
+    format!("mcp/{server}/oauth-client")
+}
+
+/// A dynamically registered client, bound to the issuer that registered it.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RegisteredClient {
+    issuer: Option<String>,
+    client_id: String,
+    client_secret: String,
+}
+
+/// Keep the issued client identity, under the same guard as the tokens.
+fn save_registered_client(
+    store: &dyn SecretStore,
+    server: &str,
+    client: &RegisteredClient,
+    guard: Option<(&CredentialGuard, u64)>,
+) -> Result<()> {
+    let value = serde_json::to_string(client)
+        .map_err(|_| McpError::Store("cannot encode the registered client".into()))?;
+    let write = || {
+        store
+            .set(&registered_client_name(server), &value)
+            .map_err(|_| McpError::Store("cannot keep the registered OAuth client".into()))
+    };
+    match guard {
+        None => write(),
+        Some((guard, epoch)) => {
+            let _write = guard.0.write.lock();
+            if guard.epoch() == epoch {
+                write()
+            } else {
+                Err(McpError::AuthRequired(server.to_owned()))
+            }
+        }
+    }
+}
+
+/// The issued client secret for `client_id` at `issuer`, if one was kept.
+fn registered_client_secret(
+    store: &dyn SecretStore,
+    server: &str,
+    client_id: &str,
+    issuer: Option<&str>,
+) -> Option<String> {
+    let value = store.get(&registered_client_name(server)).ok()??;
+    let client: RegisteredClient = serde_json::from_str(value.expose()).ok()?;
+    let issuer_matches = match (client.issuer.as_deref(), issuer) {
+        (Some(kept), Some(now)) => same_issuer(kept, now),
+        (None, None) => true,
+        _ => false,
+    };
+    (client.client_id == client_id && issuer_matches).then_some(client.client_secret)
+}
+
 /// Orders every write of one server's OAuth record against sign-out and
 /// removal.  A credential store made with [`SecretCredentialStore::guarded`]
 /// remembers the epoch it started in; [`CredentialGuard::revoke`] moves the
@@ -507,7 +567,9 @@ impl SignIn {
         registrar: Option<SecretRegistrar>,
         options: SignInOptions,
     ) -> Result<Self> {
-        let credentials = SecretCredentialStore::new(store, server, url, registrar)?
+        let registered_store = Arc::clone(&store);
+        let guard_epoch = options.guard.as_ref().map(|g| (g.clone(), g.epoch()));
+        let credentials = SecretCredentialStore::new(store, server, url, registrar.clone())?
             .guarded(options.guard.as_ref());
         // Every OAuth request (discovery, registration, exchange) goes through
         // the policy client: no proxy, vetted addresses on every hop.
@@ -532,6 +594,7 @@ impl SignIn {
         if !use_metadata_document {
             options.check_issuer(server, resolution.metadata.issuer.as_deref())?;
         }
+        let issuer = resolution.metadata.issuer.clone();
         manager.set_metadata(resolution.metadata);
 
         let listener = CallbackListener::bind(server).await?;
@@ -540,6 +603,30 @@ impl SignIn {
         if let Some(id) = options.client_id.filter(|_| !use_metadata_document) {
             request = request.with_preregistered_client(id);
             if let Some(secret) = options.client_secret {
+                request = request.with_client_secret(secret);
+            }
+        } else if !use_metadata_document {
+            // Dynamic registration, done here (not inside rmcp's session) so a
+            // client secret the server issues is kept for later refreshes.
+            let client = manager
+                .register_client("Praxi", &listener.redirect_uri(), &[])
+                .await
+                .map_err(|e| auth_error(server, &e))?;
+            request = request.with_preregistered_client(client.client_id.clone());
+            if let Some(secret) = client.client_secret {
+                if let Some(register) = &registrar {
+                    register(&secret);
+                }
+                save_registered_client(
+                    registered_store.as_ref(),
+                    server,
+                    &RegisteredClient {
+                        issuer: issuer.clone(),
+                        client_id: client.client_id,
+                        client_secret: secret.clone(),
+                    },
+                    guard_epoch.as_ref().map(|(g, e)| (g, *e)),
+                )?;
                 request = request.with_client_secret(secret);
             }
         }
@@ -664,6 +751,25 @@ fn expires_at(stored: &StoredCredentials) -> Option<u64> {
 /// refreshed before it is used.
 pub const REFRESH_WINDOW_SECS: u64 = 60;
 
+/// Whether the stored sign-in may be refreshed with the configured client:
+/// the advertised issuer is the bound one, and the stored credentials were
+/// issued by it (review finding 5).  The client secret goes to the token
+/// endpoint only when this holds.
+fn issuer_bound(
+    server: &str,
+    options: &SignInOptions,
+    advertised: Option<&str>,
+    stored: &StoredCredentials,
+) -> bool {
+    options.check_issuer(server, advertised).is_ok()
+        && !options.expected_issuer.as_ref().is_some_and(|expected| {
+            stored
+                .issuer
+                .as_deref()
+                .is_some_and(|issued| !same_issuer(issued, expected))
+        })
+}
+
 /// Whether at most 60 seconds of the stored access token remain.
 fn refresh_due(stored: &StoredCredentials) -> bool {
     let expiry = stored
@@ -754,29 +860,32 @@ async fn stored_bearer_quietly(
     }
     let stored_id = &stored.client_id;
     let metadata_client = options.client_metadata_url.as_ref() == Some(stored_id);
-    if !metadata_client {
-        // The secret goes to the token endpoint below: only to the bound issuer,
-        // and only with credentials that were issued by it.
-        if options
-            .check_issuer(server, advertised_issuer.as_deref())
-            .is_err()
-            || options.expected_issuer.as_ref().is_some_and(|expected| {
-                stored
-                    .issuer
-                    .as_deref()
-                    .is_some_and(|issued| !same_issuer(issued, expected))
-            })
-        {
-            return Err(McpError::AuthRequired(server.to_owned()));
-        }
+    if !metadata_client && !issuer_bound(server, options, advertised_issuer.as_deref(), &stored) {
+        return Err(McpError::AuthRequired(server.to_owned()));
     }
     if !metadata_client && options.client_id.as_ref().is_some_and(|id| id != stored_id) {
         return Err(McpError::AuthRequired(server.to_owned()));
     }
     // Reinstall the confidential identity after initialize_from_store, which
-    // restores only the public client id. Refresh never reads secrets from config.
+    // restores only the public client id. Refresh never reads secrets from config:
+    // a pre-registered client's secret comes from its reference, a dynamically
+    // registered one's from the record kept at registration (same id and issuer).
     let mut client = OAuthClientConfig::new(stored_id, "http://127.0.0.1/callback");
-    if !metadata_client && let Some(secret) = &options.client_secret {
+    let registered = (!metadata_client && options.client_id.is_none())
+        .then(|| {
+            registered_client_secret(
+                store.as_ref(),
+                server,
+                stored_id,
+                advertised_issuer.as_deref(),
+            )
+        })
+        .flatten();
+    if let (Some(secret), Some(register)) = (&registered, registrar) {
+        register(secret);
+    }
+    if !metadata_client && let Some(secret) = options.client_secret.as_ref().or(registered.as_ref())
+    {
         client = client.with_client_secret(secret);
     }
     manager

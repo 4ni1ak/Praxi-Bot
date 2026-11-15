@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use fixture::*;
 use mcp_bridge::oauth::{SecretRegistrar, SignIn, SignInOptions, credential_name};
-use mcp_bridge::{Backoff, McpError, McpManager, McpPolicy, ServerStatus};
+use mcp_bridge::{Backoff, McpError, McpManager, McpPolicy, McpServerConfig, ServerStatus};
 use parking_lot::Mutex;
 use secret_store::SecretStore;
 
@@ -780,5 +780,64 @@ async fn a_live_session_refreshes_before_its_bearer_enters_the_window() {
         vec![Some(format!("Bearer {REFRESHED}"))]
     );
     manager.shutdown().await;
+    server.abort();
+}
+
+/// Review finding 10: a client secret issued by dynamic registration is kept
+/// (in the secret store, bound to the issuer) and used for refresh after a
+/// restart; signing out forgets it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dynamically_registered_secret_survives_a_restart_for_refresh() {
+    const DCR_SECRET: &str = "dcr-issued-secret-sentinel-2b8f";
+    let (base, seen, server) = fake_authorization_server(true).await;
+    {
+        let mut s = seen.lock();
+        s.dcr_secret = Some(DCR_SECRET.into());
+        s.client_secret = Some(DCR_SECRET.into()); // the token endpoint requires it
+        s.registration_endpoint = Some(format!("{base}/register"));
+        s.expires_in = Some(45); // a refresh is due on the next connect
+        s.refresh_allowed = true;
+        s.mcp_bearer = Some(REFRESHED.into());
+    }
+    let store = Arc::new(MemoryStore::default());
+    let mut config = McpServerConfig::http("dcr", format!("{base}/mcp"));
+    config.oauth = Some(mcp_bridge::OAuthConfig {
+        allow_loopback_http: true,
+        ..mcp_bridge::OAuthConfig::default()
+    });
+    let first =
+        McpManager::new(tool_registry::ToolRegistry::new()).with_secret_store(store.clone());
+    assert!(matches!(
+        first.add_server(config.clone()).await,
+        Err(McpError::AuthRequired(_))
+    ));
+    finish_sign_in(
+        first
+            .start_sign_in("dcr", SignInOptions::default())
+            .await
+            .unwrap(),
+        &base,
+        &seen,
+    )
+    .await;
+    first.shutdown().await;
+    assert!(store.0.lock().contains_key("mcp/dcr/oauth-client"));
+    assert_eq!(seen.lock().token_requests[0]["client_id"], "dcr-client-1");
+
+    // "Restart": a new manager over the same secret store.
+    let registry = tool_registry::ToolRegistry::new();
+    let second = McpManager::new(registry.clone()).with_secret_store(store.clone());
+    second.add_server(config).await.unwrap();
+    let requests = seen.lock().token_requests.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["grant_type"], "refresh_token");
+    assert_eq!(
+        requests[1].get("client_secret").map(String::as_str),
+        Some(DCR_SECRET)
+    );
+    assert!(registry.get("mcp:dcr/echo").is_some());
+    assert!(second.sign_out("dcr").await.unwrap());
+    assert!(!store.0.lock().contains_key("mcp/dcr/oauth-client"));
+    second.shutdown().await;
     server.abort();
 }

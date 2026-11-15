@@ -40,6 +40,8 @@ impl SecretStore for MemoryStore {
 #[derive(Default)]
 #[allow(clippy::struct_excessive_bools)] // independent fixture switches
 pub struct Seen {
+    /// When set, `POST /register` issues `dcr-client-1` with this secret.
+    pub dcr_secret: Option<String>,
     /// Error answers of the token endpoint reflect every submitted value in
     /// `error_description` (a hostile or careless server).
     pub echo_errors: bool,
@@ -271,6 +273,16 @@ pub async fn fake_authorization_server(
                             metadata["registration_endpoint"] = serde_json::json!(registration);
                         }
                         ("200 OK", metadata)
+                    } else if path == "/register" && seen.lock().dcr_secret.is_some() {
+                        let secret = seen.lock().dcr_secret.clone();
+                        (
+                            "201 Created",
+                            serde_json::json!({
+                                "client_id": "dcr-client-1",
+                                "client_secret": secret,
+                                "redirect_uris": [],
+                            }),
+                        )
                     } else if path == "/token" {
                         let form = pairs(&body);
                         let verifier = form.get("code_verifier").cloned().unwrap_or_default();
