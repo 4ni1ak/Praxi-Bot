@@ -11,77 +11,105 @@ export const SOFT_CELL_PX = 32;
 /** Ignore the brightest / darkest 0.5 % of pixels (stray anti-aliasing, single sparkles). */
 const PEAK_PERCENTILE = 0.005;
 /** Pixels read at most from one source (larger sources are read with a stride). */
-const MAX_SAMPLES = 400_000;
+const MAX_SAMPLES = 120_000;
 
 const hex = (r: number, g: number, b: number) =>
   `#${[r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("")}`;
 
-interface Px {
-  c: string;
-  l: number;
-}
-
-function extremes(list: Px[], percentile: number): ToneExtremes {
-  if (!list.length) return { light: "#ffffff", dark: "#000000" };
-  const sorted = [...list].sort((a, b) => a.l - b.l);
-  const k = Math.min(sorted.length - 1, Math.floor(sorted.length * percentile));
-  return { dark: sorted[k].c, light: sorted[sorted.length - 1 - k].c };
-}
+/** Cheap luma bucket 0..255 (ranking only; exact WCAG luminance is used for the winners). */
+const luma = (r: number, g: number, b: number) => (r * 54 + g * 183 + b * 19) >> 8;
 
 /**
  * Tone of an RGBA pixel buffer `w` x `h`.  `cell` is the soft-cell size in buffer pixels (what
  * `SOFT_CELL_PX` window pixels are in this buffer).  Fully transparent pixels are skipped (they
- * show the layout background, which the caller accounts for).
+ * show the layout background, which the caller accounts for).  One pass, a 256-bucket luma
+ * histogram and per-cell accumulators: no per-pixel allocation.
  */
 export function toneFromPixels(data: ArrayLike<number>, w: number, h: number, cell: number): BackdropTone {
   const stride = Math.max(1, Math.ceil(Math.sqrt((w * h) / MAX_SAMPLES)));
-  const peak: Px[] = [];
+  const size = Math.max(stride, Math.round(cell));
+  const cols = Math.ceil(w / size);
+  const rows = Math.ceil(h / size);
+  const cells = cols * rows;
+  const sum = new Float64Array(cells * 3);
+  const count = new Uint32Array(cells);
+  const lo = new Int32Array(cells).fill(-1);
+  const hi = new Int32Array(cells).fill(-1);
+  const loL = new Int16Array(cells).fill(256);
+  const hiL = new Int16Array(cells).fill(-1);
+  const hist = new Uint32Array(256);
+  const histPx = new Int32Array(256).fill(-1);
+  let total = 0;
   for (let y = 0; y < h; y += stride) {
+    const row = Math.floor(y / size) * cols;
     for (let x = 0; x < w; x += stride) {
       const i = (y * w + x) * 4;
       if (data[i + 3] === 0) continue;
-      const c = hex(data[i], data[i + 1], data[i + 2]);
-      peak.push({ c, l: luminance(c) });
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const l = luma(r, g, b);
+      hist[l]++;
+      histPx[l] = i;
+      total++;
+      const c = row + Math.floor(x / size);
+      sum[c * 3] += r;
+      sum[c * 3 + 1] += g;
+      sum[c * 3 + 2] += b;
+      count[c]++;
+      if (l < loL[c]) {
+        loL[c] = l;
+        lo[c] = i;
+      }
+      if (l > hiL[c]) {
+        hiL[c] = l;
+        hi[c] = i;
+      }
     }
   }
-  const size = Math.max(1, Math.round(cell));
-  const soft: Px[] = [];
-  const local: { ratio: number; light: string; dark: string }[] = [];
-  for (let cy = 0; cy < h; cy += size) {
-    for (let cx = 0; cx < w; cx += size) {
-      let r = 0;
-      let g = 0;
-      let b = 0;
-      let n = 0;
-      let lo: Px | null = null;
-      let hi: Px | null = null;
-      for (let y = cy; y < Math.min(h, cy + size); y += stride) {
-        for (let x = cx; x < Math.min(w, cx + size); x += stride) {
-          const i = (y * w + x) * 4;
-          if (data[i + 3] === 0) continue;
-          r += data[i];
-          g += data[i + 1];
-          b += data[i + 2];
-          n++;
-          // Cheap luma for the within-cell extremes (exact luminance only for the winners).
-          const l = data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722;
-          if (!lo || l < lo.l) lo = { c: hex(data[i], data[i + 1], data[i + 2]), l };
-          if (!hi || l > hi.l) hi = { c: hex(data[i], data[i + 1], data[i + 2]), l };
-        }
-      }
-      if (n) {
-        const c = hex(r / n, g / n, b / n);
-        soft.push({ c, l: luminance(c) });
-      }
-      if (lo && hi) local.push({ ratio: (luminance(hi.c) + 0.05) / (luminance(lo.c) + 0.05), light: hi.c, dark: lo.c });
+  if (!total) {
+    const none = { light: "#ffffff", dark: "#000000" };
+    return { peak: none, soft: none };
+  }
+  const at = (i: number) => hex(data[i], data[i + 1], data[i + 2]);
+  // Peak: walk the histogram from each end until the percentile is passed.
+  const skip = Math.floor(total * PEAK_PERCENTILE);
+  const fromEnd = (dir: 1 | -1) => {
+    let seen = 0;
+    for (let k = dir === 1 ? 0 : 255; k >= 0 && k <= 255; k += dir) {
+      seen += hist[k];
+      if (seen > skip && histPx[k] >= 0) return at(histPx[k]);
     }
+    return dir === 1 ? "#000000" : "#ffffff";
+  };
+  // Soft: extremes of the cell averages; detail: the cell at the 90th percentile of local contrast.
+  let softLight = "";
+  let softDark = "";
+  let softLightL = -1;
+  let softDarkL = 2;
+  const local: { ratio: number; c: number }[] = [];
+  for (let c = 0; c < cells; c++) {
+    const n = count[c];
+    if (!n) continue;
+    const avg = hex(sum[c * 3] / n, sum[c * 3 + 1] / n, sum[c * 3 + 2] / n);
+    const L = luminance(avg);
+    if (L > softLightL) {
+      softLightL = L;
+      softLight = avg;
+    }
+    if (L < softDarkL) {
+      softDarkL = L;
+      softDark = avg;
+    }
+    if (hiL[c] > loL[c]) local.push({ ratio: hiL[c] - loL[c], c });
+    else local.push({ ratio: 0, c });
   }
   local.sort((a, b) => a.ratio - b.ratio);
   const p90 = local[Math.min(local.length - 1, Math.floor(local.length * 0.9))];
   return {
-    peak: extremes(peak, PEAK_PERCENTILE),
-    soft: extremes(soft, 0),
-    ...(p90 ? { detail: { light: p90.light, dark: p90.dark } } : {})
+    peak: { light: fromEnd(-1), dark: fromEnd(1) },
+    soft: { light: softLight, dark: softDark },
+    ...(p90 ? { detail: { light: at(hi[p90.c]), dark: at(lo[p90.c]) } } : {})
   };
 }
 

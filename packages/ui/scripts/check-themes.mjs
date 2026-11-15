@@ -113,6 +113,7 @@ for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_TH
 }
 // Platform fallbacks: reduced transparency paints solid; no backdrop-filter turns glass into tinted.
 assert.equal(effectiveUiStyle('glass', { backdropFilter: true, reducedTransparency: true }), 'solid');
+assert.equal(effectiveUiStyle('line', { backdropFilter: true, reducedTransparency: true }), 'line');
 assert.equal(effectiveUiStyle('glass', { backdropFilter: false, reducedTransparency: false }), 'tinted');
 assert.equal(effectiveUiStyle('tinted', { backdropFilter: false, reducedTransparency: false }), 'tinted');
 process.stdout.write(`surfaces: ${surfaceCells} layer checks (styles x chat area x transparency/blur extremes x backdrops; text >= ${TEXT_TARGET}:1 on panels)

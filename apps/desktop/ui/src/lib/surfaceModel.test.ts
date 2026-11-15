@@ -104,6 +104,7 @@ test("platform fallbacks", () => {
   assert.equal(effectiveUiStyle("glass", { backdropFilter: false, reducedTransparency: false }), "tinted");
   assert.equal(effectiveUiStyle("tinted", { backdropFilter: true, reducedTransparency: true }), "solid");
   assert.equal(effectiveUiStyle("line", { backdropFilter: true, reducedTransparency: false }), "line");
+  assert.equal(effectiveUiStyle("line", { backdropFilter: true, reducedTransparency: true }), "line", "line keeps its outlines");
   // The shell geometry follows the painted style, not the saved one.
   assert.equal(isFloatShell("tinted", false, (s) => s), true);
   assert.equal(isFloatShell("glass", false, () => "solid"), false);

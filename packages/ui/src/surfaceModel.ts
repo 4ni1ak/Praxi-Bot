@@ -125,9 +125,13 @@ export interface PlatformSurfaceSupport {
 
 export const FULL_SUPPORT: PlatformSurfaceSupport = { backdropFilter: true, reducedTransparency: false };
 
-/** Style actually painted: reduced transparency forces solid; glass without backdrop-filter becomes tinted. */
+/**
+ * Style actually painted: reduced transparency turns the translucent styles (tinted, glass) solid
+ * (line keeps its outlines; `applyTheme` drops its see-through fill); glass without backdrop-filter
+ * becomes tinted.
+ */
 export function effectiveUiStyle(style: UiStyle, env: PlatformSurfaceSupport = FULL_SUPPORT): UiStyle {
-  if (env.reducedTransparency) return "solid";
+  if (env.reducedTransparency) return style === "line" ? "line" : "solid";
   if (style === "glass" && !env.backdropFilter) return "tinted";
   return style;
 }

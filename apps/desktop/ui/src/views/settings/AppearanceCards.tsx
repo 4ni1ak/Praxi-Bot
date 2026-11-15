@@ -179,7 +179,7 @@ function SurfaceControls({ b, t }: { b: SettingsBridge; t: TFunction }) {
   if (style === "solid" || style === "line") return null;
   if (env.reducedTransparency) {
     return (
-      <div className={pickerStyles.sliders}>
+      <div className={pickerStyles.root}>
         {note(t("appearance.style.reduced"))}
         <div>
           <Button size="sm" variant="secondary" onClick={() => update({ transparencyOverride: true })}>

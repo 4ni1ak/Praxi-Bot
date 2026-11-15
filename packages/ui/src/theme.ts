@@ -176,7 +176,9 @@ export function applyTheme(theme: ThemeDef, overrides?: ThemeOverrides): void {
   const surface = overrides?.surface ?? DEFAULT_SURFACE;
   // Reduced transparency: the chat area keeps its background too.
   const clearChat = surface.transparentChat && !env.reducedTransparency;
-  const tokens = buildThemeTokens(theme, accent, style, overrides?.backdropActive === true, {
+  // Reduced transparency: the line style keeps its outlines but loses its see-through fill.
+  const seeThrough = overrides?.backdropActive === true && !env.reducedTransparency;
+  const tokens = buildThemeTokens(theme, accent, style, seeThrough, {
     ...surface,
     transparentChat: clearChat
   });
