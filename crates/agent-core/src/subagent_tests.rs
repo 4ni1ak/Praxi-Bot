@@ -1879,3 +1879,95 @@ async fn the_per_turn_skill_hint_uses_the_bot_filtered_view() {
     let sys = system_of(&reqs[0]);
     assert!(!sys.contains("unassigned-skill"), "{sys}");
 }
+
+#[tokio::test]
+async fn control_grant_is_not_inherited_by_a_subagent() {
+    use crate::control_grant_tests::ControlTool;
+    use crate::tests::{MACHINE_A, machine_provider};
+    use tool_registry::{ControlIdentity, ControlKind, ControlTarget};
+
+    let env = setup();
+    let target = || {
+        Some(ControlTarget {
+            kind: ControlKind::Type,
+            identity: ControlIdentity {
+                image_path: r"C:\Windows\System32\notepad.exe".into(),
+                pid: 10,
+                start_time: 99,
+            },
+            window_title: "Untitled - Notepad".into(),
+            refusal: None,
+        })
+    };
+    let ty = ControlTool::new("desktop_type", vec![target()]);
+    let read = Arc::new(with_class(
+        "fs_read",
+        Effect::Read,
+        PermissionCategory::Fs,
+        ContentClass::untrusted_private(),
+        "page text",
+    ));
+    // The parent reads, types (and is granted), then spawns a child that types
+    // into the very same program.
+    let brain = Brain::new(|req| {
+        let n = results(req).len();
+        if is_child(req) {
+            if n == 0 {
+                call(&[(
+                    "k1",
+                    "desktop_type",
+                    json!({"index": 1, "gen": 1, "text": "x"}),
+                )])
+            } else {
+                say("child done")
+            }
+        } else {
+            match n {
+                0 => call(&[("p0", "fs_read", json!({}))]),
+                1 => call(&[(
+                    "p1",
+                    "desktop_type",
+                    json!({"index": 1, "gen": 1, "text": "x"}),
+                )]),
+                2 => calls_owned(vec![spawn("p2", "type into notepad")]),
+                _ => say("parent done"),
+            }
+        }
+    });
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[
+            Arc::clone(&read) as Arc<dyn Tool>,
+            Arc::clone(&ty) as Arc<dyn Tool>,
+        ],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::full()),
+    );
+    lp.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, false));
+    let mut rx = lp.subscribe();
+    let parent = lp.run_turn(env.chat, "go").unwrap();
+
+    let first = match until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await {
+        Event::ApprovalNeeded(a) => a,
+        _ => unreachable!(),
+    };
+    assert_eq!(first.run_id, parent);
+    lp.approve(first.call_id, ApprovalScope::RunControl, env.user)
+        .unwrap();
+    // The child asks for itself: the parent's grant did not travel.
+    let second = match until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await {
+        Event::ApprovalNeeded(a) => a,
+        _ => unreachable!(),
+    };
+    assert_ne!(second.run_id, parent, "the card belongs to the child run");
+    assert_eq!(second.tool_name, "desktop_type");
+    lp.approve(second.call_id, ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(parent).await.unwrap(), RunState::Succeeded);
+    assert_eq!(ty.count.load(Ordering::SeqCst), 2);
+    // The parent's call was covered and guarded; the child's, approved once, was not.
+    assert!(ty.guards.lock()[0].is_some());
+    assert!(ty.guards.lock()[1].is_none());
+}

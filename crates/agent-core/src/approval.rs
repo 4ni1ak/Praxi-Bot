@@ -257,8 +257,8 @@ impl Shared {
         ) || executes_must_ask(exposure, class.executes);
         // Only a call that already has to ask can be covered, so the lookup is
         // skipped for every other call.
-        let control_covered = must_ask
-            && target.is_some_and(|t| ctx.control_covers(name, category, t));
+        let control_covered =
+            must_ask && target.is_some_and(|t| ctx.control_covers(name, category, t));
         let must_ask = must_ask && !control_covered;
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
@@ -830,7 +830,14 @@ impl Shared {
                 {
                     let _gate = self.exec_gate.lock();
                     if matches!(
-                        self.decide_with_target(ctx, name, effect, category, input, target.as_ref()),
+                        self.decide_with_target(
+                            ctx,
+                            name,
+                            effect,
+                            category,
+                            input,
+                            target.as_ref()
+                        ),
                         Decision::Deny
                     ) {
                         self.record_policy_denial(ctx, approval_id, call_id, name, by);

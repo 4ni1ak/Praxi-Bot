@@ -5925,7 +5925,7 @@ impl computer_target::ComputerProvider for MockComputerProvider {
     }
 }
 
-struct BoundMachine {
+pub(crate) struct BoundMachine {
     inner: MockComputerProvider,
     id: &'static str,
     unreachable: bool,
@@ -5968,7 +5968,7 @@ impl computer_target::ComputerProvider for BoundMachine {
     }
 }
 
-fn machine_provider(
+pub(crate) fn machine_provider(
     id: &'static str,
     local: Option<&'static str>,
     pc: Option<&'static str>,
@@ -7076,8 +7076,10 @@ async fn browser_eval_script_approvals_and_grants_are_computer_scoped() {
     assert_eq!(eval.count.load(Ordering::SeqCst), 3);
 }
 
-const MACHINE_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const MACHINE_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+pub(crate) const MACHINE_A: &str =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub(crate) const MACHINE_B: &str =
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 fn seed_desktop_grant(env: &Env, computer: Option<&str>) {
     let mut detail = json!({
