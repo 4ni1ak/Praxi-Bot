@@ -31,6 +31,8 @@
 #   --sha256 <hex>       Additional checksum check; never replaces provenance verification
 #   --verify-only       Verify without installing; does not require root or Linux
 #   --port <port>        Daemon port on 127.0.0.1 (default: 47821)
+#   --host-mode          Run the service as 'bot serve --host' (always-on host; still 127.0.0.1 only,
+#                        no inbound port; kept on re-install once set)
 #   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
 #   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
 #   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar (runs as praxi with read access to praxi.env)
@@ -71,6 +73,7 @@ EXPECTED_SHA=""
 VERIFY_ONLY=0
 PORT="47821"
 PORT_SET=0
+HOST_MODE=0
 DISPLAY_SET=0
 SCREEN_SET=0
 WITH_DESKTOP=0
@@ -136,6 +139,7 @@ Options:
   --sha256 <hex>       Additional checksum check; never replaces provenance verification
   --verify-only       Verify without installing; does not require root or Linux
   --port <port>        Daemon port on 127.0.0.1 (default: 47821; kept on re-install unless given)
+  --host-mode          Run the service as 'bot serve --host' (kept on re-install once set; opens no port)
   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar
@@ -205,6 +209,7 @@ while [[ $# -gt 0 ]]; do
     --sha256) need_arg "$@"; EXPECTED_SHA="$(sha256_hex "$2")"; shift 2 ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
     --port) need_arg "$@"; PORT="$2"; PORT_SET=1; shift 2 ;;
+    --host-mode) HOST_MODE=1; shift ;;
     --with-desktop) WITH_DESKTOP=1; shift ;;
     --with-desktop-session) WITH_DESKTOP_SESSION=1; WITH_DESKTOP=1; shift ;;
     --with-session-apps) WITH_SESSION_APPS=1; shift ;;
@@ -1031,9 +1036,16 @@ elif [[ "${WITHOUT_DESKTOP}" -eq 1 && -f "${UNIT_DIR}/${SLICE_NAME}" ]]; then
   rm -f "${UNIT_DIR}/${SLICE_NAME}"
 fi
 
+# Host mode is sticky: a re-install without --host-mode keeps an existing host unit.
+if [[ "${HOST_MODE}" -eq 0 && -f "${UNIT_DIR}/praxi.service" ]] && grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)' "${UNIT_DIR}/praxi.service"; then
+  HOST_MODE=1
+fi
+SERVE_ARGS="serve"
+[[ "${HOST_MODE}" -eq 0 ]] || SERVE_ARGS="serve --host"
+
 cat > "${UNIT_DIR}/praxi.service" <<UNIT
 [Unit]
-Description=Praxi-Bot daemon (bot serve, 127.0.0.1 only)
+Description=Praxi-Bot daemon (bot ${SERVE_ARGS}, 127.0.0.1 only)
 After=network-online.target
 Wants=network-online.target
 
@@ -1044,7 +1056,7 @@ ${SLICE_LINE:+${SLICE_LINE}
 Group=${SVC_USER}
 WorkingDirectory=${DATA_DIR}
 EnvironmentFile=${ENV_FILE}
-ExecStart=${PREFIX}/bin/bot serve
+ExecStart=${PREFIX}/bin/bot ${SERVE_ARGS}
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

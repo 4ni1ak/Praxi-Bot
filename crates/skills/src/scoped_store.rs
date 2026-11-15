@@ -134,7 +134,7 @@ fn check_version(version: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn next_version(version: &str) -> Result<String, String> {
+pub(crate) fn next_version(version: &str) -> Result<String, String> {
     check_version(version)?;
     let (prefix, last) = version.rsplit_once('.').unwrap_or(("", version));
     let next = if last.bytes().all(|b| b.is_ascii_digit()) {
@@ -155,7 +155,7 @@ fn next_version(version: &str) -> Result<String, String> {
     Ok(next)
 }
 
-fn with_version(content: &str, version: &str) -> Result<String, String> {
+pub(crate) fn with_version(content: &str, version: &str) -> Result<String, String> {
     let (front, body) = frontmatter::split(content)?;
     let mut out = format!("---\nversion: {version}\n");
     for line in front.lines() {
@@ -377,6 +377,7 @@ fn publish_with(
     let files = walk(&own_dir).map_err(|e| e.to_string())?;
     let source_hash = hash_files(&files).map_err(|e| e.to_string())?;
     let _shared_guard = ScopeLock::acquire(shared)?;
+    crate::owner::recover_published_versions(shared).map_err(|e| e.to_string())?;
     let mut existing = Vec::new();
     let mut issues = Vec::new();
     load_dir_locked(shared, Source::User, &mut existing, &mut issues);

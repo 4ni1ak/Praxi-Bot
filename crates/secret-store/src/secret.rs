@@ -71,8 +71,30 @@ pub fn is_managed_oauth_name(name: &str) -> bool {
 
 /// A reference to a secret by name. Safe to persist and to show to the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(try_from = "String", into = "String")]
 pub struct SecretRef(String);
+
+impl TryFrom<String> for SecretRef {
+    type Error = SecretError;
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        // Deserialization refuses only native-integration names; managed MCP
+        // OAuth names are refused again in `resolve`, as before.
+        validate_name(&name)?;
+        if is_reserved_name(&name) {
+            return Err(SecretError::InvalidName(name));
+        }
+        if is_host_credential(&name) {
+            return Err(SecretError::InvalidName("reserved host credential".into()));
+        }
+        Ok(Self(name))
+    }
+}
+
+impl From<SecretRef> for String {
+    fn from(r: SecretRef) -> Self {
+        r.0
+    }
+}
 
 impl SecretRef {
     /// Create a reference after validating the name.
@@ -84,8 +106,11 @@ impl SecretRef {
         let name = name.into();
         validate_name(&name)?;
         refuse_fill_namespace(&name)?;
-        if is_managed_oauth_name(&name) {
+        if is_reserved_name(&name) || is_managed_oauth_name(&name) {
             return Err(SecretError::InvalidName(name));
+        }
+        if is_host_credential(&name) {
+            return Err(SecretError::InvalidName("reserved host credential".into()));
         }
         Ok(Self(name))
     }
@@ -97,10 +122,35 @@ impl SecretRef {
     }
 }
 
+/// Host credentials cannot be selected as provider/connector secrets or
+/// exported in a portable state bundle. The host accesses them by exact name.
+#[must_use]
+pub fn is_host_credential(name: &str) -> bool {
+    // Windows credential targets are case-insensitive. Reserve every ASCII
+    // case spelling on all backends so aliases cannot cross this boundary.
+    name.get(.."mcp-server/".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mcp-server/"))
+}
+
 impl fmt::Display for SecretRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// Prefix of secrets owned by a native integration (the Composio API key).
+/// No configuration, tool, bot, peer or state export may reference or read
+/// them: [`SecretRef::new`] refuses these names, the secrets route refuses to
+/// write them and state bundles skip them.  Only the owning crate talks to the
+/// store with the literal name.
+pub const RESERVED_PREFIX: &str = "composio/";
+
+/// Whether `name` is reserved for a native integration (case-insensitive, and
+/// not fooled by leading slashes).
+#[must_use]
+pub fn is_reserved_name(name: &str) -> bool {
+    let n = name.trim_start_matches('/').to_ascii_lowercase();
+    n.starts_with(RESERVED_PREFIX) || n == "composio"
 }
 
 /// Store prefix of the owner-only fill secrets (see [`crate::FillSecrets`]).
@@ -185,12 +235,96 @@ pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, Se
     refuse_fill_namespace(r.name())?;
     // A deserialized reference skipped `SecretRef::new`: check again here,
     // the one place every configured reference is resolved.
-    if is_managed_oauth_name(r.name()) {
+    if is_managed_oauth_name(r.name()) || is_reserved_name(r.name()) {
         return Err(SecretError::InvalidName(r.name().to_string()));
     }
     store
         .get(r.name())?
         .ok_or_else(|| SecretError::NotFound(r.name().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Portable Windows-like credential lookup, including case-variant enumeration.
+    // No OS keychain is accessed by this fixture.
+    #[derive(Default)]
+    struct CaseInsensitiveStore(crate::MemoryStore);
+
+    impl crate::SecretStore for CaseInsensitiveStore {
+        fn get(
+            &self,
+            name: &str,
+        ) -> std::result::Result<Option<crate::SecretValue>, crate::SecretError> {
+            crate::SecretStore::get(&self.0, &name.to_ascii_lowercase())
+        }
+        fn set(&self, name: &str, value: &str) -> std::result::Result<(), crate::SecretError> {
+            crate::SecretStore::set(&self.0, &name.to_ascii_lowercase(), value)
+        }
+        fn delete(&self, name: &str) -> std::result::Result<bool, crate::SecretError> {
+            crate::SecretStore::delete(&self.0, &name.to_ascii_lowercase())
+        }
+        fn list_names(&self) -> std::result::Result<Vec<String>, crate::SecretError> {
+            crate::SecretStore::list_names(&self.0).map(|names| {
+                names
+                    .into_iter()
+                    .map(|name| name.to_ascii_uppercase())
+                    .collect()
+            })
+        }
+    }
+
+    #[test]
+    fn host_credentials_cannot_become_provider_or_connector_references() {
+        let store = CaseInsensitiveStore::default();
+        store.set("mcp-server/token/id", "host value").unwrap();
+        store.set("mcp-server/meta/id", "host value").unwrap();
+        for name in [
+            "mcp-server/token/id",
+            "mcp-server/meta/id",
+            "MCP-SERVER/TOKEN/ID",
+            "MCP-SERVER/META/ID",
+            "McP-SeRvEr/ToKeN/Id",
+            "McP-SeRvEr/MeTa/Id",
+        ] {
+            assert_eq!(store.get(name).unwrap().unwrap().expose(), "host value");
+            assert!(SecretRef::new(name).is_err());
+            assert!(serde_json::from_value::<SecretRef>(serde_json::json!(name)).is_err());
+        }
+        let ordinary: SecretRef = serde_json::from_str("\"provider/key\"").unwrap();
+        assert_eq!(ordinary.name(), "provider/key");
+        store.set("provider/key", "ordinary value").unwrap();
+        assert_eq!(
+            resolve(&store, &ordinary).unwrap().expose(),
+            "ordinary value"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reserved_tests {
+    use super::*;
+
+    #[test]
+    fn composio_names_cannot_become_references() {
+        for n in [
+            "composio/api-key",
+            "Composio/API-KEY",
+            "/composio/x",
+            "composio",
+        ] {
+            assert!(is_reserved_name(n), "{n}");
+            assert!(SecretRef::new(n).is_err(), "{n}");
+            assert!(
+                serde_json::from_str::<SecretRef>(&format!("\"{n}\"")).is_err(),
+                "{n}"
+            );
+        }
+        assert!(SecretRef::new("mcp/github-token").is_ok());
+        assert!(serde_json::from_str::<SecretRef>("\"mcp/x\"").is_ok());
+        assert!(!is_reserved_name("composiox/a"));
+    }
 }
 
 #[cfg(test)]

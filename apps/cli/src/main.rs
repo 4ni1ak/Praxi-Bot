@@ -5,15 +5,18 @@ mod channels;
 mod channels_tests;
 mod client;
 mod commands;
+mod composio_host;
 mod computer;
 mod doctor;
 mod email_cmd;
 mod email_host;
 mod host;
 mod host_links;
+mod host_provision;
 mod host_runtime;
 mod mcp_host;
 mod mcp_paste;
+mod mcp_serve;
 mod peer;
 mod presets;
 mod prompt;
@@ -83,6 +86,11 @@ enum Command {
     Skills {
         #[command(subcommand)]
         action: skills_cmd::SkillsCmd,
+    },
+    /// Create or revoke scoped MCP credentials on the local daemon.
+    Token {
+        #[command(subcommand)]
+        action: mcp_serve::TokenCmd,
     },
     /// Manage the active host and paired devices.
     Host {
@@ -212,6 +220,9 @@ enum McpCmd {
         #[arg(required = true, num_args = 1.., allow_hyphen_values = true, trailing_var_arg = true)]
         input: Vec<String>,
     },
+    /// Expose a selected bot as a scoped Praxi MCP server over stdio, using a
+    /// token issued with `bot token create`.
+    Serve(mcp_serve::ServeArgs),
 }
 
 #[derive(Subcommand)]
@@ -581,10 +592,28 @@ fn run() -> Result<()> {
         return current_thread_runtime()?.block_on(host::join(&data_dir, ticket));
     }
 
+    // Provisioning runs in the owner's terminal and needs no secret store.
+    if let Command::Host {
+        action: host::HostCmd::Provision(cmd),
+    } = command
+    {
+        return host_provision::run(cmd, &data_dir, &|| make_client(&cli, &data_dir));
+    }
+
     // Daemon commands (no secret store needed, except `serve` with real providers).
     match command {
         Command::Skills { action } => {
             return skills_cmd::run(&data_dir, action, &mut std::io::stdout());
+        }
+        Command::Mcp {
+            action: McpCmd::Serve(args),
+        } => return mcp_serve::run(&cli, args, &data_dir),
+        Command::Token { action } => {
+            let client = make_client(&cli, &data_dir)?;
+            let result =
+                current_thread_runtime()?.block_on(mcp_serve::token_command(&client, action))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
         }
         Command::Serve { .. } => return run_serve(&cli, command, &data_dir),
         Command::Doctor(c) => return run_doctor(&cli, c, &data_dir),
@@ -650,8 +679,10 @@ fn run() -> Result<()> {
             }
             SecretsCmd::Delete { name } => commands::secrets_delete(store, name),
         },
-        Command::Host { .. }
+        Command::Mcp { .. }
         | Command::Skills { .. }
+        | Command::Token { .. }
+        | Command::Host { .. }
         | Command::SelfUpdate(_)
         | Command::Doctor(_)
         | Command::Serve { .. }
@@ -662,7 +693,6 @@ fn run() -> Result<()> {
         | Command::Answer { .. }
         | Command::Schedules { .. }
         | Command::Email { .. }
-        | Command::Mcp { .. }
         | Command::Grants { .. } => Ok(()),
         Command::Providers { action } => match action {
             ProvidersCmd::Add {
@@ -1006,7 +1036,10 @@ async fn run_mcp(
         name,
         dry_run,
         input,
-    } = action;
+    } = action
+    else {
+        return Err("`mcp serve` runs before a daemon client exists".into());
+    };
     let input = if input.as_slice() == ["-"] {
         let mut text = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
@@ -1252,12 +1285,27 @@ mod tests {
             vec!["invite", "--role", "host"],
             vec!["join", "bot-pair:TEST"],
             vec!["revoke", "key"],
+            vec![
+                "add",
+                "ubuntu@203.0.113.7",
+                "--ssh-port",
+                "2222",
+                "--key",
+                "k",
+                "--yes",
+            ],
+            vec!["repair", "opc@203.0.113.7"],
+            vec!["upgrade", "oracle"],
+            vec!["remove", "oracle", "--purge", "--yes"],
         ] {
             let cli = Cli::try_parse_from(["bot", "host"].into_iter().chain(args)).unwrap();
             assert!(matches!(cli.command, Some(Command::Host { .. })));
         }
         assert!(Cli::try_parse_from(["bot", "host", "invite", "--role", "admin"]).is_err());
         assert!(Cli::try_parse_from(["bot", "host", "join"]).is_err());
+        assert!(
+            Cli::try_parse_from(["bot", "host", "remove", "x", "--purge", "--uninstall"]).is_err()
+        );
     }
 
     #[test]

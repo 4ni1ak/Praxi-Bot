@@ -634,14 +634,14 @@ impl AgentLoop {
                 continue;
             }
             let live = self.rt.active_runs().contains(&kid.id);
-            if self.rt.cancel(kid.id).is_ok()
-                && !live
-                && let Some(pctx) = self.ctx_of(run_id)
-            {
-                self.sh.emit(
-                    &pctx,
-                    finished_event(kid.id, run_id, "cancelled", "cancelled", None),
-                );
+            if self.rt.cancel(kid.id).is_ok() {
+                crate::usage::finish(&self.sh, kid.id);
+                if !live && let Some(pctx) = self.ctx_of(run_id) {
+                    self.sh.emit(
+                        &pctx,
+                        finished_event(kid.id, run_id, "cancelled", "cancelled", None),
+                    );
+                }
             }
         }
     }

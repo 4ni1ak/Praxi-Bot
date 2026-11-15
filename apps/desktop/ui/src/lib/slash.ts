@@ -2,7 +2,6 @@
  * Composer triggers: a `/` command at the very start of the message and an
  * `@` bot mention anywhere. Pure text logic; the menu UI lives in ChatView.
  */
-import { fold } from "./fuzzy.ts";
 
 /** Commands the daemon router understands as a message (`/new`, `/stop`). */
 export interface SlashCommand {
@@ -68,23 +67,4 @@ export function parseSlashInput(
 /** A bot's `@handle`: its name without whitespace. */
 export function mentionHandle(name: string): string {
   return name.replace(/\s+/g, "");
-}
-
-/**
- * `@Atlas do the thing` -> the bot named Atlas and `do the thing`. Matching is
- * case/diacritic-insensitive; an unknown handle (or a bare `@x`) is `null`, so
- * the text is sent as-is.
- */
-export function parseLeadingMention<B extends { name: string }>(
-  text: string,
-  bots: readonly B[]
-): { bot: B; rest: string } | null {
-  const m = /^\s*@(\S+)(?:\s+([\s\S]*))?$/.exec(text);
-  if (!m) {
-    return null;
-  }
-  const want = fold(m[1] ?? "");
-  const bot = bots.find((b) => fold(mentionHandle(b.name)) === want);
-  const rest = (m[2] ?? "").trim();
-  return bot && rest ? { bot, rest } : null;
 }

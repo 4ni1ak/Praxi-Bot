@@ -1,0 +1,62 @@
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.choice,
+.consent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: var(--size-border) solid var(--color-border);
+  background-color: var(--color-surface);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.choice > span,
+.consent > span {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.choice[data-offered="false"] {
+  opacity: 0.6;
+}
+
+.setting {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  word-break: break-word;
+}
+
+.label {
+  align-self: flex-start;
+  margin: var(--space-0);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  border: var(--size-border) solid var(--color-border-strong);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.experimental {
+  margin: var(--space-0);
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}

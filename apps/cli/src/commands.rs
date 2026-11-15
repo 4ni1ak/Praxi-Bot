@@ -16,7 +16,11 @@ use crate::{
 /// # Errors
 /// Store errors.
 pub fn secrets_list(store: &dyn SecretStore, out: &mut dyn FnMut(&str)) -> Result<()> {
-    let names = store.list_names()?;
+    let names: Vec<_> = store
+        .list_names()?
+        .into_iter()
+        .filter(|n| !secret_store::is_host_credential(n))
+        .collect();
     if names.is_empty() {
         out("(no secrets stored)");
     }
@@ -32,6 +36,9 @@ pub fn secrets_list(store: &dyn SecretStore, out: &mut dyn FnMut(&str)) -> Resul
 /// # Errors
 /// Invalid name, store errors.
 pub fn secrets_set(store: &dyn SecretStore, name: &str, value: &SecretValue) -> Result<()> {
+    if secret_store::is_host_credential(name) {
+        return Err("host credentials must be managed with bot token".into());
+    }
     store.set(name, value.expose())?;
     Ok(())
 }
@@ -41,6 +48,9 @@ pub fn secrets_set(store: &dyn SecretStore, name: &str, value: &SecretValue) -> 
 /// # Errors
 /// Store errors; unknown name.
 pub fn secrets_delete(store: &dyn SecretStore, name: &str) -> Result<()> {
+    if secret_store::is_host_credential(name) {
+        return Err("host credentials must be managed with bot token".into());
+    }
     if store.delete(name)? {
         Ok(())
     } else {

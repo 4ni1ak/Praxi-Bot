@@ -104,10 +104,11 @@ impl Host {
 
     fn save(&self, bot: BotId, config: Option<&EmbeddingConfig>) {
         let mut row = self.state.bot_of_user(bot).unwrap();
+        let version = self.state.storage().bot_version(bot).unwrap().unwrap();
         row.config["knowledge"] = json!({"embedding":config});
         self.state
             .storage()
-            .update_bot(bot, "Knowledge test", &row.config)
+            .update_bot(bot, "Knowledge test", &row.config, version)
             .unwrap();
         self.state.refresh_profile(&row);
         invalidate_bot(&self.state, bot);

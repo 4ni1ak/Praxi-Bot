@@ -60,6 +60,16 @@ pub struct ScheduleRequest {
     pub cron: Option<String>,
     /// IANA timezone for `when` / `cron` (default: the user's).
     pub tz: Option<String>,
+    /// Optional deterministic read-only precheck; null removes it on update.
+    #[serde(default, deserialize_with = "present_json")]
+    pub precheck: Option<Value>,
+    /// Optional file-watch or email trigger; null removes it on update.
+    #[serde(default, deserialize_with = "present_json")]
+    pub trigger: Option<Value>,
+}
+
+fn present_json<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 /// One proposed change, to be previewed before the user is asked.
@@ -262,7 +272,9 @@ pub fn tools(host: &Arc<dyn ScheduleHost>) -> Vec<Arc<dyn Tool>> {
     let when_props = json!({
         "when": {"type":"string","description":"Natural language, English or Turkish: \"every weekday at 10:30\", \"her gün 09:00\", \"in 2 hours\", \"every 15 minutes\". Give `when` or `cron`, not both."},
         "cron": {"type":"string","description":"5-field cron expression, e.g. \"30 10 * * 1-5\". Give `when` or `cron`, not both."},
-        "tz": {"type":"string","description":"IANA timezone for calendar times (default: the user's timezone)."}
+        "tz": {"type":"string","description":"IANA timezone for calendar times (default: the user's timezone)."},
+        "precheck": {"type":["object","null"],"description":"Read-only condition: {kind:hash_changed,tool,input} or {kind:script,code}. Script is an async function body returning bool or {run:bool,input:string}; 20s, 10 Read calls, 64KiB. Ask/Deny tools are refused. Full source is shown before approval."},
+        "trigger": {"type":["object","null"],"description":"Event trigger: {kind:file_watch,path,glob,events:[created|modified],debounce_ms} or {kind:email,account,from_filter,subject_filter}. Explicit workspace roots and Allow reads are required. Event payload is untrusted; every tool in the firing needs once-only approval."}
     });
     let mut create_props = json!({
         "name": {"type":"string","description":"Short name for the schedule."},

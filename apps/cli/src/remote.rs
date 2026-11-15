@@ -623,6 +623,21 @@ mod tests {
     }
 
     #[test]
+    fn cli_shows_complete_app_action_arguments() {
+        let body = format!("{}RECIPIENT-AT-END", "x".repeat(2000));
+        let text = approval_text(&needed(Some(serde_json::json!({
+            "kind":"app_action","app_name":"GitHub","action_slug":"GITHUB_SEND", "version":"20260901_00", "arguments":{"body":body}
+        }))));
+        assert!(
+            text.contains(&body)
+                && text.contains("GitHub / GITHUB_SEND")
+                && text.contains("via Composio")
+        );
+        assert!(text.contains("bot approve"));
+        assert!(!text.contains("cut at 300 bytes"));
+    }
+
+    #[test]
     fn cli_refuses_to_approve_details_it_cannot_show() {
         let text = approval_text(&needed(Some(serde_json::json!({"kind": "mystery"}))));
         assert!(text.contains("desktop app"));

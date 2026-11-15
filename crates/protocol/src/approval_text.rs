@@ -271,6 +271,19 @@ fn quoted(label: &str, text: &str) -> String {
 /// that splits the text keeps the footer on the last piece.
 #[must_use]
 pub fn describe_details(details: &Value) -> Option<String> {
+    if details.get("kind").and_then(Value::as_str) == Some("app_action") {
+        let mut text = describe_app_action(details)?;
+        // The run read something untrusted or private before this action:
+        // name the read before the footer, as a schedule card does.
+        if let Some(block) = egress_text(details) {
+            if let Some(i) = text.rfind("DAEMON SUMMARY:") {
+                text.insert_str(i, &block);
+            } else {
+                text.push_str(&block);
+            }
+        }
+        return Some(text);
+    }
     let egress = egress_text(details);
     let computer = computer_line(details);
     if details.get("kind").and_then(Value::as_str) == Some("schedule") {
@@ -569,6 +582,35 @@ fn payload_summary(egress: &Value) -> Option<String> {
         ));
     }
     Some(line)
+}
+
+fn describe_app_action(details: &Value) -> Option<String> {
+    let args = details.get("arguments").filter(|v| v.is_object())?;
+    if args.to_string().len() > 32 * 1024 {
+        return None;
+    }
+    let action = details.get("action_slug")?.as_str()?;
+    let app = details.get("app_name")?.as_str()?;
+    let version = details.get("version")?.as_str()?;
+    let raw = serde_json::to_string_pretty(args).ok()?;
+    let mut text = String::new();
+    for c in raw.chars() {
+        if is_hidden(c) {
+            let mut units = [0; 2];
+            for unit in c.encode_utf16(&mut units) {
+                text.push_str(&format!("\\u{unit:04x}"));
+            }
+        } else {
+            text.push(c);
+        }
+    }
+    Some(format!(
+        "App action approval: {} / {} (version {})\n{}DAEMON SUMMARY: via Composio. Approve only this exact action and all arguments.\n",
+        scrub(app, false),
+        scrub(action, false),
+        scrub(version, false),
+        quoted("ARGUMENTS (JSON)", &text)
+    ))
 }
 
 fn utf16_len(s: &str) -> usize {
@@ -1016,5 +1058,22 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("weather <U+00A0>"), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod app_action_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn app_payload_is_complete_and_size_capped() {
+        let payload = format!("{}TAIL-RECIPIENT", "x".repeat(1500));
+        let mut card = json!({"kind":"app_action","app_name":"GitHub","action_slug":"GITHUB_SEND","version":"20260901_00","arguments":{"body":payload}});
+        let text = describe_details(&card).unwrap();
+        assert!(text.contains(&payload));
+        assert!(text.contains("GitHub / GITHUB_SEND") && text.contains("20260901_00"));
+        assert!(text.ends_with("Approve only this exact action and all arguments.\n"));
+        card["arguments"]["body"] = json!("x".repeat(33 * 1024));
+        assert!(describe_details(&card).is_none());
     }
 }

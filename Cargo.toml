@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/live-view",
+    "crates/host-provision",
     "crates/agent-core",
     "crates/agent-router",
     "crates/tool-registry",
@@ -39,6 +40,7 @@ members = [
     "crates/connector-email",
     "crates/web-tools",
     "crates/openapi-tools",
+    "crates/composio",
     "apps/cli",
     "apps/desktop",
     "apps/node-agent",

@@ -23,7 +23,7 @@ import { useTranslation } from "react-i18next";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
 import { ApiError } from "../api/client";
-import type { Message, SendMode } from "../api/types";
+import type { Bot, Message, SendMode } from "../api/types";
 import {
   ApprovalCard,
   NoticeLine,
@@ -69,7 +69,6 @@ import {
   applyCompletion,
   detectTrigger,
   mentionHandle,
-  parseLeadingMention,
   SLASH_COMMANDS
 } from "../lib/slash";
 import {
@@ -116,7 +115,7 @@ interface MenuBot {
 type Entry =
   | { kind: "day"; key: string; ts: number }
   | { kind: "user"; key: string; ts: number; text: string }
-  | { kind: "assistant"; key: string; ts: number; text: string; live: boolean }
+  | { kind: "assistant"; key: string; ts: number; text: string; live: boolean; botId?: string | null }
   | { kind: "item"; key: string; ts: number; item: TimelineItem; runId: string }
   | { kind: "chain"; key: string; ts: number; chain: Chain; runId: string }
   | { kind: "runError"; key: string; ts: number; message: string }
@@ -322,7 +321,8 @@ export function ChatView({
           key: `m-${m.id}`,
           ts: m.created_at_ms,
           text: m.content,
-          live: false
+          live: false,
+          botId: m.bot_id
         });
       }
     }
@@ -555,29 +555,14 @@ export function ChatView({
   };
 
   const send = async () => {
-    let body = text.trim();
+    const body = text.trim();
     if (!client || !body || sending) {
       return;
     }
     setSending(true);
     setError(null);
     try {
-      // "@Other do x" starts a chat with that bot; "@ThisBot do x" just sends.
-      const mention = parseLeadingMention(
-        body,
-        bots.map((b) => ({ id: b.id, name: botView(b).name }))
-      );
-      if (mention && mention.bot.id !== chat?.bot_id) {
-        const created = await client.createChat(mention.bot.id);
-        await client.sendMessage(created.id, mention.rest);
-        await refreshChats().catch(() => {});
-        setText("");
-        onSwitchChat?.(created.id);
-        return;
-      }
-      if (mention) {
-        body = mention.rest;
-      }
+      // "@Other do x": the daemon lets Other answer in THIS chat.
       const res = await client.sendMessage(
         chatId,
         body,
@@ -710,7 +695,12 @@ export function ChatView({
       : undefined;
   const lastFailed = [...chatRuns].reverse()[0]?.error;
   const avatarState = awaitingApproval ? "waiting-approval" : active ? (lastItem?.kind === "chain" || (lastItem?.kind === "item" && lastItem.item.kind === "tool") ? "working" : "thinking") : lastFailed ? "error" : "idle";
-  const botAvatarFor = (decorative: boolean, size: "xs" | "sm" = "sm") => <BotAvatar bot={view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" }} size={size} state={avatarState} decorative={decorative} />;
+  // The bot that answered: a mentioned bot's run has its own bot id.
+  const guestBot = (botId: string | null | undefined) =>
+    botId && botId !== chat?.bot_id ? bots.find((b) => b.id === botId) : undefined;
+  const runGuest = (runId: string) => guestBot(runs.find((r) => r.id === runId)?.bot_id);
+  const botAvatarFor = (decorative: boolean, size: "xs" | "sm" = "sm", guest?: Bot) => <BotAvatar bot={guest ? botView(guest) : (view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" })} size={size} state={guest ? undefined : avatarState} decorative={decorative} />;
+  const guestName = (guest?: Bot) => guest ? <span className={styles.authorName}>{botView(guest).name}</span> : null;
 
   const rememberRun = async (runId: string) => {
     if (!client) {
@@ -760,6 +750,7 @@ export function ChatView({
         return (
           <div className={styles.assistantRow}>
             <div className={styles.assistantBubble}>
+              {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
           </div>
@@ -902,6 +893,7 @@ export function ChatView({
                 return (
                   <div key={e.key} className={styles.assistantRow}>
                     <div className={styles.assistantBubble}>
+                      {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
                   </div>
@@ -985,7 +977,7 @@ export function ChatView({
               case "chain":
                 return (
                   <div key={e.key} className={styles.chainRow}>
-                    <ThinkingChain chain={e.chain} avatar={lead ? botAvatarFor(true, "xs") : undefined} />
+                    <ThinkingChain chain={e.chain} avatar={lead ? botAvatarFor(true, "xs", runGuest(e.runId)) : undefined} />
                   </div>
                 );
               case "item":

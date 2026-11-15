@@ -970,6 +970,7 @@ pub fn serve(
     )?;
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
+    let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
@@ -1104,6 +1105,27 @@ pub fn serve(
             Some(mcp_registrar),
         );
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
+        // Composio app connections: the key stays in the secret store (reserved
+        // `composio/` prefix); without a store there is no key custody, so the
+        // feature stays off.
+        if let Some(store) = telegram_store.clone() {
+            let redact: composio::Redact = {
+                let handle = redactor.clone();
+                Arc::new(move |text: &str| handle.redact(text))
+            };
+            let audit = Arc::new(crate::composio_host::DaemonAudit(state.audit_writer()));
+            match crate::composio_host::ComposioHost::start(
+                data_dir,
+                composio_tools,
+                store,
+                redact,
+                audit,
+                { let handle = redactor.clone(); Arc::new(move |value| handle.register(value)) },
+            ) {
+                Ok(host) => state.set_composio(host as Arc<dyn daemon_api::ComposioControl>),
+                Err(e) => eprintln!("warning: composio: {e}; app connections are off"),
+            }
+        }
         if let Some(email) = email {
             state.set_email(email as Arc<dyn daemon_api::EmailControl>);
         }

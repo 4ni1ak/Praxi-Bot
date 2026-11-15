@@ -4,7 +4,10 @@ use rusqlite::Connection;
 
 use crate::error::{Result, StorageError};
 
-/// Embedded migrations, ordered; version = index + 1.
+/// Embedded migrations, ordered by their explicit numeric prefix.
+/// 0007 is message exposure (PR #89); 0008..0012 are reserved by other open drafts.
+/// The ledger allows those migrations to be integrated later without being
+/// skipped just because this build has already applied 0013.
 const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("../migrations/0001_init.sql")),
     (
@@ -31,12 +34,19 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0007_message_exposure",
         include_str!("../migrations/0007_message_exposure.sql"),
     ),
+    (
+        "0013_bot_version",
+        include_str!("../migrations/0013_bot_version.sql"),
+    ),
 ];
 
 /// Highest schema version this build supports.
+///
+/// # Panics
+/// Panics if the embedded migration list is empty or its last numeric prefix is invalid.
 #[must_use]
 pub fn latest_version() -> u32 {
-    u32::try_from(MIGRATIONS.len()).unwrap_or(u32::MAX)
+    migration_version(MIGRATIONS.last().expect("migrations exist").0)
 }
 
 /// Current schema version of the database (0 for an empty DB).
@@ -53,20 +63,69 @@ pub fn current_version(conn: &Connection) -> Result<u32> {
 /// # Errors
 /// Fails on SQL errors or if the DB is newer than this build.
 pub fn migrate(conn: &mut Connection) -> Result<u32> {
+    migrate_list(conn, MIGRATIONS)
+}
+
+fn migration_version(name: &str) -> u32 {
+    name.split('_')
+        .next()
+        .expect("migration prefix")
+        .parse()
+        .expect("numeric migration prefix")
+}
+
+fn migrate_list(conn: &mut Connection, migrations: &[(&str, &str)]) -> Result<u32> {
     let current = current_version(conn)?;
-    let latest = latest_version();
+    let latest = migration_version(migrations.last().expect("migrations exist").0);
     if current > latest {
         return Err(StorageError::SchemaTooNew {
             found: current,
             supported: latest,
         });
     }
+    // Bootstrap once from legacy contiguous user_version. After this, record
+    // actual applied IDs, never fill holes using the high-water mark.
+    {
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let has_ledger: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='storage_migrations')",
+            [], |r| r.get(0),
+        )?;
+        if !has_ledger {
+            let legacy = current_version(&tx)?;
+            if legacy >= 13 {
+                return Err(StorageError::Conflict(
+                    "sparse schema is missing its migration ledger".into(),
+                ));
+            }
+            tx.execute_batch("CREATE TABLE storage_migrations (version INTEGER PRIMARY KEY)")?;
+            for version in 1..=legacy {
+                tx.execute(
+                    "INSERT INTO storage_migrations (version) VALUES (?1)",
+                    [version],
+                )?;
+            }
+        }
+        tx.commit()?;
+    }
     let mut applied = 0;
-    for (i, (_name, sql)) in MIGRATIONS.iter().enumerate().skip(current as usize) {
-        let version = i + 1;
-        let tx = conn.transaction()?;
+    for (name, sql) in migrations {
+        let version = migration_version(name);
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM storage_migrations WHERE version=?1)",
+            [version],
+            |r| r.get(0),
+        )?;
+        if exists {
+            continue;
+        }
         tx.execute_batch(sql)?;
-        tx.execute_batch(&format!("PRAGMA user_version = {version}"))?;
+        tx.execute(
+            "INSERT INTO storage_migrations (version) VALUES (?1)",
+            [version],
+        )?;
+        tx.pragma_update(None, "user_version", current_version(&tx)?.max(version))?;
         tx.commit()?;
         applied += 1;
     }
@@ -91,9 +150,9 @@ mod tests {
     fn migrates_empty_db_and_is_idempotent() {
         let mut conn = Connection::open_in_memory().unwrap();
         assert_eq!(current_version(&conn).unwrap(), 0);
-        assert_eq!(latest_version(), 7);
-        assert_eq!(migrate(&mut conn).unwrap(), 7);
-        assert_eq!(current_version(&conn).unwrap(), 7);
+        assert_eq!(latest_version(), 13);
+        assert_eq!(migrate(&mut conn).unwrap(), 8);
+        assert_eq!(current_version(&conn).unwrap(), 13);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         assert_eq!(
             tables(&conn),
@@ -108,6 +167,7 @@ mod tests {
                 "messages",
                 "run_steps",
                 "runs",
+                "storage_migrations",
                 "users"
             ]
         );
@@ -139,28 +199,14 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_ends_at_version_seven() {
+    fn fresh_database_ends_at_latest_version() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
-        assert_eq!(latest_version(), 7);
-        assert_eq!(current_version(&conn).unwrap(), 7);
-        assert_eq!(MIGRATIONS[3].0, "0004_computer_target");
-        assert_eq!(MIGRATIONS[4].0, "0005_computer_identity");
+        assert_eq!(latest_version(), 13);
+        assert_eq!(current_version(&conn).unwrap(), 13);
         assert_eq!(MIGRATIONS[5].0, "0006_bot_skill_assignment");
         assert_eq!(MIGRATIONS[6].0, "0007_message_exposure");
-    }
-
-    #[test]
-    fn version_six_database_upgrades_to_message_exposure() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        for (i, (_, sql)) in MIGRATIONS[..6].iter().enumerate() {
-            conn.execute_batch(sql).unwrap();
-            conn.execute_batch(&format!("PRAGMA user_version = {}", i + 1))
-                .unwrap();
-        }
-        assert_eq!(current_version(&conn).unwrap(), 6);
-        assert_eq!(migrate(&mut conn).unwrap(), 1);
-        assert_eq!(current_version(&conn).unwrap(), 7);
+        assert_eq!(MIGRATIONS[7].0, "0013_bot_version");
         let cols: Vec<String> = conn
             .prepare("SELECT name FROM pragma_table_info('messages')")
             .unwrap()
@@ -174,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn main_v5_upgrades_through_the_skill_assignment_and_exposure_migrations() {
+    fn main_v5_upgrades_by_the_skill_assignment_exposure_and_bot_version_migrations() {
         let mut conn = Connection::open_in_memory().unwrap();
         for (_, sql) in &MIGRATIONS[..5] {
             conn.execute_batch(sql).unwrap();
@@ -189,8 +235,13 @@ mod tests {
                 .iter()
                 .any(|t| t.starts_with("bot_skill_assignment"))
         );
-        assert_eq!(migrate(&mut conn).unwrap(), 2);
-        assert_eq!(current_version(&conn).unwrap(), 7);
+        assert_eq!(migrate(&mut conn).unwrap(), 3);
+        assert_eq!(current_version(&conn).unwrap(), 13);
+        // An existing bot starts at version 1.
+        let v: i64 = conn
+            .query_row("SELECT version FROM bots WHERE id='bot'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 1);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         for table in ["bot_skill_assignment", "bot_skill_assignment_state"] {
             assert!(tables(&conn).contains(&table.to_owned()));
@@ -218,7 +269,21 @@ mod tests {
             .unwrap();
         assert_eq!(generation, 1);
         let triggers: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='bot_skill_assignment'", [], |r| r.get(0)).unwrap();
-        assert_eq!(triggers, 3);
+        assert_eq!(triggers, 6);
+    }
+
+    #[test]
+    fn database_already_at_0013_still_gets_message_exposure() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // What a build without 0007 produced: 0001..0006 and 0013 applied.
+        let mut without_exposure = MIGRATIONS[..6].to_vec();
+        without_exposure.push(MIGRATIONS[7]);
+        assert_eq!(migrate_list(&mut conn, &without_exposure).unwrap(), 7);
+        assert_eq!(current_version(&conn).unwrap(), 13);
+        assert_eq!(migrate(&mut conn).unwrap(), 1);
+        conn.prepare("SELECT exposure_untrusted,exposure_private,exposure_sources FROM messages")
+            .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 0);
     }
 
     #[test]

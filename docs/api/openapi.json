@@ -202,6 +202,130 @@
         ]
       }
     },
+    "/v1/bots/{bot}/files": {
+      "get": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "The bot's file access mode.",
+        "operationId": "get_files",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileAccessDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Set the bot's file access mode. Local owner only.",
+        "operationId": "put_files",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileAccessDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileAccessDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{bot}/knowledge/email-captures": {
       "get": {
         "tags": [
@@ -972,7 +1096,7 @@
         "tags": [
           "bots"
         ],
-        "summary": "Replace a bot's name and profile.",
+        "summary": "Replace a bot profile using its loaded `expected_version` (required; missing is 428).",
         "operationId": "update_bot",
         "parameters": [
           {
@@ -1017,7 +1141,27 @@
               }
             }
           },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
           "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "428": {
             "description": "",
             "content": {
               "application/json": {
@@ -1067,6 +1211,228 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Change only the listed fields of a bot, atomically, if `expected_version` is current.",
+        "operationId": "patch_bot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotPatchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "patch exceeds depth, size or operation limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the bot changed since `expected_version`; `current` is its state now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/engine": {
+      "put": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Set a bot's engine mode, approval level and workspace (local owner only).",
+        "operationId": "put_engine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotEngineInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/engine/kill": {
+      "post": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Kill switch: back to Praxi-governed and end the bot's running CLI processes.",
+        "operationId": "kill_engine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -1606,6 +1972,443 @@
             }
           },
           "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Key status.",
+        "operationId": "composio_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioStatusDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Composio is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Apps the owner connected or started to connect.",
+        "operationId": "composio_list_apps",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComposioAppDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps/{slug}": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "One app, refreshed from Composio (poll this while sign-in is pending).",
+        "operationId": "composio_get_app",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioAppDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Disconnect an app: deletes the Composio-side account when possible and\nalways forgets the app locally.",
+        "operationId": "composio_disconnect",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioDisconnectDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps/{slug}/connect": {
+      "post": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Start connecting an app: returns the Composio-hosted consent link, valid\nonce.  The caller opens it in the system browser.  Connecting is the\nowner's opt-in for that app.",
+        "operationId": "composio_connect",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioConnectDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps/{slug}/enabled": {
+      "put": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Switch an app's tools on or off.",
+        "operationId": "composio_set_enabled",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposioEnabledInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioAppDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/key": {
+      "put": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Validate (one cheap authenticated call to Composio) and store the project\nAPI key in the OS secret store.  **Write-only**: no route returns it.",
+        "operationId": "composio_set_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposioKeyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioStatusDto"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "malformed or rejected key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Composio unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Delete the key; every Composio tool disappears.",
+        "operationId": "composio_remove_key",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/toolkits": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Composio's toolkit catalog (searchable, paged, cached), with this\ninstallation's state per toolkit.",
+        "operationId": "composio_catalog",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Text matched against name, slug and description.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Category.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 100 (default 48).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioCatalogDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "no key yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
             "description": "",
             "content": {
               "application/json": {
@@ -3419,6 +4222,242 @@
         ]
       }
     },
+    "/v1/mcp-server/call": {
+      "post": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "Dispatch a scoped task/computer operation through the ordinary agent loop.",
+        "operationId": "call_tool",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpCallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-server/tokens": {
+      "post": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "Create a bot-bound token in the secret store (local owner only).",
+        "operationId": "create_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMcpToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpTokenGrant"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-server/tokens/{id}": {
+      "delete": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "Revoke a token and cancel its outstanding tasks (local owner only).",
+        "operationId": "revoke_token",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-server/tools": {
+      "get": {
+        "tags": [
+          "mcp-server"
+        ],
+        "summary": "List only explicitly enabled tools within the scoped token.",
+        "operationId": "list_tools",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "computer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "tasks",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportedMcpTool"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp/catalog": {
       "get": {
         "tags": [
@@ -4170,6 +5209,48 @@
         ]
       }
     },
+    "/v1/providers/cli": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "path",
+            "description": "When set to 1, bypasses the in-process 60-second cache.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CliEngineDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/cli/enable": {
       "post": {
         "tags": [
@@ -4216,12 +5297,91 @@
         ]
       }
     },
+    "/v1/providers/cli/install": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Creates an expiring approval; never starts a process.",
+        "operationId": "preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliInstallApproval"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/providers/cli/install/{approval_id}/decision": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Approve once (or deny). SSE `output` is untrusted text; `done` includes a\nstable error code and follows re-detection. Disconnect cancels the owned tree.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE output and done events; denied approvals emit done only",
+            "content": {
+              "text/event-stream": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/detected": {
       "get": {
         "tags": [
           "providers"
         ],
-        "summary": "Detect installed, signed-in coding CLIs.",
+        "summary": "Detect installed, signed-in coding CLIs. Local owner only: the rows carry\nthe signed-in account label (an email or organisation) and install state.",
         "operationId": "detect_providers",
         "parameters": [
           {
@@ -4247,6 +5407,16 @@
                   "items": {
                     "$ref": "#/components/schemas/DetectedProviderDto"
                   }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "caller is not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -5322,6 +6492,314 @@
             "bearer": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Create a trusted shared skill authored by the local owner.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillDocumentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/import": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Import a complete bounded skill tree; no imported code is executed.",
+        "operationId": "import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillImportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/{name}": {
+      "put": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Atomically update SKILL.md and retain auxiliary files.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillDocumentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Refuse assigned skills unless force is explicit; report their bot IDs/names.",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSkillResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSkillResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/usage": {
@@ -5329,7 +6807,7 @@
         "tags": [
           "usage"
         ],
-        "summary": "Token usage summed over the model steps of all runs.",
+        "summary": "Invocation usage, with legacy model-step fallback for pre-ledger runs.",
         "operationId": "usage",
         "parameters": [
           {
@@ -6169,6 +7647,24 @@
           }
         }
       },
+      "BotConflictBody": {
+        "type": "object",
+        "description": "`409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now.",
+        "required": [
+          "error",
+          "current"
+        ],
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/BotDto",
+            "description": "The current bot, with its current version."
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail",
+            "description": "`version_conflict`."
+          }
+        }
+      },
       "BotDto": {
         "type": "object",
         "description": "Public bot representation.",
@@ -6176,7 +7672,8 @@
           "id",
           "name",
           "config",
-          "created_at_ms"
+          "created_at_ms",
+          "version"
         ],
         "properties": {
           "config": {
@@ -6217,8 +7714,49 @@
                 "description": "Parsed `[runtime]` computer target settings (`auto` when omitted in profile)."
               }
             ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bot revision: starts at 1; profile writes and skill assignment changes\nadvance it in the write transaction. Send the loaded value back as\n`expected_version` to both PUT and PATCH."
           }
         }
+      },
+      "BotEngineInput": {
+        "type": "object",
+        "description": "New engine settings for one bot.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "approval_level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ask` (default), `accept_edits`, `auto` or `full`."
+          },
+          "consent_full_access": {
+            "type": "boolean",
+            "description": "The owner confirms Full access (no approval prompts) for this bot."
+          },
+          "consent_native_tools": {
+            "type": "boolean",
+            "description": "The owner confirms that a CLI runs this bot's file and shell actions."
+          },
+          "mode": {
+            "type": "string",
+            "description": "`praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does)."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute workspace folder; required for `native_tools`."
+          }
+        },
+        "additionalProperties": false
       },
       "BotInput": {
         "type": "object",
@@ -6226,6 +7764,14 @@
         "properties": {
           "config": {
             "description": "Profile as a JSON object."
+          },
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Required for PUT: version of the profile being replaced. Missing is 428;\nstale is 409 with the current bot. Not used when creating a bot."
           },
           "name": {
             "type": [
@@ -6251,6 +7797,63 @@
                 "description": "Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`\nwhen both are supplied. Omission on update preserves the stored target."
               }
             ]
+          }
+        }
+      },
+      "BotPatchInput": {
+        "type": "object",
+        "description": "`PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.\nEvery field not named - including unknown keys - stays exactly as stored.",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version the client loaded (`BotDto::version`).  A different current\nversion refuses the whole patch with `409` and returns the current bot."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New display name."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BotPatchOp"
+            },
+            "description": "Profile changes, applied in order (at most 128). Values/result use a\nconservative 1 MiB escaped JSON budget; excessive input is 400."
+          }
+        }
+      },
+      "BotPatchKind": {
+        "type": "string",
+        "description": "How one [`BotPatchOp`] changes the profile.",
+        "enum": [
+          "set",
+          "unset"
+        ]
+      },
+      "BotPatchOp": {
+        "type": "object",
+        "description": "One field-level change of a bot profile.",
+        "required": [
+          "op",
+          "path"
+        ],
+        "properties": {
+          "op": {
+            "$ref": "#/components/schemas/BotPatchKind",
+            "description": "`set` or `unset`."
+          },
+          "path": {
+            "type": "string",
+            "description": "RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,\n`/permissions/categories/fs/level`, `/runtime/computer`.  Object keys\nonly: a path through an array or a scalar is refused. At most 32 segments\nand 4096 bytes; resulting profile depth at most 32."
+          },
+          "value": {
+            "description": "The new value (`set` only)."
           }
         }
       },
@@ -6417,9 +8020,14 @@
           "name",
           "description",
           "version",
+          "body_sha256",
           "scope"
         ],
         "properties": {
+          "body_sha256": {
+            "type": "string",
+            "description": "Hex SHA-256 of the Markdown body (the part after the frontmatter, trimmed): lets a\nclient tell whether the catalog lists the file it just wrote or an older one."
+          },
           "description": {
             "type": "string",
             "description": "One-line description from frontmatter."
@@ -6672,12 +8280,443 @@
           "unknown"
         ]
       },
+      "CliEngineDto": {
+        "type": "object",
+        "required": [
+          "detected",
+          "executable_names",
+          "version_args",
+          "auth_args",
+          "outdated",
+          "login",
+          "docs_url"
+        ],
+        "properties": {
+          "auth_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty when no safe, locally verified CLI auth-status command is known."
+          },
+          "detected": {
+            "$ref": "#/components/schemas/DetectedProviderDto"
+          },
+          "docs_url": {
+            "type": "string"
+          },
+          "executable_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "install": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CliInstallDto"
+              }
+            ]
+          },
+          "limitation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "login": {
+            "type": "string"
+          },
+          "minimum_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "native": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CliNativeDto",
+                "description": "Present when bots can use this CLI with its own tools."
+              }
+            ]
+          },
+          "outdated": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CliInstallApproval": {
+        "type": "object",
+        "required": [
+          "approval_id",
+          "engine_id",
+          "command",
+          "expires_at_ms"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "command": {
+            "type": "string"
+          },
+          "engine_id": {
+            "type": "string"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CliInstallDecision": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CliInstallDto": {
+        "type": "object",
+        "required": [
+          "program",
+          "args",
+          "command",
+          "verified",
+          "executable"
+        ],
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string"
+          },
+          "executable": {
+            "type": "boolean"
+          },
+          "program": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CliInstallInput": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CliLevelDto": {
+        "type": "object",
+        "description": "One approval level for a CLI that runs with its own tools.",
+        "required": [
+          "level",
+          "offered",
+          "applied",
+          "native_setting"
+        ],
+        "properties": {
+          "applied": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "description": "`ask`, `accept_edits`, `auto` or `full`."
+          },
+          "native_setting": {
+            "type": "string",
+            "description": "The CLI's own setting this level maps to (shown to the owner)."
+          },
+          "offered": {
+            "type": "boolean",
+            "description": "`false` when the CLI has no such mode: it would run as `applied`."
+          }
+        }
+      },
+      "CliNativeDto": {
+        "type": "object",
+        "description": "Native-tools mode of a CLI: the CLI runs files and shell itself.",
+        "required": [
+          "support",
+          "levels"
+        ],
+        "properties": {
+          "levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CliLevelDto"
+            }
+          },
+          "support": {
+            "type": "string",
+            "description": "`verified` (flags confirmed in the installed CLI) or `experimental`."
+          }
+        }
+      },
       "Codec": {
         "type": "string",
         "enum": [
           "jpeg",
           "webp"
         ]
+      },
+      "ComposioAppDto": {
+        "type": "object",
+        "description": "A connected (or connecting) app.",
+        "required": [
+          "slug",
+          "name",
+          "state",
+          "enabled",
+          "native_first",
+          "tools"
+        ],
+        "properties": {
+          "bots": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Bots allowed; `null` = all."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "The owner enabled it (tools exist only while enabled and active)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "native_first": {
+            "type": "boolean",
+            "description": "Praxi connects it directly."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Toolkit slug."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ComposioConnState",
+            "description": "State."
+          },
+          "tools": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Direct tools currently offered to the model.",
+            "minimum": 0
+          }
+        }
+      },
+      "ComposioCatalogDto": {
+        "type": "object",
+        "description": "`GET /v1/composio/toolkits`.",
+        "required": [
+          "popular",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposioToolkitDto"
+            },
+            "description": "The page, in Composio's popularity order."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor of the next page."
+          },
+          "popular": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposioToolkitDto"
+            },
+            "description": "Pinned popular row (first page without filters only; empty otherwise)."
+          }
+        }
+      },
+      "ComposioConnState": {
+        "type": "string",
+        "description": "Connection state of an app.",
+        "enum": [
+          "not_connected",
+          "pending",
+          "active",
+          "expired"
+        ]
+      },
+      "ComposioConnectDto": {
+        "type": "object",
+        "description": "`POST /v1/composio/apps/{slug}/connect`: the one-time consent link.",
+        "required": [
+          "redirect_url",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "description": "When the link expires (ISO timestamp, may be empty)."
+          },
+          "redirect_url": {
+            "type": "string",
+            "description": "https URL on Composio's domain; open it in the system browser."
+          }
+        }
+      },
+      "ComposioDisconnectDto": {
+        "type": "object",
+        "description": "`DELETE /v1/composio/apps/{slug}` result.",
+        "required": [
+          "remote_removed"
+        ],
+        "properties": {
+          "remote_removed": {
+            "type": "boolean",
+            "description": "The account was deleted on Composio's side too.  When `false` the app\nis forgotten locally and the owner can remove it in Composio's dashboard."
+          }
+        }
+      },
+      "ComposioEnabledInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/composio/apps/{slug}/enabled`.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "New value."
+          }
+        }
+      },
+      "ComposioKeyInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/composio/key`.  Write-only.",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "The Composio project API key."
+          }
+        }
+      },
+      "ComposioStatusDto": {
+        "type": "object",
+        "description": "`GET /v1/composio`.",
+        "required": [
+          "configured",
+          "key_setup_url"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "A key is stored (the key itself is never returned)."
+          },
+          "key_setup_url": {
+            "type": "string",
+            "description": "Where the owner creates the key (https, on Composio's domain)."
+          }
+        }
+      },
+      "ComposioToolkitDto": {
+        "type": "object",
+        "description": "One toolkit of the Composio catalog.",
+        "required": [
+          "slug",
+          "name",
+          "description",
+          "categories",
+          "native_first",
+          "state",
+          "enabled"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names."
+          },
+          "description": {
+            "type": "string",
+            "description": "Short description (third-party text)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "The owner enabled it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "native_first": {
+            "type": "boolean",
+            "description": "Praxi connects it directly (always `false` until a zero-setup direct\npath exists); the UI notes it but never blocks the choice."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Toolkit slug."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ComposioConnState",
+            "description": "State for this installation."
+          },
+          "tools_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Number of actions, when Composio reports it.",
+            "minimum": 0
+          }
+        }
       },
       "ConfiguredProviderDto": {
         "type": "object",
@@ -6995,6 +9034,36 @@
           }
         }
       },
+      "CreateMcpToken": {
+        "type": "object",
+        "description": "Owner request: create a credential in the secret store. Only its id is\nreturned; `bot mcp serve` reads that one scoped credential by id.",
+        "required": [
+          "bots",
+          "scopes"
+        ],
+        "properties": {
+          "bots": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpScope"
+            },
+            "uniqueItems": true
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateSession": {
         "type": "object",
         "required": [
@@ -7092,6 +9161,34 @@
           "decision": {
             "$ref": "#/components/schemas/Decision",
             "description": "The decision taken."
+          }
+        }
+      },
+      "DeleteSkillQuery": {
+        "type": "object",
+        "description": "Explicit opt-in for deleting an assigned skill.",
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DeleteSkillResult": {
+        "type": "object",
+        "description": "Deletion result or assignment conflict. Force keeps explicit assignments as\nmissing, so a reinstall restores the owner's selected set.",
+        "required": [
+          "deleted",
+          "used_by"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "used_by": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillUsingBotDto"
+            }
           }
         }
       },
@@ -7753,6 +9850,53 @@
             "description": "Human-readable message."
           }
         }
+      },
+      "ExportedMcpTool": {
+        "type": "object",
+        "description": "MCP tool metadata. All returned text is untrusted data.",
+        "required": [
+          "name",
+          "description",
+          "input_schema",
+          "read_only",
+          "untrusted_output"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "input_schema": {},
+          "name": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "untrusted_output": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FileAccessDto": {
+        "type": "object",
+        "description": "A bot's file access mode.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Absolute folders for `folder` mode."
+          },
+          "mode": {
+            "type": "string",
+            "description": "`computer` (This computer, default) or `folder` (Folder only)."
+          }
+        },
+        "additionalProperties": false
       },
       "FileChangeDto": {
         "type": "object",
@@ -9418,6 +11562,31 @@
           }
         }
       },
+      "ManagedSkillDto": {
+        "type": "object",
+        "description": "Metadata only; the response never includes instruction bodies or files.",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "scope"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "Always `shared` for owner-managed skills."
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "McpAuthCallback": {
         "type": "object",
         "description": "Body of `POST /v1/mcp/servers/{name}/auth/callback`.",
@@ -9459,6 +11628,25 @@
           "signed_in",
           "auth_required"
         ]
+      },
+      "McpCallInput": {
+        "type": "object",
+        "description": "One MCP operation. `bot` is bound by the stdio server's --bot setting.",
+        "required": [
+          "bot",
+          "name"
+        ],
+        "properties": {
+          "arguments": {},
+          "bot": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "McpCatalogEntryDto": {
         "type": "object",
@@ -9683,6 +11871,14 @@
             "description": "Secret name (store it with `POST /v1/secrets/{name}`)."
           }
         }
+      },
+      "McpScope": {
+        "type": "string",
+        "description": "Independent MCP capabilities. Neither permits owner management endpoints.",
+        "enum": [
+          "mcp:tasks",
+          "mcp:computer"
+        ]
       },
       "McpServerChanged": {
         "type": "object",
@@ -10258,6 +12454,41 @@
           "quarantined"
         ]
       },
+      "McpTokenGrant": {
+        "type": "object",
+        "description": "Nonsecret grant, returned to the owner after storing a credential.",
+        "required": [
+          "id",
+          "bots",
+          "scopes",
+          "expires_at_ms"
+        ],
+        "properties": {
+          "bots": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpScope"
+            },
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      },
       "McpToolDto": {
         "type": "object",
         "description": "A tool of an MCP server (`GET /v1/mcp/servers/{name}/tools`).",
@@ -10392,6 +12623,14 @@
           "created_at_ms"
         ],
         "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Bot that ran `run_id` (the author of an assistant message). It differs\nfrom the chat's bot when another bot answered an `@mention`."
+          },
           "chat_id": {
             "type": "string",
             "format": "uuid",
@@ -11439,6 +13678,12 @@
             "format": "uuid",
             "description": "Chat the runs post to; without one a chat named after the schedule is\nused (and created on the first firing)."
           },
+          "consecutive_errors": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Consecutive precheck/polling failures (ten pauses the schedule).",
+            "minimum": 0
+          },
           "created_at_ms": {
             "type": "integer",
             "format": "int64",
@@ -11488,8 +13733,20 @@
           "payload": {
             "description": "What it does: `{\"kind\": \"agent_prompt\", \"text\": \"...\"}`,\n`{\"kind\": \"workflow\", \"name\": \"...\", \"params\": {}}` or\n`{\"kind\": \"tool\", \"name\": \"...\", \"input\": {}}`."
           },
+          "precheck": {
+            "description": "Read-only deterministic condition, including full script source."
+          },
+          "skipped_by_precheck": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Firings skipped before an agent run was created.",
+            "minimum": 0
+          },
           "spec": {
             "description": "When it fires: `{\"cron\": \"0 9 * * 1-5 Europe/Istanbul\"}`,\n`{\"every\": {\"seconds\": 600}}` or `{\"at\": {\"unix_ms\": 1767225600000}}`."
+          },
+          "trigger": {
+            "description": "Non-webhook trigger definition; never includes webhook secrets."
           }
         }
       },
@@ -11537,8 +13794,14 @@
           "payload": {
             "description": "See [`ScheduleDto::payload`]."
           },
+          "precheck": {
+            "description": "`HashChanged` or Script precheck. Absent keeps it; null removes it."
+          },
           "spec": {
             "description": "See [`ScheduleDto::spec`]."
+          },
+          "trigger": {
+            "description": "File-watch or email trigger. Absent keeps it; null removes it."
           },
           "webhook_secret": {
             "type": [
@@ -11745,6 +14008,61 @@
           "selected"
         ]
       },
+      "SkillDocumentInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Complete Markdown including frontmatter.",
+            "required": [
+              "skill_md"
+            ],
+            "properties": {
+              "expected_version": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional optimistic version check when updating."
+              },
+              "skill_md": {
+                "type": "string",
+                "description": "Name/description frontmatter and Markdown instructions."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Form fields, serialized into the same runtime SKILL.md format.",
+            "required": [
+              "name",
+              "description",
+              "instructions"
+            ],
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "One-line description, at most 200 characters."
+              },
+              "expected_version": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional optimistic version check when updating."
+              },
+              "instructions": {
+                "type": "string",
+                "description": "Markdown instructions."
+              },
+              "name": {
+                "type": "string",
+                "description": "Safe lowercase skill name."
+              }
+            }
+          }
+        ],
+        "description": "A complete SKILL.md or the three fields used to author one."
+      },
       "SkillHubInfoDto": {
         "type": "object",
         "description": "Hub lockfile metadata for a shared skill installed via `SkillHub`.",
@@ -11762,6 +14080,51 @@
             "description": "Provenance tag (e.g. `git:https://...`, `local:...`)."
           }
         }
+      },
+      "SkillImportInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Snapshot a local owner-selected folder.",
+            "required": [
+              "path",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "folder"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "description": "Absolute folder path. Links, special and executable files are refused."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Upload a bounded ZIP; bytes are never extracted into a caller path.",
+            "required": [
+              "base64",
+              "kind"
+            ],
+            "properties": {
+              "base64": {
+                "type": "string",
+                "description": "Standard Base64 of a ZIP, compressed and expanded limit 8 MiB."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "zip"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Import one folder or a ZIP with SKILL.md at its root. No URL fetching."
       },
       "SkillIssueDto": {
         "type": "object",
@@ -11794,6 +14157,29 @@
           "shared",
           "bot"
         ]
+      },
+      "SkillLocationsDto": {
+        "type": "object",
+        "description": "Stable storage locations for the owner's skill-management UI.",
+        "required": [
+          "shared",
+          "bot_template",
+          "bundled"
+        ],
+        "properties": {
+          "bot_template": {
+            "type": "string",
+            "description": "Per-bot skill folder template; these routes do not mutate it."
+          },
+          "bundled": {
+            "type": "string",
+            "description": "Bundled skills are embedded in the application."
+          },
+          "shared": {
+            "type": "string",
+            "description": "Shared owner-managed skill folder."
+          }
+        }
       },
       "SkillRequiresDto": {
         "type": "object",
@@ -11835,6 +14221,22 @@
           "bundled"
         ]
       },
+      "SkillUsingBotDto": {
+        "type": "object",
+        "description": "Bots currently assigned to a skill, also returned on an assignment conflict.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "SkillsCatalogDto": {
         "type": "object",
         "description": "Response of `GET /v1/skills`.",
@@ -11849,6 +14251,17 @@
               "$ref": "#/components/schemas/SkillIssueDto"
             },
             "description": "Non-fatal problems found while loading skills."
+          },
+          "locations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillLocationsDto",
+                "description": "Host-local paths, omitted for paired peers."
+              }
+            ]
           },
           "skills": {
             "type": "array",
@@ -12340,6 +14753,16 @@
             },
             "description": "Per bot."
           },
+          "by_purpose": {
+            "type": "object",
+            "description": "Per-purpose totals, including invocations that report no tokens.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UsageTotals"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "runs": {
             "type": "integer",
             "format": "int64",
@@ -12685,6 +15108,9 @@
       "name": "email"
     },
     {
+      "name": "composio"
+    },
+    {
       "name": "web"
     },
     {
@@ -12692,6 +15118,9 @@
     },
     {
       "name": "doctor"
+    },
+    {
+      "name": "mcp-server"
     }
   ]
 }

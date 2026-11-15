@@ -204,6 +204,16 @@ fn is_doctor_path(path: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// Composio app connections are the owner's: refused to every paired role
+/// except Desktop (which acts for the owner), for every method.
+pub const PEER_OWNER_PREFIX_COMPOSIO: &str = "/v1/composio";
+
+/// Whether `path` (decoded and slash-normalized) is a Composio endpoint.
+fn is_composio_path(path: &str) -> bool {
+    path.strip_prefix(PEER_OWNER_PREFIX_COMPOSIO)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 /// Same API and permissions as loopback, with transport authentication.
 pub fn peer_router(state: AppState) -> Router {
     crate::api_routes()
@@ -242,6 +252,16 @@ fn normalize_deny_path(path: &str) -> String {
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management, MCP management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if check_path == "/v1/mcp-server" || check_path.starts_with("/v1/mcp-server/") {
+        return Some("the MCP server facade is host-local and requires scoped credentials");
+    }
+    if (check_path == "/v1/providers/cli"
+        || check_path.starts_with("/v1/providers/cli/")
+        || check_path == "/v1/providers/detected")
+        || (*method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path))
+    {
+        return Some("host-local provider management is not allowed for peers");
+    }
     if check_path
         .strip_prefix("/v1/mcp/servers/")
         .and_then(|rest| rest.split_once('/'))
@@ -255,6 +275,11 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     // peer role MCP management).  Reading the list and tools stays allowed.
     if *method != Method::GET && is_mcp_servers_path(check_path) {
         return Some("MCP server management is a host-local user action, forbidden to peers");
+    }
+    if !matches!(*method, Method::GET | Method::HEAD)
+        && (check_path == "/v1/skills" || check_path.starts_with("/v1/skills/"))
+    {
+        return Some("shared skill management is local-owner only");
     }
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
@@ -277,6 +302,9 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
             })
     {
         return Some("knowledge sources and embedding authority are managed by the local owner");
+    }
+    if is_bot_engine_path(check_path) && *method != Method::GET {
+        return Some("a bot's engine settings can only be changed at this computer");
     }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
 }
@@ -308,6 +336,15 @@ fn stop_refused(method: &Method, check_path: &str, role: PeerRole) -> bool {
 // File contents and host restores require a desktop user.
 fn host_file_review(path: &str) -> bool {
     path.starts_with("/v1/runs/") && path.split('/').nth(4) == Some("changes")
+}
+
+/// `/v1/bots/{id}/engine[...]` decides who runs a bot's files and shell.
+fn is_bot_engine_path(path: &str) -> bool {
+    path.strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.split_once("/engine"))
+        .is_some_and(|(id, tail)| {
+            !id.is_empty() && !id.contains('/') && (tail.is_empty() || tail == "/kill")
+        })
 }
 
 /// `/v1/bots/{id}/skills` mutates a bot's prompt-trust boundary.
@@ -359,6 +396,10 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     if let Some(why) = host_local_denial(req.method(), &check_path) {
         return ApiError::forbidden(why).into_response();
     }
+    if is_composio_path(&check_path) && peer.role != PeerRole::Desktop {
+        return ApiError::forbidden("Composio connections are managed by the owner's desktop only")
+            .into_response();
+    }
     // An encoded `/` inside an MCP path (e.g. in the server-name segment) is
     // never legitimate: refuse it for every method.
     if encoded_slash_in_mcp_path(req.uri().path(), &check_path) {
@@ -402,6 +443,29 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     }
     req.extensions_mut()
         .insert(crate::live_view::Actor::peer(&peer));
+    // New schedule source/read capabilities remain local-owner only even on
+    // encoded or slash-normalized aliases. Existing plain timer requests keep
+    // their earlier peer policy; handlers also guard already-configured rows.
+    let req = if matches!(*req.method(), Method::POST | Method::PUT)
+        && (check_path == "/v1/schedules"
+            || check_path
+                .strip_prefix("/v1/schedules/")
+                .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok()))
+    {
+        let (parts, body) = req.into_parts();
+        let Ok(bytes) = axum::body::to_bytes(body, 128 * 1024).await else {
+            return ApiError::bad_request("schedule body exceeds limit").into_response();
+        };
+        if serde_json::from_slice::<serde_json::Value>(&bytes)
+            .is_ok_and(|v| v.get("precheck").is_some() || v.get("trigger").is_some())
+        {
+            return ApiError::forbidden("schedule triggers and prechecks are local-owner only")
+                .into_response();
+        }
+        Request::from_parts(parts, axum::body::Body::from(bytes))
+    } else {
+        req
+    };
     let (req, control_transition) = if req.method() == Method::PUT && path == "/v1/control/state" {
         let (parts, body) = req.into_parts();
         let Ok(bytes) = axum::body::to_bytes(body, 4096).await else {
@@ -484,6 +548,19 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peers_never_change_a_bots_engine() {
+        for path in ["/v1/bots/abc/engine", "/v1/bots/abc/engine/kill"] {
+            for method in [Method::PUT, Method::POST] {
+                assert!(
+                    host_local_denial(&method, path).is_some(),
+                    "{method} {path}"
+                );
+            }
+        }
+        assert!(host_local_denial(&Method::PUT, "/v1/bots/abc").is_none());
+    }
 
     #[test]
     fn only_phone_and_desktop_may_post_run_stop() {
