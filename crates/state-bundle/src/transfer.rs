@@ -41,6 +41,8 @@ pub const EXCLUSIONS: &[&str] = &[
     "logs",
     "backup-*",
     "import-staging",
+    // Knowledge databases now use the scoped backup/validation adapter below;
+    // its separate exclusions still reject every live SQLite sidecar.
     // Skill scope lock files and publication/write staging (crates/skills).
     ".praxi-*",
 ];

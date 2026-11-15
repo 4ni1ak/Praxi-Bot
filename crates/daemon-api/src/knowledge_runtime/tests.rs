@@ -395,6 +395,7 @@ async fn owner_budget_is_shared_across_bots_and_survives_service_eviction() {
     let other = BotId::new();
     host.add_bot(other);
     for bot in [host.bot, other] {
+        config.account_group = bot.to_string();
         host.save(bot, Some(&config));
         let source = host.source(bot, "Saffron snapshots restore a database.");
         let source = host.grant(bot, &source, &config);
@@ -410,6 +411,39 @@ async fn owner_budget_is_shared_across_bots_and_survives_service_eviction() {
         }
     }
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn bot_json_cannot_authorize_document_or_query_egress() {
+    let _serial = test_guard().await;
+    let server = server().await;
+    let host = Host::new();
+    let mut config = host.config(&server.uri());
+    config.query_consent = Some(consent(&config));
+    host.save(host.bot, Some(&config));
+    let source = host.source(host.bot, "Saffron snapshots restore a database.");
+    // Write the same shape an imported or generic bot/source JSON update can forge.
+    let source = host.store(host.bot).update_source(source.id, source.revision, SourceUpdate {
+        remote_embedding: Some(Some(consent(&config))), ..SourceUpdate::default()
+    }).unwrap();
+    let progress = embedding_batch(&host.state, host.bot, source.id, source.revision).await.unwrap();
+    assert_eq!(progress.status, EmbeddingStatus::AwaitingConsent);
+    host.search(host.bot, "saffron").await;
+    assert!(server.received_requests().await.unwrap().is_empty(), "JSON fields minted egress authority");
+}
+
+#[test]
+fn bot_json_cannot_select_native_runtime_or_model_artifacts() {
+    let artifact = json!({"path":"/tmp/attacker-selected-library.so","sha256":"0".repeat(64)});
+    let payload = json!({
+        "profile": {"provider_id":"local-onnx","model":"multilingual-e5-small","model_revision":null,
+            "endpoint_identity":format!("local-onnx:{}", "0".repeat(64)),"dimensions":384,"request_dimensions":false,"format":"e5"},
+        "account_group":"untrusted", "local_artifacts": {
+            "runtime":artifact,"model":artifact,"tokenizer":artifact,"config":artifact,
+            "special_tokens_map":artifact,"tokenizer_config":artifact
+        }
+    });
+    assert!(serde_json::from_value::<EmbeddingConfig>(payload).is_err(), "bot config accepted executable paths");
 }
 
 #[tokio::test]

@@ -195,7 +195,8 @@ pub(crate) async fn json_response(
             retry_after: util::retry_after(&headers)
                 .or_else(|| retry_after_date(&headers))
                 .or_else(|| retry_info(&body))
-                .or(retry_after),
+                .or(retry_after)
+                .map(|duration| duration.min(Duration::from_secs(172_800))),
         },
         ProviderError::Auth(_) => ProviderError::Auth("embedding authorization failed".into()),
         ProviderError::Upstream { status, .. } => ProviderError::Upstream {
@@ -224,10 +225,9 @@ fn retry_info(body: &str) -> Option<Duration> {
                 .ok()
         })
         .filter(|seconds| seconds.is_finite() && *seconds >= 0.)
-        // This durable worker does not inherit the interactive chat retry
-        // ceiling. Saturation postpones impossible delays instead of panicking
-        // or silently retrying earlier than a provider requested.
-        .map(|seconds| Duration::try_from_secs_f64(seconds).unwrap_or(Duration::MAX))
+        // Preserve legitimate daily quota resets, but a malformed proxy must
+        // not create an effectively permanent host-wide cooldown.
+        .map(|seconds| Duration::from_secs_f64(seconds.min(172_800.)))
         .max()
 }
 

@@ -10,6 +10,8 @@ use crate::{MemoryError, Result};
 
 const MINUTE_MS: i64 = 60_000;
 const DAY_MS: i64 = 86_400_000;
+const SMALL_CLOCK_ROLLBACK_MS: i64 = 300_000;
+const MAX_COOLDOWN_MS: i64 = 2 * DAY_MS;
 
 /// Local accounting policy, not a claim about a vendor's quota units.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +91,7 @@ impl EmbeddingRuntime {
             ));
         }
         let connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         Self::init(connection)
@@ -165,8 +168,20 @@ impl EmbeddingRuntime {
             [],
             |r| r.get(0),
         )?;
-        // A clock rollback must not erase yesterday's reservations or cooldown.
-        let now = now.max(previous);
+        // Small clock corrections remain conservative. A bad RTC/NTP jump
+        // must not hold quota for a year: translate future reservations back
+        // to the corrected clock, keeping their charge for at most one day.
+        let now = if previous.saturating_sub(now) > SMALL_CLOCK_ROLLBACK_MS {
+            let correction = previous.saturating_sub(now);
+            tx.execute("UPDATE embedding_quota SET reserved_ms=MAX(?1,reserved_ms-?2) WHERE reserved_ms>?1",params![now,correction])?;
+            tx.execute("UPDATE embedding_cooldown SET not_before_ms=MIN(?1,MAX(?2,not_before_ms-?3)) WHERE not_before_ms>?2",params![now.saturating_add(MAX_COOLDOWN_MS),now,correction])?;
+            eprintln!(
+                "knowledge embedding clock corrected after a large rollback; quota windows were rebased"
+            );
+            now
+        } else {
+            now.max(previous)
+        };
         tx.execute(
             "UPDATE embedding_runtime_meta SET value=?1 WHERE key='clock_ms'",
             [now],
@@ -175,6 +190,9 @@ impl EmbeddingRuntime {
             "DELETE FROM embedding_quota WHERE reserved_ms<=?1",
             [now.saturating_sub(DAY_MS)],
         )?;
+        // Repair old unbounded cooldown rows once. Persist the bounded deadline
+        // so subsequent reads age toward it instead of sliding it forward.
+        tx.execute("UPDATE embedding_cooldown SET not_before_ms=?2 WHERE account_group=?1 AND not_before_ms>?2",params![account,now.saturating_add(MAX_COOLDOWN_MS)])?;
         let cooldown: Option<i64> = tx
             .query_row(
                 "SELECT not_before_ms FROM embedding_cooldown WHERE account_group=?1",
@@ -214,9 +232,23 @@ impl EmbeddingRuntime {
     }
 
     pub(super) fn defer(&self, account: &str, not_before_ms: i64) -> Result<()> {
+        let not_before_ms = not_before_ms.min(storage::now_ms().saturating_add(MAX_COOLDOWN_MS));
         self.conn().execute(
             "INSERT INTO embedding_cooldown(account_group,not_before_ms) VALUES(?1,?2) ON CONFLICT(account_group) DO UPDATE SET not_before_ms=MAX(not_before_ms,excluded.not_before_ms)",
             params![account,not_before_ms])?;
+        Ok(())
+    }
+
+    /// Clear a provider cooldown after explicit owner recovery. Reservations
+    /// remain charged, so this cannot reset the account's local quota.
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub fn reset_cooldown(&self, account: &str) -> Result<()> {
+        self.conn().execute(
+            "DELETE FROM embedding_cooldown WHERE account_group=?1",
+            [account],
+        )?;
         Ok(())
     }
 }
@@ -224,6 +256,53 @@ impl EmbeddingRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_clock_rollback_recovers_within_one_budget_window() {
+        let runtime = EmbeddingRuntime::open_in_memory().unwrap();
+        let budget = EmbeddingBudget {
+            requests_per_day: 1,
+            ..EmbeddingBudget::default()
+        };
+        let now = 1_800_000_000_000;
+        let future = now + 366 * DAY_MS;
+        assert_eq!(
+            runtime.reserve("account", &budget, 1, 1, future).unwrap(),
+            Reservation::Granted
+        );
+        let Reservation::Deferred(deadline) =
+            runtime.reserve("account", &budget, 1, 1, now).unwrap()
+        else {
+            panic!("reservation must remain charged")
+        };
+        assert!(
+            deadline <= now + DAY_MS,
+            "clock correction trapped budget until {deadline}"
+        );
+        assert_eq!(
+            runtime
+                .reserve("account", &budget, 1, 1, now + DAY_MS)
+                .unwrap(),
+            Reservation::Granted
+        );
+    }
+
+    #[test]
+    fn impossible_provider_cooldown_is_bounded() {
+        let runtime = EmbeddingRuntime::open_in_memory().unwrap();
+        let now = storage::now_ms();
+        runtime.defer("account", i64::MAX).unwrap();
+        let Reservation::Deferred(deadline) = runtime
+            .reserve("account", &EmbeddingBudget::default(), 1, 1, now)
+            .unwrap()
+        else {
+            panic!("provider cooldown expected")
+        };
+        assert!(
+            deadline <= now + 2 * DAY_MS + 1000,
+            "unbounded provider cooldown"
+        );
+    }
 
     #[test]
     fn quota_survives_restart_and_is_shared_between_workers() {

@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::Scope;
 use crate::{MemoryError, Result};
 
-pub(super) const VERSION: u32 = 2;
+pub(super) const VERSION: u32 = 3;
 
 const INITIAL: &str = r"
 CREATE TABLE knowledge_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -59,7 +59,10 @@ const DELETE_TRIGGER: &str = "CREATE TRIGGER chunks_delete AFTER DELETE ON chunk
 END";
 
 pub(super) fn migrate(conn: &mut Connection, expected: Option<Scope>) -> Result<u32> {
-    let found: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    // Acquire the writer reservation before observing the version. Another
+    // process may have completed the same migration while this one waited.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let found: u32 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if found > VERSION {
         return Err(MemoryError::SchemaTooNew {
             found,
@@ -67,7 +70,7 @@ pub(super) fn migrate(conn: &mut Connection, expected: Option<Scope>) -> Result<
         });
     }
     if found > 0 {
-        let actual = read_scope(conn)?;
+        let actual = read_scope(&tx)?;
         if expected.is_some_and(|scope| scope != actual) {
             return Err(MemoryError::Invalid(
                 "knowledge index scope mismatch".into(),
@@ -76,7 +79,6 @@ pub(super) fn migrate(conn: &mut Connection, expected: Option<Scope>) -> Result<
     } else {
         let scope =
             expected.ok_or_else(|| MemoryError::Invalid("knowledge index has no scope".into()))?;
-        let tx = conn.transaction()?;
         tx.execute_batch(INITIAL)?;
         tx.execute_batch(INSERT_TRIGGER)?;
         tx.execute_batch(DELETE_TRIGGER)?;
@@ -85,12 +87,32 @@ pub(super) fn migrate(conn: &mut Connection, expected: Option<Scope>) -> Result<
             params![scope.user_id.to_string(), scope.bot_id.to_string()],
         )?;
         tx.pragma_update(None, "user_version", 1)?;
-        tx.commit()?;
     }
-    if found < 2 {
-        super::embedding::migrate(conn)?;
-    }
+    if found < 2 { super::embedding::migrate(&tx)?; }
+    if found < 3 { super::embedding::migrate_v3(&tx)?; }
+    tx.commit()?;
     Ok(VERSION)
+}
+
+pub(super) fn validate_read_binding(conn: &Connection, expected: Scope) -> Result<()> {
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version > VERSION {
+        return Err(MemoryError::SchemaTooNew {
+            found: version,
+            supported: VERSION,
+        });
+    }
+    if version != VERSION {
+        return Err(MemoryError::Invalid(
+            "knowledge index requires a writable migration".into(),
+        ));
+    }
+    if read_scope(conn)? != expected {
+        return Err(MemoryError::Invalid(
+            "knowledge index scope mismatch".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn validate_structure(conn: &Connection) -> Result<()> {

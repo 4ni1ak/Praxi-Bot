@@ -82,9 +82,8 @@ impl EmbeddingProvider for OpenAiCompatProvider {
             )?);
         }
         let returned_model = response.get("model").and_then(Value::as_str);
-        if returned_model.is_some_and(|returned| returned != model) {
-            return Err(invalid("embedding response model mismatch"));
-        }
+        // Gateways may return the resolved deployment name for an alias.
+        // Preserve it as metadata; vector identity is the configured profile.
         Ok(EmbeddingResponse {
             vectors: vectors
                 .into_iter()

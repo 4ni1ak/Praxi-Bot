@@ -38,11 +38,18 @@ CREATE TABLE embedding_jobs(
 pub(super) const GRANT_TRIGGER:&str="
 CREATE TRIGGER knowledge_embedding_grant_changed AFTER UPDATE OF remote_embedding_json,enabled ON sources
 WHEN new.remote_embedding_json IS NOT old.remote_embedding_json OR new.enabled=0 BEGIN
-    DELETE FROM knowledge_embeddings WHERE source_id=new.id AND remote=1;
-    DELETE FROM embedding_cache WHERE source_id=new.id AND remote=1;
+    DELETE FROM knowledge_embeddings WHERE source_id=new.id AND remote=1 AND (new.remote_embedding_json IS NULL OR new.enabled=0);
+    DELETE FROM embedding_cache WHERE source_id=new.id AND remote=1 AND (new.remote_embedding_json IS NULL OR new.enabled=0);
     DELETE FROM embedding_jobs WHERE source_id=new.id;
 END
 ";
+
+pub(super) const FAILURE_SCHEMA: &str = "CREATE TABLE embedding_chunk_failures(
+    chunk_id TEXT NOT NULL,source_id TEXT NOT NULL,profile TEXT NOT NULL,
+    source_revision INTEGER NOT NULL CHECK(source_revision>0),failure_code TEXT NOT NULL,
+    PRIMARY KEY(chunk_id,profile),
+    FOREIGN KEY(chunk_id,source_id) REFERENCES chunks(id,source_id) ON DELETE CASCADE,
+    FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE)";
 
 pub(super) fn validate_schema(conn: &Connection) -> Result<()> {
     for (kind, name, prefix) in [
@@ -76,11 +83,28 @@ pub(super) fn validate_schema(conn: &Connection) -> Result<()> {
                 |row| row.get(0),
             )
             .optional()?;
-        if actual.as_deref().map(str::trim) != Some(expected) {
+        let expected = if name == "embedding_jobs" {
+            expected.replace("PRIMARY KEY(source_id,profile)"," batch_limit INTEGER NOT NULL DEFAULT 0 CHECK(batch_limit BETWEEN 0 AND 128),PRIMARY KEY(source_id,profile)")
+        } else {
+            expected.to_owned()
+        };
+        if actual.as_deref().map(str::trim) != Some(expected.as_str()) {
             return Err(invalid(
                 "embedding schema lacks required constraints or foreign keys",
             ));
         }
+    }
+    let failures: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type='table' AND name='embedding_chunk_failures'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if failures.as_deref().map(str::trim) != Some(FAILURE_SCHEMA) {
+        return Err(invalid(
+            "embedding chunk-failure schema is missing or changed",
+        ));
     }
     let trigger:Option<String>=conn.query_row("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='knowledge_embedding_grant_changed'",[],|row|row.get(0)).optional()?;
     if trigger.as_deref().map(str::trim) != Some(GRANT_TRIGGER.trim()) {
@@ -107,6 +131,10 @@ pub(super) fn validate_data(conn: &Connection) -> Result<()> {
         return Err(invalid(
             "embedding index contains invalid or oversized rows",
         ));
+    }
+    let invalid_failures: bool = conn.query_row("SELECT (SELECT COUNT(*) FROM embedding_chunk_failures)>250000 OR EXISTS(SELECT 1 FROM embedding_chunk_failures WHERE source_revision<1 OR length(failure_code)>128 OR length(profile)<>64 OR profile GLOB '*[^0-9a-f]*') OR EXISTS(SELECT 1 FROM embedding_jobs WHERE batch_limit NOT BETWEEN 0 AND 128)",[],|row|row.get(0))?;
+    if invalid_failures {
+        return Err(invalid("embedding chunk failures contain invalid rows"));
     }
     let mut statement=conn.prepare("SELECT dimensions,vector FROM knowledge_embeddings UNION ALL SELECT dimensions,vector FROM embedding_cache")?;
     let rows = statement.query_map([], |row| {
@@ -150,14 +178,9 @@ pub(super) fn activate_profile(conn: &mut Connection, fingerprint: &str) -> Resu
         )
         .optional()?;
     if active.as_deref() != Some(fingerprint) {
-        tx.execute(
-            "DELETE FROM knowledge_embeddings WHERE profile<>?1",
-            [fingerprint],
-        )?;
-        tx.execute(
-            "DELETE FROM embedding_cache WHERE profile<>?1",
-            [fingerprint],
-        )?;
+        // A profile typo must not erase a paid generation. Older vectors/cache
+        // stay inert (all reads bind the selected fingerprint) until an actual
+        // replacement source generation completes.
         tx.execute(
             "DELETE FROM embedding_jobs WHERE profile<>?1",
             [fingerprint],
@@ -182,6 +205,9 @@ impl KnowledgeEmbeddingService {
         source_id: Uuid,
         cancel: &CancellationToken,
     ) -> Result<EmbeddingProgress> {
+        if !self.document_authorized(source_id) {
+            return Ok(EmbeddingProgress::status(EmbeddingStatus::AwaitingConsent));
+        }
         if cancel.is_cancelled() {
             return Ok(EmbeddingProgress::status(EmbeddingStatus::Cancelled));
         }
@@ -212,9 +238,7 @@ impl KnowledgeEmbeddingService {
                 Ok(Reservation::Deferred(deadline)) => {
                     return self.defer_batch(&batch, deadline, "local_budget");
                 }
-                Err(MemoryError::Invalid(_)) => {
-                    return self.fail_batch(&batch, "input_budget", false, None);
-                }
+                Err(MemoryError::Invalid(_)) => return self.reject_inputs(&batch, "input_budget"),
                 Err(error) => {
                     self.release(&batch)?;
                     return Err(error);
@@ -225,7 +249,10 @@ impl KnowledgeEmbeddingService {
         // source revision, active generation and the lease immediately before
         // polling the HTTP future. Later revocation cannot retract dispatched
         // bytes, but always prevents the stale result from being published.
-        if cancel.is_cancelled() || !self.admit(&batch, storage::now_ms())? {
+        if cancel.is_cancelled()
+            || !self.document_authorized(source_id)
+            || !self.admit(&batch, storage::now_ms())?
+        {
             self.release(&batch)?;
             return Ok(EmbeddingProgress::status(EmbeddingStatus::Cancelled));
         }
@@ -254,6 +281,10 @@ impl KnowledgeEmbeddingService {
                 result.unwrap_or(Err(ProviderError::Timeout))
             }
         };
+        if cancel.is_cancelled() || !self.document_authorized(source_id) {
+            self.release(&batch)?;
+            return Ok(EmbeddingProgress::status(EmbeddingStatus::Cancelled));
+        }
         match result {
             Ok(response) => {
                 if response.vectors.len() != batch.inputs.len() {
@@ -267,13 +298,23 @@ impl KnowledgeEmbeddingService {
                 let Ok(vectors) = vectors else {
                     return self.fail_batch(&batch, "response_vector", false, None);
                 };
-                if cancel.is_cancelled() {
+                if cancel.is_cancelled() || !self.document_authorized(source_id) {
                     self.release(&batch)?;
                     return Ok(EmbeddingProgress::status(EmbeddingStatus::Cancelled));
                 }
                 self.publish(&batch, &vectors, storage::now_ms())
             }
             Err(error) => {
+                if matches!(
+                    error,
+                    ProviderError::InvalidRequest(_)
+                        | ProviderError::Api {
+                            status: 400 | 413 | 422,
+                            ..
+                        }
+                ) {
+                    return self.reject_inputs(&batch, "input_rejected");
+                }
                 let (code, retry, wait) = match error {
                     ProviderError::RateLimited { retry_after } => {
                         ("provider_rate_limit", true, retry_after)
@@ -285,12 +326,13 @@ impl KnowledgeEmbeddingService {
                     _ => ("provider_invalid_response", false, None),
                 };
                 if code == "provider_rate_limit" {
-                    let delay = wait.unwrap_or(Duration::from_secs(60));
-                    self.runtime.defer(
-                        &self.config.account_group,
-                        storage::now_ms()
-                            .saturating_add(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX)),
-                    )?;
+                    let delay = wait
+                        .unwrap_or(Duration::from_secs(60))
+                        .min(Duration::from_secs(172_800));
+                    let deadline = storage::now_ms()
+                        .saturating_add(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX));
+                    self.runtime.defer(&self.config.account_group, deadline)?;
+                    return self.defer_batch(&batch, deadline, code);
                 }
                 self.fail_batch(&batch, code, retry, wait)
             }
@@ -305,6 +347,10 @@ impl KnowledgeEmbeddingService {
     pub fn reset_source_retry(&self, source_id: Uuid) -> Result<()> {
         self.store.conn().execute(
             "DELETE FROM embedding_jobs WHERE source_id=?1 AND profile=?2",
+            params![source_id.to_string(), self.fingerprint],
+        )?;
+        self.store.conn().execute(
+            "DELETE FROM embedding_chunk_failures WHERE source_id=?1 AND profile=?2",
             params![source_id.to_string(), self.fingerprint],
         )?;
         Ok(())
@@ -329,24 +375,42 @@ impl KnowledgeEmbeddingService {
                 EmbeddingStatus::AwaitingConsent,
             )));
         }
-        let job:Option<(i64,u32,i64,i64,Option<String>)>=tx.query_row(
-            "SELECT source_revision,attempts,not_before_ms,lease_until_ms,failure_code FROM embedding_jobs WHERE source_id=?1 AND profile=?2",
-            params![source_id.to_string(),self.fingerprint],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?;
-        if let Some((revision, attempts, next, lease_until, failure)) = job
+        let job:Option<(i64,u32,i64,i64,Option<String>,usize)>=tx.query_row(
+            "SELECT source_revision,attempts,not_before_ms,lease_until_ms,failure_code,batch_limit FROM embedding_jobs WHERE source_id=?1 AND profile=?2",
+            params![source_id.to_string(),self.fingerprint],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,super::super::store::integer_at(row,5)?))).optional()?;
+        let mut split_limit = 0;
+        if let Some((revision, attempts, next, lease_until, failure, batch_limit)) = job
             && u64::try_from(revision).ok() == Some(source.revision)
         {
+            split_limit = batch_limit;
             if attempts >= self.config.max_attempts {
                 let mut progress = EmbeddingProgress::status(EmbeddingStatus::Failed);
                 progress.failure_code = failure;
                 return Ok(Prepared::Done(progress));
             }
+            // Legacy impossible deadlines or an RTC correction cannot trap
+            // this job before the account ledger gets a chance to recover.
+            let next = if next > now.saturating_add(172_800_000) {
+                0
+            } else {
+                next
+            };
+            let lease_until = if lease_until
+                > now
+                    .saturating_add(i64::try_from(self.config.index_timeout_ms).unwrap_or(i64::MAX))
+                    .saturating_add(5000)
+            {
+                0
+            } else {
+                lease_until
+            };
             if next.max(lease_until) > now {
                 let mut progress = EmbeddingProgress::status(EmbeddingStatus::Deferred);
                 progress.next_attempt_ms = Some(next.max(lease_until));
                 return Ok(Prepared::Done(progress));
             }
         }
-        let limit = if self.provider.is_remote()
+        let mut limit = if self.provider.is_remote()
             && self.config.budget.request_unit == super::RequestUnit::Input
         {
             self.config
@@ -356,12 +420,15 @@ impl KnowledgeEmbeddingService {
         } else {
             self.config.max_batch_inputs
         };
+        if split_limit > 0 {
+            limit = limit.min(split_limit);
+        }
         let mut rows = Vec::new();
         {
             let mut statement=tx.prepare(
                 "SELECT c.id,c.body,d.title,c.section FROM chunks c JOIN documents d ON d.id=c.document_id
                  LEFT JOIN knowledge_embeddings e ON e.chunk_id=c.id AND e.profile=?2
-                 WHERE c.source_id=?1 AND e.chunk_id IS NULL ORDER BY d.locator,c.ordinal,c.id LIMIT ?3")?;
+                 WHERE c.source_id=?1 AND e.chunk_id IS NULL AND NOT EXISTS(SELECT 1 FROM embedding_chunk_failures f WHERE f.chunk_id=c.id AND f.profile=?2) ORDER BY d.locator,c.ordinal,c.id LIMIT ?3")?;
             let inputs = statement.query_map(
                 params![source_id.to_string(), self.fingerprint, sql_int(limit)?],
                 |row| {
@@ -409,6 +476,7 @@ impl KnowledgeEmbeddingService {
                 "DELETE FROM embedding_jobs WHERE source_id=?1 AND profile=?2",
                 params![source_id.to_string(), self.fingerprint],
             )?;
+            let skipped = self.skipped(&tx, source_id)?;
             tx.commit()?;
             return Ok(Prepared::Done(EmbeddingProgress {
                 status: if remaining == 0 {
@@ -418,6 +486,7 @@ impl KnowledgeEmbeddingService {
                 },
                 embedded_chunks: 0,
                 cache_hits: cached,
+                skipped_chunks: skipped,
                 remaining_chunks: remaining,
                 next_attempt_ms: None,
                 failure_code: None,
@@ -502,7 +571,7 @@ impl KnowledgeEmbeddingService {
         if !self.current_batch(&tx, batch)? {
             return Ok(false);
         }
-        let changed=tx.execute("UPDATE embedding_jobs SET attempts=attempts+1 WHERE source_id=?1 AND profile=?2 AND lease=?3 AND lease_until_ms>?4",
+        let changed=tx.execute("UPDATE embedding_jobs SET lease=lease WHERE source_id=?1 AND profile=?2 AND lease=?3 AND lease_until_ms>?4",
             params![batch.source.to_string(),self.fingerprint,batch.lease,now])?;
         tx.commit()?;
         Ok(changed == 1)
@@ -515,9 +584,52 @@ impl KnowledgeEmbeddingService {
     }
 
     fn remaining(&self, conn: &Connection, source: Uuid) -> Result<usize> {
-        let count:i64=conn.query_row("SELECT COUNT(*) FROM chunks c LEFT JOIN knowledge_embeddings e ON e.chunk_id=c.id AND e.profile=?2 WHERE c.source_id=?1 AND e.chunk_id IS NULL",
+        let count:i64=conn.query_row("SELECT COUNT(*) FROM chunks c LEFT JOIN knowledge_embeddings e ON e.chunk_id=c.id AND e.profile=?2 WHERE c.source_id=?1 AND e.chunk_id IS NULL AND NOT EXISTS(SELECT 1 FROM embedding_chunk_failures f WHERE f.chunk_id=c.id AND f.profile=?2)",
             params![source.to_string(),self.fingerprint],|row|row.get(0))?;
         usize::try_from(count).map_err(|_| invalid("embedding count overflow"))
+    }
+
+    fn skipped(&self, conn: &Connection, source: Uuid) -> Result<usize> {
+        conn.query_row(
+            "SELECT COUNT(*) FROM embedding_chunk_failures WHERE source_id=?1 AND profile=?2",
+            params![source.to_string(), self.fingerprint],
+            |row| super::super::store::integer_at(row, 0),
+        )
+        .map_err(Into::into)
+    }
+
+    fn reject_inputs(&self, batch: &Batch, code: &str) -> Result<EmbeddingProgress> {
+        let mut conn = self.store.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !self.current_batch(&tx, batch)? {
+            return Ok(EmbeddingProgress::status(EmbeddingStatus::Cancelled));
+        }
+        if batch.inputs.len() > 1 {
+            let smaller = batch.inputs.len().div_ceil(2);
+            tx.execute("UPDATE embedding_jobs SET batch_limit=?4,lease=NULL,lease_until_ms=0,failure_code='input_split' WHERE source_id=?1 AND profile=?2 AND lease=?3",params![batch.source.to_string(),self.fingerprint,batch.lease,sql_int(smaller)?])?;
+        } else if let Some(input) = batch.inputs.first() {
+            tx.execute("INSERT INTO embedding_chunk_failures(chunk_id,source_id,profile,source_revision,failure_code) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(chunk_id,profile) DO UPDATE SET failure_code=excluded.failure_code,source_revision=excluded.source_revision",params![input.id,batch.source.to_string(),self.fingerprint,sql_revision(batch.revision)?,code])?;
+            tx.execute(
+                "DELETE FROM embedding_jobs WHERE source_id=?1 AND profile=?2 AND lease=?3",
+                params![batch.source.to_string(), self.fingerprint, batch.lease],
+            )?;
+        }
+        let remaining = self.remaining(&tx, batch.source)?;
+        let skipped = self.skipped(&tx, batch.source)?;
+        tx.commit()?;
+        Ok(EmbeddingProgress {
+            status: if remaining == 0 {
+                EmbeddingStatus::Complete
+            } else {
+                EmbeddingStatus::Progress
+            },
+            embedded_chunks: 0,
+            cache_hits: batch.cached,
+            skipped_chunks: skipped,
+            remaining_chunks: remaining,
+            next_attempt_ms: None,
+            failure_code: Some(code.into()),
+        })
     }
 
     fn insert_vector(
@@ -553,6 +665,17 @@ impl KnowledgeEmbeddingService {
             params![batch.source.to_string(), self.fingerprint, batch.lease],
         )?;
         let remaining = self.remaining(&tx, batch.source)?;
+        let skipped = self.skipped(&tx, batch.source)?;
+        if remaining == 0 && skipped == 0 {
+            tx.execute(
+                "DELETE FROM knowledge_embeddings WHERE source_id=?1 AND profile<>?2",
+                params![batch.source.to_string(), self.fingerprint],
+            )?;
+            tx.execute(
+                "DELETE FROM embedding_cache WHERE source_id=?1 AND profile<>?2",
+                params![batch.source.to_string(), self.fingerprint],
+            )?;
+        }
         tx.commit()?;
         Ok(EmbeddingProgress {
             status: if remaining == 0 {
@@ -562,6 +685,7 @@ impl KnowledgeEmbeddingService {
             },
             embedded_chunks: batch.inputs.len(),
             cache_hits: batch.cached,
+            skipped_chunks: skipped,
             remaining_chunks: remaining,
             next_attempt_ms: None,
             failure_code: None,
@@ -576,6 +700,7 @@ impl KnowledgeEmbeddingService {
             status: EmbeddingStatus::Deferred,
             embedded_chunks: 0,
             cache_hits: batch.cached,
+            skipped_chunks: self.skipped(&conn, batch.source)?,
             remaining_chunks: self.remaining(&conn, batch.source)?,
             next_attempt_ms: Some(deadline),
             failure_code: Some(code.into()),
@@ -590,6 +715,7 @@ impl KnowledgeEmbeddingService {
         wait: Option<Duration>,
     ) -> Result<EmbeddingProgress> {
         let conn = self.store.conn();
+        conn.execute("UPDATE embedding_jobs SET attempts=attempts+1 WHERE source_id=?1 AND profile=?2 AND lease=?3",params![batch.source.to_string(),self.fingerprint,batch.lease])?;
         let attempts:Option<u32>=conn.query_row("SELECT attempts FROM embedding_jobs WHERE source_id=?1 AND profile=?2 AND lease=?3",
             params![batch.source.to_string(),self.fingerprint,batch.lease],|row|row.get(0)).optional()?;
         let Some(attempts) = attempts else {
@@ -617,6 +743,7 @@ impl KnowledgeEmbeddingService {
             status: EmbeddingStatus::Failed,
             embedded_chunks: 0,
             cache_hits: batch.cached,
+            skipped_chunks: self.skipped(&conn, batch.source)?,
             remaining_chunks: self.remaining(&conn, batch.source)?,
             next_attempt_ms: None,
             failure_code: Some(code.into()),

@@ -16,7 +16,10 @@ pub use local::{LocalEmbeddingArtifacts, PinnedEmbeddingArtifact};
 /// Whether this build includes the explicit-artifact CPU inference adapter.
 #[must_use]
 pub const fn local_embeddings_available() -> bool {
-    cfg!(feature = "local-embeddings")
+    cfg!(all(
+        feature = "local-embeddings",
+        any(target_os = "linux", windows)
+    ))
 }
 
 use std::collections::VecDeque;
@@ -112,21 +115,21 @@ const fn default_attempts() -> u32 {
     5
 }
 
-/// Persist in the bot's host-owned settings; model/tool arguments cannot grant
-/// consent or change this configuration. Import clears `query_consent`.
+/// Portable preferences only. Native file paths and egress authority are
+/// supplied separately by the trusted host, never deserialized from bot JSON.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingConfig {
     pub profile: EmbeddingProfile,
-    /// Explicit local model/runtime inputs, never read from source frontmatter.
+    /// An ID in the trusted host registry, never a model or shared-library path.
     #[serde(default)]
-    pub local_artifacts: Option<LocalEmbeddingArtifacts>,
+    pub local_profile_id: Option<String>,
     /// Shared across provider configurations using the same account/project.
     /// Defaults at the host to provider + `SecretRef` identity, never a secret value.
     pub account_group: String,
     #[serde(default)]
     pub budget: EmbeddingBudget,
-    #[serde(default)]
+    #[serde(skip)]
     pub query_consent: Option<RemoteEmbeddingConsent>,
     #[serde(default = "default_batch")]
     pub max_batch_inputs: usize,
@@ -147,7 +150,7 @@ impl EmbeddingConfig {
     pub fn new(profile: EmbeddingProfile, account_group: impl Into<String>) -> Self {
         Self {
             profile,
-            local_artifacts: None,
+            local_profile_id: None,
             account_group: account_group.into(),
             budget: EmbeddingBudget::default(),
             query_consent: None,
@@ -166,12 +169,14 @@ impl EmbeddingConfig {
     /// Invalid profile, grants, budgets, or unsupported resource limits.
     pub fn validate(&self) -> Result<()> {
         let fingerprint = self.profile.fingerprint()?;
-        if let Some(artifacts) = &self.local_artifacts
-            && artifacts.profile()? != self.profile
-        {
-            return Err(invalid(
-                "local artifact identity differs from the embedding profile",
-            ));
+        if self.local_profile_id.as_ref().is_some_and(|id| {
+            id.is_empty()
+                || id.len() > 128
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+        }) {
+            return Err(invalid("invalid installed local embedding profile ID"));
         }
         self.budget.validate()?;
         if self.account_group.trim().is_empty()
@@ -213,6 +218,8 @@ pub struct EmbeddingProgress {
     pub status: EmbeddingStatus,
     pub embedded_chunks: usize,
     pub cache_hits: usize,
+    #[serde(default)]
+    pub skipped_chunks: usize,
     pub remaining_chunks: usize,
     pub next_attempt_ms: Option<i64>,
     pub failure_code: Option<String>,
@@ -224,6 +231,7 @@ impl EmbeddingProgress {
             status,
             embedded_chunks: 0,
             cache_hits: 0,
+            skipped_chunks: 0,
             remaining_chunks: 0,
             next_attempt_ms: None,
             failure_code: None,
@@ -252,6 +260,14 @@ pub trait LocalReranker: Send + Sync {
     async fn rerank(&self, query: &str, candidates: &[RerankCandidate]) -> Result<Vec<Uuid>>;
 }
 
+/// A host permission decision, checked at admission and publication. Implement
+/// this with live permission-engine policy and owner-confirmed host grants.
+/// Source/query consent JSON alone never substitutes for this authority.
+pub trait EmbeddingAuthorizer: Send + Sync {
+    fn allows_document(&self, source: Uuid, profile: &str) -> bool;
+    fn allows_query(&self, profile: &str) -> bool;
+}
+
 /// One bot + one immutable profile. Rebuild this object when host settings change.
 pub struct KnowledgeEmbeddingService {
     store: Arc<KnowledgeStore>,
@@ -262,6 +278,7 @@ pub struct KnowledgeEmbeddingService {
     /// At most 64 vectors, five minutes each; raw query text is not retained.
     query_cache: Mutex<VecDeque<QueryCacheEntry>>,
     reranker: Option<Arc<dyn LocalReranker>>,
+    authorizer: Option<Arc<dyn EmbeddingAuthorizer>>,
 }
 
 impl KnowledgeEmbeddingService {
@@ -298,6 +315,7 @@ impl KnowledgeEmbeddingService {
             fingerprint,
             query_cache: Mutex::new(VecDeque::new()),
             reranker: None,
+            authorizer: None,
         })
     }
 
@@ -311,10 +329,30 @@ impl KnowledgeEmbeddingService {
     pub fn may_egress(&self) -> bool {
         self.provider.is_remote()
             && self
+                .authorizer
+                .as_ref()
+                .is_some_and(|authority| authority.allows_query(&self.fingerprint))
+            && self
                 .config
                 .query_consent
                 .as_ref()
                 .is_some_and(|grant| grant.profile_fingerprint == self.fingerprint)
+    }
+
+    /// Install the trusted host's live permission decision service. Remote
+    /// embedding defaults to denied when no authorizer is installed.
+    #[must_use]
+    pub fn with_authorizer(mut self, authorizer: Arc<dyn EmbeddingAuthorizer>) -> Self {
+        self.authorizer = Some(authorizer);
+        self
+    }
+
+    fn document_authorized(&self, source: Uuid) -> bool {
+        !self.provider.is_remote()
+            || self
+                .authorizer
+                .as_ref()
+                .is_some_and(|authority| authority.allows_document(source, &self.fingerprint))
     }
 
     /// Install an optional bounded local reranker. No remote grant is implied.
@@ -402,17 +440,47 @@ impl KnowledgeEmbeddingService {
     }
 }
 
-pub(super) fn migrate(conn: &mut rusqlite::Connection) -> Result<()> {
-    let tx = conn.transaction()?;
-    tx.execute_batch(index::SCHEMA)?;
-    tx.execute_batch(index::GRANT_TRIGGER)?;
-    tx.pragma_update(None, "user_version", 2)?;
-    tx.commit()?;
+pub(super) fn migrate(conn: &rusqlite::Connection) -> Result<()> {
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= 2 {
+        return Ok(());
+    }
+    conn.execute_batch(index::SCHEMA)?;
+    conn.execute_batch(index::GRANT_TRIGGER)?;
+    conn.pragma_update(None, "user_version", 2)?;
+    Ok(())
+}
+
+pub(super) fn migrate_v3(conn: &rusqlite::Connection) -> Result<()> {
+    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= 3 {
+        return Ok(());
+    }
+    conn.execute_batch(index::FAILURE_SCHEMA)?;
+    conn.execute_batch("ALTER TABLE embedding_jobs ADD COLUMN batch_limit INTEGER NOT NULL DEFAULT 0 CHECK(batch_limit BETWEEN 0 AND 128); DROP TRIGGER knowledge_embedding_grant_changed;")?;
+    conn.execute_batch(index::GRANT_TRIGGER)?;
+    conn.execute(
+        "INSERT INTO knowledge_meta(key,value) VALUES('embedding_authority_epoch',?1)",
+        [Uuid::now_v7().to_string()],
+    )?;
+    conn.pragma_update(None, "user_version", 3)?;
     Ok(())
 }
 
 pub(super) fn validate_structure(conn: &rusqlite::Connection) -> Result<()> {
     index::validate_data(conn)
+}
+
+impl KnowledgeStore {
+    /// Clear only provider-cooldown scheduling after explicit owner recovery.
+    /// Durable request reservations and terminal failure attempts are unchanged.
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub fn reset_embedding_cooldown(&self, profile: &str) -> Result<()> {
+        self.conn().execute("UPDATE embedding_jobs SET not_before_ms=0,failure_code=NULL WHERE profile=?1 AND failure_code='provider_rate_limit'",[profile])?;
+        Ok(())
+    }
 }
 
 fn invalid(message: &str) -> MemoryError {
