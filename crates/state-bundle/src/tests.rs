@@ -1743,3 +1743,96 @@ async fn composio_identity_and_app_settings_survive_validated_state_transfer() {
     );
     assert!(!target.path().join("composio.toml").exists());
 }
+
+/// Review finding 9: MCP OAuth records (tokens) never leave the secret
+/// store: `All` skips them, naming one fails, and a bundle carrying one is
+/// refused on import.
+#[tokio::test]
+async fn mcp_oauth_records_are_never_exported_or_imported() {
+    const RECORD: &str = r#"{"resource":"https://mcp.example/mcp","credentials":{"client_id":"c","token_response":{"access_token":"bundle-access-sentinel-6d2e","refresh_token":"bundle-refresh-sentinel-0a9f","token_type":"Bearer"},"granted_scopes":[],"token_received_at":null,"issuer":null}}"#;
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let store = MemoryStore::new();
+    store.set("mcp/linear/oauth", RECORD).unwrap();
+    store.set("MCP/Other/OAuth", RECORD).unwrap();
+    store
+        .set("mcp/linear/oauth-client", "dcr-secret-sentinel-11b4")
+        .unwrap();
+    store.set("plain", "kept").unwrap();
+    let mut bytes = Vec::new();
+    let manifest = export(
+        source.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::All,
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    assert_eq!(manifest.secret_names, vec!["plain".to_owned()]);
+    let raw = String::from_utf8_lossy(&bytes);
+    for token in [
+        "bundle-access-sentinel-6d2e",
+        "bundle-refresh-sentinel-0a9f",
+        "dcr-secret-sentinel-11b4",
+    ] {
+        assert!(!raw.contains(token), "{token} exported");
+    }
+    for name in [
+        "mcp/linear/oauth",
+        "MCP/Other/OAuth",
+        "mcp/linear/oauth-client",
+    ] {
+        let mut out = Vec::new();
+        assert!(
+            export(
+                source.path(),
+                &store,
+                ExportOptions {
+                    secrets: SecretSelection::Names(vec![name.into()]),
+                    ..Default::default()
+                },
+                &mut out,
+            )
+            .await
+            .is_err(),
+            "{name} exported by name"
+        );
+    }
+}
+
+/// A bundle that carries an MCP OAuth record is refused on import: it would
+/// plant someone else's sign-in.
+#[tokio::test]
+async fn a_bundle_carrying_an_mcp_oauth_record_is_refused_on_import() {
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let store = MemoryStore::new();
+    store.set("plain", "kept").unwrap();
+    let mut bytes = Vec::new();
+    export(
+        source.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::Names(vec!["plain".into()]),
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    let planted = replace_payload(
+        &bytes,
+        "secrets.json",
+        serde_json::to_vec(&serde_json::json!({"mcp/victim/oauth": "{}"})).unwrap(),
+    );
+    let planted = alter_manifest(&planted, |m| {
+        m.secret_names = vec!["mcp/victim/oauth".into()];
+    });
+    assert!(matches!(
+        rejected(&planted, ImportOptions::default()).await,
+        ImportError::Invalid(_)
+    ));
+}

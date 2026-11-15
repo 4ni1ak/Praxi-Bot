@@ -983,6 +983,23 @@ fn api_routes() -> Router<AppState> {
             post(m::reconnect_mcp_server),
         )
         .route("/v1/mcp/servers/{name}/tools", get(m::list_mcp_tools))
+        .route("/v1/mcp/servers/{name}/auth/start", post(m::start_mcp_auth))
+        .route(
+            "/v1/mcp/servers/{name}/auth/callback",
+            post(m::complete_mcp_auth),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/cancel",
+            post(m::cancel_mcp_auth),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/status",
+            get(m::mcp_auth_status),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/logout",
+            post(m::logout_mcp_auth),
+        )
         .route("/v1/mcp/catalog", get(m::mcp_catalog))
         .route("/v1/composio", get(c::composio_status))
         .route(

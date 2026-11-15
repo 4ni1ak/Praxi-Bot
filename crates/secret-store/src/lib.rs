@@ -32,5 +32,6 @@ pub use open::{
 };
 pub use redact::{REDACTED, Redactor, secret_variants};
 pub use secret::{
-    RESERVED_PREFIX, SecretRef, SecretStore, SecretValue, is_reserved_name, resolve, validate_name,
+    RESERVED_PREFIX, SecretRef, SecretStore, SecretValue, is_managed_oauth_name, is_reserved_name,
+    resolve, validate_name,
 };
