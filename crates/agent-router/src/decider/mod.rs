@@ -454,6 +454,9 @@ fn bump(c: &AtomicU64) {
     c.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Which backends (by id, `provider/model`) a decision may be sent to.
+pub type BackendFilter<'a> = dyn Fn(&str) -> bool + Send + Sync + 'a;
+
 /// Result of one decision.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Outcome {
@@ -465,6 +468,8 @@ pub struct Outcome {
     pub cached: bool,
     /// Wall time.
     pub latency_ms: u64,
+    /// Requests sent to a backend for this decision (0 on a cache hit).
+    pub backend_calls: u32,
 }
 
 struct Cached {
@@ -569,9 +574,21 @@ impl Decider {
     /// a chain where every backend failed yields an empty [`Outcome`], and
     /// the caller applies its deterministic fallback.
     pub async fn decide(&self, req: &DecisionRequest, budget: &TurnBudget) -> Outcome {
+        self.decide_via(req, budget, &|_| true).await
+    }
+
+    /// [`Self::decide`] restricted to the backends whose id passes `allow`
+    /// (the caller's egress rule: which providers this request may be sent
+    /// to). A cached answer of a backend that is not allowed is not used.
+    pub async fn decide_via(
+        &self,
+        req: &DecisionRequest,
+        budget: &TurnBudget,
+        allow: &BackendFilter<'_>,
+    ) -> Outcome {
         let started = Instant::now();
         bump(&self.counters.decisions);
-        let mut outcome = self.decide_inner(req, budget, started).await;
+        let mut outcome = self.decide_inner(req, budget, started, allow).await;
         let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         outcome.latency_ms = ms;
         self.counters
@@ -612,11 +629,31 @@ impl Decider {
         );
     }
 
+    /// The cached answer for `key`, when fresh and from an allowed backend.
+    fn cached(&self, key: u128, now: Instant, allow: &BackendFilter<'_>) -> Option<Outcome> {
+        if self.cfg.cache_ttl.is_zero() {
+            return None;
+        }
+        let cache = self.cache.lock();
+        let hit = cache.get(&key)?;
+        if now.duration_since(hit.at) >= self.cfg.cache_ttl || !allow(&hit.backend) {
+            return None;
+        }
+        Some(Outcome {
+            answers: hit.answers.clone(),
+            backend: Some(hit.backend.clone()),
+            cached: true,
+            latency_ms: 0,
+            backend_calls: 0,
+        })
+    }
+
     async fn decide_inner(
         &self,
         req: &DecisionRequest,
         budget: &TurnBudget,
         started: Instant,
+        allow: &BackendFilter<'_>,
     ) -> Outcome {
         if !req.is_valid() {
             return Outcome::default();
@@ -632,24 +669,24 @@ impl Decider {
             req
         };
         let key = cache_key(req);
-        if !self.cfg.cache_ttl.is_zero()
-            && let Some(hit) = self.cache.lock().get(&key)
-            && started.duration_since(hit.at) < self.cfg.cache_ttl
-        {
+        if let Some(hit) = self.cached(key, started, allow) {
             bump(&self.counters.cache_hits);
-            return Outcome {
-                answers: hit.answers.clone(),
-                backend: Some(hit.backend.clone()),
-                cached: true,
-                latency_ms: 0,
-            };
+            return hit;
+        }
+        if !self.slots.iter().any(|s| allow(s.backend.id())) {
+            // Nothing this caller may send to: no call, no budget spent.
+            return Outcome::default();
         }
         if !budget.take() {
             bump(&self.counters.budget_denied);
             return Outcome::default();
         }
         let tokens = req.estimated_tokens();
+        let mut sent = 0u32;
         for (i, slot) in self.slots.iter().enumerate() {
+            if !allow(slot.backend.id()) {
+                continue;
+            }
             let Some(left) = self.cfg.timeout.checked_sub(started.elapsed()) else {
                 bump(&self.counters.timeouts);
                 break;
@@ -663,6 +700,7 @@ impl Decider {
                 continue;
             }
             bump(&self.counters.backend_calls);
+            sent += 1;
             let raw = match tokio::time::timeout(left, slot.backend.decide(req)).await {
                 Err(_) => {
                     bump(&self.counters.timeouts);
@@ -697,8 +735,12 @@ impl Decider {
                 backend: Some(backend),
                 cached: false,
                 latency_ms: 0,
+                backend_calls: sent,
             };
         }
-        Outcome::default()
+        Outcome {
+            backend_calls: sent,
+            ..Outcome::default()
+        }
     }
 }

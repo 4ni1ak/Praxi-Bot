@@ -66,6 +66,13 @@ pub struct RouterSettings {
     /// Use the K3 classifier model (`models.classifier`); defaults to `true`
     /// when a classifier model is configured.
     pub k3: Option<bool>,
+    /// Let the workspace decider (a cheap decision model, when the owner
+    /// enabled one) plan this bot's turns (default `true`).
+    pub decider: bool,
+    /// Providers this bot's text may be sent to for decider questions, in
+    /// addition to the providers of its own model roles. A decider backend at
+    /// any other provider is never asked on behalf of this bot.
+    pub decider_providers: Vec<String>,
 }
 
 impl Default for RouterSettings {
@@ -73,6 +80,8 @@ impl Default for RouterSettings {
         Self {
             enabled: true,
             k3: None,
+            decider: true,
+            decider_providers: Vec::new(),
         }
     }
 }
