@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::{
     DocumentFormat, DocumentInfo, DocumentInput, IndexOutcome, KnowledgeLimits, NewSource,
-    RemoteEmbeddingConsent, Scope, Source, SourceUpdate, chunk_text, schema,
+    RemoteEmbeddingConsent, Scope, Source, SourceKind, SourceUpdate, chunk_text, schema,
 };
 use crate::{MemoryError, Result, Trust};
 
@@ -89,6 +89,19 @@ impl KnowledgeStore {
         Ok(self.conn().query_row(
             "SELECT EXISTS(SELECT 1 FROM sources WHERE enabled=1)",
             [],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Whether this bot has a currently enabled source of `kind` (read-only
+    /// check used to offer kind-specific tools only when the owner enabled it).
+    ///
+    /// # Errors
+    /// SQLite or serialization failure.
+    pub fn has_enabled_source_of_kind(&self, kind: SourceKind) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM sources WHERE enabled=1 AND kind=?1)",
+            [serde_json::to_string(&kind)?],
             |row| row.get(0),
         )?)
     }
@@ -227,6 +240,14 @@ impl KnowledgeStore {
         schema::migrate(&mut conn, Some(scope))?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("UPDATE sources SET enabled=0,remote_embedding_json=NULL,revision=revision+1,updated_ms=?1", [storage::now_ms()])?;
+        // An archive locator is not an owner selection on the receiving host.
+        tx.execute(
+            "UPDATE sources SET locator='imported:requires-path-selection' WHERE kind IN (?1,?2)",
+            params![
+                serde_json::to_string(&SourceKind::File)?,
+                serde_json::to_string(&SourceKind::Folder)?
+            ],
+        )?;
         // Imported work never resumes network activity. Explicitly purge these
         // rows as well as relying on the attested grant-revocation trigger.
         tx.execute("DELETE FROM embedding_jobs", [])?;
@@ -347,6 +368,49 @@ impl KnowledgeStore {
         tx.execute("DELETE FROM sources WHERE id=?1", [id.to_string()])?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Replace a filesystem binding after the owner selects a local path.
+    /// Keep the source identity and label, but discard its previous content,
+    /// vector cache, pending work and egress permission atomically.
+    ///
+    /// # Errors
+    /// Non-filesystem source, stale revision, invalid locator or SQLite failure.
+    pub fn rebind_source(
+        &self,
+        id: Uuid,
+        expected_revision: u64,
+        locator: String,
+    ) -> Result<Source> {
+        validate_metadata(&locator, 4096, false, "source locator")?;
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut source = require_source(&tx, id, expected_revision, false)?;
+        if !matches!(
+            source.kind,
+            SourceKind::File | SourceKind::Folder | SourceKind::SharedBrain
+        ) {
+            return Err(MemoryError::Invalid(
+                "only filesystem sources can be rebound".into(),
+            ));
+        }
+        source.locator = locator;
+        source.enabled = true;
+        source.remote_embedding = None;
+        source.revision = next_revision(source.revision)?;
+        source.updated_ms = storage::now_ms();
+        tx.execute("DELETE FROM documents WHERE source_id=?1", [id.to_string()])?;
+        tx.execute(
+            "DELETE FROM embedding_cache WHERE source_id=?1",
+            [id.to_string()],
+        )?;
+        tx.execute(
+            "DELETE FROM embedding_jobs WHERE source_id=?1",
+            [id.to_string()],
+        )?;
+        tx.execute("UPDATE sources SET locator=?2,enabled=1,remote_embedding_json=NULL,revision=?3,updated_ms=?4 WHERE id=?1", params![id.to_string(), source.locator, sql_int(source.revision)?, source.updated_ms])?;
+        tx.commit()?;
+        Ok(source)
     }
 
     /// Publish all chunks of one bounded document atomically. Identical text is
