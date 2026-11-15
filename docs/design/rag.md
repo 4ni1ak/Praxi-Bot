@@ -116,8 +116,12 @@ owner's ARM host; real throughput remains to be measured there.
 
 `knowledge_search` takes a plain query, optional source IDs within the current
 bot, top-k and output budgets. FTS syntax is never accepted directly: query words
-are quoted/normalized and joined as bounded alternatives. Empty or unmatched
-queries return an empty result, without selecting arbitrary memories.
+are quoted/normalized and joined as bounded alternatives. English/Turkish
+stopwords are removed. Questions and multi-term searches require at least two
+meaningful matching terms; an explicit single keyword remains supported. Term
+coverage precedes BM25 within the bounded candidates. Empty, weakly matching or
+unmatched questions return an empty result. Tool discovery checks for a live
+enabled source, and read-only search never creates a missing index.
 
 Default search returns at most five chunks with 600 **estimated** tokens and an
 independent 8 KiB byte cap. Hard ceilings are 20 hits, 2,000 estimated tokens,
@@ -140,16 +144,21 @@ provider failure. RRF combines rank, not incomparable raw BM25/cosine scores.
 A bounded local reranker may reorder the existing candidate set; a remote
 reranker requires a separate egress authorization and is not enabled implicitly.
 
-Automatic retrieval is **off by default**. `KnowledgeDecider` is our synchronous,
+Automatic retrieval is **unavailable until native taint enforcement lands**.
+The shared `knowledge_step` entry refuses both the heuristic and injected custom
+deciders, even if bot JSON says `auto_retrieve=true`. `KnowledgeDecider` is our synchronous,
 bounded hook for a heuristic or an already-computed decision from a future router
 adapter. No `agent-router` code is changed. The shipped heuristic reads
-`bot.config.knowledge.auto_retrieve`, skips commands/greetings, and schedules one
-normal `knowledge_search` tool step before the first model call for a relevant
-root-turn question. It adds no decider model call. Subagents and later model
+`bot.config.knowledge.auto_retrieve` and requires an explicit document/notes
+retrieval cue instead of every question mark. Once the native capability is
+enabled, it can schedule one ordinary search before a relevant root-turn
+question. It adds no decider model call. Subagents and later model
 steps do not silently repeat it. The same tool visibility, permission, approval,
 timeout, output and audit machinery applies to explicit and automatic searches.
-History reconstructs a matching assistant tool call and Tool-role result, so the
-retrieved data never becomes a system instruction or an unmatched tool message.
+Already persisted automatic retrieval is replayed as a delimited untrusted-data
+User message. It never fabricates an assistant function call, provider signature
+or Tool result. Real Gemini and Anthropic adapters are covered with local HTTP
+shape tests. Explicit model-issued searches keep normal paired tool messages.
 
 ## Trust, poisoning and PR #46
 
@@ -168,20 +177,27 @@ process restart because it is stored in the durable tool step.
 PR #46 is a separate, **unmerged** egress workstream at the inspected baseline.
 Its current `ToolSpec.content`, `ToolOutput.exposure` and persisted `ExecFact`
 wire shapes are supported by a narrow constructor bridge on the new knowledge
-tools. Main ignores the extra spec/output fields; #46 consumes them. A backend
-that may send query embeddings declares egress before execution. The bridge
-avoids changing unrelated tools or the permission engine. Main's provenance
+tools. Main ignores the extra spec/output fields. They are **inert compatibility
+metadata**, not an active security boundary. Main's provenance
 tests establish metadata integrity, **not** an egress gate that does not yet
 exist on main. End-to-end poisoning/egress enforcement requires #46 integration
 and its gate tests on the combined code; merge review must preserve that boundary.
 No prompt label alone is claimed to make an LLM immune to prompt injection.
 
-At the inspected #46 head, egress classification is static per registered tool.
-A mutable hybrid backend must conservatively declare egress even when a specific
-call falls back to local search, so #46 will ask on tainted turns in that case.
-The PR1 lexical backend declares no egress. Selective approval for a future hybrid
-call needs a trusted invocation-specific classification seam; changing a prompt
-label or allowing the backend to send after a non-egress classification is unsafe.
+`Tool::egress_for(bot_id)` supplies an optional host-derived dynamic override;
+wrappers must forward it and knowledge delegates to its bot-aware backend.
+`KnowledgeBackend::search_for_run` carries the real execution run to a remote
+backend's permission check. Neither hook alone authorizes network traffic. The
+PR1 lexical backend declares no egress. Integration with #46 must consume the
+override, replace the compatibility JSON with native types, keep exactly one
+execution-fact writer, and pass durable taint/replay tests before opening the
+automatic-retrieval capability. Ordinary wrappers no longer invent a private
+read merely because they wrap another tool.
+
+Standalone PR1/PR2 bundles exclude `knowledge.db`, `knowledge.db-wal` and
+`knowledge.db-shm` at every depth. PR3 replaces this exclusion with its explicit
+SQLite backup/validated import adapter; it must never restore generic file-copy
+handling for these databases.
 
 ## Embeddings, caching and privacy
 
