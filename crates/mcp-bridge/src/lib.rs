@@ -54,7 +54,9 @@ mod session;
 mod tool;
 mod transport;
 
-pub use catalog::{CatalogEntry, CatalogInstall, RequiredSecret, builtin_catalog};
+pub use catalog::{
+    CatalogEntry, CatalogInstall, RequiredSecret, builtin_catalog, check_stdio_package_pin,
+};
 pub use config::{McpConfigStore, McpServerConfig, McpTransport, OAuthConfig, TomlFileStore};
 pub use diagnostics::ExternalRedactor;
 pub use error::{McpError, Result};

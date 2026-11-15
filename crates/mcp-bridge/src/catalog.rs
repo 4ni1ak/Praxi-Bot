@@ -214,11 +214,15 @@ fn package_spec<'a>(base: &str, args: &'a [String]) -> Option<&'a str> {
     None
 }
 
-/// Fail when a stdio catalog entry would `npx`/`uvx` an unpinned package.
-pub(crate) fn check_stdio_package_pin(id: &str, command: &str, args: &[String]) -> Result<()> {
+/// Fail when a stdio server (catalog entry or pasted line) would `npx`/`uvx`
+/// an unpinned package.
+///
+/// # Errors
+/// [`McpError::Config`] naming the unpinned spec.
+pub fn check_stdio_package_pin(id: &str, command: &str, args: &[String]) -> Result<()> {
     if args.iter().any(|a| mentions_latest(a)) {
         return Err(McpError::Config(format!(
-            "catalog entry `{id}`: stdio package must be pinned to an exact version, not @latest"
+            "server `{id}`: stdio package must be pinned to an exact version, not @latest"
         )));
     }
     let base = command_base(command);
@@ -227,7 +231,7 @@ pub(crate) fn check_stdio_package_pin(id: &str, command: &str, args: &[String]) 
     }
     let Some(spec) = package_spec(&base, args) else {
         return Err(McpError::Config(format!(
-            "catalog entry `{id}`: stdio runner `{base}` has no package argument to pin"
+            "server `{id}`: stdio runner `{base}` has no package argument to pin"
         )));
     };
     let pinned = if is_npm_runner(&base) {
@@ -239,7 +243,7 @@ pub(crate) fn check_stdio_package_pin(id: &str, command: &str, args: &[String]) 
         Ok(())
     } else {
         Err(McpError::Config(format!(
-            "catalog entry `{id}`: stdio package `{spec}` is unpinned; use an exact version (`pkg@1.2.3` or `pkg==1.2.3`), not a floating npx/uvx install"
+            "server `{id}`: stdio package `{spec}` is unpinned; use an exact version (`pkg@1.2.3` or `pkg==1.2.3`), not a floating npx/uvx install"
         )))
     }
 }
