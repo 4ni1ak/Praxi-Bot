@@ -215,33 +215,23 @@ impl Tool for WorkflowRun {
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let i: RunInput =
             serde_json::from_value(input).map_err(|e| ToolError::InvalidInput(e.to_string()))?;
-        let (wf, clean) = match self.store.load_for_replay(&i.name) {
-            Ok(loaded) => loaded,
-            Err(e) => {
-                self.gate.note_exposure(
-                    &ctx.run_id,
-                    ContentClass::untrusted_private(),
-                    "saved workflow",
-                );
-                return Err(ToolError::Execution(e.to_string()));
-            }
-        };
+        let wf = self
+            .store
+            .get(&i.name)
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
         let _guard = self
             .enter(&ctx.run_id, &wf.name)
             .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
         let mut opts = self.opts.clone();
         opts.run_id.clone_from(&ctx.run_id);
         opts.bot_id.clone_from(&ctx.bot_id);
-        // An imported, edited, or tainted save is persisted behaviour. A
-        // workflow this daemon saved from a run with no untrusted content is
-        // not. Record that exposure before the first outbound step.
-        if !clean {
-            self.gate.note_exposure(
-                &ctx.run_id,
-                ContentClass::untrusted_private(),
-                "saved workflow",
-            );
-        }
+        // A saved workflow is persisted behaviour, including all substituted
+        // parameters. Record that exposure before its first outbound step.
+        self.gate.note_exposure(
+            &ctx.run_id,
+            ContentClass::untrusted_private(),
+            "saved workflow",
+        );
         let report = Replayer::new(self.handles.clone(), opts)
             .replay(&wf, &i.params, self.gate.as_ref())
             .await

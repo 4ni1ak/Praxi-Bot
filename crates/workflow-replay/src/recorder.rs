@@ -86,11 +86,6 @@ pub struct Recording {
     pub dropped: Vec<DroppedStep>,
     /// Review hints.
     pub warnings: Vec<String>,
-    /// `Some(false)` when the recorded run showed facts and none of them
-    /// ingested untrusted content. `Some(true)` when untrusted content was
-    /// seen. `None` when the run has no facts: that provenance is unknown
-    /// and replay stays tainted.
-    pub source_untrusted: Option<bool>,
 }
 
 impl Recording {
@@ -100,98 +95,8 @@ impl Recording {
     /// # Errors
     /// Name collision, invalid workflow, or a store error.
     pub fn save_new(&self, store: &WorkflowStore) -> Result<u64, SaveError> {
-        let revision = store.save_with_mode(&self.workflow, SaveMode::CreateNew)?;
-        if self.source_untrusted == Some(false) {
-            store.note_clean_origin(&self.workflow.name)?;
-        }
-        Ok(revision)
+        store.save_with_mode(&self.workflow, SaveMode::CreateNew)
     }
-}
-
-fn provenance_of(steps: &[&RunStep]) -> Option<bool> {
-    let mut saw_fact = false;
-    let mut untrusted = false;
-    let mut note = |ingests: bool| {
-        saw_fact = true;
-        untrusted |= ingests;
-    };
-    for step in steps {
-        match step.name.as_str() {
-            "user_message" => {
-                let text = step.input["text"].as_str().unwrap_or("");
-                if text.contains("<recalled_memory>") {
-                    note(false);
-                }
-                if text.contains("<untrusted_memory_data>")
-                    || text.contains("<untrusted_skill_data>")
-                {
-                    note(true);
-                }
-            }
-            "tools" => {
-                let Some(results) = step
-                    .output
-                    .as_ref()
-                    .and_then(|output| output["results"].as_array())
-                else {
-                    continue;
-                };
-                for result in results {
-                    let Some(fact) = result.get("fact") else {
-                        continue;
-                    };
-                    if fact.get("ran").and_then(serde_json::Value::as_bool) == Some(false) {
-                        continue;
-                    }
-                    note(
-                        fact.get("ingests_untrusted")
-                            .and_then(serde_json::Value::as_bool)
-                            == Some(true),
-                    );
-                }
-            }
-            "model" => {
-                let Some(output) = step.output.as_ref() else {
-                    continue;
-                };
-                for key in ["executed", "metadata"] {
-                    let Some(list) = output.get(key).and_then(serde_json::Value::as_array) else {
-                        continue;
-                    };
-                    for item in list {
-                        if item.get("ran").and_then(serde_json::Value::as_bool) == Some(false) {
-                            continue;
-                        }
-                        note(
-                            item.get("ingests_untrusted")
-                                .and_then(serde_json::Value::as_bool)
-                                == Some(true),
-                        );
-                    }
-                }
-            }
-            "workflow" => {
-                let Some(output) = step.output.as_ref() else {
-                    continue;
-                };
-                if let Some(exposure) = output.get("exposure") {
-                    if exposure.get("ran").and_then(serde_json::Value::as_bool) == Some(false) {
-                        continue;
-                    }
-                    note(
-                        exposure
-                            .get("ingests_untrusted")
-                            .and_then(serde_json::Value::as_bool)
-                            == Some(true),
-                    );
-                } else if output.get("summary").is_some() || output.get("final_text").is_some() {
-                    note(true);
-                }
-            }
-            _ => {}
-        }
-    }
-    saw_fact.then_some(untrusted)
 }
 
 fn default_recording_name(run_id: RunId) -> String {
@@ -325,7 +230,6 @@ impl Recorder {
             workflow: wf,
             dropped: cx.dropped,
             warnings: cx.warnings,
-            source_untrusted: provenance_of(&ordered),
         })
     }
 
@@ -1209,84 +1113,6 @@ mod tests {
         assert_eq!(recording.save_new(&store).unwrap(), 1);
         assert!(
             matches!(recording.save_new(&store), Err(SaveError::AlreadyExists(name)) if name == "chosen")
-        );
-    }
-
-    #[test]
-    fn a_run_with_no_untrusted_facts_stamps_a_clean_replay() {
-        let steps = [tool_step(
-            1,
-            json!([call("a", "shell_run", &json!({"command": "echo ok"}))]),
-            json!([{
-                "id": "a",
-                "text": "ok",
-                "is_error": false,
-                "fact": {
-                    "ran": true,
-                    "ingests_untrusted": false,
-                    "reads_private": false,
-                    "label": "the shell"
-                }
-            }]),
-        )];
-        let recording = Recorder::new()
-            .from_steps(
-                &steps,
-                &RecordOptions {
-                    name: Some("clean-run".into()),
-                    description: None,
-                },
-            )
-            .unwrap();
-        assert_eq!(recording.source_untrusted, Some(false));
-        let dir = tempfile::tempdir().unwrap();
-        let store = WorkflowStore::new(dir.path());
-        recording.save_new(&store).unwrap();
-        assert!(store.replay_is_clean("clean-run"));
-
-        let tainted = [tool_step(
-            1,
-            json!([call("a", "shell_run", &json!({"command": "echo ok"}))]),
-            json!([{
-                "id": "a",
-                "text": "ok",
-                "is_error": false,
-                "fact": {
-                    "ran": true,
-                    "ingests_untrusted": true,
-                    "reads_private": false,
-                    "label": "page"
-                }
-            }]),
-        )];
-        let recording = Recorder::new()
-            .from_steps(
-                &tainted,
-                &RecordOptions {
-                    name: Some("tainted-run".into()),
-                    description: None,
-                },
-            )
-            .unwrap();
-        assert_eq!(recording.source_untrusted, Some(true));
-        recording.save_new(&store).unwrap();
-        assert!(!store.replay_is_clean("tainted-run"));
-        assert_eq!(
-            Recorder::new()
-                .from_steps(
-                    &[tool_step(
-                        1,
-                        json!([call("a", "shell_run", &json!({"command": "echo ok"}))]),
-                        json!([res("a", "shell_run", "ok", false)]),
-                    )],
-                    &RecordOptions {
-                        name: Some("unknown-run".into()),
-                        description: None,
-                    },
-                )
-                .unwrap()
-                .source_untrusted,
-            None
         );
     }
 }

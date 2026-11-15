@@ -688,28 +688,25 @@ impl TurnExecutor {
                 "exposure": { "ran": false },
             })
         };
-        let fail_after_read = |why: String| {
+        let Some(w) = self.sh.router.workflows.get() else {
+            return Ok(fail("workflows are not available".into()));
+        };
+        // Loading/parsing can itself return file content in an error. Record
+        // exposure before touching the store and persist it on failure too.
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "saved workflow",
+        );
+        let fail_after_read = |why| {
             let mut failed = fail(why);
             failed["exposure"] = json!({"ran": true, "ingests_untrusted": true,
                 "reads_private": true, "label": "saved workflow"});
             failed
         };
-        let Some(w) = self.sh.router.workflows.get() else {
-            return Ok(fail("workflows are not available".into()));
+        let wf = match w.store.get(&name) {
+            Ok(wf) => wf,
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
-        // Loading can return file content in an error. A clean origin is the
-        // hash of the bytes just parsed; anything else is tainted before replay.
-        let before = ctx.taint.lock().exposure;
-        let (wf, clean) = match w.store.load_for_replay(&name) {
-            Ok(loaded) => loaded,
-            Err(e) => {
-                note_saved_workflow(&ctx);
-                return Ok(fail_after_read(e.to_string()));
-            }
-        };
-        if !clean {
-            note_saved_workflow(&ctx);
-        }
         let mut opts = w.opts.clone();
         opts.run_id = run.id.to_string();
         let gate = LoopGate {
@@ -720,13 +717,19 @@ impl TurnExecutor {
             .await
         {
             Ok(r) => r,
-            Err(e) => {
-                note_saved_workflow(&ctx);
-                return Ok(fail_after_read(e.to_string()));
-            }
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
         let summary = summarize(&report);
-        let exposure = replay_exposure(&ctx, clean, before);
+        let exposure = json!({
+            "ran": true,
+            "ingests_untrusted": true,
+            "reads_private": true,
+            "label": "workflow replay",
+        });
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "workflow replay",
+        );
         if report.is_completed() {
             self.sh.emit(
                 &ctx,
@@ -786,37 +789,4 @@ impl TurnExecutor {
         );
         Ok(json!({ "final_text": text }))
     }
-}
-
-fn note_saved_workflow(ctx: &crate::shared::RunCtx) {
-    ctx.taint.lock().note(
-        tool_registry::ContentClass::untrusted_private(),
-        "saved workflow",
-    );
-}
-
-fn replay_exposure(
-    ctx: &crate::shared::RunCtx,
-    clean: bool,
-    before: permission_engine::ContentExposure,
-) -> Value {
-    let after = ctx.taint.lock().exposure;
-    if !clean {
-        ctx.taint.lock().note(
-            tool_registry::ContentClass::untrusted_private(),
-            "workflow replay",
-        );
-        return json!({
-            "ran": true,
-            "ingests_untrusted": true,
-            "reads_private": true,
-            "label": "workflow replay",
-        });
-    }
-    json!({
-        "ran": true,
-        "ingests_untrusted": after.untrusted && !before.untrusted,
-        "reads_private": after.private && !before.private,
-        "label": "workflow replay",
-    })
 }
