@@ -894,3 +894,67 @@ pub struct ReleaseResult {
     pub request_id: Uuid,
     pub state: String,
 }
+
+/// Which runs a Stop targets (`POST /v1/runs/stop`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopScope {
+    /// Every non-terminal run of the user that exists when the daemon first
+    /// receives the `stop_id`, plus the listed ids. Local user only.
+    AllExisting,
+    /// Exactly the listed ids that exist and are cancellable.
+    Listed,
+}
+
+/// Body of `POST /v1/runs/stop`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StopRunsInput {
+    /// One user decision to stop, minted by the caller. The daemon fixes the
+    /// target set the first time it sees this id; a repeat never changes it.
+    pub stop_id: Uuid,
+    /// Runs the caller knew about (at most 1024). Only the first receipt reads them.
+    #[serde(default)]
+    pub run_ids: Vec<Uuid>,
+    /// Which runs the Stop targets besides `run_ids`.
+    pub scope: StopScope,
+}
+
+/// What happened to one run of a Stop's target set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopOutcome {
+    /// The run was cancelled by this Stop (or a retry of it).
+    Cancelled,
+    /// The run was already finished when the Stop reached the daemon.
+    AlreadyTerminal,
+    /// The id is not a run of this user. Never cancelled later, even if a run
+    /// with that id appears.
+    NotFound,
+    /// The cancel failed; a repeat of the same `stop_id` retries it.
+    Failed,
+}
+
+/// One member of a Stop's target set.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunResult {
+    /// Run id.
+    pub run_id: Uuid,
+    /// Cancel outcome.
+    pub outcome: StopOutcome,
+    /// Current run state, if the run exists.
+    pub state: Option<String>,
+    /// Why the cancel failed.
+    pub error: Option<String>,
+}
+
+/// Response of `POST /v1/runs/stop`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunsResponse {
+    /// Echo of the request's `stop_id`.
+    pub stop_id: Uuid,
+    /// `true` when this call fixed the target set, `false` for a repeat.
+    pub first_seen: bool,
+    /// Every member of the target set. A run that is not listed was not
+    /// targeted (it was created after the first receipt).
+    pub results: Vec<StopRunResult>,
+}

@@ -34,6 +34,7 @@ mod routes;
 mod schedule;
 mod schedule_tools;
 mod sse;
+mod stop;
 pub mod web;
 mod web_routes;
 
@@ -188,6 +189,8 @@ struct Inner {
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
     policy_lock: parking_lot::Mutex<()>,
+    /// Target sets of `POST /v1/runs/stop` (see `stop`).
+    stops: parking_lot::Mutex<stop::StopBook>,
     /// Serialises `providers.toml` read-modify-write operations (`POST /v1/providers/cli/enable`).
     providers_lock: parking_lot::Mutex<()>,
     /// Why `policy.json` could not be loaded (locked deny-all mode), if so.
@@ -328,6 +331,7 @@ impl AppState {
             secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
+            stops: parking_lot::Mutex::new(stop::StopBook::default()),
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
@@ -689,6 +693,9 @@ impl AppState {
     pub(crate) fn set_policy_load_error(&self, e: Option<String>) {
         *self.0.policy_load_error.lock() = e;
     }
+    pub(crate) fn stops(&self) -> &parking_lot::Mutex<stop::StopBook> {
+        &self.0.stops
+    }
     pub(crate) fn policy_lock(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.0.policy_lock.lock()
     }
@@ -819,6 +826,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/approvals/{call_id}", post(r::decide_approval))
         .route("/v1/questions/{call_id}", post(r::answer_question))
         .route("/v1/runs", get(r::list_runs))
+        .route(
+            "/v1/runs/stop",
+            post(stop::stop_runs).layer(axum::extract::DefaultBodyLimit::max(stop::MAX_BODY_BYTES)),
+        )
         .route("/v1/runs/{id}", get(r::get_run))
         .route("/v1/runs/{id}/cancel", post(r::cancel_run))
         .route("/v1/runs/{id}/resume", post(r::resume_run))
