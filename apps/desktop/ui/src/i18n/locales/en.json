@@ -288,7 +288,8 @@
       "queueHint": "Deliver after the current turn finishes",
       "steerHint": "Deliver now and redirect the current turn"
     },
-    "placeholder": "Message the bot…",
+    "placeholder": "Message…  / commands · @ bots",
+    "addCommand": "Add a command or bot",
     "placeholderBusy": "The bot is working — queue or steer…",
     "send": "Send",
     "subagent": {
@@ -483,7 +484,6 @@
       "noMatch": "No match"
     },
     "conversationLabel": "Today",
-    "composerHint": "Enter to send · / for commands · @ to mention a bot",
     "openBot": "Open {{name}}",
     "emptyTitle": "What shall we work on?",
     "emptyGreeting": "Hi, I'm {{name}}",
@@ -700,6 +700,26 @@
         "running": "Asking you",
         "done": "Asked you",
         "failed": "Couldn't ask you"
+      },
+      "mcp_search": {
+        "running": "Searching {{app}}",
+        "done": "Searched {{app}}",
+        "failed": "Couldn't search {{app}}"
+      },
+      "mcp_read": {
+        "running": "Reading from {{app}}",
+        "done": "Read from {{app}}",
+        "failed": "Couldn't read from {{app}}"
+      },
+      "mcp_draft": {
+        "running": "Drafting in {{app}}",
+        "done": "Drafted in {{app}}",
+        "failed": "Couldn't draft in {{app}}"
+      },
+      "mcp_send": {
+        "running": "Sending with {{app}}",
+        "done": "Sent with {{app}}",
+        "failed": "Couldn't send with {{app}}"
       },
       "mcp": {
         "running": "Using {{app}} ({{action}})",
