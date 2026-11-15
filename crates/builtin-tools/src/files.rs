@@ -664,6 +664,27 @@ fn lexical_under(path: &Path, dir: &Path) -> bool {
     !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
 }
 
+/// Windows only: the same spill directory spelled with 8.3 short names
+/// (`RUNNER~1`) does not match by text. Only when the path is on the very
+/// drive of the data dir (a text comparison, so never a remote letter) the
+/// widened, on-disk comparison is allowed to decide.
+fn short_name_alias_under(path: &Path, dir: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let first = |p: &Path| {
+            p.components()
+                .next()
+                .map(|c| fold_part(&c.as_os_str().to_string_lossy()))
+        };
+        first(path).is_some() && first(path) == first(dir) && under_dir(path, dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, dir);
+        false
+    }
+}
+
 /// True when `path` is inside `dir` (component-wise, widened like
 /// `in_checkpoint_store`).
 fn under_dir(path: &Path, dir: &Path) -> bool {
@@ -687,7 +708,8 @@ fn validate_read_path(sh: &Shared, raw: &str, run: &str) -> Result<PathBuf, Tool
         return validate_path(sh, raw, Follow::Content);
     }
     let run_dir = sh.spill_dir.join(run);
-    let syntactically_in_run = lexical_absolute(raw).is_ok_and(|l| lexical_under(&l, &run_dir));
+    let syntactically_in_run = lexical_absolute(raw)
+        .is_ok_and(|l| lexical_under(&l, &run_dir) || short_name_alias_under(&l, &run_dir));
     if !syntactically_in_run {
         return validate_path(sh, raw, Follow::Content);
     }
@@ -4986,6 +5008,56 @@ mod tests {
                 .unwrap(),
         );
         assert!(ok.contains("ordinary"), "{ok}");
+    }
+
+    /// A daemon whose data dir is reached through an 8.3 alias (GitHub
+    /// runners: `C:\Users\RUNNER~1\...`) must still read its own spill files,
+    /// whichever spelling the model is given.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn spill_files_are_readable_through_a_short_name_data_dir() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("workspace-root");
+        let data = base.path().join("praxi-bot-data-dir");
+        let mine = data.join("spill").join("run-1");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&mine).unwrap();
+        fs::write(mine.join("c.txt"), "spilled-data").unwrap();
+        let short = win_fs::short_path(&data).unwrap();
+        if short
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("praxi-bot-data-dir")
+        {
+            eprintln!("skipped: this volume does not generate 8.3 names");
+            return;
+        }
+        let c = ctx(); // run-1
+        for (tool_dir, read_dir) in [
+            (&short, &data),
+            (&short, &short),
+            (&data, &short),
+            (&data, &data),
+        ] {
+            let t = tools_bounded(tool_dir, std::slice::from_ref(&root), &[]);
+            let p = read_dir.join("spill").join("run-1").join("c.txt");
+            let ok = text(
+                &get(&t, "fs_read")
+                    .call(&c, json!({"path": &p}))
+                    .await
+                    .unwrap_or_else(|e| panic!("{}: {e}", p.display())),
+            );
+            assert!(ok.contains("spilled-data"), "{ok}");
+            // Another run's directory stays closed in every spelling.
+            let other = read_dir.join("spill").join("run-2").join("c.txt");
+            assert!(
+                get(&t, "fs_read")
+                    .call(&c, json!({"path": &other}))
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     #[cfg(windows)]
