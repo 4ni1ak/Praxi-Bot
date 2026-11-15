@@ -70,6 +70,11 @@ pub struct Param {
     /// Human description.
     #[serde(default)]
     pub description: String,
+    /// The value is a secret (a password typed into a field when the workflow
+    /// was recorded): it is never recorded, a caller must supply it, and it is
+    /// never shown in an approval, an event or a stored call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret: bool,
 }
 
 /// Extra hint for finding an unnamed or renamed desktop element.
@@ -628,6 +633,13 @@ impl Workflow {
                     None => return err(format!("missing required parameter `{}`", p.name)),
                 },
             };
+            // A display placeholder is not a value, least of all for a secret.
+            if tool_registry::is_masked_secret(&raw) {
+                return err(format!(
+                    "parameter `{}` is a display placeholder, not a value",
+                    p.name
+                ));
+            }
             check_type(&p.name, p.ty, &raw)?;
             out.insert(p.name.clone(), raw);
         }
@@ -709,6 +721,7 @@ mod tests {
             ty: ParamType::String,
             default: Some("hello".into()),
             description: "Text".into(),
+            secret: false,
         });
         w.steps.push(Step::Launch(Launch {
             executable: "notepad.exe".into(),
@@ -774,6 +787,7 @@ mod tests {
             ty: ParamType::Number,
             default: None,
             description: String::new(),
+            secret: false,
         });
         let none = serde_json::Map::new();
         assert!(w.bind_params(&none).is_err(), "n is required");

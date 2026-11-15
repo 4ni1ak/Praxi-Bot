@@ -570,6 +570,7 @@ impl Lifter {
                 description: format!(
                     "A secret ({hint}); it is not recorded, give it when replaying"
                 ),
+                secret: true,
             });
             return format!("{{{name}}}");
         }
@@ -585,6 +586,7 @@ impl Lifter {
             ty: ParamType::String,
             default: Some(value.to_owned()),
             description: format!("Recorded from the request ({hint})"),
+            secret: false,
         });
         self.by_value.insert(value.to_owned(), name.clone());
         format!("{{{name}}}")
@@ -1037,6 +1039,7 @@ mod tests {
         assert_eq!(f.value.as_deref(), Some("{text}"));
         let p = wf.params.iter().find(|p| p.name == "text").unwrap();
         assert_eq!(p.default, None, "required: asked for at replay time");
+        assert!(p.secret, "flagged so workflow_run masks it");
         assert!(!format!("{wf:?}").contains(tool_registry::SECRET_MASK));
     }
 

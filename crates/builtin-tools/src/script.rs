@@ -41,6 +41,11 @@ pub struct GateRequest {
     pub raw_command: String,
     /// The call's input.
     pub input: Value,
+    /// A trusted view of `input` for the approval card and the events, when the
+    /// caller itself knows part of it must not be shown (a typed secret it
+    /// resolved from its own observation). It must be a mask patch of `input`;
+    /// `None` lets the loop ask the tool.
+    pub display: Option<Value>,
 }
 
 /// Permission check for tool calls issued from scripts.
@@ -213,6 +218,7 @@ impl ScriptHost for GateHost {
             effect: spec.effect,
             raw_command: raw_command_for(name, &input),
             input: input.clone(),
+            display: None,
         };
         self.gate.authorize(&req).await?;
         let ctx = ToolContext {
@@ -516,6 +522,7 @@ mod tests {
             effect: Effect::Write,
             raw_command: raw.into(),
             input: Value::Null,
+            display: None,
         };
         assert!(
             gate.authorize(&req("fs_write", PermissionCategory::Fs, ""))

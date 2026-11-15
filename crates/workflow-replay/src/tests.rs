@@ -347,12 +347,14 @@ async fn params_are_substituted_typed_and_validated() {
             ty: ParamType::String,
             default: Some("red shoes".into()),
             description: String::new(),
+            secret: false,
         },
         Param {
             name: "qty".into(),
             ty: ParamType::Number,
             default: Some("1".into()),
             description: String::new(),
+            secret: false,
         },
     ];
     let bloc = |role: &str, name: &str| BrowserLocator {
@@ -508,6 +510,7 @@ async fn agent_step_and_failed_success_check_hand_over() {
         ty: ParamType::String,
         default: Some("Ada".into()),
         description: String::new(),
+        secret: false,
     });
     wf.steps = vec![Step::Agent(AgentStep {
         instruction: "Greet {who}".into(),
@@ -701,6 +704,7 @@ async fn shell_step_quotes_parameter_values() {
         ty: ParamType::String,
         default: None,
         description: String::new(),
+        secret: false,
     }];
     wf.steps = vec![Step::Shell(crate::format::Shell {
         command: "echo {input}".into(),
@@ -1131,4 +1135,237 @@ async fn remote_pc_replay_cannot_navigate_host_browser() {
         .unwrap();
     assert!(!report.is_completed());
     assert!(browser.calls.lock().is_empty());
+}
+
+// ---- typed secrets (a recorded login) ----------------------------------------------------
+
+const PW: &str = "hunter2-fake-fixture-value";
+
+fn secret_param() -> Param {
+    Param {
+        name: "pw".into(),
+        ty: ParamType::String,
+        default: None,
+        description: "password".into(),
+        secret: true,
+    }
+}
+
+fn type_step(kind: DesktopActionKind) -> Step {
+    Step::DesktopAction(DesktopAction {
+        app: None,
+        window_title_pattern: Some("*App".into()),
+        target: Some(desk_loc("edit", "Password")),
+        action: kind,
+        value: Some("{pw}".into()),
+        method: None,
+    })
+}
+
+fn login_desktop() -> Arc<FakeDesktop> {
+    FakeDesktop::new(
+        vec![window(1, "Login - App")],
+        vec![desktop_api::snapshot::UiNode::new(
+            0,
+            "edit",
+            "Password",
+            None,
+            Some(desktop_api::snapshot::Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            }),
+            vec!["secure".into()],
+        )],
+    )
+}
+
+#[tokio::test]
+async fn a_replayed_secure_field_is_masked_in_its_approval_but_typed_for_real() {
+    for kind in [DesktopActionKind::Type, DesktopActionKind::SetValue] {
+        let mut wf = screen_wf(vec![type_step(kind)]);
+        wf.params.push(secret_param());
+        let desktop = login_desktop();
+        let gate = RecordingGate::default();
+        let report = replayer(
+            handles(Some(desktop.clone()), None),
+            ReplayOptions::instant(),
+        )
+        .replay(&wf, &params(&json!({"pw": PW})), &gate)
+        .await
+        .unwrap();
+        assert!(report.is_completed(), "{kind:?}");
+        let reqs = gate.requests.lock();
+        let shown = reqs[0]
+            .display
+            .as_ref()
+            .unwrap_or_else(|| panic!("{kind:?}: the replay gave the gate no masked view"));
+        assert!(!shown.to_string().contains(PW), "{kind:?}: {shown}");
+        // The real value is what the backend receives.
+        let typed = desktop.actions.lock().iter().any(|a| {
+            matches!(a, Action::TypeText { text } | Action::SetValue { value: text, .. } if text == PW)
+        });
+        assert!(typed, "{kind:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_recorded_secret_parameter_is_required_and_a_placeholder_is_refused() {
+    let mut wf = screen_wf(vec![type_step(DesktopActionKind::Type)]);
+    wf.params.push(secret_param());
+    let desktop = login_desktop();
+    let rp = replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    );
+    // Missing: nothing is typed.
+    let missing = rp
+        .replay(&wf, &params(&json!({})), &RecordingGate::default())
+        .await;
+    assert!(missing.is_err(), "a missing secret must stop the replay");
+    // The display placeholder is not a value.
+    let placeholder = tool_registry::masked_secret(PW, "password field");
+    let refused = rp
+        .replay(
+            &wf,
+            &params(&json!({"pw": placeholder})),
+            &RecordingGate::default(),
+        )
+        .await;
+    assert!(refused.is_err(), "a placeholder must not be accepted");
+    assert!(desktop.actions.lock().is_empty(), "nothing was typed");
+}
+
+fn browser_facts(kind: builtin_tools::FieldKind) -> builtin_tools::FieldFacts {
+    builtin_tools::FieldFacts {
+        role: "textbox".into(),
+        name: "Password".into(),
+        kind,
+        backend_id: 1,
+        session_id: None,
+        frame_id: "main".into(),
+        frame_origin: Some("https://login.test".into()),
+        top_origin: Some("https://login.test".into()),
+        in_top_frame: true,
+    }
+}
+
+fn browser_login_wf() -> Workflow {
+    let mut wf = Workflow::new("login");
+    wf.params.push(secret_param());
+    wf.steps = vec![Step::BrowserAction(BrowserAction {
+        url_pattern: None,
+        target: Some(BrowserLocator {
+            role: "textbox".into(),
+            name: "Password".into(),
+            fingerprint: fingerprint_hex("textbox", "Password"),
+            aria_label: None,
+            css: None,
+            nth: None,
+        }),
+        action: BrowserActionKind::Fill,
+        value: Some("{pw}".into()),
+    })];
+    wf
+}
+
+const LOGIN_PAGE: &str = "# Login (https://login.test/)\n  [e1] textbox \"Password\"\n";
+
+#[tokio::test]
+async fn a_replayed_browser_password_fill_is_masked_in_its_approval() {
+    let browser = FakeBrowser::new(LOGIN_PAGE);
+    browser.facts.lock().insert(
+        "e1".into(),
+        browser_facts(builtin_tools::FieldKind::Credential),
+    );
+    let gate = RecordingGate::default();
+    let report = replayer(
+        handles(None, Some(browser.clone())),
+        ReplayOptions::instant(),
+    )
+    .replay(&browser_login_wf(), &params(&json!({"pw": PW})), &gate)
+    .await
+    .unwrap();
+    assert!(report.is_completed());
+    let reqs = gate.requests.lock();
+    let shown = reqs[0].display.as_ref().expect("masked view");
+    assert!(!shown.to_string().contains(PW), "{shown}");
+    assert_eq!(shown["origin"], "https://login.test");
+    assert!(
+        browser
+            .calls
+            .lock()
+            .iter()
+            .any(|c| c == &format!("fill:e1:{PW}")),
+        "{:?}",
+        browser.calls.lock()
+    );
+}
+
+#[tokio::test]
+async fn a_replayed_browser_fill_into_an_unreadable_field_types_nothing() {
+    let browser = FakeBrowser::new(LOGIN_PAGE);
+    browser.facts.lock().insert(
+        "e1".into(),
+        browser_facts(builtin_tools::FieldKind::Unknown),
+    );
+    let report = replayer(
+        handles(None, Some(browser.clone())),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        &browser_login_wf(),
+        &params(&json!({"pw": PW})),
+        &RecordingGate::default(),
+    )
+    .await
+    .unwrap();
+    assert!(!report.is_completed());
+    assert!(!browser.calls.lock().iter().any(|c| c.starts_with("fill:")));
+}
+
+#[tokio::test]
+async fn workflow_run_masks_only_the_parameters_the_workflow_declares_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(dir.path());
+    let mut wf = browser_login_wf();
+    wf.params.push(Param {
+        name: "user".into(),
+        ty: ParamType::String,
+        default: Some("ada".into()),
+        description: String::new(),
+        secret: false,
+    });
+    store.save(&wf).unwrap();
+    let tools = bound_tools(
+        store,
+        handles(None, None),
+        Arc::new(RecordingGate::default()),
+        ReplayOptions::instant(),
+    );
+    let run = tools
+        .iter()
+        .find(|t| t.spec().name == "workflow_run")
+        .unwrap();
+    let ctx = ToolContext::default();
+    let input = json!({"name": "login", "params": {"pw": PW, "user": "ada-lovelace"}});
+    let shown = run.display_input(&ctx, &input).await.expect("masked");
+    assert!(!shown.to_string().contains(PW), "{shown}");
+    assert_eq!(
+        shown["params"]["user"], "ada-lovelace",
+        "ordinary params stay readable"
+    );
+    assert!(tool_registry::is_masked_secret(
+        shown["params"]["pw"].as_str().unwrap()
+    ));
+    // Nothing secret given: shown as is.
+    assert!(
+        run.display_input(&ctx, &json!({"name": "login", "params": {"user": "x"}}))
+            .await
+            .is_none()
+    );
+    // A long or multi-line "secret" is not masked: the user reads it.
+    let long = json!({"name": "login", "params": {"pw": "two words"}});
+    assert!(run.display_input(&ctx, &long).await.is_none());
 }

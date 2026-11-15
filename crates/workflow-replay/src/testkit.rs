@@ -148,6 +148,8 @@ pub struct FakeBrowser {
     pub page: Mutex<String>,
     pub calls: Mutex<Vec<String>>,
     pub eval_result: Mutex<Value>,
+    /// What the snapshot says about a ref (`field_facts`).
+    pub facts: Mutex<std::collections::HashMap<String, builtin_tools::FieldFacts>>,
 }
 
 impl FakeBrowser {
@@ -156,6 +158,7 @@ impl FakeBrowser {
             page: Mutex::new(page.to_owned()),
             calls: Mutex::new(Vec::new()),
             eval_result: Mutex::new(json!(1)),
+            facts: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -208,6 +211,9 @@ impl BrowserDriver for FakeBrowser {
     async fn eval(&self, js: &str) -> Result<Value, String> {
         self.calls.lock().push(format!("eval:{js}"));
         Ok(self.eval_result.lock().clone())
+    }
+    async fn field_facts(&self, r: &str) -> Option<builtin_tools::FieldFacts> {
+        self.facts.lock().get(r).cloned()
     }
 }
 

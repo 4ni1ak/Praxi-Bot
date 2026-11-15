@@ -557,6 +557,22 @@ impl Replayer {
         effect: Effect,
         input: Value,
     ) -> Result<(), Stop> {
+        self.authorize_shown(gate, tool, category, effect, input, None)
+            .await
+    }
+
+    /// [`Self::authorize`] with a view of `input` the replayer derived from its
+    /// own resolved snapshot (a typed secret masked); the gate shows it instead
+    /// of asking the tool, which has no observation of a replayed run.
+    async fn authorize_shown(
+        &self,
+        gate: &dyn ToolGate,
+        tool: &str,
+        category: PermissionCategory,
+        effect: Effect,
+        input: Value,
+        display: Option<Value>,
+    ) -> Result<(), Stop> {
         let req = GateRequest {
             run_id: self.opts.run_id.clone(),
             tool: tool.to_owned(),
@@ -564,6 +580,7 @@ impl Replayer {
             effect,
             raw_command: raw_command_for(tool, &input),
             input,
+            display,
         };
         gate.authorize(&req).await.map_err(Stop::Denied)
     }
@@ -903,12 +920,40 @@ impl Replayer {
             ),
             DesktopActionKind::Key => ("desktop_key", json!({"keys": value, "index": index_json})),
         };
-        self.authorize(
+        // A display placeholder is never typed; a secure field's value is
+        // masked in the approval from THIS replay's own observation.
+        let typed = match d.action {
+            DesktopActionKind::Type | DesktopActionKind::SetValue => value.as_deref(),
+            _ => None,
+        };
+        if typed.is_some_and(tool_registry::is_masked_secret) {
+            return Err(Stop::Failed(tool_registry::placeholder_refusal()));
+        }
+        let display = match (typed, &snap, &found) {
+            (Some(text), Some(s), Some(f))
+                if s.nodes[f.node].states.iter().any(|st| st == "secure") =>
+            {
+                tool_registry::display_secret(text, "password field").map(|masked| {
+                    let key = if d.action == DesktopActionKind::Type {
+                        "text"
+                    } else {
+                        "value"
+                    };
+                    let mut view = input.clone();
+                    view[key] = json!(masked);
+                    view["field"] = json!(s.nodes[f.node].name);
+                    view
+                })
+            }
+            _ => None,
+        };
+        self.authorize_shown(
             gate,
             tool,
             PermissionCategory::Desktop,
             Effect::Write,
             input,
+            display,
         )
         .await?;
 
@@ -1076,12 +1121,38 @@ impl Replayer {
                 BrowserActionKind::Press => ("browser_press", json!({"key": value})),
                 BrowserActionKind::Back => ("browser_back", json!({})),
             };
-            self.authorize(
+            // A fill is judged on the live driver's own facts for the resolved
+            // ref: refused when they are unreadable or the text is a display
+            // placeholder, shown masked for a real credential input, and bound
+            // to that field when it is typed.
+            let mut expected: Option<builtin_tools::FieldFacts> = None;
+            let mut display = None;
+            if b.action == BrowserActionKind::Fill {
+                let text = value.as_deref().unwrap_or_default();
+                if tool_registry::is_masked_secret(text) {
+                    return Err(Stop::Failed(tool_registry::placeholder_refusal()));
+                }
+                if let Some(r) = &r {
+                    expected = driver.field_facts(r).await;
+                }
+                if let Some(x) = &expected {
+                    if x.kind == builtin_tools::FieldKind::Unknown {
+                        return Err(Stop::Failed(
+                            "the page's field facts could not be read; nothing was typed".into(),
+                        ));
+                    }
+                    display = r
+                        .as_deref()
+                        .and_then(|r| builtin_tools::fill_view_of(x, r, text));
+                }
+            }
+            self.authorize_shown(
                 gate,
                 tool,
                 PermissionCategory::Browser,
                 Effect::Write,
                 input,
+                display,
             )
             .await?;
             let need = || "browser step has no target".to_owned();
@@ -1092,9 +1163,12 @@ impl Replayer {
                     match action {
                         BrowserActionKind::Click => driver.click(&r.ok_or_else(need)?).await,
                         BrowserActionKind::Fill => {
-                            driver
-                                .fill(&r.ok_or_else(need)?, value.as_deref().unwrap_or_default())
-                                .await
+                            let r = r.ok_or_else(need)?;
+                            let text = value.as_deref().unwrap_or_default();
+                            match &expected {
+                                Some(x) => driver.fill_checked(&r, text, x).await,
+                                None => driver.fill(&r, text).await,
+                            }
                         }
                         BrowserActionKind::Select => {
                             driver

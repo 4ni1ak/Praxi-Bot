@@ -232,6 +232,25 @@ impl Tool for WorkflowRun {
         }
         Ok(ToolOutput::text(summarize(&report)))
     }
+
+    /// The parameters the workflow declares `secret` are shown masked (a
+    /// short single-line token only), so a password handed to a recorded login
+    /// is not in the approval, the event or the stored call.
+    async fn display_input(&self, _ctx: &ToolContext, input: &Value) -> Option<Value> {
+        let i: RunInput = serde_json::from_value(input.clone()).ok()?;
+        let wf = self.store.get(&i.name).ok()?;
+        let mut view = input.clone();
+        let mut changed = false;
+        for p in wf.params.iter().filter(|p| p.secret) {
+            if let Some(Value::String(v)) = i.params.get(&p.name)
+                && let Some(masked) = tool_registry::display_secret(v, "secret parameter")
+            {
+                view["params"][&p.name] = Value::String(masked);
+                changed = true;
+            }
+        }
+        changed.then_some(view)
+    }
 }
 
 /// Text the agent reads after a replay.

@@ -257,13 +257,13 @@ impl Shared {
         name: &str,
         input: &Value,
     ) -> Option<Value> {
-        let tool = self.tools.get(name)?;
         let tctx = tool_registry::ToolContext {
             run_id: ctx.run_id.to_string(),
             bot_id: Some(ctx.bot_id.to_string()),
             ..tool_registry::ToolContext::default()
         };
-        tool.display_input(&tctx, input).await
+        // Only the closed set of builtin tools, and only a checked mask patch.
+        self.tools.display_input(name, &tctx, input).await
     }
 
     /// [`Self::display_tool_input`] for a call as the model wrote it: a
@@ -556,7 +556,25 @@ impl Shared {
         effect: Effect,
         category: PermissionCategory,
         input: &Value,
+        details: Option<Value>,
+    ) -> Result<ExecPermit, Option<String>> {
+        self.request_approval_shown(ctx, call_id, name, effect, category, input, details, None)
+            .await
+    }
+
+    /// [`Self::request_approval`] with a view of `input` the caller derived
+    /// itself (see `GateRequest::display`); `None` asks the tool.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn request_approval_shown(
+        self: &Arc<Self>,
+        ctx: &Arc<RunCtx>,
+        call_id: ToolCallId,
+        name: &str,
+        effect: Effect,
+        category: PermissionCategory,
+        input: &Value,
         mut details: Option<Value>,
+        supplied: Option<Value>,
     ) -> Result<ExecPermit, Option<String>> {
         // The tool's token for this approval: kept for the close guard, never shown.
         let token = details.as_ref().and_then(approval_ref);
@@ -577,7 +595,10 @@ impl Shared {
         let prefix = computer_approval(ctx, name, category, &mut details);
         // The card, the summary and the event show what the tool says may be
         // shown (a typed secret masked); `input` stays raw for the tool.
-        let shown = self.display_tool_input(ctx, name, input).await;
+        let shown = match supplied {
+            Some(view) => Some(view),
+            None => self.display_tool_input(ctx, name, input).await,
+        };
         let args = shown.as_ref().map_or(args, Value::to_string);
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
@@ -1037,7 +1058,7 @@ impl ToolGate for LoopGate {
                     .approval_details(&ctx, &req.tool, &req.input)
                     .await
                     .map_err(|e| format!("{}: {e}", req.tool))?;
-                sh.request_approval(
+                sh.request_approval_shown(
                     &ctx,
                     ToolCallId::new(),
                     &req.tool,
@@ -1045,6 +1066,7 @@ impl ToolGate for LoopGate {
                     req.category,
                     &req.input,
                     details,
+                    req.display.clone(),
                 )
                 .await
                 .and_then(ExecPermit::commit)
