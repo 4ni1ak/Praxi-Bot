@@ -134,7 +134,7 @@ impl Storage {
         std::fs::create_dir_all(&data_dir)?;
         // Resolve host-selected relative paths and symlinked home directories
         // once, before any knowledge capability treats this root as trusted.
-        let data_dir = std::fs::canonicalize(data_dir)?;
+        let data_dir = crate::paths::without_verbatim_prefix(std::fs::canonicalize(data_dir)?);
         let conn = Connection::open(data_dir.join("bot.db"))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -1418,6 +1418,17 @@ fn audit_row(r: &Row<'_>) -> rusqlite::Result<AuditEntry> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn data_dir_is_canonical_but_never_a_verbatim_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path().join("nested").join("..")).unwrap();
+        assert!(!st.data_dir().to_string_lossy().starts_with("\\\\?\\"));
+        assert_eq!(
+            std::fs::canonicalize(st.data_dir()).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
+    }
 
     struct Fx {
         st: Storage,
