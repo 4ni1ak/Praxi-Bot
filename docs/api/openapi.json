@@ -4161,6 +4161,219 @@
         ]
       }
     },
+    "/v1/hosts/setup": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_setup_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartHostSetupInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostSetupJob"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/setup/ssh-keys": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_setup_ssh_keys",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshKeyList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/setup/{job}": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_setup_get",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostSetupJob"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/setup/{job}/cancel": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_setup_cancel",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostSetupJob"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/setup/{job}/host-key": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_setup_host_key",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostKeyAnswer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostSetupJob"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}": {
+      "delete": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_forget",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/hosts/{id}/connect": {
       "post": {
         "tags": [
@@ -10477,6 +10690,40 @@
           }
         }
       },
+      "HostKeyAnswer": {
+        "type": "object",
+        "description": "`POST /v1/hosts/setup/{job}/host-key`.",
+        "required": [
+          "accept"
+        ],
+        "properties": {
+          "accept": {
+            "type": "boolean"
+          }
+        }
+      },
+      "HostKeyPrompt": {
+        "type": "object",
+        "description": "The server's SSH host key, shown on first use.",
+        "required": [
+          "host",
+          "port",
+          "fingerprint"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "HostLimits": {
         "type": "object",
         "properties": {
@@ -10629,6 +10876,128 @@
             "type": "string"
           }
         }
+      },
+      "HostSetupJob": {
+        "type": "object",
+        "description": "A setup job as seen by the app (poll `GET /v1/hosts/setup/{job}`).",
+        "required": [
+          "id",
+          "state",
+          "target",
+          "steps",
+          "notes",
+          "install_available"
+        ],
+        "properties": {
+          "host_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Paired host id once pairing worked: select it in the computer list."
+          },
+          "host_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HostKeyPrompt"
+              }
+            ]
+          },
+          "host_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "install_available": {
+            "type": "boolean",
+            "description": "False while Praxi has no published release: only a server that already\nruns Praxi can be added."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Free-text progress lines (\"installing ...\")."
+          },
+          "state": {
+            "$ref": "#/components/schemas/HostSetupState"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostSetupStep"
+            }
+          },
+          "target": {
+            "type": "string",
+            "description": "`user@host:port` being set up."
+          },
+          "view_targets": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Live-view targets on the host (`null`: not known / older host).",
+            "minimum": 0
+          }
+        }
+      },
+      "HostSetupState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "awaiting_host_key",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "HostSetupStep": {
+        "type": "object",
+        "description": "One finished step. Texts are English and technical (for \"copy details\");\nthe app shows its own localised sentence per `id`.",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HostSetupStepStatus"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "HostSetupStepStatus": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "warn",
+          "fail",
+          "skip"
+        ]
       },
       "HostState": {
         "type": "string",
@@ -14331,6 +14700,79 @@
             "format": "int64",
             "description": "Event streams open right now.",
             "minimum": 0
+          }
+        }
+      },
+      "SshKeyHint": {
+        "type": "object",
+        "description": "A private key file found in `~/.ssh` (path only).",
+        "required": [
+          "name",
+          "path"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "SshKeyList": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SshKeyHint"
+            }
+          }
+        }
+      },
+      "StartHostSetupInput": {
+        "type": "object",
+        "description": "`POST /v1/hosts/setup`.",
+        "required": [
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "Host name or IP address of the server."
+          },
+          "key_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Path of a private key file. Omit to use the SSH agent. Only the path is\nused: the file is never copied into Praxi's data or logs."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local name for the server (default: derived from the address)."
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "SSH port (default 22).",
+            "minimum": 0
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SSH user (default `ubuntu`)."
           }
         }
       },

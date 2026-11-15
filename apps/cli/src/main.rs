@@ -14,6 +14,7 @@ mod host;
 mod host_links;
 mod host_provision;
 mod host_runtime;
+mod host_setup;
 mod mcp_host;
 mod mcp_paste;
 mod mcp_serve;

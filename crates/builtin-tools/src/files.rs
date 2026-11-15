@@ -4022,6 +4022,23 @@ mod tests {
     }
 
     #[test]
+    fn server_provisioning_state_is_protected_for_every_spelling() {
+        // `hosts/ssh_config` goes to `ssh -F` and `hosts/known_hosts` pins server
+        // identities: a bot must not write, move, delete or restore them.
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            "hosts/ssh_config",
+            "hosts/known_hosts",
+            "hosts/oracle/host.json",
+            "HOSTS/ssh_config",
+            "hosts./ssh_config",
+            "hosts/ssh_config::$DATA",
+        ] {
+            assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
+        }
+    }
+
+    #[test]
     fn cli_configuration_and_credentials_are_protected_even_in_broad_roots() {
         // The data folder is elsewhere: the whole daemon folder is protected by default.
         let outside = tempfile::tempdir().unwrap();

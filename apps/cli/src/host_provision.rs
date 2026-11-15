@@ -186,6 +186,28 @@ impl LocalHost for LocalDaemon<'_> {
         })
     }
 
+    fn host_ids(&self) -> Vec<String> {
+        let Ok(c) = self.local() else {
+            return Vec::new();
+        };
+        self.call(&c, Method::GET, "/v1/hosts", None)
+            .ok()
+            .and_then(|v| {
+                v["hosts"].as_array().map(|h| {
+                    h.iter()
+                        .filter_map(|x| x["id"].as_str().map(str::to_owned))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    fn forget_host(&self, id: &str) -> std::result::Result<(), String> {
+        let c = self.local()?;
+        self.call(&c, Method::DELETE, &format!("/v1/hosts/{id}"), None)
+            .map(|_| ())
+    }
+
     fn revoke_host(&self, id: &str) -> std::result::Result<(), String> {
         let c = self.local()?;
         let key = peer_network::key_from_string(id).map_err(|e| e.to_string())?;
@@ -204,7 +226,7 @@ fn resolve(store: &Store, args: &TargetArgs) -> Result<HostRecord> {
     )
 }
 
-fn resolve_parts(
+pub(crate) fn resolve_parts(
     store: &Store,
     target: &str,
     port: Option<u32>,
@@ -243,7 +265,7 @@ fn resolve_parts(
     Ok(rec)
 }
 
-fn transport(store: &Store, rec: &HostRecord) -> Result<OpenSshTransport> {
+pub(crate) fn transport(store: &Store, rec: &HostRecord) -> Result<OpenSshTransport> {
     let paths = SshPaths {
         ssh: host_provision::ssh::resolve_binary("ssh")?,
         keyscan: host_provision::ssh::resolve_binary("ssh-keyscan")?,
@@ -317,6 +339,7 @@ pub fn run(cmd: &ProvisionCmd, data_dir: &Path, client: &dyn Fn() -> Result<Clie
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             desktop: !args.no_desktop,
             retry_delay: Duration::from_secs(5),
+            allow_install: true,
         },
     };
     let report = engine.run();
@@ -391,6 +414,7 @@ fn remove(
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             desktop: true,
             retry_delay: Duration::ZERO,
+            allow_install: true,
         },
     };
     let report = engine.remove(level);

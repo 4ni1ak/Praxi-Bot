@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { hostAcceptsWork, type LinkState } from "../lib/hostState";
 import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
 import styles from "./ComputerPicker.module.css";
+import { AddServerModal } from "./AddServerModal";
 import { PairHostModal } from "./PairHostModal";
 import { Popover } from "./Popover";
 import { useToast } from "./Toast";
@@ -38,6 +39,7 @@ export function ComputerPicker() {
     stopHostRuns
   } = useDaemon();
   const [open, setOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -149,7 +151,7 @@ export function ComputerPicker() {
           data-testid="computer-add"
           onClick={() => {
             setOpen(false);
-            setPairOpen(true);
+            setAddOpen(true);
           }}
         >
           <Plus aria-hidden="true" className={styles.icon} />
@@ -174,6 +176,14 @@ export function ComputerPicker() {
           </button>
         ) : null}
       </Popover>
+      <AddServerModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onManual={() => {
+          setAddOpen(false);
+          setPairOpen(true);
+        }}
+      />
       <PairHostModal open={pairOpen} onClose={() => setPairOpen(false)} />
     </>
   );

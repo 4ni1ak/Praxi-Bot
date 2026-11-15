@@ -25,6 +25,9 @@ import type {
   Health,
   HostLinkConnection,
   HostLinkInfo,
+  HostSetupJob,
+  SshKeyHint,
+  StartHostSetupInput,
   HostLinkList,
   EmailAccount,
   EmailAccountInput,
@@ -292,6 +295,26 @@ export class ApiClient {
   }
   disconnectHost(id: string): Promise<void> {
     return this.request("DELETE", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
+  /** "Add server" wizard (this computer's own daemon, local owner only). */
+  startHostSetup(input: StartHostSetupInput): Promise<HostSetupJob> {
+    return this.request("POST", "/hosts/setup", { body: input });
+  }
+  getHostSetup(job: string): Promise<HostSetupJob> {
+    return this.request("GET", `/hosts/setup/${encodeURIComponent(job)}`);
+  }
+  answerHostSetupKey(job: string, accept: boolean): Promise<HostSetupJob> {
+    return this.request("POST", `/hosts/setup/${encodeURIComponent(job)}/host-key`, {
+      body: { accept }
+    });
+  }
+  cancelHostSetup(job: string): Promise<HostSetupJob> {
+    return this.request("POST", `/hosts/setup/${encodeURIComponent(job)}/cancel`);
+  }
+  /** Private key files found in `~/.ssh` (paths only). */
+  async listSshKeys(): Promise<SshKeyHint[]> {
+    const r = await this.request<{ keys: SshKeyHint[] }>("GET", "/hosts/setup/ssh-keys");
+    return r.keys;
   }
   listBots(): Promise<Bot[]> {
     return this.request("GET", "/bots");
