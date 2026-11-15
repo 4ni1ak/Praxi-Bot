@@ -33,8 +33,8 @@ use crate::history::{
 };
 use crate::router::{RoutePlan, route_hints};
 use crate::shared::{
-    CallRec, ModelOut, ResultRec, RunCtx, STEP_COMMAND, STEP_MODEL, STEP_TOOLS, STEP_USER,
-    STEP_WORKFLOW, Shared, xe,
+    CallRec, ModelOut, ResultRec, RunCtx, STEP_COMMAND, STEP_MODEL, STEP_NUDGE, STEP_TOOLS,
+    STEP_USER, STEP_WORKFLOW, Shared, xe,
 };
 
 pub(crate) struct TurnExecutor {
@@ -140,6 +140,25 @@ fn call_key(name: &str, args: &str) -> (String, Value) {
     (name.to_owned(), v)
 }
 
+/// True when the turn's last model step ended with no text after tool calls
+/// and no nudge was sent yet (one nudge per turn).
+fn silent_end(history: &[RunStep]) -> bool {
+    let Some(last) = history.last() else {
+        return false;
+    };
+    let blank = step_output::<ModelOut>(last)
+        .is_some_and(|m| m.text.trim().is_empty() && !m.stopped_by_guard);
+    let turn_start = history
+        .iter()
+        .rposition(|s| s.name == STEP_USER)
+        .unwrap_or(0);
+    let turn = &history[turn_start..];
+    blank && turn.iter().any(|s| s.name == STEP_TOOLS) && !turn.iter().any(|s| s.name == STEP_NUDGE)
+}
+
+/// Shown when the model is still silent after the nudge (never end empty).
+const SILENT_FALLBACK: &str = "The model returned no answer after using tools, so I could not finish this. Try again or pick a stronger model. / Model araçları kullandıktan sonra yanıt vermedi; tekrar dene ya da daha güçlü bir model seç.";
+
 fn user_step(text: &str) -> StepSpec {
     StepSpec {
         name: STEP_USER.to_owned(),
@@ -180,6 +199,7 @@ impl StepExecutor for TurnExecutor {
     ) -> Result<Value, ExecError> {
         match step.name.as_str() {
             STEP_USER => Ok(json!({ "text": step.input["text"] })),
+            STEP_NUDGE => Ok(json!({})),
             STEP_MODEL => self.exec_model(run, step, cancel).await,
             STEP_TOOLS => self.exec_tools(run, step).await,
             STEP_WORKFLOW => self.exec_workflow(run, step).await,
@@ -239,6 +259,7 @@ impl TurnExecutor {
             .ok_or_else(|| xe("turn has no user message"))
     }
 
+    #[allow(clippy::too_many_lines)] // one ordered planning pass; the order is the contract
     fn plan_next(&self, run: &Run, history: &[RunStep]) -> Result<Option<StepSpec>, ExecError> {
         let ctx = self.sh.ctx(run)?;
         // A session can have performed side effects before its model step was
@@ -303,6 +324,9 @@ impl TurnExecutor {
                 return Ok(Some(user_step(&text)));
             }
             if finished {
+                if let Some(step) = self.nudge_step(&ctx, history, model_steps) {
+                    return Ok(Some(step));
+                }
                 st.closed = true;
                 return Ok(None);
             }
@@ -334,6 +358,9 @@ impl TurnExecutor {
             .chain(&ctx.profile.models.fallback)
             .any(|m| m.starts_with("cli:"));
         let mut input = json!({ "model": ctx.profile.models.executor, "n": model_steps });
+        if history.iter().any(|s| s.name == STEP_NUDGE) {
+            input["nudged"] = json!(true);
+        }
         if cli_session {
             input["cli_session"] = json!(true);
         }
@@ -345,6 +372,23 @@ impl TurnExecutor {
             // which provider errors are worth retrying.
             retry: None,
         }))
+    }
+
+    /// The one-per-turn nudge when the model went silent after tool calls.
+    fn nudge_step(
+        &self,
+        ctx: &RunCtx,
+        history: &[RunStep],
+        model_steps: usize,
+    ) -> Option<StepSpec> {
+        let g = &self.sh.cfg.guards;
+        let limit = ctx.sub.as_ref().map_or(g.max_steps, |s| s.max_steps);
+        (silent_end(history) && model_steps < limit as usize).then(|| StepSpec {
+            name: STEP_NUDGE.to_owned(),
+            input: json!({}),
+            idempotent: true,
+            retry: None,
+        })
     }
 
     /// The closing, tool-less model call that replaces a hard failure when a
@@ -496,6 +540,16 @@ impl TurnExecutor {
             .map(|r| GUARD_NOTE.replace("{reason}", r));
         let (skills, suggested_skills) =
             self.skills_block(run.id, &ctx, &steps, &hints.skills, &specs);
+        // Discovery mode: say where the tools are (stable block, before the skills index).
+        let skills = match (self.sh.discovery_block(&ctx, &specs), skills) {
+            (Some(d), Some(s)) => Some(format!(
+                "{d}
+
+{s}"
+            )),
+            (Some(d), None) => Some(d),
+            (None, s) => s,
+        };
         let lookup = |n: &str| self.sh.tools.get(n).map(|t| t.spec().clone());
         let spill_dir = self
             .sh
@@ -526,9 +580,18 @@ impl TurnExecutor {
         req.max_tokens = self.sh.cfg.max_tokens;
         req.temperature = self.sh.cfg.temperature;
 
+        let purpose = if guard_reason.is_some() {
+            crate::CallPurpose::GuardClose
+        } else {
+            crate::CallPurpose::Executor
+        };
         if primary.starts_with("cli:") {
+            let mut call =
+                crate::usage::CallGuard::start(&self.sh, &ctx, &primary, purpose).map_err(xe)?;
             let out = self.exec_cli(run, &req, &specs, cancel).await?;
-            self.audit_usage(&ctx, &out);
+            if let Some(usage) = &out.usage {
+                call.usage(usage);
+            }
             return serde_json::to_value(out).map_err(xe);
         }
 
@@ -554,10 +617,12 @@ impl TurnExecutor {
             }
             req.model = ModelRef((*name).clone());
             let timeout = self.sh.cfg.guards.model_timeout;
-            let attempt =
-                tokio::time::timeout(timeout, self.call_with_retries(&ctx, run, &req, &specs))
-                    .await
-                    .unwrap_or(Err(ProviderError::Timeout));
+            let attempt = tokio::time::timeout(
+                timeout,
+                self.call_with_retries(&ctx, run, &req, &specs, purpose),
+            )
+            .await
+            .unwrap_or(Err(ProviderError::Timeout));
             match attempt {
                 Ok(out) => {
                     result = Some(out);
@@ -592,6 +657,20 @@ impl TurnExecutor {
             };
             return Err(xe(message));
         };
+        if guard_reason.is_none()
+            && step.input["nudged"] == true
+            && out.text.trim().is_empty()
+            && out.tool_calls.is_empty()
+        {
+            self.sh.emit(
+                &ctx,
+                Event::MessageDelta(MessageDelta {
+                    run_id: run.id,
+                    text: SILENT_FALLBACK.to_owned(),
+                }),
+            );
+            SILENT_FALLBACK.clone_into(&mut out.text);
+        }
         if let Some(reason) = guard_reason {
             // Tools were disabled: ignore anything the model still tried to call.
             out.tool_calls.clear();
@@ -604,30 +683,7 @@ impl TurnExecutor {
             );
             out.guard_reason = Some(reason);
         }
-        self.audit_usage(&ctx, &out);
         serde_json::to_value(out).map_err(xe)
-    }
-
-    /// Records a `usage` audit entry (tokens and estimated cost) for a model
-    /// step that reported usage.
-    fn audit_usage(&self, ctx: &RunCtx, out: &ModelOut) {
-        if let Some(u) = &out.usage {
-            let cost = self
-                .sh
-                .price_for(&out.model)
-                .map(|p| p.cost(u.prompt_tokens, u.completion_tokens, u.cached_tokens));
-            let mut detail = json!({
-                "model": out.model,
-                "prompt_tokens": u.prompt_tokens,
-                "completion_tokens": u.completion_tokens,
-                "cached_tokens": u.cached_tokens,
-                "cost_usd": cost,
-            });
-            if out.model.starts_with("cli:") {
-                detail["cost_source"] = json!("subscription_estimate");
-            }
-            self.sh.audit(ctx, "bot", "usage", &detail);
-        }
     }
 
     /// The skills index block for the system prompt (name-ordered, so it does
@@ -719,6 +775,7 @@ impl TurnExecutor {
         run: &Run,
         req: &ChatRequest,
         specs: &[ToolSpec],
+        purpose: crate::CallPurpose,
     ) -> Result<ModelOut, ProviderError> {
         let policy = self.sh.cfg.model_retry;
         let attempts = policy.max_attempts.max(1);
@@ -727,7 +784,10 @@ impl TurnExecutor {
         let mut attempt = 1;
         let mut malformed_retried = false;
         loop {
-            match self.stream_once(ctx, run, req.clone(), specs).await {
+            match self
+                .stream_once(ctx, run, req.clone(), specs, purpose)
+                .await
+            {
                 Ok(out) => return Ok(out),
                 // A garbled tool call is retried once, not `attempts` times.
                 Err(e @ ProviderError::MalformedToolCall(_)) if malformed_retried => {
@@ -769,16 +829,25 @@ impl TurnExecutor {
         run: &Run,
         req: ChatRequest,
         specs: &[ToolSpec],
+        purpose: crate::CallPurpose,
     ) -> Result<ModelOut, ProviderError> {
         // A CLI selected by the HTTP fallback chain is also a whole session.
         if req.model.0.starts_with("cli:") {
-            return self
+            let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &req.model.0, purpose)
+                .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
+            let out = self
                 .exec_cli(run, &req, specs, &CancellationToken::new())
                 .await
-                .map_err(|e| ProviderError::InvalidRequest(e.0));
+                .map_err(|e| ProviderError::InvalidRequest(e.0))?;
+            if let Some(usage) = &out.usage {
+                call.usage(usage);
+            }
+            return Ok(out);
         }
         let model = req.model.clone();
         let provider = self.sh.providers.read().pick(&model)?;
+        let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &model.0, purpose)
+            .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
         let mut stream = provider.stream(req).await?;
         let mut out = ModelOut {
             model: model.0,
@@ -802,7 +871,10 @@ impl TurnExecutor {
                     }
                     out.tool_calls.push(tc);
                 }
-                ChatChunk::Usage(u) => out.usage = Some(u),
+                ChatChunk::Usage(u) => {
+                    call.usage(&u);
+                    out.usage = Some(u);
+                }
                 ChatChunk::Done { finish_reason } => {
                     out.finish = format!("{finish_reason:?}");
                     break;
@@ -946,30 +1018,49 @@ impl TurnExecutor {
                         continue;
                     }
                 };
-                match self
+                // An owner-created standing grant that covers exactly this
+                // call (verified by the tool against the live facts) stands in
+                // for the card. Nothing else can: policy, presets and grants
+                // were already overridden to Ask for such a call.
+                if self
                     .sh
-                    .request_approval(
-                        &ctx,
-                        call_uuid,
-                        &resolved.name,
-                        effect,
-                        category,
-                        &resolved.input,
-                        details,
-                    )
+                    .standing_grant(&ctx, &resolved.name, &resolved.input)
                     .await
+                    .is_some()
                 {
-                    Ok(permit) => Slot::Run {
+                    Slot::Run {
                         tool,
                         input,
                         call: call_uuid,
                         meta,
-                        permit: Some(permit),
-                    },
-                    Err(reason) => Slot::Done {
-                        text: user_denied(reason),
-                        is_error: true,
-                    },
+                        permit: None,
+                    }
+                } else {
+                    match self
+                        .sh
+                        .request_approval(
+                            &ctx,
+                            call_uuid,
+                            &resolved.name,
+                            effect,
+                            category,
+                            &resolved.input,
+                            details,
+                        )
+                        .await
+                    {
+                        Ok(permit) => Slot::Run {
+                            tool,
+                            input,
+                            call: call_uuid,
+                            meta,
+                            permit: Some(permit),
+                        },
+                        Err(reason) => Slot::Done {
+                            text: user_denied(reason),
+                            is_error: true,
+                        },
+                    }
                 }
             } else {
                 Slot::Run {

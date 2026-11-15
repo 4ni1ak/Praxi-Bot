@@ -3,14 +3,13 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { BotAvatar, Button } from "ui";
 import type { Bot } from "../api/types";
+import { BotAvatarUploadField, useBotFormDeps } from "../components/BotAdvancedFields";
 import {
-  BotAppsFields,
-  BotAvatarUploadField,
-  BotModelRolesFields,
-  BotPermissionsFields,
-  BotRuntimeFields,
-  useBotFormDeps
-} from "../components/BotAdvancedFields";
+  AdvancedFields,
+  AppFields,
+  ModelFields,
+  PermissionFields
+} from "../components/BotEditorFields";
 import { CharacterColorRow, CharacterShapeGrid } from "../components/CharacterPicker";
 import formStyles from "../components/Form.module.css";
 import { Modal } from "../components/Modal";
@@ -31,9 +30,11 @@ import {
   presetToAutonomy,
   resolveAutoExecutorRef
 } from "../lib/botProfile";
+import { invalidCustomRoles } from "../lib/botEditor";
 import { botHasAccess, changedApps, saveBotAndApps } from "../lib/mcpApps";
 import { modelGroups } from "../lib/modelPicker";
 import { useDaemon } from "../state/DaemonContext";
+import { useCustomText } from "../state/useCustomText";
 import styles from "./NewBotModal.module.css";
 
 function NewBotDialogContent({
@@ -47,15 +48,13 @@ function NewBotDialogContent({
   const { client, bots, conn, refreshBots } = useDaemon();
   const {
     providersDto,
-    providerIds,
-    httpProviders,
     servers,
     setServers,
     allowed,
     setAllowed,
     initialApps,
     setInitialApps
-  } = useBotFormDeps(client, undefined, Boolean(conn?.fake_provider), true);
+  } = useBotFormDeps(client, undefined, true);
 
   const [createdBot, setCreatedBot] = useState<Bot | null>(null);
   const [templateId, setTemplateId] = useState<BotTemplateId | null>("blank");
@@ -69,7 +68,11 @@ function NewBotDialogContent({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const patch = (p: Partial<BotDraft>) => setDraft((d) => ({ ...d, ...p }));
+  const { customText, setCustom, forgetFor } = useCustomText(setDraft);
+  const patch = (p: Partial<BotDraft>) => {
+    setDraft((d) => ({ ...d, ...p }));
+    forgetFor(p);
+  };
 
   const autoExecutor = useMemo(
     () => resolveAutoExecutorRef(providersDto, Boolean(conn?.fake_provider)),
@@ -103,9 +106,13 @@ function NewBotDialogContent({
   const activeAutonomy = presetToAutonomy(draft.preset);
   const nameMissing = draft.name.trim() === "";
   const executorMissing = effectiveExecutor.model.trim() === "";
+  // An unusable hand-typed id blocks creating the bot, as it blocks saving an edit.
+  const [pendingFallback, setPendingFallback] = useState("");
+  const customInvalid =
+    invalidCustomRoles(customText).length > 0 || pendingFallback.trim() !== "";
 
   const save = async () => {
-    if (!client || nameMissing || executorMissing || saving) {
+    if (!client || nameMissing || executorMissing || customInvalid || saving) {
       return;
     }
     setSaving(true);
@@ -353,12 +360,12 @@ function NewBotDialogContent({
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.models")}</h3>
-              <BotModelRolesFields
+              <ModelFields
                 draft={effectiveDraft}
-                providerIds={providerIds}
-                httpProviders={httpProviders}
                 providersDto={providersDto}
                 executorMissing={executorMissing}
+                pendingFallback={pendingFallback}
+                onPendingFallback={setPendingFallback}
                 patch={(next) => {
                   if (next.executor) {
                     setBrainMode("manual");
@@ -370,12 +377,12 @@ function NewBotDialogContent({
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.permissions")}</h3>
-              <BotPermissionsFields draft={draft} patch={patch} />
+              <PermissionFields draft={draft} patch={patch} />
             </div>
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.apps.title")}</h3>
-              <BotAppsFields
+              <AppFields
                 servers={servers}
                 allowed={allowed}
                 onToggle={(name, checked) =>
@@ -384,10 +391,19 @@ function NewBotDialogContent({
               />
             </div>
 
-            <div>
-              <h3 className={styles.advancedHeading}>{t("botForm.runtime")}</h3>
-              <BotRuntimeFields draft={draft} patch={patch} />
-            </div>
+            <AdvancedFields
+              draft={effectiveDraft}
+              customText={customText}
+              onCustomText={(role, text) => {
+                if (role === "executor") setBrainMode("manual");
+                setCustom(role, text);
+              }}
+              computerTarget="local"
+              browserTarget="local"
+              deleteBlocked={null}
+              chatCount={0}
+              runCount={0}
+            />
           </div>
         ) : null}
 
@@ -405,7 +421,7 @@ function NewBotDialogContent({
         <Button
           type="submit"
           variant="primary"
-          disabled={saving || nameMissing || executorMissing}
+          disabled={saving || nameMissing || executorMissing || customInvalid}
           data-testid="new-bot-submit"
         >
           {t("newBot.create")}

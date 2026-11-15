@@ -48,19 +48,67 @@ impl Drop for SecretValue {
 
 impl ZeroizeOnDrop for SecretValue {}
 
+/// Whether `name` is an OAuth record the MCP bridge manages itself
+/// (`mcp/<server>/oauth`, `mcp/<server>/oauth-client`, ...): access and
+/// refresh tokens and issued client secrets.  Such records are read and
+/// written only by the bridge's credential store; no configuration field may
+/// reference them ([`SecretRef::new`] and [`resolve`] refuse), so they can
+/// never be sent as a header, put into a child's environment or used as a
+/// provider key.  Compared case-insensitively (some keychains fold case).
+#[must_use]
+pub fn is_managed_oauth_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let mut parts = lower.split('/');
+    if parts.next() != Some("mcp") {
+        return false;
+    }
+    // Exactly `mcp/<server>/oauth` or `mcp/<server>/oauth-<part>`: names
+    // below a server (`mcp/<server>/env/OAUTH_TOKEN`) stay ordinary secrets.
+    let rest: Vec<&str> = parts.collect();
+    matches!(rest.as_slice(), [server, last]
+        if !server.is_empty() && (*last == "oauth" || last.starts_with("oauth-")))
+}
+
 /// A reference to a secret by name. Safe to persist and to show to the agent.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct SecretRef(String);
+
+impl TryFrom<String> for SecretRef {
+    type Error = SecretError;
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        // Deserialization refuses only native-integration names; managed MCP
+        // OAuth names are refused again in `resolve`, as before.
+        validate_name(&name)?;
+        if is_reserved_name(&name) {
+            return Err(SecretError::InvalidName(name));
+        }
+        if is_host_credential(&name) {
+            return Err(SecretError::InvalidName("reserved host credential".into()));
+        }
+        Ok(Self(name))
+    }
+}
+
+impl From<SecretRef> for String {
+    fn from(r: SecretRef) -> Self {
+        r.0
+    }
+}
 
 impl SecretRef {
     /// Create a reference after validating the name.
     ///
     /// # Errors
-    /// [`SecretError::InvalidName`] for empty or malformed names.
+    /// [`SecretError::InvalidName`] for empty or malformed names, and for
+    /// managed OAuth records ([`is_managed_oauth_name`]).
     pub fn new(name: impl Into<String>) -> Result<Self, SecretError> {
         let name = name.into();
         validate_name(&name)?;
+        refuse_fill_namespace(&name)?;
+        if is_reserved_name(&name) || is_managed_oauth_name(&name) {
+            return Err(SecretError::InvalidName(name));
+        }
         if is_host_credential(&name) {
             return Err(SecretError::InvalidName("reserved host credential".into()));
         }
@@ -71,12 +119,6 @@ impl SecretRef {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for SecretRef {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
@@ -93,6 +135,45 @@ pub fn is_host_credential(name: &str) -> bool {
 impl fmt::Display for SecretRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// Prefix of secrets owned by a native integration (the Composio API key).
+/// No configuration, tool, bot, peer or state export may reference or read
+/// them: [`SecretRef::new`] refuses these names, the secrets route refuses to
+/// write them and state bundles skip them.  Only the owning crate talks to the
+/// store with the literal name.
+pub const RESERVED_PREFIX: &str = "composio/";
+
+/// Whether `name` is reserved for a native integration (case-insensitive, and
+/// not fooled by leading slashes).
+#[must_use]
+pub fn is_reserved_name(name: &str) -> bool {
+    let n = name.trim_start_matches('/').to_ascii_lowercase();
+    n.starts_with(RESERVED_PREFIX) || n == "composio"
+}
+
+/// Store prefix of the owner-only fill secrets (see [`crate::FillSecrets`]).
+pub const FILL_PREFIX: &str = "fill/";
+
+/// Whether `name` is in the fill namespace (ASCII case-insensitive, so a
+/// case-folding backend cannot be used to step around the prefix).
+#[must_use]
+pub fn is_fill_name(name: &str) -> bool {
+    name.get(..FILL_PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(FILL_PREFIX))
+}
+
+/// Configuration (providers, MCP, `OpenAPI`, e-mail, channels) can never name a
+/// fill secret: only the fill tools, through [`crate::FillSecrets`], read them.
+///
+/// # Errors
+/// [`SecretError::Reserved`] for a `fill/` name.
+pub fn refuse_fill_namespace(name: &str) -> Result<(), SecretError> {
+    if is_fill_name(name) {
+        Err(SecretError::Reserved(name.to_string()))
+    } else {
+        Ok(())
     }
 }
 
@@ -144,9 +225,19 @@ pub trait SecretStore: Send + Sync {
 
 /// Resolve a [`SecretRef`] to its value. Call only at the provider / MCP boundary.
 ///
+/// A `SecretRef` can also come from deserialisation (which skips
+/// [`SecretRef::new`]), so the fill namespace is refused here as well.
+///
 /// # Errors
-/// [`SecretError::NotFound`] if the secret does not exist.
+/// [`SecretError::NotFound`] if the secret does not exist,
+/// [`SecretError::Reserved`] for a fill secret.
 pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, SecretError> {
+    refuse_fill_namespace(r.name())?;
+    // A deserialized reference skipped `SecretRef::new`: check again here,
+    // the one place every configured reference is resolved.
+    if is_managed_oauth_name(r.name()) || is_reserved_name(r.name()) {
+        return Err(SecretError::InvalidName(r.name().to_string()));
+    }
     store
         .get(r.name())?
         .ok_or_else(|| SecretError::NotFound(r.name().to_string()))
@@ -207,6 +298,75 @@ mod tests {
         assert_eq!(
             resolve(&store, &ordinary).unwrap().expose(),
             "ordinary value"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reserved_tests {
+    use super::*;
+
+    #[test]
+    fn composio_names_cannot_become_references() {
+        for n in [
+            "composio/api-key",
+            "Composio/API-KEY",
+            "/composio/x",
+            "composio",
+        ] {
+            assert!(is_reserved_name(n), "{n}");
+            assert!(SecretRef::new(n).is_err(), "{n}");
+            assert!(
+                serde_json::from_str::<SecretRef>(&format!("\"{n}\"")).is_err(),
+                "{n}"
+            );
+        }
+        assert!(SecretRef::new("mcp/github-token").is_ok());
+        assert!(serde_json::from_str::<SecretRef>("\"mcp/x\"").is_ok());
+        assert!(!is_reserved_name("composiox/a"));
+    }
+}
+
+#[cfg(test)]
+mod managed_oauth_tests {
+    use super::*;
+
+    #[test]
+    fn managed_oauth_records_can_never_be_referenced_or_resolved() {
+        let store = crate::MemoryStore::new();
+        store
+            .set("mcp/victim/oauth", "{\"access_token\":\"t\"}")
+            .unwrap();
+        store.set("mcp/victim/oauth-client", "s").unwrap();
+        store.set("mcp/victim/key", "plain").unwrap();
+        for name in [
+            "mcp/victim/oauth",
+            "MCP/Victim/OAuth",
+            "mcp/victim/oauth-client",
+        ] {
+            assert!(is_managed_oauth_name(name), "{name}");
+            assert!(SecretRef::new(name).is_err(), "{name}");
+            // A reference that came in through serde skips `new`.
+            let smuggled: SecretRef = serde_json::from_value(serde_json::json!(name)).unwrap();
+            assert!(resolve(&store, &smuggled).is_err(), "{name}");
+        }
+        for name in [
+            "mcp/victim/key",
+            "mcp_victim_oauth",
+            "oauth",
+            "mcp/oauth",
+            "github/oauth",
+            "mcp/victim/env/OAUTH_TOKEN",
+            "mcp/victim/header/oauth",
+            "mcp/victim/oauthish",
+        ] {
+            assert!(!is_managed_oauth_name(name), "{name}");
+        }
+        assert_eq!(
+            resolve(&store, &SecretRef::new("mcp/victim/key").unwrap())
+                .unwrap()
+                .expose(),
+            "plain"
         );
     }
 }

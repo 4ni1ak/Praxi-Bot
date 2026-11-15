@@ -32,7 +32,8 @@ export function ModelPicker({
   reviewOpen = true,
   thinking = false,
   placement = "bottom-end",
-  testId = "model-picker"
+  testId = "model-picker",
+  labelFor
 }: {
   groups: ModelGroup[];
   value: string;
@@ -45,6 +46,8 @@ export function ModelPicker({
   thinking?: boolean;
   placement?: PopoverPlacement;
   testId?: string;
+  /** Text shown for a model instead of its raw id (e.g. a human model name). */
+  labelFor?: (provider: string, model: string) => string;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(
@@ -62,6 +65,12 @@ export function ModelPicker({
       }),
     [groups, query]
   );
+
+  // "Other model id": a CLI accepts models its short list does not show.
+  const typed = query.trim();
+  const otherIds = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(typed)
+    ? groups.filter((g) => g.provider.startsWith("cli:") && !g.models.some((m) => m.model === typed))
+    : [];
 
   const close = useCallback(() => {
     setOpen(false);
@@ -89,6 +98,8 @@ export function ModelPicker({
 
   const [valueProvider = "", ...rest] = value.split("/");
   const valueModel = rest.join("/");
+  const valueLabel = groups.find((g) => g.provider === valueProvider)
+    ?.models.find((m) => m.ref === value)?.displayName ?? valueModel;
 
   return (
     <div className={styles.root}>
@@ -111,7 +122,9 @@ export function ModelPicker({
         <span className={styles.triggerText}>
           {autoOption?.selected
             ? autoOption.label
-            : valueModel || placeholder || t("modelPicker.none")}
+            : (valueModel && labelFor ? labelFor(valueProvider, valueModel) : valueLabel) ||
+              placeholder ||
+              t("modelPicker.none")}
         </span>
         <ChevronDown />
       </button>
@@ -151,7 +164,7 @@ export function ModelPicker({
           />
         </label>
         <div className={styles.scroll} role="listbox" aria-label={t("modelPicker.title")}>
-          {shown.length === 0 && !showAuto ? (
+          {shown.length === 0 && !showAuto && otherIds.length === 0 ? (
             <p className={styles.empty}>{t("modelPicker.empty")}</p>
           ) : (
             <>
@@ -176,6 +189,20 @@ export function ModelPicker({
                   {autoOption.selected ? <Check aria-hidden="true" /> : null}
                 </button>
               ) : null}
+              {otherIds.map((g) => (
+                <button
+                  key={`other-${g.provider}`}
+                  type="button"
+                  role="option"
+                  aria-selected={false}
+                  className={styles.option}
+                  onClick={() => pick(`${g.provider}/${typed}`)}
+                >
+                  <span className={styles.optionText}>
+                    {t("modelPicker.otherId", { id: typed, provider: g.provider.slice(4) })}
+                  </span>
+                </button>
+              ))}
               {shown.map((g) => {
                 const brand = providerBrand(g.provider);
                 return (
@@ -197,7 +224,9 @@ export function ModelPicker({
                           onClick={() => pick(m.ref)}
                         >
                           <BrandMark name={productBrandKey(m.provider, m.model)} size={16} />
-                          <span className={styles.optionText}>{m.model}</span>
+                          <span className={styles.optionText} title={labelFor ? m.model : undefined}>
+                            {labelFor ? labelFor(m.provider, m.model) : m.displayName}
+                          </span>
                           {active ? <Check aria-hidden="true" /> : null}
                         </button>
                       );

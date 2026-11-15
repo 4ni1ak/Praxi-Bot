@@ -17,6 +17,7 @@ mod compaction;
 mod config;
 mod control;
 pub mod control_note;
+mod discovery_prompt;
 mod exec;
 mod history;
 mod knowledge;
@@ -25,6 +26,7 @@ mod profile;
 mod router;
 mod shared;
 mod subagent;
+pub mod usage;
 
 #[cfg(test)]
 mod router_tests;
@@ -49,7 +51,8 @@ pub use knowledge::{
 };
 pub use permission_engine::Decision as PolicyDecision;
 pub use profile::{
-    BotProfile, ModelsConfig, PermissionsConfig, ProfileError, RouterSettings, ToolFilter,
+    BotProfile, EngineConsent, EngineSettings, ModelsConfig, PermissionsConfig, ProfileError,
+    RouterSettings, ToolFilter,
 };
 pub use shared::{
     ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, LoopError,
@@ -57,6 +60,7 @@ pub use shared::{
     schedule_id_of,
 };
 pub use subagent::MAX_DEPTH as MAX_SUBAGENT_DEPTH;
+pub use usage::CallPurpose;
 
 /// Audit-log action recording an "always allow" grant rule for a bot.
 pub(crate) const AUDIT_GRANT_ALWAYS: &str = "grant.always";

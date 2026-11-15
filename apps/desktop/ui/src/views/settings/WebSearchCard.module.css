@@ -19,11 +19,6 @@
   color: var(--color-text-muted);
 }
 
-:global(:root[data-style="glass"]) .note,
-:global(:root[data-style="glass"]) .configWarning {
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
-}
-
 .note svg,
 .configWarning svg {
   flex: none;

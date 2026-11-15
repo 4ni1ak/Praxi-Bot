@@ -224,7 +224,7 @@ fn clap_defaults_to_tasks_and_only_accepts_explicit_layers_and_safe_ttl() {
     let bot = Uuid::now_v7().to_string();
     let cli = Cli::try_parse_from(["bot", "mcp", "serve", "--bot", &bot]).unwrap();
     let Some(crate::Command::Mcp {
-        action: McpCmd::Serve(args),
+        action: crate::McpCmd::Serve(args),
     }) = cli.command
     else {
         panic!("mcp command")

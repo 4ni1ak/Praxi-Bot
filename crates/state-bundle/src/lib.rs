@@ -3,6 +3,9 @@
 //! See the crate README for the format, trust model and swap limitations.
 
 mod install;
+mod knowledge;
+#[cfg(test)]
+mod knowledge_tests;
 mod policy;
 mod transfer;
 
@@ -98,7 +101,10 @@ fn is_mailbox_password(name: &str) -> bool {
 
 /// Select secrets explicitly; the safe default is none.
 /// `All` leaves out mailbox secrets (`email/<account>/password`, `email/<account>/api_key`); they are
-/// exported only when named in `Names`.
+/// exported only when named in `Names`.  MCP OAuth records (`mcp/<server>/oauth`,
+/// access and refresh tokens) never leave the secret store: `All` skips them
+/// and naming one is an error (there is no opt-in; sign in again on the
+/// other machine).
 #[derive(Debug, Clone, Default)]
 pub enum SecretSelection {
     #[default]
@@ -243,10 +249,21 @@ pub async fn export(
         SecretSelection::All => store
             .list_names()?
             .into_iter()
-            .filter(|n| !is_mailbox_password(n) && !secret_store::is_host_credential(n))
+            .filter(|n| {
+                !is_mailbox_password(n)
+                    && !secret_store::is_reserved_name(n)
+                    && !secret_store::is_managed_oauth_name(n)
+                    && !secret_store::is_host_credential(n)
+            })
             .collect(),
         SecretSelection::Names(names) => names,
     };
+    if let Some(name) = names
+        .iter()
+        .find(|n| secret_store::is_managed_oauth_name(n))
+    {
+        return Err(secret_store::SecretError::InvalidName(name.clone()).into());
+    }
     names.sort();
     names.dedup();
     if !names.is_empty() {
@@ -256,6 +273,9 @@ pub async fn export(
                 return Err(invalid("host credentials cannot be exported"));
             }
             secret_store::validate_name(name)?;
+            if secret_store::is_reserved_name(name) {
+                return Err(secret_store::SecretError::InvalidName(name.clone()).into());
+            }
             let value = store
                 .get(name)?
                 .ok_or_else(|| secret_store::SecretError::NotFound(name.clone()))?;

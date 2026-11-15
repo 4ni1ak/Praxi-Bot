@@ -41,3 +41,14 @@ test("parseSseEnvelope handles control_state_changed without advancing cursor", 
   assert.equal(parsed.envelope.event.type, "control_state_changed");
   assert.equal(parsed.envelope.gseq, 42);
 });
+
+test("view_targets_changed is an unsequenced hint that keeps the replay cursor (244-V #3)", () => {
+  const parsed = parseSseEnvelope(
+    { id: null, event: "view_targets_changed", data: '{"type":"view_targets_changed"}' },
+    41,
+    1000
+  );
+  assert.ok(parsed);
+  assert.equal(parsed.envelope.event.type, "view_targets_changed");
+  assert.equal(parsed.nextCursor, 41);
+});

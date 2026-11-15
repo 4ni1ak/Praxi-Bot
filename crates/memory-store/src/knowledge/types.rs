@@ -288,6 +288,10 @@ pub struct SearchHit {
 pub enum SearchMode {
     /// SQLite FTS5 BM25; no embedder or network needed.
     Lexical,
+    /// Lexical and exact cosine candidates fused with reciprocal ranks.
+    Hybrid,
+    /// Optional semantic retrieval was unavailable; lexical results remain valid.
+    LexicalDegraded,
 }
 
 /// Effective trust of every retrieved body, independently of source authorship.

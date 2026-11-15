@@ -30,7 +30,9 @@ use vision::{BoundingBox, OcrEngine};
 use protocol::event::ControlRect;
 
 use crate::control::{ActionPermit, ControlRequest, DesktopControlGate};
+use crate::fill_secret::{Source, names_a_secret, refused, scrub, source};
 use crate::util::{exec_err, finish_text, parse, save_file, spec};
+use secret_store::{FillSecrets, SecretValue, sanitize_label};
 
 /// An OCR engine usable from tools.
 pub type SharedOcr = Arc<dyn OcrEngine + Send + Sync>;
@@ -183,6 +185,8 @@ struct Shared {
     data_dir: PathBuf,
     settings: DesktopSettings,
     control: Option<Arc<dyn DesktopControlGate>>,
+    /// Owner-stored secrets the type tools may type; `None` refuses `secret`.
+    fill_secrets: Option<Arc<FillSecrets>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,7 +287,76 @@ fn derr(e: &DesktopError) -> ToolError {
     exec_err(format!("{e}{hint}"))
 }
 
+/// A result that may have come from typing a secret: scrub the value (and its
+/// encodings) out of the text and out of any error message.
+fn finish_secret(
+    result: Result<String, ToolError>,
+    secret: Option<&SecretValue>,
+) -> Result<String, ToolError> {
+    let Some(v) = secret else {
+        return result;
+    };
+    match result {
+        Ok(t) => Ok(scrub(&t, v)),
+        Err(ToolError::InvalidInput(m)) => Err(ToolError::InvalidInput(scrub(&m, v))),
+        Err(ToolError::PermissionDenied(m)) => Err(ToolError::PermissionDenied(scrub(&m, v))),
+        Err(ToolError::Execution(m)) => Err(ToolError::Execution(scrub(&m, v))),
+        Err(other) => Err(ToolError::Execution(scrub(&other.to_string(), v))),
+    }
+}
+
+/// What a secret fill needs to know about the window that receives it.
+struct WindowFacts {
+    title: String,
+    identity: Option<String>,
+}
+
 impl Shared {
+    fn fill_secrets(&self) -> Result<Arc<FillSecrets>, ToolError> {
+        self.fill_secrets
+            .clone()
+            .ok_or_else(|| exec_err("no secrets are configured on this daemon"))
+    }
+
+    /// The window this run observed, as the backend lists it NOW, with the
+    /// verified program identity the backend supplies (`None` when it cannot).
+    async fn live_window(&self, run_id: &str) -> Result<WindowFacts, ToolError> {
+        let scope = self.observed_scope(run_id)?;
+        let backend = self.backend(run_id)?;
+        let wins = backend.windows().await.map_err(|e| derr(&e))?;
+        let win = wins.into_iter().find(|w| w.id == scope).ok_or_else(|| {
+            exec_err("the window that holds the field is gone; call desktop_get_state")
+        })?;
+        let identity = backend.program_identity(&win).await;
+        Ok(WindowFacts {
+            title: win.title,
+            identity,
+        })
+    }
+
+    /// Refuse unless the receiving program's verified identity is on the
+    /// secret's allow-list.
+    async fn verify_window_program(
+        &self,
+        run_id: &str,
+        name: &str,
+    ) -> Result<WindowFacts, ToolError> {
+        let secrets = self.fill_secrets()?;
+        let facts = self.live_window(run_id).await?;
+        secrets
+            .check_desktop(name, facts.identity.as_deref())
+            .map_err(|e| refused(&e))?;
+        Ok(facts)
+    }
+
+    /// The secret's value, after the live program check.
+    async fn secret_for_window(&self, run_id: &str, name: &str) -> Result<SecretValue, ToolError> {
+        self.verify_window_program(run_id, name).await?;
+        self.fill_secrets()?
+            .resolve_value(name)
+            .map_err(|e| refused(&e))
+    }
+
     /// Resolve a reference against the caller's run state. `expect_gen` is required
     /// and must match the run's current generation (otherwise: stale hint).
     fn target(
@@ -677,6 +750,21 @@ pub fn tools_dynamic(
     settings: DesktopSettings,
     control: Option<Arc<dyn DesktopControlGate>>,
 ) -> Vec<Arc<dyn Tool>> {
+    tools_dynamic_with_secrets(default_backend, ocr, data_dir, settings, control, None)
+}
+
+/// [`tools_dynamic`] whose `desktop_type` / `desktop_set_value` may type the
+/// owner's fill secrets (only into a program with a verified identity on the
+/// secret's allow-list).
+#[must_use]
+pub fn tools_dynamic_with_secrets(
+    default_backend: Option<Arc<dyn DesktopBackend>>,
+    ocr: Option<SharedOcr>,
+    data_dir: &Path,
+    settings: DesktopSettings,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+) -> Vec<Arc<dyn Tool>> {
     let shared = Arc::new(Shared {
         default_backend,
         ocr,
@@ -684,6 +772,7 @@ pub fn tools_dynamic(
         data_dir: data_dir.to_path_buf(),
         settings,
         control,
+        fill_secrets,
     });
     let d = PermissionCategory::Desktop;
     let index_prop = json!({
@@ -753,12 +842,13 @@ pub fn tools_dynamic(
             Op::Type,
             spec(
                 "desktop_type",
-                "Click an element to focus it, then type text with the keyboard (enter text). Not for starting apps (use desktop_launch). Returns the refreshed UI tree. Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"text\":\"hello\"}",
+                "Click an element to focus it, then type text with the keyboard (enter text). Give exactly one of `text` (what you type) or `secret` (the name of a secret the owner stored, from secrets_list: it is typed for you and you never see the value). Not for starting apps (use desktop_launch). Returns the refreshed UI tree. Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"text\":\"hello\"}",
                 json!({"type":"object","properties":{
                     "index":index_prop,
                     "gen":gen_prop,
-                    "text":{"type":"string","description":"Text to type."}
-                },"required":["index","text","gen"]}),
+                    "text":{"type":"string","description":"Text to type. Not with `secret`."},
+                    "secret":{"type":"string","description":"Name of an owner-stored secret to type instead of `text`."}
+                },"required":["index","gen"]}),
                 Effect::Write,
                 d,
             ),
@@ -767,12 +857,13 @@ pub fn tools_dynamic(
             Op::SetValue,
             spec(
                 "desktop_set_value",
-                "Replace the value of a text field or combo box. Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"value\":\"hello\"}",
+                "Replace the value of a text field or combo box. Give exactly one of `value` or `secret` (the name of a secret the owner stored, from secrets_list: it is set for you and you never see the value). Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"value\":\"hello\"}",
                 json!({"type":"object","properties":{
                     "index":index_prop,
                     "gen":gen_prop,
-                    "value":{"type":"string","description":"New value."}
-                },"required":["index","value","gen"]}),
+                    "value":{"type":"string","description":"New value. Not with `secret`."},
+                    "secret":{"type":"string","description":"Name of an owner-stored secret to set instead of `value`."}
+                },"required":["index","gen"]}),
                 Effect::Write,
                 d,
             ),
@@ -877,7 +968,6 @@ struct TypeIn {
     index: Value,
     #[serde(rename = "gen")]
     expect_gen: Option<u64>,
-    text: String,
 }
 
 #[derive(Deserialize)]
@@ -885,7 +975,6 @@ struct SetValueIn {
     index: Value,
     #[serde(rename = "gen")]
     expect_gen: Option<u64>,
-    value: String,
 }
 
 #[derive(Deserialize)]
@@ -1136,6 +1225,7 @@ impl DesktopTool {
                 sh.settle_and_refresh(run_id, head).await
             }
             Op::Type => {
+                let what = source(&input, "text")?;
                 let i: TypeIn = parse(input)?;
                 if i.expect_gen.is_none() {
                     return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
@@ -1158,22 +1248,41 @@ impl DesktopTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
+                // A secret is resolved only now (after the approval and the
+                // live program check), held in memory and wiped on drop.
+                let secret = match &what {
+                    Source::Text(_) => None,
+                    Source::Secret(name) => Some(sh.secret_for_window(run_id, name).await?),
+                };
                 // Focus the element with a real click, then type into the focus.
-                sh.act(
-                    run_id,
-                    Action::Click {
-                        target,
-                        method: ClickMethod::Global,
-                    },
-                    &permit,
-                )
-                .await?;
-                let head = sh
-                    .act(run_id, Action::TypeText { text: i.text }, &permit)
+                let typed = async {
+                    sh.act(
+                        run_id,
+                        Action::Click {
+                            target,
+                            method: ClickMethod::Global,
+                        },
+                        &permit,
+                    )
                     .await?;
-                sh.settle_and_refresh(run_id, head).await
+                    let text = match (&what, &secret) {
+                        (Source::Text(t), _) => t.clone(),
+                        (Source::Secret(name), Some(v)) => {
+                            // The program that owns the window is verified again
+                            // right before the keys are sent.
+                            sh.verify_window_program(run_id, name).await?;
+                            v.expose().to_owned()
+                        }
+                        (Source::Secret(_), None) => String::new(),
+                    };
+                    let head = sh.act(run_id, Action::TypeText { text }, &permit).await?;
+                    sh.settle_and_refresh(run_id, head).await
+                }
+                .await;
+                finish_secret(typed, secret.as_ref())
             }
             Op::SetValue => {
+                let what = source(&input, "value")?;
                 let i: SetValueIn = parse(input)?;
                 if i.expect_gen.is_none() {
                     return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
@@ -1196,17 +1305,23 @@ impl DesktopTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
-                let head = sh
-                    .act(
-                        run_id,
-                        Action::SetValue {
-                            target,
-                            value: i.value,
-                        },
-                        &permit,
-                    )
-                    .await?;
-                sh.settle_and_refresh(run_id, head).await
+                let secret = match &what {
+                    Source::Text(_) => None,
+                    Source::Secret(name) => Some(sh.secret_for_window(run_id, name).await?),
+                };
+                let set = async {
+                    let value = match (&what, &secret) {
+                        (Source::Text(t), _) => t.clone(),
+                        (Source::Secret(_), Some(v)) => v.expose().to_owned(),
+                        (Source::Secret(_), None) => String::new(),
+                    };
+                    let head = sh
+                        .act(run_id, Action::SetValue { target, value }, &permit)
+                        .await?;
+                    sh.settle_and_refresh(run_id, head).await
+                }
+                .await;
+                finish_secret(set, secret.as_ref())
             }
             Op::Key => {
                 let i: KeyIn = parse(input)?;
@@ -1347,10 +1462,66 @@ impl DesktopTool {
     }
 }
 
+impl DesktopTool {
+    /// The text key of this tool's secret-capable parameter.
+    fn text_key(&self) -> Option<&'static str> {
+        match self.op {
+            Op::Type => Some("text"),
+            Op::SetValue => Some("value"),
+            _ => None,
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for DesktopTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    /// Typing an owner-stored secret is confirmed on every call, however
+    /// permissive the policy, preset, grants or read shortcuts are. A desktop
+    /// program never has a standing grant (the default `standing_grant`).
+    fn always_ask_for(&self, input: &Value) -> bool {
+        self.text_key().is_some() && names_a_secret(input)
+    }
+
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        let Some(key) = self.text_key() else {
+            return Ok(None);
+        };
+        let Source::Secret(name) = source(input, key)? else {
+            return Ok(None);
+        };
+        let sh = &self.shared;
+        let r = parse_ref(
+            input
+                .get("index")
+                .ok_or_else(|| ToolError::InvalidInput("missing index".into()))?,
+        )?;
+        let expect_gen = input.get("gen").and_then(Value::as_u64);
+        if expect_gen.is_none() {
+            return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
+        }
+        sh.target(&ctx.run_id, r, expect_gen)?;
+        let (label, _) = sh.describe(&ctx.run_id, r)?;
+        // Refuse here, BEFORE any approval is offered, when the receiving
+        // program is not one the owner allowed for this secret.
+        let facts = sh.verify_window_program(&ctx.run_id, &name).await?;
+        Ok(Some(json!({
+            "kind": "secret_fill",
+            "tool": self.spec.name,
+            "secret": sanitize_label(&name, 80),
+            "field": sanitize_label(&label, 80),
+            "window": sanitize_label(&facts.title, 80),
+            "program": sanitize_label(facts.identity.as_deref().unwrap_or_default(), 80),
+            "has_standing_grant": false,
+            "note": "The secret value is typed by Praxi; the assistant never sees it.",
+        })))
     }
 
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
@@ -1400,6 +1571,8 @@ pub(crate) mod fake {
         pub launched_at: Mutex<Option<tokio::time::Instant>>,
         /// Runs inside `screenshot` / `windows` (a takeover landing mid-capture).
         pub hook: Mutex<Option<FakeHook>>,
+        /// The verified program identity this backend reports (`None` = it cannot verify).
+        pub identity: Mutex<Option<String>>,
     }
 
     impl FakeDesktop {
@@ -1418,6 +1591,7 @@ pub(crate) mod fake {
                 launched_window_pid: 4242,
                 launched_at: Mutex::new(None),
                 hook: Mutex::new(None),
+                identity: Mutex::new(None),
             }
         }
     }
@@ -1561,6 +1735,10 @@ pub(crate) mod fake {
         async fn launch(&self, _app: AppSpec) -> Result<Pid, DesktopError> {
             *self.launched_at.lock() = Some(tokio::time::Instant::now());
             Ok(self.launch_pid)
+        }
+
+        async fn program_identity(&self, _window: &WindowInfo) -> Option<String> {
+            self.identity.lock().clone()
         }
 
         fn capabilities(&self) -> Capabilities {

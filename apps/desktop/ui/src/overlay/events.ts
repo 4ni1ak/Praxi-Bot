@@ -398,11 +398,42 @@ export async function giveBackControl(): Promise<ControlSnapshot> {
   return invoke<ControlSnapshot>("give_back_control");
 }
 
-export async function stopBotRun(): Promise<ControlSnapshot> {
+/**
+ * A user Stop on the native side (`* -> Idle`, raises `stopSeq`). `token` is the Stop's
+ * `stop_id` when the main window's ledger made the decision, so its echo is recognised.
+ */
+export async function stopBotRun(token?: string): Promise<ControlSnapshot> {
   if (!isTauriRuntime()) {
     return INITIAL_CONTROL_SNAPSHOT;
   }
-  return invoke<ControlSnapshot>("stop_bot_run");
+  return invoke<ControlSnapshot>("stop_bot_run", { token: token ?? null });
+}
+
+/** Normal end of the native run; a no-op unless `runGeneration` still equals `expectedGeneration`. */
+export async function finishBotRun(expectedGeneration: number): Promise<ControlSnapshot> {
+  if (!isTauriRuntime()) {
+    return INITIAL_CONTROL_SNAPSHOT;
+  }
+  return invoke<ControlSnapshot>("finish_bot_run", { expectedGeneration });
+}
+
+/**
+ * Hide the widget's pending-Stop indicator (widget or main window). Acknowledges
+ * nothing: the main window keeps showing whether the Stop was confirmed.
+ */
+export async function dismissStopWidget(): Promise<ControlSnapshot> {
+  if (!isTauriRuntime()) {
+    return INITIAL_CONTROL_SNAPSHOT;
+  }
+  return invoke<ControlSnapshot>("dismiss_stop_widget");
+}
+
+/** Acknowledge every Stop up to `seq` as handled (silent; main window only). */
+export async function ackStop(seq: number): Promise<ControlSnapshot> {
+  if (!isTauriRuntime()) {
+    return INITIAL_CONTROL_SNAPSHOT;
+  }
+  return invoke<ControlSnapshot>("ack_stop", { seq });
 }
 
 export async function setStopHotkey(hotkey: string): Promise<ControlSnapshot> {

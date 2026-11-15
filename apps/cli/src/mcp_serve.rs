@@ -24,12 +24,6 @@ use uuid::Uuid;
 use crate::client::Client;
 use crate::{Cli, Result};
 
-#[derive(Subcommand)]
-pub enum McpCmd {
-    /// Expose a selected bot over stdio using a previously issued scoped token.
-    Serve(ServeArgs),
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Layer {
     Tasks,

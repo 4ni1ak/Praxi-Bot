@@ -2,9 +2,21 @@ import type { components } from "./schema";
 
 /** Types generated from `docs/api/openapi.json` (`pnpm --filter desktop-ui gen:api`). */
 type S = components["schemas"];
+export type KnowledgeSource = S["KnowledgeSourceDto"];
+export type KnowledgeSourceInput = S["KnowledgeSourceInput"];
+export type KnowledgeSourceKind = S["KnowledgeSourceKind"];
+export type KnowledgeSourceChange = S["KnowledgeSourceChange"];
+export type KnowledgeMutation = S["KnowledgeMutation"];
+export type KnowledgeSettings = S["KnowledgeSettingsDto"];
+export type KnowledgeSettingsInput = S["KnowledgeSettingsInput"];
+export type KnowledgeEmailCapture = S["KnowledgeEmailCapture"];
+export type KnowledgeEmbeddingProgress = S["KnowledgeEmbeddingProgress"];
+export type KnowledgeEmbeddingApproval = S["EmbeddingApprovalChallenge"];
+export type KnowledgeEmbeddingGrantTarget = S["EmbeddingGrantTarget"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];
+export type BotPatchInput = S["BotPatchInput"];
 export type Chat = S["ChatDto"];
 export type Message = S["MessageDto"];
 /**
@@ -13,7 +25,15 @@ export type Message = S["MessageDto"];
  */
 export type Run = S["RunDto"] & { schedule_id?: string | null };
 export type Approval = S["ApprovalDto"];
+export type StopRunResult = S["StopRunResult"];
+export type StopOutcome = S["StopOutcome"];
+export type StopScope = S["StopScope"];
 export type Health = S["Health"];
+export type HostLinkInfo = S["HostLinkInfo"];
+export type HostLinkList = S["HostLinkList"];
+export type HostLinkConnection = S["HostLinkConnection"];
+export type StopRunsInput = S["StopRunsInput"];
+export type StopRunsResponse = S["StopRunsResponse"];
 export type UsageSummary = S["UsageSummary"];
 export type UsageTotals = S["UsageTotals"];
 export type EffectivePolicy = S["EffectivePolicyDto"];
@@ -37,6 +57,7 @@ export type ControlStateChanged = S["ControlStateChanged"];
 export type ReleaseResult = S["ReleaseResult"];
 export type ScreenPrivilegesInput = S["ScreenPrivilegesInput"];
 export type TargetInfo = S["TargetInfo"];
+export type TargetUnavailable = S["TargetUnavailable"];
 export type TargetKind = S["TargetKind"];
 export type ViewCapabilities = S["Capabilities"];
 export type Codec = S["Codec"];
@@ -255,6 +276,7 @@ export type DaemonEvent =
       target_id: string;
       reason?: ViewReason | null;
     }
+  | { type: "view_targets_changed" }
   | { type: "error"; run_id: string; message: string; recoverable: boolean }
   | { type: "mcp_server_changed"; name: string; status: McpStatus }
   | {
@@ -291,6 +313,8 @@ export interface GlobalEnvelope extends Envelope {
 
 export type McpTransport = S["McpTransportKind"];
 export type McpStatus = S["McpStatus"];
+export type McpAuthState = S["McpAuthState"];
+export type McpAuthStart = S["McpAuthStart"];
 export type McpServer = S["McpServerDto"];
 /** Body of `POST /v1/mcp/servers`. */
 export type McpServerConfig = S["McpServerInput"] & { name: string };
@@ -299,6 +323,14 @@ export type McpServerPatch = S["McpServerPatch"];
 export type McpTool = S["McpToolDto"];
 export type McpRequiredSecret = S["McpRequiredSecretDto"];
 export type McpCatalogEntry = S["McpCatalogEntryDto"];
+
+export type ComposioStatus = S["ComposioStatusDto"];
+export type ComposioConnState = S["ComposioConnState"];
+export type ComposioToolkit = S["ComposioToolkitDto"];
+export type ComposioCatalog = S["ComposioCatalogDto"];
+export type ComposioApp = S["ComposioAppDto"];
+export type ComposioConnect = S["ComposioConnectDto"];
+export type ComposioDisconnect = S["ComposioDisconnectDto"];
 
 // ---- E-mail accounts (`/v1/email/*`) ---------------------------------------
 
@@ -342,3 +374,7 @@ export type AvailableSkill = S["AvailableSkillDto"];
 export type OwnSkill = S["OwnSkillDto"];
 export type BotSkills = S["BotSkillsDto"];
 export type PutBotSkillsInput = S["PutBotSkillsInput"];
+
+export type CliEngineDto = S["CliEngineDto"];
+export type BotEngineInput = S["BotEngineInput"];
+export type CliInstallApproval = S["CliInstallApproval"];
