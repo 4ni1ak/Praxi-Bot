@@ -48,8 +48,10 @@ struct SignInFlow {
 }
 
 impl SignInFlow {
+    /// Still exchanging or reconnecting (an outcome is final even if the
+    /// task has not quite returned yet).
     fn running(&self) -> bool {
-        !self.task.is_finished()
+        !self.task.is_finished() && self.done.borrow().is_none()
     }
 }
 
@@ -1331,6 +1333,16 @@ mod tests {
         Ok(out)
     }
 
+    async fn wait_auth(host: &McpHost, name: &str, want: McpAuthState) {
+        let reached = tokio::time::timeout(Duration::from_secs(10), async {
+            while host.auth_status(name).await.unwrap() != want {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(reached.is_ok(), "{name}: auth state never became {want:?}");
+    }
+
     async fn wait_for(host: &McpHost, name: &str, want: McpStatus) {
         let reached = tokio::time::timeout(Duration::from_secs(10), async {
             while host.status_of(name) != want {
@@ -1432,11 +1444,9 @@ mod tests {
         .await
         .unwrap();
         wait_for(&host, "remote", McpStatus::Connected).await;
+        // The flow ends after its reconnect (tool discovery included).
+        wait_auth(&host, "remote", McpAuthState::SignedIn).await;
         assert!(registry.get("mcp:remote/echo").is_some());
-        assert_eq!(
-            host.auth_status("remote").await.unwrap(),
-            McpAuthState::SignedIn
-        );
         let stored = store.get("mcp/remote/oauth").unwrap().unwrap();
         assert!(stored.expose().contains(ACCESS));
         // Neither the DTO, the config file nor the event stream carries a token.
@@ -1608,6 +1618,8 @@ mod tests {
         .await
         .unwrap();
         wait_for(&host, "remote", McpStatus::Connected).await;
+        // The flow ends after its reconnect (tool discovery included).
+        wait_auth(&host, "remote", McpAuthState::SignedIn).await;
         for path in ["/v1/mcp/servers", "/v1/mcp/servers/remote/auth/status"] {
             let text = http
                 .get(format!("{url}{path}"))
