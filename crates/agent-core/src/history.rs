@@ -72,42 +72,25 @@ pub(crate) const GUARD_NOTE: &str = "The turn was stopped by a safety limit ({re
 
 const NOT_EXECUTED: &str = "[not executed: the turn was stopped by a safety limit]";
 
-pub(crate) const MAX_HISTORY_MESSAGES: usize = 256;
-pub(crate) const MAX_HISTORY_BYTES: usize = 64 * 1024;
-
-/// How much persisted chat history a model call carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HistoryBounds {
-    pub messages: usize,
-    pub bytes: usize,
-}
-
-impl HistoryBounds {
-    /// The default window.
-    pub(crate) const FULL: Self = Self {
-        messages: MAX_HISTORY_MESSAGES,
-        bytes: MAX_HISTORY_BYTES,
-    };
-    /// The short window of a turn the decider judged to stand alone.
-    pub(crate) const RECENT: Self = Self {
-        messages: crate::decider::RECENT_MESSAGES,
-        bytes: crate::decider::RECENT_BYTES,
-    };
-}
+const MAX_HISTORY_MESSAGES: usize = 256;
+const MAX_HISTORY_BYTES: usize = 64 * 1024;
 const HISTORY_OMITTED_NOTE: &str = "Some older conversation exchanges were omitted to keep history bounded. \
 They remain in storage; do not infer their contents. A summary of older history is a follow-up if needed.";
 
 fn append_chat_history(
     storage: &Storage,
     run: &Run,
-    bounds: HistoryBounds,
     out: &mut Vec<Message>,
 ) -> Result<(), storage::StorageError> {
     let Some(chat) = run.chat_id else {
         return Ok(());
     };
-    let (history, omitted) =
-        storage.list_messages_bounded(chat, Some(run.id), bounds.messages, bounds.bytes)?;
+    let (history, omitted) = storage.list_messages_bounded(
+        chat,
+        Some(run.id),
+        MAX_HISTORY_MESSAGES,
+        MAX_HISTORY_BYTES,
+    )?;
     // A bounded suffix may start with an assistant response whose user
     // message was outside the window. Drop that incomplete exchange.
     let start = history
@@ -143,7 +126,6 @@ const HANDOVER_DATA_LABEL: &str = "[router data: UNTRUSTED workflow replay repor
 /// `final_note` (guard stop) is appended as a closing system message;
 /// `skills` is the skills index block of the system prompt.  A subagent run
 /// starts from a fresh history: no chat messages.
-#[cfg(test)]
 pub(crate) fn build_messages(
     storage: &Storage,
     run: &Run,
@@ -152,34 +134,13 @@ pub(crate) fn build_messages(
     final_note: Option<&str>,
     skills: Option<&str>,
 ) -> Result<Vec<Message>, storage::StorageError> {
-    build_messages_bounded(
-        storage,
-        run,
-        steps,
-        profile,
-        final_note,
-        skills,
-        HistoryBounds::FULL,
-    )
-}
-
-/// [`build_messages`] with an explicit chat-history window.
-pub(crate) fn build_messages_bounded(
-    storage: &Storage,
-    run: &Run,
-    steps: &[RunStep],
-    profile: &BotProfile,
-    final_note: Option<&str>,
-    skills: Option<&str>,
-    bounds: HistoryBounds,
-) -> Result<Vec<Message>, storage::StorageError> {
     let subagent = run.parent_run_id.is_some();
     let mut out = vec![Message::text(
         MessageRole::System,
         system_prompt(profile, subagent, skills),
     )];
     if !subagent {
-        append_chat_history(storage, run, bounds, &mut out)?;
+        append_chat_history(storage, run, &mut out)?;
     }
     // Tool calls of the latest model step that have no result yet; a stopped
     // turn leaves some, and providers reject unanswered tool calls.

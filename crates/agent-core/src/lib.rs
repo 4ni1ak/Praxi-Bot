@@ -41,8 +41,7 @@ pub use config::{
 };
 pub use control::{ControlGate, ControlRequest};
 pub use decider::{
-    DECIDER_FILE, DeciderApi, DeciderBackendSettings, DeciderSavings, DeciderSettings, TurnDecider,
-    build_decider,
+    DECIDER_FILE, DeciderApi, DeciderBackendSettings, DeciderSettings, TurnDecider, build_decider,
 };
 pub use permission_engine::Decision as PolicyDecision;
 pub use profile::{

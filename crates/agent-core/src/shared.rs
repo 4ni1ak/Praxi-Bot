@@ -971,9 +971,8 @@ impl Shared {
             let narrowed = self
                 .surface
                 .hinted_specs(hints, &|s| self.spec_visible(profile, bot, s));
-            // Only the meta-tools left: every hint was unknown or hidden,
-            // unless the turn was planned as meta-only on purpose.
-            if narrowed.len() > 3 || crate::router::is_meta_only(hints) {
+            // Only the meta-tools left: every hint was unknown or hidden.
+            if narrowed.len() > 3 {
                 return narrowed;
             }
         }

@@ -232,9 +232,9 @@ impl AgentLoop {
         self.sh.router.reset();
     }
 
-    /// Install (or remove) the decider: the cheap decision model that plans
-    /// each turn (tool pre-selection, trivial-turn routing, history
-    /// trimming). Turns already started keep the plan they have.
+    /// Install (or remove) the decider, the cheap decision model of this
+    /// loop. No turn consults it yet; the uses are wired separately, each
+    /// behind its own switch in [`DeciderSettings`](crate::DeciderSettings).
     pub fn set_decider(&self, decider: Option<Arc<crate::TurnDecider>>) {
         *self.sh.decider.write() = decider;
     }
@@ -242,7 +242,7 @@ impl AgentLoop {
     /// The installed decider, if any.
     #[must_use]
     pub fn decider(&self) -> Option<Arc<crate::TurnDecider>> {
-        self.sh.turn_decider()
+        self.sh.decider.read().clone()
     }
 
     /// The workspace-wide default permission policy.
