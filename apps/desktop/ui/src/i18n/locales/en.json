@@ -1948,6 +1948,18 @@
     "targetsLabel": "Target screen",
     "checkingTargets": "Checking for screens…",
     "queryFailed": "Could not load the screen list. It is retried automatically.",
+    "loadingPreview": "Loading the first frame…",
+    "noScreen": {
+      "desktop_off": "desktop control is switched off",
+      "unsupported_platform": "this platform has no screen capture",
+      "wayland": "Wayland sessions are not supported, use an X11 session",
+      "no_display": "no display is available",
+      "screen_unavailable": "the screen cannot be opened right now (locked session or missing permission)",
+      "start_failed": "screen capture could not start",
+      "starting": "checking the screen…",
+      "timed_out": "the screen did not answer, retrying",
+      "unknown": "the screen is not available"
+    },
     "noTargets": "No screen targets reported yet.",
     "hostLabel": "Host: {{host}}",
     "viewOnly": "View only",
@@ -2000,6 +2012,8 @@
       "active": "You have the wheel",
       "paused": "Paused · Waiting for you",
       "unavailable": "Idle · Not active",
+      "ready": "This computer · ready",
+      "noScreenReason": "No screen: {{detail}}",
       "empty": "No active screen"
     },
     "reasons": {
