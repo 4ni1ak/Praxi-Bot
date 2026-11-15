@@ -71,7 +71,7 @@ for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_TH
 // 4.5 everywhere; faint text and control borders 3.
 const flat = (c) => ({ peak: { light: c, dark: c }, soft: { light: c, dark: c } });
 const TONES = [['worst', WORST_TONE], ['grey', flat('#808080')], ['blue', flat('#4a7bd0')], ['orange', flat('#d9822b')],
-  ['busy', { peak: { light: '#f5f0e0', dark: '#0a1020' }, soft: { light: '#9ab0a8', dark: '#203038' } }]];
+  ['busy', { peak: { light: '#f5f0e0', dark: '#0a1020' }, soft: { light: '#9ab0a8', dark: '#203038' }, detail: { light: '#f5f0e0', dark: '#203038' } }]];
 let surfaceCells = 0;
 for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_THEME }]) {
   const d = deriveTheme(theme);

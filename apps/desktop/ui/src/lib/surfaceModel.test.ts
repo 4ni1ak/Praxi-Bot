@@ -84,6 +84,13 @@ test("transparent chat area: no fill, a scrim that fades over dark backdrops and
     const friendly = planSurfaces(d, "glass", true, { ...DEFAULT_SURFACE, transparentChat: true, tone: flat(d.bg) });
     const hostile = planSurfaces(d, "glass", true, { ...DEFAULT_SURFACE, transparentChat: true, tone: WORST_TONE });
     assert.equal(friendly.scrimAlpha, 0, `${id}: the theme's own colour behind needs no scrim`);
+    // Dots on a calm ground: contrast may pass, but the detail still gets a scrim.
+    const dotted: BackdropTone = d.light
+      ? { peak: { light: d.bg, dark: "#c8c8c8" }, soft: { light: d.bg, dark: d.bg }, detail: { light: d.bg, dark: "#c8c8c8" } }
+      : { peak: { light: "#3a3a3a", dark: d.bg }, soft: { light: d.bg, dark: d.bg }, detail: { light: "#3a3a3a", dark: d.bg } };
+    assert.equal(legibleAlpha(d.text, d.light ? "#ffffff" : d.bg, d.light ? "#c8c8c8" : "#3a3a3a"), 0, `${id}: contrast alone passes`);
+    const busy = planSurfaces(d, "glass", true, { ...DEFAULT_SURFACE, transparentChat: true, tone: dotted });
+    assert.ok(busy.scrimAlpha >= 0.45, `${id}: busy backdrop gets the minimum scrim`);
     assert.ok(hostile.scrimAlpha > 0.5, `${id}: a hostile backdrop gets a real scrim`);
     const t = buildThemeTokens(theme(id), "#3b82f6", "glass", true, { ...DEFAULT_SURFACE, transparentChat: true, tone: WORST_TONE });
     assert.equal(t["--center-fill"], "transparent");

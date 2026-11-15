@@ -46,12 +46,15 @@ export function toneFromPixels(data: ArrayLike<number>, w: number, h: number, ce
   }
   const size = Math.max(1, Math.round(cell));
   const soft: Px[] = [];
+  const local: { ratio: number; light: string; dark: string }[] = [];
   for (let cy = 0; cy < h; cy += size) {
     for (let cx = 0; cx < w; cx += size) {
       let r = 0;
       let g = 0;
       let b = 0;
       let n = 0;
+      let lo: Px | null = null;
+      let hi: Px | null = null;
       for (let y = cy; y < Math.min(h, cy + size); y += stride) {
         for (let x = cx; x < Math.min(w, cx + size); x += stride) {
           const i = (y * w + x) * 4;
@@ -60,22 +63,33 @@ export function toneFromPixels(data: ArrayLike<number>, w: number, h: number, ce
           g += data[i + 1];
           b += data[i + 2];
           n++;
+          // Cheap luma for the within-cell extremes (exact luminance only for the winners).
+          const l = data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722;
+          if (!lo || l < lo.l) lo = { c: hex(data[i], data[i + 1], data[i + 2]), l };
+          if (!hi || l > hi.l) hi = { c: hex(data[i], data[i + 1], data[i + 2]), l };
         }
       }
       if (n) {
         const c = hex(r / n, g / n, b / n);
         soft.push({ c, l: luminance(c) });
       }
+      if (lo && hi) local.push({ ratio: (luminance(hi.c) + 0.05) / (luminance(lo.c) + 0.05), light: hi.c, dark: lo.c });
     }
   }
-  return { peak: extremes(peak, PEAK_PERCENTILE), soft: extremes(soft, 0) };
+  local.sort((a, b) => a.ratio - b.ratio);
+  const p90 = local[Math.min(local.length - 1, Math.floor(local.length * 0.9))];
+  return {
+    peak: extremes(peak, PEAK_PERCENTILE),
+    soft: extremes(soft, 0),
+    ...(p90 ? { detail: { light: p90.light, dark: p90.dark } } : {})
+  };
 }
 
 /** The tone after a layer of `color` at `amount` (0..1) is laid over the backdrop (the dim layers). */
 export function dimTone(tone: BackdropTone, color: string, amount: number): BackdropTone {
   const a = Math.min(1, Math.max(0, Number.isFinite(amount) ? amount : 0));
   const ext = (e: ToneExtremes): ToneExtremes => ({ light: mix(e.light, color, a), dark: mix(e.dark, color, a) });
-  return { peak: ext(tone.peak), soft: ext(tone.soft) };
+  return { peak: ext(tone.peak), soft: ext(tone.soft), ...(tone.detail ? { detail: ext(tone.detail) } : {}) };
 }
 
 /** Tone of the plain layout background (no backdrop): its two gradient stops. */

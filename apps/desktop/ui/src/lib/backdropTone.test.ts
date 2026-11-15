@@ -13,6 +13,7 @@ test("a flat backdrop has the same peak and soft extremes", () => {
   const tone = toneFromPixels(buffer(40, 20, () => [74, 123, 208, 255]), 40, 20, 8);
   assert.deepEqual(tone.peak, { light: "#4a7bd0", dark: "#4a7bd0" });
   assert.deepEqual(tone.soft, tone.peak);
+  assert.deepEqual(tone.detail, tone.peak, "no texture");
 });
 
 test("fine bright dots count for unblurred layers but average out under the glass blur", () => {
@@ -22,6 +23,14 @@ test("fine bright dots count for unblurred layers but average out under the glas
   assert.equal(tone.peak.light, "#ffffff", "the dots are the peak");
   assert.equal(tone.peak.dark, "#101010");
   assert.equal(tone.soft.light, "#1f1f1f", "a 16 px cell averages 1 white in 16 pixels");
+  assert.deepEqual(tone.detail, { light: "#ffffff", dark: "#101010" }, "the texture inside one cell");
+});
+
+test("a smooth gradient has no texture worth a scrim", () => {
+  const data = buffer(64, 8, (x) => [x * 4, x * 4, x * 4, 255]);
+  const { detail } = toneFromPixels(data, 64, 8, 4);
+  assert.ok(detail);
+  assert.ok(detail.light !== detail.dark && parseInt(detail.light.slice(1, 3), 16) - parseInt(detail.dark.slice(1, 3), 16) <= 12);
 });
 
 test("transparent pixels are ignored", () => {

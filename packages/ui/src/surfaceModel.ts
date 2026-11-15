@@ -79,6 +79,11 @@ export interface ToneExtremes {
 export interface BackdropTone {
   peak: ToneExtremes;
   soft: ToneExtremes;
+  /**
+   * Local texture: the brightest and darkest pixel inside one ~32 px cell, for the cell at the 90th
+   * percentile of within-cell contrast (dots, dither, grain).  Absent = flat.
+   */
+  detail?: ToneExtremes;
 }
 
 /** Unknown backdrop (an image that cannot be sampled, or before the first sample): pure white / black. */
@@ -102,6 +107,10 @@ const MATERIAL: Record<"glass" | "tinted", { min: number; max: number }> = {
   glass: { min: 0.3, max: 0.9 },
   tinted: { min: 0.55, max: 0.95 }
 };
+/** Backdrops whose local texture reaches this contrast (light vs dark pixel in one cell) count as busy. */
+export const BUSY_DETAIL = 1.4;
+/** A busy backdrop always gets at least this much scrim under the conversation. */
+export const BUSY_SCRIM_MIN = 0.45;
 /** The line style lets the backdrop through at this alpha (unchanged from 198-A). */
 const LINE_ALPHA = 0.72;
 /** Cards inside a translucent panel (settings groups, panel cards, bubbles): alpha of their own fill. */
@@ -251,7 +260,10 @@ export function planSurfaces(
   // The scrim is as light as legibility allows: over a dark backdrop it disappears.  Light themes
   // use the airy panel tint so the scrim does not grey a colourful backdrop.
   const scrimTint = d.light ? tint : d.bg;
-  const scrimAlpha = clearChat ? round2(legibleAlpha(d.text, scrimTint, peak)) : 0;
+  // Fine, high-contrast detail (dither, dots, grain) is noisy behind text even when the contrast
+  // ratio passes; the gap between the per-pixel and the blurred extreme measures it.
+  const busy = tone.detail !== undefined && contrastRatio(tone.detail.light, tone.detail.dark) >= BUSY_DETAIL;
+  const scrimAlpha = clearChat ? round2(Math.max(busy ? BUSY_SCRIM_MIN : 0, legibleAlpha(d.text, scrimTint, peak))) : 0;
 
   const floatTint = d.light ? mix(d.raised, "#ffffff", 0.3) : d.surface;
   let floatAlpha = 1;
