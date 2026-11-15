@@ -192,6 +192,8 @@ struct Inner {
     restore_locks: parking_lot::Mutex<std::collections::HashSet<RunId>>,
     #[cfg(test)]
     restore_fail_at: parking_lot::Mutex<Option<usize>>,
+    #[cfg(test)]
+    restore_pause: parking_lot::Mutex<Option<changes::TestRestorePause>>,
     /// Serialises `providers.toml` read-modify-write operations (`POST /v1/providers/cli/enable`).
     providers_lock: parking_lot::Mutex<()>,
     /// Why `policy.json` could not be loaded (locked deny-all mode), if so.
@@ -335,6 +337,8 @@ impl AppState {
             restore_locks: parking_lot::Mutex::new(std::collections::HashSet::new()),
             #[cfg(test)]
             restore_fail_at: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            restore_pause: parking_lot::Mutex::new(None),
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),

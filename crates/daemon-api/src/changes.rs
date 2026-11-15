@@ -533,9 +533,9 @@ pub(crate) async fn restore_changes(
     let (roots, grants) = s.agent().checkpoint_access();
     let state = s.clone();
     let audit_actor = actor.key.clone();
-    let report = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let _lock = lock;
-        builtin_tools::try_with_exclusive_file_access(&data_dir, || builtin_tools::with_checkpoint_access(&data_dir, &roots, &grants, || {
+        let report = builtin_tools::try_with_exclusive_file_access(&data_dir, || builtin_tools::with_checkpoint_access(&data_dir, &roots, &grants, || {
             // Refuse conservatively while any other run can still write. This
             // includes Paused runs that can resume with stale filesystem state.
             let runs = state.storage().list_runs(state.user_id()).map_err(ApiError::internal)?;
@@ -555,6 +555,13 @@ pub(crate) async fn restore_changes(
                 .map_err(ApiError::internal)?;
             store.restore_selection_using(&run_str, &cp_arg, |index| {
                 #[cfg(test)]
+                if index == 0 {
+                    if let Some(pause) = state.0.restore_pause.lock().take() {
+                        let _ = pause.entered.send(());
+                        pause.release.recv().map_err(io::Error::other)?;
+                    }
+                }
+                #[cfg(test)]
                 if *state.0.restore_fail_at.lock() == Some(index) { return Err(io::Error::other("injected checkpoint failure")); }
                 let runs = state.storage().list_runs(state.user_id()).map_err(io::Error::other)?;
                 if runs.iter().any(|r| ensure_run_finished(r).is_err()) {
@@ -562,8 +569,21 @@ pub(crate) async fn restore_changes(
                 }
                 Ok(())
             }).map_err(map_store_err)
-        })).map_err(|e| ApiError::conflict(e.to_string()))?
-    }).await.map_err(ApiError::internal)??;
+        })).map_err(|e| ApiError::conflict(e.to_string()))??;
+        // This blocking task owns mutation AND finalization. Dropping the HTTP
+        // future must never discard the durable audit, recovery ids or event.
+        Ok(Json(finalize_restore(&state, run_id, cp_arg, actor, force, report)))
+    }).await.map_err(ApiError::internal)?
+}
+
+fn finalize_restore(
+    s: &AppState,
+    run_id: RunId,
+    cp: String,
+    actor: crate::live_view::Actor,
+    force: bool,
+    report: builtin_tools::RestoreReport,
+) -> RestoreResponseDto {
     let builtin_tools::RestoreReport {
         restored,
         safety_checkpoint_ids: safety_ids,
@@ -584,7 +604,7 @@ pub(crate) async fn restore_changes(
     });
     let audit = s.storage().append_audit(
         s.user_id(),
-        Some(run.id),
+        Some(run_id),
         &actor.key,
         "checkpoint.restored",
         &detail,
@@ -592,9 +612,9 @@ pub(crate) async fn restore_changes(
 
     let safety_checkpoint_id = safety_ids.first().cloned().unwrap_or_default();
     s.agent().emit_run_event(
-        run.id,
+        run_id,
         Event::CheckpointRestored(CheckpointRestored {
-            run_id: run.id,
+            run_id,
             checkpoint_id: cp.clone(),
             safety_checkpoint_id,
             restored: restored.clone(),
@@ -610,17 +630,23 @@ pub(crate) async fn restore_changes(
         ));
     }
     let (covered, not_covered) = scope_lists();
-    Ok(Json(RestoreResponseDto {
+    RestoreResponseDto {
         partial,
         error,
-        run_id: run.id.0,
+        run_id: run_id.0,
         checkpoint_id: cp,
         safety_checkpoint_ids: safety_ids,
         restored,
         warnings,
         covered,
         not_covered,
-    }))
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct TestRestorePause {
+    pub entered: tokio::sync::oneshot::Sender<()>,
+    pub release: std::sync::mpsc::Receiver<()>,
 }
 
 #[cfg(test)]
@@ -816,6 +842,57 @@ mod tests {
         fs::write(&path, "after").unwrap();
         store.record_after(&cp).unwrap();
         (path, cp)
+    }
+
+    #[tokio::test]
+    async fn disconnected_restore_still_finalizes_audit_event_and_recovery() {
+        let h = setup_harness();
+        let (path, cp) = edit(&h, h.run_id, "disconnect.txt");
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        *h.state.0.restore_pause.lock() = Some(TestRestorePause {
+            entered,
+            release: resume,
+        });
+        let app = h.app.clone();
+        let url = format!("/v1/runs/{}/changes/all/restore", h.run_id);
+        let request = tokio::spawn(async move { call(&app, Method::POST, &url, None, true).await });
+        ready.await.unwrap(); // Safety snapshot exists; mutation is still in flight.
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !h.state.0.restore_locks.lock().is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), "before");
+        let audits = h.state.storage().list_audit(h.state.user_id()).unwrap();
+        let completed = audits
+            .iter()
+            .find(|a| a.action == "checkpoint.restored")
+            .unwrap();
+        let safety = completed.detail["safety_checkpoint_ids"][0]
+            .as_str()
+            .unwrap();
+        let checkpoints = CheckpointStore::new(h.dir.path())
+            .list(&h.run_id.0.to_string())
+            .unwrap();
+        assert!(
+            checkpoints
+                .iter()
+                .any(|c| c.id == safety && c.op == "pre-restore:all")
+        );
+        let log = read_event_log(h.dir.path(), h.run_id).unwrap();
+        assert!(
+            log.iter()
+                .any(|e| matches!(&e.event, Event::CheckpointRestored(ev)
+            if ev.checkpoint_id == "all" && ev.safety_checkpoint_id == safety))
+        );
+        assert_eq!(completed.detail["checkpoint_id"], "all");
+        assert!(checkpoints.iter().any(|c| c.id == cp));
     }
 
     #[tokio::test]
