@@ -1951,7 +1951,16 @@ export interface components {
             id: string;
             /** @description Is the configured default. */
             is_default: boolean;
-            /** @description Model ids the provider reports (empty without a listing). */
+            /**
+             * @description Presentation metadata: recommended models first by rank, then the rest
+             *     by display name. Split on `recommended` for an "All models" expander.
+             *     No model is added just because it appears in the curated table.
+             */
+            model_details?: components["schemas"]["ModelMetadataDto"][];
+            /**
+             * @description Model ids in the same order as `model_details`. By default only current
+             *     chat candidates are shown; `?chat_only=false` includes everything.
+             */
             models: string[];
             /** @description Why the model list could not be fetched. */
             models_error?: string | null;
@@ -3162,6 +3171,22 @@ export interface components {
          * @enum {string}
          */
         Mode: "steer" | "queue";
+        /** @description Presentation only: never changes execution capabilities or configured ids. */
+        ModelMetadataDto: {
+            deprecated: boolean;
+            display_name: string;
+            id: string;
+            /**
+             * @description `chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,
+             *     `video`, or `other`. Kind describes primary use, not input modalities.
+             */
+            kind: string;
+            /** @description A short annotation such as `preview` or a live `OpenRouter` `free` id. */
+            note?: string | null;
+            recommended: boolean;
+            /** Format: int32 */
+            recommended_rank?: number | null;
+        };
         /** @enum {string} */
         Modifier: "alt" | "ctrl" | "meta" | "shift";
         /** @enum {string} */
@@ -6454,7 +6479,13 @@ export interface operations {
     };
     list_providers: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Default true: omit deprecated and non-chat models. False exposes all
+                 *     kinds for advanced clients; it does not change bot execution.
+                 */
+                chat_only?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;

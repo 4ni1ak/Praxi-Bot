@@ -33,6 +33,23 @@ test("modelGroups keeps the current model even when unlisted", () => {
   assert.deepEqual(modelGroups(null), []);
 });
 
+test("modelGroups wires daemon display names and recommendation order without changing ids", () => {
+  const named = structuredClone(dto);
+  named.configured[0].model_details = [
+    { id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5", kind: "chat", recommended: true, recommended_rank: 1, deprecated: false, note: null },
+    { id: "claude-opus-5-5", display_name: "Claude Opus 5.5", kind: "chat", recommended: true, recommended_rank: 2, deprecated: false, note: null }
+  ];
+  const groups = modelGroups(named, "anthropic/custom-id");
+  const models = groups.find((g) => g.provider === "anthropic")?.models;
+  assert.deepEqual(models?.map((m) => m.ref), [
+    "anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5", "anthropic/custom-id"
+  ]);
+  assert.equal(models?.[0].displayName, "Claude Sonnet 5.5");
+  assert.equal(models?.[2].displayName, "custom-id");
+  assert.equal(models?.[2].recommended, false);
+  assert.equal(filterModelGroups(groups, "Sonnet 5.5")[0].models[0].ref, "anthropic/claude-sonnet-5-5");
+});
+
 test("filterModelGroups searches provider and model", () => {
   const g = modelGroups(dto);
   assert.deepEqual(
@@ -41,6 +58,21 @@ test("filterModelGroups searches provider and model", () => {
   );
   assert.equal(filterModelGroups(g, "gemini").length, 1);
   assert.deepEqual(filterModelGroups(g, "nomatch"), []);
+});
+
+test("metadata-aware filtering does not reinsert a retired or non-chat default", () => {
+  const filtered = structuredClone(dto);
+  filtered.configured[1].default_model = "gemini-2.0-flash";
+  filtered.configured[1].models = ["gemini-4-carbon"];
+  filtered.configured[1].model_details = [
+    { id: "gemini-4-carbon", display_name: "Gemini 4 Carbon", kind: "chat", recommended: true, recommended_rank: 1, deprecated: false, note: null }
+  ];
+  const ids = modelGroups(filtered).find((g) => g.provider === "gemini")?.models.map((m) => m.model);
+  assert.deepEqual(ids, ["gemini-4-carbon"]);
+  // An existing bot's explicit current id remains editable and executable.
+  const current = modelGroups(filtered, "gemini/gemini-2.0-flash")
+    .find((g) => g.provider === "gemini")?.models.map((m) => m.model);
+  assert.ok(current?.includes("gemini-2.0-flash"));
 });
 
 test("search folding handles Turkish letters and diacritics", () => {
