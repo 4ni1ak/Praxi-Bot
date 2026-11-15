@@ -12,6 +12,7 @@ import { Modal } from "../components/Modal";
 import { Segmented } from "../components/SettingsUi";
 import { useToast } from "../components/Toast";
 import { openExternal } from "../lib/externalLink";
+import { mcpErrorHintKey } from "../lib/mcpError";
 import {
   ALL_CATEGORIES,
   type BotScope,
@@ -43,6 +44,42 @@ const MAX_FACES = 4;
  * (on hover / focus, always while open or broken) opens bot access,
  * reconnect and disconnect below the row.
  */
+
+/** The failure of one server: what to do first, then the full message and what the server printed. */
+function McpErrorBlock({ server }: { server: McpServer }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const hintKey = mcpErrorHintKey(server.error_kind, server.command);
+  const stderr = server.stderr_tail ?? [];
+  const id = `mcp-error-${server.name}`;
+  return (
+    <div className={styles.errorBlock} data-testid={`mcp-error-${server.name}`}>
+      {hintKey ? <p className={styles.errorHint}>{t(hintKey)}</p> : null}
+      <p className={styles.errorText}>{server.error}</p>
+      <button
+        type="button"
+        className={styles.errorToggle}
+        aria-expanded={open}
+        aria-controls={id}
+        data-testid={`mcp-error-toggle-${server.name}`}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? t("apps.error.hideDetails") : t("apps.error.showDetails")}
+      </button>
+      {open ? (
+        <div className={styles.errorDetails} id={id}>
+          <span className={styles.errorLabel}>{t("apps.error.message")}</span>
+          <pre className={styles.errorPre}>{server.error}</pre>
+          <span className={styles.errorLabel}>{t("apps.error.stderr")}</span>
+          <pre className={styles.errorPre}>
+            {stderr.length > 0 ? stderr.join("\n") : t("apps.error.noStderr")}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ConnectedCell({
   server,
   description,
@@ -128,9 +165,7 @@ function ConnectedCell({
           <ChevronDown aria-hidden="true" />
         </button>
       </div>
-      {server.error ? (
-        <p className={styles.cellError} title={server.error}>{server.error}</p>
-      ) : null}
+      {server.error ? <McpErrorBlock server={server} /> : null}
       {open ? (
         <div className={styles.panel} id={panelId}>
           <span className={styles.panelLabel}>{t("apps.access.label")}</span>

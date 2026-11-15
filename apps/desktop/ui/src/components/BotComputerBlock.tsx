@@ -165,7 +165,9 @@ export function BotComputerBlock() {
               ? summary.canInput
                 ? t("liveView.interactive")
                 : t("liveView.viewOnly")
-              : t("liveView.states.unavailable")}
+              : summary
+                ? t("liveView.states.unavailable")
+                : t("liveView.states.noScreen")}
           </span>
         </div>
       </button>

@@ -1113,6 +1113,24 @@
       "notApplied": "{{name}}: not saved, this app was changed elsewhere (for example it is now open to all bots). Showing its current state.",
       "savedToast": "{{name}}: bot access saved"
     },
+    "error": {
+      "showDetails": "Show details",
+      "hideDetails": "Hide details",
+      "message": "Error",
+      "stderr": "What the server printed",
+      "noStderr": "The server printed nothing before it stopped.",
+      "hint": {
+        "runtime_node": "Node.js is not installed. Install the LTS version from https://nodejs.org, restart Praxi-Bot, then press Reconnect.",
+        "runtime_uv": "uv is not installed. Install it (Windows: winget install --id=astral-sh.uv -e, or https://docs.astral.sh/uv/), restart Praxi-Bot, then press Reconnect.",
+        "runtime_pipx": "pipx is not installed. Install it from https://pipx.pypa.io, restart Praxi-Bot, then press Reconnect.",
+        "runtime_docker": "Docker is not installed or not running. Start Docker, then press Reconnect.",
+        "runtime_other": "The program that starts this server was not found. Install it or give its full path in the server settings, then press Reconnect.",
+        "closed": "The server stopped while starting. Open the details to see what it printed, fix that, then press Reconnect.",
+        "spawn": "The server program could not be started. Check the command in the server settings, then press Reconnect.",
+        "timeout": "The server did not answer in time. The first start can be slow while packages download; press Reconnect to try again.",
+        "config": "The server settings or a required secret are missing or invalid. Fix them and press Reconnect."
+      }
+    },
     "reconnect": "Reconnect",
     "disconnectConfirm": "Disconnect this server?",
     "disconnect": "Disconnect",
@@ -1791,6 +1809,7 @@
       "active": "You are in control",
       "finishing": "Handing back…",
       "paused": "Paused",
+      "noScreen": "No screen yet",
       "unavailable": "Unavailable",
       "closed": "Closed",
       "disconnected": "Connection lost",

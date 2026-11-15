@@ -2396,6 +2396,12 @@ export interface components {
             /** @description Endpoint (http). */
             url?: string | null;
         };
+        /**
+         * @description Class of the last connect error of an MCP server, so a UI can show a
+         *     localized "what to do" next to the raw `error` text.
+         * @enum {string}
+         */
+        McpErrorKind: "runtime_missing" | "spawn" | "closed" | "timeout" | "config" | "other";
         /** @description A secret the user must provide to install a catalog entry. */
         McpRequiredSecretDto: {
             /** @description Where the user can get the value. */
@@ -2442,6 +2448,7 @@ export interface components {
             };
             /** @description Most recent error, if any. */
             error?: string | null;
+            error_kind?: null | components["schemas"]["McpErrorKind"];
             /** @description Plain request headers (http). Not secrets. */
             headers?: {
                 [key: string]: string;
@@ -2458,6 +2465,11 @@ export interface components {
             };
             /** @description Connection state. */
             status: components["schemas"]["McpStatus"];
+            /**
+             * @description Last lines the server wrote to stderr (secret-redacted, bounded) while
+             *     it is in an error state; empty otherwise.
+             */
+            stderr_tail?: string[];
             /** @description Glob allow list over server-side tool names; empty = all. */
             tool_allow?: string[];
             /**

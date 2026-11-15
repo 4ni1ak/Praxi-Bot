@@ -1113,6 +1113,24 @@
       "notApplied": "{{name}}: kaydedilmedi, bu uygulama başka yerde değiştirildi (örneğin artık tüm botlara açık). Güncel durum gösteriliyor.",
       "savedToast": "{{name}}: bot erişimi kaydedildi"
     },
+    "error": {
+      "showDetails": "Ayrıntıları göster",
+      "hideDetails": "Ayrıntıları gizle",
+      "message": "Hata",
+      "stderr": "Sunucunun yazdıkları",
+      "noStderr": "Sunucu durmadan önce hiçbir şey yazmadı.",
+      "hint": {
+        "runtime_node": "Node.js kurulu değil. https://nodejs.org adresinden LTS sürümünü kurun, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_uv": "uv kurulu değil. Kurun (Windows: winget install --id=astral-sh.uv -e veya https://docs.astral.sh/uv/), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_pipx": "pipx kurulu değil. https://pipx.pypa.io adresinden kurun, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_docker": "Docker kurulu değil ya da çalışmıyor. Docker'ı başlatın ve Yeniden bağlan'a basın.",
+        "runtime_other": "Bu sunucuyu başlatan program bulunamadı. Kurun ya da sunucu ayarlarında tam yolunu verin, sonra Yeniden bağlan'a basın.",
+        "closed": "Sunucu başlarken durdu. Neyi yazdığını görmek için ayrıntıları açın, sorunu giderin ve Yeniden bağlan'a basın.",
+        "spawn": "Sunucu programı başlatılamadı. Sunucu ayarlarındaki komutu kontrol edin ve Yeniden bağlan'a basın.",
+        "timeout": "Sunucu zamanında yanıt vermedi. İlk başlatma paketler inerken yavaş olabilir; tekrar denemek için Yeniden bağlan'a basın.",
+        "config": "Sunucu ayarları ya da gerekli bir gizli anahtar eksik veya geçersiz. Düzeltin ve Yeniden bağlan'a basın."
+      }
+    },
     "reconnect": "Yeniden bağlan",
     "disconnectConfirm": "Bu sunucunun bağlantısı kesilsin mi?",
     "disconnect": "Bağlantıyı kes",
@@ -1791,6 +1809,7 @@
       "active": "Kontrol sizde",
       "finishing": "Geri veriliyor…",
       "paused": "Duraklatıldı",
+      "noScreen": "Henüz ekran yok",
       "unavailable": "Kullanılamıyor",
       "closed": "Kapalı",
       "disconnected": "Bağlantı kesildi",
