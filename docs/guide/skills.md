@@ -63,3 +63,20 @@ Invalid skill files are skipped with an issue noted, not fatal.
 
 Skills also feed the router: the keyword and embedding search of the decision
 ladder (K2) can suggest a skill for a request (see [Workflows](workflows.md)).
+
+## Choosing which skills a bot gets
+
+On a bot's profile, **Skills → Choose skills…** picks which shared and bundled
+skills the bot is offered. The default is all of them. A bot's own learned
+skills always stay active, and a skill the bot publishes is not assigned to
+other bots automatically.
+
+An unassigned skill is not listed in the bot's prompt, in its skill hint, in
+the router's candidate list or in `skill_list`, and `skill_read` refuses it. If
+the assignment cannot be read (a damaged row, an unusable bot folder), the bot
+gets no shared skill rather than all of them.
+
+This is a prompt and tool boundary, **not confidentiality**. Shared skills are
+plain files in `<data folder>/skills/`; a bot that has been granted file access
+to that folder or a shell can still read an unassigned skill from disk. Do not
+keep secrets in a skill file.

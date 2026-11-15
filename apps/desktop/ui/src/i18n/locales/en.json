@@ -236,6 +236,35 @@
     "confirmDelete": "Click again to delete",
     "chats": "Chats",
     "noChats": "No chats yet. Start one with “New chat”.",
+    "skills": {
+      "heading": "Skills",
+      "loading": "Loading skills…",
+      "summaryAll": "Uses all shared skills ({{count}})",
+      "summarySelected": "{{count}} of {{total}} shared skills",
+      "summaryLearned": "(+{{count}} learned)",
+      "summaryMissing": "{{count}} assigned skill unavailable on disk",
+      "chooseButton": "Choose skills…",
+      "modalTitle": "Choose skills",
+      "modeLabel": "Shared skills access",
+      "modeAll": "All shared skills",
+      "modeSelected": "Only the skills I pick",
+      "searchPlaceholder": "Filter skills by name or description…",
+      "missingTitle": "Unavailable",
+      "missingHint": "These assigned skills are no longer on disk. You can remove them or leave the assignment intact.",
+      "removeMissing": "Remove",
+      "emptyCatalog": "No shared or bundled skills are installed yet.",
+      "emptySearch": "No skills match your search.",
+      "ownTitle": "This bot's own learned skills ({{count}})",
+      "tooMany": "Only {{max}} skills can be assigned. Pick fewer skills, or use \"All shared skills\".",
+      "conflict": "Skills changed since you opened this dialog (another window or device saved them). The current assignment was reloaded; review it and try again.",
+      "invalid": "Could not save: {{detail}}",
+      "boundaryHint": "This limits what the bot is offered and can load with its skill tools. It is not a secret store: a bot with file or shell access may still read the skills folder on disk.",
+      "ownHint": "Learned skills belong to this bot and always stay active.",
+      "scope": {
+        "shared": "shared",
+        "bundled": "bundled"
+      }
+    },
     "chatState": {
       "needs": "Needs you",
       "running": "Running"

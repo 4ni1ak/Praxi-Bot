@@ -23,6 +23,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0005_computer_identity",
         include_str!("../migrations/0005_computer_identity.sql"),
     ),
+    (
+        "0006_bot_skill_assignment",
+        include_str!("../migrations/0006_bot_skill_assignment.sql"),
+    ),
 ];
 
 /// Highest schema version this build supports.
@@ -83,14 +87,17 @@ mod tests {
     fn migrates_empty_db_and_is_idempotent() {
         let mut conn = Connection::open_in_memory().unwrap();
         assert_eq!(current_version(&conn).unwrap(), 0);
-        assert_eq!(migrate(&mut conn).unwrap(), latest_version());
-        assert_eq!(current_version(&conn).unwrap(), latest_version());
+        assert_eq!(latest_version(), 6);
+        assert_eq!(migrate(&mut conn).unwrap(), 6);
+        assert_eq!(current_version(&conn).unwrap(), 6);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         assert_eq!(
             tables(&conn),
             [
                 "approvals",
                 "audit_log",
+                "bot_skill_assignment",
+                "bot_skill_assignment_state",
                 "bots",
                 "chats",
                 "event_index",
@@ -125,6 +132,54 @@ mod tests {
             )
             .unwrap();
         assert_eq!(row, ("paused".into(), None, None, 200));
+    }
+
+    #[test]
+    fn main_v5_upgrades_by_only_the_skill_assignment_migration() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for (_, sql) in &MIGRATIONS[..5] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch("PRAGMA user_version = 5;
+            INSERT INTO users (id,name,created_at_ms) VALUES ('user','u',100);
+            INSERT INTO bots (id,user_id,name,created_at_ms) VALUES ('bot','user','b',100);
+            INSERT INTO runs (id,user_id,bot_id,kind,state,created_at_ms,updated_at_ms,computer_target,computer_node)
+            VALUES ('run','user','bot','turn','paused',100,200,'pc','pc-A');").unwrap();
+        assert!(
+            !tables(&conn)
+                .iter()
+                .any(|t| t.starts_with("bot_skill_assignment"))
+        );
+        assert_eq!(migrate(&mut conn).unwrap(), 1);
+        assert_eq!(current_version(&conn).unwrap(), 6);
+        assert_eq!(migrate(&mut conn).unwrap(), 0);
+        for table in ["bot_skill_assignment", "bot_skill_assignment_state"] {
+            assert!(tables(&conn).contains(&table.to_owned()));
+        }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM bot_skill_assignment", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0); // Existing bots retain the all-skills default.
+        let target: (String, String) = conn
+            .query_row(
+                "SELECT computer_target,computer_node FROM runs WHERE id='run'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(target, ("pc".into(), "pc-A".into()));
+        let generation: i64 = conn
+            .query_row(
+                "SELECT generation FROM bot_skill_assignment_state WHERE id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(generation, 1);
+        let triggers: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='bot_skill_assignment'", [], |r| r.get(0)).unwrap();
+        assert_eq!(triggers, 3);
     }
 
     #[test]

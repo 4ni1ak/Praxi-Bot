@@ -53,7 +53,7 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for ApiJson<T> {
     }
 }
 
-fn id(s: &str) -> Result<Uuid, ApiError> {
+pub(crate) fn id(s: &str) -> Result<Uuid, ApiError> {
     s.parse().map_err(|_| ApiError::bad_request("malformed id"))
 }
 
