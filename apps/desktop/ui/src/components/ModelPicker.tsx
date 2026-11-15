@@ -28,7 +28,17 @@ export interface ModelPickerAutoOption {
 }
 
 /** "Connect" / "Install" rows for coding CLIs; mounted only where CLI models can be chosen. */
-function EngineSection({ query, testId, onInstall }: { query: string; testId: string; onInstall: () => void }) {
+function EngineSection({
+  query,
+  testId,
+  onInstall,
+  onConnected
+}: {
+  query: string;
+  testId: string;
+  onInstall: () => void;
+  onConnected: () => void;
+}) {
   const { t } = useTranslation();
   const toast = useToast();
   const cli = useCliEngineRows(true);
@@ -43,6 +53,10 @@ function EngineSection({ query, testId, onInstall }: { query: string; testId: st
     }
     try {
       await cli.run(row);
+      if (row.action === "connect") {
+        // The provider list reloads for every subscriber; show the new engine's models now.
+        onConnected();
+      }
     } catch (e) {
       toast.show(e instanceof Error && e.message ? e.message : t("modelPicker.engineError"), "danger");
     }
@@ -357,7 +371,7 @@ export function ModelPicker({
                   })
                 : null}
               {engines ? (
-                <EngineSection query={query} testId={testId} onInstall={close} />
+                <EngineSection query={query} testId={testId} onInstall={close} onConnected={() => setAllOpen(true)} />
               ) : null}
             </>
           )}
