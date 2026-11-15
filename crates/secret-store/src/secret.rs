@@ -79,6 +79,7 @@ impl TryFrom<String> for SecretRef {
     fn try_from(name: String) -> Result<Self, Self::Error> {
         // Deserialization refuses only native-integration names; managed MCP
         // OAuth names are refused again in `resolve`, as before.
+        validate_name(&name)?;
         if is_reserved_name(&name) {
             return Err(SecretError::InvalidName(name));
         }
