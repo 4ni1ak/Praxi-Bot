@@ -704,6 +704,8 @@ pub struct SkillHints {
 
 pub(crate) struct Shared {
     pub storage: Arc<Storage>,
+    /// Real arguments of calls whose display form hides a typed secret; memory only.
+    pub secrets: crate::secrets::SecretVault,
     pub tools: ToolRegistry,
     pub checkpoint_access: RwLock<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)>,
     pub providers: RwLock<Providers>,
@@ -1601,57 +1603,6 @@ impl Shared {
             .collect();
         specs.sort_by(|a, b| a.name.cmp(&b.name));
         specs
-    }
-
-    /// Replace the raw `arguments` of call `call_id` with `masked` in the run's
-    /// stored records: the tool step's input and the model step's output (the
-    /// source of the history shown to the model on later turns). Only entries
-    /// whose arguments are still exactly `raw` change, so a provider that
-    /// reuses a call id cannot make this touch another call. Best effort: a
-    /// storage error leaves the record as it was.
-    pub(crate) fn scrub_call_arguments(&self, run: RunId, call_id: &str, raw: &str, masked: &str) {
-        fn scrub(
-            list: Option<&mut serde_json::Value>,
-            call_id: &str,
-            raw: &str,
-            masked: &str,
-        ) -> bool {
-            let mut changed = false;
-            for c in list
-                .and_then(serde_json::Value::as_array_mut)
-                .into_iter()
-                .flatten()
-            {
-                if c["id"] == call_id && c["arguments"] == raw {
-                    c["arguments"] = serde_json::Value::String(masked.to_owned());
-                    changed = true;
-                }
-            }
-            changed
-        }
-        let Ok(steps) = self.storage.list_steps(run) else {
-            return;
-        };
-        for step in steps {
-            let (mut input, mut output) = (step.input.clone(), step.output.clone());
-            let hit = match step.name.as_str() {
-                STEP_TOOLS => {
-                    scrub(input.get_mut("calls"), call_id, raw, masked).then_some((true, false))
-                }
-                STEP_MODEL => output
-                    .as_mut()
-                    .is_some_and(|o| scrub(o.get_mut("tool_calls"), call_id, raw, masked))
-                    .then_some((false, true)),
-                _ => None,
-            };
-            if let Some((in_changed, out_changed)) = hit {
-                let _ = self.storage.rewrite_step_json(
-                    step.id,
-                    in_changed.then_some(&input),
-                    out_changed.then_some(output.as_ref()).flatten(),
-                );
-            }
-        }
     }
 
     pub fn audit(&self, ctx: &RunCtx, actor: &str, action: &str, detail: &serde_json::Value) {

@@ -74,6 +74,7 @@ impl AgentLoop {
             });
             Shared {
                 storage: Arc::clone(&storage),
+                secrets: crate::secrets::SecretVault::default(),
                 surface: ToolSurface::with_visibility(
                     tools.clone(),
                     cfg.discovery_threshold,

@@ -128,42 +128,21 @@ fn take_matching_card(
     }
 }
 
-fn call_key(name: &str, args: &str) -> (String, Value) {
+/// The identity of a call for the repeat guard. A call whose stored form
+/// carries a secret handle is identified by the in-memory keyed fingerprint of
+/// its REAL arguments (never by what is stored): two different passwords are
+/// two calls, two identical ones are the same call. A handle this process no
+/// longer knows is identified by itself only.
+fn call_key(sh: &Shared, run: protocol::RunId, name: &str, args: &str) -> (String, Value) {
     let v = serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.to_owned()));
+    if let Some(id) = crate::secrets::refs_in(&v).first() {
+        let fp = sh
+            .secrets
+            .fingerprint_of(run, id)
+            .map_or_else(|| format!("unknown:{id}"), |f| f.to_string());
+        return (name.to_owned(), json!({ "$secret_call": fp }));
+    }
     (name.to_owned(), v)
-}
-
-/// Whether a call in the stored history is the same call as `new` (for the
-/// repeat guard). A stored call whose typed secret was masked (see
-/// [`Shared::scrub_call_arguments`]) matches a new call that differs only in
-/// the secret and in the masked view's extra labels.
-pub(crate) fn same_call(stored: &(String, Value), new: &(String, Value)) -> bool {
-    stored.0 == new.0 && value_matches(&stored.1, &new.1)
-}
-
-fn has_mask(v: &Value) -> bool {
-    match v {
-        Value::String(s) => tool_registry::is_masked_secret(s),
-        Value::Array(a) => a.iter().any(has_mask),
-        Value::Object(o) => o.values().any(has_mask),
-        _ => false,
-    }
-}
-
-fn value_matches(stored: &Value, new: &Value) -> bool {
-    if !has_mask(stored) {
-        return stored == new;
-    }
-    match (stored, new) {
-        (Value::String(s), Value::String(_)) if tool_registry::is_masked_secret(s) => true,
-        (Value::Object(a), Value::Object(b)) => b
-            .iter()
-            .all(|(k, v)| a.get(k).is_some_and(|x| value_matches(x, v))),
-        (Value::Array(a), Value::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| value_matches(x, y))
-        }
-        _ => stored == new,
-    }
 }
 
 fn user_step(text: &str) -> StepSpec {
@@ -433,7 +412,7 @@ impl TurnExecutor {
 
         let mut seq: Vec<(String, Value)> = tool_steps(history)
             .iter()
-            .map(|c| call_key(&c.name, &c.arguments))
+            .map(|c| call_key(&self.sh, ctx.run_id, &c.name, &c.arguments))
             .collect();
         let group_all_reads =
             self.is_read(ctx, &hints, &remaining[0].name, &remaining[0].arguments);
@@ -449,8 +428,8 @@ impl TurnExecutor {
         let g = &self.sh.cfg.guards;
         let mut calls = Vec::with_capacity(take);
         for c in &remaining[..take] {
-            let key = call_key(&c.name, &c.arguments);
-            let streak = 1 + seq.iter().rev().take_while(|k| same_call(k, &key)).count();
+            let key = call_key(&self.sh, ctx.run_id, &c.name, &c.arguments);
+            let streak = 1 + seq.iter().rev().take_while(|k| **k == key).count();
             let repeat = u32::try_from(streak).unwrap_or(u32::MAX);
             if repeat >= g.repeat_stop {
                 return Err(format!(
@@ -531,7 +510,9 @@ impl TurnExecutor {
         req.temperature = self.sh.cfg.temperature;
 
         if primary.starts_with("cli:") {
-            let out = self.exec_cli(run, &req, &specs, cancel).await?;
+            let mut out = self.exec_cli(run, &req, &specs, cancel).await?;
+            self.conceal_calls(&ctx, run.id, &hints.tools, &mut out)
+                .await;
             self.audit_usage(&ctx, &out);
             return serde_json::to_value(out).map_err(xe);
         }
@@ -608,8 +589,65 @@ impl TurnExecutor {
             );
             out.guard_reason = Some(reason);
         }
+        self.conceal_calls(&ctx, run.id, &hints.tools, &mut out)
+            .await;
         self.audit_usage(&ctx, &out);
         serde_json::to_value(out).map_err(xe)
+    }
+
+    /// Before the model's answer is stored or shown anywhere: give every call a
+    /// unique id (a provider that repeats one cannot make one call stand for
+    /// another) and replace the arguments of each call that types a secret by
+    /// their display form, tagged with an opaque handle. The real arguments
+    /// stay in memory only ([`crate::secrets::SecretVault`]); nothing else,
+    /// least of all the disk, ever holds them, so a stop, a crash or a failed
+    /// write at any later point leaves no plaintext behind.
+    async fn conceal_calls(
+        &self,
+        ctx: &RunCtx,
+        run: protocol::RunId,
+        hints: &[String],
+        out: &mut ModelOut,
+    ) {
+        let mut seen = std::collections::HashSet::new();
+        for tc in &mut out.tool_calls {
+            if !seen.insert(tc.id.clone()) {
+                let base = tc.id.clone();
+                let mut n = 2;
+                loop {
+                    let candidate = format!("{base}~{n}");
+                    if seen.insert(candidate.clone()) {
+                        tc.id = candidate;
+                        break;
+                    }
+                    n += 1;
+                }
+            }
+            let Ok(mut args) = serde_json::from_str::<Value>(&tc.arguments) else {
+                continue;
+            };
+            // A handle the model wrote (copied from its own history) names nothing.
+            let before = args.clone();
+            crate::secrets::untag(&mut args);
+            if args != before {
+                tc.arguments = args.to_string();
+            }
+            let Some(mut shown) = self
+                .sh
+                .display_call_input(ctx, &tc.name, &args, hints)
+                .await
+            else {
+                continue;
+            };
+            let id = self.sh.secrets.put(run, &tc.arguments);
+            crate::secrets::tag(&mut shown, &id);
+            if crate::secrets::refs_in(&shown).is_empty() {
+                // Nothing in the view is masked: there is nothing to hold back.
+                self.sh.secrets.forget(&id);
+                continue;
+            }
+            tc.arguments = shown.to_string();
+        }
     }
 
     /// Records a `usage` audit entry (tokens and estimated cost) for a model
@@ -837,28 +875,49 @@ impl TurnExecutor {
 
         let mut slots = Vec::with_capacity(calls.len());
         let mut uuids = Vec::with_capacity(calls.len());
-        let mut masked_args: Vec<Option<String>> = Vec::with_capacity(calls.len());
+        let mut held: Vec<String> = Vec::new();
         for call in &calls {
             let call_uuid = ToolCallId::new();
             uuids.push(call_uuid);
-            let parsed: Result<Value, String> = if call.arguments.trim().is_empty() {
+            // The stored call holds only the display form of a typed secret
+            // (a handle instead of the value); the real arguments come from
+            // memory, and a call whose secret this process no longer holds is
+            // not run: the user is asked again.
+            let stored: Result<Value, String> = if call.arguments.trim().is_empty() {
                 Ok(json!({}))
             } else {
                 serde_json::from_str(&call.arguments)
                     .map_err(|e| format!("invalid JSON arguments: {e}"))
             };
+            let handles = stored
+                .as_ref()
+                .map(crate::secrets::refs_in)
+                .unwrap_or_default();
+            let (parsed, lost) = match (&stored, handles.first()) {
+                (Ok(_), Some(id)) => match self.sh.secrets.raw(ctx.run_id, id) {
+                    Some(raw) => {
+                        held.extend(handles.iter().cloned());
+                        (
+                            serde_json::from_str(&raw)
+                                .map_err(|e| format!("invalid JSON arguments: {e}")),
+                            false,
+                        )
+                    }
+                    None => (stored.clone(), true),
+                },
+                _ => (stored.clone(), false),
+            };
             // What the stream, the journal and the renderers show of the call:
-            // a secret typed into a field is masked there and in the stored
-            // record (see below), never in what the tool receives.
-            let shown = match &parsed {
-                Ok(v) => {
+            // a secret typed into a field is masked there, never in what the
+            // tool receives.
+            let shown = match (&parsed, lost) {
+                (Ok(v), false) => {
                     self.sh
                         .display_call_input(&ctx, &call.name, v, &hints)
                         .await
                 }
-                Err(_) => None,
+                _ => None,
             };
-            masked_args.push(shown.as_ref().map(Value::to_string));
             self.sh.emit(
                 &ctx,
                 Event::ToolCallRequested(ToolCallRequested {
@@ -872,6 +931,14 @@ impl TurnExecutor {
                 text: format!("Error: {m}"),
                 is_error: true,
             };
+            if lost {
+                slots.push(err(
+                    "the secret value typed for this call is no longer held (it was only \
+                     kept in memory); nothing was typed. Ask the user for it again."
+                        .into(),
+                ));
+                continue;
+            }
             let input = match parsed {
                 Ok(v) => v,
                 Err(m) => {
@@ -1038,13 +1105,9 @@ impl TurnExecutor {
         }))
         .await;
 
-        // The calls have run: the stored record of each keeps the masked view,
-        // so no later history, replay or export carries the typed secret.
-        for (call, masked) in calls.iter().zip(&masked_args) {
-            if let Some(masked) = masked {
-                self.sh
-                    .scrub_call_arguments(run.id, &call.id, &call.arguments, masked);
-            }
+        // The calls have run: the real arguments are dropped from memory too.
+        for id in &held {
+            self.sh.secrets.forget(id);
         }
 
         let g = &self.sh.cfg.guards;

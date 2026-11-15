@@ -22,6 +22,7 @@ mod history;
 mod memory;
 mod profile;
 mod router;
+mod secrets;
 mod shared;
 mod subagent;
 
