@@ -82,6 +82,11 @@ pub enum CliSettings {
 pub enum CliEngine {
     Claude,
     Codex,
+    /// Native-tools engines (no confined mode): Cursor, `OpenCode`, Gemini CLI.
+    Cursor,
+    #[serde(rename = "opencode")]
+    OpenCode,
+    Gemini,
 }
 
 impl CliEngine {
@@ -91,6 +96,9 @@ impl CliEngine {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Cursor => "cursor",
+            Self::OpenCode => "opencode",
+            Self::Gemini => "gemini",
         }
     }
 }
@@ -180,7 +188,38 @@ impl ProviderSettings {
         if self.cli.is_some() || entry.kind == crate::ProviderKind::Cli {
             return Err(ProviderError::CliSession);
         }
-        let key = match (&self.key, &entry.auth) {
+        let key = self.resolve_key(entry, store)?;
+        let entry = self.apply_model_caps(entry);
+        build_chat_provider(&entry, config, key)
+    }
+
+    /// Build an embedding adapter using exactly this configured provider's
+    /// endpoint and secret reference. No separate RAG API key is persisted.
+    ///
+    /// # Errors
+    /// Disabled/session providers, missing credentials, or unsupported adapters.
+    pub fn build_embedding_provider(
+        &self,
+        entry: &ProviderEntry,
+        store: &dyn SecretStore,
+        config: OpenAiCompatConfig,
+    ) -> Result<Box<dyn crate::embedding::EmbeddingProvider>, ProviderError> {
+        if !self.enabled || self.cli.is_some() || self.id != entry.id {
+            return Err(ProviderError::InvalidRequest(
+                "embedding provider is disabled or mismatched".into(),
+            ));
+        }
+        crate::embedding::endpoint_identity(&entry.base_url)?;
+        let key = self.resolve_key(entry, store)?;
+        crate::factory::build_embedding_provider(entry, config, key)
+    }
+
+    fn resolve_key(
+        &self,
+        entry: &ProviderEntry,
+        store: &dyn SecretStore,
+    ) -> Result<Option<String>, ProviderError> {
+        Ok(match (&self.key, &entry.auth) {
             (Some(r), _) => Some(
                 resolve(store, r)
                     .map_err(|e| ProviderError::Auth(e.to_string()))?
@@ -189,15 +228,16 @@ impl ProviderSettings {
             ),
             (None, Auth::None) => None,
             (None, Auth::ApiKeyEnv(var)) => Some(key_from_env(var)?),
-        };
-        let entry = self.apply_model_caps(entry);
-        build_chat_provider(&entry, config, key)
+        })
     }
 }
 
 /// All configured providers plus the explicit global default, if any.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProviderConfig {
+    /// Entries disabled during legacy secret-reference quarantine, for the repair UI.
+    #[serde(skip)]
+    pub quarantined: BTreeMap<String, String>,
     /// Explicit global default provider id; `None` means "first added".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_provider: Option<String>,
@@ -329,7 +369,35 @@ impl ProviderConfig {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {
             Ok(s) => {
-                let cfg: Self = toml::from_str(&s)?;
+                // Quarantine legacy references before SecretRef deserialization.
+                // Keep the source file for repair; never turn a forbidden key into
+                // a keyless enabled provider. New writes still reject SecretRef.
+                let mut raw: toml::Value = toml::from_str(&s)?;
+                let mut quarantined = BTreeMap::new();
+                if let Some(entries) = raw.get_mut("provider").and_then(toml::Value::as_array_mut) {
+                    for entry in entries {
+                        if entry
+                            .get("key")
+                            .and_then(toml::Value::as_str)
+                            .is_some_and(secret_store::is_reserved_name)
+                        {
+                            let id = entry
+                                .get("id")
+                                .and_then(toml::Value::as_str)
+                                .unwrap_or("unknown");
+                            quarantined.insert(id.to_owned(), "Reserved secret reference: remove the key in providers.toml and reconnect this provider".to_owned());
+                            eprintln!(
+                                "provider {id:?} disabled: reserved secret reference; remove its key in providers.toml and reconnect the provider"
+                            );
+                            if let Some(table) = entry.as_table_mut() {
+                                table.remove("key");
+                                table.insert("enabled".into(), toml::Value::Boolean(false));
+                            }
+                        }
+                    }
+                }
+                let mut cfg: Self = raw.try_into()?;
+                cfg.quarantined = quarantined;
                 cfg.validate_cli()?;
                 Ok(cfg)
             }
@@ -376,6 +444,9 @@ impl ProviderConfig {
                 let id = match engine {
                     CliEngine::Claude => "cli:claude",
                     CliEngine::Codex => "cli:codex",
+                    CliEngine::Cursor => "cli:cursor",
+                    CliEngine::OpenCode => "cli:opencode",
+                    CliEngine::Gemini => "cli:gemini",
                 };
                 if p.id != id
                     || p.key.is_some()
@@ -1220,5 +1291,36 @@ added_at_ms = 10
         let toml_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(lock_mode, 0o600);
         assert_eq!(toml_mode, 0o600);
+    }
+}
+
+#[cfg(test)]
+mod reserved_upgrade_tests {
+    use super::*;
+    #[test]
+    fn legacy_reserved_reference_is_disabled_without_preventing_startup() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join(CONFIG_FILE_NAME);
+        let text = r#"[[provider]]
+id = "legacy"
+key = "composio/legacy-provider-key"
+enabled = true
+added_at_ms = 1
+[[provider]]
+id = "valid"
+key = "provider.valid.api_key"
+added_at_ms = 2
+"#;
+        std::fs::write(&path, text).unwrap();
+        let cfg = ProviderConfig::load(&path).unwrap();
+        assert!(!cfg.providers[0].enabled);
+        assert!(cfg.quarantined["legacy"].contains("Reserved secret reference"));
+        assert!(cfg.providers[0].key.is_none());
+        assert!(cfg.providers[1].enabled);
+        assert_eq!(
+            cfg.providers[1].key.as_ref().unwrap().name(),
+            "provider.valid.api_key"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
     }
 }

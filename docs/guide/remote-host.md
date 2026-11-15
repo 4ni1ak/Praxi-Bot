@@ -252,6 +252,40 @@ ssh -L 47821:127.0.0.1:47821 user@your-server
 The API token lives in `/var/lib/praxi` (readable only by `praxi`); clients on
 the tunnel authenticate with it like on a local install.
 
+### Using the host from the desktop app
+
+The desktop app can show the host's screen (the Xvfb desktop and the bot's
+browser), take it over and hand it back, and chat with bots that run **on the
+host**. It needs no extra port: the app's own daemon opens an outbound iroh
+channel to the host, and every request is checked by the host's peer guard as a
+paired *Desktop*.
+
+1. The host must run as a host: `bot serve --host` (this also turns peer
+   networking on). An installed `praxi.service` runs `bot serve`; override it
+   with a drop-in (`sudo systemctl edit praxi`):
+
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=/opt/praxi/bin/bot serve --host
+   ```
+
+2. On the host, create a one-time pairing ticket for the desktop and copy it:
+   `praxi host invite --role desktop`
+3. In the app, open the computer selector in the header, **Add a host…**, and
+   paste the ticket. The selector then lists the host next to "This computer".
+4. Pairing does not allow screen access by itself. On the host, let the paired
+   desktop watch and take over (kept across restarts, local user only):
+   `praxi host screen --all-desktops` (add `--view-only` for watching only,
+   `--revoke` to remove). `praxi host devices` lists device keys.
+
+On a host, a paired Desktop can operate bots, chats and runs and use the screen
+but cannot change secrets or provider keys, MCP servers, skills, email or web
+search credentials, Telegram pairing, or import/hand over state; do those on the
+host itself. Until the host has a model key of its own, the app says "this host
+has no model key yet": the screen and bot management work, chats cannot be
+answered. Put the key on the host with `praxi setup` (see section 3).
+
 ### Letting another core control this machine (experimental)
 
 This is **not functional on Linux yet**. `bot-node run` exits because there is

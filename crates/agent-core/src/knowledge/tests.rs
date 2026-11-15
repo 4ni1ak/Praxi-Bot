@@ -121,7 +121,12 @@ fn search_call(query: &str, discovery: bool) -> ToolCall {
 
 fn enable(env: &Env) {
     env.storage
-        .update_bot(env.bot, "b", &json!({"knowledge":{"auto_retrieve":true}}))
+        .update_bot(
+            env.bot,
+            "b",
+            &json!({"knowledge":{"auto_retrieve":true}}),
+            1,
+        )
         .unwrap();
 }
 

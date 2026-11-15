@@ -1,0 +1,152 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: var(--space-0);
+  max-width: calc(var(--size-content-max) * 0.4);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) ease-out,
+    color var(--motion-duration-fast) ease-out;
+}
+
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.trigger[data-computer="host"] {
+  color: var(--color-accent-text);
+}
+
+.name {
+  min-width: var(--space-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dot {
+  flex-shrink: 0;
+  width: calc(var(--space-1) * 1.5);
+  height: calc(var(--space-1) * 1.5);
+  border-radius: 50%;
+  background-color: var(--color-text-muted);
+}
+
+.dot[data-tone="ok"] {
+  background-color: var(--color-success);
+}
+
+.dot[data-tone="wait"] {
+  background-color: var(--color-warning);
+}
+
+.dot[data-tone="bad"] {
+  background-color: var(--color-danger);
+}
+
+.icon {
+  flex-shrink: 0;
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.chevron {
+  flex-shrink: 0;
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+.menu {
+  padding: var(--space-2);
+}
+
+.heading {
+  margin: var(--space-0);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--space-10);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: calc(var(--radius-md) * 1.25);
+  background: none;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.item > .icon {
+  color: var(--color-text-muted);
+}
+
+.item:hover:not(:disabled),
+.item:focus-visible {
+  outline: none;
+  background-color: var(--color-surface-active);
+}
+
+.item:focus-visible {
+  box-shadow: inset 0 0 0 var(--size-border-thick) var(--color-focus);
+}
+
+.itemText {
+  flex: 1;
+  min-width: var(--space-0);
+  display: flex;
+  flex-direction: column;
+}
+
+.itemText b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+}
+
+.itemText small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.check {
+  flex-shrink: 0;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--color-accent-text);
+}
+
+.danger,
+.danger > .icon {
+  color: var(--color-danger);
+}

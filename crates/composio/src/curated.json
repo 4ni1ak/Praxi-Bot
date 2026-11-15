@@ -1,0 +1,35 @@
+{
+ "cap_per_toolkit": 20,
+ "native_first": [],
+ "popular": [
+  {"slug": "instagram", "name": "Instagram"},
+  {"slug": "linkedin", "name": "LinkedIn"},
+  {"slug": "twitter", "name": "X"},
+  {"slug": "facebook", "name": "Facebook"},
+  {"slug": "tiktok", "name": "TikTok"},
+  {"slug": "whatsapp", "name": "WhatsApp"},
+  {"slug": "gmail", "name": "Gmail"},
+  {"slug": "googlecalendar", "name": "Google Calendar"},
+  {"slug": "googledrive", "name": "Google Drive"},
+  {"slug": "github", "name": "GitHub"},
+  {"slug": "slack", "name": "Slack"},
+  {"slug": "hubspot", "name": "HubSpot"},
+  {"slug": "salesforce", "name": "Salesforce"},
+  {"slug": "airtable", "name": "Airtable"},
+  {"slug": "discord", "name": "Discord"},
+  {"slug": "telegram", "name": "Telegram"},
+  {"slug": "youtube", "name": "YouTube"},
+  {"slug": "reddit", "name": "Reddit"},
+  {"slug": "shopify", "name": "Shopify"},
+  {"slug": "stripe", "name": "Stripe"}
+ ],
+ "read_only_actions": [
+  "SLACK_LIST_ALL_CHANNELS", "SLACK_FETCH_CONVERSATION_HISTORY",
+  "HUBSPOT_LIST_CONTACTS", "AIRTABLE_LIST_RECORDS",
+  "INSTAGRAM_GET_USER_MEDIA", "INSTAGRAM_GET_USER_INFO",
+  "LINKEDIN_GET_MY_INFO", "TWITTER_USER_LOOKUP_ME", "TWITTER_RECENT_SEARCH",
+  "FACEBOOK_GET_PAGE_DETAILS", "SALESFORCE_GET_RECORD",
+  "GMAIL_FETCH_EMAILS", "GOOGLECALENDAR_EVENTS_LIST", "GITHUB_LIST_REPOSITORY_ISSUES",
+  "NOTION_SEARCH_NOTION_PAGE", "LINEAR_LIST_LINEAR_ISSUES"
+ ]
+}

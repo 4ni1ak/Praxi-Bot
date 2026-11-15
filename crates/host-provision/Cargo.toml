@@ -1,0 +1,21 @@
+[package]
+name = "host-provision"
+description = "Provision a rented Linux server over SSH into a paired Praxi host (engine; the CLI drives it)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

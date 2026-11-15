@@ -17,6 +17,7 @@ mod compaction;
 mod config;
 mod control;
 pub mod control_note;
+mod discovery_prompt;
 mod exec;
 mod history;
 mod knowledge;
@@ -50,7 +51,8 @@ pub use knowledge::{
 };
 pub use permission_engine::Decision as PolicyDecision;
 pub use profile::{
-    BotProfile, ModelsConfig, PermissionsConfig, ProfileError, RouterSettings, ToolFilter,
+    BotProfile, EngineConsent, EngineSettings, ModelsConfig, PermissionsConfig, ProfileError,
+    RouterSettings, ToolFilter,
 };
 pub use shared::{
     ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, LoopError,

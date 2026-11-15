@@ -705,6 +705,7 @@ pub struct NeverList {
 const DAEMON_STATE_NAMES: &[&str] = &[
     "api-token",
     "control-latch",
+    "view-privileges",
     "bot.db",
     "policy.json",
     "identity.key",

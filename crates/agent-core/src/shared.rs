@@ -404,7 +404,9 @@ pub fn build_providers(
     let mut cli_built: Vec<String> = Vec::new();
     for s in cfg.providers.iter().filter(|p| p.enabled) {
         if let Some(CliSettings::Cli { engine, .. }) = &s.cli {
-            if cli_provider::engine_spec(engine.as_str()).is_some_and(|spec| spec.runnable) {
+            if cli_provider::engine_spec(engine.as_str())
+                .is_some_and(cli_provider::CliEngineSpec::can_enable)
+            {
                 cli_built.push(s.id.clone());
             } else {
                 warn(&format!(
@@ -756,6 +758,9 @@ pub(crate) struct Shared {
     pub spawn_gate: Mutex<()>,
     /// Skills index (`AgentLoop::with_skills`).
     pub skills: OnceLock<skills::SkillIndex>,
+    /// Owner-stored fill secrets (from the builtin tool config); workflow
+    /// replay types them through the same checks as the fill tools.
+    pub fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.
@@ -773,6 +778,9 @@ pub(crate) struct Shared {
     /// Serialises a global-policy install with the decision to execute an
     /// already-approved tool. Not held across `.await`.
     pub exec_gate: Mutex<()>,
+    /// Cancellation tokens of the native-tools engine processes running per bot,
+    /// so the owner's kill switch can end them at once.
+    pub native_runs: Mutex<HashMap<BotId, Vec<(uuid::Uuid, tokio_util::sync::CancellationToken)>>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]
@@ -1606,6 +1614,26 @@ impl Shared {
         specs
     }
 
+    /// The discovery-mode prompt block for this bot, or `None` when the model
+    /// was handed its tools directly (no `find_tool` among `specs`) or the bot
+    /// may use none of the advertised families. Built from the permission-
+    /// filtered registry, independent of per-turn router hints. Unchanged
+    /// registry and policy inputs produce identical bytes across turns.
+    pub(crate) fn discovery_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        if !specs.iter().any(|s| s.name == agent_router::FIND_TOOL) {
+            return None;
+        }
+        let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
+        crate::discovery_prompt::block(
+            visible
+                .iter()
+                .filter(|s| {
+                    self.decide(ctx, &s.name, s.effect, s.category, &Value::Null) != Decision::Deny
+                })
+                .map(|s| s.name.as_str()),
+        )
+    }
+
     pub fn audit(&self, ctx: &RunCtx, actor: &str, action: &str, detail: &serde_json::Value) {
         let _ = self
             .storage
@@ -1741,3 +1769,5 @@ pub(crate) const STEP_TOOLS: &str = "tools";
 pub(crate) const STEP_WORKFLOW: &str = "workflow";
 /// A built-in command run by the router (`/new`).
 pub(crate) const STEP_COMMAND: &str = "command";
+/// One system nudge after a model turn ended with no text after tool calls.
+pub(crate) const STEP_NUDGE: &str = "nudge";

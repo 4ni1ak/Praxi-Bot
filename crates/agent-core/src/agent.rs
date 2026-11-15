@@ -112,6 +112,7 @@ impl AgentLoop {
                 rt: OnceLock::new(),
                 spawn_gate: Mutex::new(()),
                 skills: OnceLock::new(),
+                fill_secrets: OnceLock::new(),
                 skill_hints: RwLock::new(None),
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
@@ -119,6 +120,7 @@ impl AgentLoop {
                 identity_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
                 exec_gate: Mutex::new(()),
+                native_runs: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 task_reap_gate: Mutex::new(None),
                 #[cfg(test)]
@@ -186,6 +188,9 @@ impl AgentLoop {
         }));
         *self.sh.checkpoint_access.write() =
             (cfg.fs_allowed_roots.clone(), cfg.fs_granted_paths.clone());
+        if let Some(secrets) = &cfg.fill_secrets {
+            let _ = self.sh.fill_secrets.set(Arc::clone(secrets));
+        }
         let _ = builtin_tools::register_builtin_tools(&self.sh.tools, cfg);
         self
     }
@@ -281,6 +286,62 @@ impl AgentLoop {
         self.sh.global_policy.read().clone()
     }
 
+    /// Resolve query-embedding egress in the actual active run's policy scope.
+    /// Unknown/cross-bot run IDs fail closed. Owner source opt-in remains an
+    /// independent host requirement; generic tool grants are not consulted.
+    #[must_use]
+    pub fn embedding_egress_decision(
+        &self,
+        bot_id: BotId,
+        run_id: &str,
+    ) -> permission_engine::Decision {
+        use permission_engine::{ActionRequest, Decision};
+        let Ok(run_id) = run_id.parse::<Uuid>().map(RunId) else {
+            return Decision::Deny;
+        };
+        let _gate = self.sh.exec_gate.lock();
+        // Never reconstruct a context from a caller-supplied persisted run ID.
+        // Only a currently executing run may exercise its captured initiator
+        // and inherited subagent policy.
+        if self.rt.state(run_id).ok() != Some(RunState::Running) {
+            return Decision::Deny;
+        }
+        let Some(ctx) = self
+            .sh
+            .runs
+            .lock()
+            .get(&run_id)
+            .filter(|ctx| ctx.bot_id == bot_id)
+            .cloned()
+        else {
+            return Decision::Deny;
+        };
+        if self
+            .sh
+            .policy_locked
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Decision::Deny;
+        }
+        let Ok(current) = self.sh.profile_for(bot_id) else {
+            return Decision::Deny;
+        };
+        let policy = self.sh.global_policy.read();
+        let request = ActionRequest {
+            category: PermissionCategory::Remote,
+            raw_command: String::new(),
+            initiator: ctx.initiator,
+        };
+        self.sh
+            .resolver
+            .resolve(&policy, ctx.bot_policy.as_ref(), None, &request)
+            .stricter(
+                self.sh
+                    .resolver
+                    .resolve(&policy, current.policy().as_ref(), None, &request),
+            )
+    }
+
     /// Replace the workspace-wide default policy.
     ///
     /// Bumps the policy revision, then denies pending approvals that the new
@@ -307,6 +368,22 @@ impl AgentLoop {
     #[must_use]
     pub fn price_for(&self, model: &str) -> Option<ModelPrice> {
         self.sh.price_for(model)
+    }
+
+    /// Owner kill switch: end every running native-tools engine process of
+    /// `bot_id` (the whole process tree). Returns how many were signalled.
+    #[allow(clippy::must_use_candidate)] // Callers may ignore the count.
+    pub fn kill_native_runs(&self, bot_id: BotId) -> usize {
+        let runs = self
+            .sh
+            .native_runs
+            .lock()
+            .remove(&bot_id)
+            .unwrap_or_default();
+        for (_, token) in &runs {
+            token.cancel();
+        }
+        runs.len()
     }
 
     /// Register the profile used by `bot_id` (otherwise the bot row's JSON
@@ -345,6 +422,7 @@ impl AgentLoop {
             control: Some(Arc::new(LoopControl {
                 sh: Arc::downgrade(&self.sh),
             })),
+            fill_secrets: self.sh.fill_secrets.get().cloned(),
             ..workflow_replay::ReplayOptions::default()
         };
         let (s2, h2, o2) = (store.clone(), handles.clone(), opts.clone());

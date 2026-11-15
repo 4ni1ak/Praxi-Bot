@@ -13,6 +13,35 @@ use crate::lexical::{expand_query, stem_all};
 /// cheap field boost: a hit in the name outweighs a hit in the description.
 const NAME_BOOST: usize = 3;
 
+/// Leaf verbs a person reaches for first; hits named after them rank higher.
+const PRIMARY_VERBS: &[&str] = &["open", "navigate"];
+/// Niche leaf verbs: relevant only when asked for by name.
+const NICHE_VERBS: &[&str] = &[
+    "resize", "close", "drag", "hover", "console", "network", "install", "dialog", "upload",
+    "handle",
+];
+/// Ranking multipliers (see [`rank_factor`]).
+const PRIMARY_BOOST: f64 = 1.25;
+const NICHE_PENALTY: f64 = 0.7;
+
+/// Multiplier applied to a BM25 score so the tool a person expects first wins:
+/// primary verbs (open/navigate) up, niche verbs down. Built-in-first order is
+/// applied by the grouping in `find_tool`, not here (it hurt the golden set).
+fn rank_factor(name: &str) -> f64 {
+    let leaf = name
+        .split_once(':')
+        .map_or(name, |(_, rest)| rest.rsplit('/').next().unwrap_or(rest));
+    let leaf = leaf.to_lowercase();
+    let has = |verbs: &[&str]| leaf.split(['_', '.', '-']).any(|t| verbs.contains(&t));
+    let mut f = 1.0;
+    if has(PRIMARY_VERBS) {
+        f *= PRIMARY_BOOST;
+    } else if has(NICHE_VERBS) {
+        f *= NICHE_PENALTY;
+    }
+    f
+}
+
 /// One discovery result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolHit {
@@ -80,15 +109,23 @@ impl ToolIndex {
     /// The best `k` tools for a natural-language `query`, best first.
     #[must_use]
     pub fn search(&self, query: &str, k: usize) -> Vec<ToolHit> {
-        self.index
-            .search(&expand_query(&tokenize(query)), k)
+        let mut hits: Vec<ToolHit> = self
+            .index
+            .search(&expand_query(&tokenize(query)), self.entries.len())
             .into_iter()
             .map(|(doc, score)| ToolHit {
                 name: self.entries[doc].0.clone(),
                 description: self.entries[doc].1.clone(),
-                score,
+                score: score * rank_factor(&self.entries[doc].0),
             })
-            .collect()
+            .collect();
+        hits.sort_by(|a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        hits.truncate(k);
+        hits
     }
 }
 
@@ -256,5 +293,39 @@ mod tests {
         assert_eq!(top(&index, "pencere"), "desktop.list_windows");
         assert_eq!(top(&index, "işlem"), "process.list");
         assert_eq!(index.search("xyzzy", 3).len(), 0);
+    }
+
+    #[test]
+    fn browser_query_puts_open_first_with_builtin_and_mcp_families() {
+        let specs = vec![
+            spec("browser_open", "Open a URL in the browser", &["url"]),
+            spec("browser_click", "Click an element on the page", &["ref"]),
+            spec(
+                "mcp:playwright/browser_resize",
+                "Resize the browser window",
+                &["width", "height"],
+            ),
+            spec(
+                "mcp:playwright/browser_navigate",
+                "Navigate to a URL",
+                &["url"],
+            ),
+            spec("mcp:playwright/browser_close", "Close the page", &[]),
+            spec("fs_read", "Read a file", &["path"]),
+        ];
+        let index = ToolIndex::build(&specs);
+        for q in ["browser", "open website", "youtube"] {
+            assert_eq!(top(&index, q), "browser_open", "query {q}");
+        }
+        let names: Vec<_> = index
+            .search("browser", 6)
+            .into_iter()
+            .map(|h| h.name)
+            .collect();
+        let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
+        assert!(pos("mcp:playwright/browser_navigate") < pos("mcp:playwright/browser_resize"));
+        // Without the builtin family the MCP navigate tool still wins over resize.
+        let mcp_only = ToolIndex::build(&specs[2..5]);
+        assert_eq!(top(&mcp_only, "browser"), "mcp:playwright/browser_navigate");
     }
 }

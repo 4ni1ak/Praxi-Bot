@@ -155,6 +155,15 @@ impl Redactor {
                 server,
                 message: self.scrub(&message),
             },
+            McpError::RuntimeMissing {
+                server,
+                command,
+                hint,
+            } => McpError::RuntimeMissing {
+                server,
+                command: self.scrub(&command),
+                hint: self.scrub(&hint),
+            },
             McpError::Transport { server, message } => McpError::Transport {
                 server,
                 message: self.scrub(&message),

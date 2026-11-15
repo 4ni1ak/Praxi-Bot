@@ -121,9 +121,39 @@ test("pickDefaultTarget and summarizeTarget expose unavailable reasons without a
     pickDefaultTarget([targetIdle, targetRemote, targetBrowser], { botId: "bot-2" })?.target_id,
     "t-idle"
   );
+});
+
+test("a focused bot never auto-selects another bot's browser (244-V #7)", () => {
+  const botA = "bot-a";
+  const botBBrowser = { ...targetBrowser, target_id: "t-b", bot_id: "bot-b" };
+  const desktop: TargetInfo = {
+    ...targetBrowser,
+    target_id: "t-desktop",
+    bot_id: null,
+    kind: "desktop"
+  };
+  // Desktop unavailable, bot A has no slot yet, bot B's browser is live.
+  const desktopDown: TargetInfo = {
+    ...desktop,
+    capabilities: { ...desktop.capabilities, view: false },
+    unavailable_reason: "unavailable"
+  };
+  assert.equal(pickDefaultTarget([botBBrowser], { botId: botA }), null);
+  assert.equal(pickDefaultTarget([botBBrowser, desktopDown], { botId: botA })?.target_id, "t-desktop");
+  // No bot in focus at all: still not a bot's browser.
+  assert.equal(pickDefaultTarget([botBBrowser]), null);
+  assert.equal(pickDefaultTarget([botBBrowser, desktop])?.target_id, "t-desktop");
+  // Its own browser, idle or live, comes first; the shared desktop after.
+  const botAIdle = { ...targetIdle, target_id: "t-a", bot_id: botA };
   assert.equal(
-    pickDefaultTarget([targetIdle, targetBrowser])?.target_id,
-    "t-browser"
+    pickDefaultTarget([botBBrowser, desktop, botAIdle], { botId: botA })?.target_id,
+    "t-a"
+  );
+  assert.equal(pickDefaultTarget([botBBrowser, desktop], { botId: botA })?.target_id, "t-desktop");
+  // An explicit choice may cross bots.
+  assert.equal(
+    pickDefaultTarget([botBBrowser, desktop], { botId: botA, preferredTargetId: "t-b" })?.target_id,
+    "t-b"
   );
 });
 
