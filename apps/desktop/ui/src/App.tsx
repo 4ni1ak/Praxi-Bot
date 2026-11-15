@@ -23,6 +23,11 @@ import { PRODUCT_CONFIG } from "./config/product";
 import {
   isMiniRail,
   loadShellLayout,
+  fitRail,
+  railAfterStep,
+  searchPlan,
+  FLOAT_PAD,
+  isFloatShell,
   panelMax,
   panelWidthFromPointer,
   railTier,
@@ -33,22 +38,27 @@ import {
   PANEL_MIN,
   saveShellLayout,
   stepPanel,
-  stepRail,
   type ShellLayout
 } from "./lib/shellLayout";
 import { useMcp } from "./state/useMcp";
 import { AccountMenu, type AccountAction } from "./components/AccountMenu";
+import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
 import { BOT_COLORS, botView } from "./lib/botProfile";
 import { getAutostart, setAutostart } from "./lib/providers";
+import { PausedControlBanner } from "./components/PausedControlBanner";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
+import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
+import { LiveViewer } from "./views/LiveViewer";
 import { appearanceFromQuery } from "./lib/appearance";
 import { createDebounced } from "./lib/debounce";
-import { CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
+import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
 import { Backdrop, sceneColors } from "./components/Backdrop";
 import { useApplyAppearance } from "./state/useApplyAppearance";
+import { usePanelReserve } from "./state/usePanelReserve";
+import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
 import { DaemonProvider, useDaemon } from "./state/DaemonContext";
@@ -111,6 +121,7 @@ function AppShell() {
     refreshBots,
     retry
   } = useDaemon();
+  const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   const [controlState, setControlState] = useState<ControlSnapshot>(
@@ -127,14 +138,15 @@ function AppShell() {
   const { servers: appServers } = useMcp(true);
   const [helpOpen, setHelpOpen] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const [panelOpen, setPanelOpen] = useState(() => {
+    if (!isMockMode() || typeof window === "undefined") {
+      return false;
+    }
+    const q = new URLSearchParams(window.location.search);
+    return q.get("lv") === "panel" || q.get("panel") === "1";
+  });
+  const viewportWidth = useViewportWidth();
   const chipRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
   // Remember the column widths (after a pause, so a drag writes once).
   const layoutRef = useRef(layout);
   useEffect(() => {
@@ -152,7 +164,7 @@ function AppShell() {
   }, []);
   const setRail = useCallback((rail: number) => setLayout((l) => (l.rail === rail ? l : { ...l, rail })), []);
   const setPanelWidth = useCallback((panel: number) => setLayout((l) => (l.panel === panel ? l : { ...l, panel })), []);
-  const gridPad = () => (document.documentElement.dataset.float === "on" ? 12 : 0);
+  const gridPad = () => (document.documentElement.dataset.float === "on" ? FLOAT_PAD : 0);
   useEffect(() => {
     let mounted = true;
     void loadSettings().then(async (loaded) => {
@@ -279,6 +291,11 @@ function AppShell() {
       const activeHotkey = controlState.stopHotkey || settings.stopHotkey;
       if (matchesHotkeyEvent(event, activeHotkey)) {
         event.preventDefault();
+        // Plain Stop stays independent: the daemon-wide override latch is only
+        // used while a screen takeover is held (never on key repeat).
+        if (!event.repeat) {
+          void overrideStop({ onlyIfControlled: true });
+        }
         void stopBotRun().then(setControlState);
       }
     };
@@ -287,7 +304,7 @@ function AppShell() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey]);
+  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, overrideStop]);
 
   // Native title bar on / off (Tauri window decorations; no-op in a browser).
   useEffect(() => {
@@ -407,10 +424,26 @@ function AppShell() {
   };
   const openNeeds = () => setRoute({ kind: "needs" });
 
-  const mini = isMiniRail(layout.rail);
   const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot" || (route.kind === "botForm" && Boolean(route.botId)));
   const panelVisible = panelOpen && botInView;
-  const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail));
+  const float = isFloatShell(settings.uiStyle, backdropIsActive(settings.backdrop, settings.backgroundUrl));
+  const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
+  const panelReserve = usePanelReserve(panelVisible);
+  const railWidth = fitRail(viewportWidth, layout.rail, panelWidth, float, panelReserve);
+  const fitStored = (candidate: number) => fitRail(viewportWidth, candidate, panelWidth, float, panelReserve);
+  const search = searchPlan(layout.rail, railWidth, botSearch !== null);
+  const searchButtonRef = useRef<HTMLButtonElement | null>(null);
+  const closeSearch = useCallback(() => setBotSearch(null), []);
+  // A dialog opened by a shortcut sits above the Search popover: close the popover instead of leaving it beneath.
+  const dialogOpen = settingsOpen !== null || appsOpen || newBotOpen || helpOpen;
+  useEffect(() => {
+    if (dialogOpen) setBotSearch(null);
+  }, [dialogOpen]);
+  const mini = isMiniRail(railWidth);
+
+  useEffect(() => {
+    setThumbnailDemand(panelVisible, selectedBot?.id ?? null);
+  }, [panelVisible, selectedBot?.id, setThumbnailDemand]);
   const togglePanel = () => setPanelOpen((open) => !open);
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
@@ -452,7 +485,10 @@ function AppShell() {
           <Button
             variant="danger"
             size="sm"
-            onClick={() => void stopBotRun().then(setControlState)}
+            onClick={() => {
+              void overrideStop({ onlyIfControlled: true });
+              void stopBotRun().then(setControlState);
+            }}
           >
             {t("widget.stop")}
           </Button>
@@ -483,6 +519,13 @@ function AppShell() {
           >
             {isHumanDriving ? t("widget.giveBack") : t("widget.takeTheWheel")}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openViewer()}
+          >
+            {t("liveView.expand")}
+          </Button>
         </div>
       </div>
     </div>
@@ -490,7 +533,7 @@ function AppShell() {
 
   return (
     <SidebarLayout
-      style={{ "--size-sidebar-width": `${layout.rail}px` } as CSSProperties}
+      style={{ "--size-sidebar-width": `${railWidth}px` } as CSSProperties}
       backdrop={
         settings.backdrop !== NO_BACKDROP && settings.backdrop !== CUSTOM_BACKDROP ? (
           <Backdrop
@@ -518,9 +561,9 @@ function AppShell() {
             label={t("shell.panelGrip")}
             value={panelWidth}
             min={PANEL_MIN}
-            max={panelMax(viewportWidth, layout.rail)}
-            onDrag={(x) => setPanelWidth(panelWidthFromPointer(x, window.innerWidth, gridPad(), layout.rail))}
-            onStep={(dir) => setPanelWidth(stepPanel(panelWidth, dir === -1 ? 1 : -1, window.innerWidth, layout.rail))}
+            max={panelMax(viewportWidth, layout.rail, float)}
+            onDrag={(x) => setPanelWidth(panelWidthFromPointer(x, window.innerWidth, gridPad(), layout.rail, float))}
+            onStep={(dir) => setPanelWidth(stepPanel(panelWidth, dir === -1 ? 1 : -1, window.innerWidth, layout.rail, float))}
           />
           {selectedBot && panelBotView ? (
             <BotPanel
@@ -540,25 +583,30 @@ function AppShell() {
         </SidePanel>
       }
       sidebar={
-        <Sidebar className={[styles.rail, mini ? styles.railMini : ""].filter(Boolean).join(" ")} data-rail-tier={railTier(layout.rail)}>
+        <Sidebar className={[styles.rail, mini ? styles.railMini : ""].filter(Boolean).join(" ")} data-rail-tier={railTier(railWidth)}>
           <ResizeGrip
             side="end"
             label={t("shell.railGrip")}
-            value={layout.rail}
+            value={railWidth}
             min={RAIL_MINI}
             max={RAIL_MAX}
             onDrag={(x) => setRail(railWidthFromPointer(x, gridPad()))}
-            onStep={(dir) => setRail(stepRail(layout.rail, dir))}
+            onStep={(dir) => setRail(railAfterStep(layout.rail, railWidth, dir, fitStored))}
           />
           <SidebarHeader>
             <div className={styles.brand}>
               <b className={styles.brandName}>{PRODUCT_CONFIG.appName}</b>
               <div className={styles.topActions}>
-                <button className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (mini) setRail(RAIL_MIN); setBotSearch(botSearch === null || mini ? "" : null); }}><Search /></button>
+                <button ref={searchButtonRef} className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (search.expandStored) setRail(RAIL_MIN); setBotSearch(search.open ? "" : null); }}><Search /></button>
                 <button className={styles.iconButton} title={t("sidebar.newBot")} aria-label={t("sidebar.newBot")} data-testid="new-bot-button" onClick={() => setNewBotOpen(true)}><Plus /></button>
               </div>
             </div>
             {botSearch !== null && !mini ? <input className={styles.botSearch} autoFocus value={botSearch} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} /> : null}
+            {search.popover ? (
+              <Popover open={botSearch !== null} anchor={searchButtonRef} onClose={closeSearch} placement="bottom-start" role="dialog" label={t("sidebar.searchBots")} width={240}>
+                <input className={styles.botSearchPopover} value={botSearch ?? ""} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} />
+              </Popover>
+            ) : null}
           </SidebarHeader>
           <SidebarSection>
             {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={() => setRoute({ kind: "needs" })}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
@@ -622,6 +670,7 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
+        <PausedControlBanner />
         {route.kind === "onboarding" ? (
           <OnboardingView
             settings={settings}
@@ -819,6 +868,7 @@ function AppShell() {
           handleOpenOnboarding(false);
         }}
       />
+      <LiveViewer />
     </SidebarLayout>
   );
 }
@@ -827,8 +877,10 @@ export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
-        <ControlBridgeHost />
-        <AppShell />
+        <LiveViewProvider>
+          <ControlBridgeHost />
+          <AppShell />
+        </LiveViewProvider>
       </DaemonProvider>
     </ToastProvider>
   );
