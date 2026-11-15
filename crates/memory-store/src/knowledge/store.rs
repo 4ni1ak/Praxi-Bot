@@ -47,9 +47,50 @@ impl KnowledgeStore {
         let path = dir.join("knowledge.db");
         reject_symlink(&path)?;
         let conn = Connection::open(path)?;
+        configure(&conn)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, scope)
+    }
+
+    /// Open an existing, already migrated index for reads only. A missing bot
+    /// directory or index returns `None`; discovery/search never creates it.
+    ///
+    /// # Errors
+    /// Unsupported schema, corrupt binding, symlink, or SQLite/IO failure.
+    pub fn open_existing(data_dir: impl AsRef<Path>, scope: Scope) -> Result<Option<Self>> {
+        let bots = data_dir.as_ref().join("bots");
+        reject_symlink(&bots)?;
+        let dir = bots.join(scope.bot_id.to_string());
+        reject_symlink(&dir)?;
+        let path = dir.join("knowledge.db");
+        reject_symlink(&path)?;
+        match std::fs::metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+            Ok(_) => {}
+        }
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        configure(&conn)?;
+        schema::validate_read_binding(&conn, scope)?;
+        Ok(Some(Self {
+            connection: Mutex::new(conn),
+            scope,
+            limits: KnowledgeLimits::default(),
+        }))
+    }
+
+    /// Whether this bot has a currently enabled source. The check reads only
+    /// the scoped catalog and is used by the live tool-visibility boundary.
+    ///
+    /// # Errors
+    /// SQLite failure.
+    pub fn has_enabled_sources(&self) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM sources WHERE enabled=1)",
+            [],
+            |row| row.get(0),
+        )?)
     }
 
     /// In-memory scoped index, for tests and ephemeral evaluation.
@@ -129,6 +170,9 @@ impl KnowledgeStore {
         let mut conn =
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         configure(&conn)?;
+        // Bundled SQLite invokes FTS5's integrity check here as well. The
+        // forged-inverted-index regression keeps ordinary content/schema
+        // intact and proves this rejects a semantic shadow-table substitution.
         let integrity: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         if integrity != "ok" {
             return Err(MemoryError::Invalid("corrupt knowledge database".into()));
@@ -166,7 +210,7 @@ impl KnowledgeStore {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         configure(&conn)?;
         schema::migrate(&mut conn, Some(scope))?;
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("UPDATE sources SET enabled=0,remote_embedding_json=NULL,revision=revision+1,updated_ms=?1", [storage::now_ms()])?;
         tx.commit()?;
         Ok(())
@@ -193,7 +237,7 @@ impl KnowledgeStore {
             updated_ms: now,
         };
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         if count(&tx, "SELECT COUNT(*) FROM sources")? >= self.limits.sources {
             return Err(MemoryError::Invalid(
                 "knowledge source quota reached".into(),
@@ -254,7 +298,7 @@ impl KnowledgeStore {
             ));
         }
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let mut source = require_source(&tx, id, expected_revision, false)?;
         let before = source.clone();
         if let Some(label) = update.label {
@@ -282,7 +326,7 @@ impl KnowledgeStore {
     /// Missing source, stale revision, or SQLite failure.
     pub fn delete_source(&self, id: Uuid, expected_revision: u64) -> Result<()> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         require_source(&tx, id, expected_revision, false)?;
         tx.execute("DELETE FROM sources WHERE id=?1", [id.to_string()])?;
         tx.commit()?;
@@ -306,7 +350,7 @@ impl KnowledgeStore {
         let pieces = chunk_text(&input.content, input.format, self.limits)?;
         let hash = document_hash(input, self.limits.chunk_chars)?;
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let source = require_source(&tx, source_id, expected_revision, true)?;
         let old = document_by_locator(&tx, source_id, &input.locator)?;
         if let Some(old) = &old
@@ -399,7 +443,7 @@ impl KnowledgeStore {
         expected_revision: u64,
     ) -> Result<u64> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let source = require_source(&tx, source_id, expected_revision, false)?;
         if tx.execute(
             "DELETE FROM documents WHERE id=?1 AND source_id=?2",

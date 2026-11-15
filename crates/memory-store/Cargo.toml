@@ -28,6 +28,7 @@ sqlite-vec = "0.1.9"
 storage.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+unicode-normalization = "0.1"
 fastembed = { version = "5", optional = true, default-features = false, features = ["hf-hub-native-tls", "ort-download-binaries-native-tls"] }
 
 [dev-dependencies]

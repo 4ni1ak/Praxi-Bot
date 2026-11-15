@@ -80,6 +80,43 @@ fn text(out: &ToolOutput) -> &str {
 }
 
 #[tokio::test]
+async fn empty_bot_search_is_invisible_and_does_not_create_an_index() {
+    let (dir, storage, a, b, store) = fixture();
+    let tool = tool(Arc::new(LocalKnowledgeBackend::new(storage)));
+    assert!(
+        !tool.visible_to(Some(&a.to_string())),
+        "empty index is not a useful tool"
+    );
+    assert!(
+        !tool.visible_to(Some(&b.to_string())),
+        "missing index is not a useful tool"
+    );
+    let out = tool
+        .call(&context(b), json!({"query":"saffron"}))
+        .await
+        .unwrap();
+    assert!(!text(&out).contains("saffron"));
+    assert!(!dir.path().join("bots").join(b.to_string()).exists());
+    let source = add(&store, "Saffron backup snapshot.");
+    assert!(tool.visible_to(Some(&a.to_string())));
+    let current = store.source(source).unwrap().unwrap();
+    store
+        .update_source(
+            source,
+            current.revision,
+            memory_store::knowledge::SourceUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        !tool.visible_to(Some(&a.to_string())),
+        "visibility follows current grants"
+    );
+}
+
+#[tokio::test]
 async fn lexical_tool_is_registered_with_bot_scope_and_needs_no_provider() {
     let (_dir, storage, a, b, store) = fixture();
     let source_id = add(
@@ -149,27 +186,30 @@ async fn poisoning_cannot_change_execution_side_provenance_or_escape_output_budg
 }
 
 #[test]
-fn egress_branch_wire_contract_has_explicit_untrusted_private_classification() {
-    // The real ToolSpec on main has no ContentClass yet. Deserialize the
-    // exact required fields at the #46 boundary instead of inspecting text.
-    #[derive(serde::Deserialize)]
-    #[allow(clippy::struct_excessive_bools)] // Exact PR #46 wire contract.
-    struct FutureClass {
-        declared: bool,
-        ingests_untrusted: bool,
-        reads_private: bool,
-        egress: bool,
+fn dynamic_egress_classification_is_scoped_to_the_authenticated_bot() {
+    struct Backend(BotId);
+    #[async_trait::async_trait]
+    impl KnowledgeBackend for Backend {
+        fn may_egress(&self, bot: BotId) -> bool {
+            bot == self.0
+        }
+        async fn search(
+            &self,
+            _bot: BotId,
+            _request: SearchRequest,
+        ) -> Result<SearchResponse, ToolError> {
+            Err(ToolError::Execution(
+                "classification fixture does not dispatch".into(),
+            ))
+        }
     }
-    #[derive(serde::Deserialize)]
-    struct FutureSpec {
-        content: FutureClass,
-    }
-    for remote in [false, true] {
-        let spec: FutureSpec = serde_json::from_value(spec_wire(remote)).unwrap();
-        assert!(
-            spec.content.declared && spec.content.ingests_untrusted && spec.content.reads_private
-        );
-        assert_eq!(spec.content.egress, remote);
-        assert!(search_spec(remote).is_valid());
-    }
+    let bot = BotId::new();
+    let tool = tool(Arc::new(Backend(bot)));
+    assert_eq!(tool.egress_for(Some(&bot.to_string())), Some(true));
+    assert_eq!(
+        tool.egress_for(Some(&BotId::new().to_string())),
+        Some(false)
+    );
+    assert_eq!(tool.egress_for(None), Some(false));
+    assert_eq!(tool.egress_for(Some("untrusted-not-a-bot-id")), Some(false));
 }
