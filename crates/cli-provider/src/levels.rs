@@ -98,6 +98,8 @@ pub enum Driver {
     Cursor,
     OpenCode,
     Gemini,
+    /// Antigravity CLI (`agy acp`).
+    Agy,
 }
 
 /// How far a driver's interface was checked.
@@ -122,12 +124,13 @@ pub enum Transport {
 }
 
 impl Driver {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Claude,
         Self::Codex,
         Self::Cursor,
         Self::OpenCode,
         Self::Gemini,
+        Self::Agy,
     ];
 
     /// Registry id (`claude`, `codex`, `cursor`, `opencode`, `gemini`).
@@ -139,6 +142,7 @@ impl Driver {
             Self::Cursor => "cursor",
             Self::OpenCode => "opencode",
             Self::Gemini => "gemini",
+            Self::Agy => "agy",
         }
     }
 
@@ -155,6 +159,7 @@ impl Driver {
             Self::Cursor => "Cursor",
             Self::OpenCode => "OpenCode",
             Self::Gemini => "Gemini CLI",
+            Self::Agy => "Antigravity",
         }
     }
 
@@ -163,7 +168,7 @@ impl Driver {
         match self {
             Self::Claude => Transport::StreamJson,
             Self::Codex => Transport::CodexAppServer,
-            Self::Cursor | Self::OpenCode | Self::Gemini => Transport::Acp,
+            Self::Cursor | Self::OpenCode | Self::Gemini | Self::Agy => Transport::Acp,
         }
     }
 
@@ -172,7 +177,7 @@ impl Driver {
     #[must_use]
     pub const fn support(self) -> Support {
         match self {
-            Self::Gemini | Self::OpenCode => Support::Experimental,
+            Self::Gemini | Self::OpenCode | Self::Agy => Support::Experimental,
             _ => Support::Verified,
         }
     }
@@ -206,6 +211,8 @@ pub struct LevelPlan {
     pub flags: &'static [&'static str],
     /// ACP: accept every forwarded permission request without a card.
     pub acp_allow_all: bool,
+    /// ACP `session/set_mode` id sent after `session/new` (Antigravity).
+    pub acp_mode: Option<&'static str>,
     /// `false` when Praxi cannot make the CLI honour `applied` (the turn is refused).
     pub enforced: bool,
 }
@@ -220,6 +227,7 @@ const fn plan(requested: ApprovalLevel, applied: ApprovalLevel, native: &'static
         codex: None,
         flags: &[],
         acp_allow_all: false,
+        acp_mode: None,
         enforced: true,
     }
 }
@@ -227,6 +235,7 @@ const fn plan(requested: ApprovalLevel, applied: ApprovalLevel, native: &'static
 /// The mapping table (the reference project's approval-level provider mappings,
 /// adapted: the default is Ask and Full is never implied).
 #[must_use]
+#[allow(clippy::too_many_lines)] // One table.
 pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
     use ApprovalLevel::{AcceptEdits, Ask, Auto, Full};
     match driver {
@@ -321,6 +330,28 @@ pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
                 ..plan(level, Full, "--yolo")
             },
         },
+        // Antigravity's ACP modes (`agy acp` session/new): default asks before edits and
+        // commands, accept-edits approves workspace edits, auto approves edits and safe
+        // commands but asks before irreversible actions. Full skips every prompt.
+        Driver::Agy => match level {
+            Ask => LevelPlan {
+                acp_mode: Some("default"),
+                ..plan(level, Ask, "mode default")
+            },
+            AcceptEdits => LevelPlan {
+                acp_mode: Some("accept-edits"),
+                ..plan(level, AcceptEdits, "mode accept-edits")
+            },
+            Auto => LevelPlan {
+                acp_mode: Some("auto"),
+                ..plan(level, Auto, "mode auto")
+            },
+            Full => LevelPlan {
+                flags: &["--dangerously-skip-permissions"],
+                acp_allow_all: true,
+                ..plan(level, Full, "--dangerously-skip-permissions")
+            },
+        },
     }
 }
 
@@ -346,6 +377,10 @@ pub fn acp_args(driver: Driver, plan: &LevelPlan, model: Option<&str>) -> Option
             if let Some(m) = model {
                 args.extend(["-m".into(), m.to_owned()]);
             }
+        }
+        Driver::Agy => {
+            args.push("acp".into());
+            args.extend(own(plan.flags));
         }
         Driver::Claude | Driver::Codex => return None,
     }
@@ -432,6 +467,22 @@ mod tests {
             ),
             (Driver::Gemini, Auto, Ask, "default", &["--acp"]),
             (Driver::Gemini, Full, Full, "--yolo", &["--acp", "--yolo"]),
+            (Driver::Agy, Ask, Ask, "mode default", &["acp"]),
+            (
+                Driver::Agy,
+                AcceptEdits,
+                AcceptEdits,
+                "mode accept-edits",
+                &["acp"],
+            ),
+            (Driver::Agy, Auto, Auto, "mode auto", &["acp"]),
+            (
+                Driver::Agy,
+                Full,
+                Full,
+                "--dangerously-skip-permissions",
+                &["acp", "--dangerously-skip-permissions"],
+            ),
         ];
         for (driver, level, applied, native, argv) in cases {
             let p = level_plan(*driver, *level);
@@ -467,5 +518,8 @@ mod tests {
         assert_eq!(Driver::Gemini.support(), Support::Experimental);
         assert_eq!(Driver::OpenCode.support(), Support::Experimental);
         assert!(!level_plan(Driver::OpenCode, Ask).enforced);
+        // Antigravity: Ask is its default mode, and only Full drops the prompts.
+        assert_eq!(level_plan(Driver::Agy, Ask).acp_mode, Some("default"));
+        assert_eq!(level_plan(Driver::Agy, Full).acp_mode, None);
     }
 }
