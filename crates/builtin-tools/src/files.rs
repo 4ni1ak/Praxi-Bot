@@ -1024,13 +1024,22 @@ const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
 ///   redirect a stored password) and `email-secret-cleanup.json` (pending
 ///   secret deletions after an account change).
 /// - `schedule.toml` (limits for bot-created schedules).
+/// - `knowledge-host.json` (pins the native embedding library path and SHA),
+///   `knowledge-authority.db` (owner egress grants) and `knowledge-runtime.db`
+///   (embedding quota/cooldown ledger), with the same sidecars.
 /// - the atomic-write temp files (`.tmp*`) of any of them.
 ///
 /// Deliberately NOT listed: `skills.lock.json` / `skills-usage.json` (counters
 /// and a lockfile for bot-writable skills; no authority) and logs.
 fn daemon_state_name(base: &str) -> bool {
-    const DATABASES: [&str; 3] = ["bot.db", "schedules.db", "memory.db"];
-    const FILES: [&str; 12] = [
+    const DATABASES: [&str; 5] = [
+        "bot.db",
+        "schedules.db",
+        "memory.db",
+        "knowledge-authority.db",
+        "knowledge-runtime.db",
+    ];
+    const FILES: [&str; 13] = [
         "control-latch.json",
         "policy.json",
         "host.toml",
@@ -1043,6 +1052,7 @@ fn daemon_state_name(base: &str) -> bool {
         "email.toml",
         "email-secret-cleanup.json",
         "schedule.toml",
+        "knowledge-host.json",
     ];
     DATABASES.iter().any(|s| {
         base == *s
@@ -4051,6 +4061,17 @@ mod tests {
             "email-secret-cleanup.json.tmp",
             "schedule.toml",
             "schedule.toml.bak",
+            "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
+            "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
         ] {
             let file = d.path().join(name);
             fs::write(&file, secret).unwrap();
@@ -4082,6 +4103,59 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn knowledge_state_files_resist_edit_move_delete_and_checkpoint_restore() {
+        let (d, w, t) = setup();
+        let c = ctx();
+        for name in [
+            "knowledge-host.json",
+            "knowledge-authority.db",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+        ] {
+            let file = d.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            let own = w.path().join("own.txt");
+            fs::write(&own, "mine").unwrap();
+            for (tool, input) in [
+                (
+                    "fs_edit",
+                    json!({"path": &file, "old": "pinned", "new": "evil"}),
+                ),
+                ("fs_move", json!({"from": &file, "to": w.path().join("x")})),
+                (
+                    "fs_move",
+                    json!({"from": &own, "to": &file, "overwrite": true}),
+                ),
+                ("fs_delete", json!({"path": &file})),
+            ] {
+                let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{tool} {name}: {err}"
+                );
+                assert_eq!(
+                    fs::read_to_string(&file).unwrap(),
+                    "pinned",
+                    "{tool} {name}"
+                );
+            }
+            // A checkpoint that names the file cannot be used to write it back.
+            let store = crate::checkpoint::CheckpointStore::new(d.path());
+            if let Ok(id) = store.create("run-cp", "fs_write", &[file.as_path()]) {
+                fs::write(&file, "changed-by-daemon").unwrap();
+                let restored =
+                    crate::files::with_checkpoint_access(d.path(), &[], &[], || store.restore(&id));
+                assert!(restored.is_err(), "{name}: restore must refuse");
+                assert_eq!(
+                    fs::read_to_string(&file).unwrap(),
+                    "changed-by-daemon",
+                    "{name}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
