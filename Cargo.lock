@@ -7960,6 +7960,7 @@ dependencies = [
  "base64 0.22.1",
  "fs4",
  "parking_lot",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7968,6 +7969,7 @@ dependencies = [
  "tokio",
  "tool-registry",
  "unicode-normalization",
+ "zip",
 ]
 
 [[package]]

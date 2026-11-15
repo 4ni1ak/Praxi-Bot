@@ -6132,6 +6132,314 @@
             "bearer": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Create a trusted shared skill authored by the local owner.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillDocumentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/import": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Import a complete bounded skill tree; no imported code is executed.",
+        "operationId": "import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillImportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/{name}": {
+      "put": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Atomically update SKILL.md and retain auxiliary files.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillDocumentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Refuse assigned skills unless force is explicit; report their bot IDs/names.",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSkillResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSkillResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/usage": {
@@ -8466,6 +8774,34 @@
           }
         }
       },
+      "DeleteSkillQuery": {
+        "type": "object",
+        "description": "Explicit opt-in for deleting an assigned skill.",
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DeleteSkillResult": {
+        "type": "object",
+        "description": "Deletion result or assignment conflict. Force keeps explicit assignments as\nmissing, so a reinstall restores the owner's selected set.",
+        "required": [
+          "deleted",
+          "used_by"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "used_by": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillUsingBotDto"
+            }
+          }
+        }
+      },
       "DeliveryKind": {
         "type": "string",
         "description": "How a sent message was delivered.",
@@ -10789,6 +11125,31 @@
           }
         }
       },
+      "ManagedSkillDto": {
+        "type": "object",
+        "description": "Metadata only; the response never includes instruction bodies or files.",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "scope"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "Always `shared` for owner-managed skills."
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "McpAuthCallback": {
         "type": "object",
         "description": "Body of `POST /v1/mcp/servers/{name}/auth/callback`.",
@@ -13086,6 +13447,61 @@
           "selected"
         ]
       },
+      "SkillDocumentInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Complete Markdown including frontmatter.",
+            "required": [
+              "skill_md"
+            ],
+            "properties": {
+              "expected_version": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional optimistic version check when updating."
+              },
+              "skill_md": {
+                "type": "string",
+                "description": "Name/description frontmatter and Markdown instructions."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Form fields, serialized into the same runtime SKILL.md format.",
+            "required": [
+              "name",
+              "description",
+              "instructions"
+            ],
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "One-line description, at most 200 characters."
+              },
+              "expected_version": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional optimistic version check when updating."
+              },
+              "instructions": {
+                "type": "string",
+                "description": "Markdown instructions."
+              },
+              "name": {
+                "type": "string",
+                "description": "Safe lowercase skill name."
+              }
+            }
+          }
+        ],
+        "description": "A complete SKILL.md or the three fields used to author one."
+      },
       "SkillHubInfoDto": {
         "type": "object",
         "description": "Hub lockfile metadata for a shared skill installed via `SkillHub`.",
@@ -13103,6 +13519,51 @@
             "description": "Provenance tag (e.g. `git:https://...`, `local:...`)."
           }
         }
+      },
+      "SkillImportInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Snapshot a local owner-selected folder.",
+            "required": [
+              "path",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "folder"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "description": "Absolute folder path. Links, special and executable files are refused."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Upload a bounded ZIP; bytes are never extracted into a caller path.",
+            "required": [
+              "base64",
+              "kind"
+            ],
+            "properties": {
+              "base64": {
+                "type": "string",
+                "description": "Standard Base64 of a ZIP, compressed and expanded limit 8 MiB."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "zip"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Import one folder or a ZIP with SKILL.md at its root. No URL fetching."
       },
       "SkillIssueDto": {
         "type": "object",
@@ -13135,6 +13596,29 @@
           "shared",
           "bot"
         ]
+      },
+      "SkillLocationsDto": {
+        "type": "object",
+        "description": "Stable storage locations for the owner's skill-management UI.",
+        "required": [
+          "shared",
+          "bot_template",
+          "bundled"
+        ],
+        "properties": {
+          "bot_template": {
+            "type": "string",
+            "description": "Per-bot skill folder template; these routes do not mutate it."
+          },
+          "bundled": {
+            "type": "string",
+            "description": "Bundled skills are embedded in the application."
+          },
+          "shared": {
+            "type": "string",
+            "description": "Shared owner-managed skill folder."
+          }
+        }
       },
       "SkillRequiresDto": {
         "type": "object",
@@ -13176,6 +13660,22 @@
           "bundled"
         ]
       },
+      "SkillUsingBotDto": {
+        "type": "object",
+        "description": "Bots currently assigned to a skill, also returned on an assignment conflict.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "SkillsCatalogDto": {
         "type": "object",
         "description": "Response of `GET /v1/skills`.",
@@ -13190,6 +13690,17 @@
               "$ref": "#/components/schemas/SkillIssueDto"
             },
             "description": "Non-fatal problems found while loading skills."
+          },
+          "locations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillLocationsDto",
+                "description": "Host-local paths, omitted for paired peers."
+              }
+            ]
           },
           "skills": {
             "type": "array",

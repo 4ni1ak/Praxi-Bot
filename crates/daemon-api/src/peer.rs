@@ -273,6 +273,11 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     if *method != Method::GET && is_mcp_servers_path(check_path) {
         return Some("MCP server management is a host-local user action, forbidden to peers");
     }
+    if !matches!(*method, Method::GET | Method::HEAD)
+        && (check_path == "/v1/skills" || check_path.starts_with("/v1/skills/"))
+    {
+        return Some("shared skill management is local-owner only");
+    }
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
     }
