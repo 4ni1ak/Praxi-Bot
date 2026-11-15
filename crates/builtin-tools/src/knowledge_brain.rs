@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use memory_store::knowledge::brain::{BrainWriteInput, PreparedBrainWrite};
-use memory_store::knowledge::{KnowledgeStore, Scope};
+use memory_store::knowledge::{KnowledgeStore, Scope, SourceKind};
 use protocol::{BotId, RunId};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -62,6 +62,31 @@ fn error(error: impl std::fmt::Display) -> ToolError {
 }
 
 impl BrainTool {
+    /// The owner offers brain writes to a bot only by enabling a shared-brain
+    /// source for it. Read-only: never creates an index.
+    fn brain_enabled(&self, bot_id: BotId) -> bool {
+        self.storage
+            .get_bot(bot_id)
+            .ok()
+            .flatten()
+            .and_then(|bot| {
+                KnowledgeStore::open_existing(
+                    self.storage.data_dir(),
+                    Scope {
+                        user_id: bot.user_id,
+                        bot_id,
+                    },
+                )
+                .ok()
+                .flatten()
+            })
+            .is_some_and(|store| {
+                store
+                    .has_enabled_source_of_kind(SourceKind::SharedBrain)
+                    .unwrap_or(false)
+            })
+    }
+
     fn caller(&self, ctx: &ToolContext) -> Result<(Scope, Uuid), ToolError> {
         let bot_id = ctx
             .bot_id
@@ -87,6 +112,11 @@ impl BrainTool {
             .ok_or_else(|| error("unknown run"))?;
         if run.bot_id != bot_id || run.user_id != bot.user_id {
             return Err(error("run is not owned by this bot"));
+        }
+        if !self.brain_enabled(bot_id) {
+            return Err(error(
+                "the owner has not enabled the shared brain for this bot",
+            ));
         }
         Ok((
             Scope {
@@ -121,7 +151,10 @@ impl Tool for BrainTool {
         true
     }
     fn visible_to(&self, bot_id: Option<&str>) -> bool {
-        bot_id.is_some()
+        bot_id
+            .and_then(|id| id.parse::<Uuid>().ok())
+            .map(BotId)
+            .is_some_and(|bot| self.brain_enabled(bot))
     }
 
     async fn approval_details(
@@ -191,7 +224,7 @@ impl Tool for BrainTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memory_store::knowledge::{NewSource, SourceKind, SourceUpdate};
+    use memory_store::knowledge::{NewSource, SourceUpdate};
     use protocol::UserId;
 
     #[tokio::test(start_paused = true)]
@@ -239,6 +272,20 @@ mod tests {
                 pause_reason: None,
             })
             .unwrap();
+        KnowledgeStore::open(
+            storage.data_dir(),
+            Scope {
+                user_id: scope.user_id,
+                bot_id: other_bot,
+            },
+        )
+        .unwrap()
+        .add_source(NewSource::new(
+            SourceKind::SharedBrain,
+            "Shared brain",
+            storage.data_dir().join("brain").display().to_string(),
+        ))
+        .unwrap();
         let other = ToolContext {
             run_id: other_run.to_string(),
             bot_id: Some(other_bot.to_string()),
@@ -272,6 +319,62 @@ mod tests {
     }
 
     fn fixture() -> (tempfile::TempDir, Arc<Storage>, ToolContext, Scope) {
+        let (dir, storage, ctx, scope) = fixture_without_brain();
+        KnowledgeStore::open(dir.path(), scope)
+            .unwrap()
+            .add_source(NewSource::new(
+                SourceKind::SharedBrain,
+                "Shared brain",
+                dir.path().join("brain").display().to_string(),
+            ))
+            .unwrap();
+        (dir, storage, ctx, scope)
+    }
+
+    #[tokio::test]
+    async fn review_81_brain_write_is_offered_only_when_the_owner_enabled_the_shared_brain() {
+        let (dir, storage, ctx, scope) = fixture_without_brain();
+        let tool = tool(storage);
+        let bot = ctx.bot_id.clone();
+        let input = json!({"filename":"gate.md","content":"A gated decision."});
+        // Default off: invisible, uncallable, and nothing was created.
+        assert!(!tool.visible_to(bot.as_deref()));
+        assert!(!tool.visible_to(None));
+        assert!(tool.approval_details(&ctx, &input).await.is_err());
+        assert!(tool.call(&ctx, input.clone()).await.is_err());
+        assert!(!dir.path().join("bots").exists());
+        // A non-brain source does not enable it.
+        let store = KnowledgeStore::open(dir.path(), scope).unwrap();
+        store
+            .add_source(NewSource::new(SourceKind::Note, "Note", "note:one"))
+            .unwrap();
+        assert!(!tool.visible_to(bot.as_deref()));
+        // The owner enables the shared brain.
+        let brain = store
+            .add_source(NewSource::new(
+                SourceKind::SharedBrain,
+                "Shared brain",
+                dir.path().join("brain").display().to_string(),
+            ))
+            .unwrap();
+        assert!(tool.visible_to(bot.as_deref()));
+        assert!(tool.approval_details(&ctx, &input).await.is_ok());
+        // Disabling it again withdraws the tool.
+        store
+            .update_source(
+                brain.id,
+                brain.revision,
+                SourceUpdate {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!tool.visible_to(bot.as_deref()));
+        assert!(tool.call(&ctx, input).await.is_err());
+    }
+
+    fn fixture_without_brain() -> (tempfile::TempDir, Arc<Storage>, ToolContext, Scope) {
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(Storage::open(dir.path()).unwrap());
         let user = UserId::new();

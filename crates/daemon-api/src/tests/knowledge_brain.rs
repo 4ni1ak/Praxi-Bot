@@ -67,6 +67,19 @@ async fn installed_brain_tool_requires_exact_once_only_approval_even_under_full_
             "note:reference",
         ))
         .unwrap();
+    assert!(
+        !tool.visible_to(Some(&bot)),
+        "a bot without a shared-brain source must not be offered the write tool"
+    );
+    // The owner offers brain writes by enabling the shared brain for this bot.
+    store
+        .add_source(NewSource::new(
+            SourceKind::SharedBrain,
+            "Shared brain",
+            t.state.data_dir().join("brain").display().to_string(),
+        ))
+        .unwrap();
+    assert!(tool.visible_to(Some(&bot)));
     let approval = propose_note(&t, &chat, source.id, "approved.md").await;
     let card = approval.details.as_ref().unwrap();
     let content = card["content"].as_str().unwrap().to_owned();

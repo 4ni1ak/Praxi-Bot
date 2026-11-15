@@ -93,6 +93,19 @@ impl KnowledgeStore {
         )?)
     }
 
+    /// Whether this bot has a currently enabled source of `kind` (read-only
+    /// check used to offer kind-specific tools only when the owner enabled it).
+    ///
+    /// # Errors
+    /// SQLite or serialization failure.
+    pub fn has_enabled_source_of_kind(&self, kind: SourceKind) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM sources WHERE enabled=1 AND kind=?1)",
+            [serde_json::to_string(&kind)?],
+            |row| row.get(0),
+        )?)
+    }
+
     /// In-memory scoped index, for tests and ephemeral evaluation.
     ///
     /// # Errors
