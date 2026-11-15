@@ -231,6 +231,14 @@ export type DaemonEvent =
       reason: string;
     }
   | {
+      type: "checkpoint_restored";
+      run_id: string;
+      checkpoint_id: string;
+      safety_checkpoint_id: string;
+      partial?: boolean;
+      restored: string[];
+    }
+  | {
       type: "control_requested";
       request_id: string;
       run_id: string;
@@ -310,6 +318,16 @@ export type WebSearchConfigInput = S["WebSearchConfigInput"];
 export type WebSearchTestInput = S["WebSearchTestInput"];
 export type WebSearchTestReport = S["WebSearchTestReport"];
 
+export type ChangeKind = S["ChangeKindDto"];
+export type DiffOmittedReason = S["DiffOmittedReasonDto"];
+export type UnifiedDiff = S["UnifiedDiffDto"];
+export type FileChange = S["FileChangeDto"];
+export type RunChanges = S["RunChangesDto"];
+export type RestoreAction = S["RestoreActionDto"];
+export type RestorePreviewEntry = S["RestorePreviewEntryDto"];
+export type RestorePreview = S["RestorePreviewDto"];
+export type RestoreRequest = S["RestoreRequestDto"];
+export type RestoreResponse = S["RestoreResponseDto"];
 export type SkillAssignmentMode = S["SkillAssignmentModeDto"];
 export type SkillScope = S["SkillScope"];
 export type SkillRequires = S["SkillRequiresDto"];

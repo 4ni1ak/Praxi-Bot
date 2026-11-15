@@ -369,7 +369,71 @@
     "notice": {
       "modelFallback": "Switched model from {{from}} to {{to}}: {{reason}}",
       "error": "{{message}}",
-      "workflowDrift": "Workflow {{workflow}} drifted: {{reason}}"
+      "workflowDrift": "Workflow {{workflow}} drifted: {{reason}}",
+      "checkpointRestored": "Restored {{count}} file(s) from checkpoint {{checkpointId}}. Safety checkpoint: {{safetyId}}.",
+      "checkpointRestorePartial": "Restore {{checkpointId}} failed; {{count}} file(s) may still be changed. Recover with safety checkpoint {{safetyId}}."
+    },
+    "changes": {
+      "tab": "Changes",
+      "title": "File changes ({{count}})",
+      "undoAll": "Undo all",
+      "undoFile": "Undo",
+      "loading": "Loading file changes...",
+      "loadError": "Could not load file changes: {{message}}",
+      "empty": "No tracked file changes in this run.",
+      "scopeDisclaimer": "Undo covers file tools (fs_write, fs_edit, fs_move, fs_delete). External effects from shell, web, email, or desktop tools cannot be undone automatically.",
+      "modifiedSinceBadge": "Edited since run",
+      "movedFrom": "From {{path}}",
+      "viaLink": "Via link {{path}}",
+      "diffStats": "+{{added}} / -{{removed}}",
+      "bytes": "{{count}} B",
+      "showDiff": "Show diff",
+      "hideDiff": "Hide diff",
+      "kind": {
+        "created": "Created",
+        "modified": "Modified",
+        "deleted": "Deleted",
+        "moved": "Moved"
+      },
+      "omitted": {
+        "binary": "Binary file — inline diff omitted ({{before}} -> {{after}}).",
+        "too_large": "File exceeds inline diff size limit ({{before}} -> {{after}}).",
+        "run_budget_exceeded": "Run diff budget exceeded — inline diff omitted ({{before}} -> {{after}}).",
+        "directory": "Directory — inline diff omitted.",
+        "symlink": "Symlink — inline diff omitted.",
+        "modified_since": "File changed on disk after this run finished.",
+        "not_accessible": "Not accessible under current file access settings.",
+        "line_endings": "Only line endings changed (LF/CRLF)."
+      },
+      "modal": {
+        "titleSingle": "Undo change to {{path}}?",
+        "titleAll": "Undo all file changes from this run?",
+        "previewLoading": "Checking current files on disk...",
+        "safetyNote": "Undo affects every related file operation; review all paths below. A safety checkpoint saves the current state so this undo can be undone.",
+        "modifiedWarning": "These files changed after this run. Another run is identified when known; other changes may be your edits. Confirm before overwriting.",
+        "overwriteLabel": "Overwrite my newer changes",
+        "unverifiedWarning": "Could not verify some current files. Files listed as changed have a verified difference. Confirm before overwriting changed or unverified files.",
+        "unverifiedOverwriteLabel": "Overwrite changed or unverified files",
+        "confirm": "Restore",
+        "restoring": "Restoring...",
+        "cancel": "Cancel",
+        "action": {
+          "restore": "Restore previous version",
+          "delete": "Delete created file",
+          "keep": "Keep symlink untouched"
+        }
+      },
+      "restoreDone": "Restored {{count}} file(s). Safety snapshot saved.",
+      "restoreFailed": "Could not restore: {{message}}",
+      "loadMore": "Load more files",
+      "safetyCheckpoint": "Safety checkpoint: {{id}}",
+      "undoUndo": "Undo this undo",
+      "changedByRun": "Changed by another run ({{run}})",
+      "changedOutsideRun": "Changed outside this run",
+      "computerScope": "Run computer: {{computer}}. These file checkpoints are on the connected daemon’s disk.",
+      "computerUnknown": "Not recorded",
+      "couldNotVerify": "Could not verify the current file state",
+      "restorePartial": "Restore failed; review the rollback warning and safety checkpoint below."
     },
     "route": {
       "workflow": "Workflow: {{name}} (0 LLM calls)",
