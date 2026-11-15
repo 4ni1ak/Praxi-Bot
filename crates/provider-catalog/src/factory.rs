@@ -2,6 +2,7 @@
 
 use crate::{
     anthropic::AnthropicProvider,
+    embedding::EmbeddingProvider,
     entry::{ProviderEntry, ProviderKind},
     error::ProviderError,
     gemini::GeminiProvider,
@@ -32,6 +33,31 @@ pub fn build_chat_provider(
             return Err(ProviderError::InvalidRequest(format!(
                 "unsupported provider kind {k:?}"
             )));
+        }
+    })
+}
+
+/// Build the optional embedding capability using the existing provider entry
+/// and secret boundary. Chat capability flags are deliberately unaffected.
+///
+/// # Errors
+/// Returns `Unsupported` for providers without an embedding adapter.
+pub fn build_embedding_provider(
+    entry: &ProviderEntry,
+    config: OpenAiCompatConfig,
+    key: Option<String>,
+) -> Result<Box<dyn EmbeddingProvider>, ProviderError> {
+    Ok(match entry.kind {
+        ProviderKind::OpenAiCompatible => Box::new(OpenAiCompatProvider::with_api_key(
+            entry.clone(),
+            config,
+            key,
+        )?),
+        ProviderKind::Gemini => Box::new(GeminiProvider::with_api_key(entry.clone(), config, key)?),
+        _ => {
+            return Err(ProviderError::Unsupported {
+                capability: "embeddings".into(),
+            });
         }
     })
 }
