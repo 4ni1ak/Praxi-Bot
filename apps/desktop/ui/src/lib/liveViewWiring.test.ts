@@ -202,3 +202,15 @@ test("Clear pause goes through the verifying runClearPause and the dock uses the
   assert.match(viewer, /foreignTakeoverOwner\(state\)/);
   assert.match(viewer, /liveView\.connectionLost/);
 });
+
+// ---- #62 reconciliation: the host buffers native events behind the snapshot ----
+
+test("ControlBridgeHost judges native events against the initial run generation and keeps a Stop across a bridge swap", () => {
+  assert.match(host, /initializeNativeState\(snap\.mode, snap\.runGeneration\)/);
+  assert.match(host, /buffered\.push\(/);
+  assert.match(host, /cancelled: cancelledRef\.current/);
+  assert.match(host, /retiringRef\.current = bridge\.drain\(\)/);
+  assert.match(host, /await retiringRef\.current/);
+  assert.match(host, /targetsLoaded: \(\) => targetsRef\.current\.length > 0/);
+  assert.match(host, /retryDeferredStarts\(\)/);
+});

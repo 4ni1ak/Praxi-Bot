@@ -47,6 +47,10 @@ export function ControlBridgeHost() {
   const computerTargetRef = useRef<ComputerTarget>(DEFAULT_SETTINGS.computerTarget);
   const stepRef = useRef(t("control.starting"));
   stepRef.current = t("control.starting");
+  // Survive a bridge swap (daemon client replaced): ids a Stop already cancelled,
+  // and the retired bridge's queued cancels, which the next bridge waits for.
+  const cancelledRef = useRef(new Set<string>());
+  const retiringRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     if (!client || !isTauriRuntime()) {
@@ -84,6 +88,8 @@ export function ControlBridgeHost() {
           selectedTarget: selectedRef.current,
           computerTarget: computerTargetRef.current
         }),
+      cancelled: cancelledRef.current,
+      targetsLoaded: () => targetsRef.current.length > 0,
       onSnapshot: ingestControlSnapshot,
       issueSnapshotTicket,
       panelOverlay: {
@@ -110,28 +116,38 @@ export function ControlBridgeHost() {
     });
     registerBridge(bridge);
     const offEvents = onDaemonEvent((env) => void bridge.handleEvent(env));
-    let nativeEvents = 0;
+    // Native events that land before the initial snapshot are replayed after it,
+    // so each one is judged against the snapshot's `run_generation` (a Stop is an
+    // idle with a HIGHER generation; a same-generation idle never is).
+    const buffered: { mode: ControlMode; generation: number }[] = [];
+    let nativeReady = false;
     const offState = subscribeOverlayEvents({
       onControlStateChanged: (snap) => {
-        nativeEvents += 1;
-        void bridge.onNativeState(snap.mode as ControlMode, snap.runGeneration);
+        const mode = snap.mode as ControlMode;
+        if (!nativeReady) {
+          buffered.push({ mode, generation: snap.runGeneration });
+          if (buffered.length > 50) buffered.shift();
+          return;
+        }
+        void bridge.onNativeState(mode, snap.runGeneration);
       },
       onSettingsUpdated: refreshComputerTarget
     });
     // Both subscriptions are installed before either initial snapshot starts.
     let disposed = false;
-    let nativeReady = false;
     let initializing = false;
     const tick = async () => {
       if (disposed || initializing) return;
       if (!nativeReady) {
         initializing = true;
-        const observed = nativeEvents;
         try {
           const snap = await getControlState();
           if (disposed) return;
-          if (observed === nativeEvents) await bridge.initializeNativeState(snap.mode);
+          await bridge.initializeNativeState(snap.mode, snap.runGeneration);
           nativeReady = true;
+          for (const ev of buffered.splice(0)) {
+            void bridge.onNativeState(ev.mode, ev.generation);
+          }
         } catch {
           // Retry initialization on the next heartbeat without changing control.
         } finally {
@@ -139,7 +155,10 @@ export function ControlBridgeHost() {
         }
       }
       if (disposed || !nativeReady) return;
+      await retiringRef.current; // a Stop on the previous bridge issues its cancels first
+      if (disposed) return;
       void bridge.restoreRuns();
+      void bridge.retryDeferredStarts();
       await bridge.heartbeat();
       // events are notifications only and never replayed: re-read the snapshot
       void bridge.refreshControlState();
@@ -151,6 +170,7 @@ export function ControlBridgeHost() {
       alive = false;
       registerBridge(null);
       bridge.dispose();
+      retiringRef.current = bridge.drain();
       offEvents();
       offState();
       window.clearInterval(beat);

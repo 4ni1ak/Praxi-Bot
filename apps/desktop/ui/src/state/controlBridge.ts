@@ -29,9 +29,13 @@ import { isCancellableRunState, isProcessingRunState } from "../lib/runState.ts"
  * - while a daemon-owned takeover holds the latch, only `POST /v1/control/release`
  *   ("Bitirdim"), `POST /v1/control/override` (Stop) or `POST /v1/control/recover`
  *   touch the latch — heartbeats/reopen never clear it;
- * - transitioning out of `human_driving -> idle` ("Bitirdim" hand-back) NEVER
- *   cancels live runs; only explicit Stop from `bot_driving` / `paused` or
- *   `emergencyStop()` cancels live runs.
+ * - the ONLY native transition into `idle` is `stop_all`, which always raises
+ *   `run_generation`: an idle snapshot with a higher generation is an explicit
+ *   Stop (from any mode, `human_driving` included) and cancels live runs. An idle
+ *   snapshot with the SAME generation (hotkey applied/edited, step text, overlay
+ *   clear, refused action) is not a Stop, and neither is the echo of a finish the
+ *   bridge itself caused. A hand-back (`give_back`: `human_driving -> bot_driving`)
+ *   and `releaseOwnedTakeover` never cancel. `emergencyStop()` cancels too.
  */
 
 export interface Rect {
@@ -131,6 +135,13 @@ export interface BridgeDeps {
   };
   /** Resolve whether a run / bot currently targets the local PC or a browser/remote screen. */
   resolveTargetScope?: (info: { runId?: string; botId?: string }) => TargetScope;
+  /** False until the run targets are loaded (so a restored run's scope is not guessed). */
+  targetsLoaded?(): boolean;
+  /**
+   * Run ids a Stop already sent a cancel for, shared across bridge replacements:
+   * a new bridge never re-tracks them while the daemon still lists them.
+   */
+  cancelled?: Set<string>;
   /** Optional hook to render non-local action highlights inside the live-view panel. */
   panelOverlay?: {
     showAction(highlight: PanelActionHighlight): void;
@@ -187,6 +198,11 @@ export class ControlBridge {
   private snapshot: { finished: Set<string> } | null = null;
   private stopRequested = false;
   private automaticIdleGeneration: number | null = null;
+  /** Highest native `run_generation` seen (initial snapshot or event). */
+  private nativeGeneration: number | null = null;
+  /** Runs tracked when the bridge was retired (for Stops queued before that). */
+  private retired: string[] = [];
+  private deferredStarts: { botId: string; runId: string; tries: number }[] = [];
   private activeTakeover: TrackedTakeover | null = null;
   private releasingTakeover = false;
   /** Id of the takeover THIS app owns (set by the live-view controller). */
@@ -204,15 +220,26 @@ export class ControlBridge {
 
   /** Retire the old daemon connection before a replacement bridge can act. */
   dispose(): void {
+    // Native events already queued on this bridge still get to cancel the runs it
+    // tracked (a Stop during a daemon client replacement), see `nativeState`; any
+    // event arriving after this point is ignored.
+    this.retired = [...this.active];
     this.disposed = true;
     this.active.clear();
     this.handled.clear();
+    this.deferredStarts = [];
+  }
+
+  /** Resolves once everything queued so far (including cancels) has been issued. */
+  drain(): Promise<void> {
+    return this.chain;
   }
 
   /** Initial native state is a snapshot, never an explicit Stop or resume. */
-  initializeNativeState(mode: ControlModeName): Promise<void> {
+  initializeNativeState(mode: ControlModeName, generation?: number): Promise<void> {
     this.chain = this.chain.then(async () => {
       if (this.disposed) return;
+      if (generation !== undefined) this.noteGeneration(generation);
       if (mode !== "idle" || this.mode === "idle") this.mode = mode;
       await this.heartbeat();
     }).catch(() => undefined);
@@ -230,17 +257,21 @@ export class ControlBridge {
         const rows = await this.deps.client.listRuns();
         this.chain = this.chain.then(async () => {
           if (this.disposed) return;
-          const live = rows.filter((run) =>
-            isCancellableRunState(run.state) && !snapshot.finished.has(run.id)
+          const live = rows.filter(
+            (run) =>
+              isCancellableRunState(run.state) &&
+              !snapshot.finished.has(run.id) &&
+              !this.deps.cancelled?.has(run.id)
           );
           if (this.stopRequested) {
-            await Promise.all(live.map((run) => this.deps.client.cancelRun(run.id).catch(() => undefined)));
+            await this.cancelIds(live.map((run) => run.id));
           } else {
             for (const run of live) this.active.add(run.id);
-            const processing = live.find((run) => isProcessingRunState(run.state));
-            if (processing) {
-              await this.ensureDriving(processing.bot_id);
-            } else if (this.active.size === 0 && this.mode === "bot_driving") {
+            const processing = live.filter((run) => isProcessingRunState(run.state));
+            for (const run of processing) {
+              await this.startRestored(run.bot_id, run.id);
+            }
+            if (processing.length === 0 && this.active.size === 0 && this.mode === "bot_driving") {
               await this.stopNativeRun();
             }
           }
@@ -308,8 +339,10 @@ export class ControlBridge {
   /** The native state machine changed (Tauri `control:state_changed`). */
   onNativeState(mode: ControlModeName, generation?: number): Promise<void> {
     if (this.disposed) return Promise.resolve();
+    // Queued while this bridge was still current: if it is retired before the
+    // event runs, a Stop must still cancel what the bridge tracked.
     this.chain = this.chain
-      .then(() => this.nativeState(mode, generation))
+      .then(() => this.nativeState(mode, generation, true))
       .catch(() => undefined);
     return this.chain;
   }
@@ -346,7 +379,10 @@ export class ControlBridge {
     this.chain = this.chain
       .then(async () => {
         // An explicit Stop also covers runs a pending restore has not found yet.
+        // Decide which runs to cancel NOW, before any await (a bridge swap must
+        // not lose them).
         this.markStopRequested();
+        const runs = this.takeRuns();
         if (this.deps.client.overrideControl) {
           try {
             result = await this.deps.client.overrideControl();
@@ -357,7 +393,7 @@ export class ControlBridge {
         }
         await this.deps.native.stopRun().catch(() => undefined);
         this.mode = "idle";
-        await this.cancelActiveRuns();
+        await this.cancelIds([...runs, ...this.takeRuns()]);
       })
       .catch(() => undefined);
     return this.chain.then(() => result);
@@ -415,31 +451,93 @@ export class ControlBridge {
     return this.deps.resolveTargetScope?.(info) ?? "local_desktop";
   }
 
-  private async cancelActiveRuns(): Promise<void> {
+  /** Copy and clear the tracked run ids (the Stop decision point). */
+  private takeRuns(): string[] {
     const runs = [...this.active];
     this.active.clear();
+    return runs;
+  }
+
+  private async cancelIds(ids: string[]): Promise<void> {
+    for (const id of ids) this.deps.cancelled?.add(id);
     await Promise.all(
-      runs.map((id) => this.deps.client.cancelRun(id).catch(() => undefined))
+      ids.map((id) => this.deps.client.cancelRun(id).catch(() => undefined))
     );
   }
 
-  private async nativeState(mode: ControlModeName, generation?: number): Promise<void> {
-    if (this.disposed) return;
-    if (mode === "idle" && generation !== undefined && generation === this.automaticIdleGeneration) {
-      // Finishing the final known run is not an explicit Stop for runs still
-      // being discovered. Native Stop All always emits a new generation.
+  private noteGeneration(generation: number): void {
+    if (this.nativeGeneration === null || generation > this.nativeGeneration) {
+      this.nativeGeneration = generation;
+    }
+  }
+
+  /**
+   * An idle snapshot is a Stop only when `run_generation` rose (`stop_all`), and
+   * not for the single generation `stopNativeRun` just caused. Without a
+   * generation (older callers, unit tests) it is taken as a Stop.
+   */
+  private isStopIdle(generation: number | undefined): boolean {
+    if (generation === undefined) return true;
+    if (generation === this.automaticIdleGeneration) return false;
+    return this.nativeGeneration === null || generation > this.nativeGeneration;
+  }
+
+  /** Start the local overlay for a restored run, or wait until its scope is known. */
+  private async startRestored(botId: string, runId: string): Promise<void> {
+    if (this.deps.targetsLoaded && !this.deps.targetsLoaded()) {
+      this.deferredStarts.push({ botId, runId, tries: 0 });
+      return;
+    }
+    await this.ensureDriving(botId, runId);
+  }
+
+  /** Retry restored-run overlays that were waiting for the targets (call each tick). */
+  retryDeferredStarts(): Promise<void> {
+    if (this.deferredStarts.length === 0) return Promise.resolve();
+    this.chain = this.chain
+      .then(async () => {
+        const waiting = this.deferredStarts;
+        this.deferredStarts = [];
+        for (const d of waiting) {
+          if (this.disposed || !this.active.has(d.runId)) continue;
+          if (this.deps.targetsLoaded?.() === false && d.tries < 3) {
+            this.deferredStarts.push({ ...d, tries: d.tries + 1 });
+            continue;
+          }
+          await this.ensureDriving(d.botId, d.runId);
+        }
+      })
+      .catch(() => undefined);
+    return this.chain;
+  }
+
+  private async nativeState(
+    mode: ControlModeName,
+    generation?: number,
+    queuedWhileCurrent = false
+  ): Promise<void> {
+    const stop = mode === "idle" && this.isStopIdle(generation);
+    if (generation !== undefined) this.noteGeneration(generation);
+    if (this.disposed) {
+      // A Stop queued on a retired bridge (the daemon client was replaced) still
+      // cancels the runs it tracked; nothing else is applied.
+      if (stop && queuedWhileCurrent) await this.cancelIds(this.retired.splice(0));
+      return;
+    }
+    if (mode === "idle" && !stop) {
+      // Same-generation idle (hotkey applied/edited, step text, overlay clear,
+      // refused action) or the echo of our own finish: not a Stop.
       await this.heartbeat();
       return;
     }
     const previous = this.mode;
     this.mode = mode;
-    // Leaving `human_driving` (or ending an owned takeover) is a hand-back
-    // ("Bitirdim"), never Stop; everything else that goes idle is an explicit Stop.
-    const handBack = previous === "human_driving" || this.releasingTakeover;
-    if (mode === "idle" && !handBack) {
-      // A native event, not initializeNativeState's initial snapshot: keep the
-      // user's Stop even when already idle or while a snapshot read is pending.
+    let runs: string[] = [];
+    if (stop) {
+      // Decide now, before any await: a Stop must survive a bridge swap, and it
+      // also covers runs a pending restore has not found yet.
       this.markStopRequested();
+      runs = this.takeRuns();
     }
 
     // While an owned takeover controls the daemon latch, a local Pause overrides
@@ -458,11 +556,9 @@ export class ControlBridge {
         (mode === "idle" || mode === "bot_driving");
       await this.heartbeat(resumed);
     }
-    if (this.disposed) return;
 
-    // Only Stop (any idle that is not a hand-back) cancels runs.
-    if (mode === "idle" && !handBack) {
-      await this.cancelActiveRuns();
+    if (stop) {
+      await this.cancelIds(runs);
     }
   }
 
