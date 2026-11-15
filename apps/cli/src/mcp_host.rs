@@ -14,8 +14,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use daemon_api::mcp::{
-    McpCatalogEntryDto, McpCatalogInstallDto, McpRequiredSecretDto, McpServerChanged, McpServerDto,
-    McpServerInput, McpStatus, McpToolDto, McpTransportInput, McpTransportKind, McpTransportObject,
+    McpAuthStart, McpAuthState, McpCatalogEntryDto, McpCatalogInstallDto, McpOAuthConfig,
+    McpRequiredSecretDto, McpServerChanged, McpServerDto, McpServerInput, McpStatus, McpToolDto,
+    McpTransportInput, McpTransportKind, McpTransportObject,
 };
 use daemon_api::{McpControl, McpControlError};
 use mcp_bridge::{
@@ -32,6 +33,7 @@ use crate::doctor::MCP_FILE;
 /// How often the status poller looks for changes the API did not cause
 /// (a quarantine after failing calls, a crashed child ...).
 const POLL_EVERY: Duration = Duration::from_secs(2);
+type SignInTask = tokio::task::JoinHandle<Result<(), McpError>>;
 
 const FILE_HEADER: &str = "\
 # MCP servers of this bot (managed by the app; you may edit it while the daemon is stopped).\n\
@@ -49,6 +51,9 @@ const FILE_HEADER: &str = "\
 
 /// The running MCP servers of a daemon.
 pub struct McpHost {
+    /// Held across start/cancel/logout and replacement, so an old callback
+    /// cannot persist credentials after cancellation or removal returns.
+    auth_flows: tokio::sync::Mutex<HashMap<String, SignInTask>>,
     manager: McpManager,
     registry: ToolRegistry,
     store: TomlFileStore,
@@ -142,6 +147,7 @@ impl McpHost {
             })
             .collect();
         let host = Arc::new(Self {
+            auth_flows: tokio::sync::Mutex::new(HashMap::new()),
             manager,
             registry,
             store,
@@ -175,6 +181,12 @@ impl McpHost {
 
     /// Disconnect every server (stdio children exit) and stop the poller.
     pub async fn shutdown(&self) {
+        let mut flows = self.auth_flows.lock().await;
+        for (_, task) in flows.drain() {
+            task.abort();
+            let _ = task.await;
+        }
+        drop(flows);
         if let Some(p) = self.poller.lock().take() {
             p.abort();
         }
@@ -191,6 +203,7 @@ impl McpHost {
             return McpStatus::Connecting;
         }
         match self.snapshot(name) {
+            Some(s) if s.auth_required => McpStatus::AuthRequired,
             Some(s) => match s.status {
                 ServerStatus::Connected => McpStatus::Connected,
                 ServerStatus::Quarantined => McpStatus::Quarantined,
@@ -246,6 +259,12 @@ impl McpHost {
             ),
         };
         McpServerDto {
+            oauth: cfg.oauth.as_ref().map(|c| McpOAuthConfig {
+                client_id: c.client_id.clone(),
+                client_secret_ref: c.client_secret_ref.clone(),
+                client_metadata_url: c.client_metadata_url.clone(),
+                allow_loopback_http: c.allow_loopback_http,
+            }),
             name: cfg.id.clone(),
             transport,
             command,
@@ -276,6 +295,13 @@ impl McpHost {
             .get(name)
             .cloned()
             .ok_or_else(|| McpControlError::NotFound(format!("mcp server {name}")))
+    }
+
+    fn check_http(&self, name: &str) -> Result<(), McpControlError> {
+        if !matches!(self.config_of(name)?.transport, McpTransport::Http { .. }) {
+            return Err(invalid("OAuth applies only to HTTP servers"));
+        }
+        Ok(())
     }
 
     fn check_writable(&self) -> Result<(), McpControlError> {
@@ -367,6 +393,13 @@ fn map_err(e: McpError) -> McpControlError {
         McpError::Config(m) => McpControlError::Invalid(m),
         McpError::UnknownServer(n) => McpControlError::NotFound(format!("mcp server {n}")),
         other => McpControlError::Internal(other.to_string()),
+    }
+}
+
+async fn abort_sign_in(flows: &mut HashMap<String, SignInTask>, name: &str) {
+    if let Some(task) = flows.remove(name) {
+        task.abort();
+        let _ = task.await;
     }
 }
 
@@ -520,6 +553,11 @@ fn merge_update(
         }
     }
     let mut cfg = prev.clone();
+    if let Some(value) = obj.get("oauth") {
+        cfg.oauth = serde_json::from_value(value.clone()).map_err(|_| {
+            invalid("invalid OAuth settings; use client_secret_ref, never a secret value")
+        })?;
+    }
     if let Some(transport) = obj.get("transport") {
         match transport {
             serde_json::Value::String(kind) => set_transport_kind(&mut cfg, kind)?,
@@ -639,7 +677,12 @@ fn to_config(name: &str, input: McpServerInput) -> Result<McpServerConfig, McpCo
         ),
     };
     let cfg = McpServerConfig {
-        oauth: None,
+        oauth: input.oauth.map(|c| mcp_bridge::OAuthConfig {
+            client_id: c.client_id,
+            client_secret_ref: c.client_secret_ref,
+            client_metadata_url: c.client_metadata_url,
+            allow_loopback_http: c.allow_loopback_http,
+        }),
         id: name.to_owned(),
         transport,
         enabled: input.enabled.unwrap_or(true),
@@ -692,6 +735,75 @@ fn catalog_dto(e: &CatalogEntry) -> Option<McpCatalogEntryDto> {
 
 #[async_trait]
 impl McpControl for McpHost {
+    async fn auth_start(&self, name: &str) -> Result<McpAuthStart, McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        self.check_http(name)?;
+        if flows.get(name).is_some_and(|task| !task.is_finished()) {
+            return Err(McpControlError::Conflict(
+                "a sign-in is already in progress".into(),
+            ));
+        }
+        abort_sign_in(&mut flows, name).await;
+        let handle = self.manager.server_handle(name).map_err(map_err)?;
+        let sign_in = self
+            .manager
+            .start_sign_in(name, mcp_bridge::oauth::SignInOptions::default())
+            .await
+            .map_err(map_err)?;
+        let response = McpAuthStart {
+            authorization_url: sign_in.authorization_url().to_owned(),
+            expires_in: mcp_bridge::oauth::CALLBACK_TIMEOUT.as_secs(),
+        };
+        flows.insert(
+            name.to_owned(),
+            tokio::spawn(async move {
+                sign_in.finish(mcp_bridge::oauth::CALLBACK_TIMEOUT).await?;
+                handle.reenable().await.map(|_| ())
+            }),
+        );
+        Ok(response)
+    }
+
+    async fn auth_cancel(&self, name: &str) -> Result<McpAuthState, McpControlError> {
+        self.check_http(name)?;
+        {
+            let mut flows = self.auth_flows.lock().await;
+            abort_sign_in(&mut flows, name).await;
+        }
+        self.auth_status(name).await
+    }
+
+    async fn auth_status(&self, name: &str) -> Result<McpAuthState, McpControlError> {
+        self.check_http(name)?;
+        let flows = self.auth_flows.lock().await;
+        if flows.get(name).is_some_and(|task| !task.is_finished()) {
+            return Ok(McpAuthState::SigningIn);
+        }
+        if self.snapshot(name).is_some_and(|s| s.auth_required) {
+            return Ok(McpAuthState::AuthRequired);
+        }
+        Ok(
+            if self
+                .manager
+                .has_stored_authorization(name)
+                .await
+                .map_err(map_err)?
+            {
+                McpAuthState::SignedIn
+            } else {
+                McpAuthState::SignedOut
+            },
+        )
+    }
+
+    async fn auth_logout(&self, name: &str) -> Result<McpAuthState, McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        self.check_http(name)?;
+        abort_sign_in(&mut flows, name).await;
+        self.manager.sign_out(name).await.map_err(map_err)?;
+        self.announce(name);
+        Ok(McpAuthState::SignedOut)
+    }
     fn list(&self) -> Vec<McpServerDto> {
         let all: Vec<McpServerConfig> = self.configs.lock().values().cloned().collect();
         all.iter().map(|c| self.dto(c)).collect()
@@ -729,6 +841,8 @@ impl McpControl for McpHost {
         name: &str,
         input: serde_json::Value,
     ) -> Result<McpServerDto, McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        abort_sign_in(&mut flows, name).await;
         let (cfg, old, handle, generation) = {
             let _op = self.ops.lock().await;
             self.check_writable()?;
@@ -824,6 +938,8 @@ impl McpControl for McpHost {
     }
 
     async fn remove(&self, name: &str) -> Result<(), McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        abort_sign_in(&mut flows, name).await;
         let old = {
             let _op = self.ops.lock().await;
             self.check_writable()?;
@@ -904,6 +1020,9 @@ impl McpControl for McpHost {
 
 impl Drop for McpHost {
     fn drop(&mut self) {
+        for (_, task) in self.auth_flows.get_mut().drain() {
+            task.abort();
+        }
         if let Some(p) = self.poller.lock().take() {
             p.abort();
         }
