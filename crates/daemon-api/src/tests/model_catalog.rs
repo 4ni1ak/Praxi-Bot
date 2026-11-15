@@ -1,7 +1,7 @@
 use super::*;
 use provider_catalog::{ChatProvider, ProviderError, ProviderSettings};
 
-const SECRET: &str = "fixture-live-provider-secret-123456";
+const SECRET: &str = "fixture-provider-secret-123456";
 
 #[test]
 fn provider_models_openapi_declares_optional_query() {
@@ -107,6 +107,12 @@ fn catalog_setup(fail: bool) -> (T, Arc<std::sync::Mutex<Vec<String>>>) {
 
 #[tokio::test]
 async fn provider_models_api_keeps_legacy_shape_and_returns_ranked_names() {
+    // The sentinel must reach the redactor, not disappear incidentally through
+    // the non-chat filter (for example, an id containing "-live" is audio).
+    assert_eq!(
+        provider_catalog::model_metadata("gemini", &[SECRET.into()], true).len(),
+        1
+    );
     let (t, _) = catalog_setup(false);
     let response = call(&t, Method::GET, "/v1/providers", None).await;
     assert_eq!(response.status, StatusCode::OK);
