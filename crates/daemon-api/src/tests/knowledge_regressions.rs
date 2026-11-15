@@ -313,7 +313,10 @@ async fn review_81_daemon_state_and_ancestor_are_never_source_grants() {
             response.json()
         );
     }
-    assert!(index(&t, &bot).list_sources().unwrap().is_empty());
+    assert_eq!(
+        index(&t, &bot).list_sources().unwrap(),
+        [] as [memory_store::knowledge::Source; 0]
+    );
     let brain = add(&t, &bot, json!({"kind":"shared_brain","label":"Brain"})).await;
     assert!(brain["source"]["enabled"].as_bool().unwrap());
     let as_folder = request(
@@ -524,7 +527,7 @@ async fn review_81_peer_roles_cannot_mutate_knowledge_authority() {
                     .method(method.clone())
                     .uri(&path)
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{}"#))
+                    .body(Body::from("{}"))
                     .unwrap();
                 req.extensions_mut().insert(crate::PeerIdentity {
                     key: "review-peer".into(),
@@ -542,7 +545,10 @@ async fn review_81_peer_roles_cannot_mutate_knowledge_authority() {
             }
         }
     }
-    assert!(index(&t, &bot).list_sources().unwrap().is_empty());
+    assert_eq!(
+        index(&t, &bot).list_sources().unwrap(),
+        [] as [memory_store::knowledge::Source; 0]
+    );
     let local = add(
         &t,
         &bot,

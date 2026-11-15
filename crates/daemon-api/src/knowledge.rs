@@ -533,6 +533,7 @@ fn parse_chat(locator: &str) -> Result<Uuid, ApiError> {
         .ok_or_else(|| ApiError::bad_request("invalid conversation locator"))
 }
 
+#[allow(clippy::too_many_lines)] // One scan transaction: walk, index, record failures, prune.
 fn reindex_inner(
     s: &AppState,
     owner: Scope,
@@ -744,6 +745,7 @@ pub(crate) async fn list_sources(
 }
 
 #[utoipa::path(post, path = "/v1/bots/{bot}/knowledge/sources", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), request_body = KnowledgeSourceInput, responses((status = 201, body = KnowledgeMutation), (status = 409, body = ErrorBody)))]
+#[allow(clippy::too_many_lines)] // One match arm per source kind.
 pub(crate) async fn create_source(
     State(s): State<AppState>,
     ApiPath(bot): ApiPath<Uuid>,

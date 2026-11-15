@@ -390,12 +390,7 @@ async fn knowledge_local_profile_is_host_installed_and_paths_are_not_api_inputs(
     assert_eq!(initial.json()["auto_retrieve"], false);
     assert_eq!(initial.json()["auto_retrieval_available"], false);
     assert!(initial.json()["embedding"].is_null());
-    assert!(
-        initial.json()["local_profiles"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(initial.json()["local_profiles"], json!([]));
     let artifact = json!({"path":t._dir.path().join("private-operator-selected-file"),"sha256":"a".repeat(64)});
     let artifacts = json!({"runtime":artifact,"model":artifact,"tokenizer":artifact,"config":artifact,"special_tokens_map":artifact,"tokenizer_config":artifact});
     let mut config = json!({"auto_retrieve":false,"embedding":{"provider_id":"local-onnx","model":"ignored-client-model","dimensions":999,"requests_per_minute":100,"requests_per_day":1000,"local_profile_id":"offline-e5"}});
@@ -569,6 +564,7 @@ async fn knowledge_provider_aliases_share_secret_reference_quota() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // One end-to-end owner-card scenario.
 async fn knowledge_remote_grants_require_owner_cards_and_queries_are_independent() {
     let _serial = crate::knowledge_runtime::test_guard().await;
     let t = setup();

@@ -175,13 +175,15 @@ fn path_within(path: &Path, parent: &Path) -> bool {
 
 fn safe_name(name: &str) -> bool {
     let lowered = name.to_ascii_lowercase();
+    let json = std::path::Path::new(&lowered)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
     !name.is_empty()
         && !name.starts_with('.')
         && !name.ends_with(['.', ' '])
         && !name.contains(['\\', ':', '\0'])
         && !name.chars().any(char::is_control)
-        && !(lowered.contains("credentials") && lowered.ends_with(".json"))
-        && !(lowered.starts_with("client_secret") && lowered.ends_with(".json"))
+        && !(json && (lowered.contains("credentials") || lowered.starts_with("client_secret")))
         && !matches!(
             lowered.as_str(),
             "api-token"
