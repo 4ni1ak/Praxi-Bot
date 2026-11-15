@@ -1933,7 +1933,15 @@ impl CheckpointStore {
     ) -> io::Result<Vec<FileChange>> {
         crate::files::with_data_dir_gate(&self.data_dir, || {
             with_review_budget(|| {
-                let cps = self.list_user_checkpoints(run_id)?;
+                let all = self.list(run_id)?;
+                let baselines: HashMap<_, _> = all
+                    .iter()
+                    .flat_map(|cp| &cp.entries)
+                    .map(|e| (e.path.clone(), e.clone()))
+                    .collect();
+                let cps = all
+                    .into_iter()
+                    .filter(|cp| !cp.op.starts_with("pre-restore:"));
                 let run_root = self.root.join(sanitize(run_id));
                 let mut order: Vec<String> = Vec::new();
                 let mut acc: HashMap<String, CollapsedEntry> = HashMap::new();
@@ -1979,7 +1987,7 @@ impl CheckpointStore {
                 let mut out = Vec::new();
                 for key in order.into_iter().skip(offset).take(limit.min(100)) {
                     if let Some(item) = acc.remove(&key) {
-                        out.push(build_file_change(item, &mut used_run_bytes)?);
+                        out.push(build_file_change(item, &mut used_run_bytes, &baselines)?);
                     }
                 }
                 Ok(out)
@@ -2019,11 +2027,7 @@ impl CheckpointStore {
                             continue;
                         }
                         let mut accessible = path_accessible(&entry.path)?;
-                        let last = if cp.op.starts_with("pre-restore:") {
-                            entry
-                        } else {
-                            last_by_path.get(&entry.path).unwrap_or(entry)
-                        };
+                        let last = last_by_path.get(&entry.path).unwrap_or(entry);
                         let matches = if accessible {
                             match matches_recorded_after(last) {
                                 Ok(matches) => matches,
@@ -2254,7 +2258,10 @@ impl CheckpointStore {
     }
 
     fn last_entry_by_path(&self, run_id: &str) -> io::Result<HashMap<String, CheckpointEntry>> {
-        let cps = self.list_user_checkpoints(run_id)?;
+        // Successful restores record their result on the safety checkpoint.
+        // That durable state becomes this run's review baseline without changing
+        // the historical file-tool manifests or their original diff payloads.
+        let cps = self.list(run_id)?;
         let mut map = HashMap::new();
         for cp in cps {
             for entry in cp.entries {
@@ -2583,7 +2590,11 @@ fn read_after_bytes(
     )?))
 }
 
-fn build_file_change(item: CollapsedEntry, used_run_bytes: &mut u64) -> io::Result<FileChange> {
+fn build_file_change(
+    item: CollapsedEntry,
+    used_run_bytes: &mut u64,
+    baselines: &HashMap<String, CheckpointEntry>,
+) -> io::Result<FileChange> {
     let reads = (|| -> io::Result<_> {
         let accessible = path_accessible(&item.path)?
             && path_accessible(&item.before_entry.path)?
@@ -2597,12 +2608,22 @@ fn build_file_change(item: CollapsedEntry, used_run_bytes: &mut u64) -> io::Resu
         if !accessible {
             return Ok((false, Verification::Unknown, ReadBounded::Missing, None));
         }
-        let mut matches = matches_recorded_after(&item.latest_entry)?;
+        let baseline = baselines
+            .get(&item.latest_entry.path)
+            .unwrap_or(&item.latest_entry);
+        let mut matches = matches_recorded_after(baseline)?;
         for extra in &item.extra_after_checks {
-            matches = matches.combine(matches_recorded_after(extra)?);
+            matches = matches.combine(matches_recorded_after(
+                baselines.get(&extra.path).unwrap_or(extra),
+            )?);
         }
         let before = read_before_bytes(&item.before_dir, &item.before_entry, &item.before_links)?;
-        let after = read_after_bytes(&item.latest_entry, matches == Verification::Matched)?;
+        let after = read_after_bytes(
+            &item.latest_entry,
+            matches == Verification::Matched
+                && baseline.after_existed == item.latest_entry.after_existed
+                && baseline.after_sha256 == item.latest_entry.after_sha256,
+        )?;
         Ok((true, matches, before, after))
     })();
     let (accessible, verification, before_read, after_read) = match reads {
@@ -2913,6 +2934,43 @@ mod tests {
         let cp = store.create("run", "fs_delete", &[&tree]).unwrap();
         store.record_after(&cp).unwrap();
         assert!(!store.restore_preview(&cp).unwrap()[0].current_matches_after);
+    }
+
+    #[test]
+    fn successful_restore_is_review_baseline_until_an_actual_external_edit() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let file = work.path().join("baseline.txt");
+        fs::write(&file, "before").unwrap();
+        let cp = store.create("run", "fs_edit", &[&file]).unwrap();
+        fs::write(&file, "after").unwrap();
+        store.record_after(&cp).unwrap();
+        let report = store.restore_selection("run", &cp).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "before");
+        assert_eq!(
+            store.changes_for_run("run").unwrap()[0].verification,
+            Verification::Matched
+        );
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Matched
+        );
+        // Original tool history and its diff are never rewritten as a restore.
+        assert_eq!(store.find(&cp).unwrap().1.entries[0].after_size, Some(5));
+        assert!(store.changes_for_run("run").unwrap()[0].text.is_none());
+        fs::write(&file, "newer").unwrap();
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Changed
+        );
+        assert_eq!(
+            store
+                .restore_preview(&report.safety_checkpoint_ids[0])
+                .unwrap()[0]
+                .verification,
+            Verification::Changed
+        );
     }
 
     #[test]
