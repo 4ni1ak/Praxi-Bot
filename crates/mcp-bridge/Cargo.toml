@@ -16,6 +16,7 @@ base64.workspace = true
 futures.workspace = true
 globset.workspace = true
 http = "1"
+oauth2 = { version = "5", default-features = false }
 parking_lot.workspace = true
 permission-engine = { path = "../permission-engine", version = "0.1.0" }
 # Same crate rmcp uses to spawn children. Unix: new process group

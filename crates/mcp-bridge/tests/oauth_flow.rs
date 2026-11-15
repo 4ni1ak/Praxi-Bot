@@ -13,6 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const ACCESS: &str = "access-sentinel-e2e-7f3a";
 const REFRESH: &str = "refresh-sentinel-e2e-91bc";
+const REFRESHED: &str = "refreshed-access-sentinel-e2e-637c";
 
 #[derive(Default)]
 struct MemoryStore(Mutex<BTreeMap<String, String>>);
@@ -36,6 +37,8 @@ impl SecretStore for MemoryStore {
 /// What the fake authorization server saw and what it expects.
 #[derive(Default)]
 struct Seen {
+    expires_in: Option<u64>,
+    refresh_allowed: bool,
     /// `code_challenge` of the authorization request (set by the test, which
     /// plays the browser).
     challenge: Option<String>,
@@ -174,14 +177,19 @@ async fn fake_authorization_server(
                             == Some("authorization_code")
                             && form.get("code").map(String::as_str) == Some("code-1")
                             && Some(challenge) == expected;
+                        let refreshing = form.get("grant_type").map(String::as_str)
+                            == Some("refresh_token")
+                            && form.get("refresh_token").map(String::as_str) == Some(REFRESH)
+                            && seen.lock().refresh_allowed;
+                        let expires_in = seen.lock().expires_in.unwrap_or(3600);
                         seen.lock().token_requests.push(form);
-                        if valid {
+                        if valid || refreshing {
                             (
                                 "200 OK",
                                 serde_json::json!({
-                                    "access_token": ACCESS,
+                                    "access_token": if refreshing { REFRESHED } else { ACCESS },
                                     "token_type": "Bearer",
-                                    "expires_in": 3600,
+                                    "expires_in": if refreshing { 3600 } else { expires_in },
                                     "refresh_token": REFRESH,
                                 }),
                             )
@@ -236,6 +244,78 @@ async fn redirect(authorization_url: &str, query: &str) -> std::io::Result<Strin
     let mut out = String::new();
     socket.read_to_string(&mut out).await?;
     Ok(out)
+}
+
+async fn finish_sign_in(sign_in: SignIn, base: &str, seen: &Mutex<Seen>) {
+    let url = sign_in.authorization_url().to_owned();
+    let params = pairs(url.split_once('?').unwrap().1);
+    seen.lock().challenge = Some(params["code_challenge"].clone());
+    let finishing = tokio::spawn(sign_in.finish(Duration::from_secs(20)));
+    redirect(
+        &url,
+        &format!("code=code-1&state={}&iss={base}", params["state"]),
+    )
+    .await
+    .unwrap();
+    finishing.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn expiry_and_the_sixty_second_window_refresh_before_sending_a_bearer() {
+    for (expiry, accepted) in [(1, true), (45, true), (1, false)] {
+        let (base, seen, server) = fake_authorization_server(true).await;
+        seen.lock().expires_in = Some(expiry);
+        seen.lock().refresh_allowed = accepted;
+        let store = Arc::new(MemoryStore::default());
+        let manager = McpManager::with_policy(
+            tool_registry::ToolRegistry::new(),
+            McpPolicy {
+                quarantine_after: 1,
+                ..McpPolicy::default()
+            },
+        )
+        .with_secret_store(store);
+        assert!(matches!(
+            manager
+                .add_server(McpServerConfig::http("expiry", format!("{base}/mcp")))
+                .await,
+            Err(McpError::AuthRequired(_))
+        ));
+        finish_sign_in(
+            manager.start_sign_in("expiry", options()).await.unwrap(),
+            &base,
+            &seen,
+        )
+        .await;
+        if expiry == 1 {
+            tokio::time::sleep(Duration::from_millis(1100)).await;
+        }
+        // This fixture deliberately still rejects MCP; the refresh must happen
+        // first, and authentication failures must never quarantine it.
+        assert!(matches!(
+            manager.reenable("expiry").await,
+            Err(McpError::AuthRequired(_))
+        ));
+        let requests = seen.lock().token_requests.clone();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1]["grant_type"], "refresh_token");
+        assert_eq!(requests[1]["resource"], format!("{base}/mcp"));
+        let bearers = seen.lock().mcp_authorization.clone();
+        if accepted {
+            assert_eq!(
+                bearers.last().cloned().flatten(),
+                Some(format!("Bearer {REFRESHED}"))
+            );
+        } else {
+            assert!(bearers.iter().all(Option::is_none));
+        }
+        let snapshot = manager.snapshot("expiry").unwrap();
+        assert!(snapshot.auth_required);
+        assert_eq!(snapshot.consecutive_failures, 0);
+        assert_eq!(snapshot.status, ServerStatus::Disconnected);
+        manager.shutdown().await;
+        server.abort();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -16,6 +16,7 @@
 
 use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
+use oauth2::TokenResponse as _;
 use rmcp::transport::auth::{
     AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
     AuthorizationSession, CredentialStore, StoredCredentials,
@@ -374,8 +375,7 @@ impl SignIn {
 }
 
 /// The access token to connect `server` (at `url`) with, refreshed first when
-/// it is about to expire (rmcp refreshes ahead of expiry inside
-/// `get_access_token`). `Ok(None)` when no sign-in was ever stored for this
+/// at most 60 seconds remain. `Ok(None)` when no sign-in was ever stored for this
 /// server and URL: nothing is contacted then.
 ///
 /// # Errors
@@ -390,27 +390,63 @@ pub async fn stored_bearer(
 ) -> Result<Option<String>> {
     let probe = SecretCredentialStore::new(Arc::clone(store), server, url, registrar.cloned())?;
     let stored = probe.load().await.map_err(|e| auth_error(server, &e))?;
-    if stored.is_none_or(|c| c.token_response.is_none()) {
+    if stored.as_ref().is_none_or(|c| c.token_response.is_none()) {
         return Ok(None);
     }
+    let refresh_due = stored.as_ref().is_some_and(|c| {
+        let expiry = c
+            .token_response
+            .as_ref()
+            .and_then(oauth2::TokenResponse::expires_in);
+        match (expiry, c.token_received_at) {
+            (Some(expiry), Some(received)) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                received
+                    .saturating_add(expiry.as_secs())
+                    .saturating_sub(now)
+                    <= 60
+            }
+            _ => false,
+        }
+    });
     // rmcp's own HTTP client: its address filter stays in place.
     let mut manager = AuthorizationManager::new(url)
         .await
         .map_err(|e| auth_error(server, &e))?;
     manager.set_credential_store(probe);
+    // Apply our proxy-independent endpoint policy on refresh as well as sign-in.
+    let resolution = manager
+        .resolve_metadata()
+        .await
+        .map_err(|e| auth_error(server, &e))?;
+    check_endpoint_addresses(server, url, &resolution.metadata).await?;
+    manager.set_metadata(resolution.metadata);
     match manager.initialize_from_store().await {
         Ok(true) => {}
         Ok(false) => return Err(McpError::AuthRequired(server.to_owned())),
         Err(e) => return Err(auth_error(server, &e)),
     }
-    match manager.get_access_token().await {
+    let token = if refresh_due {
+        manager
+            .refresh_token()
+            .await
+            .map(|t| t.access_token().secret().clone())
+    } else {
+        manager.get_access_token().await
+    };
+    match token {
         Ok(token) => {
             if let Some(registrar) = registrar {
                 registrar(&token);
             }
             Ok(Some(token))
         }
-        Err(AuthError::AuthorizationRequired) => Err(McpError::AuthRequired(server.to_owned())),
+        Err(AuthError::AuthorizationRequired | AuthError::TokenRefreshRejected(_)) => {
+            Err(McpError::AuthRequired(server.to_owned()))
+        }
         Err(e) => Err(auth_error(server, &e)),
     }
 }

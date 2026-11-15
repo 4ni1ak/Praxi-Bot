@@ -4485,6 +4485,7 @@ dependencies = [
  "futures",
  "globset",
  "http",
+ "oauth2",
  "parking_lot",
  "permission-engine",
  "process-wrap",
