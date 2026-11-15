@@ -25,6 +25,7 @@ mod profile;
 mod router;
 mod shared;
 mod subagent;
+mod tiering;
 
 #[cfg(test)]
 mod router_tests;

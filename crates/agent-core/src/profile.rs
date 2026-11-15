@@ -29,9 +29,12 @@ pub struct ModelsConfig {
     pub planner: Option<String>,
     /// The model that runs the loop (`provider/model`).
     pub executor: String,
-    /// Router classifier model; informational in v0.
+    /// Optional HTTP model for simple, clean first turns. Unset disables tiering.
+    #[serde(default)]
+    pub light: Option<String>,
+    /// Optional K3 router classifier model.
     pub classifier: Option<String>,
-    /// Fallback models; informational in v0.
+    /// Ordered alternatives after a retryable error or missing capability.
     #[serde(default)]
     pub fallback: Vec<String>,
 }
@@ -177,6 +180,18 @@ impl TryFrom<Raw> for BotProfile {
 }
 
 fn validate_profile_models(models: &ModelsConfig) -> Result<(), String> {
+    if let Some(light) = &models.light {
+        let Some((provider, model)) = light.split_once('/') else {
+            return Err("light model must be an HTTP provider/model reference".into());
+        };
+        if provider.trim().is_empty()
+            || model.trim().is_empty()
+            || light.trim() != light
+            || provider.starts_with("cli:")
+        {
+            return Err("light model must be an HTTP provider/model reference".into());
+        }
+    }
     for role in [models.planner.as_deref(), models.classifier.as_deref()]
         .into_iter()
         .flatten()

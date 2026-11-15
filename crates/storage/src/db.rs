@@ -1021,6 +1021,23 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Whether one run has an audit fact, without loading other runs' details.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn has_run_audit_action(
+        &self,
+        user_id: UserId,
+        run_id: RunId,
+        action: &str,
+    ) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM audit_log WHERE user_id = ?1 AND run_id = ?2 AND action = ?3)",
+            params![user_id.to_string(), run_id.to_string(), action],
+            |row| row.get(0),
+        )?)
+    }
+
     /// The newest audit row of one action for a user (indexed by `id`, no full scan).
     ///
     /// # Errors

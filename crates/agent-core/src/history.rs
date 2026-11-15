@@ -174,6 +174,9 @@ pub(crate) fn build_messages(
     let mut metas: Vec<ToolMeta> = Vec::new();
     let mut n_model: usize = 0;
     for (index, step) in steps.iter().enumerate() {
+        if crate::tiering::discarded(steps, index) {
+            continue;
+        }
         match step.name.as_str() {
             STEP_USER => {
                 flush(&mut out, &mut outstanding);
