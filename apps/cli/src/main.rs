@@ -1527,3 +1527,5 @@ mod tests {
         assert!(Cli::try_parse_from(["bot", "setup", "--key-env", "X"]).is_err());
     }
 }
+#[cfg(test)]
+mod rag_wiring_tests;

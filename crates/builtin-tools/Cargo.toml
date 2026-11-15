@@ -17,6 +17,7 @@ browser-cdp = { path = "../browser-cdp", version = "0.1.0" }
 connector-email = { path = "../connector-email", version = "0.1.0" }
 desktop-api = { path = "../desktop-api", version = "0.1.0" }
 globset.workspace = true
+memory-store = { path = "../memory-store", version = "0.1.0" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 parking_lot.workspace = true
 permission-engine = { path = "../permission-engine", version = "0.1.0" }
