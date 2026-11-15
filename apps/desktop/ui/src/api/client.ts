@@ -333,12 +333,12 @@ export class ApiClient {
     });
   }
   /** Release an owned screen takeover or clear a legacy latch. */
-  releaseControl(req?: ReleaseRequest): Promise<ControlStateDto> {
-    return this.request("POST", "/control/release", req ? { body: req } : {});
+  releaseControl(req?: ReleaseRequest, signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/release", req ? { body: req, signal } : { signal });
   }
   /** Local Stop override: interrupts any active takeover and keeps the pause latch. */
-  overrideControl(): Promise<ControlStateDto> {
-    return this.request("POST", "/control/override");
+  overrideControl(signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/override", { signal });
   }
   /** Local user recovery: clears an interrupted/recovered latch after key reset. */
   recoverControl(): Promise<ControlStateDto> {

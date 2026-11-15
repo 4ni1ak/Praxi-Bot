@@ -1,20 +1,27 @@
 import type { ControlStateDto } from "../api/types.ts";
 
 /**
- * The takeover half of a Stop (card 237, review r-94 #2 / #9). Pure; injected parts.
+ * The takeover half of a Stop (card 237, reviews r-94 #2 / #9, r-94b #3 / #5). Pure.
  *
  * - `stop()` SYNCHRONOUSLY revokes this app's takeover input: from that call on no
  *   pointer / key event is queued or sent and the lease heartbeat stops renewing,
  *   whatever the daemon answers, until the user takes control again (`resume()`).
  * - The `POST /v1/control/override` it owes is retained until it is delivered through
- *   the CURRENT client: with no client yet it waits for one; a failure is retried; a
- *   reply that arrives after the client was replaced is ignored and the override is
- *   sent again through the new client.
+ *   the CURRENT client. Every attempt belongs to one client and one decision
+ *   generation and is bounded (`OVERRIDE_ATTEMPT_MS`, then aborted). An attempt whose
+ *   client was replaced, or whose decision is no longer the newest, is abandoned: its
+ *   late answer is ignored and never re-sent. A failed or timed-out attempt stays owed
+ *   and is retried by the next pump (a new control snapshot - polled every 5 s -, a
+ *   client change or another Stop); there is no retry timer.
+ * - `resume()` is the user's NEWER explicit takeover decision: it retires the owed
+ *   override and any attempt in flight, so an old Stop can never pause a takeover
+ *   the user acquired after it.
  * - "Only if controlled" Stops decide from a control snapshot of the current client;
  *   while there is none the decision waits (unknown is not "not controlled").
  */
 
-export const OVERRIDE_RETRY_MS = 2000;
+/** One override attempt may take this long before it is aborted and counted as failed. */
+export const OVERRIDE_ATTEMPT_MS = 5000;
 
 export interface TakeoverStopDeps<C> {
   /** The daemon client that is current right now (or null). */
@@ -24,18 +31,27 @@ export interface TakeoverStopDeps<C> {
    * the CURRENT client; `null` when no such snapshot exists yet.
    */
   controlled(): boolean | null;
-  post(client: C): Promise<ControlStateDto>;
+  post(client: C, signal: AbortSignal): Promise<ControlStateDto>;
   /** Apply a delivered override reply (only called while `client` is still current). */
   apply(client: C, dto: ControlStateDto): void;
   schedule(fn: () => void, ms: number): unknown;
+  cancel(handle: unknown): void;
+}
+
+interface Attempt<C> {
+  readonly client: C;
+  readonly gen: number;
+  readonly controller: AbortController;
+  readonly timer: unknown;
 }
 
 export class TakeoverStop<C> {
   private readonly deps: TakeoverStopDeps<C>;
   private halted = false;
-  private owed: { force: boolean } | null = null;
-  private inFlight = false;
-  private retryPending = false;
+  /** Decision generation: every Stop and every explicit user takeover raises it. */
+  private gen = 0;
+  private owed: { gen: number; force: boolean } | null = null;
+  private attempt: Attempt<C> | null = null;
 
   constructor(deps: TakeoverStopDeps<C>) {
     this.deps = deps;
@@ -44,13 +60,17 @@ export class TakeoverStop<C> {
   /** A Stop decision. `force`: send the override even if no takeover is held (viewer Stop). */
   stop(force: boolean): void {
     this.halted = true;
-    this.owed = { force: (this.owed?.force ?? false) || force };
+    this.gen += 1;
+    this.owed = { gen: this.gen, force: (this.owed?.force ?? false) || force };
     this.pump();
   }
 
-  /** The user took control again (a new decision): input may flow again. */
+  /** The user took control again (a newer decision): input flows, the old override is retired. */
   resume(): void {
     this.halted = false;
+    this.gen += 1;
+    this.owed = null;
+    this.abandon();
   }
 
   /** May this app send takeover input / renew the input lease right now? */
@@ -66,12 +86,19 @@ export class TakeoverStop<C> {
   /** Try to deliver the owed override (call on Stop, client change and new snapshots). */
   pump(): void {
     const owed = this.owed;
-    if (!owed || this.inFlight) {
+    if (!owed) {
       return;
     }
     const client = this.deps.client();
     if (!client) {
       return; // retained until a client exists
+    }
+    const running = this.attempt;
+    if (running) {
+      if (running.client === client && running.gen === owed.gen) {
+        return; // the current client is already being asked for this decision
+      }
+      this.abandon(); // another client or an older decision: never let it block
     }
     if (!owed.force) {
       const controlled = this.deps.controlled();
@@ -83,30 +110,57 @@ export class TakeoverStop<C> {
         return;
       }
     }
-    this.inFlight = true;
-    this.deps.post(client).then(
+    const controller = new AbortController();
+    const attempt: Attempt<C> = {
+      client,
+      gen: owed.gen,
+      controller,
+      timer: this.deps.schedule(() => controller.abort(), OVERRIDE_ATTEMPT_MS)
+    };
+    this.attempt = attempt;
+    let reply: Promise<ControlStateDto>;
+    try {
+      reply = this.deps.post(client, controller.signal);
+    } catch (err) {
+      reply = Promise.reject(err);
+    }
+    reply.then(
       (dto) => {
-        this.inFlight = false;
+        if (this.attempt !== attempt) {
+          return; // abandoned: a late answer writes nothing and is not re-sent
+        }
+        this.finish(attempt);
         if (this.deps.client() !== client) {
-          this.pump(); // a replaced client's reply writes nothing; send again
+          this.pump();
           return;
         }
-        if (this.owed === owed) {
+        if (this.owed?.gen === attempt.gen) {
           this.owed = null;
         }
         this.deps.apply(client, dto);
-        this.pump(); // a Stop pressed meanwhile may owe another override
+        this.pump();
       },
       () => {
-        this.inFlight = false;
-        if (!this.retryPending) {
-          this.retryPending = true;
-          this.deps.schedule(() => {
-            this.retryPending = false;
-            this.pump();
-          }, OVERRIDE_RETRY_MS);
+        if (this.attempt === attempt) {
+          this.finish(attempt); // failed or timed out: still owed, retried by the next pump
         }
       }
     );
+  }
+
+  private finish(attempt: Attempt<C>): void {
+    this.deps.cancel(attempt.timer);
+    if (this.attempt === attempt) {
+      this.attempt = null;
+    }
+  }
+
+  private abandon(): void {
+    const running = this.attempt;
+    if (running) {
+      this.attempt = null;
+      this.deps.cancel(running.timer);
+      running.controller.abort();
+    }
   }
 }

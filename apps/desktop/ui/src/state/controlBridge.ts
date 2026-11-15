@@ -136,8 +136,8 @@ export interface BridgeDeps {
       reason?: string
     ): Promise<unknown>;
     getControlState?(): Promise<ControlStateDto>;
-    releaseControl?(req?: ReleaseRequest): Promise<ControlStateDto>;
-    overrideControl?(): Promise<ControlStateDto>;
+    releaseControl?(req?: ReleaseRequest, signal?: AbortSignal): Promise<ControlStateDto>;
+    overrideControl?(signal?: AbortSignal): Promise<ControlStateDto>;
     recoverControl?(): Promise<ControlStateDto>;
   };
   native: {
@@ -318,7 +318,10 @@ export class ControlBridge {
       }
       this.releasingTakeover = true;
       try {
-        const result = await this.bounded(this.deps.client.releaseControl(req));
+        const release = this.deps.client.releaseControl;
+        const result = await this.boundedAbort((signal) =>
+          release.call(this.deps.client, req, signal)
+        );
         this.applyControlDto(result);
         return result;
       } finally {
@@ -363,6 +366,15 @@ export class ControlBridge {
       timer = setTimeout(() => reject(new Error("bridge call bound exceeded")), ms);
     });
     return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+  }
+
+  /** Like `bounded`, and the request itself is aborted when the bound is hit. */
+  private boundedAbort<T>(call: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    return this.bounded(call(controller.signal)).catch((err: unknown) => {
+      controller.abort();
+      throw err;
+    });
   }
 
   private sleep(ms: number): Promise<void> {
@@ -451,7 +463,10 @@ export class ControlBridge {
     // instead of fighting the latch, and leaving human_driving never sends legacy release:true.
     if (mode === "paused" && this.hasOwnedTakeover() && this.deps.client.overrideControl) {
       try {
-        const dto = await this.bounded(this.deps.client.overrideControl());
+        const override = this.deps.client.overrideControl;
+        const dto = await this.boundedAbort((signal) =>
+          override.call(this.deps.client, signal)
+        );
         this.applyControlDto(dto);
       } catch {
         // next beat / state check retries

@@ -214,9 +214,10 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         controlStateRef.current !== null
           ? shouldOverrideOnStop(stateRef.current, controlStateRef.current)
           : null,
-      post: (c) => c.overrideControl(),
+      post: (c, signal) => c.overrideControl(signal),
       apply: (_c, dto) => applyOverrideRef.current(dto),
-      schedule: (fn, ms) => window.setTimeout(fn, ms)
+      schedule: (fn, ms) => window.setTimeout(fn, ms),
+      cancel: (handle) => window.clearTimeout(handle as number)
     });
   }
   const updateState = useCallback(

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ControlStateDto } from "../api/types.ts";
 import { createInitialLiveViewState, shouldOverrideOnStop } from "../lib/liveViewState.ts";
 import { FakeClock, flush } from "./ledgerFakes.ts";
-import { OVERRIDE_RETRY_MS, TakeoverStop } from "./takeoverStop.ts";
+import { OVERRIDE_ATTEMPT_MS, TakeoverStop } from "./takeoverStop.ts";
 
 type Client = { name: string };
 
@@ -34,7 +34,7 @@ function harness() {
   let current: Client | null = { name: "A" };
   let snapshotFor: Client | null = null;
   let snapshot: ControlStateDto | null = null;
-  const posts: { client: string; resolve: (d: ControlStateDto) => void; reject: (e: Error) => void }[] = [];
+  const posts: { client: string; resolve: (d: ControlStateDto) => void; reject: (e: Error) => void; signal: AbortSignal }[] = [];
   const applied: { client: string; dto: ControlStateDto }[] = [];
   const gate = new TakeoverStop<Client>({
     client: () => current,
@@ -42,16 +42,18 @@ function harness() {
       current !== null && snapshotFor === current && snapshot !== null
         ? shouldOverrideOnStop(createInitialLiveViewState(null), snapshot)
         : null,
-    post: (c) =>
+    post: (c, signal) =>
       new Promise((resolve, reject) => {
-        posts.push({ client: c.name, resolve, reject });
+        posts.push({ client: c.name, resolve, reject, signal });
+        signal.addEventListener("abort", () => reject(new Error("aborted")));
       }),
     apply: (c, d) => {
       applied.push({ client: c.name, dto: d });
       snapshot = d;
       snapshotFor = c;
     },
-    schedule: (fn, ms) => clock.set(fn, ms)
+    schedule: (fn, ms) => clock.set(fn, ms),
+    cancel: (handle) => clock.clear(handle)
   });
   return {
     gate,
@@ -111,14 +113,15 @@ test("no client at Stop: the override is retained and sent once a client and its
   assert.equal(h.posts[0]?.client, "B");
 });
 
-test("a failed override is retried until delivered", async () => {
+test("a failed override stays owed and is retried by the next snapshot (no retry timer)", async () => {
   const h = harness();
   h.snapshot(dto("active"));
   h.gate.stop(false);
   h.posts[0]?.reject(new Error("500"));
   await flush();
   assert.equal(h.gate.owes(), true);
-  h.clock.advance(OVERRIDE_RETRY_MS);
+  assert.equal(h.clock.pending(), 0, "no timer is left behind");
+  h.snapshot(dto("active")); // the 5 s control poll
   assert.equal(h.posts.length, 2);
   h.posts[1]?.resolve(dto("paused"));
   await flush();
@@ -145,4 +148,15 @@ test("the viewer's Stop overrides even without a held takeover, once a client ex
   h.gate.stop(true);
   h.swap({ name: "B" });
   assert.equal(h.posts.length, 1, "forced: no snapshot needed");
+});
+
+test("a hung override is aborted after its bound and retried by the next snapshot", async () => {
+  const h = harness();
+  h.snapshot(dto("active"));
+  h.gate.stop(false);
+  h.clock.advance(OVERRIDE_ATTEMPT_MS);
+  await flush();
+  assert.equal(h.posts[0]?.signal.aborted, true);
+  h.snapshot(dto("active"));
+  assert.equal(h.posts.length, 2);
 });
