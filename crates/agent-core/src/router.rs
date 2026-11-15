@@ -513,7 +513,10 @@ impl TurnExecutor {
     }
 
     async fn route_first_counted(&self, ctx: &RunCtx, text: &str) -> Option<Decision> {
-        if ctx.sub.is_some() || ctx.parent_run_id.is_some() {
+        if ctx.sub.is_some()
+            || ctx.parent_run_id.is_some()
+            || ctx.initiator == protocol::InitiatorKind::ExternalSchedule
+        {
             return None;
         }
         let bl = self.sh.ladder_for(ctx.bot_id, &ctx.profile)?;

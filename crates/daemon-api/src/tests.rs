@@ -4139,6 +4139,58 @@ async fn the_stop_book_is_bounded_per_actor() {
 }
 
 #[tokio::test]
+async fn c225_schedule_extensions_local_owner_only_for_every_role_and_path_alias() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let body = json!({"bot_id":bot,"name":"check","spec":{"every":{"seconds":60}},"payload":{"kind":"agent_prompt","text":"review"},"precheck":{"kind":"script","code":"return false;"}});
+    let owner = call(&t, Method::POST, "/v1/schedules", Some(body.clone())).await;
+    assert_eq!(owner.status, StatusCode::CREATED, "{:?}", owner.json());
+    assert_eq!(owner.json()["precheck"]["code"], "return false;");
+    let id = owner.json()["id"].as_str().unwrap().to_owned();
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in [
+            (Method::POST, "/v1/schedules".to_owned()),
+            (Method::POST, "/v1/%73chedules".to_owned()),
+            (Method::POST, "/v1//schedules".to_owned()),
+            (Method::POST, "/v1/schedules/".to_owned()),
+            (Method::PUT, format!("/v1/schedules/{id}")),
+            (Method::PUT, format!("/v1/schedules%2F{id}")),
+            (Method::PUT, format!("/v1/schedules//{id}")),
+            (Method::PUT, format!("/v1/schedules/{id}/")),
+        ] {
+            let mut req = Request::builder()
+                .method(method)
+                .uri(&path)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "fake-peer".into(),
+                role,
+            });
+            let response = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{role:?} {path}");
+        }
+    }
+    assert_eq!(t.state.schedule_store().unwrap().list().unwrap().len(), 1);
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    let event = audit
+        .iter()
+        .find(|a| a.action == "schedule.create_intent")
+        .unwrap();
+    assert!(!event.detail.to_string().contains("return false"));
+    assert!(event.detail.get("schedule_id").is_some());
+}
+
+#[tokio::test]
 async fn usage_purpose_totals_are_additive_and_preserve_the_legacy_shape() {
     let t = setup();
     let (bot, chat) = make_chat(&t).await;

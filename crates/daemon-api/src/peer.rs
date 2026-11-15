@@ -440,6 +440,29 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     }
     req.extensions_mut()
         .insert(crate::live_view::Actor::peer(&peer));
+    // New schedule source/read capabilities remain local-owner only even on
+    // encoded or slash-normalized aliases. Existing plain timer requests keep
+    // their earlier peer policy; handlers also guard already-configured rows.
+    let req = if matches!(*req.method(), Method::POST | Method::PUT)
+        && (check_path == "/v1/schedules"
+            || check_path
+                .strip_prefix("/v1/schedules/")
+                .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok()))
+    {
+        let (parts, body) = req.into_parts();
+        let Ok(bytes) = axum::body::to_bytes(body, 128 * 1024).await else {
+            return ApiError::bad_request("schedule body exceeds limit").into_response();
+        };
+        if serde_json::from_slice::<serde_json::Value>(&bytes)
+            .is_ok_and(|v| v.get("precheck").is_some() || v.get("trigger").is_some())
+        {
+            return ApiError::forbidden("schedule triggers and prechecks are local-owner only")
+                .into_response();
+        }
+        Request::from_parts(parts, axum::body::Body::from(bytes))
+    } else {
+        req
+    };
     let (req, control_transition) = if req.method() == Method::PUT && path == "/v1/control/state" {
         let (parts, body) = req.into_parts();
         let Ok(bytes) = axum::body::to_bytes(body, 4096).await else {

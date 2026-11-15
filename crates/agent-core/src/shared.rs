@@ -874,6 +874,7 @@ pub(crate) fn kind_for(i: InitiatorKind) -> String {
         InitiatorKind::Channel => format!("{KIND_PREFIX}:channel"),
         InitiatorKind::Subagent => format!("{KIND_PREFIX}:subagent"),
         InitiatorKind::Schedule => format!("{KIND_PREFIX}:schedule"),
+        InitiatorKind::ExternalSchedule => format!("{KIND_PREFIX}:external_schedule"),
     }
 }
 
@@ -884,7 +885,8 @@ pub(crate) fn kind_for_schedule(id: TaskId) -> String {
 
 /// The schedule behind a run kind written by [`kind_for_schedule`].
 pub fn schedule_id_of(kind: &str) -> Option<TaskId> {
-    kind.strip_prefix("turn:schedule:")?
+    kind.strip_prefix("turn:schedule:")
+        .or_else(|| kind.strip_prefix("turn:external_schedule:"))?
         .parse()
         .ok()
         .map(TaskId)
@@ -895,6 +897,9 @@ pub(crate) fn initiator_of(kind: &str) -> InitiatorKind {
         Some("routine") => InitiatorKind::Routine,
         Some("channel") => InitiatorKind::Channel,
         Some("subagent") => InitiatorKind::Subagent,
+        Some(s) if s == "external_schedule" || s.starts_with("external_schedule:") => {
+            InitiatorKind::ExternalSchedule
+        }
         Some(s) if s == "schedule" || s.starts_with("schedule:") => InitiatorKind::Schedule,
         _ => InitiatorKind::Human,
     }

@@ -2,6 +2,7 @@
 
 #![allow(clippy::assert_is_empty)]
 
+mod c225;
 mod composio_approvals;
 mod fill_secret;
 mod planning_pause;

@@ -24,6 +24,7 @@ mod knowledge;
 mod memory;
 mod profile;
 mod router;
+mod schedule_precheck;
 mod shared;
 mod subagent;
 pub mod usage;

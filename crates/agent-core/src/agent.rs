@@ -577,6 +577,44 @@ impl AgentLoop {
         )
     }
 
+    /// Start an externally supplied scheduled run in a new, isolated chat.
+    /// The durable initiator survives resume and is inherited by all children.
+    ///
+    /// # Errors
+    /// Existing chat history or normal run-start errors.
+    pub fn run_scheduled_external(
+        &self,
+        chat_id: ChatId,
+        schedule_id: TaskId,
+        work: ScheduleWork,
+        note: Option<&str>,
+    ) -> Result<RunId> {
+        if !self.sh.storage.list_messages(chat_id)?.is_empty() {
+            return Err(LoopError::Profile(
+                "external schedule requires an empty chat".into(),
+            ));
+        }
+        let mut text = match &work {
+            ScheduleWork::Prompt(text) => text.clone(),
+            ScheduleWork::Workflow { name, params } => {
+                format!("Scheduled workflow {name}: {params:?}")
+            }
+            ScheduleWork::Tool { name, input } => format!("Scheduled tool {name}: {input}"),
+        };
+        if let Some(note) = note {
+            text.push_str("\n\n");
+            text.push_str(note);
+        }
+        let directive = (!matches!(work, ScheduleWork::Prompt(_))).then_some(work);
+        self.start_turn(
+            chat_id,
+            &text,
+            &format!("turn:external_schedule:{schedule_id}"),
+            directive,
+            None,
+        )
+    }
+
     /// `handoff`: the just-concluded run that still holds the chat's `active`
     /// slot; the new turn takes the slot over from it without a gap in which
     /// another start could slip in.
@@ -599,6 +637,17 @@ impl AgentLoop {
             .storage
             .get_chat(chat_id)?
             .ok_or_else(|| LoopError::NotFound(format!("chat {chat_id}")))?;
+        if self
+            .sh
+            .storage
+            .list_messages(chat_id)?
+            .iter()
+            .any(|m| m.role == "external_schedule")
+        {
+            return Err(LoopError::Profile(
+                "external schedule chat is isolated; start a new chat".into(),
+            ));
+        }
         self.sh
             .profile_for(chat.bot_id)
             .map_err(LoopError::Profile)?;
@@ -609,6 +658,14 @@ impl AgentLoop {
                 .is_some_and(|held| Some(*held) != handoff)
             {
                 return Err(LoopError::Busy(chat_id));
+            }
+            let messages = self.sh.storage.list_messages(chat_id)?;
+            if messages.iter().any(|m| m.role == "external_schedule")
+                || (initiator_of(kind) == InitiatorKind::ExternalSchedule && !messages.is_empty())
+            {
+                return Err(LoopError::Profile(
+                    "external schedule requires an isolated empty chat".into(),
+                ));
             }
             let run_id = self
                 .rt
@@ -649,6 +706,17 @@ impl AgentLoop {
         });
         {
             let active = self.sh.active.lock();
+            if self
+                .sh
+                .storage
+                .list_messages(chat_id)?
+                .iter()
+                .any(|m| m.role == "external_schedule")
+            {
+                return Err(LoopError::Profile(
+                    "external schedule chat is isolated; start a new chat".into(),
+                ));
+            }
             if let Some(&run_id) = active.get(&chat_id) {
                 if let Some(content) = steering {
                     let ctx = self.sh.runs.lock().get(&run_id).cloned();
@@ -1403,7 +1471,16 @@ impl AgentLoop {
             user_id,
             chat_id,
             run_id: Some(run_id),
-            role: "user".to_owned(),
+            role: if self
+                .sh
+                .storage
+                .get_run(run_id)?
+                .is_some_and(|r| initiator_of(&r.kind) == InitiatorKind::ExternalSchedule)
+            {
+                "external_schedule".to_owned()
+            } else {
+                "user".to_owned()
+            },
             content: content.clone(),
             created_at_ms: now_ms(),
         })?;

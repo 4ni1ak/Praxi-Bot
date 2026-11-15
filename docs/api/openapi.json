@@ -13141,6 +13141,12 @@
             "format": "uuid",
             "description": "Chat the runs post to; without one a chat named after the schedule is\nused (and created on the first firing)."
           },
+          "consecutive_errors": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Consecutive precheck/polling failures (ten pauses the schedule).",
+            "minimum": 0
+          },
           "created_at_ms": {
             "type": "integer",
             "format": "int64",
@@ -13190,8 +13196,20 @@
           "payload": {
             "description": "What it does: `{\"kind\": \"agent_prompt\", \"text\": \"...\"}`,\n`{\"kind\": \"workflow\", \"name\": \"...\", \"params\": {}}` or\n`{\"kind\": \"tool\", \"name\": \"...\", \"input\": {}}`."
           },
+          "precheck": {
+            "description": "Read-only deterministic condition, including full script source."
+          },
+          "skipped_by_precheck": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Firings skipped before an agent run was created.",
+            "minimum": 0
+          },
           "spec": {
             "description": "When it fires: `{\"cron\": \"0 9 * * 1-5 Europe/Istanbul\"}`,\n`{\"every\": {\"seconds\": 600}}` or `{\"at\": {\"unix_ms\": 1767225600000}}`."
+          },
+          "trigger": {
+            "description": "Non-webhook trigger definition; never includes webhook secrets."
           }
         }
       },
@@ -13239,8 +13257,14 @@
           "payload": {
             "description": "See [`ScheduleDto::payload`]."
           },
+          "precheck": {
+            "description": "`HashChanged` or Script precheck. Absent keeps it; null removes it."
+          },
           "spec": {
             "description": "See [`ScheduleDto::spec`]."
+          },
+          "trigger": {
+            "description": "File-watch or email trigger. Absent keeps it; null removes it."
           },
           "webhook_secret": {
             "type": [
