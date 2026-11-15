@@ -45,6 +45,9 @@ pub enum HostCmd {
         #[arg(long)]
         revoke: bool,
     },
+    /// Provision your own server over SSH: add, repair, upgrade, remove.
+    #[command(flatten)]
+    Provision(crate::host_provision::ProvisionCmd),
 }
 
 /// Device keys a `host screen` command applies to.
@@ -159,7 +162,7 @@ pub async fn run(
             "/v1/host/activate".into(),
             Some(json!({"force": force})),
         ),
-        HostCmd::Join { .. } | HostCmd::Screen { .. } => {
+        HostCmd::Join { .. } | HostCmd::Screen { .. } | HostCmd::Provision(_) => {
             return Err("this command is local only".into());
         }
     };

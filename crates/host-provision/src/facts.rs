@@ -13,7 +13,9 @@ impl Facts {
         Self(
             text.lines()
                 .filter_map(|l| l.split_once('='))
-                .filter(|(k, _)| !k.is_empty() && k.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+                .filter(|(k, _)| {
+                    !k.is_empty() && k.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                })
                 .map(|(k, v)| (k.to_owned(), v.trim().to_owned()))
                 .collect(),
         )
@@ -53,7 +55,13 @@ fn major_minor(v: &str) -> (u64, u64) {
     (p.next().unwrap_or(0), p.next().unwrap_or(0))
 }
 
-fn r(id: &'static str, title: &str, status: Status, detail: String, hint: Option<&str>) -> StepResult {
+fn r(
+    id: &'static str,
+    title: &str,
+    status: Status,
+    detail: String,
+    hint: Option<&str>,
+) -> StepResult {
     StepResult::new(id, title, status, detail, hint.map(str::to_owned))
 }
 
@@ -95,7 +103,10 @@ pub fn evaluate(f: &Facts) -> Vec<StepResult> {
         ),
         "ol" | "rhel" | "fedora" | "rocky" | "almalinux" | "centos" => (
             Status::Pass,
-            format!("{} (RHEL family, less tested than Ubuntu/Debian)", f.get("os_name")),
+            format!(
+                "{} (RHEL family, less tested than Ubuntu/Debian)",
+                f.get("os_name")
+            ),
             None,
         ),
         _ if like.contains("debian") || like.contains("rhel") || like.contains("fedora") => (
@@ -124,9 +135,19 @@ pub fn evaluate(f: &Facts) -> Vec<StepResult> {
     out.push(r(
         "preflight.systemd",
         "systemd",
-        if f.flag("systemd") { Status::Pass } else { Status::Fail },
-        if f.flag("systemd") { "running".into() } else { "systemd is not PID 1".into() },
-        (!f.flag("systemd")).then_some("Praxi runs as a systemd service; containers without systemd are not supported."),
+        if f.flag("systemd") {
+            Status::Pass
+        } else {
+            Status::Fail
+        },
+        if f.flag("systemd") {
+            "running".into()
+        } else {
+            "systemd is not PID 1".into()
+        },
+        (!f.flag("systemd")).then_some(
+            "Praxi runs as a systemd service; containers without systemd are not supported.",
+        ),
     ));
 
     out.push(r(
@@ -139,19 +160,35 @@ pub fn evaluate(f: &Facts) -> Vec<StepResult> {
 
     let ram = f.num("ram_mb");
     let (status, hint) = if ram < 2000 {
-        (Status::Fail, Some("At least 2 GB RAM is required (6 GB recommended with a browser)."))
+        (
+            Status::Fail,
+            Some("At least 2 GB RAM is required (6 GB recommended with a browser)."),
+        )
     } else if ram < 6000 {
-        (Status::Warn, Some("6 GB or more is recommended when the host also runs a browser."))
+        (
+            Status::Warn,
+            Some("6 GB or more is recommended when the host also runs a browser."),
+        )
     } else {
         (Status::Pass, None)
     };
-    out.push(r("preflight.ram", "Memory", status, format!("{ram} MB"), hint));
+    out.push(r(
+        "preflight.ram",
+        "Memory",
+        status,
+        format!("{ram} MB"),
+        hint,
+    ));
 
     let disk = f.num("disk_mb");
     out.push(r(
         "preflight.disk",
         "Free disk",
-        if disk >= 8000 { Status::Pass } else { Status::Fail },
+        if disk >= 8000 {
+            Status::Pass
+        } else {
+            Status::Fail
+        },
         format!("{disk} MB free"),
         (disk < 8000).then_some("At least 8 GB of free disk space is required."),
     ));
@@ -169,7 +206,11 @@ pub fn evaluate(f: &Facts) -> Vec<StepResult> {
         "preflight.gh",
         "GitHub CLI (for release verification)",
         Status::Pass,
-        if gh.is_empty() { "not installed; the installer step will add it".into() } else { format!("{gh} (checked during install)") },
+        if gh.is_empty() {
+            "not installed; the installer step will add it".into()
+        } else {
+            format!("{gh} (checked during install)")
+        },
         None,
     ));
 
@@ -177,23 +218,45 @@ pub fn evaluate(f: &Facts) -> Vec<StepResult> {
     out.push(r(
         "preflight.port",
         "Local port",
-        if busy_foreign { Status::Fail } else { Status::Pass },
-        if busy_foreign { format!("something else listens on 127.0.0.1:{}", f.get("port")) } else { format!("{} is free or ours", f.get("port")) },
+        if busy_foreign {
+            Status::Fail
+        } else {
+            Status::Pass
+        },
+        if busy_foreign {
+            format!("something else listens on 127.0.0.1:{}", f.get("port"))
+        } else {
+            format!("{} is free or ours", f.get("port"))
+        },
         busy_foreign.then_some("Stop the other service or reinstall with another port."),
     ));
 
     let (status, detail) = match existing(f) {
         Existing::Fresh => (Status::Pass, "no Praxi install found".to_owned()),
-        Existing::Installed { version, host_mode, active } => (
+        Existing::Installed {
+            version,
+            host_mode,
+            active,
+        } => (
             Status::Pass,
             format!(
                 "Praxi {version} found ({}, {})",
-                if host_mode { "host mode" } else { "plain `bot serve`" },
+                if host_mode {
+                    "host mode"
+                } else {
+                    "plain `bot serve`"
+                },
                 if active { "running" } else { "stopped" }
             ),
         ),
     };
-    out.push(r("preflight.existing", "Existing Praxi install", status, detail, None));
+    out.push(r(
+        "preflight.existing",
+        "Existing Praxi install",
+        status,
+        detail,
+        None,
+    ));
     out
 }
 
@@ -207,9 +270,18 @@ mod tests {
 
     #[test]
     fn good_server_passes_and_bad_ones_fail_with_hints() {
-        assert!(evaluate(&Facts::parse(good())).iter().all(|c| c.status != Status::Fail));
-        let low = good().replace("ram_mb=24000", "ram_mb=1000").replace("systemd=1", "systemd=0");
-        let bad: Vec<_> = evaluate(&Facts::parse(&low)).into_iter().filter(|c| c.status == Status::Fail).collect();
+        assert!(
+            evaluate(&Facts::parse(good()))
+                .iter()
+                .all(|c| c.status != Status::Fail)
+        );
+        let low = good()
+            .replace("ram_mb=24000", "ram_mb=1000")
+            .replace("systemd=1", "systemd=0");
+        let bad: Vec<_> = evaluate(&Facts::parse(&low))
+            .into_iter()
+            .filter(|c| c.status == Status::Fail)
+            .collect();
         assert_eq!(bad.len(), 2);
         assert!(bad.iter().all(|c| c.remediation.is_some()));
         assert_eq!(semver("v0.1.0"), Some((0, 1, 0)));

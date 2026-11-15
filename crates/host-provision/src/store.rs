@@ -86,7 +86,9 @@ impl Store {
     }
 
     pub fn list(&self) -> Vec<HostRecord> {
-        let Ok(rd) = fs::read_dir(&self.root) else { return Vec::new() };
+        let Ok(rd) = fs::read_dir(&self.root) else {
+            return Vec::new();
+        };
         let mut v: Vec<HostRecord> = rd
             .flatten()
             .filter_map(|e| self.load(&e.file_name().to_string_lossy()))
@@ -99,7 +101,9 @@ impl Store {
     pub fn find(&self, spec: &str) -> Option<HostRecord> {
         self.load(spec).or_else(|| {
             let (user, host) = spec.split_once('@')?;
-            self.list().into_iter().find(|r| r.user == user && r.host == host)
+            self.list()
+                .into_iter()
+                .find(|r| r.user == user && r.host == host)
         })
     }
 }

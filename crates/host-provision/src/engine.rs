@@ -8,9 +8,10 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::{
-    Error, facts, remote,
+    Error, facts,
     facts::{Existing, Facts},
     known_hosts::{HostKeyState, KnownHosts},
+    remote,
     result::{ProvisionLog, Report, Status, StepResult},
     store::{HostRecord, Store},
     transport::{Output, RemoteCmd, StageFile, Sub, Transport, TransportError, sanitize},
@@ -124,7 +125,10 @@ impl Engine<'_> {
     }
 
     fn emit(&mut self, report: &mut Report, r: StepResult) -> bool {
-        self.log().line(r.id, &format!("{} {}: {}", r.status.label(), r.title, r.detail));
+        self.log().line(
+            r.id,
+            &format!("{} {}: {}", r.status.label(), r.title, r.detail),
+        );
         self.ui.progress(&r);
         let cont = r.status != Status::Fail;
         report.results.push(r);
@@ -159,13 +163,23 @@ impl Engine<'_> {
             Err(StepResult::fail(
                 id,
                 title,
-                format!("exit {}: {}", out.code, sanitize(&crate::result::redact(&tail), 400)),
+                format!(
+                    "exit {}: {}",
+                    out.code,
+                    sanitize(&crate::result::redact(&tail), 400)
+                ),
                 "Re-running is safe. The full redacted log is in the host's provision.log.",
             ))
         }
     }
 
-    fn upload(&self, id: &'static str, title: &str, file: StageFile, bytes: &str) -> Result<(), StepResult> {
+    fn upload(
+        &self,
+        id: &'static str,
+        title: &str,
+        file: StageFile,
+        bytes: &str,
+    ) -> Result<(), StepResult> {
         self.transport
             .upload(file, bytes.as_bytes())
             .map_err(|e| fail_from(id, title, &e))
@@ -176,7 +190,9 @@ impl Engine<'_> {
         let mut report = Report::default();
         let _ = self.flow(&mut report);
         // Best effort; the staging dir holds only the scripts.
-        let _ = self.transport.run(RemoteCmd::Cleanup, b"", Duration::from_secs(15));
+        let _ = self
+            .transport
+            .run(RemoteCmd::Cleanup, b"", Duration::from_secs(15));
         report
     }
 
@@ -202,13 +218,23 @@ impl Engine<'_> {
         let state = match self.known_hosts.check(&host, port, &scanned) {
             Ok(s) => s,
             Err(e) => {
-                return self.finish(report, StepResult::fail("hostkey", T, e.to_string(), "The server offered no usable host key."));
+                return self.finish(
+                    report,
+                    StepResult::fail(
+                        "hostkey",
+                        T,
+                        e.to_string(),
+                        "The server offered no usable host key.",
+                    ),
+                );
             }
         };
         let r = match state {
-            HostKeyState::Trusted { fingerprint } => {
-                StepResult::pass("hostkey", T, format!("matches the pinned key {fingerprint}"))
-            }
+            HostKeyState::Trusted { fingerprint } => StepResult::pass(
+                "hostkey",
+                T,
+                format!("matches the pinned key {fingerprint}"),
+            ),
             HostKeyState::Mismatch { pinned, seen } => {
                 report.hard_stop = true;
                 StepResult::fail(
@@ -226,7 +252,12 @@ impl Engine<'_> {
                             self.params.record.fingerprint = Some(fp.clone());
                             StepResult::pass("hostkey", T, format!("first contact, pinned {fp}"))
                         }
-                        Err(e) => StepResult::fail("hostkey", T, e.to_string(), "Could not write Praxi's known_hosts file."),
+                        Err(e) => StepResult::fail(
+                            "hostkey",
+                            T,
+                            e.to_string(),
+                            "Could not write Praxi's known_hosts file.",
+                        ),
                     }
                 } else {
                     StepResult::fail(
@@ -255,7 +286,12 @@ impl Engine<'_> {
                 let user = self.rec().user.clone();
                 StepResult::pass("connect", T, format!("logged in as {user}"))
             }
-            Ok(_) => StepResult::fail("connect", T, "unexpected answer from the server", "The login shell must be POSIX-compatible."),
+            Ok(_) => StepResult::fail(
+                "connect",
+                T,
+                "unexpected answer from the server",
+                "The login shell must be POSIX-compatible.",
+            ),
             Err(r) => {
                 if r.detail.contains("host key") {
                     report.hard_stop = true;
@@ -270,8 +306,22 @@ impl Engine<'_> {
 
     fn step_preflight(&mut self, report: &mut Report) -> Option<Facts> {
         const T: &str = "Preflight";
-        let staged = self.upload("preflight", T, StageFile::Provision, &remote::provision_sh());
-        let out = staged.and_then(|()| self.exec("preflight", T, RemoteCmd::Provision(Sub::Preflight), b"", SHORT * 3, true));
+        let staged = self.upload(
+            "preflight",
+            T,
+            StageFile::Provision,
+            &remote::provision_sh(),
+        );
+        let out = staged.and_then(|()| {
+            self.exec(
+                "preflight",
+                T,
+                RemoteCmd::Provision(Sub::Preflight),
+                b"",
+                SHORT * 3,
+                true,
+            )
+        });
         let out = match out {
             Ok(o) => o,
             Err(r) => {
@@ -300,14 +350,29 @@ impl Engine<'_> {
             (Existing::Installed { version, .. }, _)
                 if facts::semver(version) > facts::semver(&app) =>
             {
-                let r = StepResult::warn("install", T, format!("server runs {version}, newer than this app ({app}); not downgrading"), "Update the desktop app, or reinstall the server explicitly.");
+                let r = StepResult::warn(
+                    "install",
+                    T,
+                    format!("server runs {version}, newer than this app ({app}); not downgrading"),
+                    "Update the desktop app, or reinstall the server explicitly.",
+                );
                 return self.finish(report, r);
             }
             (Existing::Fresh, Mode::Upgrade) => {
-                let r = StepResult::fail("install", T, "nothing is installed on this server", "Use `bot host add` for a new server.");
+                let r = StepResult::fail(
+                    "install",
+                    T,
+                    "nothing is installed on this server",
+                    "Use `bot host add` for a new server.",
+                );
                 return self.finish(report, r);
             }
-            (Existing::Installed { host_mode: false, .. }, Mode::Add) => {
+            (
+                Existing::Installed {
+                    host_mode: false, ..
+                },
+                Mode::Add,
+            ) => {
                 let r = StepResult::fail(
                     "install",
                     T,
@@ -316,10 +381,19 @@ impl Engine<'_> {
                 );
                 return self.finish(report, r);
             }
-            (Existing::Installed { version, host_mode: true, active: true }, Mode::Add | Mode::Upgrade)
-                if facts::semver(version) == facts::semver(&app) =>
-            {
-                let r = StepResult::skip("install", T, format!("Praxi {version} already installed in host mode"));
+            (
+                Existing::Installed {
+                    version,
+                    host_mode: true,
+                    active: true,
+                },
+                Mode::Add | Mode::Upgrade,
+            ) if facts::semver(version) == facts::semver(&app) => {
+                let r = StepResult::skip(
+                    "install",
+                    T,
+                    format!("Praxi {version} already installed in host mode"),
+                );
                 return self.finish(report, r);
             }
             (Existing::Fresh, _) => (true, facts.flag("data_dir")),
@@ -330,33 +404,95 @@ impl Engine<'_> {
         }
 
         let tag = format!("v{app}");
-        self.ui.note(&format!("installing {tag} on {name} (this takes a few minutes)"));
+        self.ui.note(&format!(
+            "installing {tag} on {name} (this takes a few minutes)"
+        ));
         let steps = |s: &mut Self, report: &mut Report| -> Option<()> {
             let r = s
-                .upload("install.stage", T, StageFile::Installer, &remote::installer_sh())
-                .and_then(|()| s.upload("install.stage", T, StageFile::SetupHeadless, &remote::setup_headless_sh()))
-                .map(|()| StepResult::pass("install.stage", "Upload install scripts", "2 scripts staged (mode 0700 dir)"))
+                .upload(
+                    "install.stage",
+                    T,
+                    StageFile::Installer,
+                    &remote::installer_sh(),
+                )
+                .and_then(|()| {
+                    s.upload(
+                        "install.stage",
+                        T,
+                        StageFile::SetupHeadless,
+                        &remote::setup_headless_sh(),
+                    )
+                })
+                .map(|()| {
+                    StepResult::pass(
+                        "install.stage",
+                        "Upload install scripts",
+                        "2 scripts staged (mode 0700 dir)",
+                    )
+                })
                 .unwrap_or_else(|r| r);
             s.finish(report, r)?;
             if snapshot {
                 let r = s
-                    .exec("install.snapshot", "Snapshot existing data", RemoteCmd::Provision(Sub::Snapshot), b"", Duration::from_secs(900), true)
+                    .exec(
+                        "install.snapshot",
+                        "Snapshot existing data",
+                        RemoteCmd::Provision(Sub::Snapshot),
+                        b"",
+                        Duration::from_secs(900),
+                        true,
+                    )
                     .map(|o| {
-                        let line = o.stdout.lines().chain(o.stderr.lines()).find(|l| l.contains("snapshot:")).unwrap_or("done").trim().to_owned();
+                        let line = o
+                            .stdout
+                            .lines()
+                            .chain(o.stderr.lines())
+                            .find(|l| l.contains("snapshot:"))
+                            .unwrap_or("done")
+                            .trim()
+                            .to_owned();
                         StepResult::pass("install.snapshot", "Snapshot existing data", line)
                     })
                     .unwrap_or_else(|r| r);
                 s.finish(report, r)?;
             }
             let r = s
-                .exec("install.gh", "GitHub CLI (release verification)", RemoteCmd::Provision(Sub::InstallGh), b"", Duration::from_secs(900), true)
-                .map(|_| StepResult::pass("install.gh", "GitHub CLI (release verification)", ">= 2.80 present"))
+                .exec(
+                    "install.gh",
+                    "GitHub CLI (release verification)",
+                    RemoteCmd::Provision(Sub::InstallGh),
+                    b"",
+                    Duration::from_secs(900),
+                    true,
+                )
+                .map(|_| {
+                    StepResult::pass(
+                        "install.gh",
+                        "GitHub CLI (release verification)",
+                        ">= 2.80 present",
+                    )
+                })
                 .unwrap_or_else(|r| r);
             s.finish(report, r)?;
             let params = format!("version={tag}\ndesktop={}\n", u8::from(s.params.desktop));
             let r = s
-                .exec("install.run", T, RemoteCmd::Provision(Sub::Install), params.as_bytes(), LONG, true)
-                .map(|_| StepResult::pass("install.run", T, format!("Praxi {tag} installed in host mode (127.0.0.1 only, no inbound port)")))
+                .exec(
+                    "install.run",
+                    T,
+                    RemoteCmd::Provision(Sub::Install),
+                    params.as_bytes(),
+                    LONG,
+                    true,
+                )
+                .map(|_| {
+                    StepResult::pass(
+                        "install.run",
+                        T,
+                        format!(
+                            "Praxi {tag} installed in host mode (127.0.0.1 only, no inbound port)"
+                        ),
+                    )
+                })
                 .unwrap_or_else(|r| r);
             s.finish(report, r)
         };
@@ -369,9 +505,21 @@ impl Engine<'_> {
     // ---- 5. pair ------------------------------------------------------
 
     fn server_desktops(&self, id: &'static str, title: &str) -> Result<Vec<String>, StepResult> {
-        let out = self.exec(id, title, RemoteCmd::Provision(Sub::Devices), b"", SHORT, false)?;
+        let out = self.exec(
+            id,
+            title,
+            RemoteCmd::Provision(Sub::Devices),
+            b"",
+            SHORT,
+            false,
+        )?;
         let v: serde_json::Value = serde_json::from_str(out.stdout.trim()).map_err(|_| {
-            StepResult::fail(id, title, "the host answered with something unexpected", "Is the service running? Try `bot host repair`.")
+            StepResult::fail(
+                id,
+                title,
+                "the host answered with something unexpected",
+                "Is the service running? Try `bot host repair`.",
+            )
         })?;
         let peers = v.get("peers").unwrap_or(&v);
         Ok(peers
@@ -386,9 +534,13 @@ impl Engine<'_> {
     fn step_pair(&mut self, report: &mut Report) -> Option<()> {
         const T: &str = "Pair this computer";
         // Already paired here and the server still lists our key: nothing to do.
-        if let (Some(host_id), Some(key)) = (self.rec().paired_host_id.clone(), self.rec().desktop_key.clone())
-            && self.local.knows_host(&host_id)
-            && self.server_desktops("pair", T).is_ok_and(|keys| keys.contains(&key))
+        if let (Some(host_id), Some(key)) = (
+            self.rec().paired_host_id.clone(),
+            self.rec().desktop_key.clone(),
+        ) && self.local.knows_host(&host_id)
+            && self
+                .server_desktops("pair", T)
+                .is_ok_and(|keys| keys.contains(&key))
         {
             let r = StepResult::skip("pair", T, "already paired");
             return self.finish(report, r);
@@ -406,11 +558,21 @@ impl Engine<'_> {
     fn pair_now(&mut self, title: &str) -> Result<String, StepResult> {
         let fail = |detail: String, hint: &str| StepResult::fail("pair", title, detail, hint);
         let before = self.server_desktops("pair", title)?;
-        let out = self.exec("pair", title, RemoteCmd::Provision(Sub::Invite), b"", SHORT, false)?;
+        let out = self.exec(
+            "pair",
+            title,
+            RemoteCmd::Provision(Sub::Invite),
+            b"",
+            SHORT,
+            false,
+        )?;
         // The ticket is single use and short lived: it goes straight to the
         // local daemon and is never written to disk or the log.
         let invite: InviteOut = serde_json::from_str(out.stdout.trim()).map_err(|_| {
-            fail("the host did not return an invite".into(), "Is the service running in host mode? Try `bot host repair`.")
+            fail(
+                "the host did not return an invite".into(),
+                "Is the service running in host mode? Try `bot host repair`.",
+            )
         })?;
         let paired = self.local.pair(&invite.ticket).map_err(|e| {
             fail(
@@ -428,11 +590,23 @@ impl Engine<'_> {
         };
         let key = (*key).clone();
         let params = format!("key={key}\n");
-        self.exec("pair", title, RemoteCmd::Provision(Sub::Screen), params.as_bytes(), SHORT, true)?;
+        self.exec(
+            "pair",
+            title,
+            RemoteCmd::Provision(Sub::Screen),
+            params.as_bytes(),
+            SHORT,
+            true,
+        )?;
         self.params.record.paired_host_id = Some(paired.id.clone());
         self.params.record.desktop_key = Some(key);
-        self.store.save(self.rec()).map_err(|e| fail(e.to_string(), "Could not save the local server record."))?;
-        Ok(format!("paired with {} and granted screen view + input", sanitize(&paired.name, 60)))
+        self.store
+            .save(self.rec())
+            .map_err(|e| fail(e.to_string(), "Could not save the local server record."))?;
+        Ok(format!(
+            "paired with {} and granted screen view + input",
+            sanitize(&paired.name, 60)
+        ))
     }
 
     // ---- 6. health ----------------------------------------------------
@@ -440,7 +614,14 @@ impl Engine<'_> {
     fn step_health(&mut self, report: &mut Report) {
         const T: &str = "Health";
         let app = self.params.app_version.clone();
-        let st = self.exec("health.service", T, RemoteCmd::Provision(Sub::Status), b"", SHORT, true);
+        let st = self.exec(
+            "health.service",
+            T,
+            RemoteCmd::Provision(Sub::Status),
+            b"",
+            SHORT,
+            true,
+        );
         let Ok(st) = st else {
             self.emit(report, st.unwrap_err());
             return;
@@ -466,7 +647,9 @@ impl Engine<'_> {
                 },
             );
         }
-        let Some(id) = self.rec().paired_host_id.clone() else { return };
+        let Some(id) = self.rec().paired_host_id.clone() else {
+            return;
+        };
         let mut health = Err(String::new());
         for attempt in 0..6 {
             health = self.local.health(&id);
@@ -484,38 +667,86 @@ impl Engine<'_> {
                 return;
             }
         };
-        self.emit(report, StepResult::pass("health.channel", "Paired channel", "answers over the encrypted peer link"));
+        self.emit(
+            report,
+            StepResult::pass(
+                "health.channel",
+                "Paired channel",
+                "answers over the encrypted peer link",
+            ),
+        );
         self.emit(
             report,
             if h.mode == "host" {
                 StepResult::pass("health.mode", "Host mode", "host")
             } else {
-                StepResult::fail("health.mode", "Host mode", format!("mode is '{}'", h.mode), "Run `bot host repair <user@server>`.")
+                StepResult::fail(
+                    "health.mode",
+                    "Host mode",
+                    format!("mode is '{}'", h.mode),
+                    "Run `bot host repair <user@server>`.",
+                )
             },
         );
         let same = facts::semver(&h.version) == facts::semver(&app);
         self.emit(
             report,
             if same {
-                StepResult::pass("health.version", "Version matches this app", h.version.clone())
+                StepResult::pass(
+                    "health.version",
+                    "Version matches this app",
+                    h.version.clone(),
+                )
             } else {
-                StepResult::fail("health.version", "Version matches this app", format!("host {} vs app {app}", h.version), "Run `bot host upgrade <user@server>`.")
+                StepResult::fail(
+                    "health.version",
+                    "Version matches this app",
+                    format!("host {} vs app {app}", h.version),
+                    "Run `bot host upgrade <user@server>`.",
+                )
             },
         );
         if self.params.desktop {
             self.emit(
                 report,
                 if h.has_display {
-                    StepResult::pass("health.display", "Display detected by the host", if h.has_browser { "display and browser" } else { "display" })
+                    StepResult::pass(
+                        "health.display",
+                        "Display detected by the host",
+                        if h.has_browser {
+                            "display and browser"
+                        } else {
+                            "display"
+                        },
+                    )
                 } else {
-                    StepResult::warn("health.display", "Display detected by the host", "no display", "Live view needs the virtual display; run `bot host repair`.")
+                    StepResult::warn(
+                        "health.display",
+                        "Display detected by the host",
+                        "no display",
+                        "Live view needs the virtual display; run `bot host repair`.",
+                    )
                 },
             );
         }
         let r = match h.view_targets {
-            Some(n) if n > 0 => StepResult::pass("health.live_view", "Live-view target", format!("{n} available")),
-            Some(_) => StepResult::warn("health.live_view", "Live-view target", "none yet", "Targets appear when a display or browser session is up."),
-            None => StepResult::warn("health.live_view", "Live-view target", "needs #107 (the host has no live-view route)", "Upgrade the host to a build with live view."),
+            Some(n) if n > 0 => StepResult::pass(
+                "health.live_view",
+                "Live-view target",
+                format!("{n} available"),
+            ),
+            Some(_) => StepResult::warn(
+                "health.live_view",
+                "Live-view target",
+                "none yet",
+                "Targets appear when a display or browser session is up.",
+            ),
+            None => StepResult::warn(
+                "health.live_view",
+                "Live-view target",
+                "needs #107 (the host has no live-view route)",
+                "Upgrade the host to a build with live view.",
+            ),
         };
         self.emit(report, r);
         // A host with no model key reports setup_required: expected here.
@@ -528,7 +759,9 @@ impl Engine<'_> {
     pub fn remove(&mut self, level: RemoveLevel) -> Report {
         let mut report = Report::default();
         let ok = self.remove_flow(&mut report, level);
-        let _ = self.transport.run(RemoteCmd::Cleanup, b"", Duration::from_secs(15));
+        let _ = self
+            .transport
+            .run(RemoteCmd::Cleanup, b"", Duration::from_secs(15));
         if ok.is_some() {
             let rec = self.rec().clone();
             let _ = self.known_hosts.forget(&rec.host, rec.port);
@@ -541,41 +774,140 @@ impl Engine<'_> {
         const T: &str = "Remove server";
         let need_server = level != RemoveLevel::Disconnect;
         let reachable = self.step_hostkey_quiet().is_ok()
-            && self.exec("remove.connect", "SSH login", RemoteCmd::Probe, b"", SHORT, false).is_ok();
+            && self
+                .exec(
+                    "remove.connect",
+                    "SSH login",
+                    RemoteCmd::Probe,
+                    b"",
+                    SHORT,
+                    false,
+                )
+                .is_ok();
         if need_server && !reachable {
             self.emit(report, StepResult::fail("remove.connect", "SSH login", "the server cannot be reached", "Uninstall needs the server; nothing was changed. Use a plain `bot host remove` to only forget it."));
             return None;
         }
         if reachable {
             if let Some(key) = self.rec().desktop_key.clone() {
-                let _ = self.upload("remove.stage", T, StageFile::Provision, &remote::provision_sh());
+                let _ = self.upload(
+                    "remove.stage",
+                    T,
+                    StageFile::Provision,
+                    &remote::provision_sh(),
+                );
                 let params = format!("key={key}\n");
-                let r = self.exec("remove.revoke", "Revoke this computer on the server", RemoteCmd::Provision(Sub::Revoke), params.as_bytes(), SHORT, false);
-                self.emit(report, r.map_or_else(|r| StepResult::warn("remove.revoke", "Revoke this computer on the server", r.detail, "Revoke it later with `bot host revoke` on the server."), |_| StepResult::pass("remove.revoke", "Revoke this computer on the server", "done")));
+                let r = self.exec(
+                    "remove.revoke",
+                    "Revoke this computer on the server",
+                    RemoteCmd::Provision(Sub::Revoke),
+                    params.as_bytes(),
+                    SHORT,
+                    false,
+                );
+                self.emit(
+                    report,
+                    r.map_or_else(
+                        |r| {
+                            StepResult::warn(
+                                "remove.revoke",
+                                "Revoke this computer on the server",
+                                r.detail,
+                                "Revoke it later with `bot host revoke` on the server.",
+                            )
+                        },
+                        |_| {
+                            StepResult::pass(
+                                "remove.revoke",
+                                "Revoke this computer on the server",
+                                "done",
+                            )
+                        },
+                    ),
+                );
             }
             if need_server {
-                let _ = self.upload("remove.stage", T, StageFile::Installer, &remote::installer_sh());
-                let sub = if level == RemoveLevel::Purge { Sub::Purge } else { Sub::Uninstall };
+                let _ = self.upload(
+                    "remove.stage",
+                    T,
+                    StageFile::Installer,
+                    &remote::installer_sh(),
+                );
+                let sub = if level == RemoveLevel::Purge {
+                    Sub::Purge
+                } else {
+                    Sub::Uninstall
+                };
                 let r = self
-                    .exec("remove.uninstall", "Uninstall Praxi on the server", RemoteCmd::Provision(sub), b"", Duration::from_secs(300), true)
-                    .map(|_| StepResult::pass("remove.uninstall", "Uninstall Praxi on the server", if level == RemoveLevel::Purge { "removed, data deleted" } else { "removed, data kept" }))
+                    .exec(
+                        "remove.uninstall",
+                        "Uninstall Praxi on the server",
+                        RemoteCmd::Provision(sub),
+                        b"",
+                        Duration::from_secs(300),
+                        true,
+                    )
+                    .map(|_| {
+                        StepResult::pass(
+                            "remove.uninstall",
+                            "Uninstall Praxi on the server",
+                            if level == RemoveLevel::Purge {
+                                "removed, data deleted"
+                            } else {
+                                "removed, data kept"
+                            },
+                        )
+                    })
                     .unwrap_or_else(|r| r);
                 self.finish(report, r)?;
             }
         } else {
-            self.emit(report, StepResult::warn("remove.connect", "SSH login", "server not reachable; only forgetting it locally", "Revoke this computer on the server later if it comes back."));
+            self.emit(
+                report,
+                StepResult::warn(
+                    "remove.connect",
+                    "SSH login",
+                    "server not reachable; only forgetting it locally",
+                    "Revoke this computer on the server later if it comes back.",
+                ),
+            );
         }
         if let Some(id) = self.rec().paired_host_id.clone() {
             let r = self.local.revoke_host(&id);
-            self.emit(report, r.map_or_else(|e| StepResult::warn("remove.local", "Revoke the host on this computer", sanitize(&e, 200), "Run `bot host revoke <key>` here."), |()| StepResult::pass("remove.local", "Revoke the host on this computer", "done")));
+            self.emit(
+                report,
+                r.map_or_else(
+                    |e| {
+                        StepResult::warn(
+                            "remove.local",
+                            "Revoke the host on this computer",
+                            sanitize(&e, 200),
+                            "Run `bot host revoke <key>` here.",
+                        )
+                    },
+                    |()| {
+                        StepResult::pass("remove.local", "Revoke the host on this computer", "done")
+                    },
+                ),
+            );
         }
-        self.emit(report, StepResult::pass("remove.forget", "Forget the server", "local record and pinned key removed"));
+        self.emit(
+            report,
+            StepResult::pass(
+                "remove.forget",
+                "Forget the server",
+                "local record and pinned key removed",
+            ),
+        );
         Some(())
     }
 
     fn step_hostkey_quiet(&self) -> Result<(), Error> {
         let rec = self.rec();
-        let scanned = self.transport.scan_host_keys().map_err(|e| Error::Failed(e.to_string()))?;
+        let scanned = self
+            .transport
+            .scan_host_keys()
+            .map_err(|e| Error::Failed(e.to_string()))?;
         match self.known_hosts.check(&rec.host, rec.port, &scanned)? {
             HostKeyState::Trusted { .. } => Ok(()),
             _ => Err(Error::Failed("host key not trusted".into())),

@@ -41,7 +41,11 @@ pub struct SshPaths {
 /// Find `ssh` / `ssh-keyscan` as absolute paths (Windows: System32\OpenSSH
 /// first, then PATH; elsewhere PATH).
 pub fn resolve_binary(name: &str) -> Result<PathBuf, Error> {
-    let exe = if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() };
+    let exe = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    };
     let mut dirs: Vec<PathBuf> = Vec::new();
     if cfg!(windows)
         && let Some(root) = std::env::var_os("SystemRoot")
@@ -132,7 +136,10 @@ pub fn keyscan_argv(target: &SshTarget) -> Vec<OsString> {
     ]
 }
 
-fn drain(mut r: impl Read + Send + 'static, cap: usize) -> std::thread::JoinHandle<(Vec<u8>, bool)> {
+fn drain(
+    mut r: impl Read + Send + 'static,
+    cap: usize,
+) -> std::thread::JoinHandle<(Vec<u8>, bool)> {
     std::thread::spawn(move || {
         let (mut kept, mut over) = (Vec::new(), false);
         let mut buf = [0u8; 8192];
@@ -225,7 +232,13 @@ pub fn classify_ssh_failure(stderr: &str) -> TransportError {
 }
 
 fn first_line(s: &str) -> String {
-    s.lines().next().unwrap_or("ssh failed").trim().chars().take(200).collect()
+    s.lines()
+        .next()
+        .unwrap_or("ssh failed")
+        .trim()
+        .chars()
+        .take(200)
+        .collect()
 }
 
 pub struct OpenSshTransport {
@@ -270,7 +283,12 @@ impl Transport for OpenSshTransport {
         Ok(keys)
     }
 
-    fn run(&self, cmd: RemoteCmd, stdin: &[u8], timeout: Duration) -> Result<Output, TransportError> {
+    fn run(
+        &self,
+        cmd: RemoteCmd,
+        stdin: &[u8],
+        timeout: Duration,
+    ) -> Result<Output, TransportError> {
         let args = ssh_argv(&self.paths, &self.target, cmd.command_line());
         let out = run_capped(&self.paths.ssh, &args, stdin, timeout)?;
         if out.code == 255 {
@@ -307,7 +325,10 @@ mod tests {
             .collect();
         let dashdash = argv.iter().position(|a| a == "--").unwrap();
         // after `--`: exactly the host and the constant command
-        assert_eq!(&argv[dashdash + 1..], ["203.0.113.7", "sh -c 'echo praxi-ok'"]);
+        assert_eq!(
+            &argv[dashdash + 1..],
+            ["203.0.113.7", "sh -c 'echo praxi-ok'"]
+        );
         assert!(argv.windows(2).any(|w| w == ["-l", "ubuntu"]));
         assert!(argv.windows(2).any(|w| w == ["-p", "2222"]));
         // the key path with a space is one argv element, not split
@@ -322,8 +343,14 @@ mod tests {
         ] {
             assert!(argv.iter().any(|a| a == must), "missing {must}");
         }
-        assert!(argv.iter().any(|a| a == "UserKnownHostsFile=/data/hosts/known_hosts"));
-        assert!(argv.windows(2).any(|w| w == ["-F", "/data/hosts/ssh_config"]));
+        assert!(
+            argv.iter()
+                .any(|a| a == "UserKnownHostsFile=/data/hosts/known_hosts")
+        );
+        assert!(
+            argv.windows(2)
+                .any(|w| w == ["-F", "/data/hosts/ssh_config"])
+        );
     }
 
     #[test]

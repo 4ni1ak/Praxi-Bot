@@ -40,7 +40,13 @@ impl StepResult {
         detail: String,
         remediation: Option<String>,
     ) -> Self {
-        Self { id, title: title.to_owned(), status, detail, remediation }
+        Self {
+            id,
+            title: title.to_owned(),
+            status,
+            detail,
+            remediation,
+        }
     }
 
     pub fn pass(id: &'static str, title: &str, detail: impl Into<String>) -> Self {
@@ -52,11 +58,23 @@ impl StepResult {
     }
 
     pub fn warn(id: &'static str, title: &str, detail: impl Into<String>, hint: &str) -> Self {
-        Self::new(id, title, Status::Warn, detail.into(), Some(hint.to_owned()))
+        Self::new(
+            id,
+            title,
+            Status::Warn,
+            detail.into(),
+            Some(hint.to_owned()),
+        )
     }
 
     pub fn fail(id: &'static str, title: &str, detail: impl Into<String>, hint: &str) -> Self {
-        Self::new(id, title, Status::Fail, detail.into(), Some(hint.to_owned()))
+        Self::new(
+            id,
+            title,
+            Status::Fail,
+            detail.into(),
+            Some(hint.to_owned()),
+        )
     }
 }
 
@@ -74,10 +92,20 @@ impl Report {
 
     /// Plain-text table for the terminal.
     pub fn table(&self) -> String {
-        let w = self.results.iter().map(|r| r.title.chars().count()).max().unwrap_or(0);
+        let w = self
+            .results
+            .iter()
+            .map(|r| r.title.chars().count())
+            .max()
+            .unwrap_or(0);
         let mut s = String::new();
         for r in &self.results {
-            s.push_str(&format!("{:<5} {:<w$}  {}\n", r.status.label(), r.title, r.detail));
+            s.push_str(&format!(
+                "{:<5} {:<w$}  {}\n",
+                r.status.label(),
+                r.title,
+                r.detail
+            ));
             if let (Status::Fail | Status::Warn, Some(h)) = (r.status, &r.remediation) {
                 s.push_str(&format!("      -> {h}\n"));
             }
@@ -90,8 +118,15 @@ impl Report {
 /// logged or shown: ticket/pairing material, anything after a secret-looking
 /// keyword, private key blocks, long opaque tokens, ANSI escapes.
 pub fn redact(text: &str) -> String {
-    const KEYWORDS: [&str; 7] =
-        ["passphrase", "password", "token", "secret", "authorization", "ticket", "private key"];
+    const KEYWORDS: [&str; 7] = [
+        "passphrase",
+        "password",
+        "token",
+        "secret",
+        "authorization",
+        "ticket",
+        "private key",
+    ];
     let mut out = Vec::new();
     let mut in_key = false;
     for raw in text.lines() {
@@ -107,9 +142,16 @@ pub fn redact(text: &str) -> String {
             continue;
         }
         let lower = line.to_ascii_lowercase();
-        let hit = KEYWORDS.iter().filter_map(|k| lower.find(k).map(|i| i + k.len())).min();
+        let hit = KEYWORDS
+            .iter()
+            .filter_map(|k| lower.find(k).map(|i| i + k.len()))
+            .min();
         let line = match hit {
-            Some(end) if line.len() > end && !line[end..].trim().is_empty() && lower.contains(['=', ':', '"']) => {
+            Some(end)
+                if line.len() > end
+                    && !line[end..].trim().is_empty()
+                    && lower.contains(['=', ':', '"']) =>
+            {
                 format!("{} <redacted>", &line[..end])
             }
             _ => line,

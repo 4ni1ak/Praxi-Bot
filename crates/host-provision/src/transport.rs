@@ -131,7 +131,12 @@ pub trait Transport {
     fn scan_host_keys(&self) -> Result<Vec<ScannedKey>, TransportError>;
 
     /// Run one fixed remote command with `stdin`, output capped, bounded time.
-    fn run(&self, cmd: RemoteCmd, stdin: &[u8], timeout: Duration) -> Result<Output, TransportError>;
+    fn run(
+        &self,
+        cmd: RemoteCmd,
+        stdin: &[u8],
+        timeout: Duration,
+    ) -> Result<Output, TransportError>;
 
     /// Upload one of the app's own scripts into the staging directory.
     fn upload(&self, file: StageFile, bytes: &[u8]) -> Result<(), TransportError> {
@@ -185,7 +190,10 @@ mod tests {
         ];
         for c in all {
             let line = c.command_line();
-            assert!(line.starts_with("sh -c '") && line.ends_with('\''), "{line}");
+            assert!(
+                line.starts_with("sh -c '") && line.ends_with('\''),
+                "{line}"
+            );
             assert_eq!(line.matches('\'').count(), 2, "{line}");
         }
     }

@@ -7,7 +7,17 @@
 //! are not supported in this version). The engine only knows the
 //! [`Transport`] trait, so tests use a fake and a pure-Rust SSH client could
 //! replace OpenSSH later.
-#![allow(clippy::missing_errors_doc, clippy::must_use_candidate, clippy::module_name_repetitions)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::module_name_repetitions,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::format_push_string,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::missing_panics_doc
+)]
 
 pub mod engine;
 pub mod facts;
