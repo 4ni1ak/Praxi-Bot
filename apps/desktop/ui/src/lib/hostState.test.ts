@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  computerScopePlan,
   deriveHostState,
   hostAcceptsWork,
   liveRunIds,
@@ -108,4 +109,9 @@ test("only live runs are listed for stop", () => {
     ]),
     ["a", "c"]
   );
+});
+
+test("the local control bridge stays mounted while a host is selected", () => {
+  assert.deepEqual(computerScopePlan("local"), { localBridge: true, hostSession: false });
+  assert.deepEqual(computerScopePlan("host-key"), { localBridge: true, hostSession: true });
 });

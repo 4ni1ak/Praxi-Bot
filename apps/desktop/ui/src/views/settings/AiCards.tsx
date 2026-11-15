@@ -15,6 +15,7 @@ import pageStyles from "./AiPage.module.css";
 import { ProvidersSection } from "../SettingsSections";
 import { ApiKeyPaste } from "./ApiKeyPaste";
 import { DetectedAccountsBlock } from "./DetectedAccountsBlock";
+import { KnowledgeCard } from "./KnowledgeCard";
 import type { CardDef } from "./types";
 
 /** Default provider + model: a searchable dropdown grouped by provider. */
@@ -92,6 +93,7 @@ function AdvancedProviders() {
 /** Cards of the "AI" section: found on this computer, API key, default, advanced. */
 export function aiCards(t: TFunction): CardDef[] {
   return [
+    { id: "knowledge", section: "ai", kind: "block", title: t("knowledge.title"), description: t("knowledge.description"), keywords: "rag memory knowledge kaynak hafiza bilgi brain beyin", node: <KnowledgeCard /> },
     {
       id: "detectedAccounts",
       section: "ai",

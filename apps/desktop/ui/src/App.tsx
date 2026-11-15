@@ -64,10 +64,12 @@ import { usePanelReserve } from "./state/usePanelReserve";
 import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
+import { computerScopePlan } from "./lib/hostState";
 import { ComputerPicker } from "./components/ComputerPicker";
 import { HostStateBanner } from "./components/HostStateBanner";
 import {
   DaemonProvider,
+  HostSession,
   LOCAL_COMPUTER,
   useDaemon
 } from "./state/DaemonContext";
@@ -896,16 +898,24 @@ function AppShell() {
 }
 
 /**
- * Everything that follows the active computer. The live view is rebuilt per computer
- * (targets, sessions and takeover belong to one daemon), and the native control bridge
- * is the control of THIS PC only, so it never runs against a host's events.
+ * The local daemon's safety machinery (heartbeat, native Stop and tray, local event
+ * stream, approval overlays) stays connected to THIS computer whichever computer the
+ * views show. Selecting a host only swaps the daemon the chat and panel views talk
+ * to (a second session and live view, rebuilt per host).
  */
-function ComputerScope({ children }: { children: ReactNode }) {
+export function ComputerScope({ children }: { children: ReactNode }) {
   const { activeComputerId } = useDaemon();
+  const plan = computerScopePlan(activeComputerId, LOCAL_COMPUTER);
   return (
-    <LiveViewProvider key={activeComputerId}>
-      {activeComputerId === LOCAL_COMPUTER ? <ControlBridgeHost /> : null}
-      {children}
+    <LiveViewProvider>
+      {plan.localBridge ? <ControlBridgeHost /> : null}
+      {!plan.hostSession ? (
+        children
+      ) : (
+        <HostSession key={activeComputerId}>
+          <LiveViewProvider>{children}</LiveViewProvider>
+        </HostSession>
+      )}
     </LiveViewProvider>
   );
 }

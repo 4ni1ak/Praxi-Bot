@@ -81,18 +81,74 @@ fn is_hosts_path(path: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+fn is_mutating(method: &Method) -> bool {
+    *method != Method::GET && *method != Method::HEAD && *method != Method::OPTIONS
+}
+
+/// `path` is `prefix` or below it (decoded and slash-normalized).
+fn under(path: &str, prefix: &str) -> bool {
+    path.strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// Profile parts that decide what a bot may do without asking: the permission
+/// preset, per-category levels and unattended rules (`permissions`) and the
+/// tool allow/exclude lists (`tools`).
+const EXECUTION_KEYS: [&str; 2] = ["permissions", "tools"];
+
+/// On a host a paired peer may edit a bot (name, persona, language, model
+/// choice among configured providers) but never its execution authority:
+/// `permissions`, `tools`, or switching the executor to an external `cli:`
+/// engine. A save that repeats the stored values is fine; creating a bot
+/// with these parts, or changing them, is refused; omitting them on update
+/// keeps the stored ones.
+pub(crate) fn protect_execution_config(
+    peer: Option<&PeerIdentity>,
+    host_mode: bool,
+    current: Option<&serde_json::Value>,
+    next: &mut serde_json::Value,
+) -> Result<(), ApiError> {
+    if peer.is_none() || !host_mode {
+        return Ok(());
+    }
+    let refuse = || {
+        ApiError::forbidden(
+            "permissions and tools of a bot on a host are managed on the host itself",
+        )
+    };
+    for key in EXECUTION_KEYS {
+        let cur = current.and_then(|c| c.get(key));
+        match (next.get(key), cur) {
+            (Some(incoming), cur) if Some(incoming) != cur => return Err(refuse()),
+            (None, Some(cur)) => {
+                next.as_object_mut()
+                    .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
+                    .insert(key.into(), cur.clone());
+            }
+            _ => {}
+        }
+    }
+    let executor = |v: &serde_json::Value| v.pointer("/models/executor").cloned();
+    if let Some(new) = executor(next)
+        && new.as_str().is_some_and(|e| e.starts_with("cli:"))
+        && Some(new) != current.and_then(executor)
+    {
+        return Err(refuse());
+    }
+    Ok(())
+}
+
 /// What a Desktop peer may NOT administer on a daemon that runs as an
 /// always-on host (`mode = host`). On such a host the desktop is an operator
 /// of bots, runs, chats and the screen, not an administrator of credentials,
 /// tool servers, skills or pairing: those stay with the host's own local user
 /// (CLI on the host). Returns the refusal reason for `method path`.
 fn host_mode_desktop_denial(method: &Method, check_path: &str) -> Option<&'static str> {
-    let mutating = *method != Method::GET && *method != Method::HEAD;
-    let under = |prefix: &str| {
-        check_path
-            .strip_prefix(prefix)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-    };
+    let mutating = is_mutating(method);
+    let under = |prefix: &str| under(check_path, prefix);
+    if under("/v1/policy") && mutating {
+        return Some("the execution policy is managed on the host itself");
+    }
     if under("/v1/secrets") && mutating {
         return Some("secrets are managed on the host itself");
     }
@@ -170,13 +226,43 @@ fn normalize_deny_path(path: &str) -> String {
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if check_path
+        .strip_prefix("/v1/mcp/servers/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(_, rest)| rest == "auth" || rest.starts_with("auth/"))
+    {
+        return Some("MCP sign-in is a host-local user action, forbidden to peers");
+    }
+    // MCP configuration decides which secrets are sent where and which
+    // commands run on this host: create / update / delete / reconnect are
+    // host-local user actions for every peer role (no card or ADR grants a
+    // peer role MCP management).  Reading the list and tools stays allowed.
+    if *method != Method::GET && is_mcp_servers_path(check_path) {
+        return Some("MCP server management is a host-local user action, forbidden to peers");
+    }
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
     }
     if is_hosts_path(check_path) {
         return Some("host links are managed by the local user only");
     }
+    if !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && check_path
+            .strip_prefix("/v1/bots/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(bot, rest)| {
+                !bot.is_empty() && (rest == "knowledge" || rest.starts_with("knowledge/"))
+            })
+    {
+        return Some("knowledge sources and embedding authority are managed by the local owner");
+    }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
+}
+
+/// `/v1/mcp/servers` or anything below it (decoded and slash-normalized).
+fn is_mcp_servers_path(path: &str) -> bool {
+    path.strip_prefix("/v1/mcp/servers")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// `POST /v1/control/{request_id}` answers an overlay question: local only.
@@ -258,11 +344,22 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     if denied || stop_refused(req.method(), &check_path, peer.role) {
         return ApiError::forbidden("peer role does not allow this operation").into_response();
     }
-    if peer.role == PeerRole::Desktop
-        && state.leader().config().mode == crate::host::HostMode::Host
-        && let Some(why) = host_mode_desktop_denial(req.method(), &check_path)
-    {
-        return ApiError::forbidden(why).into_response();
+    if state.leader().config().mode == crate::host::HostMode::Host {
+        // Pairing and the host lifecycle (invite, revoke, standby, activate,
+        // update, import, handover) are done on the host itself: a paired
+        // peer, whatever its role, cannot mint tickets, revoke devices or
+        // change who leads.
+        if is_mutating(req.method()) && under(&check_path, "/v1/host") {
+            return ApiError::forbidden(
+                "pairing and host lifecycle are managed on the host itself",
+            )
+            .into_response();
+        }
+        if peer.role == PeerRole::Desktop
+            && let Some(why) = host_mode_desktop_denial(req.method(), &check_path)
+        {
+            return ApiError::forbidden(why).into_response();
+        }
     }
     if req.method() == Method::POST && answers_overlay_question(&check_path) {
         return ApiError::forbidden("only the local user answers overlay questions")

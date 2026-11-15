@@ -181,19 +181,42 @@ pub(crate) async fn update_email_account(
         .get("bot")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
-    let updated = control.update(&name, patch).await?;
-    if let Some(bot) = bound
-        && let Err(e) = canonical_bot(&s, &bot)
-    {
-        // Same race as on create: put the previous binding back.
-        if let Some(prev) = previous {
-            let _ = control
-                .update(&name, serde_json::json!({ "bot": prev }))
-                .await;
+    // Reserve the bounded scan before mutating the mailbox. The detached task
+    // owns both guards, so disconnecting the HTTP request cannot skip cleanup.
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
+    tokio::spawn(async move {
+        let _knowledge_authority = crate::knowledge::email_authorities(&s, &name).await?;
+        let updated = control.update(&name, patch).await?;
+        if let Some(bot) = bound
+            && let Err(e) = canonical_bot(&s, &bot)
+        {
+            if let Some(prev) = &previous {
+                let _ = control
+                    .update(&name, serde_json::json!({ "bot": prev }))
+                    .await;
+            }
+            return Err(e);
         }
-        return Err(e);
-    }
-    Ok(Json(updated))
+        if previous.as_ref() != Some(&updated.bot) {
+            let state = s.clone();
+            let account = name.clone();
+            if let Err(error) = crate::knowledge::blocking_with_permit(permit, move || {
+                crate::knowledge::revoke_email_sources(&state, &account)
+            })
+            .await
+            {
+                if let Some(prev) = &previous {
+                    let _ = control
+                        .update(&name, serde_json::json!({ "bot": prev }))
+                        .await;
+                }
+                return Err(error);
+            }
+        }
+        Ok(Json(updated))
+    })
+    .await
+    .map_err(|_| ApiError::internal("email authority task failed"))?
 }
 
 /// Query of `DELETE /v1/email/accounts/{name}`.
@@ -221,8 +244,19 @@ pub(crate) async fn delete_email_account(
     Path(name): Path<String>,
     Query(q): Query<DeleteAccountQuery>,
 ) -> Result<StatusCode, ApiError> {
-    email(&s)?.remove_account(&name, q.delete_inbox).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let control = email(&s)?;
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
+    tokio::spawn(async move {
+        let _knowledge_authority = crate::knowledge::email_authorities(&s, &name).await?;
+        control.remove_account(&name, q.delete_inbox).await?;
+        crate::knowledge::blocking_with_permit(permit, move || {
+            crate::knowledge::revoke_email_sources(&s, &name)
+        })
+        .await?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| ApiError::internal("email authority task failed"))?
 }
 
 /// Try IMAP login and SMTP authentication for a stored account. TLS exactly as

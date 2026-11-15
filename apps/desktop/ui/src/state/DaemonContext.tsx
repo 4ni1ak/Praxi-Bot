@@ -57,7 +57,6 @@ export interface ComputerEntry {
 const LIVE_RUN_STATES = new Set(["queued", "running", "waiting_approval"]);
 
 type Action =
-  | { type: "reset" }
   | { type: "event"; env: GlobalEnvelope }
   | { type: "answered"; runId: string; callId: string; answer: string }
   | {
@@ -69,8 +68,6 @@ type Action =
 
 function reducer(state: EventsState, action: Action): EventsState {
   switch (action.type) {
-    case "reset":
-      return EMPTY_EVENTS;
     case "event":
       return applyEvent(state, action.env);
     case "answered":
@@ -112,6 +109,10 @@ export interface DaemonContextValue {
   versions: { local: string | null; host: string | null };
   /** Why the last attempt to open the channel failed, if it did. */
   hostError: string | null;
+  /** The open channel to the selected host (a guarded loopback proxy), if any. */
+  hostConn: Connection | null;
+  /** Paired hosts and the versions of this computer's daemon, as last polled. */
+  hostList: HostLinkList | null;
   /** Switch the whole UI (API, events, live view) to this computer or a host. */
   selectComputer: (id: string) => Promise<void>;
   /** Pair with a host by ticket; resolves to the new entry. */
@@ -130,22 +131,36 @@ export function useDaemon(): DaemonContextValue {
   return v;
 }
 
-export function DaemonProvider({ children }: { children: ReactNode }) {
-  const [phase, setPhase] = useState<Phase>("connecting");
-  const [error, setError] = useState<string | null>(null);
-  const [localConn, setLocalConn] = useState<Connection | null>(null);
-  const [activeId, setActiveId] = useState<string>(LOCAL_COMPUTER);
-  const [hostConn, setHostConn] = useState<Connection | null>(null);
-  const [hostError, setHostError] = useState<string | null>(null);
-  const [hostList, setHostList] = useState<HostLinkList | null>(null);
-  const conn = activeId === LOCAL_COMPUTER ? localConn : hostConn;
+/** Everything a session reads from one daemon: its lists, events and health. */
+type DaemonData = Pick<
+  DaemonContextValue,
+  | "client"
+  | "health"
+  | "eventsConnected"
+  | "bots"
+  | "chats"
+  | "runs"
+  | "events"
+  | "needs"
+  | "refreshBots"
+  | "refreshChats"
+  | "refreshRuns"
+  | "recordAnswer"
+  | "onDaemonEvent"
+>;
+
+/**
+ * Client, event stream, health and lists for ONE daemon connection. The local
+ * daemon and (while selected) a paired host each run their own copy, so the local
+ * safety machinery never depends on which computer the views are showing.
+ */
+function useDaemonData(conn: Connection | null): DaemonData {
   const [health, setHealth] = useState<Health | null>(null);
   const [eventsConnected, setEventsConnected] = useState(false);
   const [bots, setBots] = useState<Bot[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [events, dispatch] = useReducer(reducer, EMPTY_EVENTS);
-  const [attempt, setAttempt] = useState(0);
 
   const [client, setClient] = useState<ApiClient | null>(null);
   useEffect(() => {
@@ -172,19 +187,6 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   }, [conn]);
   const clientRef = useRef<ApiClient | null>(null);
   clientRef.current = client;
-  // The local daemon's own client: it owns the pairing store and the channels,
-  // so it is used for the computer list even while a host is the active one.
-  const localClient = useMemo(
-    () =>
-      localConn && localConn.base_url !== MOCK_BASE_URL
-        ? new ApiClient(localConn)
-        : null,
-    [localConn]
-  );
-  const localClientRef = useRef<ApiClient | null>(null);
-  localClientRef.current = localClient;
-  const activeIdRef = useRef(activeId);
-  activeIdRef.current = activeId;
   const listeners = useRef(new Set<(env: GlobalEnvelope) => void>());
   const onDaemonEvent = useCallback(
     (listener: (env: GlobalEnvelope) => void) => {
@@ -195,29 +197,6 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     },
     []
   );
-
-  // 1. find / start the daemon
-  useEffect(() => {
-    let cancelled = false;
-    setPhase("connecting");
-    connectDaemon()
-      .then((c) => {
-        if (!cancelled) {
-          setLocalConn(c);
-          setPhase("ready");
-          setError(null);
-        }
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
-          setPhase("error");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [attempt]);
 
   const refreshBots = useCallback(async () => {
     const c = clientRef.current;
@@ -238,7 +217,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // 2. initial data + event stream (replayed from the start: `Last-Event-ID: 0`)
+  // initial data + event stream (replayed from the start: `Last-Event-ID: 0`)
   useEffect(() => {
     if (!client) {
       return undefined;
@@ -274,7 +253,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     });
   }, [client, refreshBots, refreshChats, refreshRuns]);
 
-  // 3. health indicator + reconciliation with the daemon's own pending lists
+  // health indicator + reconciliation with the daemon's own pending lists
   useEffect(() => {
     if (!client) {
       return undefined;
@@ -315,7 +294,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     };
   }, [client]);
 
-  // 4. keep the lists fresh when runs start / finish
+  // keep the lists fresh when runs start / finish
   const lastRunEvents = useRef(0);
   useEffect(() => {
     const total = Object.keys(events.runs).length;
@@ -329,7 +308,84 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     }
   }, [events.runs, client, refreshChats, refreshRuns]);
 
-  // 5. paired hosts and their channel state (polled from this computer's daemon)
+  const recordAnswer = useCallback(
+    (runId: string, callId: string, answer: string) =>
+      dispatch({ type: "answered", runId, callId, answer }),
+    []
+  );
+  const needs = useMemo(() => needsYou(events), [events]);
+
+  return {
+    client,
+    health,
+    eventsConnected,
+    bots,
+    chats,
+    runs,
+    events,
+    needs,
+    refreshBots,
+    refreshChats,
+    refreshRuns,
+    recordAnswer,
+    onDaemonEvent
+  };
+}
+
+/**
+ * THIS computer's daemon: always connected, whichever computer the views show. It
+ * also owns the iroh client side (paired hosts, pairing, the channel to a host),
+ * so the local heartbeat, Stop and approval overlays keep working while a host is
+ * selected.
+ */
+export function DaemonProvider({ children }: { children: ReactNode }) {
+  const [phase, setPhase] = useState<Phase>("connecting");
+  const [error, setError] = useState<string | null>(null);
+  const [localConn, setLocalConn] = useState<Connection | null>(null);
+  const [activeId, setActiveId] = useState<string>(LOCAL_COMPUTER);
+  const [hostConn, setHostConn] = useState<Connection | null>(null);
+  const [hostError, setHostError] = useState<string | null>(null);
+  const [hostList, setHostList] = useState<HostLinkList | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const data = useDaemonData(localConn);
+
+  // The local daemon's own client: it owns the pairing store and the channels.
+  const localClient = useMemo(
+    () =>
+      localConn && localConn.base_url !== MOCK_BASE_URL
+        ? new ApiClient(localConn)
+        : null,
+    [localConn]
+  );
+  const localClientRef = useRef<ApiClient | null>(null);
+  localClientRef.current = localClient;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+
+  // 1. find / start the daemon
+  useEffect(() => {
+    let cancelled = false;
+    setPhase("connecting");
+    connectDaemon()
+      .then((c) => {
+        if (!cancelled) {
+          setLocalConn(c);
+          setPhase("ready");
+          setError(null);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+          setPhase("error");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+
+  // 2. paired hosts and their channel state (polled from this computer's daemon)
   const refreshHosts = useCallback(async () => {
     const c = localClientRef.current;
     if (!c) {
@@ -355,21 +411,11 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     return hostConn ? markRemoteBaseUrl(hostConn.base_url) : undefined;
   }, [hostConn]);
 
-  const resetData = useCallback(() => {
-    setBots([]);
-    setChats([]);
-    setRuns([]);
-    setHealth(null);
-    setEventsConnected(false);
-    dispatch({ type: "reset" });
-  }, []);
-
   const selectComputer = useCallback(
     async (id: string) => {
       if (id === activeIdRef.current) {
         return;
       }
-      resetData();
       setHostConn(null);
       setHostError(null);
       activeIdRef.current = id;
@@ -401,7 +447,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [refreshHosts, resetData]
+    [refreshHosts]
   );
 
   const pairHost = useCallback(
@@ -417,20 +463,6 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     [refreshHosts]
   );
 
-  const stopHostRuns = useCallback(async () => {
-    const c = clientRef.current;
-    if (!c || activeIdRef.current === LOCAL_COMPUTER) {
-      return 0;
-    }
-    // Listed scope with what the host itself reports as live right now.
-    const ids = liveRunIds(await c.listRuns());
-    if (ids.length === 0) {
-      return 0;
-    }
-    await c.stopRuns({ stop_id: crypto.randomUUID(), run_ids: ids, scope: "listed" });
-    return ids.length;
-  }, []);
-
   const computers = useMemo<ComputerEntry[]>(
     () => [
       { id: LOCAL_COMPUTER, kind: "local", name: "", link: null },
@@ -443,29 +475,6 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     ],
     [hostList]
   );
-  const activeLink =
-    activeId === LOCAL_COMPUTER
-      ? null
-      : (hostList?.hosts.find((h) => h.id === activeId) ?? null);
-  const hostState = useMemo<HostUiState | null>(() => {
-    if (activeId === LOCAL_COMPUTER) {
-      return null;
-    }
-    if (hostError && !hostConn) {
-      return { kind: "offline" };
-    }
-    // Until the first list arrives the host is simply being connected.
-    const link =
-      hostList === null
-        ? { id: activeId, name: "", state: "connecting" as const }
-        : activeLink;
-    return deriveHostState({
-      link,
-      health,
-      localVersion: hostList?.local_version ?? null,
-      localApiVersion: hostList?.local_api_version ?? null
-    });
-  }, [activeId, activeLink, health, hostConn, hostError, hostList]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const restartDaemon = useCallback(async () => {
@@ -480,44 +489,85 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       setPhase("error");
     }
   }, []);
-  const recordAnswer = useCallback(
-    (runId: string, callId: string, answer: string) =>
-      dispatch({ type: "answered", runId, callId, answer }),
-    []
-  );
-
-  const needs = useMemo(() => needsYou(events), [events]);
 
   const value: DaemonContextValue = {
+    ...data,
     phase,
     error,
-    conn,
-    client,
-    health,
-    eventsConnected,
-    bots,
-    chats,
-    runs,
-    events,
-    needs,
-    refreshBots,
-    refreshChats,
-    refreshRuns,
-    recordAnswer,
+    conn: localConn,
     retry,
     restartDaemon,
-    onDaemonEvent,
     activeComputerId: activeId,
     computers,
-    activeHostName: activeLink?.name ?? null,
+    activeHostName: null,
+    hostState: null,
+    versions: { local: hostList?.local_version ?? null, host: null },
+    hostError,
+    hostConn,
+    hostList,
+    selectComputer,
+    pairHost,
+    stopHostRuns: async () => 0
+  };
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/**
+ * The views' daemon while a paired host is selected: the host's lists, events and
+ * health through the guarded channel, replacing the context value for the views
+ * only. Mount it per host (`key`); the local `DaemonProvider` above stays live.
+ */
+export function HostSession({ children }: { children: ReactNode }) {
+  const local = useDaemon();
+  const { hostConn, hostList, hostError, activeComputerId } = local;
+  const data = useDaemonData(hostConn);
+  const link =
+    hostList?.hosts.find((h) => h.id === activeComputerId) ?? null;
+  const hostState = useMemo<HostUiState>(() => {
+    if (hostError && !hostConn) {
+      return { kind: "offline" };
+    }
+    // Until the first list arrives the host is simply being connected.
+    const l =
+      hostList === null
+        ? { id: activeComputerId, name: "", state: "connecting" as const }
+        : link;
+    return deriveHostState({
+      link: l,
+      health: data.health,
+      localVersion: hostList?.local_version ?? null,
+      localApiVersion: hostList?.local_api_version ?? null
+    });
+  }, [activeComputerId, data.health, hostConn, hostError, hostList, link]);
+
+  const clientRef = useRef(data.client);
+  clientRef.current = data.client;
+  const stopHostRuns = useCallback(async () => {
+    const c = clientRef.current;
+    if (!c) {
+      return 0;
+    }
+    // Listed scope with what the host itself reports as live right now.
+    const ids = liveRunIds(await c.listRuns());
+    if (ids.length === 0) {
+      return 0;
+    }
+    await c.stopRuns({ stop_id: crypto.randomUUID(), run_ids: ids, scope: "listed" });
+    return ids.length;
+  }, []);
+
+  const value: DaemonContextValue = {
+    ...local,
+    ...data,
+    phase: "ready",
+    error: null,
+    conn: hostConn,
+    activeHostName: link?.name ?? null,
     hostState,
     versions: {
       local: hostList?.local_version ?? null,
-      host: activeId === LOCAL_COMPUTER ? null : (health?.version ?? null)
+      host: data.health?.version ?? null
     },
-    hostError,
-    selectComputer,
-    pairHost,
     stopHostRuns
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

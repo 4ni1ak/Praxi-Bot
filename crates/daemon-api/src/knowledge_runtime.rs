@@ -132,6 +132,8 @@ pub(crate) fn install(state: &AppState) {
         let tools = state.agent().tool_registry();
         tools.unregister(builtin_tools::knowledge::KNOWLEDGE_SEARCH);
         tools.register(builtin_tools::knowledge::tool(runtime));
+        tools.unregister(builtin_tools::knowledge_brain::KNOWLEDGE_BRAIN_WRITE);
+        tools.register(builtin_tools::knowledge_brain::tool(state.storage_arc()));
     }
 }
 
