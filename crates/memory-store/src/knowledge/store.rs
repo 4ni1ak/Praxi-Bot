@@ -48,7 +48,7 @@ impl KnowledgeStore {
         reject_symlink(&path)?;
         let conn = Connection::open(path)?;
         configure(&conn)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        ensure_wal(&conn)?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, scope)
     }
@@ -465,6 +465,50 @@ fn configure(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "cache_size", -16_384)?;
     conn.pragma_update(None, "temp_store", "FILE")?;
     Ok(())
+}
+
+/// Switch the database to WAL only when it is not already in WAL mode.
+///
+/// Changing the journal mode needs an exclusive lock and SQLite does not run
+/// the busy handler for it, so concurrent first openers failed with
+/// `database is locked` (observed on Windows). The mode is checked first (WAL
+/// is persistent), switches are serialised in-process, and a switch that still
+/// meets `SQLITE_BUSY` (another process) is retried with a short bounded
+/// back-off.
+fn ensure_wal(conn: &Connection) -> Result<()> {
+    static SWITCH: Mutex<()> = Mutex::new(());
+    let is_wal = |conn: &Connection| -> Result<bool> {
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+        Ok(mode.eq_ignore_ascii_case("wal"))
+    };
+    if is_wal(conn)? {
+        return Ok(());
+    }
+    let _guard = SWITCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut attempt = 0_u32;
+    loop {
+        if is_wal(conn)? {
+            return Ok(());
+        }
+        match conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy
+                    || error.code == rusqlite::ErrorCode::DatabaseLocked =>
+            {
+                attempt += 1;
+                if attempt > 40 {
+                    return Err(rusqlite::Error::SqliteFailure(error, None).into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(
+                    25 * u64::from(attempt.min(8)),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 fn reject_symlink(path: &Path) -> Result<()> {
