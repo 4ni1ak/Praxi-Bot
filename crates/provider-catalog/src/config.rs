@@ -87,6 +87,8 @@ pub enum CliEngine {
     #[serde(rename = "opencode")]
     OpenCode,
     Gemini,
+    /// Antigravity CLI (`agy acp`).
+    Agy,
 }
 
 impl CliEngine {
@@ -99,6 +101,7 @@ impl CliEngine {
             Self::Cursor => "cursor",
             Self::OpenCode => "opencode",
             Self::Gemini => "gemini",
+            Self::Agy => "agy",
         }
     }
 }
@@ -447,6 +450,7 @@ impl ProviderConfig {
                     CliEngine::Cursor => "cli:cursor",
                     CliEngine::OpenCode => "cli:opencode",
                     CliEngine::Gemini => "cli:gemini",
+                    CliEngine::Agy => "cli:agy",
                 };
                 if p.id != id
                     || p.key.is_some()

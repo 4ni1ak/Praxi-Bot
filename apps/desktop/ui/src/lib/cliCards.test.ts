@@ -19,13 +19,13 @@ test("one status per engine, one card for codex, installed engines never offer i
     cursor: "not_installed",
     opencode: "ready",
     gemini: "not_installed",
-    agy: "unsupported"
+    agy: "ready"
   });
   assert.equal(engines.filter((e) => e.detected.id.includes("chatgpt")).length, 0);
   const { installed, available } = splitEngines(engines);
   assert.ok(installed.every((e) => e.detected.installed));
   assert.deepEqual(available.map((e) => e.detected.id), ["cursor", "gemini"]);
-  assert.equal(hasSwitch(engines.find((e) => e.detected.id === "agy")!), false);
+  assert.equal(hasSwitch(engines.find((e) => e.detected.id === "agy")!), true);
 });
 
 test("paths lose the verbatim prefix and versions read as numbers", () => {
