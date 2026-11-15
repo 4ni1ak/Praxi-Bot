@@ -2301,6 +2301,72 @@
         ]
       }
     },
+    "/v1/mcp/servers/{name}/auth/callback": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Finish a pending sign-in with a pasted redirect URL (host without a browser).",
+        "operationId": "complete_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpAuthCallback"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp/servers/{name}/auth/cancel": {
       "post": {
         "tags": [
@@ -6411,6 +6477,20 @@
             "minimum": 0
           }
         }
+      },
+      "McpAuthCallback": {
+        "type": "object",
+        "description": "Body of `POST /v1/mcp/servers/{name}/auth/callback`.",
+        "required": [
+          "redirect_url"
+        ],
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "description": "The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`)."
+          }
+        },
+        "additionalProperties": false
       },
       "McpAuthStart": {
         "type": "object",

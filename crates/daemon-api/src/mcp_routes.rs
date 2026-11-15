@@ -207,6 +207,20 @@ pub(crate) async fn start_mcp_auth(
     Ok(Json(mcp(&s)?.auth_start(&name).await?))
 }
 
+/// Finish a pending sign-in with a pasted redirect URL (host without a browser).
+#[utoipa::path(post, path = "/v1/mcp/servers/{name}/auth/callback", tag = "mcp", security(("bearer" = [])),
+    params(("name" = String, Path)), request_body = crate::mcp::McpAuthCallback,
+    responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
+pub(crate) async fn complete_mcp_auth(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<crate::mcp::McpAuthCallback>,
+) -> Result<Json<crate::mcp::McpAuthState>, ApiError> {
+    Ok(Json(
+        mcp(&s)?.auth_callback(&name, &body.redirect_url).await?,
+    ))
+}
+
 /// Close the one-shot listener and cancel a pending token exchange.
 #[utoipa::path(post, path = "/v1/mcp/servers/{name}/auth/cancel", tag = "mcp", security(("bearer" = [])),
     params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody)))]

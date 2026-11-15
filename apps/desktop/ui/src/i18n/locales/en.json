@@ -1005,6 +1005,9 @@
       "quarantined": "Quarantined"
     },
     "auth": {
+      "pasteLabel": "Redirect address from the browser",
+      "pasteSubmit": "Finish sign-in",
+      "pasteHint": "If the browser runs on another computer and shows an error page after you sign in, copy that page's full address and paste it here.",
       "signIn": "Sign in",
       "signOut": "Sign out",
       "waiting": "Waiting for the browser sign-in…",

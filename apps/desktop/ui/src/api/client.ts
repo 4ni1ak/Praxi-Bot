@@ -446,6 +446,12 @@ export class ApiClient {
   startMcpAuth(name: string): Promise<McpAuthStart> {
     return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/start`);
   }
+  /** Finish a sign-in with the redirect address pasted from the browser (headless daemon). */
+  completeMcpAuth(name: string, redirectUrl: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/callback`, {
+      body: { redirect_url: redirectUrl }
+    });
+  }
   cancelMcpAuth(name: string): Promise<McpAuthState> {
     return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/cancel`);
   }

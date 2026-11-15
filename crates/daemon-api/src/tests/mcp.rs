@@ -682,6 +682,7 @@ async fn oauth_routes_are_host_local_for_every_peer_role() {
         for (method, suffix) in [
             (Method::POST, "start"),
             (Method::POST, "cancel"),
+            (Method::POST, "callback"),
             (Method::POST, "logout"),
             (Method::GET, "status"),
         ] {
@@ -723,4 +724,10 @@ async fn oauth_routes_are_host_local_for_every_peer_role() {
             StatusCode::UNPROCESSABLE_ENTITY
         );
     }
+    let path = "/v1/mcp/servers/s/auth/callback";
+    let body = json!({"redirect_url": "http://127.0.0.1:1/callback?code=c&state=s"});
+    let r = send(&t.app, Method::POST, path, Some(body.clone()), &[]).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = call(&t, Method::POST, path, Some(body)).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
 }

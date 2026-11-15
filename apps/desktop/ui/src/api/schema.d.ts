@@ -733,6 +733,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp/servers/{name}/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish a pending sign-in with a pasted redirect URL (host without a browser). */
+        post: operations["complete_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp/servers/{name}/auth/cancel": {
         parameters: {
             query?: never;
@@ -2200,6 +2217,11 @@ export interface components {
              * @description Highest daemon-wide event `gseq` (`0` = none yet).
              */
             gseq: number;
+        };
+        /** @description Body of `POST /v1/mcp/servers/{name}/auth/callback`. */
+        McpAuthCallback: {
+            /** @description The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`). */
+            redirect_url: string;
         };
         /** @description Browser destination for a user-started, five-minute sign-in. */
         McpAuthStart: {
@@ -4778,6 +4800,47 @@ export interface operations {
             };
             /** @description MCP management is not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    complete_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpAuthCallback"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

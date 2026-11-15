@@ -410,6 +410,14 @@ pub enum McpAuthState {
     AuthRequired,
 }
 
+/// Body of `POST /v1/mcp/servers/{name}/auth/callback`.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpAuthCallback {
+    /// The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`).
+    pub redirect_url: String,
+}
+
 /// Browser destination for a user-started, five-minute sign-in.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct McpAuthStart {
@@ -425,6 +433,18 @@ pub trait McpControl: Send + Sync {
     /// # Errors
     /// Unknown server, unsupported transport or discovery/policy failure.
     async fn auth_start(&self, _name: &str) -> Result<McpAuthStart, McpControlError> {
+        Err(McpControlError::Invalid("OAuth is unavailable".into()))
+    }
+    /// Finish a pending sign-in with the redirect URL the user pasted (a host
+    /// without a browser); same `state` check and one-shot rule as the
+    /// loopback redirect.
+    /// # Errors
+    /// No sign-in waiting, a wrong redirect, or a refused exchange.
+    async fn auth_callback(
+        &self,
+        _name: &str,
+        _redirect_url: &str,
+    ) -> Result<McpAuthState, McpControlError> {
         Err(McpControlError::Invalid("OAuth is unavailable".into()))
     }
     /// Cancel and join the pending flow before returning.

@@ -54,6 +54,9 @@ pub struct McpHost {
     /// Held across start/cancel/logout and replacement, so an old callback
     /// cannot persist credentials after cancellation or removal returns.
     auth_flows: tokio::sync::Mutex<HashMap<String, SignInTask>>,
+    /// Where a pasted redirect URL goes (headless hosts), one per pending
+    /// sign-in; taken by the first paste.
+    auth_paste: Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>,
     manager: McpManager,
     registry: ToolRegistry,
     store: TomlFileStore,
@@ -148,6 +151,7 @@ impl McpHost {
             .collect();
         let host = Arc::new(Self {
             auth_flows: tokio::sync::Mutex::new(HashMap::new()),
+            auth_paste: Mutex::new(HashMap::new()),
             manager,
             registry,
             store,
@@ -397,6 +401,8 @@ fn map_err(e: McpError) -> McpControlError {
 }
 
 async fn abort_sign_in(flows: &mut HashMap<String, SignInTask>, name: &str) {
+    // The paste sender of an aborted flow is dropped with the flow's receiver;
+    // a stale one is harmless (its receiver is gone) and replaced on start.
     if let Some(task) = flows.remove(name) {
         task.abort();
         let _ = task.await;
@@ -754,14 +760,50 @@ impl McpControl for McpHost {
             authorization_url: sign_in.authorization_url().to_owned(),
             expires_in: mcp_bridge::oauth::CALLBACK_TIMEOUT.as_secs(),
         };
+        let (paste, pasted) = tokio::sync::oneshot::channel();
+        self.auth_paste.lock().insert(name.to_owned(), paste);
         flows.insert(
             name.to_owned(),
             tokio::spawn(async move {
-                sign_in.finish(mcp_bridge::oauth::CALLBACK_TIMEOUT).await?;
+                sign_in
+                    .finish_or_pasted(mcp_bridge::oauth::CALLBACK_TIMEOUT, Some(pasted))
+                    .await?;
                 handle.reenable().await.map(|_| ())
             }),
         );
         Ok(response)
+    }
+
+    async fn auth_callback(
+        &self,
+        name: &str,
+        redirect_url: &str,
+    ) -> Result<McpAuthState, McpControlError> {
+        let task = {
+            let mut flows = self.auth_flows.lock().await;
+            self.check_http(name)?;
+            let paste = self.auth_paste.lock().remove(name);
+            let running = flows.get(name).is_some_and(|task| !task.is_finished());
+            let (Some(paste), true) = (paste, running) else {
+                return Err(invalid("no sign-in is waiting for a redirect"));
+            };
+            if paste.send(redirect_url.to_owned()).is_err() {
+                return Err(invalid("no sign-in is waiting for a redirect"));
+            }
+            flows.remove(name)
+        };
+        if let Some(task) = task {
+            match tokio::time::timeout(Duration::from_secs(60), task).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(e))) => {
+                    self.announce(name);
+                    return Err(invalid(format!("sign-in failed: {e}")));
+                }
+                Ok(Err(_)) | Err(_) => return Err(invalid("sign-in did not finish")),
+            }
+        }
+        self.announce(name);
+        self.auth_status(name).await
     }
 
     async fn auth_cancel(&self, name: &str) -> Result<McpAuthState, McpControlError> {
@@ -1567,6 +1609,95 @@ mod tests {
             }
         }
         // The audit log lives in the SQLite database scanned above.
+    }
+
+    /// Headless host: the browser runs elsewhere, so the user pastes the
+    /// redirect address. Same `state` check, one shot, loopback closed after.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pasted_redirect_signs_in_once_and_a_wrong_one_consumes_the_flow() {
+        const ACCESS: &str = "paste-flow-access-sentinel-19af";
+        const REFRESH: &str = "paste-flow-refresh-sentinel-e4c2";
+        let remote = fake_remote(ACCESS, REFRESH).await;
+        let base = remote.uri();
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+        config.oauth = Some(mcp_bridge::OAuthConfig {
+            client_id: Some("praxi-paste-test".into()),
+            allow_loopback_http: true,
+            ..mcp_bridge::OAuthConfig::default()
+        });
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+        let store = Arc::new(secret_store::MemoryStore::new());
+        let registry = ToolRegistry::new();
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            registry.clone(),
+            Some(store.clone()),
+            None,
+            None,
+            fast_policy(),
+        );
+        wait_for(&host, "remote", McpStatus::AuthRequired).await;
+        assert!(matches!(
+            host.auth_callback("remote", "http://127.0.0.1:1/callback?code=c&state=s")
+                .await,
+            Err(McpControlError::Invalid(_))
+        ));
+
+        // A wrong `state` fails and ends the flow; a second paste finds nothing.
+        let started = host.auth_start("remote").await.unwrap();
+        let redirect = query_pairs(&started.authorization_url)["redirect_uri"].clone();
+        let Err(McpControlError::Invalid(err)) = host
+            .auth_callback("remote", &format!("{redirect}?code=code-1&state=forged"))
+            .await
+        else {
+            panic!("a forged state must be refused");
+        };
+        assert!(err.contains("state"), "{err}");
+        let params = query_pairs(&started.authorization_url);
+        let good = format!(
+            "{redirect}?code=code-1&state={}&iss={base}",
+            params["state"]
+        );
+        assert!(matches!(
+            host.auth_callback("remote", &good).await,
+            Err(McpControlError::Invalid(_))
+        ));
+        assert!(store.get("mcp/remote/oauth").unwrap().is_none());
+        assert_eq!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::AuthRequired
+        );
+
+        // A fresh sign-in finished by paste connects; its loopback port is closed.
+        let started = host.auth_start("remote").await.unwrap();
+        let params = query_pairs(&started.authorization_url);
+        let redirect = params["redirect_uri"].clone();
+        let state = host
+            .auth_callback(
+                "remote",
+                &format!(
+                    "  {redirect}?code=code-1&state={}&iss={base}\n",
+                    params["state"]
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state, McpAuthState::SignedIn);
+        wait_for(&host, "remote", McpStatus::Connected).await;
+        assert!(registry.get("mcp:remote/echo").is_some());
+        let late = browser_redirect(
+            &started.authorization_url,
+            &format!("code=code-1&state={}&iss={base}", params["state"]),
+        )
+        .await;
+        assert!(
+            late.as_ref().map_or(true, |r| !r.contains(" 200 ")),
+            "loopback still open: {late:?}"
+        );
+        host.shutdown().await;
     }
 
     fn stdio(name: &str, enabled: bool) -> McpServerInput {

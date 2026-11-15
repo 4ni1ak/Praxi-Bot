@@ -53,6 +53,7 @@ function ConnectedCell({
   onReconnect,
   onSignIn,
   onCancelSignIn,
+  onPasteRedirect,
   onSignOut,
   onDisconnect,
   onSaveBots
@@ -64,6 +65,7 @@ function ConnectedCell({
   onReconnect: () => void;
   onSignIn: () => void;
   onCancelSignIn: () => void;
+  onPasteRedirect: (url: string) => void;
   onSignOut: () => void;
   onDisconnect: () => void;
   onSaveBots: (from: BotScope, to: BotScope) => void;
@@ -73,6 +75,7 @@ function ConnectedCell({
   const [confirm, setConfirm] = useState(false);
   const [open, setOpen] = useState(false);
   const [auth, setAuth] = useState<McpAuthState | null>(null);
+  const [pasted, setPasted] = useState("");
   const isHttp = server.transport === "http";
   const needsSignIn = server.status === "auth_required";
   // Ask the daemon (never the server) whether a sign-in is stored, so
@@ -202,6 +205,33 @@ function ConnectedCell({
                 </Button>
               </>
             ) : null}
+          </div>
+          {signingIn ? (
+            <form
+              className={styles.actions}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (pasted.trim()) {
+                  onPasteRedirect(pasted.trim());
+                  setPasted("");
+                }
+              }}
+            >
+              <input
+                className={formStyles.input}
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+                placeholder="http://127.0.0.1:…/callback?…"
+                aria-label={t("apps.auth.pasteLabel")}
+                data-testid={`mcp-paste-${server.name}`}
+              />
+              <Button size="sm" variant="secondary" type="submit" disabled={!pasted.trim()}>
+                {t("apps.auth.pasteSubmit")}
+              </Button>
+            </form>
+          ) : null}
+          {signingIn ? <p className={formStyles.hint}>{t("apps.auth.pasteHint")}</p> : null}
+          <div className={styles.actions}>
             {needsReconnect && !needsSignIn ? (
               <Button size="sm" variant="secondary" disabled={busy} onClick={onReconnect}>
                 {t("apps.reconnect")}
@@ -662,6 +692,12 @@ export function AppsModal({
                             signal.aborted = true;
                           }
                         }}
+                        onPasteRedirect={(url) =>
+                          void run(s.name, async () => {
+                            // The poll in signIn() sees the finished flow.
+                            await client?.completeMcpAuth(s.name, url);
+                          })
+                        }
                         onSignOut={() =>
                           void run(s.name, async () => {
                             await client?.logoutMcpAuth(s.name);
