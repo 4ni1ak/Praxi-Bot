@@ -186,6 +186,28 @@ impl LocalHost for LocalDaemon<'_> {
         })
     }
 
+    fn host_ids(&self) -> Vec<String> {
+        let Ok(c) = self.local() else {
+            return Vec::new();
+        };
+        self.call(&c, Method::GET, "/v1/hosts", None)
+            .ok()
+            .and_then(|v| {
+                v["hosts"].as_array().map(|h| {
+                    h.iter()
+                        .filter_map(|x| x["id"].as_str().map(str::to_owned))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    fn forget_host(&self, id: &str) -> std::result::Result<(), String> {
+        let c = self.local()?;
+        self.call(&c, Method::DELETE, &format!("/v1/hosts/{id}"), None)
+            .map(|_| ())
+    }
+
     fn revoke_host(&self, id: &str) -> std::result::Result<(), String> {
         let c = self.local()?;
         let key = peer_network::key_from_string(id).map_err(|e| e.to_string())?;

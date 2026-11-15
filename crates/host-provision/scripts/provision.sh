@@ -153,6 +153,11 @@ cmd_screen() {
   [[ "${P[key]:-}" =~ ^[A-Za-z0-9]{1,128}$ ]] || die "bad device key"
   as_praxi host screen "${P[key]}"
 }
+cmd_screen_revoke() {
+  read_params
+  [[ "${P[key]:-}" =~ ^[A-Za-z0-9]{1,128}$ ]] || die "bad device key"
+  as_praxi host screen "${P[key]}" --revoke
+}
 cmd_revoke() {
   read_params
   [[ "${P[key]:-}" =~ ^[A-Za-z0-9]{1,128}$ ]] || die "bad device key"
@@ -170,6 +175,7 @@ case "${1:-}" in
   invite) cmd_invite ;;
   devices) cmd_devices ;;
   screen) cmd_screen ;;
+  screen-revoke) cmd_screen_revoke ;;
   revoke) cmd_revoke ;;
   uninstall) cmd_uninstall ;;
   purge) cmd_purge ;;

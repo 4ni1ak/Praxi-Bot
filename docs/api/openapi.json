@@ -4336,6 +4336,44 @@
         ]
       }
     },
+    "/v1/hosts/{id}": {
+      "delete": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_forget",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/hosts/{id}/connect": {
       "post": {
         "tags": [

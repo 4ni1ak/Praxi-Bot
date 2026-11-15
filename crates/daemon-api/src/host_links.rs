@@ -110,6 +110,11 @@ pub trait HostLinks: Send + Sync {
     async fn connect(&self, id: &str) -> Result<HostLinkConnection, HostLinkError>;
     /// Close the channel; the pairing stays. Returns whether one was open.
     fn disconnect(&self, id: &str) -> bool;
+    /// Remove the pairing with a host from this computer (rollback of a
+    /// pairing that did not finish). Returns whether a pairing was removed.
+    async fn forget(&self, _id: &str) -> bool {
+        false
+    }
 }
 
 impl From<HostLinkError> for ApiError {
@@ -192,6 +197,27 @@ pub(crate) async fn connect(
     let links = links(&s)?;
     audit(&s, "host_link.connect", &serde_json::json!({"host":id}))?;
     Ok(Json(links.connect(&id).await?))
+}
+
+#[utoipa::path(delete, operation_id = "hosts_forget", path = "/v1/hosts/{id}", tag = "host", security(("bearer" = [])), params(("id" = String, Path)), responses((status = 204), (status = 404, body = crate::error::ErrorBody)))]
+pub(crate) async fn forget(
+    State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    if peer.is_some() {
+        return Err(ApiError::forbidden("host links are local only"));
+    }
+    if !valid_id(&id) {
+        return Err(ApiError::bad_request("invalid host id"));
+    }
+    let links = links(&s)?;
+    audit(&s, "host_link.forget", &serde_json::json!({"host":id}))?;
+    if links.forget(&id).await {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found("host"))
+    }
 }
 
 #[utoipa::path(delete, operation_id = "hosts_disconnect", path = "/v1/hosts/{id}/connect", tag = "host", security(("bearer" = [])), params(("id" = String, Path)), responses((status = 204)))]

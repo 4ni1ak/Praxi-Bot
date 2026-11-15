@@ -45,7 +45,7 @@ impl Modify for Security {
     ),
     paths(
         crate::cli_engines::list, crate::cli_engines::preview, crate::cli_engines::decide,
-        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::standby, host::activate, host::update,
+        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_links::forget, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
         live_view::availability,

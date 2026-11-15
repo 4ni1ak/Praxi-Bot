@@ -215,6 +215,21 @@ impl HostLinks for CliHostLinks {
     fn disconnect(&self, id: &str) -> bool {
         self.open.lock().remove(id).is_some()
     }
+
+    async fn forget(&self, id: &str) -> bool {
+        let Some(device) = self
+            .devices()
+            .into_iter()
+            .find(|d| d.id == id && d.role == Role::Host)
+        else {
+            return false;
+        };
+        self.open.lock().remove(id);
+        let (Ok(key), Ok(net)) = (device.public_key(), self.network().await) else {
+            return false;
+        };
+        net.revoke(&key).unwrap_or(false)
+    }
 }
 
 pub fn install(state: &daemon_api::AppState, data: PathBuf, shared: Option<PeerNetwork>) {

@@ -30,7 +30,7 @@ use daemon_api::{
 };
 use host_provision::{
     Engine, HostHealth, HostRecord, KnownHosts, LocalHost, Mode, Output, PairedHost, Params,
-    RemoteCmd, Status, StepResult, Store, Transport, TransportError, Ui, validate,
+    RemoteCmd, Status, StepResult, Store, Sub, Transport, TransportError, Ui, validate,
 };
 use parking_lot::Mutex;
 use reqwest::Method;
@@ -369,8 +369,14 @@ impl<T: Transport> Transport for Cancellable<T> {
         stdin: &[u8],
         timeout: Duration,
     ) -> Result<Output, TransportError> {
-        // Cleanup still runs: it only removes the staged scripts.
-        if self.cancel.load(Ordering::SeqCst) && cmd != RemoteCmd::Cleanup {
+        // Cleanup and the rollback of a pairing still run after cancel: they
+        // only remove the staged scripts and take authority back.
+        let allowed = matches!(
+            cmd,
+            RemoteCmd::Cleanup
+                | RemoteCmd::Provision(Sub::Devices | Sub::Revoke | Sub::ScreenRevoke)
+        );
+        if self.cancel.load(Ordering::SeqCst) && !allowed {
             return Err(TransportError::Other("cancelled".into()));
         }
         self.inner.run(cmd, stdin, timeout)
@@ -412,6 +418,10 @@ impl Ui for JobUi<'_> {
                 s.job.notes.push(line);
             }
         });
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
     }
 
     fn confirm_host_key(&mut self, host: &str, port: u16, fingerprint: &str) -> bool {
@@ -500,5 +510,17 @@ impl LocalHost for SetupLocal {
 
     fn revoke_host(&self, _id: &str) -> Result<(), String> {
         Err("removing a server is not part of the wizard".into())
+    }
+
+    fn host_ids(&self) -> Vec<String> {
+        self.links.list().into_iter().map(|h| h.id).collect()
+    }
+
+    fn forget_host(&self, id: &str) -> Result<(), String> {
+        if self.handle.block_on(self.links.forget(id)) {
+            Ok(())
+        } else {
+            Err("no such pairing".into())
+        }
     }
 }

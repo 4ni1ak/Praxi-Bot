@@ -62,6 +62,10 @@ pub trait LocalHost {
     /// Ask the host over the paired channel.
     fn health(&self, id: &str) -> Result<HostHealth, String>;
     fn revoke_host(&self, id: &str) -> Result<(), String>;
+    /// Host ids paired on this computer right now (to tell a new pairing from an old one).
+    fn host_ids(&self) -> Vec<String>;
+    /// Remove a pairing from this computer (rollback of a pairing this run made).
+    fn forget_host(&self, id: &str) -> Result<(), String>;
 }
 
 pub trait Ui {
@@ -69,6 +73,30 @@ pub trait Ui {
     fn note(&mut self, line: &str);
     /// First contact with a server: show the fingerprint, return true to pin it.
     fn confirm_host_key(&mut self, host: &str, port: u16, fingerprint: &str) -> bool;
+    /// The user asked to stop: no new pairing authority may be created and
+    /// what this run already created is rolled back.
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+/// What a pairing created that did not exist before this run.
+#[derive(Debug, Default, Clone)]
+pub struct Created {
+    /// Desktop keys the server listed before the invite (never touched).
+    before: Vec<String>,
+    /// This computer's new pairing with the host, if it did not exist before.
+    local_host: Option<String>,
+    /// This computer's new device key on the server.
+    server_key: Option<String>,
+    /// The key was granted screen view + input.
+    screen: bool,
+}
+
+impl Created {
+    fn any(&self) -> bool {
+        self.local_host.is_some() || self.server_key.is_some()
+    }
 }
 
 pub struct Params {
@@ -187,7 +215,7 @@ impl Engine<'_> {
             &format!("{} {}: {}", r.status.label(), r.title, r.detail),
         );
         self.ui.progress(&r);
-        let cont = r.status != Status::Fail;
+        let cont = r.status != Status::Fail && !self.ui.cancelled();
         report.results.push(r);
         cont
     }
@@ -245,7 +273,22 @@ impl Engine<'_> {
     /// Run the whole flow for `params.mode`.
     pub fn run(&mut self) -> Report {
         let mut report = Report::default();
-        let _ = self.flow(&mut report);
+        let mut created = None;
+        let _ = self.flow(&mut report, &mut created);
+        if let Some(c) = created.take()
+            && self.ui.cancelled()
+        {
+            let note = self.rollback(&c);
+            self.emit(
+                &mut report,
+                StepResult::warn(
+                    "pair.rollback",
+                    "Undo the pairing",
+                    "setup was cancelled after pairing; the new pairing was undone",
+                    &note,
+                ),
+            );
+        }
         // Best effort; the staging dir holds only the scripts.
         let _ = self
             .transport
@@ -253,12 +296,12 @@ impl Engine<'_> {
         report
     }
 
-    fn flow(&mut self, report: &mut Report) -> Option<()> {
+    fn flow(&mut self, report: &mut Report, created: &mut Option<Created>) -> Option<()> {
         self.step_hostkey(report)?;
         self.step_connect(report)?;
         let facts = self.step_preflight(report)?;
         self.step_install(report, &facts)?;
-        self.step_pair(report)?;
+        self.step_pair(report, created)?;
         self.step_health(report);
         Some(())
     }
@@ -593,7 +636,7 @@ impl Engine<'_> {
             .collect())
     }
 
-    fn step_pair(&mut self, report: &mut Report) -> Option<()> {
+    fn step_pair(&mut self, report: &mut Report, created: &mut Option<Created>) -> Option<()> {
         const T: &str = "Pair this computer";
         // Already paired here and the server still lists our key: nothing to do.
         if let (Some(host_id), Some(key)) = (
@@ -609,7 +652,10 @@ impl Engine<'_> {
         }
         let r = self.pair_now(T);
         match r {
-            Ok(detail) => self.finish(report, StepResult::pass("pair", T, detail)),
+            Ok((detail, c)) => {
+                *created = Some(c);
+                self.finish(report, StepResult::pass("pair", T, detail))
+            }
             Err(r) => {
                 self.finish(report, r)?;
                 None
@@ -617,9 +663,96 @@ impl Engine<'_> {
         }
     }
 
-    fn pair_now(&mut self, title: &str) -> Result<String, StepResult> {
+    /// Pairing is a transaction: whatever this run created (the server's new
+    /// device entry, its screen grant, this computer's new peer) is undone
+    /// when a later part fails or the user cancels. Pairings that existed
+    /// before are never touched. The invite ticket exists only in memory and
+    /// is dropped; with no invite-revoke command on the host it simply
+    /// expires on its own.
+    fn pair_now(&mut self, title: &str) -> Result<(String, Created), StepResult> {
+        let mut txn = Created::default();
+        match self.pair_txn(title, &mut txn) {
+            Ok(detail) => Ok((detail, txn)),
+            Err(mut r) => {
+                if txn.any() {
+                    let note = self.rollback(&txn);
+                    r.remediation = Some(match r.remediation.take() {
+                        Some(h) => format!("{h} {note}"),
+                        None => note,
+                    });
+                }
+                Err(r)
+            }
+        }
+    }
+
+    /// Undo `c`; returns one plain sentence saying what was undone and what,
+    /// if anything, is left (with the command to remove it).
+    fn rollback(&mut self, c: &Created) -> String {
+        let mut notes: Vec<String> = Vec::new();
+        let mut key = c.server_key.clone();
+        if key.is_none() && c.local_host.is_some() {
+            // The key was not identified yet: take it from the server's list only if it is unambiguous.
+            if let Ok(after) = self.server_desktops("pair", "Undo the pairing") {
+                let new: Vec<&String> = after.iter().filter(|k| !c.before.contains(k)).collect();
+                if let [only] = new.as_slice() {
+                    key = Some((*only).clone());
+                }
+            }
+        }
+        match &key {
+            Some(k) => {
+                let params = format!("key={k}\n");
+                let run = |s: &Self, sub: Sub| {
+                    s.transport
+                        .run(RemoteCmd::Provision(sub), params.as_bytes(), SHORT)
+                        .is_ok_and(|o| o.ok())
+                };
+                let screen_ok = !c.screen || run(self, Sub::ScreenRevoke);
+                let revoked = run(self, Sub::Revoke);
+                if revoked && screen_ok {
+                    notes.push("This computer's device entry and screen access were removed from the server.".into());
+                } else {
+                    notes.push(format!(
+                        "The server could not be reached to remove this computer: on the server run `bot host screen {k} --revoke` and `bot host revoke {k}` (data dir /var/lib/praxi)."
+                    ));
+                }
+            }
+            None if c.local_host.is_some() => notes.push(
+                "This computer's device entry on the server could not be identified: on the server run `bot host devices`, then `bot host revoke <key>` for the newest desktop.".into(),
+            ),
+            None => {}
+        }
+        if let Some(id) = &c.local_host {
+            match self.local.forget_host(id) {
+                Ok(()) => notes.push("The pairing on this computer was removed.".into()),
+                Err(e) => notes.push(format!(
+                    "The pairing on this computer could not be removed ({}).",
+                    sanitize(&e, 120)
+                )),
+            }
+        }
+        notes.join(" ")
+    }
+
+    fn pair_txn(&mut self, title: &str, txn: &mut Created) -> Result<String, StepResult> {
         let fail = |detail: String, hint: &str| StepResult::fail("pair", title, detail, hint);
+        let cancelled = |ui: &dyn Ui| {
+            ui.cancelled().then(|| {
+                StepResult::fail(
+                    "pair",
+                    title,
+                    "cancelled before pairing",
+                    "Nothing was paired.",
+                )
+            })
+        };
+        if let Some(r) = cancelled(&*self.ui) {
+            return Err(r);
+        }
         let before = self.server_desktops("pair", title)?;
+        txn.before.clone_from(&before);
+        let known_before = self.local.host_ids();
         let out = self.exec(
             "pair",
             title,
@@ -636,12 +769,18 @@ impl Engine<'_> {
                 "Is the service running in host mode? Try `bot host repair`.",
             )
         })?;
+        if let Some(r) = cancelled(&*self.ui) {
+            return Err(r);
+        }
         let paired = self.local.pair(&invite.ticket).map_err(|e| {
             fail(
                 format!("this computer could not pair: {}", sanitize(&e, 200)),
                 "Is the desktop daemon running here (`bot serve` or the app)? The ticket lives 2 minutes; just run the command again.",
             )
         })?;
+        if !known_before.contains(&paired.id) {
+            txn.local_host = Some(paired.id.clone());
+        }
         let after = self.server_desktops("pair", title)?;
         let new: Vec<&String> = after.iter().filter(|k| !before.contains(k)).collect();
         let [key] = new.as_slice() else {
@@ -651,7 +790,12 @@ impl Engine<'_> {
             ));
         };
         let key = (*key).clone();
+        txn.server_key = Some(key.clone());
+        if let Some(r) = cancelled(&*self.ui) {
+            return Err(r);
+        }
         let params = format!("key={key}\n");
+        txn.screen = true;
         self.exec(
             "pair",
             title,

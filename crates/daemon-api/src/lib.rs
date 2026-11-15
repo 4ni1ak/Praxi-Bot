@@ -946,6 +946,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/host", get(host::status))
         .route("/v1/hosts", get(host_links::list))
         .route("/v1/hosts/pair", post(host_links::pair))
+        .route("/v1/hosts/{id}", axum::routing::delete(host_links::forget))
         .route("/v1/hosts/setup", post(host_setup::start))
         .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
         .route("/v1/hosts/setup/{job}", get(host_setup::get))
