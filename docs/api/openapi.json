@@ -2840,7 +2840,7 @@
         "tags": [
           "providers"
         ],
-        "summary": "Detect installed, signed-in coding CLIs.",
+        "summary": "Detect installed, signed-in coding CLIs. Local owner only: the rows carry\nthe signed-in account label (an email or organisation) and install state.",
         "operationId": "detect_providers",
         "parameters": [
           {
@@ -2866,6 +2866,16 @@
                   "items": {
                     "$ref": "#/components/schemas/DetectedProviderDto"
                   }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "caller is not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }

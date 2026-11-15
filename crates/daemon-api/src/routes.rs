@@ -1218,14 +1218,18 @@ pub(crate) struct DetectProvidersQuery {
     pub refresh: Option<String>,
 }
 
-/// Detect installed, signed-in coding CLIs.
+/// Detect installed, signed-in coding CLIs. Local owner only: the rows carry
+/// the signed-in account label (an email or organisation) and install state.
 #[utoipa::path(get, path = "/v1/providers/detected", tag = "providers", security(("bearer" = [])),
     params(DetectProvidersQuery),
-    responses((status = 200, body = Vec<DetectedProviderDto>)))]
+    responses((status = 200, body = Vec<DetectedProviderDto>),
+              (status = 403, body = ErrorBody, description = "caller is not the local owner")))]
 pub(crate) async fn detect_providers(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     Query(query): Query<DetectProvidersQuery>,
 ) -> Result<Json<Vec<DetectedProviderDto>>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let refresh = query
         .refresh
         .as_deref()

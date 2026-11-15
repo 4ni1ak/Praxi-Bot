@@ -307,3 +307,41 @@ async fn unauthenticated_bot_or_tool_cannot_request_or_decide_install() {
         0
     );
 }
+
+#[tokio::test]
+async fn detected_engines_with_account_label_are_owner_only() {
+    let t = setup();
+    // The local owner still reads it.
+    let own = call(&t, Method::GET, "/v1/providers/detected", None).await;
+    assert_eq!(own.status, StatusCode::OK);
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for path in [
+            "/v1/providers/detected",
+            "/v1/providers/detected?refresh=1",
+            "/v1/providers/detected/",
+            "/v1/providers//detected",
+            "/v1/providers%2Fdetected",
+        ] {
+            let mut req = Request::builder()
+                .method(Method::GET)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer".into(),
+                role,
+            });
+            let status = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status, StatusCode::FORBIDDEN, "{role:?} {path}");
+        }
+    }
+}
