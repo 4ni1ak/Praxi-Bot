@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod bot_patch;
 mod cli_engines;
 mod doctor;
 mod email;
@@ -451,7 +452,7 @@ async fn bots_crud() {
         &t,
         Method::PUT,
         &path,
-        Some(json!({"config": {
+        Some(json!({"expected_version": 1, "config": {
             "bot": {"id": "tester", "name": "Renamed"},
             "models": {"executor": "fake/other"}
         }})),
@@ -3141,7 +3142,8 @@ async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
                     "bot": {"id": "tester", "name": "Tester"},
                     "models": {"executor": "fake/echo"}
                 },
-                "runtime": {"computer": input}
+                "runtime": {"computer": input},
+                "expected_version": call(&t, Method::GET, &bot_path, None).await.json()["version"]
             })),
         )
         .await;
@@ -3175,7 +3177,8 @@ async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
                 "bot": {"id": "tester", "name": "Tester"},
                 "models": {"executor": "fake/echo"}
             },
-            "runtime": {"computer": "quantum"}
+            "runtime": {"computer": "quantum"},
+            "expected_version": 7
         })),
     )
     .await;
@@ -3335,7 +3338,7 @@ async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_overri
         &t,
         Method::PUT,
         &path,
-        Some(json!({"profile_toml": PROFILE})),
+        Some(json!({"profile_toml": PROFILE, "expected_version": 1})),
     )
     .await;
     assert_eq!(updated.status, StatusCode::OK);
@@ -3346,7 +3349,8 @@ async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_overri
         &path,
         Some(json!({
             "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"host\"\n"),
-            "runtime": {"computer": "pc"}
+            "runtime": {"computer": "pc"},
+            "expected_version": 2
         })),
     )
     .await;

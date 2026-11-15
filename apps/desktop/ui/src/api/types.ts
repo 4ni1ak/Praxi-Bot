@@ -16,6 +16,7 @@ export type KnowledgeEmbeddingGrantTarget = S["EmbeddingGrantTarget"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];
+export type BotPatchInput = S["BotPatchInput"];
 export type Chat = S["ChatDto"];
 export type Message = S["MessageDto"];
 /**

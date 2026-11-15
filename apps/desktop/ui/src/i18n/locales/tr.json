@@ -242,9 +242,6 @@
     "notFound": "Bu bot artık yok.",
     "noModel": "Model yok",
     "newChat": "Yeni sohbet",
-    "confirmDelete": "Silmek için tekrar tıkla",
-    "chats": "Sohbetler",
-    "noChats": "Henüz sohbet yok. “Yeni sohbet” ile başla.",
     "skills": {
       "heading": "Beceriler",
       "loading": "Beceriler yükleniyor…",
@@ -252,8 +249,7 @@
       "summarySelected": "{{total}} ortak beceriden {{count}} tanesi",
       "summaryLearned": "(+{{count}} öğrenilmiş)",
       "summaryMissing": "Atanmış {{count}} beceri diskte bulunamıyor",
-      "chooseButton": "Beceri seç…",
-      "modalTitle": "Becerileri seç",
+      "modalTitle": "Beceriler",
       "modeLabel": "Ortak beceri erişimi",
       "modeAll": "Tüm ortak beceriler",
       "modeSelected": "Yalnızca seçtiklerim",
@@ -272,12 +268,18 @@
       "scope": {
         "shared": "ortak",
         "bundled": "yerleşik"
-      }
+      },
+      "modalSubtitle": "{{name}} botuna sunulanlar",
+      "manage": "Becerileri yönet",
+      "more": "+{{count}} tane daha",
+      "saved": "Beceriler kaydedildi.",
+      "loadFailed": "Beceriler yüklenemedi"
     },
     "chatState": {
       "needs": "Senden bekliyor",
       "running": "Çalışıyor"
-    }
+    },
+    "newChatFailed": "Sohbet başlatılamadı: {{detail}}"
   },
   "chat": {
     "notFound": "Bu sohbet yok.",
@@ -743,10 +745,7 @@
       "notApplied": "{{names}}: uygulanmadı, uygulama bu arada değişti (örneğin artık tüm botlara açık). Liste güncel durumu gösteriyor.",
       "partialFail": "Bot kaydedildi ama şu uygulamalar için erişim güncellenemedi: {{names}}. Tekrar Kaydet’i dene."
     },
-    "createTitle": "Yeni bot",
     "editTitle": "Botu düzenle",
-    "create": "Botu oluştur",
-    "identity": "Kimlik",
     "name": "Ad",
     "nameRequired": "Ad gerekli.",
     "avatar": "Avatar",
@@ -761,19 +760,13 @@
     "persona": "Kişilik",
     "personaPlaceholder": "Bu bot nasıl davranmalı? (sistem talimatı)",
     "models": "Modeller",
-    "modelsHint": "Her rol için bir sağlayıcı seç ve model adını yaz. Yalnızca yürütücü zorunludur.",
     "role": {
       "executor": "Yürütücü",
       "planner": "Planlayıcı",
       "classifier": "Sınıflandırıcı",
       "fallback": "Yedek modeller"
     },
-    "provider": "sağlayıcı",
-    "model": "model",
-    "defaultProvider": "Varsayılan sağlayıcı",
-    "modelPlaceholder": "model adı",
     "executorRequired": "Yürütücü model gerekli.",
-    "fallbackPlaceholder": "sağlayıcı/model, sağlayıcı/model",
     "permissions": "İzinler",
     "preset": {
       "read-only": {
@@ -818,7 +811,6 @@
     "computer": "Bilgisayar",
     "browser": "Tarayıcı",
     "local": "Yerel (bu makine)",
-    "remoteSoon": "Uzak (yakında)",
     "runtimeHint": "Şimdilik yalnızca bu makine desteklenir."
   },
   "usage": {
@@ -1861,12 +1853,12 @@
   "botPanel": {
     "toggle": "Bot paneli",
     "close": "Paneli kapat",
-    "settings": "Bot ayarları",
     "profile": "Bot profili",
     "chats": "Sohbetler",
     "noChats": "Henüz sohbet yok.",
     "untitled": "Yeni sohbet",
     "computer": "Bilgisayar",
+    "edit": "Botu düzenle",
     "runsOnHost": "{{name}} sunucusunda çalışır",
     "runsOnLocal": "Bu bilgisayarda çalışır"
   },
@@ -2094,6 +2086,192 @@
     "openScreen": "Ekranı aç",
     "connectionLost": "Ekran bağlantısı koptu. Yeniden bağlanılıyor…",
     "clearForeignPause": "{{owner}} duraklatmasını kaldır"
+  },
+  "botEmpty": {
+    "title": "{{name}} ile sohbete başla",
+    "body": "Burada henüz bir şey yok. Bir şey iste, sohbet bu alanda açılsın."
+  },
+  "botProfile": {
+    "facts": "{{date}} tarihinde oluşturuldu · {{chats}} sohbet",
+    "noPersona": "Henüz kişilik yok. Botun nasıl davranacağını Botu düzenle bölümünden belirleyebilirsin.",
+    "noApps": "Bu bota bağlı uygulama yok."
+  },
+  "botEdit": {
+    "sections": "Bölümler",
+    "section": {
+      "identity": "Kimlik",
+      "models": "Modeller",
+      "permissions": "İzinler",
+      "skills": "Beceriler",
+      "apps": "Uygulamalar",
+      "advanced": "Gelişmiş"
+    },
+    "sectionHint": {
+      "identity": "Ad, görünüm ve kişilik.",
+      "models": "İşi hangi model yapar, hangileri yardım eder.",
+      "permissions": "Bot sana sormadan neler yapabilir.",
+      "skills": "Bu bota sunulan ortak beceriler.",
+      "apps": "Bu botun kullanabileceği bağlı uygulamalar.",
+      "advanced": "Özel model kimlikleri, botun çalıştığı yer ve silme."
+    },
+    "look": "Görünüm",
+    "personaHint": "Modele botun kalıcı talimatı olarak gönderilir.",
+    "mainModel": "Ana model",
+    "pickModel": "Model seç",
+    "sameAsMain": "Ana modelle aynı",
+    "roleHint": {
+      "executor": "Her sohbette asıl işi yapar.",
+      "planner": "Büyük işleri adımlara böler. İsteğe bağlı.",
+      "classifier": "Gelen istekleri ucuza sınıflandırır. İsteğe bağlı."
+    },
+    "noProvidersTitle": "Bağlı bir yapay zekâ sağlayıcısı yok",
+    "noProvidersBody": "Burada model seçebilmek için Ayarlar → Yapay zekâ bölümünden bir sağlayıcı bağla.",
+    "fallbackHint": "Ana model kullanılamadığında bu sırayla denenir.",
+    "addFallback": "Yedek ekle",
+    "removeFallback": "{{name}} modelini kaldır",
+    "categories": "Kategoriye göre",
+    "categoriesHint": "Reddet engeller, Sor onayını bekler, İzin ver sormadan çalıştırır.",
+    "appsLoading": "Uygulamalar yükleniyor…",
+    "appsNoneBody": "Uygulamalar ekranından bir uygulama bağla, sonra hangi botların kullanacağını buradan seç.",
+    "customTitle": "Özel model kimliği",
+    "customHint": "Seçicilerde görünmeyen bir model için. sağlayıcı/model biçiminde yaz.",
+    "customPlaceholder": "sağlayıcı/model",
+    "customIssue": {
+      "empty": "Ana model zorunludur.",
+      "spaces": "Model kimliğinde boşluk olamaz.",
+      "noModel": "Sağlayıcıdan sonra modeli ekle: sağlayıcı/model."
+    },
+    "dangerTitle": "Tehlikeli bölge",
+    "deleteTitle": "Bu botu sil",
+    "deleteHint": "Botu, uygulama erişimini ve e-posta hesaplarını kaldırır. Yalnızca sohbeti veya çalıştırması yokken yapılabilir. Geri alınamaz.",
+    "delete": "Botu sil",
+    "deleteConfirmTitle": "{{name}} silinsin mi?",
+    "deleteConfirmBody": "Bot, uygulama erişimi ve e-posta hesapları kaldırılacak. Bu işlem geri alınamaz. Hâlâ sohbeti veya çalıştırması olan bot silinemez: bu durumda hiçbir şey kaldırılmaz ve nedenini görürsünüz.",
+    "deleted": "{{name}} silindi.",
+    "unsaved": "Kaydedilmemiş değişiklikler",
+    "needsAttention": "Düzeltilmesi gerekiyor",
+    "problem": {
+      "nameMissing": "Kaydetmek için bota bir ad ver.",
+      "executorMissing": "Kaydetmek için bir ana model seç.",
+      "customInvalid": "Özel bir model kimliği henüz geçerli değil (Gelişmiş).",
+      "fallbackPending": "Yedek modeller altında yazdığınız model kimliğini ekleyin ya da silin."
+    },
+    "saving": "Kaydediliyor…",
+    "saved": "{{name}} kaydedildi.",
+    "skillsFailed": "Bot kaydedildi ama becerileri kaydedilemedi: {{detail}}",
+    "discardTitle": "Değişiklikler silinsin mi?",
+    "discardBody": "Kaydedilmemiş değişikliklerin var. Şimdi kapatırsan kaybolur.",
+    "discard": "Vazgeç ve kapat",
+    "keepEditing": "Düzenlemeye devam et",
+    "conflict": {
+      "title": "Bu bot başka yerden değiştirildi",
+      "body": "Siz düzenlerken kayıtlı botta şunlar değişti: {{parts}}. Hiçbir şey kaydedilmedi. Yeniden yükle kayıtlı sürümü gösterir (profil değişiklikleriniz atılır); üzerine yaz yalnızca sizin değiştirdiğiniz alanları onun üstüne yazar.",
+      "reload": "Kayıtlı sürümü yükle",
+      "overwrite": "Değişikliklerimle üzerine yaz",
+      "part": {
+        "identity": "ad veya görünüm",
+        "models": "modeller",
+        "permissions": "izinler",
+        "runtime": "çalıştığı yer",
+        "other": "diğer ayarlar"
+      }
+    },
+    "fallbackCustom": "Başka model kimliği",
+    "fallbackCustomHint": "Listede olmasa bile provider/model biçiminde herhangi bir model kimliği. Birden fazlasını virgülle ayırın.",
+    "target": {
+      "auto": "Otomatik",
+      "pc": "Bu bilgisayar",
+      "host": "Ana makine",
+      "browser": "Tarayıcı",
+      "off": "Kapalı"
+    },
+    "deleteBlocked": "Bu botun sohbetleri var ({{count}}); bu yüzden silinemez. Yalnızca sohbeti ve çalıştırması olmayan bot silinebilir.",
+    "deleteBlockedRuns": "Bu botun saklanan {{count}} çalıştırması var; bu yüzden silinemez. Yalnızca sohbeti ve çalıştırması olmayan bot silinebilir."
+  },
+  "addSkill": {
+    "open": "Beceri ekle",
+    "title": "Beceri ekle",
+    "subtitle": "Botlarına bir işi her seferinde aynı şekilde yapmayı öğret.",
+    "installSubtitle": "Dosyayı beceriler klasörüne koy ve kontrol et.",
+    "source": "Becerinin kaynağı",
+    "sourceWrite": "Kendim yazacağım",
+    "sourceFile": "Dosyadan",
+    "chooseFile": "SKILL.md seç",
+    "fileHint": "Dosya seçilmedi",
+    "fileNote": "Yalnızca SKILL.md dosyasının kendisi okunur. Devam etmeden önce aşağıda inceleyip düzenleyebilirsin.",
+    "parse": {
+      "title": "Bu dosya geçerli bir beceri değil",
+      "tooLarge": "Dosya 64 KB'tan büyük.",
+      "noFrontmatter": "Dosya bir --- satırıyla başlamalı, ardından name ve description gelmeli.",
+      "unterminated": "Baştaki --- bloğu ikinci bir --- satırıyla kapatılmamış.",
+      "badLine": "Bu satır anahtar: değer biçiminde değil — {{detail}}",
+      "unknownKey": "Bilinmeyen anahtar “{{detail}}”. Yalnızca name, description, version ve when kullanılabilir.",
+      "badWhen": "“when” bloğu “{{detail}}” yakınında geçersiz. domains, apps veya keywords ile [a, b] listesi kullan.",
+      "unreadable": "Dosya metin olarak okunamadı.",
+      "duplicateKey": "“{{detail}}” anahtarı iki kez geçiyor.",
+      "emptyVersion": "`version` var ama boş."
+    },
+    "name": "Ad",
+    "nameHint": "Küçük harf, rakam, - _ ve . — bu aynı zamanda klasör adıdır.",
+    "useSuggestion": "“{{name}}” kullan",
+    "version": "Sürüm",
+    "description": "Açıklama",
+    "descriptionHint": "Tek satır. Bot, becerinin ne zaman işe yarayacağına bunu okuyarak karar verir.",
+    "descriptionPlaceholder": "Ödeme yapmadan önce faturayı siparişle karşılaştır.",
+    "body": "Talimatlar",
+    "bodyHint": "Markdown. Adımları dikkatli bir iş arkadaşına anlatır gibi yaz.",
+    "bodyPlaceholder": "# Fatura kontrolü\n\n1. Siparişi aç.\n2. Toplamları karşılaştır.\n3. Farklıysa ödemeden önce sor.",
+    "triggers": "Kendiliğinden öner (isteğe bağlı)",
+    "triggersHint": "Virgülle ayır. Bot bu sitelerden veya uygulamalardan birindeyken ya da görevde bir anahtar kelime geçtiğinde beceri önerilir.",
+    "domains": "Web siteleri",
+    "apps": "Uygulamalar",
+    "keywords": "Anahtar kelimeler",
+    "keywordsPlaceholder": "fatura, ödeme",
+    "issue": {
+      "nameEmpty": "Ad zorunludur.",
+      "nameLength": "Ad en fazla 64 karakter olabilir.",
+      "nameChars": "Yalnızca küçük harf, rakam, - _ ve . kullan.",
+      "nameStart": "Ad bir harf veya rakamla başlamalı.",
+      "nameDots": "Ad “..” içeremez ve noktayla bitemez.",
+      "nameTaken": "Bu adda bir beceri zaten var.",
+      "descriptionEmpty": "Açıklama zorunludur.",
+      "descriptionLong": "Açıklama en fazla 200 karakter olabilir.",
+      "descriptionLines": "Açıklama tek satır olmalı.",
+      "versionEmpty": "Sürüm zorunludur.",
+      "bodyEmpty": "Talimatları yaz.",
+      "tooLarge": "Beceri 64 KB'tan büyük."
+    },
+    "continue": "Devam",
+    "done": "Bitti",
+    "discardBody": "Yazdığın beceri henüz hiçbir yere kaydedilmedi. Şimdi kapatırsan kaybolur.",
+    "boundaryTitle": "Şimdilik bir adım elle yapılıyor",
+    "boundaryBody": "Uygulama henüz bir beceriyi beceri klasörüne kendisi kaydedemiyor. Beceriniz uygulamada ön kontrolden geçti; yüklenip yüklenmediğine arka plan hizmeti karar verir. Dosyayı bir kez yerleştirin, sonra Kontrol et'e basın.",
+    "stepCopy": "Beceri dosyasını kopyala",
+    "copyFile": "Dosya içeriğini kopyala",
+    "copied": "Kopyalandı",
+    "stepSave": "Bu dosya olarak kaydet",
+    "copyPath": "Yolu kopyala",
+    "pathHint": "Klasör yoksa oluştur.",
+    "pathHintRelative": "Praxi-Bot'un veri klasörünün içinde. Klasör yoksa oluştur.",
+    "stepCheck": "Algılandığını kontrol et",
+    "check": "Kontrol et",
+    "checking": "Kontrol ediliyor…",
+    "found": "“{{name}}” yüklendi",
+    "foundAll": "{{bot}} tüm ortak becerileri kullanıyor; bu beceri de artık onda.",
+    "foundPicked": "{{bot}} yalnızca seçtiğin becerileri kullanıyor. Bunu da verelim mi?",
+    "assign": "{{bot}} botuna ver",
+    "assigned": "{{bot}} artık bunu kullanabilir.",
+    "rejected": "Beceri bulundu ama yüklenemedi",
+    "notFound": "Henüz bulunamadı",
+    "notFoundBody": "Dosyanın adının SKILL.md olduğundan ve yukarıdaki klasörde durduğundan emin ol, sonra yeniden kontrol et.",
+    "checkFailed": "Kontrol edilemedi",
+    "namePlaceholder": "fatura-kontrol",
+    "domainsPlaceholder": "github.com, gitlab.com",
+    "appsPlaceholder": "Excel, SystemSettings",
+    "different": "Bu adı başka bir beceri taşıyor",
+    "differentBody": "Katalogda “{{name}}” var (sürüm {{version}}, {{scope}}) ama hazırladığınız dosya bu değil. Adı ya da sürümü değiştirin veya eski dosyayı değiştirin, sonra yeniden kontrol edin.",
+    "discardInstallBody": "Beceri dosyası beceri klasöründe henüz bulunamadı. Şimdi kapatırsanız yazdıklarınız kaybolur.",
+    "unverified": "Bu arka plan hizmeti talimatların parmak izini bildirmiyor; aynı ad, sürüm ve açıklamaya sahip eski bir dosya elenemiyor. Kapatırken yazdıklarınız yine de sorulur."
   },
   "stopStatus": {
     "title": {

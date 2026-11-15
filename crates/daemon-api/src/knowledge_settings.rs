@@ -311,10 +311,17 @@ pub(crate) async fn put_settings(
             // Old source metadata is inert without its host grant. Retain paid
             // vectors until a replacement profile generation completes.
         }
-        bot.config["knowledge"] =
-            json!({"auto_retrieve":input.auto_retrieve,"embedding":embedding});
-        if !s.storage().update_bot(bot.id, &bot.name, &bot.config)? {
-            return Err(ApiError::not_found("bot"));
+        let knowledge = json!({"auto_retrieve":input.auto_retrieve,"embedding":embedding});
+        // Only the knowledge subtree is written, against the stored profile in
+        // one transaction, so a concurrent profile edit is never overwritten
+        // with this request's older copy; the bot revision still advances.
+        match s.storage().modify_bot(bot.id, |name, stored| {
+            let mut next = stored.clone();
+            next["knowledge"] = knowledge.clone();
+            Ok((name.to_owned(), next))
+        })? {
+            storage::BotPatch::Applied { bot: saved, .. } => bot = saved,
+            _ => return Err(ApiError::not_found("bot")),
         }
         crate::knowledge_runtime::invalidate_bot(&s, bot.id);
         s.refresh_profile(&bot);

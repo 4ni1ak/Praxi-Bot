@@ -241,14 +241,15 @@ export interface paths {
          *     the persisted grants).
          */
         get: operations["get_bot"];
-        /** Replace a bot's name and profile. */
+        /** Replace a bot profile using its loaded `expected_version` (required; missing is 428). */
         put: operations["update_bot"];
         post?: never;
         /** Delete a bot that has no chats or runs. */
         delete: operations["delete_bot"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Change only the listed fields of a bot, atomically, if `expected_version` is current. */
+        patch: operations["patch_bot"];
         trace?: never;
     };
     "/v1/bots/{id}/grants": {
@@ -1942,6 +1943,13 @@ export interface components {
             /** @description Skill version string. */
             version: string;
         };
+        /** @description `409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now. */
+        BotConflictBody: {
+            /** @description The current bot, with its current version. */
+            current: components["schemas"]["BotDto"];
+            /** @description `version_conflict`. */
+            error: components["schemas"]["ErrorDetail"];
+        };
         /** @description Public bot representation. */
         BotDto: {
             /** @description Bot profile (ADR-0011) as JSON. */
@@ -1960,6 +1968,13 @@ export interface components {
             /** @description Display name. */
             name: string;
             runtime?: null | components["schemas"]["RuntimeConfigDto"];
+            /**
+             * Format: int64
+             * @description Bot revision: starts at 1; profile writes and skill assignment changes
+             *     advance it in the write transaction. Send the loaded value back as
+             *     `expected_version` to both PUT and PATCH.
+             */
+            version: number;
         };
         /**
          * @description Create (`POST /v1/bots`) or replace (`PUT /v1/bots/{id}`) a bot.  Exactly
@@ -1968,11 +1983,55 @@ export interface components {
         BotInput: {
             /** @description Profile as a JSON object. */
             config?: unknown;
+            /**
+             * Format: int64
+             * @description Required for PUT: version of the profile being replaced. Missing is 428;
+             *     stale is 409 with the current bot. Not used when creating a bot.
+             */
+            expected_version?: number | null;
             /** @description Display name (defaults to the profile's `[bot].name`). */
             name?: string | null;
             /** @description Profile as TOML text (the contents of a bot profile file). */
             profile_toml?: string | null;
             runtime?: null | components["schemas"]["RuntimeConfigDto"];
+        };
+        /**
+         * @description `PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.
+         *     Every field not named - including unknown keys - stays exactly as stored.
+         */
+        BotPatchInput: {
+            /**
+             * Format: int64
+             * @description The version the client loaded (`BotDto::version`).  A different current
+             *     version refuses the whole patch with `409` and returns the current bot.
+             */
+            expected_version: number;
+            /** @description New display name. */
+            name?: string | null;
+            /**
+             * @description Profile changes, applied in order (at most 128). Values/result use a
+             *     conservative 1 MiB escaped JSON budget; excessive input is 400.
+             */
+            ops?: components["schemas"]["BotPatchOp"][];
+        };
+        /**
+         * @description How one [`BotPatchOp`] changes the profile.
+         * @enum {string}
+         */
+        BotPatchKind: "set" | "unset";
+        /** @description One field-level change of a bot profile. */
+        BotPatchOp: {
+            /** @description `set` or `unset`. */
+            op: components["schemas"]["BotPatchKind"];
+            /**
+             * @description RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,
+             *     `/permissions/categories/fs/level`, `/runtime/computer`.  Object keys
+             *     only: a path through an array or a scalar is refused. At most 32 segments
+             *     and 4096 bytes; resulting profile depth at most 32.
+             */
+            path: string;
+            /** @description The new value (`set` only). */
+            value?: unknown;
         };
         /** @description Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`. */
         BotSkillsDto: {
@@ -2029,6 +2088,11 @@ export interface components {
         };
         /** @description Catalog entry for a shared or bundled skill (metadata only, never the body). */
         CatalogSkillDto: {
+            /**
+             * @description Hex SHA-256 of the Markdown body (the part after the frontmatter, trimmed): lets a
+             *     client tell whether the catalog lists the file it just wrote or an older one.
+             */
+            body_sha256: string;
             /** @description One-line description from frontmatter. */
             description: string;
             hub?: null | components["schemas"]["SkillHubInfoDto"];
@@ -5003,7 +5067,23 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotConflictBody"];
+                };
+            };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5040,6 +5120,66 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    patch_bot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotPatchInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotDto"];
+                };
+            };
+            /** @description patch exceeds depth, size or operation limits */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the bot changed since `expected_version`; `current` is its state now */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotConflictBody"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

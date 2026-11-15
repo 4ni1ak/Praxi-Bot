@@ -597,7 +597,7 @@ async fn on_a_host_a_peer_cannot_relax_execution_policy_but_can_edit_the_rest_of
         desktop,
         Method::PUT,
         &path,
-        Some(json!({"profile_toml": profile(relax, "Owner")})),
+        Some(json!({"profile_toml": profile(relax, "Owner"), "expected_version": 1})),
     )
     .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
@@ -606,7 +606,7 @@ async fn on_a_host_a_peer_cannot_relax_execution_policy_but_can_edit_the_rest_of
         desktop,
         Method::PUT,
         &path,
-        Some(json!({"profile_toml": profile("", "Renamed")})),
+        Some(json!({"profile_toml": profile("", "Renamed"), "expected_version": 1})),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
@@ -621,7 +621,7 @@ async fn on_a_host_a_peer_cannot_relax_execution_policy_but_can_edit_the_rest_of
         desktop,
         Method::PUT,
         &path,
-        Some(json!({"profile_toml": profile(strict, "Again")})),
+        Some(json!({"profile_toml": profile(strict, "Again"), "expected_version": 2})),
     )
     .await;
     assert_eq!(
