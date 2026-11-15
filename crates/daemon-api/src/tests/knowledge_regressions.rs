@@ -512,6 +512,8 @@ async fn review_81_peer_roles_cannot_mutate_knowledge_authority() {
             (Method::PUT, "settings".to_owned()),
             (Method::POST, "embedding-approvals".to_owned()),
             (Method::POST, format!("embedding-approvals/{id}/confirm")),
+            (Method::DELETE, "embedding-grants".to_owned()),
+            (Method::POST, "embedding-cooldown/reset".to_owned()),
         ] {
             for path in [
                 format!("/v1/bots/{bot}/knowledge/{suffix}"),
@@ -548,4 +550,107 @@ async fn review_81_peer_roles_cannot_mutate_knowledge_authority() {
     )
     .await;
     assert_eq!(local["source"]["documents"], 1);
+}
+
+async fn metadata_refresh_case(action: &str) {
+    use secret_store::SecretStore;
+    let _serial = crate::knowledge_runtime::test_guard().await;
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(Storage::open(dir.path()).unwrap());
+    let secrets = Arc::new(secret_store::MemoryStore::new());
+    let redactor = agent_core::SharedRedactor::default();
+    let refresh = Arc::clone(&secrets);
+    redactor.set_refresher(Arc::new(move |redactor| {
+        redactor
+            .refresh_from_store(Some(refresh.as_ref()), &[])
+            .unwrap();
+    }));
+    let agent = AgentLoop::new(
+        storage.clone(),
+        ToolRegistry::new(),
+        Providers::single(Arc::new(FakeProvider)),
+        LoopConfig {
+            redactor: Some(redactor),
+            ..LoopConfig::default()
+        },
+    );
+    let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    let t = T {
+        app: router(state.clone()),
+        state,
+        agent,
+        _dir: dir,
+    };
+    let (bot, _) = make_chat(&t).await;
+    let files = tempfile::tempdir().unwrap();
+    let original = files.path().join("selected.md");
+    std::fs::write(&original, "Selected non-secret source.").unwrap();
+    let source = add(
+        &t,
+        &bot,
+        json!({"kind":"file","label":"Current label","path":original}),
+    )
+    .await["source"]
+        .clone();
+    let secret = "late-registered-secret";
+    secrets.set("late-key", secret).unwrap();
+    let next = files.path().join(format!("{secret}.md"));
+    std::fs::write(&next, "Selected non-secret replacement.").unwrap();
+    let result = request(&t, Method::PUT, &format!("/v1/bots/{bot}/knowledge/sources/{}", source["id"].as_str().unwrap()), Some(json!({"action":action,"expected_revision":source["revision"],"label":format!("Label {secret}"),"path":next}))).await;
+    assert_eq!(
+        result.status,
+        StatusCode::BAD_REQUEST,
+        "fresh host secret must be checked before {action}: {}",
+        result.json()
+    );
+    let record = index(&t, &bot)
+        .source(source["id"].as_str().unwrap().parse().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.revision, source["revision"].as_u64().unwrap());
+    assert_eq!(record.label, "Current label");
+    assert_eq!(record.locator, original.to_string_lossy());
+}
+
+#[tokio::test]
+async fn review_81_metadata_refresh_precedes_rename() {
+    metadata_refresh_case("rename").await;
+}
+
+#[tokio::test]
+async fn review_81_metadata_refresh_precedes_rebind() {
+    metadata_refresh_case("rebind").await;
+}
+
+#[tokio::test]
+async fn review_81_owner_scope_precedes_authority_lane() {
+    let _serial = crate::knowledge_runtime::test_guard().await;
+    let t = setup();
+    let foreign = protocol::UserId::new();
+    t.state.storage().insert_user(&storage::User {
+        id: foreign,
+        name: "Other owner".into(),
+        created_at_ms: 1,
+    }).unwrap();
+    let bot = BotId::new();
+    t.state.storage().insert_bot(&storage::Bot {
+        id: bot,
+        user_id: foreign,
+        name: "Private bot".into(),
+        config: json!({}),
+        created_at_ms: 1,
+    }).unwrap();
+    let lane = crate::knowledge_runtime::authority_lock(&t.state, bot);
+    let _active = lane.lock_owned().await;
+    for (method, suffix, body) in [
+        (Method::PUT, "settings".into(), Some(json!({"auto_retrieve":false,"embedding":null}))),
+        (Method::POST, "embedding-approvals".into(), Some(json!({"kind":"queries"}))),
+        (Method::POST, format!("embedding-approvals/{}/confirm", Uuid::now_v7()), None),
+        (Method::DELETE, "embedding-grants".into(), Some(json!({"kind":"queries"}))),
+        (Method::POST, "embedding-cooldown/reset".into(), None),
+    ] {
+        let response = call(&t, method.clone(), &format!("/v1/bots/{bot}/knowledge/{suffix}"), body).await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND, "foreign bot must be scoped before its work can be observed or cancelled: {method} {suffix}: {}", response.json());
+    }
+    assert_eq!(t.state.storage().get_bot(bot).unwrap().unwrap().config, json!({}));
 }
