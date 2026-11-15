@@ -2237,6 +2237,8 @@ async fn category_grant_covers_other_tools_but_not_the_money_floor() {
         bot_id: env.bot,
         target: GrantTarget::Category(PermissionCategory::Money),
         granted_at_ms: 0,
+        computer: None,
+        inert: false,
     });
     let mut rx3 = lp3.subscribe();
     let run3 = lp3.run_turn(env.chat, "pay").unwrap();
@@ -3355,12 +3357,16 @@ async fn effective_policy_merges_category_grants_but_not_floors_or_denies() {
             bot_id: env.bot,
             target: GrantTarget::Category(c),
             granted_at_ms: 1,
+            computer: None,
+            inert: false,
         });
     }
     lp.sh.grants.lock().always.push(crate::Grant {
         bot_id: env.bot,
         target: GrantTarget::Tool("t.x".into()),
         granted_at_ms: 2,
+        computer: None,
+        inert: false,
     });
     let eff = lp.effective_policy(env.bot).unwrap();
     let fs = &eff.categories[&PermissionCategory::Fs];
@@ -3394,6 +3400,8 @@ async fn effective_policy_merges_category_grants_but_not_floors_or_denies() {
         bot_id: env.bot,
         target: GrantTarget::Category(PermissionCategory::Fs),
         granted_at_ms: 1,
+        computer: None,
+        inert: false,
     });
     let eff2 = lp2.effective_policy(env.bot).unwrap();
     assert!(eff2.policy.is_some());
@@ -3837,6 +3845,11 @@ async fn computer_slot_queues_another_run_and_outlives_a_cancelled_backend_await
             updated_at_ms: now,
             parent_run_id: None,
             spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         };
         env.storage.insert_run(&run).unwrap();
         lp.sh.ctx(&run).unwrap();
@@ -3912,6 +3925,11 @@ async fn computer_slot_is_enforced_without_an_embedder_control_gate() {
             updated_at_ms: now,
             parent_run_id: None,
             spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         };
         env.storage.insert_run(&run).unwrap();
         lp.sh.ctx(&run).unwrap();
@@ -4115,6 +4133,11 @@ async fn an_active_run_that_used_the_computer_holds_the_pin_until_it_ends() {
         updated_at_ms: now,
         parent_run_id: None,
         spec: None,
+        computer_target: None,
+        computer_node: None,
+        computer_node_name: None,
+        paused_at_ms: None,
+        pause_reason: None,
     };
     env.storage.insert_run(&run).unwrap();
     lp.sh.ctx(&run).unwrap();
@@ -4420,6 +4443,8 @@ async fn allow_with_limits_read_still_parks_when_a_grant_exists() {
         bot_id: env.bot,
         target: GrantTarget::Tool("fs_read".into()),
         granted_at_ms: 1,
+        computer: None,
+        inert: false,
     });
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "read it").unwrap();
@@ -4999,9 +5024,11 @@ async fn always_ask_tool_ignores_tool_category_and_chat_grants() {
                 bot_id: env.bot,
                 target,
                 granted_at_ms: 1,
+                computer: None,
+                inert: false,
             });
         }
-        g.this_chat.insert((env.chat, "sched_make".into()));
+        g.this_chat.insert((env.chat, "sched_make".into(), None));
     }
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "go").unwrap();
@@ -5407,6 +5434,1770 @@ async fn a_multiline_secret_in_the_details_is_refused_like_any_other() {
     }
 }
 
+// ---------- computer target & waiting_for_pc tests ----------
+
+struct NamedDesktop {
+    label: &'static str,
+    snapshots: Arc<AtomicUsize>,
+}
+
+impl NamedDesktop {
+    fn new(label: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            label,
+            snapshots: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+}
+
+#[async_trait]
+impl desktop_api::DesktopBackend for NamedDesktop {
+    async fn snapshot(
+        &self,
+        _scope: Option<u64>,
+    ) -> Result<desktop_api::Snapshot, desktop_api::DesktopError> {
+        self.snapshots.fetch_add(1, Ordering::SeqCst);
+        Ok(desktop_api::Snapshot {
+            window: desktop_api::WindowInfo {
+                id: 1,
+                title: format!("window-{}", self.label),
+                pid: 1,
+                bounds: desktop_api::snapshot::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 800.0,
+                    height: 600.0,
+                },
+                focused: true,
+            },
+            nodes: vec![desktop_api::UiNode::new(
+                0,
+                "button",
+                format!("btn-{}", self.label),
+                None,
+                None,
+                vec![],
+            )],
+            generation: 1,
+            quality: desktop_api::TreeQuality::Weak,
+        })
+    }
+
+    async fn act(
+        &self,
+        _action: desktop_api::Action,
+    ) -> Result<desktop_api::ActionResult, desktop_api::DesktopError> {
+        Ok(desktop_api::ActionResult {
+            dispatched: true,
+            verified: Some(true),
+            new_snapshot: None,
+        })
+    }
+
+    async fn screenshot(
+        &self,
+        _region: desktop_api::Region,
+        _quality: desktop_api::Quality,
+    ) -> Result<desktop_api::Image, desktop_api::DesktopError> {
+        Ok(desktop_api::Image {
+            data: vec![0, 1],
+            width: 1,
+            height: 1,
+            mime_type: "image/png".into(),
+        })
+    }
+
+    async fn windows(&self) -> Result<Vec<desktop_api::WindowInfo>, desktop_api::DesktopError> {
+        Ok(vec![])
+    }
+
+    async fn launch(
+        &self,
+        _app: desktop_api::snapshot::AppSpec,
+    ) -> Result<desktop_api::snapshot::Pid, desktop_api::DesktopError> {
+        Ok(42)
+    }
+
+    fn capabilities(&self) -> desktop_api::Capabilities {
+        desktop_api::Capabilities {
+            platform: self.label.into(),
+            accessibility_tree: true,
+            screenshot: true,
+            app_launch: true,
+            has_display: true,
+        }
+    }
+}
+
+struct MockComputerProvider {
+    local: parking_lot::RwLock<Option<Arc<dyn desktop_api::DesktopBackend>>>,
+    pc: parking_lot::RwLock<Option<Arc<dyn desktop_api::DesktopBackend>>>,
+    is_host: bool,
+    browser_available: bool,
+    has_display: bool,
+}
+
+impl computer_target::ComputerProvider for MockComputerProvider {
+    fn local(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        self.local.read().clone()
+    }
+
+    fn local_node(&self) -> computer_target::ComputerNode {
+        computer_target::ComputerNode {
+            id: MACHINE_A.into(),
+            name: "Local computer".into(),
+        }
+    }
+
+    fn pc(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        self.pc.read().clone()
+    }
+    fn pc_target(&self) -> Option<computer_target::ComputerDesktop> {
+        self.pc.read().clone().map(|backend| {
+            let id = backend.capabilities().platform.clone();
+            computer_target::ComputerDesktop {
+                node: computer_target::ComputerNode {
+                    id: id.clone(),
+                    name: id,
+                },
+                backend,
+            }
+        })
+    }
+    fn node_target(&self, id: &str) -> Option<computer_target::ComputerDesktop> {
+        self.pc_target().filter(|d| d.node.id == id)
+    }
+
+    fn is_host(&self) -> bool {
+        self.is_host
+    }
+
+    fn browser_available(&self) -> bool {
+        self.browser_available
+    }
+
+    fn has_display(&self) -> bool {
+        self.has_display
+    }
+
+    fn node(&self, _id: &str) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        None
+    }
+}
+
+struct BoundMachine {
+    inner: MockComputerProvider,
+    id: &'static str,
+    unreachable: bool,
+    unbound: bool,
+}
+
+impl computer_target::ComputerProvider for BoundMachine {
+    fn local(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        self.inner.local()
+    }
+    fn local_node(&self) -> computer_target::ComputerNode {
+        computer_target::ComputerNode {
+            id: self.id.into(),
+            name: "Local computer".into(),
+        }
+    }
+    fn pc(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        self.inner.pc()
+    }
+    fn pc_target(&self) -> Option<computer_target::ComputerDesktop> {
+        self.inner.pc_target()
+    }
+    fn node_target(&self, id: &str) -> Option<computer_target::ComputerDesktop> {
+        self.inner.node_target(id)
+    }
+    fn is_host(&self) -> bool {
+        self.inner.is_host
+    }
+    fn browser_available(&self) -> bool {
+        self.inner.browser_available
+    }
+    fn has_display(&self) -> bool {
+        self.inner.has_display
+    }
+    fn paired_pc_unreachable(&self) -> bool {
+        self.unreachable
+    }
+    fn local_identity_bound(&self) -> bool {
+        !self.unbound
+    }
+}
+
+fn machine_provider(
+    id: &'static str,
+    local: Option<&'static str>,
+    pc: Option<&'static str>,
+    unreachable: bool,
+) -> Arc<BoundMachine> {
+    Arc::new(BoundMachine {
+        inner: MockComputerProvider {
+            local: parking_lot::RwLock::new(
+                local.map(|label| NamedDesktop::new(label) as Arc<dyn desktop_api::DesktopBackend>),
+            ),
+            pc: parking_lot::RwLock::new(
+                pc.map(|label| NamedDesktop::new(label) as Arc<dyn desktop_api::DesktopBackend>),
+            ),
+            is_host: true,
+            browser_available: true,
+            has_display: true,
+        },
+        id,
+        unreachable,
+        unbound: false,
+    })
+}
+
+struct ControlInspectTool {
+    spec: ToolSpec,
+    control: crate::control::LoopControl,
+    seen_headless: Mutex<Vec<Option<bool>>>,
+    seen_window: Mutex<Vec<Option<String>>>,
+}
+
+#[async_trait]
+impl Tool for ControlInspectTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn call(&self, ctx: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
+        use builtin_tools::DesktopControlGate as _;
+        let run_id = ctx.run_id.clone();
+        self.seen_headless
+            .lock()
+            .push(self.control.browser_headless_for_run(&run_id));
+        let title = if let Some(b) = self.control.desktop_for_run(&run_id) {
+            Some(b.snapshot(None).await.unwrap().window.title)
+        } else {
+            None
+        };
+        self.seen_window.lock().push(title);
+        Ok(ToolOutput::text("inspected"))
+    }
+}
+
+fn computer_test_tools() -> (Arc<TestTool>, Arc<TestTool>, Arc<TestTool>) {
+    let mut desk = tool("desktop_ping", Effect::Read, "desk ok");
+    desk.spec.category = PermissionCategory::Desktop;
+    let mut browser = tool("browser_ping", Effect::Read, "browser ok");
+    browser.spec.category = PermissionCategory::Browser;
+    let fs = tool("fs_ping", Effect::Read, "fs ok");
+    (Arc::new(desk), Arc::new(browser), Arc::new(fs))
+}
+
+#[tokio::test]
+async fn computer_target_off_hides_tools_and_inherits_to_subagents() {
+    let env = setup();
+    let host_desk = NamedDesktop::new("host");
+    let pc_desk = NamedDesktop::new("pc");
+
+    let (desk_t, browser_t, fs_t) = computer_test_tools();
+    let provider_off = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(host_desk)),
+        pc: parking_lot::RwLock::new(Some(pc_desk)),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    });
+    let fake_off = Fake::new(vec![
+        calls(&[
+            ("c1", "desktop_ping", json!({})),
+            ("c2", "browser_ping", json!({})),
+            ("c3", "fs_ping", json!({})),
+            ("c4", "spawn_subagent", json!({"task": "child work"})),
+        ]),
+        // Child subagent reply:
+        text("child done"),
+        // Parent final reply:
+        text("parent done"),
+    ]);
+    let registry = ToolRegistry::new();
+    registry.register(Arc::clone(&desk_t) as Arc<dyn Tool>);
+    registry.register(Arc::clone(&browser_t) as Arc<dyn Tool>);
+    registry.register(Arc::clone(&fs_t) as Arc<dyn Tool>);
+    let lp = AgentLoop::new(
+        Arc::clone(&env.storage),
+        registry,
+        Providers::single(Arc::clone(&fake_off) as Arc<dyn ChatProvider>),
+        cfg(Policy::full()),
+    )
+    .with_subagents();
+    lp.set_computer_provider(provider_off);
+    lp.add_profile(env.bot, profile("[runtime]\ncomputer = \"off\"\n"));
+
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+
+    let parent_tools = req_tool_names(&fake_off.request(0));
+    assert!(
+        parent_tools.iter().any(|t| t == "fs_ping"),
+        "{parent_tools:?}"
+    );
+    assert!(
+        !parent_tools.iter().any(|t| t == "desktop_ping"),
+        "{parent_tools:?}"
+    );
+    assert!(
+        !parent_tools.iter().any(|t| t == "browser_ping"),
+        "{parent_tools:?}"
+    );
+
+    let child_tools = req_tool_names(&fake_off.request(1));
+    assert!(
+        child_tools.iter().any(|t| t == "fs_ping"),
+        "{child_tools:?}"
+    );
+    assert!(
+        !child_tools.iter().any(|t| t == "desktop_ping"),
+        "{child_tools:?}"
+    );
+    assert!(
+        !child_tools.iter().any(|t| t == "browser_ping"),
+        "{child_tools:?}"
+    );
+
+    assert_eq!(desk_t.count.load(Ordering::SeqCst), 0);
+    assert_eq!(browser_t.count.load(Ordering::SeqCst), 0);
+    assert_eq!(fs_t.count.load(Ordering::SeqCst), 1);
+
+    let parent_final_msgs = tool_messages(&fake_off.request(2));
+    assert!(
+        parent_final_msgs[0].contains("unknown tool"),
+        "{parent_final_msgs:?}"
+    );
+    assert!(
+        parent_final_msgs[1].contains("unknown tool"),
+        "{parent_final_msgs:?}"
+    );
+
+    let stored_parent = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!(stored_parent.computer_target.as_deref(), Some("off"));
+    let children = env.storage.list_child_runs(run).unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].computer_target.as_deref(), Some("off"));
+}
+
+async fn run_computer_probe(
+    env: &Env,
+    computer_toml: &str,
+    provider: Arc<MockComputerProvider>,
+) -> (Vec<String>, Option<bool>, Option<String>, Option<String>) {
+    let (desk_t, browser_t, fs_t) = computer_test_tools();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "inspect_ctrl", json!({}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&desk_t), t(&browser_t), t(&fs_t)],
+        profile(&format!("[runtime]\ncomputer = \"{computer_toml}\"\n")),
+        cfg(Policy::full()),
+    );
+    lp.set_computer_provider(provider);
+    let inspect = Arc::new(ControlInspectTool {
+        spec: ToolSpec {
+            name: "inspect_ctrl".into(),
+            description: "inspect".into(),
+            input_schema: json!({"type": "object"}),
+            effect: Effect::Read,
+            category: PermissionCategory::Fs,
+            platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
+        },
+        control: crate::control::LoopControl {
+            sh: Arc::downgrade(&lp.sh),
+        },
+        seen_headless: Mutex::new(Vec::new()),
+        seen_window: Mutex::new(Vec::new()),
+    });
+    lp.sh.tools.register(Arc::clone(&inspect) as Arc<dyn Tool>);
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let tools = req_tool_names(&fake.request(0));
+    let headless = inspect.seen_headless.lock().pop().flatten();
+    let window = inspect.seen_window.lock().pop().flatten();
+    let target = env.storage.get_run(run).unwrap().unwrap().computer_target;
+    (tools, headless, window, target)
+}
+
+#[tokio::test]
+async fn computer_target_selects_tools_backend_and_browser_headless_per_resolution() {
+    let env = setup();
+    let host_desk = NamedDesktop::new("host");
+    let pc_desk = NamedDesktop::new("pc");
+
+    // 1. "browser": desktop hidden, browser visible, headless = true.
+    let (br_tools, br_headless, br_win, br_label) = run_computer_probe(
+        &env,
+        "browser",
+        Arc::new(MockComputerProvider {
+            local: parking_lot::RwLock::new(None),
+            pc: parking_lot::RwLock::new(None),
+            is_host: true,
+            browser_available: true,
+            has_display: false,
+        }),
+    )
+    .await;
+    assert!(br_tools.iter().any(|t| t == "browser_ping"), "{br_tools:?}");
+    assert!(
+        !br_tools.iter().any(|t| t == "desktop_ping"),
+        "{br_tools:?}"
+    );
+    assert_eq!(br_headless, Some(true));
+    assert_eq!(br_win, None);
+    assert_eq!(br_label.as_deref(), Some("browser"));
+
+    // 2. "host" with display: desktop + browser visible, headless = false, desktop = host.
+    let (host_tools, host_headless, host_win, host_label) = run_computer_probe(
+        &env,
+        "host",
+        Arc::new(MockComputerProvider {
+            local: parking_lot::RwLock::new(Some(host_desk)),
+            pc: parking_lot::RwLock::new(Some(pc_desk.clone())),
+            is_host: true,
+            browser_available: true,
+            has_display: true,
+        }),
+    )
+    .await;
+    assert!(
+        host_tools.iter().any(|t| t == "desktop_ping"),
+        "{host_tools:?}"
+    );
+    assert!(
+        host_tools.iter().any(|t| t == "browser_ping"),
+        "{host_tools:?}"
+    );
+    assert_eq!(host_headless, Some(false));
+    assert_eq!(host_win.as_deref(), Some("window-host"));
+    assert_eq!(host_label.as_deref(), Some("host"));
+
+    // 3. "pc": desktop = pc backend, headless = true, browser follows provider availability.
+    let (pc_tools, pc_headless, pc_win, pc_label) = run_computer_probe(
+        &env,
+        "pc",
+        Arc::new(MockComputerProvider {
+            local: parking_lot::RwLock::new(Some(NamedDesktop::new("local"))),
+            pc: parking_lot::RwLock::new(Some(pc_desk)),
+            is_host: true,
+            browser_available: true,
+            has_display: true,
+        }),
+    )
+    .await;
+    assert!(pc_tools.iter().any(|t| t == "desktop_ping"), "{pc_tools:?}");
+    assert!(
+        !pc_tools.iter().any(|t| t == "browser_ping"),
+        "{pc_tools:?}"
+    );
+    assert_eq!(pc_headless, None);
+    assert_eq!(pc_win.as_deref(), Some("window-pc"));
+    assert_eq!(pc_label.as_deref(), Some("pc"));
+}
+
+#[tokio::test]
+async fn script_inner_call_respects_computer_target_disablement() {
+    let env = setup();
+    let code = "try { await tools.call('desktop_ping', {}); return 'ran'; } catch (e) { return 'blocked: ' + e; }";
+    let fake = Fake::new(vec![
+        calls(&[("c1", "script_run", json!({ "code": code }))]),
+        text("ok"),
+    ]);
+    let mut desk = tool("desktop_ping", Effect::Read, "ran");
+    desk.spec.category = PermissionCategory::Desktop;
+    let desk = Arc::new(desk);
+
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&desk)],
+        profile("[runtime]\ncomputer = \"off\"\n"),
+        cfg(Policy::full()),
+    )
+    .with_builtin_tools(builtin_cfg(&env, Arc::new(NoGate)));
+    lp.set_computer_provider(Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("local"))),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    }));
+
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(desk.count.load(Ordering::SeqCst), 0);
+    let msg = tool_messages(&fake.request(1)).join("\n");
+    assert!(msg.contains("blocked:"), "{msg}");
+}
+
+#[tokio::test]
+async fn waiting_for_pc_pauses_cancels_and_resumes_when_pc_comes_online() {
+    let env = setup();
+    let provider = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(None),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: false,
+        has_display: false,
+    });
+    let fake = Fake::new(vec![
+        calls(&[("c1", "inspect_ctrl", json!({}))]),
+        text("pc completed"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"pc\"\n"),
+        cfg(Policy::full()),
+    );
+    lp.set_computer_provider(provider.clone());
+    let inspect = Arc::new(ControlInspectTool {
+        spec: ToolSpec {
+            name: "inspect_ctrl".into(),
+            description: "inspect".into(),
+            input_schema: json!({"type": "object"}),
+            effect: Effect::Read,
+            category: PermissionCategory::Fs,
+            platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
+        },
+        control: crate::control::LoopControl {
+            sh: Arc::downgrade(&lp.sh),
+        },
+        seen_headless: Mutex::new(Vec::new()),
+        seen_window: Mutex::new(Vec::new()),
+    });
+    lp.sh.tools.register(Arc::clone(&inspect) as Arc<dyn Tool>);
+
+    // Run 1: PC offline -> pauses in waiting_for_pc, then user cancels it.
+    let mut rx = lp.subscribe();
+    let run1 = lp.run_turn(env.chat, "wait then cancel").unwrap();
+    assert_eq!(lp.wait(run1).await.unwrap(), RunState::Paused);
+    let stored1 = env.storage.get_run(run1).unwrap().unwrap();
+    assert_eq!(stored1.state, "paused");
+    assert_eq!(
+        stored1.pause_reason.as_deref(),
+        Some(computer_target::WAIT_FOR_PC_REASON)
+    );
+    assert_eq!(stored1.computer_target.as_deref(), Some("pc"));
+    assert_eq!(
+        fake.n_requests(),
+        0,
+        "model must not run while waiting for PC"
+    );
+
+    lp.cancel(run1).unwrap();
+    let Event::RunFinished(finished) = until(
+        &mut rx,
+        |e| matches!(e, Event::RunFinished(f) if f.run_id == run1),
+    )
+    .await
+    else {
+        unreachable!()
+    };
+    assert!(
+        finished
+            .error
+            .as_deref()
+            .is_some_and(|e| e.to_ascii_lowercase().contains("cancel")),
+        "{:?}",
+        finished.error
+    );
+    let stored1 = env.storage.get_run(run1).unwrap().unwrap();
+    assert_eq!(stored1.state, "cancelled");
+    assert_eq!(stored1.pause_reason, None);
+
+    // Run 2: PC offline -> pauses; then PC comes online -> resume_waiting_for_pc finishes it.
+    let run2 = lp.run_turn(env.chat, "wait then resume").unwrap();
+    assert_eq!(lp.wait(run2).await.unwrap(), RunState::Paused);
+    let pc_desk = NamedDesktop::new("pc-live");
+    *provider.pc.write() = Some(pc_desk.clone());
+    assert_eq!(lp.resume_waiting_for_pc().await, vec![run2]);
+    assert_eq!(lp.wait(run2).await.unwrap(), RunState::Succeeded);
+
+    let stored2 = env.storage.get_run(run2).unwrap().unwrap();
+    assert_eq!(stored2.state, "succeeded");
+    assert_eq!(stored2.pause_reason, None);
+    assert_eq!(stored2.computer_target.as_deref(), Some("pc"));
+    assert_eq!(
+        *inspect.seen_window.lock(),
+        vec![Some("window-pc-live".into())]
+    );
+    assert_eq!(pc_desk.snapshots.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn waiting_for_pc_timeout_marks_run_failed_and_emits_error() {
+    let env = setup();
+    let provider = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(None),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: false,
+        has_display: false,
+    });
+    let mut config = cfg(Policy::full());
+    config.wait_for_pc_timeout = Duration::from_millis(60);
+    let fake = Fake::new(vec![text("never reached")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"pc\"\n"),
+        config,
+    );
+    lp.set_computer_provider(provider);
+
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "timeout test").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+
+    let mut saw_timeout_err = false;
+    let finished_err = loop {
+        match until(&mut rx, |e| {
+            matches!(e, Event::Error(err) if err.run_id == run)
+                || matches!(e, Event::RunFinished(f) if f.run_id == run)
+        })
+        .await
+        {
+            Event::Error(err) if err.run_id == run && err.message.contains("timed out") => {
+                assert!(!err.recoverable);
+                saw_timeout_err = true;
+            }
+            Event::RunFinished(f) if f.run_id == run => break f.error,
+            _ => {}
+        }
+    };
+    assert!(saw_timeout_err, "expected timeout Error event");
+    assert!(
+        finished_err
+            .as_deref()
+            .is_some_and(|m| m.contains("timed out")),
+        "{finished_err:?}"
+    );
+
+    let stored = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!(stored.state, "failed");
+    assert_eq!(stored.pause_reason, None);
+    assert!(
+        stored
+            .error
+            .as_deref()
+            .is_some_and(|m| m.contains("timed out")),
+        "{:?}",
+        stored.error
+    );
+    assert_eq!(fake.n_requests(), 0);
+}
+
+#[tokio::test]
+async fn computer_resolution_stays_fixed_across_resume() {
+    let env = setup();
+    let host_desk = NamedDesktop::new("host-fixed");
+    let pc_desk = NamedDesktop::new("pc-later");
+    let provider = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(host_desk)),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    });
+    let mut write_tool = tool("fs_gate", Effect::Write, "written");
+    write_tool.spec.category = PermissionCategory::Fs;
+    let write_tool = Arc::new(write_tool);
+
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_gate", json!({}))]),
+        calls(&[("c2", "inspect_ctrl", json!({}))]),
+        text("all done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&write_tool)],
+        profile("[runtime]\ncomputer = \"auto\"\n"),
+        cfg(Policy::approve_destructive()),
+    );
+    lp.set_computer_provider(provider.clone());
+    let inspect = Arc::new(ControlInspectTool {
+        spec: ToolSpec {
+            name: "inspect_ctrl".into(),
+            description: "inspect".into(),
+            input_schema: json!({"type": "object"}),
+            effect: Effect::Read,
+            category: PermissionCategory::Fs,
+            platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
+        },
+        control: crate::control::LoopControl {
+            sh: Arc::downgrade(&lp.sh),
+        },
+        seen_headless: Mutex::new(Vec::new()),
+        seen_window: Mutex::new(Vec::new()),
+    });
+    lp.sh.tools.register(Arc::clone(&inspect) as Arc<dyn Tool>);
+
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "fix target across restart").unwrap();
+    until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    assert_eq!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_target
+            .as_deref(),
+        Some("host")
+    );
+
+    // Pause and simulate restart + PC coming online in the meantime.
+    lp.shutdown(Duration::from_millis(500)).await;
+    *provider.pc.write() = Some(pc_desk);
+
+    let lp2 = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&write_tool)],
+        profile("[runtime]\ncomputer = \"auto\"\n"),
+        cfg(Policy::full()),
+    );
+    lp2.set_computer_provider(provider);
+    let inspect2 = Arc::new(ControlInspectTool {
+        spec: inspect.spec.clone(),
+        control: crate::control::LoopControl {
+            sh: Arc::downgrade(&lp2.sh),
+        },
+        seen_headless: Mutex::new(Vec::new()),
+        seen_window: Mutex::new(Vec::new()),
+    });
+    lp2.sh
+        .tools
+        .register(Arc::clone(&inspect2) as Arc<dyn Tool>);
+    lp2.recover().unwrap();
+    lp2.resume(run).unwrap();
+    assert_eq!(lp2.wait(run).await.unwrap(), RunState::Succeeded);
+
+    assert_eq!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_target
+            .as_deref(),
+        Some("host")
+    );
+    assert_eq!(
+        *inspect2.seen_window.lock(),
+        vec![Some("window-host-fixed".into())],
+        "resumed run must keep its original 'host' desktop rather than switching to newly online 'pc'"
+    );
+}
+
+#[tokio::test]
+async fn resumed_pc_never_switches_node_or_falls_back_before_provider_install() {
+    let env = setup();
+    let fake = Fake::new(vec![text("resumed")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"pc\"\n"),
+        cfg(Policy::full()),
+    );
+    let provider = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+        pc: parking_lot::RwLock::new(Some(NamedDesktop::new("pc-A"))),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    });
+    lp.set_computer_provider(provider.clone());
+    let profile = lp.sh.profile_for(env.bot).unwrap();
+    let resolved = lp.sh.resolve_computer_for_run(&profile, None);
+    let run = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    env.storage
+        .insert_message(&storage::Message {
+            id: uuid::Uuid::now_v7(),
+            user_id: env.user,
+            chat_id: env.chat,
+            run_id: Some(run),
+            role: "user".into(),
+            content: "resume safely".into(),
+            created_at_ms: now_ms(),
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: Vec::new(),
+        })
+        .unwrap();
+    lp.sh.bind_computer(run, &resolved).unwrap();
+    lp.rt.pause_queued(run, None).unwrap();
+    let stored = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!(stored.computer_node.as_deref(), Some("pc-A"));
+
+    // Reconnection order changes: B is now the active PC; A must remain pinned.
+    *provider.pc.write() = Some(NamedDesktop::new("pc-B"));
+    lp.resume(run).unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+    let waiting = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!(
+        waiting.pause_reason.as_deref(),
+        Some(computer_target::WAIT_FOR_PC_REASON)
+    );
+    assert_eq!(waiting.computer_node.as_deref(), Some("pc-A"));
+    assert!(lp.resume_waiting_for_pc().await.is_empty());
+    assert_eq!(fake.n_requests(), 0);
+
+    // Offline and missing-provider cases must not use the host desktop.
+    *provider.pc.write() = None;
+    let offline = lp.sh.resolve_computer_for_run(&profile, Some(&waiting));
+    assert!(offline.wait_for_pc && offline.desktop.is_none() && !offline.browser);
+    *lp.sh.computer_provider.write() = None;
+    *lp.sh.static_desktop.write() = Some(NamedDesktop::new("wrong-local"));
+    lp.resume(run).unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+    assert_eq!(fake.n_requests(), 0);
+
+    // Only A can resume, even if the profile was edited while waiting.
+    *provider.pc.write() = Some(NamedDesktop::new("pc-A"));
+    lp.set_computer_provider(provider);
+    lp.add_profile(env.bot, profile_for_off());
+    assert_eq!(lp.resume_waiting_for_pc().await, vec![run]);
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_node
+            .as_deref(),
+        Some("pc-A")
+    );
+}
+
+fn profile_for_off() -> BotProfile {
+    profile("[runtime]\ncomputer = \"off\"\n")
+}
+
+#[tokio::test]
+async fn computer_approval_and_grants_are_bound_to_kind_and_node() {
+    for scope in [
+        ApprovalScope::ThisChat,
+        ApprovalScope::Always,
+        ApprovalScope::AlwaysCategory,
+    ] {
+        let env = setup();
+        let mut desk = tool("desktop_write", Effect::Write, "ok");
+        desk.spec.category = PermissionCategory::Desktop;
+        let desk = Arc::new(desk);
+        let fake = Fake::new(vec![
+            calls(&[("c1", "desktop_write", json!({}))]),
+            text("host done"),
+            calls(&[("c2", "desktop_write", json!({}))]),
+            text("PC done"),
+            calls(&[("c3", "desktop_write", json!({}))]),
+            text("B done"),
+            calls(&[("c4", "desktop_write", json!({}))]),
+            text("B again"),
+        ]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[t(&desk)],
+            profile("[runtime]\ncomputer = \"host\"\n"),
+            cfg(Policy::approve_destructive()),
+        );
+        let provider = Arc::new(MockComputerProvider {
+            local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+            pc: parking_lot::RwLock::new(Some(NamedDesktop::new("pc-A"))),
+            is_host: true,
+            browser_available: true,
+            has_display: true,
+        });
+        lp.set_computer_provider(provider.clone());
+        lp.sh.grants.lock().always.push(crate::Grant {
+            bot_id: env.bot,
+            target: GrantTarget::Category(PermissionCategory::Desktop),
+            granted_at_ms: 1,
+            computer: None,
+            inert: false,
+        });
+        let mut rx = lp.subscribe();
+        for (target, expected_name) in [("host", "Local computer"), ("pc", "pc-A"), ("pc", "pc-B")]
+        {
+            lp.add_profile(
+                env.bot,
+                profile(&format!("[runtime]\ncomputer = {target:?}\n")),
+            );
+            if expected_name == "pc-B" {
+                *provider.pc.write() = Some(NamedDesktop::new("pc-B"));
+            }
+            let run = lp.run_turn(env.chat, "write").unwrap();
+            let Event::ApprovalNeeded(a) =
+                until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+            else {
+                unreachable!()
+            };
+            assert!(a.summary.contains(expected_name), "{}", a.summary);
+            let details = a.details.unwrap();
+            assert_eq!(details["computer_target"]["kind"], target);
+            assert_eq!(details["computer_target"]["node_name"], expected_name);
+            lp.approve(a.call_id, scope, env.user).unwrap();
+            assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+            assert_eq!(env.storage.list_approvals(run).unwrap().len(), 1);
+        }
+        let lp = if matches!(scope, ApprovalScope::Always | ApprovalScope::AlwaysCategory) {
+            let restarted = make_loop(
+                &env.storage,
+                env.bot,
+                &fake,
+                &[t(&desk)],
+                profile("[runtime]\ncomputer = \"pc\"\n"),
+                cfg(Policy::approve_destructive()),
+            );
+            restarted.set_computer_provider(provider);
+            restarted
+        } else {
+            lp
+        };
+        let same_pc = lp.run_turn(env.chat, "same target").unwrap();
+        assert_eq!(lp.wait(same_pc).await.unwrap(), RunState::Succeeded);
+        assert!(env.storage.list_approvals(same_pc).unwrap().is_empty());
+        assert_eq!(desk.count.load(Ordering::SeqCst), 4);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn computer_prepare_skips_non_pc_targets_and_bounds_stalled_provider() {
+    struct Stalled(AtomicUsize);
+    impl computer_target::ComputerProvider for Stalled {
+        fn local(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+            None
+        }
+        fn pc(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+            None
+        }
+        fn is_host(&self) -> bool {
+            true
+        }
+        fn browser_available(&self) -> bool {
+            false
+        }
+        fn prepare(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Box::pin(std::future::pending())
+        }
+    }
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let provider = Arc::new(Stalled(AtomicUsize::new(0)));
+    lp.set_computer_provider(provider.clone());
+    for target in [
+        computer_target::ComputerTarget::Off,
+        computer_target::ComputerTarget::Browser,
+        computer_target::ComputerTarget::Host,
+    ] {
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            lp.sh.prepare_computer_provider(&target),
+        )
+        .await
+        .expect("non-PC targets must not wait on preparation");
+    }
+    assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+    let start = tokio::time::Instant::now();
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        lp.sh
+            .prepare_computer_provider(&computer_target::ComputerTarget::Pc),
+    )
+    .await
+    .expect("PC preparation must have its own bounded timeout");
+    assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+    assert_eq!(start.elapsed(), Duration::from_secs(2));
+}
+
+#[tokio::test(start_paused = true)]
+async fn computer_prepare_timeout_emits_a_run_event() {
+    struct Stalled {
+        hits: AtomicUsize,
+        local: Arc<NamedDesktop>,
+    }
+    impl computer_target::ComputerProvider for Stalled {
+        fn local(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+            Some(Arc::clone(&self.local) as Arc<dyn desktop_api::DesktopBackend>)
+        }
+        fn pc(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+            None
+        }
+        fn is_host(&self) -> bool {
+            true
+        }
+        fn browser_available(&self) -> bool {
+            false
+        }
+        fn has_display(&self) -> bool {
+            true
+        }
+        fn local_node(&self) -> computer_target::ComputerNode {
+            computer_target::ComputerNode {
+                id: MACHINE_A.into(),
+                name: "Local computer".into(),
+            }
+        }
+        fn prepare(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            Box::pin(std::future::pending())
+        }
+    }
+    let env = setup();
+    let fake = Fake::new(vec![text("continued from cache")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"auto\"\n"),
+        cfg(Policy::full()),
+    );
+    let provider = Arc::new(Stalled {
+        hits: AtomicUsize::new(0),
+        local: NamedDesktop::new("host"),
+    });
+    lp.set_computer_provider(provider.clone());
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(provider.hits.load(Ordering::SeqCst), 1);
+    let notice = until(&mut rx, |e| {
+        matches!(
+            e,
+            Event::Error(err)
+                if err.recoverable && err.message == crate::shared::COMPUTER_PREPARE_TIMEOUT_NOTICE
+        )
+    })
+    .await;
+    assert!(matches!(notice, Event::Error(_)));
+    assert_eq!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_target
+            .as_deref(),
+        Some("host"),
+        "a timed-out prepare still resolves from the cache"
+    );
+}
+
+#[tokio::test]
+async fn explicit_host_without_display_fails_before_model() {
+    let env = setup();
+    let fake = Fake::new(vec![text("must not run")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::full()),
+    );
+    lp.set_computer_provider(Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(None),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: false,
+    }));
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Failed);
+    assert!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("no local desktop")
+    );
+    assert_eq!(fake.n_requests(), 0);
+}
+
+#[tokio::test]
+async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
+    let env = setup();
+    let fake = Fake::new(vec![text("after upgrade")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    env.storage
+        .insert_message(&storage::Message {
+            id: uuid::Uuid::now_v7(),
+            user_id: env.user,
+            chat_id: env.chat,
+            run_id: Some(run),
+            role: "user".into(),
+            content: "resume safely".into(),
+            created_at_ms: now_ms(),
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: Vec::new(),
+        })
+        .unwrap();
+    lp.rt.pause_queued(run, None).unwrap();
+    drop(lp);
+    let Env {
+        dir,
+        storage,
+        user: _,
+        bot,
+        chat: _,
+    } = env;
+    drop(storage);
+    {
+        let conn = rusqlite::Connection::open(dir.path().join("bot.db")).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE runs DROP COLUMN computer_node;
+            ALTER TABLE runs DROP COLUMN computer_node_name;
+            ALTER TABLE runs DROP COLUMN paused_at_ms;
+            ALTER TABLE runs DROP COLUMN computer_target;
+            ALTER TABLE runs DROP COLUMN pause_reason;
+            ALTER TABLE messages DROP COLUMN exposure_untrusted;
+            ALTER TABLE messages DROP COLUMN exposure_private;
+            ALTER TABLE messages DROP COLUMN exposure_sources;
+            PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    }
+    let storage = Arc::new(Storage::open(dir.path()).unwrap());
+    let row = storage.get_run(run).unwrap().unwrap();
+    assert_eq!(row.state, "paused");
+    assert_eq!(row.computer_target, None);
+    assert!(row.paused_at_ms.is_some());
+    let lp = make_loop(
+        &storage,
+        bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"off\"\n"),
+        cfg(Policy::full()),
+    );
+    lp.recover().unwrap();
+    lp.resume(run).unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Failed);
+    let row = storage.get_run(run).unwrap().unwrap();
+    assert_eq!(row.computer_target, None);
+    assert!(
+        row.error
+            .unwrap()
+            .contains("original computer identity is unknown")
+    );
+    assert_eq!(fake.n_requests(), 0);
+}
+
+#[tokio::test]
+async fn explicit_node_before_provider_install_retains_requested_key() {
+    let env = setup();
+    let fake = Fake::new(vec![text("A resumed")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"node:pc-A\"\n"),
+        cfg(Policy::full()),
+    );
+    *lp.sh.static_desktop.write() = Some(NamedDesktop::new("wrong-host"));
+    let run = lp.run_turn(env.chat, "wait for A").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+    assert_eq!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_node
+            .as_deref(),
+        Some("pc-A")
+    );
+    let provider = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+        pc: parking_lot::RwLock::new(Some(NamedDesktop::new("pc-B"))),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    });
+    lp.set_computer_provider(provider.clone());
+    assert!(lp.resume_waiting_for_pc().await.is_empty());
+    assert_eq!(fake.n_requests(), 0);
+    *provider.pc.write() = Some(NamedDesktop::new("pc-A"));
+    assert_eq!(lp.resume_waiting_for_pc().await, vec![run]);
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+}
+
+#[tokio::test]
+async fn browser_eval_script_approvals_and_grants_are_computer_scoped() {
+    let env = setup();
+    let mut eval = tool("browser_eval", Effect::Write, "evaluated");
+    eval.spec.category = PermissionCategory::Script;
+    let eval = Arc::new(eval);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "browser_eval", json!({}))]),
+        text("host done"),
+        calls(&[("c2", "browser_eval", json!({}))]),
+        text("browser done"),
+        calls(&[("c3", "browser_eval", json!({}))]),
+        text("browser again"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&eval)],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::approve_destructive()),
+    );
+    lp.set_computer_provider(Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    }));
+    // A broad legacy Script grant also cannot waive a computer tool approval.
+    lp.sh.grants.lock().always.push(crate::Grant {
+        bot_id: env.bot,
+        target: GrantTarget::Category(PermissionCategory::Script),
+        granted_at_ms: 1,
+        computer: None,
+        inert: false,
+    });
+    let mut rx = lp.subscribe();
+    for target in ["host", "browser"] {
+        lp.add_profile(
+            env.bot,
+            profile(&format!("[runtime]\ncomputer = {target:?}\n")),
+        );
+        let run = lp.run_turn(env.chat, "evaluate").unwrap();
+        let Event::ApprovalNeeded(a) =
+            until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+        else {
+            unreachable!()
+        };
+        assert!(a.summary.contains(&format!("[{target}: Local computer")));
+        assert_eq!(
+            a.details.as_ref().unwrap()["computer_target"]["kind"],
+            target
+        );
+        lp.approve(a.call_id, ApprovalScope::AlwaysCategory, env.user)
+            .unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    }
+    let same_target = lp.run_turn(env.chat, "again").unwrap();
+    assert_eq!(lp.wait(same_target).await.unwrap(), RunState::Succeeded);
+    assert!(env.storage.list_approvals(same_target).unwrap().is_empty());
+    assert_eq!(eval.count.load(Ordering::SeqCst), 3);
+}
+
+const MACHINE_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const MACHINE_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+fn seed_desktop_grant(env: &Env, computer: Option<&str>) {
+    let mut detail = json!({
+        "bot_id": env.bot.to_string(),
+        "category": "desktop",
+    });
+    if let Some(computer) = computer {
+        detail["computer"] = json!(computer);
+    }
+    env.storage
+        .append_audit(env.user, None, "user", "grant.always", &detail)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn local_computer_grant_does_not_match_on_another_machine() {
+    let env = setup();
+    let mut desk = tool("desktop_write", Effect::Write, "ok");
+    desk.spec.category = PermissionCategory::Desktop;
+    let desk = Arc::new(desk);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "desktop_write", json!({}))]),
+        text("on A"),
+        calls(&[("c2", "desktop_write", json!({}))]),
+        text("on B"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&desk)],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::approve_destructive()),
+    );
+    lp.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, false));
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "write").unwrap();
+    let Event::ApprovalNeeded(a) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    lp.approve(a.call_id, ApprovalScope::AlwaysCategory, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let scope_a = format!("host:{MACHINE_A}");
+    assert_eq!(
+        lp.list_grants(env.bot)[0].computer.as_deref(),
+        Some(scope_a.as_str())
+    );
+
+    let lp_b = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&desk)],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::approve_destructive()),
+    );
+    lp_b.set_computer_provider(machine_provider(MACHINE_B, Some("host"), None, false));
+    let mut rx_b = lp_b.subscribe();
+    let run_b = lp_b.run_turn(env.chat, "write on B").unwrap();
+    let Event::ApprovalNeeded(a_b) =
+        until(&mut rx_b, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        panic!("a grant made on machine A matched machine B")
+    };
+    lp_b.deny(a_b.call_id, env.user, None).unwrap();
+    let _ = lp_b.wait(run_b).await;
+}
+
+#[tokio::test]
+async fn identity_change_marks_orphaned_grants_once_and_fails_paused_local_pc() {
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    for scope in [
+        format!("host:{MACHINE_A}"),
+        format!("pc:{MACHINE_A}"),
+        format!("browser:{MACHINE_A}"),
+        "pc:paired-offline".into(),
+    ] {
+        seed_desktop_grant(&env, Some(&scope));
+    }
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    lp.reconcile_computer_identity(MACHINE_A, Some(&["paired-offline".into()]))
+        .unwrap();
+    assert!(lp.list_grants(env.bot).iter().all(|g| !g.inert));
+    let old = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    let remote = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    for (run, node) in [(old, MACHINE_A), (remote, "paired-offline")] {
+        env.storage
+            .bind_run_computer(run, "pc", Some(node), Some("PC"))
+            .unwrap();
+        lp.rt
+            .pause_queued(run, Some(computer_target::WAIT_FOR_PC_REASON))
+            .unwrap();
+    }
+    for _ in 0..2 {
+        let reloaded = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        reloaded
+            .reconcile_computer_identity(MACHINE_B, Some(&["paired-offline".into()]))
+            .unwrap();
+        let grants = reloaded.list_grants(env.bot);
+        assert_eq!(grants.iter().filter(|g| g.inert).count(), 3);
+        assert!(
+            !grants
+                .iter()
+                .find(|g| g.computer.as_deref() == Some("pc:paired-offline"))
+                .unwrap()
+                .inert
+        );
+        assert!(!reloaded.sh.grants.lock().covers(
+            env.bot,
+            "desktop_write",
+            PermissionCategory::Desktop,
+            Some(&format!("pc:{MACHINE_A}"))
+        ));
+        let row = env.storage.get_run(old).unwrap().unwrap();
+        assert_eq!(row.state, "failed");
+        assert!(
+            row.error
+                .unwrap()
+                .contains("identity changed or state imported")
+        );
+        assert_eq!(
+            env.storage.get_run(remote).unwrap().unwrap().state,
+            "paused"
+        );
+        let audits = env.storage.list_audit(env.user).unwrap();
+        assert_eq!(
+            audits.iter().filter(|e| e.action == "grant.inert").count(),
+            3
+        );
+        assert_eq!(
+            audits
+                .iter()
+                .filter(|e| e.action == "computer.identity")
+                .count(),
+            2
+        );
+        assert_eq!(
+            audits
+                .iter()
+                .filter(|e| e.action == "run.computer_identity_unavailable")
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn unknown_paired_list_keeps_pc_grants_and_paused_pc_runs() {
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    seed_desktop_grant(&env, Some("pc:paired-offline"));
+    let mk = || {
+        make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(""),
+            cfg(Policy::full()),
+        )
+    };
+    let lp = mk();
+    let run = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    env.storage
+        .bind_run_computer(run, "pc", Some("paired-offline"), Some("PC"))
+        .unwrap();
+    lp.rt
+        .pause_queued(run, Some(computer_target::WAIT_FOR_PC_REASON))
+        .unwrap();
+    // Peer disabled at boot: the paired list is unknown, not empty.
+    mk().reconcile_computer_identity(MACHINE_A, None).unwrap();
+    let after = mk();
+    assert!(after.list_grants(env.bot).iter().all(|g| !g.inert));
+    assert_eq!(env.storage.get_run(run).unwrap().unwrap().state, "paused");
+    // Peer enabled later with the PC still paired: the grant matches again.
+    after
+        .reconcile_computer_identity(MACHINE_A, Some(&["paired-offline".into()]))
+        .unwrap();
+    assert!(after.sh.grants.lock().covers(
+        env.bot,
+        "desktop_write",
+        PermissionCategory::Desktop,
+        Some("pc:paired-offline")
+    ));
+    // A known list that lacks the id does mark it inert.
+    after
+        .reconcile_computer_identity(MACHINE_A, Some(&[]))
+        .unwrap();
+    assert!(after.list_grants(env.bot).iter().all(|g| g.inert));
+    assert_eq!(env.storage.get_run(run).unwrap().unwrap().state, "failed");
+}
+
+#[tokio::test]
+async fn identity_row_only_for_computer_users_without_full_audit_scan() {
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    lp.reconcile_computer_identity(MACHINE_A, None).unwrap();
+    assert!(
+        env.storage
+            .last_audit_by_action(env.user, "computer.identity")
+            .unwrap()
+            .is_none()
+    );
+    seed_desktop_grant(&env, Some(&format!("host:{MACHINE_A}")));
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    lp.reconcile_computer_identity(MACHINE_A, None).unwrap();
+    lp.reconcile_computer_identity(MACHINE_A, None).unwrap();
+    let audits = env.storage.list_audit(env.user).unwrap();
+    assert_eq!(
+        audits
+            .iter()
+            .filter(|e| e.action == "computer.identity")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn legacy_local_grants_are_inert_and_audited_once() {
+    let env = setup();
+    let fake = Fake::new(vec![]);
+    for kind in ["host", "pc", "browser"] {
+        seed_desktop_grant(&env, Some(&format!("{kind}:local")));
+    }
+    for _ in 0..2 {
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        let listed = lp.list_grants(env.bot);
+        assert_eq!(listed.len(), 3);
+        assert!(listed.iter().all(|g| g.inert));
+        for scope in ["host:local", "pc:local", "browser:local"] {
+            assert!(!lp.sh.grants.lock().covers(
+                env.bot,
+                "desktop_write",
+                PermissionCategory::Desktop,
+                Some(scope),
+            ));
+        }
+        assert_eq!(
+            env.storage
+                .list_audit(env.user)
+                .unwrap()
+                .iter()
+                .filter(|e| e.action == "grant.inert")
+                .count(),
+            3
+        );
+    }
+}
+
+#[tokio::test]
+async fn legacy_unscoped_computer_grants_are_inert_and_effective_policy_lists_scopes() {
+    let env = setup();
+    seed_desktop_grant(&env, None);
+    let mut desk = tool("desktop_write", Effect::Write, "ok");
+    desk.spec.category = PermissionCategory::Desktop;
+    let desk = Arc::new(desk);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "desktop_write", json!({}))]),
+        text("asked"),
+        calls(&[("c2", "desktop_write", json!({}))]),
+        text("granted"),
+        calls(&[("c3", "desktop_write", json!({}))]),
+        text("same machine"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&desk)],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::approve_destructive()),
+    );
+    let listed = lp.list_grants(env.bot);
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].inert);
+    assert!(listed[0].computer.is_none());
+    assert!(!lp.sh.grants.lock().covers(
+        env.bot,
+        "desktop_write",
+        PermissionCategory::Desktop,
+        Some(&format!("host:{MACHINE_A}")),
+    ));
+    let inert_audits = |storage: &Storage| {
+        storage
+            .list_audit(env.user)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.action == "grant.inert")
+            .count()
+    };
+    assert_eq!(inert_audits(&env.storage), 1);
+    let reloaded = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&desk)],
+        profile("[runtime]\ncomputer = \"host\"\n"),
+        cfg(Policy::approve_destructive()),
+    );
+    assert_eq!(inert_audits(&env.storage), 1, "inert is recorded once");
+    assert!(reloaded.list_grants(env.bot)[0].inert);
+
+    reloaded.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, false));
+    let mut rx = reloaded.subscribe();
+    let run = reloaded.run_turn(env.chat, "still ask").unwrap();
+    let Event::ApprovalNeeded(a) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        panic!("an unscoped desktop grant authorized a computer")
+    };
+    reloaded
+        .approve(a.call_id, ApprovalScope::AlwaysCategory, env.user)
+        .unwrap();
+    assert_eq!(reloaded.wait(run).await.unwrap(), RunState::Succeeded);
+    let eff = reloaded.effective_policy(env.bot).unwrap();
+    let desktop = &eff.categories[&PermissionCategory::Desktop];
+    assert_eq!(desktop.decision, crate::PolicyDecision::ask());
+    assert!(!desktop.via_grant);
+    assert_eq!(desktop.scopes, vec![format!("host:{MACHINE_A}")]);
+    let again = reloaded.run_turn(env.chat, "same computer").unwrap();
+    assert_eq!(reloaded.wait(again).await.unwrap(), RunState::Succeeded);
+    assert!(env.storage.list_approvals(again).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn auto_emits_when_it_leaves_an_unreachable_paired_pc() {
+    let env = setup();
+    let fake = Fake::new(vec![text("on host"), text("in browser")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"auto\"\n"),
+        cfg(Policy::full()),
+    );
+    lp.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, true));
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let notice = until(&mut rx, |e| {
+        matches!(e, Event::Error(err) if err.recoverable && err.message == "auto: PC not reachable, using host")
+    })
+    .await;
+    assert!(matches!(notice, Event::Error(_)));
+    assert_eq!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_target
+            .as_deref(),
+        Some("host")
+    );
+
+    lp.set_computer_provider(machine_provider(MACHINE_A, None, None, true));
+    let run = lp.run_turn(env.chat, "browser").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let notice = until(&mut rx, |e| {
+        matches!(e, Event::Error(err) if err.recoverable && err.message == "auto: PC not reachable, using browser")
+    })
+    .await;
+    assert!(matches!(notice, Event::Error(_)));
+    assert_eq!(
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_target
+            .as_deref(),
+        Some("browser")
+    );
+}
+
+#[tokio::test]
+async fn legacy_paused_run_never_adopts_this_daemons_computer() {
+    let env = setup();
+    let fake = Fake::new(vec![text("stayed local")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"auto\"\n"),
+        cfg(Policy::full()),
+    );
+    lp.set_computer_provider(machine_provider(
+        MACHINE_A,
+        Some("host-desk"),
+        Some("pc-online"),
+        false,
+    ));
+    for node in [None, Some("local"), Some("pc:local")] {
+        let run = lp
+            .rt
+            .create_run(env.user, env.bot, Some(env.chat), "turn")
+            .unwrap();
+        if let Some(node) = node {
+            env.storage
+                .bind_run_computer(run, "pc", Some(node), Some("Local computer"))
+                .unwrap();
+        }
+        lp.rt.pause_queued(run, None).unwrap();
+        lp.resume(run).unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Failed);
+        let row = env.storage.get_run(run).unwrap().unwrap();
+        assert_eq!(row.computer_node.as_deref(), node);
+        assert!(
+            row.error
+                .unwrap()
+                .contains("original computer identity is unknown")
+        );
+    }
+    assert_eq!(fake.n_requests(), 0);
+}
+
 /// End to end: a 10-step browser turn through the real loop. The model sees
 /// the superseded snapshots shortened (and the shortened prefix stays
 /// byte-identical between calls of the same stride), the stored step outputs
@@ -5475,4 +7266,216 @@ async fn multi_step_browser_turn_compacts_what_the_model_sees_not_what_is_stored
         })
         .count();
     assert_eq!(full, 10);
+}
+
+/// The identity key was unreadable at boot (`unbound-machine`): resuming a
+/// stored host/browser run must leave it paused and untouched so a later boot
+/// with a readable key can still resume it. It must not be failed with
+/// "local computer identity changed".
+#[tokio::test]
+async fn resume_during_unbound_identity_boot_keeps_host_and_browser_runs_paused() {
+    let env = setup();
+    let fake = Fake::new(vec![text("resumed")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let unbound = Arc::new(BoundMachine {
+        inner: MockComputerProvider {
+            local: parking_lot::RwLock::new(None),
+            pc: parking_lot::RwLock::new(None),
+            is_host: true,
+            browser_available: true,
+            has_display: false,
+        },
+        id: "unbound-machine",
+        unreachable: false,
+        unbound: true,
+    });
+    lp.set_computer_provider(unbound);
+    let audits_before = env.storage.list_audit(env.user).unwrap().len();
+    let mut runs = Vec::new();
+    for kind in ["host", "browser"] {
+        let run = lp
+            .rt
+            .create_run(env.user, env.bot, Some(env.chat), "turn")
+            .unwrap();
+        env.storage
+            .bind_run_computer(run, kind, Some(MACHINE_A), Some("Local computer"))
+            .unwrap();
+        lp.rt.pause_queued(run, None).unwrap();
+        let before = env.storage.get_run(run).unwrap().unwrap();
+        lp.resume(run).unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+        let after = env.storage.get_run(run).unwrap().unwrap();
+        assert_eq!(after.state, "paused", "{kind}");
+        assert!(after.error.is_none(), "{kind}: {:?}", after.error);
+        assert_eq!(after.computer_target, before.computer_target);
+        assert_eq!(after.computer_node.as_deref(), Some(MACHINE_A));
+        runs.push(run);
+    }
+    assert_eq!(fake.n_requests(), 0);
+    assert_eq!(
+        env.storage.list_audit(env.user).unwrap().len(),
+        audits_before
+    );
+
+    // A later boot with a readable key and the same identity resumes them.
+    lp.set_computer_provider(machine_provider(MACHINE_A, None, None, false));
+    for run in runs {
+        let state = env.storage.get_run(run).unwrap().unwrap().state;
+        assert_eq!(state, "paused");
+    }
+}
+
+fn unbound_provider() -> Arc<BoundMachine> {
+    Arc::new(BoundMachine {
+        inner: MockComputerProvider {
+            local: parking_lot::RwLock::new(Some(
+                NamedDesktop::new("host") as Arc<dyn desktop_api::DesktopBackend>
+            )),
+            pc: parking_lot::RwLock::new(None),
+            is_host: true,
+            browser_available: true,
+            has_display: true,
+        },
+        id: "unbound-machine",
+        unreachable: false,
+        unbound: true,
+    })
+}
+
+/// A NEW run during a boot whose identity key was unreadable gets no local
+/// computer and persists nothing machine-bound; the next readable boot is clean.
+#[tokio::test]
+async fn fresh_runs_during_unbound_identity_boot_persist_no_local_identity() {
+    let env = setup();
+    for target in ["host", "browser", "auto"] {
+        let fake = Fake::new(vec![text("hello")]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[],
+            profile(&format!(
+                "[runtime]
+computer = \"{target}\"
+"
+            )),
+            cfg(Policy::full()),
+        );
+        lp.set_computer_provider(unbound_provider());
+        let mut rx = lp.subscribe();
+        let run = lp.run_turn(env.chat, "hi").unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded, "{target}");
+        let row = env.storage.get_run(run).unwrap().unwrap();
+        assert_eq!(row.computer_node, None, "{target}");
+        assert_eq!(row.computer_node_name, None, "{target}");
+        assert_eq!(row.computer_target.as_deref(), Some("off"), "{target}");
+        let notice = until(&mut rx, |e| {
+            matches!(e, Event::Error(err) if err.recoverable && err.message.contains("identity could not be read"))
+        })
+        .await;
+        assert!(matches!(notice, Event::Error(_)));
+    }
+    let nodes: Vec<_> = env
+        .storage
+        .list_audit(env.user)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.detail.to_string().contains("unbound-machine"))
+        .collect();
+    assert!(nodes.is_empty(), "{nodes:?}");
+
+    // The lowest common point refuses a non-fingerprint local id outright, and
+    // never derives a grant scope from one.
+    let fake = Fake::new(vec![]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    for label in [
+        computer_target::ComputerLabel::Host,
+        computer_target::ComputerLabel::Browser,
+    ] {
+        let rc = crate::shared::RunComputer {
+            node: Some(computer_target::ComputerNode {
+                id: "unbound-machine".into(),
+                name: "Local computer".into(),
+            }),
+            unavailable_reason: None,
+            label,
+            desktop: None,
+            desktop_available: false,
+            browser: true,
+            browser_headless: None,
+            wait_for_pc: false,
+            notice: None,
+        };
+        assert!(lp.sh.bind_computer(run, &rc).is_err(), "{label:?}");
+    }
+    let row = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!((row.computer_target, row.computer_node), (None, None));
+
+    // Next boot with a readable key starts clean.
+    lp.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, false));
+    lp.reconcile_computer_identity(MACHINE_A, Some(&[]))
+        .unwrap();
+    assert!(lp.list_grants(env.bot).is_empty());
+    let fake = Fake::new(vec![text("fine")]);
+    let lp2 = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(
+            "[runtime]
+computer = \"host\"
+",
+        ),
+        cfg(Policy::full()),
+    );
+    lp2.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, false));
+    let run = lp2.run_turn(env.chat, "hi").unwrap();
+    assert_eq!(lp2.wait(run).await.unwrap(), RunState::Succeeded);
+    let row = env.storage.get_run(run).unwrap().unwrap();
+    assert_eq!(row.computer_node.as_deref(), Some(MACHINE_A));
+}
+
+/// A run started before any provider is installed (fallback) never stores the
+/// `local` alias as its computer node.
+#[tokio::test]
+async fn run_before_provider_install_stores_no_local_alias() {
+    let env = setup();
+    let fake = Fake::new(vec![text("early")]);
+    let (_, browser_t, _) = computer_test_tools();
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&browser_t)],
+        profile(
+            "[runtime]
+computer = \"browser\"
+",
+        ),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "hi").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let row = env.storage.get_run(run).unwrap().unwrap();
+    assert_ne!(row.computer_node.as_deref(), Some("local"));
+    assert_eq!(row.computer_node, None);
 }

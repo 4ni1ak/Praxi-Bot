@@ -16,8 +16,16 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0003_subagents.sql"),
     ),
     (
-        "0004_message_exposure",
-        include_str!("../migrations/0004_message_exposure.sql"),
+        "0004_computer_target",
+        include_str!("../migrations/0004_computer_target.sql"),
+    ),
+    (
+        "0005_computer_identity",
+        include_str!("../migrations/0005_computer_identity.sql"),
+    ),
+    (
+        "0006_message_exposure",
+        include_str!("../migrations/0006_message_exposure.sql"),
     ),
 ];
 
@@ -96,6 +104,65 @@ mod tests {
                 "users"
             ]
         );
+    }
+
+    #[test]
+    fn pre_058_paused_run_survives_upgrade_with_null_target_and_pause_clock() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for (_, sql) in &MIGRATIONS[..3] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch(
+            "PRAGMA user_version = 3;
+            INSERT INTO users (id,name,created_at_ms) VALUES ('user','u',100);
+            INSERT INTO bots (id,user_id,name,created_at_ms) VALUES ('bot','user','b',100);
+            INSERT INTO runs (id,user_id,bot_id,kind,state,created_at_ms,updated_at_ms)
+            VALUES ('run','user','bot','turn','paused',100,200);",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let row: (String, Option<String>, Option<String>, i64) = conn
+            .query_row(
+                "SELECT state,computer_target,computer_node,paused_at_ms FROM runs WHERE id='run'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("paused".into(), None, None, 200));
+    }
+
+    #[test]
+    fn fresh_database_ends_at_version_six() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(latest_version(), 6);
+        assert_eq!(current_version(&conn).unwrap(), 6);
+        assert_eq!(MIGRATIONS[3].0, "0004_computer_target");
+        assert_eq!(MIGRATIONS[4].0, "0005_computer_identity");
+        assert_eq!(MIGRATIONS[5].0, "0006_message_exposure");
+    }
+
+    #[test]
+    fn version_five_database_upgrades_to_message_exposure() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for (i, (_, sql)) in MIGRATIONS[..5].iter().enumerate() {
+            conn.execute_batch(sql).unwrap();
+            conn.execute_batch(&format!("PRAGMA user_version = {}", i + 1))
+                .unwrap();
+        }
+        assert_eq!(current_version(&conn).unwrap(), 5);
+        assert_eq!(migrate(&mut conn).unwrap(), 1);
+        assert_eq!(current_version(&conn).unwrap(), 6);
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('messages')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(std::result::Result::unwrap)
+            .collect();
+        for c in ["exposure_untrusted", "exposure_private", "exposure_sources"] {
+            assert!(cols.iter().any(|x| x == c), "missing column {c}");
+        }
     }
 
     #[test]

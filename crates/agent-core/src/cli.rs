@@ -573,6 +573,11 @@ mod tests {
                     "depth": 1,
                     "spawn_key": "0:c1"
                 })),
+                computer_target: parent_run.computer_target.clone(),
+                computer_node: parent_run.computer_node.clone(),
+                computer_node_name: parent_run.computer_node_name.clone(),
+                paused_at_ms: None,
+                pause_reason: None,
             })
             .unwrap();
         let child = env.storage.get_run(child_id).unwrap().unwrap();

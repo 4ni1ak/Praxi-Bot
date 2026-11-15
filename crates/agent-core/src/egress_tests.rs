@@ -271,6 +271,8 @@ async fn a_standing_grant_does_not_waive_the_gate_but_the_bot_setting_does() {
         bot_id: env.bot,
         target: GrantTarget::Tool("web_search".into()),
         granted_at_ms: 0,
+        computer: None,
+        inert: false,
     });
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "go").unwrap();
@@ -332,6 +334,8 @@ async fn an_untainted_grant_still_skips_the_ask() {
         bot_id: env.bot,
         target: GrantTarget::Tool("email_send".into()),
         granted_at_ms: 0,
+        computer: None,
+        inert: false,
     });
     let run = lp.run_turn(env.chat, "send").unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
@@ -1269,6 +1273,11 @@ async fn a_no_tool_turn_that_can_see_tainted_history_is_untrusted_memory() {
         updated_at_ms: storage::now_ms(),
         parent_run_id: None,
         spec: None,
+        computer_target: None,
+        computer_node: None,
+        computer_node_name: None,
+        paused_at_ms: None,
+        pause_reason: None,
     };
     env.storage.insert_run(&run).unwrap();
     env.storage
@@ -2168,6 +2177,8 @@ async fn every_file_writer_asks_when_the_run_is_tainted() {
             bot_id: env.bot,
             target: crate::GrantTarget::Tool(spec.name.clone()),
             granted_at_ms: 0,
+            computer: None,
+            inert: false,
         });
     }
     ctx.taint
@@ -2240,6 +2251,8 @@ async fn a_tainted_file_write_shows_the_path_and_the_content() {
         bot_id: env.bot,
         target: crate::GrantTarget::Tool("fs_write".into()),
         granted_at_ms: 0,
+        computer: None,
+        inert: false,
     });
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "write").unwrap();

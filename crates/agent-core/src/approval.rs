@@ -101,10 +101,12 @@ impl Drop for PendingGuard {
 
 /// Serialised detail of a grant audit entry.
 pub(crate) fn grant_detail(g: &Grant) -> Value {
-    match &g.target {
+    let mut detail = match &g.target {
         GrantTarget::Tool(t) => json!({ "bot_id": g.bot_id.to_string(), "tool": t }),
         GrantTarget::Category(c) => json!({ "bot_id": g.bot_id.to_string(), "category": c }),
-    }
+    };
+    detail["computer"] = json!(g.computer);
+    detail
 }
 
 /// Inverse of [`grant_detail`].
@@ -115,6 +117,35 @@ pub(crate) fn grant_target(detail: &Value) -> Option<GrantTarget> {
     serde_json::from_value::<PermissionCategory>(detail["category"].clone())
         .ok()
         .map(GrantTarget::Category)
+}
+
+/// Add the immutable computer identity to both event details and the summary.
+fn computer_approval(
+    ctx: &RunCtx,
+    name: &str,
+    category: PermissionCategory,
+    details: &mut Option<Value>,
+) -> String {
+    let computer = ctx.tool_grant_scope(name, category).map(|_| json!({
+            "kind": ctx.resolved_computer.label.as_str(),
+            "node_id": ctx.resolved_computer.node.as_ref().map(|n| &n.id),
+            "node_name": ctx.resolved_computer.node.as_ref().map_or("Local computer", |n| n.name.as_str()),
+        }));
+    let prefix = computer.as_ref().map_or(String::new(), |c| {
+        format!(
+            "[{}: {} ({})] ",
+            c["kind"].as_str().unwrap_or_default(),
+            c["node_name"].as_str().unwrap_or_default(),
+            c["node_id"].as_str().unwrap_or("local")
+        )
+    });
+    if let Some(computer) = computer {
+        let detail = details.get_or_insert_with(|| json!({}));
+        if let Some(obj) = detail.as_object_mut() {
+            obj.insert("computer_target".into(), computer);
+        }
+    }
+    prefix
 }
 
 impl Shared {
@@ -215,8 +246,16 @@ impl Shared {
         }
         let granted = {
             let g = self.grants.lock();
-            g.this_chat.contains(&(ctx.chat_id, name.to_owned()))
-                || g.covers(ctx.bot_id, name, category)
+            g.this_chat.contains(&(
+                ctx.chat_id,
+                name.to_owned(),
+                ctx.tool_grant_scope(name, category),
+            )) || g.covers(
+                ctx.bot_id,
+                name,
+                category,
+                ctx.tool_grant_scope(name, category).as_deref(),
+            )
         };
         if granted || (self.cfg.read_tools_skip_ask && effect == Effect::Read) {
             Decision::Allow
@@ -385,12 +424,12 @@ impl Shared {
             if d.is_ask()
                 && d.unsupported_limits().is_none()
                 && !floor
-                && self
-                    .grants
-                    .lock()
-                    .always
-                    .iter()
-                    .any(|g| g.bot_id == ctx.bot_id && g.target == GrantTarget::Category(c))
+                && self.grants.lock().always.iter().any(|g| {
+                    !g.inert
+                        && g.bot_id == ctx.bot_id
+                        && g.target == GrantTarget::Category(c)
+                        && g.computer == ctx.grant_scope(c)
+                })
             {
                 d = Decision::Allow;
             }
@@ -429,33 +468,58 @@ impl Shared {
         bot_id: BotId,
         bot_policy: Option<&Policy>,
         category: PermissionCategory,
-    ) -> (Decision, bool) {
+    ) -> (Decision, bool, Vec<String>) {
         let req = ActionRequest {
             category,
             raw_command: String::new(),
             initiator: InitiatorKind::Human,
         };
         let r = &self.resolver;
-        if self.locked_deny(category) {
-            return (Decision::Deny, false);
-        }
-        let d = r.resolve(&self.global_policy.read(), bot_policy, None, &req);
-        // Same rule as `decide`: only a plain policy-level `Ask` can be waived.
-        // An unsupported-limit ask is not waivable, grant or not.
-        let floor = r.resolve(&Policy::full(), None, None, &req) != Decision::Allow;
-        if d.is_ask()
-            && d.unsupported_limits().is_none()
-            && !floor
-            && self
+        let computer_scoped = matches!(
+            category,
+            PermissionCategory::Desktop | PermissionCategory::Browser
+        );
+        let scopes = {
+            let mut scopes: Vec<String> = self
                 .grants
                 .lock()
                 .always
                 .iter()
-                .any(|g| g.bot_id == bot_id && g.target == GrantTarget::Category(category))
-        {
-            return (Decision::Allow, true);
+                .filter(|g| {
+                    !g.inert
+                        && g.bot_id == bot_id
+                        && g.target == GrantTarget::Category(category)
+                        && g.computer.is_some()
+                })
+                .filter_map(|g| g.computer.clone())
+                .collect();
+            scopes.sort();
+            scopes.dedup();
+            scopes
+        };
+        if self.locked_deny(category) {
+            return (Decision::Deny, false, scopes);
         }
-        (d, false)
+        let d = r.resolve(&self.global_policy.read(), bot_policy, None, &req);
+        // Same rule as `decide`: only a plain policy-level `Ask` can be waived.
+        // An unsupported-limit ask is not waivable, grant or not.
+        // Desktop and browser grants are per computer: the category stays ask
+        // here, and `scopes` names the computers that are allowed.
+        let floor = r.resolve(&Policy::full(), None, None, &req) != Decision::Allow;
+        if d.is_ask()
+            && d.unsupported_limits().is_none()
+            && !floor
+            && !computer_scoped
+            && self.grants.lock().always.iter().any(|g| {
+                !g.inert
+                    && g.bot_id == bot_id
+                    && g.target == GrantTarget::Category(category)
+                    && g.computer.is_none()
+            })
+        {
+            return (Decision::Allow, true, scopes);
+        }
+        (d, false, scopes)
     }
 
     pub(crate) fn set_state(&self, run_id: RunId, to: RunState) {
@@ -676,7 +740,8 @@ impl Shared {
         let once_only = details.is_some() || self.always_ask(name);
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
-        let summary = self.redact(format!("{name} {}", truncate_utf8(&args, 300)));
+        let prefix = computer_approval(ctx, name, category, &mut details);
+        let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
         let parked_at = policy_revision(self);
         self.remember_parked(call_id, ctx, name, effect, category, input);
@@ -808,18 +873,25 @@ impl Shared {
 
     /// Persist a new "always allow" rule for the run's bot (idempotent) and
     /// keep the audit entry.
-    fn add_grant(&self, ctx: &RunCtx, target: GrantTarget) {
+    fn add_grant(
+        &self,
+        ctx: &RunCtx,
+        target: GrantTarget,
+        category: PermissionCategory,
+        name: &str,
+    ) {
         let grant = Grant {
             bot_id: ctx.bot_id,
             target,
             granted_at_ms: now_ms(),
+            computer: ctx.tool_grant_scope(name, category),
+            inert: false,
         };
         {
             let mut g = self.grants.lock();
-            if g.always
-                .iter()
-                .any(|x| x.bot_id == grant.bot_id && x.target == grant.target)
-            {
+            if g.always.iter().any(|x| {
+                x.bot_id == grant.bot_id && x.target == grant.target && x.computer == grant.computer
+            }) {
                 return;
             }
             g.always.push(grant.clone());
@@ -945,19 +1017,27 @@ impl ExecPermit {
         match scope {
             ApprovalScope::Once => {}
             ApprovalScope::ThisChat => {
-                self.sh
-                    .grants
-                    .lock()
-                    .this_chat
-                    .insert((self.ctx.chat_id, self.name.clone()));
+                self.sh.grants.lock().this_chat.insert((
+                    self.ctx.chat_id,
+                    self.name.clone(),
+                    self.ctx.tool_grant_scope(&self.name, self.category),
+                ));
             }
             ApprovalScope::Always => {
-                self.sh
-                    .add_grant(&self.ctx, GrantTarget::Tool(self.name.clone()));
+                self.sh.add_grant(
+                    &self.ctx,
+                    GrantTarget::Tool(self.name.clone()),
+                    self.category,
+                    &self.name,
+                );
             }
             ApprovalScope::AlwaysCategory => {
-                self.sh
-                    .add_grant(&self.ctx, GrantTarget::Category(self.category));
+                self.sh.add_grant(
+                    &self.ctx,
+                    GrantTarget::Category(self.category),
+                    self.category,
+                    &self.name,
+                );
             }
         }
         self.sh.audit(
@@ -1134,7 +1214,7 @@ impl ToolGate for LoopGate {
             .get(&run_id)
             .cloned()
             .ok_or("script has no active run")?;
-        if !ctx.profile.tool_visible(&req.tool) {
+        if !ctx.profile.tool_visible(&req.tool) || !ctx.profile.category_visible(req.category) {
             return Err(format!("unknown tool: {}", req.tool));
         }
         let result = match sh.decide(&ctx, &req.tool, req.effect, req.category, &req.input) {
