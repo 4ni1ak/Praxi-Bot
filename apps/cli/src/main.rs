@@ -10,14 +10,17 @@ mod doctor;
 mod email_cmd;
 mod email_host;
 mod host;
+mod host_links;
 mod host_runtime;
 mod mcp_host;
+mod mcp_paste;
 mod peer;
 mod presets;
 mod prompt;
 mod remote;
 mod serve;
 mod update;
+mod view_targets;
 mod web_host;
 mod wizard;
 
@@ -160,6 +163,11 @@ enum Command {
         #[command(subcommand)]
         action: EmailCmd,
     },
+    /// Manage the daemon's MCP servers.
+    Mcp {
+        #[command(subcommand)]
+        action: McpCmd,
+    },
     /// Messaging channels (Telegram).
     Channels {
         #[command(subcommand)]
@@ -178,6 +186,25 @@ enum Command {
         /// Reason given to the model on deny.
         #[arg(long, requires = "deny")]
         reason: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Add MCP servers from a paste: a server URL, a `claude mcp add ...`
+    /// line, an `npx`/`uvx` command line, or MCP JSON (`{"mcpServers": ...}`).
+    /// Quote the paste, or give `-` to read it from stdin. Values in it
+    /// (`-e KEY=value`, headers, `env`) go to the secret store, never the config.
+    Add {
+        /// Server name (default: derived from the URL or package).
+        #[arg(long)]
+        name: Option<String>,
+        /// Show what would be added; contact nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// The paste.
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true, trailing_var_arg = true)]
+        input: Vec<String>,
     },
 }
 
@@ -561,6 +588,7 @@ fn run() -> Result<()> {
         | Command::Answer { .. }
         | Command::Schedules { .. }
         | Command::Email { .. }
+        | Command::Mcp { .. }
         | Command::Grants { .. }
         | Command::Channels {
             action: ChannelsCmd::Telegram {
@@ -624,6 +652,7 @@ fn run() -> Result<()> {
         | Command::Answer { .. }
         | Command::Schedules { .. }
         | Command::Email { .. }
+        | Command::Mcp { .. }
         | Command::Grants { .. } => Ok(()),
         Command::Providers { action } => match action {
             ProvidersCmd::Add {
@@ -923,6 +952,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
             }
             Command::Schedules { action } => run_schedules(&c, action, json, &mut out).await,
             Command::Email { action } => run_email(&c, action, json, &mut out).await,
+            Command::Mcp { action } => run_mcp(&c, action, json, &mut out).await,
             Command::Channels {
                 action:
                     ChannelsCmd::Telegram {
@@ -954,6 +984,29 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
         rt.block_on(net.shutdown());
     }
     outcome
+}
+
+async fn run_mcp(
+    c: &Client,
+    action: &McpCmd,
+    json: bool,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    let McpCmd::Add {
+        name,
+        dry_run,
+        input,
+    } = action;
+    let input = if input.as_slice() == ["-"] {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+        vec![text]
+    } else {
+        input.clone()
+    };
+    let parsed =
+        mcp_paste::parse_argv(&input, name.as_deref()).map_err(|e| email_cmd::rejected(&e))?;
+    mcp_paste::add(c, &parsed, *dry_run, json, out).await
 }
 
 async fn run_email(
@@ -1121,6 +1174,58 @@ mod tests {
             Cli::try_parse_from(["bot", "self-update", "--rollback", "--version", "1.0.0"])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn mcp_add_takes_the_paste_verbatim_after_its_options() {
+        let cli = Cli::try_parse_from([
+            "bot",
+            "mcp",
+            "add",
+            "--name",
+            "files",
+            "--dry-run",
+            "claude",
+            "mcp",
+            "add",
+            "x",
+            "-e",
+            "A=b c",
+            "--",
+            "npx",
+            "-y",
+            "pkg@1.0.0",
+        ])
+        .unwrap();
+        let Some(Command::Mcp {
+            action:
+                McpCmd::Add {
+                    name,
+                    dry_run,
+                    input,
+                },
+        }) = cli.command
+        else {
+            panic!("not `mcp add`");
+        };
+        assert_eq!(name.as_deref(), Some("files"));
+        assert!(dry_run);
+        assert_eq!(
+            input,
+            [
+                "claude",
+                "mcp",
+                "add",
+                "x",
+                "-e",
+                "A=b c",
+                "--",
+                "npx",
+                "-y",
+                "pkg@1.0.0"
+            ]
+        );
+        assert!(Cli::try_parse_from(["bot", "mcp", "add"]).is_err());
     }
 
     #[test]

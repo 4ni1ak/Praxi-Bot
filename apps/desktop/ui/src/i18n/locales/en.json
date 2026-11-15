@@ -204,7 +204,11 @@
     "refusedBadge": "{{count}} bot action refused",
     "refusedBadge_other": "{{count}} bot actions refused",
     "hotkeyHint": "Stop in app: {{hotkey}}",
-    "dragHandleAria": "Drag floating control widget"
+    "dragHandleAria": "Drag floating control widget",
+    "stopPending": "Stopping — confirming every run…",
+    "stopConfirmed": "Stopped — every run confirmed",
+    "stopUnknown": "Stopping — could not confirm with the app yet",
+    "dismissStop": "Hide the Stop indicator (the main window keeps its status)"
   },
   "dev": {
     "sectionTitle": "Developer",
@@ -284,7 +288,8 @@
       "queueHint": "Deliver after the current turn finishes",
       "steerHint": "Deliver now and redirect the current turn"
     },
-    "placeholder": "Message the bot…",
+    "placeholder": "Message…  / commands · @ bots",
+    "addCommand": "Add a command or bot",
     "placeholderBusy": "The bot is working — queue or steer…",
     "send": "Send",
     "subagent": {
@@ -466,7 +471,6 @@
       "noMatch": "No match"
     },
     "conversationLabel": "Today",
-    "composerHint": "Enter to send · / for commands · @ to mention a bot",
     "openBot": "Open {{name}}",
     "emptyTitle": "What shall we work on?",
     "emptyGreeting": "Hi, I'm {{name}}",
@@ -684,6 +688,26 @@
         "done": "Asked you",
         "failed": "Couldn't ask you"
       },
+      "mcp_search": {
+        "running": "Searching {{app}}",
+        "done": "Searched {{app}}",
+        "failed": "Couldn't search {{app}}"
+      },
+      "mcp_read": {
+        "running": "Reading from {{app}}",
+        "done": "Read from {{app}}",
+        "failed": "Couldn't read from {{app}}"
+      },
+      "mcp_draft": {
+        "running": "Drafting in {{app}}",
+        "done": "Drafted in {{app}}",
+        "failed": "Couldn't draft in {{app}}"
+      },
+      "mcp_send": {
+        "running": "Sending with {{app}}",
+        "done": "Sent with {{app}}",
+        "failed": "Couldn't send with {{app}}"
+      },
       "mcp": {
         "running": "Using {{app}} ({{action}})",
         "done": "Used {{app}} ({{action}})",
@@ -694,6 +718,16 @@
         "done": "Ran {{name}}",
         "failed": "Didn't complete {{name}}"
       }
+    },
+    "timelineLabel": "Conversation",
+    "jumpToLatest": "Jump to latest",
+    "runBar": {
+      "label": "Run controls",
+      "waiting": "Waiting for your approval",
+      "paused": "Paused",
+      "human": "You are in control",
+      "elapsed": "Running for {{time}}",
+      "stoppingDetail": "Waiting for the run to end…"
     }
   },
   "botForm": {
@@ -1094,7 +1128,20 @@
       "connecting": "Connecting",
       "disconnected": "Disconnected",
       "error": "Error",
+      "auth_required": "Sign-in required",
       "quarantined": "Quarantined"
+    },
+    "auth": {
+      "pasteLabel": "Redirect address from the browser",
+      "pasteSubmit": "Finish sign-in",
+      "pasteHint": "If the browser runs on another computer and shows an error page after you sign in, copy that page's full address and paste it here.",
+      "signIn": "Sign in",
+      "signOut": "Sign out",
+      "waiting": "Waiting for the browser sign-in…",
+      "signedInToast": "{{name}}: signed in",
+      "signedOutToast": "{{name}}: signed out",
+      "failedToast": "{{name}}: sign-in did not finish",
+      "openFailed": "{{name}}: the sign-in page could not be opened in the browser"
     },
     "toolCount": "{{count}} tools",
     "toolCount_one": "{{count}} tool",
@@ -1112,6 +1159,32 @@
       "save": "Save",
       "notApplied": "{{name}}: not saved, this app was changed elsewhere (for example it is now open to all bots). Showing its current state.",
       "savedToast": "{{name}}: bot access saved"
+    },
+    "error": {
+      "showDetails": "Show details",
+      "hideDetails": "Hide details",
+      "message": "Error",
+      "stderr": "What the server printed",
+      "noStderr": "The server printed nothing before it stopped.",
+      "hint": {
+        "runtime_node": "Node.js was not found on PATH. Install the LTS version from https://nodejs.org (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
+        "runtime_uv": "uv was not found on PATH. Install it (Windows: winget install --id=astral-sh.uv -e, or https://docs.astral.sh/uv/) or add its folder to PATH, restart Praxi-Bot, then press Reconnect.",
+        "runtime_pipx": "pipx was not found on PATH. Install it from https://pipx.pypa.io (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
+        "runtime_docker": "The docker command was not found on PATH. Install Docker (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
+        "runtime_other": "The program that starts this server was not found on PATH. Install it, add its folder to PATH or give its full path in the server settings, restart Praxi-Bot, then press Reconnect.",
+        "closed": "The server stopped while starting. Open the details to see what it printed (for example Docker installed but not running), fix that, then press Reconnect.",
+        "spawn": "The server program could not be started. Check the command in the server settings, then press Reconnect.",
+        "needs_folder": "Choose the one folder this app may read and write, then press Save and connect.",
+        "timeout": "The server did not answer in time. The first start can be slow while packages download; press Reconnect to try again.",
+        "config": "The server settings or a required secret are missing or invalid. Fix them and press Reconnect."
+      }
+    },
+    "folder": {
+      "label": "Folder the bot may read and write",
+      "placeholder": "Full path, for example C:\\Users\\you\\Documents",
+      "hint": "Only this folder is shared with the app. Praxi-Bot's own data and credential folders are refused.",
+      "missing": "Choose a folder first.",
+      "save": "Save and connect"
     },
     "reconnect": "Reconnect",
     "disconnectConfirm": "Disconnect this server?",
@@ -1661,11 +1734,28 @@
       "custom": "Custom color"
     },
     "style": {
-      "title": "Style",
-      "description": "How panels, cards and menus are painted.",
+      "title": "Panel style",
+      "description": "How the sidebar, the chat area and the right panel are painted. Solid is the most readable and the lightest on the GPU.",
       "solid": "Solid",
+      "tinted": "Tinted",
       "glass": "Glass",
-      "line": "Line"
+      "line": "Line",
+      "transparency": "Transparency",
+      "transparencyHint": "Over bright backdrops panels stay as opaque as needed to keep text readable.",
+      "opaque": "Opaque",
+      "clear": "Clear",
+      "blur": "Blur",
+      "blurSoft": "Soft",
+      "blurStrong": "Strong",
+      "reduced": "Windows transparency effects are off, so panels are painted solid.",
+      "override": "Use this style anyway",
+      "overridden": "Shown although Windows transparency effects are off.",
+      "followSystem": "Follow Windows",
+      "fallback": "This system cannot blur behind windows; glass is shown as tinted."
+    },
+    "clearChat": {
+      "title": "Transparent chat area",
+      "description": "Removes the chat area's own background so the backdrop shows behind the conversation. Messages and the message box keep a readable surface."
     },
     "corners": {
       "title": "Corners",
@@ -1771,7 +1861,110 @@
     "chats": "Chats",
     "noChats": "No chats yet.",
     "untitled": "New chat",
-    "computer": "Computer"
+    "computer": "Computer",
+    "runsOnHost": "Runs on {{name}} (host)",
+    "runsOnLocal": "Runs on this computer"
+  },
+  "knowledge": {
+    "title": "Knowledge and shared brain",
+    "description": "Choose what this bot can search. Sources stay on this host until you explicitly enable remote embeddings for each source.",
+    "bot": "Bot",
+    "noBot": "Create a bot to add knowledge sources.",
+    "kind": "Source type",
+    "label": "Source name",
+    "path": "Path on the daemon host",
+    "pathHint": "Use an absolute local file or folder path. Files may be up to 4 MiB; indexed text up to 1 MiB. PDFs need a text layer and may have up to 64 pages; complex or encrypted PDFs may need a simplified export. Hidden folders, credentials and symbolic links are excluded.",
+    "url": "Saved page URL",
+    "html": "The saved content is HTML",
+    "savedWebHint": "Paste a page you already saved. Adding this source makes no web request.",
+    "content": "Content",
+    "conversation": "Conversation",
+    "select": "Choose…",
+    "emailCapture": "Previously read email",
+    "emailHint": "Choose a successful email read made by this bot with an explicit account. Only accounts this bot can currently access are shown.",
+    "brainHint": "Read Markdown from this host’s shared brain folder. Bot writes create new source-labelled notes and require approval of the complete content.",
+    "add": "Add source",
+    "empty": "No sources selected for this bot.",
+    "counts": "{{documents}} documents · {{chunks}} chunks",
+    "active": "Active",
+    "disabled": "Disabled · reauthorization required",
+    "disable": "Disable",
+    "reauthorize": "Enable and reauthorize",
+    "reindex": "Update index",
+    "continue": "Continue indexing",
+    "remove": "Remove from index",
+    "indexed": "Processed {{count}} documents.",
+    "grantRemote": "Allow document embeddings",
+    "revokeRemote": "Revoke document embeddings",
+    "consentTitle": "Send “{{source}}” for embeddings?",
+    "consentDescription": "The selected provider will receive text from this source, including future updates. This grant applies only to the destination and model below. Retrieval queries require separate permission.",
+    "confirmConsent": "Allow this source",
+    "settings": "Retrieval settings",
+    "auto": "Automatically retrieve relevant knowledge for new turns",
+    "embeddings": "Use an embedding provider",
+    "lexicalHint": "Local lexical search works without a provider. Embeddings add semantic matching; source text remains local until you grant permission per source.",
+    "provider": "Configured provider",
+    "model": "Embedding model",
+    "dimensions": "Vector dimensions",
+    "requestDimensions": "Request this dimension from the provider",
+    "rpm": "Embedding inputs per minute",
+    "rpd": "Embedding inputs per rolling 24 hours",
+    "quotaHint": "Each text input in a batch counts separately. These are your local limits, shared by providers using the same saved credential. Environment-only providers use their configured provider identity; separate credentials can still share a provider project quota.",
+    "queryHint": "Save the profile first and review its destination. Queries may contain private conversation context. Enabling document embeddings never grants query permission.",
+    "save": "Save settings",
+    "brainApproval": "Publish a shared brain note",
+    "brainApprovalHint": "This creates a new note other bots may read. Review the entire Markdown and its source labels.",
+    "brainHash": "Content SHA-256",
+    "brainSources": "Approved sources",
+    "kinds": {
+      "file": "File",
+      "folder": "Folder",
+      "saved_web": "Saved web page",
+      "conversation": "Past conversation",
+      "email": "Read email",
+      "note": "Bot note",
+      "shared_brain": "Shared Markdown brain"
+    },
+    "local": "Local · multilingual E5 small",
+    "localHint": "Select a model installed on this host. Local embeddings keep selected text on this host.",
+    "localUnavailable": "This daemon build has no local embedding support. The configuration can be saved; retrieval remains lexical until a build with local-embeddings is installed.",
+    "embed": "Build or resume semantic index",
+    "embeddingRemaining": "{{count}} chunks remaining",
+    "embeddingRetry": "Retry after {{time}}",
+    "embeddingStatus": {
+      "progress": "Processing embeddings",
+      "complete": "Semantic index ready",
+      "awaiting_consent": "Source permission required",
+      "deferred": "Waiting for request budget or retry",
+      "cancelled": "Embedding paused",
+      "failed": "Embedding failed; review provider settings"
+    },
+    "importHint": "Imported sources start disabled. Select and save the embedding provider again, then authorize sources and retrieval queries separately.",
+    "defaultBrainName": "Shared brain",
+    "rename": "Rename",
+    "newName": "New source name",
+    "saveName": "Save name",
+    "removeTitle": "Remove “{{source}}” from the index?",
+    "removeHint": "This removes indexed text, embeddings and source permission. Your original file stays on this host.",
+    "confirmRemove": "Confirm removal",
+    "reselect": "Choose local path",
+    "reselectHint": "This source was imported. Select a path on this host to bind it again. Previous indexed content and embedding permission will be cleared.",
+    "confirmPath": "Use this path",
+    "skippedFiles": "{{count}} files skipped",
+    "fileSkipped": "Unreadable, protected or beyond an extraction limit. Other files continue indexing.",
+    "emailUnavailable": "Email discovery is unavailable: {{error}}",
+    "localProfile": "Installed local model",
+    "noLocalProfiles": "No local model profiles are installed on this host.",
+    "autoUnavailable": "Automatic retrieval is unavailable in this build. Explicit knowledge search remains available.",
+    "approvalTitle": "Review embedding permission",
+    "queryConsentTitle": "Allow retrieval queries for this bot?",
+    "approvalExpiry": "This approval expires at {{time}}. A changed source or destination requires a new review.",
+    "reviewQuery": "Review query permission",
+    "revokeQuery": "Revoke query permission",
+    "resetCooldown": "Reset provider cooldown",
+    "embeddingSkipped": "{{count}} chunks skipped",
+    "queryConsentDescription": "The provider below will receive retrieval queries, which may contain private conversation context. This permission applies to this bot and this destination/model. Document text needs its own source permission.",
+    "confirmQuery": "Allow retrieval queries"
   },
   "liveView": {
     "title": "Computer live view",
@@ -1780,6 +1973,20 @@
     "refresh": "Refresh targets",
     "backToChat": "Back",
     "targetsLabel": "Target screen",
+    "checkingTargets": "Checking for screens…",
+    "queryFailed": "Could not load the screen list. It is retried automatically.",
+    "loadingPreview": "Loading the first frame…",
+    "noScreen": {
+      "desktop_off": "desktop control is switched off",
+      "unsupported_platform": "this platform has no screen capture",
+      "wayland": "Wayland sessions are not supported, use an X11 session",
+      "no_display": "no display is available",
+      "screen_unavailable": "the screen cannot be opened right now (locked session or missing permission)",
+      "start_failed": "screen capture could not start",
+      "starting": "checking the screen…",
+      "timed_out": "the screen did not answer, retrying",
+      "unknown": "the screen is not available"
+    },
     "noTargets": "No screen targets reported yet.",
     "hostLabel": "Host: {{host}}",
     "viewOnly": "View only",
@@ -1818,6 +2025,9 @@
       "active": "You are in control",
       "finishing": "Handing back…",
       "paused": "Paused",
+      "checking": "Checking screens…",
+      "queryFailed": "Could not load screens",
+      "noScreen": "No screen yet",
       "unavailable": "Unavailable",
       "closed": "Closed",
       "disconnected": "Connection lost",
@@ -1829,6 +2039,8 @@
       "active": "You have the wheel",
       "paused": "Paused · Waiting for you",
       "unavailable": "Idle · Not active",
+      "ready": "This computer · ready",
+      "noScreenReason": "No screen: {{detail}}",
       "empty": "No active screen"
     },
     "reasons": {
@@ -1876,5 +2088,79 @@
     "openScreen": "Open screen",
     "connectionLost": "Connection to the screen lost. Reconnecting…",
     "clearForeignPause": "Clear {{owner}}'s pause"
+  },
+  "stopStatus": {
+    "title": {
+      "stopping": "Stopping…",
+      "unreachable": "Stopped on this computer",
+      "partial": "Some runs could not be stopped",
+      "expired": "Stop expired",
+      "unconfirmable": "Earlier Stop not confirmed",
+      "stopped": "Stopped",
+      "unconfirmed": "Stop not confirmed",
+      "released": "Runs allowed to continue"
+    },
+    "detail": {
+      "stoppingCount_one": "{{stopped}} of {{count}} run stopped; waiting for the rest to end.",
+      "stoppingCount_other": "{{stopped}} of {{count}} runs stopped; waiting for the rest to end.",
+      "stoppingNone": "Asking the daemon to stop every running bot…",
+      "partial": "{{stopped}} of {{count}} stopped. The rest are held and cannot act; retrying…",
+      "expiredRetry": "The daemon no longer had this Stop on record. Retrying only the {{held}} runs still held; nothing started later is touched.",
+      "expiredNone": "The daemon no longer had this Stop on record; none of the runs it held is still going.",
+      "unconfirmable": "A Stop from before the app restarted never reached the daemon. Press Stop again if bots are still running.",
+      "stoppedCount_one": "{{count}} run stopped.",
+      "stoppedCount_other": "All {{count}} runs stopped.",
+      "stoppedNone": "No bot runs were going.",
+      "unreachableSweep": "Bot and takeover input is halted here. The daemon cannot be reached yet; when it is, this Stop will stop EVERY run open at that moment, including runs started meanwhile from another device or a schedule.",
+      "unreachableListed_one": "Bot and takeover input is halted here. The daemon has not confirmed yet; when it is reached it will stop only the {{count}} run known when you pressed Stop. Retrying…",
+      "unreachableListed_other": "Bot and takeover input is halted here. The daemon has not confirmed yet; when it is reached it will stop only the {{count}} runs known when you pressed Stop. Retrying…",
+      "unconfirmed": "The daemon lost this Stop before saying what it stopped. {{quarantined}} runs that may have been targeted are paused and cannot act until you decide.",
+      "released": "You let the paused runs continue. Nothing was cancelled.",
+      "stoppingSweep": "Asking the daemon to stop. This Stop will stop EVERY run open when the daemon receives it, including runs started meanwhile from another device or a schedule (the app had no fresh run list when you pressed Stop)."
+    },
+    "notAudited": "Not recorded in the audit log",
+    "progressLabel": "Runs stopped",
+    "dismiss": "Dismiss",
+    "stopAllNow": "Stop all now",
+    "letContinue": "Let them continue"
+  },
+  "computerPicker": {
+    "label": "Computer: {{name}}",
+    "menu": "Computer",
+    "host": "Host",
+    "localHint": "Runs here, on this PC",
+    "link": {
+      "idle": "Paired, not connected",
+      "connecting": "Connecting…",
+      "connected": "Connected",
+      "offline": "Not answering",
+      "unreachable": "No longer paired"
+    },
+    "add": "Add a host…",
+    "stopHost": "Stop all runs on the host",
+    "stopHostHint": "Stops what is running there now",
+    "stopNone": "Nothing is running on the host.",
+    "stopFailed": "Could not reach the host to stop its runs.",
+    "stopped": "Stopped {{count}} run(s) on the host."
+  },
+  "pairHost": {
+    "title": "Add a host",
+    "lead": "Pair this computer with your always-on host to watch its screen and chat with the bots that run there.",
+    "step1": "On the host, run:",
+    "step3": "Paste the ticket it prints below. It works once and expires in a few minutes.",
+    "ticket": "Pairing ticket",
+    "hint": "The ticket is used once and is not saved.",
+    "pair": "Pair",
+    "pairing": "Pairing…",
+    "failed": "Pairing failed. Check that the host is on and the ticket is new."
+  },
+  "hostState": {
+    "connecting": "Connecting to {{name}}…",
+    "offline": "{{name}} is not answering. Its bots keep running; this app reconnects on its own.",
+    "notPaired": "{{name}} no longer accepts this computer. Pair again with a new ticket.",
+    "versionBlocking": "This app ({{local}}) and {{name}} ({{host}}) are on different versions. Update them to the same version before using the host.",
+    "versionWarning": "This app is {{local}} and {{name}} is {{host}}: a small difference, everything should work.",
+    "noModelKey": "{{name}} has no model key yet. You can watch its screen and manage its bots, but chats cannot be answered until a key is added on the host.",
+    "useThisComputer": "Use this computer"
   }
 }

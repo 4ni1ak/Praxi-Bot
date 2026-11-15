@@ -17,6 +17,12 @@ pub fn test_server() -> &'static Path {
 }
 
 fn build() -> PathBuf {
+    // Local workers prebuild sequentially so tests never launch a second Cargo.
+    if let Some(path) = std::env::var_os("PRAXI_MCP_TEST_SERVER") {
+        let path = PathBuf::from(path);
+        assert!(path.is_file(), "prebuilt MCP fixture is missing");
+        return path;
+    }
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut command = Command::new(cargo);
     command

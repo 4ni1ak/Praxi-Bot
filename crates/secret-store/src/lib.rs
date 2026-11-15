@@ -12,6 +12,7 @@
 
 mod error;
 mod file;
+mod fill;
 mod keyring_store;
 mod memory;
 mod open;
@@ -24,6 +25,11 @@ mod wipe;
 
 pub use error::SecretError;
 pub use file::{EncryptedFileStore, KdfParams};
+pub use fill::{
+    FillError, FillGrant, FillSecretInfo, FillSecrets, GRANT_KIND_BROWSER_FILL,
+    MAX_FILL_VALUE_BYTES, ValueHook, canonical_origin, metadata_path, sanitize_label,
+    validate_fill_name,
+};
 pub use keyring_store::KeyringStore;
 pub use memory::MemoryStore;
 pub use open::{
@@ -31,4 +37,7 @@ pub use open::{
     secrets_file_path,
 };
 pub use redact::{REDACTED, Redactor, secret_variants};
-pub use secret::{SecretRef, SecretStore, SecretValue, resolve, validate_name};
+pub use secret::{
+    FILL_PREFIX, SecretRef, SecretStore, SecretValue, is_fill_name, is_managed_oauth_name,
+    refuse_fill_namespace, resolve, validate_name,
+};

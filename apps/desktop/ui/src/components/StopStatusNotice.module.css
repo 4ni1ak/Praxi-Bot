@@ -1,0 +1,207 @@
+.wrap {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.wrap[data-variant="main"] {
+  padding: var(--space-2) var(--space-5) var(--space-0);
+}
+
+.wrap[data-variant="panel"] {
+  width: 100%;
+}
+
+.notice {
+  --stop-tone: var(--color-accent);
+  --stop-tone-subtle: var(--color-accent-subtle);
+
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-2);
+  width: 100%;
+  max-width: var(--size-content-max);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: hidden;
+  border: var(--size-border) solid color-mix(in srgb, var(--stop-tone) 45%, var(--color-border));
+  border-radius: var(--radius-card);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--stop-tone) 14%, transparent),
+      transparent 70%
+    ),
+    var(--color-surface-elevated);
+  box-shadow: 0 var(--space-1) var(--space-4) var(--color-shadow);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  animation: stopIn var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.wrap[data-variant="panel"] .notice {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: var(--space-2);
+  column-gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  box-shadow: none;
+}
+
+.notice[data-tone="success"] {
+  --stop-tone: var(--color-success);
+}
+
+.notice[data-tone="warning"] {
+  --stop-tone: var(--color-warning);
+}
+
+.notice[data-tone="danger"] {
+  --stop-tone: var(--color-danger);
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+  border-radius: var(--radius-pill);
+  background-color: color-mix(in srgb, var(--stop-tone) 18%, transparent);
+  color: var(--stop-tone);
+  flex-shrink: 0;
+}
+
+.wrap[data-variant="panel"] .icon {
+  width: var(--size-avatar-sm);
+  height: var(--size-avatar-sm);
+}
+
+.icon svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.icon[data-spin="true"] svg {
+  animation: stopSpin var(--motion-duration-pulse) linear infinite;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  min-width: 0;
+}
+
+.title {
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.audit svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  flex-shrink: 0;
+}
+
+.meter {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: block;
+  height: var(--space-1);
+  border-radius: var(--radius-pill);
+  background-color: color-mix(in srgb, var(--stop-tone) 16%, transparent);
+  overflow: hidden;
+}
+
+.meterFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--stop-tone);
+  transition: inline-size var(--motion-duration-slow) var(--motion-easing-standard);
+}
+
+.actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.dismiss:focus-visible {
+  outline: var(--size-border-thick) solid var(--color-focus);
+  outline-offset: var(--size-border);
+}
+
+.dismiss svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+@keyframes stopIn {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-1) * -1));
+  }
+}
+
+@keyframes stopSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice,
+  .icon[data-spin="true"] svg,
+  .meterFill {
+    animation: none;
+    transition: none;
+  }
+}

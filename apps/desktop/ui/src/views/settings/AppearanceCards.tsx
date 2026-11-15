@@ -1,4 +1,4 @@
-import { Bot as BotIcon, Check } from "lucide-react";
+import { Bot as BotIcon, Check, Info } from "lucide-react";
 import { useRef, type CSSProperties } from "react";
 import type { TFunction } from "i18next";
 import {
@@ -9,7 +9,13 @@ import {
   CORNERS,
   OWN_BUBBLES,
   paletteById,
+  PANEL_BLUR_MAX,
+  PANEL_BLUR_MIN,
+  PANEL_TRANSPARENCY_MAX,
+  PANEL_TRANSPARENCY_MIN,
+  osPrefersReducedTransparency,
   resolveTheme,
+  surfaceSupport,
   UI_STYLES,
   type BubbleStyle,
   type UiStyle
@@ -112,6 +118,7 @@ function BackgroundControls({ b, t }: { b: SettingsBridge; t: TFunction }) {
 
 const SAMPLE_CLASS: Record<UiStyle | BubbleStyle, string> = {
   solid: pickerStyles.sampleSolid,
+  tinted: pickerStyles.sampleTinted,
   soft: pickerStyles.sampleSolid,
   glass: pickerStyles.sampleGlass,
   line: pickerStyles.sampleLine,
@@ -154,6 +161,76 @@ function ShapeTiles<T extends UiStyle | BubbleStyle>({
           </span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Transparency / blur sliders under the panel style tiles (live while dragging, saved after a pause). */
+function SurfaceControls({ b, t }: { b: SettingsBridge; t: TFunction }) {
+  const { settings, update } = b;
+  const env = surfaceSupport();
+  const style = settings.uiStyle;
+  const note = (text: string) => (
+    <p className={pickerStyles.note}>
+      <Info aria-hidden="true" />
+      {text}
+    </p>
+  );
+  if (style === "solid" || style === "line") return null;
+  if (env.reducedTransparency) {
+    return (
+      <div className={pickerStyles.root}>
+        {note(t("appearance.style.reduced"))}
+        <div>
+          <Button size="sm" variant="secondary" onClick={() => update({ transparencyOverride: true })}>
+            {t("appearance.style.override")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className={pickerStyles.sliders}>
+      {settings.transparencyOverride && osPrefersReducedTransparency() ? (
+        <div className={pickerStyles.row}>
+          {note(t("appearance.style.overridden"))}
+          <Button size="sm" variant="ghost" onClick={() => update({ transparencyOverride: false })}>
+            {t("appearance.style.followSystem")}
+          </Button>
+        </div>
+      ) : null}
+      <label className={pickerStyles.range}>
+        <span className={pickerStyles.rangeName}>{t("appearance.style.transparency")}</span>
+        <span>{t("appearance.style.opaque")}</span>
+        <input
+          type="range"
+          min={PANEL_TRANSPARENCY_MIN}
+          max={PANEL_TRANSPARENCY_MAX}
+          step={1}
+          value={settings.panelTransparency}
+          aria-label={t("appearance.style.transparency")}
+          onChange={(e) => update({ panelTransparency: Number(e.target.value) }, { deferSave: true })}
+        />
+        <span>{t("appearance.style.clear")}</span>
+      </label>
+      {style === "glass" && env.backdropFilter ? (
+        <label className={pickerStyles.range}>
+          <span className={pickerStyles.rangeName}>{t("appearance.style.blur")}</span>
+          <span>{t("appearance.style.blurSoft")}</span>
+          <input
+            type="range"
+            min={PANEL_BLUR_MIN}
+            max={PANEL_BLUR_MAX}
+            step={1}
+            value={settings.panelBlur}
+            aria-label={t("appearance.style.blur")}
+            onChange={(e) => update({ panelBlur: Number(e.target.value) }, { deferSave: true })}
+          />
+          <span>{t("appearance.style.blurStrong")}</span>
+        </label>
+      ) : null}
+      {style === "glass" && !env.backdropFilter ? note(t("appearance.style.fallback")) : null}
+      <p className={pickerStyles.hint}>{t("appearance.style.transparencyHint")}</p>
     </div>
   );
 }
@@ -278,16 +355,32 @@ export function appearanceCards(b: SettingsBridge, t: TFunction): CardDef[] {
       t("appearance.style.description"),
       row(
         "style",
-        <ShapeTiles
-          values={UI_STYLES}
-          value={settings.uiStyle}
-          label={t("appearance.style.title")}
-          onPick={(uiStyle) => update({ uiStyle })}
-          t={t}
-          labelKey={(v) => `appearance.style.${v}`}
-        />
+        <div className={pickerStyles.root}>
+          <ShapeTiles
+            values={UI_STYLES}
+            value={settings.uiStyle}
+            label={t("appearance.style.title")}
+            onPick={(uiStyle) => update({ uiStyle })}
+            t={t}
+            labelKey={(v) => `appearance.style.${v}`}
+          />
+          <SurfaceControls b={b} t={t} />
+        </div>
       ),
-      { keywords: "glass solid line cam duz cizgi stil" }
+      { keywords: "glass solid tinted line cam duz renkli cizgi stil panel saydam transparent blur bulanik" }
+    ),
+    card(
+      "clearChat",
+      t("appearance.clearChat.title"),
+      t("appearance.clearChat.description"),
+      <SettingRow title={t("appearance.clearChat.title")} description={t("appearance.clearChat.description")}>
+        <Switch
+          label={t("appearance.clearChat.title")}
+          checked={settings.transparentChat}
+          onChange={(transparentChat) => update({ transparentChat, chatPanel: !transparentChat })}
+        />
+      </SettingRow>,
+      { keywords: "transparent chat background saydam sohbet arka plan seffaf" }
     ),
     card(
       "backdrop",
