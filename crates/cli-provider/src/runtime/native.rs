@@ -631,6 +631,7 @@ impl Run<'_> {
         )
         .await?;
         let mut session: Option<String> = None;
+        let mut setup: Vec<i64> = Vec::new();
         loop {
             let v = frames.next().await?;
             if let Some(method) = v["method"].as_str() {
@@ -706,12 +707,27 @@ impl Run<'_> {
                         .as_str()
                         .ok_or(CliError::Protocol)?;
                     session = Some(id.to_owned());
-                    send(
-                        stdin,
-                        json!({"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{
-                        "sessionId":id,"prompt":[{"type":"text","text":self.prompt_text()}]}}),
-                    )
-                    .await?;
+                    // Antigravity selects mode and model after `session/new` (ACP
+                    // `session/set_mode`, `session/set_model`); the prompt waits for both.
+                    if self.nt.driver == Driver::Agy {
+                        for request in
+                            agy_setup(id, self.plan.acp_mode, self.nt.turn.model.as_deref())
+                        {
+                            setup.push(request["id"].as_i64().unwrap_or_default());
+                            send(stdin, request).await?;
+                        }
+                    }
+                    if setup.is_empty() {
+                        send_prompt(stdin, id, &self.prompt_text()).await?;
+                    }
+                }
+                Some(n @ (4 | 5)) => {
+                    setup.retain(|pending| *pending != n);
+                    if setup.is_empty()
+                        && let Some(id) = session.as_deref()
+                    {
+                        send_prompt(stdin, id, &self.prompt_text()).await?;
+                    }
                 }
                 Some(3) => {
                     if session.is_none() {
@@ -723,6 +739,32 @@ impl Run<'_> {
             }
         }
     }
+}
+
+/// Antigravity's per-session setup after `session/new`: the level's mode and the chosen
+/// model (`default` keeps the CLI's own), each acknowledged before the prompt is sent.
+fn agy_setup(session: &str, mode: Option<&str>, model: Option<&str>) -> Vec<Value> {
+    let mut out = Vec::new();
+    if let Some(mode) = mode {
+        out.push(json!({"jsonrpc":"2.0","id":4,"method":"session/set_mode","params":{"sessionId":session,"modeId":mode}}));
+    }
+    if let Some(model) = model.filter(|m| *m != "default") {
+        out.push(json!({"jsonrpc":"2.0","id":5,"method":"session/set_model","params":{"sessionId":session,"modelId":model}}));
+    }
+    out
+}
+
+async fn send_prompt(
+    stdin: &mut tokio::process::ChildStdin,
+    session: &str,
+    text: &str,
+) -> Result<(), CliError> {
+    send(
+        stdin,
+        json!({"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{
+            "sessionId":session,"prompt":[{"type":"text","text":text}]}}),
+    )
+    .await
 }
 
 /// ACP permission answer. Below Full only the agent's "once" options are used, so a
@@ -788,6 +830,45 @@ fn codex_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn antigravity_session_setup_matches_its_captured_acp_shapes() {
+        // Sanitised `agy acp` 1.5.9 session/new result: models and modes it offers.
+        let captured = json!({"sessionId":"S","models":{"availableModels":[
+            {"modelId":"gemini-4-argon-medium"},{"modelId":"gemini-3.8-flash-medium"},
+            {"modelId":"claude-sonnet-5-5-medium"},{"modelId":"claude-opus-5-5-medium"}],
+            "currentModelId":"gemini-4-argon-medium"},
+            "modes":{"currentModeId":"default","availableModes":[
+            {"id":"default"},{"id":"accept-edits"},{"id":"auto"},{"id":"plan"}]}});
+        let offered = |key: &str, field: &str, id: &str| {
+            captured[key]
+                .as_object()
+                .and_then(|o| o.values().find_map(|v| v.as_array()))
+                .is_some_and(|list| list.iter().any(|m| m[field] == id))
+        };
+        for model in crate::engine_spec("agy")
+            .unwrap()
+            .models
+            .iter()
+            .filter(|m| **m != "default")
+        {
+            assert!(offered("models", "modelId", model), "{model}");
+        }
+        for level in ApprovalLevel::ALL {
+            if let Some(mode) = level_plan(Driver::Agy, level).acp_mode {
+                assert!(offered("modes", "id", mode), "{mode}");
+            }
+        }
+        let ask = agy_setup(
+            "S",
+            level_plan(Driver::Agy, ApprovalLevel::Ask).acp_mode,
+            Some("claude-opus-5-5-medium"),
+        );
+        assert_eq!(ask[0]["method"], "session/set_mode");
+        assert_eq!(ask[0]["params"]["modeId"], "default");
+        assert_eq!(ask[1]["params"]["modelId"], "claude-opus-5-5-medium");
+        assert_eq!(agy_setup("S", None, Some("default")), Vec::<Value>::new());
+    }
 
     #[test]
     fn acp_never_selects_a_remembered_grant_below_full_access() {
