@@ -78,8 +78,8 @@
 }
 
 :global(:root[data-style="glass"]) .bar {
-  background-color: color-mix(in srgb, var(--bar-tone) 10%, color-mix(in srgb, var(--color-surface-elevated-opaque) 60%, transparent));
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
+  /* no blur layer of its own (blur budget): a more opaque tint keeps it legible over a backdrop */
+  background-color: color-mix(in srgb, var(--bar-tone) 10%, var(--color-surface-elevated-opaque));
 }
 
 .lead {
