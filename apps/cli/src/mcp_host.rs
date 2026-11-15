@@ -1247,6 +1247,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::too_many_lines)] // One user journey: 401, cancel, sign-in, logout.
     async fn user_sign_in_through_the_host_connects_and_logout_forgets() {
         const ACCESS: &str = "host-flow-access-sentinel-5d21";
         const REFRESH: &str = "host-flow-refresh-sentinel-a07e";
