@@ -236,10 +236,13 @@ pub(crate) async fn list(
     Ok(Json(rows))
 }
 
-/// A detected, signed-in engine the confined runner can run is switched on the first
-/// time it is seen. "Seen" is the `cli:<id>` entry in `providers.toml`: the owner's
-/// switch-off writes `enabled = false` there, so it is never turned on again.
-async fn auto_enable_new(
+/// A detected, signed-in engine is switched on the first time it is seen. That only makes
+/// it selectable in the model picker: no bot changes engine or approval level (those live
+/// in each bot's `engine` table, written only by `PUT /v1/bots/{id}/engine`). "Seen" is
+/// the `cli:<id>` entry in `providers.toml`: the owner's switch-off writes `enabled = false`
+/// there, so it is never turned on again. Engines whose sign-in cannot be probed
+/// (no `auth_args`, e.g. OpenCode) count as signed in unless detection says signed out.
+pub(crate) async fn auto_enable_new(
     s: &AppState,
     rows: &[cli_provider::DetectedCli],
 ) -> Result<Vec<String>, ApiError> {
@@ -252,10 +255,15 @@ async fn auto_enable_new(
         let Some(spec) = cli_provider::engine_spec(&row.id) else {
             continue;
         };
-        let eligible = spec.runnable
+        let signed_in = match row.auth {
+            cli_provider::AuthState::SignedIn => true,
+            cli_provider::AuthState::Unknown => spec.auth_args.is_empty(),
+            cli_provider::AuthState::SignedOut => false,
+        };
+        let eligible = spec.can_enable()
             && row.installed
-            && row.runnable
-            && row.auth == cli_provider::AuthState::SignedIn
+            && row.version.is_some()
+            && signed_in
             && spec.minimum_version.is_none_or(|min| {
                 row.version
                     .as_deref()
