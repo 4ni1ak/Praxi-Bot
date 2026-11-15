@@ -34,7 +34,7 @@ pub const USE_TOOL: &str = "use_tool";
 /// model should see it directly.
 pub const DEFAULT_DISCOVERY_THRESHOLD: usize = 40;
 /// Default number of results of `find_tool`.
-pub const DEFAULT_FIND_K: usize = 5;
+pub const DEFAULT_FIND_K: usize = 6;
 /// Upper bound on `k` accepted by `find_tool`.
 pub const MAX_FIND_K: usize = 25;
 
@@ -130,6 +130,92 @@ fn str_arg<'a>(input: &'a Value, key: &str) -> Result<&'a str, ToolError> {
         .ok_or_else(|| ToolError::InvalidInput(format!("`{key}` must be a string")))
 }
 
+/// Where a tool comes from: `builtin`, `mcp:<server>` or another namespace.
+fn source_of(name: &str) -> String {
+    match name.strip_prefix("mcp:").and_then(|r| r.split_once('/')) {
+        Some((server, _)) => format!("mcp:{server}"),
+        None => match name.split_once(':') {
+            Some((ns, _)) => ns.to_owned(),
+            None => "builtin".to_owned(),
+        },
+    }
+}
+
+/// `playwright: browser_navigate` for MCP tools, the plain name otherwise.
+fn label_of(name: &str) -> String {
+    match name.strip_prefix("mcp:").and_then(|r| r.split_once('/')) {
+        Some((server, tool)) => format!("{server}: {tool}"),
+        None => name.to_owned(),
+    }
+}
+
+/// First line of a description, cut to a readable length.
+fn one_line(description: &str) -> String {
+    let line = description.lines().next().unwrap_or_default().trim();
+    if line.chars().count() > 110 {
+        let cut: String = line.chars().take(107).collect();
+        format!("{cut}...")
+    } else {
+        line.to_owned()
+    }
+}
+
+/// Compact `name: type` list of a schema's parameters, required ones marked.
+fn params_of(schema: &Value) -> Vec<String> {
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|r| r.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let Some(props) = schema.get("properties").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut names: Vec<&String> = props.keys().collect();
+    // Required parameters first, then the rest, both alphabetical.
+    names.sort_by(|a, b| {
+        let key = |n: &&String| (!required.contains(&n.as_str()), n.to_string());
+        key(a).cmp(&key(b))
+    });
+    names
+        .into_iter()
+        .take(8)
+        .map(|n| {
+            let ty = props[n.as_str()]
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("any");
+            let req = if required.contains(&n.as_str()) {
+                " (required)"
+            } else {
+                ""
+            };
+            format!("{n}: {ty}{req}")
+        })
+        .collect()
+}
+
+/// A `use_tool` argument object with a placeholder for every required parameter.
+fn example_of(name: &str, schema: &Value) -> Value {
+    let mut input = serde_json::Map::new();
+    if let Some(required) = schema.get("required").and_then(Value::as_array) {
+        for key in required.iter().filter_map(Value::as_str) {
+            let ty = schema["properties"][key]
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("string");
+            let placeholder = match ty {
+                "integer" | "number" => json!(0),
+                "boolean" => json!(true),
+                "array" => json!([]),
+                "object" => json!({}),
+                _ => json!(format!("<{key}>")),
+            };
+            input.insert(key.to_owned(), placeholder);
+        }
+    }
+    json!({ "name": USE_TOOL, "arguments": { "name": name, "input": input } })
+}
+
 struct FindTool {
     spec: ToolSpec,
     discovery: Arc<Discovery>,
@@ -158,23 +244,39 @@ impl Tool for FindTool {
         let index = self.discovery.index();
         // The index is shared by all bots: rank everything, then drop what this
         // caller may not see, then cut to `k`.
-        let hits: Vec<Value> = index
+        let mut found: Vec<(String, String, f64, ToolSpec)> = index
             .search(query, index.len())
             .into_iter()
             .filter_map(|h| {
                 let tool = self.discovery.registry.get(&h.name)?;
-                let spec = tool.spec();
-                self.discovery.visible(ctx, spec).then(|| {
-                    json!({
-                        "name": h.name,
-                        "description": h.description,
-                        "score": h.score,
-                        "effect": spec.effect,
-                        "category": spec.category,
-                    })
-                })
+                let spec = tool.spec().clone();
+                self.discovery
+                    .visible(ctx, &spec)
+                    .then(|| (h.name, h.description, h.score, spec))
             })
             .take(k)
+            .collect();
+        // Group by source: built-in tools first, then each MCP server, keeping
+        // the rank order inside a group.
+        found.sort_by_key(|(name, ..)| {
+            let src = source_of(name);
+            (src != "builtin", src)
+        });
+        let hits: Vec<Value> = found
+            .iter()
+            .map(|(name, description, score, spec)| {
+                json!({
+                    "name": name,
+                    "source": source_of(name),
+                    "label": label_of(name),
+                    "description": one_line(description),
+                    "params": params_of(&spec.input_schema),
+                    "example": example_of(name, &spec.input_schema),
+                    "score": score,
+                    "effect": spec.effect,
+                    "category": spec.category,
+                })
+            })
             .collect();
         // One shape for every query: `{results, hint?}`. `hint` is only present
         // when nothing matched, so the model never has to parse a bare array.
@@ -334,7 +436,7 @@ impl ToolSurface {
                     "type": "object",
                     "properties": {
                         "query": { "type": "string", "description": "What you want to do" },
-                        "k": { "type": "integer", "description": "Max results (default 5)" }
+                        "k": { "type": "integer", "description": "Max results (default 6)" }
                     },
                     "required": ["query"]
                 }),
@@ -905,5 +1007,30 @@ mod tests {
                 .resolve_hinted("tool1", &["tool1".into()], &visible)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn find_tool_groups_by_source_and_carries_a_ready_example() {
+        let reg = registry_with(10);
+        reg.register(fake(
+            "mcp:playwright/browser_navigate",
+            "Navigate to a URL",
+            Effect::Read,
+        ));
+        reg.register(fake(
+            "browser_open",
+            "Open a URL in the browser",
+            Effect::Read,
+        ));
+        let surface = ToolSurface::new(reg, 5);
+        let find = surface.resolve(FIND_TOOL).unwrap();
+        let out =
+            block_on(find.call(&ToolContext::default(), json!({ "query": "browser" }))).unwrap();
+        let hits = json_of(&out);
+        let first = &hits["results"][0];
+        assert_eq!(first["name"], "browser_open");
+        assert_eq!(first["source"], "builtin");
+        assert_eq!(first["example"]["arguments"]["name"], "browser_open");
+        assert_eq!(hits["results"][1]["label"], "playwright: browser_navigate");
     }
 }

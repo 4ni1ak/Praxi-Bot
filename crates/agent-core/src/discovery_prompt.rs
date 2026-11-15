@@ -51,6 +51,15 @@ fn clean_server_id(raw: &str) -> Option<String> {
     (!id.is_empty()).then_some(id)
 }
 
+/// Host OS line: fixed text per compile target (byte-stable across turns).
+const HOST_LINE: &str = if cfg!(windows) {
+    r"Host: Windows; paths look like C:\Users\name\Documents (never /home/...)."
+} else if cfg!(target_os = "macos") {
+    "Host: macOS; paths look like /Users/name/Documents."
+} else {
+    "Host: Linux; paths look like /home/name/Documents."
+};
+
 /// The block for the permitted tool `names` (any order), or `None` when there
 /// is nothing to advertise.
 pub(crate) fn block<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<String> {
@@ -100,8 +109,13 @@ pub(crate) fn block<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<Stri
         let _ = write!(out, "\nConnected apps (by id): {}.", shown.join(", "));
     }
     out.push_str(
-        "\nBefore you say you cannot do something or lack a capability, call find_tool first.",
+        "\nBrowser, web, file and desktop actions are done by calling use_tool with a tool \
+from find_tool (its result includes a ready `example`). Never say you cannot before you tried \
+find_tool.",
     );
+    out.push('\n');
+    out.push_str(HOST_LINE);
+    out.push_str("\nAnswer in the language the user writes in.");
     Some(out)
 }
 
@@ -118,7 +132,7 @@ mod tests {
                 && !b.contains("computer / desktop")
                 && !b.contains("shell commands")
         );
-        assert!(b.contains("call find_tool first"));
+        assert!(b.contains("Never say you cannot before you tried find_tool"));
     }
 
     #[test]
