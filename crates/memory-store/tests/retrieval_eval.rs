@@ -210,12 +210,13 @@ fn lexical_quality_and_reference_token_economy() {
     );
 }
 
-/// A deterministic, corpus-vocabulary fixture. It has no semantic model and
+/// A deterministic TF-IDF fixture with sublinear term frequency. It has no semantic model and
 /// cannot inspect source IDs, filenames, expected answers, or query labels.
 /// Unknown-only input gets a separate orthogonal coordinate, so the no-match
 /// case tests real vector abstention rather than a scripted search response.
 struct FixtureEmbedder {
     vocabulary: BTreeMap<String, usize>,
+    inverse_document_frequency: Vec<f32>,
     documents: AtomicUsize,
     queries: AtomicUsize,
 }
@@ -228,7 +229,7 @@ fn words(text: &str) -> impl Iterator<Item = String> + '_ {
 
 impl FixtureEmbedder {
     fn new(corpus: &BTreeMap<String, String>) -> Self {
-        let vocabulary = corpus
+        let vocabulary: BTreeMap<_, _> = corpus
             .values()
             .flat_map(|text| words(text))
             .collect::<BTreeSet<_>>()
@@ -236,8 +237,25 @@ impl FixtureEmbedder {
             .enumerate()
             .map(|(index, word)| (word, index))
             .collect();
+        let documents: Vec<BTreeSet<_>> =
+            corpus.values().map(|text| words(text).collect()).collect();
+        let count = f32::from(u16::try_from(documents.len()).unwrap());
+        let mut inverse_document_frequency = vec![0.; vocabulary.len()];
+        for (word, &index) in &vocabulary {
+            let frequency = f32::from(
+                u16::try_from(
+                    documents
+                        .iter()
+                        .filter(|document| document.contains(word))
+                        .count(),
+                )
+                .unwrap(),
+            );
+            inverse_document_frequency[index] = ((count + 1.) / (frequency + 1.)).ln() + 1.;
+        }
         Self {
             vocabulary,
+            inverse_document_frequency,
             documents: AtomicUsize::new(0),
             queries: AtomicUsize::new(0),
         }
@@ -276,11 +294,17 @@ impl EmbeddingProvider for FixtureEmbedder {
                 let mut vector = vec![0.0_f32; self.dimensions()];
                 for word in words(&input.text) {
                     if let Some(&index) = self.vocabulary.get(&word) {
-                        vector[index] = 1.;
+                        vector[index] += 1.;
                     }
                 }
                 if vector.iter().all(|&value| value == 0.) {
                     vector[self.vocabulary.len()] = 1.;
+                } else {
+                    for (value, weight) in vector.iter_mut().zip(&self.inverse_document_frequency) {
+                        if *value > 0. {
+                            *value = (1. + value.ln()) * weight;
+                        }
+                    }
                 }
                 vector
             })
@@ -302,7 +326,7 @@ async fn embedded_fixture(
         EmbeddingProfile {
             provider_id: provider.id().into(),
             model: "fixture-vocabulary".into(),
-            model_revision: Some("binary-term-v1".into()),
+            model_revision: Some("sublinear-tfidf-v2".into()),
             endpoint_identity: provider.endpoint_identity().unwrap(),
             dimensions: provider.dimensions(),
             request_dimensions: false,
