@@ -17,6 +17,8 @@ import {
   evaluateRestoreGate,
   languageForPath,
   parseUnifiedDiff,
+  verificationLabel,
+  restoreConsentKeys,
   type DiffRow
 } from "../lib/fileChanges";
 import { Modal } from "./Modal";
@@ -72,7 +74,7 @@ function InlineDiffView({ change }: { change: FileChange }) {
     if (!change.current_matches_after) {
       return (
         <div className={styles.omittedNote}>
-          {t("chat.changes.omitted.modified_since")}
+          {t(verificationLabel(change) ?? "chat.changes.omitted.modified_since")}
         </div>
       );
     }
@@ -234,7 +236,7 @@ export function RunChangesSection({
         })
       );
       // Discard the old clean preview immediately, and reset explicit consent.
-      if (e instanceof ApiError && e.status === 409 && e.code === "modified_since") {
+      if (e instanceof ApiError && e.status === 409 && (e.code === "modified_since" || e.code === "could_not_verify")) {
         setPreview(null);
         setConflictRequiresConfirm(true);
         setOverwriteChecked(false);
@@ -383,7 +385,7 @@ export function RunChangesSection({
                             " "
                           )}
                         >
-                          {t(change.changed_by_run ? "chat.changes.changedByRun" : "chat.changes.changedOutsideRun", { run: change.changed_by_run })}
+                          {t(verificationLabel(change) ?? "chat.changes.changedOutsideRun", { run: change.changed_by_run })}
                         </span>
                       ) : null}
 
@@ -471,7 +473,7 @@ export function RunChangesSection({
                     </span>
                     <span className={styles.previewAction}>
                       {!entry.accessible ? t("chat.changes.omitted.not_accessible") : t(`chat.changes.modal.action.${entry.action}`)}
-                      {!entry.current_matches_after && entry.accessible ? t(entry.changed_by_run ? "chat.changes.changedByRun" : "chat.changes.changedOutsideRun", { run: entry.changed_by_run }) : null}
+                      {!entry.current_matches_after && entry.accessible ? t(verificationLabel(entry) ?? "chat.changes.changedOutsideRun", { run: entry.changed_by_run }) : null}
                     </span>
                   </div>
                 ))}
@@ -484,7 +486,7 @@ export function RunChangesSection({
                       className={styles.warningIcon}
                       aria-hidden="true"
                     />
-                    <span>{t("chat.changes.modal.modifiedWarning")}</span>
+                    <span>{t(restoreConsentKeys(preview).warning)}</span>
                   </div>
 
                   <label className={styles.checkboxRow}>
@@ -494,7 +496,7 @@ export function RunChangesSection({
                       onChange={(e) => setOverwriteChecked(e.target.checked)}
                       data-testid="overwrite-newer-checkbox"
                     />
-                    <span>{t("chat.changes.modal.overwriteLabel")}</span>
+                    <span>{t(restoreConsentKeys(preview).label)}</span>
                   </label>
                 </>
               ) : null}

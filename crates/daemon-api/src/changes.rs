@@ -7,7 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use builtin_tools::{
     ChangeKind, CheckpointStore, DiffOmittedReason, FileChange, RestoreAction, RestorePreviewEntry,
-    UnifiedDiff,
+    UnifiedDiff, Verification,
 };
 use protocol::event::CheckpointRestored;
 use protocol::{Event, RunId};
@@ -96,6 +96,24 @@ impl From<UnifiedDiff> for UnifiedDiffDto {
     }
 }
 
+/// Whether bounded hashing verified the recorded after-state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationDto {
+    Matched,
+    Changed,
+    Unknown,
+}
+impl From<Verification> for VerificationDto {
+    fn from(v: Verification) -> Self {
+        match v {
+            Verification::Matched => Self::Matched,
+            Verification::Changed => Self::Changed,
+            Verification::Unknown => Self::Unknown,
+        }
+    }
+}
+
 /// One collapsed file change recorded during a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[allow(clippy::struct_excessive_bools)]
@@ -113,6 +131,7 @@ pub struct FileChangeDto {
     pub text: Option<UnifiedDiffDto>,
     pub diff_omitted_reason: Option<DiffOmittedReasonDto>,
     pub current_matches_after: bool,
+    pub verification: VerificationDto,
     pub via_link_of: Option<String>,
     pub is_dir: bool,
     pub is_link: bool,
@@ -134,6 +153,7 @@ impl From<FileChange> for FileChangeDto {
             text: c.text.map(Into::into),
             diff_omitted_reason: c.diff_omitted_reason.map(Into::into),
             current_matches_after: c.current_matches_after,
+            verification: c.verification.into(),
             via_link_of: c.via_link_of,
             is_dir: c.is_dir,
             is_link: c.is_link,
@@ -177,6 +197,7 @@ pub struct RestorePreviewEntryDto {
     pub changed_by_run: Option<Uuid>,
     pub path: String,
     pub current_matches_after: bool,
+    pub verification: VerificationDto,
     pub action: RestoreActionDto,
     pub via_link_of: Option<String>,
 }
@@ -188,6 +209,7 @@ impl From<RestorePreviewEntry> for RestorePreviewEntryDto {
             changed_by_run: None,
             path: e.path,
             current_matches_after: e.current_matches_after,
+            verification: e.verification.into(),
             action: e.action.into(),
             via_link_of: e.via_link_of,
         }
@@ -201,6 +223,7 @@ pub struct RestorePreviewDto {
     pub checkpoint_id: String,
     pub entries: Vec<RestorePreviewEntryDto>,
     pub modified_since: Vec<String>,
+    pub could_not_verify: Vec<String>,
     pub covered: Vec<String>,
     pub not_covered: Vec<String>,
 }
@@ -457,7 +480,7 @@ pub(crate) async fn preview_restore(
                             &review_run,
                             &entries
                                 .iter()
-                                .filter(|e| e.accessible && !e.current_matches_after)
+                                .filter(|e| e.accessible && e.verification == Verification::Changed)
                                 .map(|e| e.path.as_str())
                                 .collect(),
                         );
@@ -479,7 +502,12 @@ pub(crate) async fn preview_restore(
 
     let modified_since: Vec<String> = entries
         .iter()
-        .filter(|e| e.accessible && !e.current_matches_after)
+        .filter(|e| e.accessible && e.verification == VerificationDto::Changed)
+        .map(|e| e.path.clone())
+        .collect();
+    let could_not_verify = entries
+        .iter()
+        .filter(|e| e.accessible && e.verification == VerificationDto::Unknown)
         .map(|e| e.path.clone())
         .collect();
     let (covered, not_covered) = scope_lists();
@@ -488,6 +516,7 @@ pub(crate) async fn preview_restore(
         checkpoint_id: cp,
         entries,
         modified_since,
+        could_not_verify,
         covered,
         not_covered,
     }))
@@ -546,9 +575,11 @@ pub(crate) async fn restore_changes(
             let store = CheckpointStore::new(&data_dir);
             verify_checkpoint_scope(&store, &cp_arg, &run_str)?;
             let preview = store.selection_preview(&run_str, &cp_arg).map_err(map_store_err)?;
-            let modified: Vec<_> = preview.into_iter().filter(|e| e.accessible && !e.current_matches_after).map(|e| e.path).collect();
-            if !force && !modified.is_empty() {
-                return Err(ApiError::new(StatusCode::CONFLICT, "modified_since", format!("{} file(s) changed or their after-state is unavailable ({}); explicit overwrite confirmation required", modified.len(), modified.join(", "))));
+            let modified: Vec<_> = preview.iter().filter(|e| e.accessible && e.verification == Verification::Changed).map(|e| e.path.as_str()).collect();
+            let unknown: Vec<_> = preview.iter().filter(|e| e.accessible && e.verification == Verification::Unknown).map(|e| e.path.as_str()).collect();
+            if !force && (!modified.is_empty() || !unknown.is_empty()) {
+                let code = if modified.is_empty() { "could_not_verify" } else { "modified_since" };
+                return Err(ApiError::new(StatusCode::CONFLICT, code, format!("changed: [{}]; could not verify: [{}]; explicit overwrite confirmation required", modified.join(", "), unknown.join(", "))));
             }
             state.storage().append_audit(state.user_id(), Some(run_id), &audit_actor,
                 "checkpoint.restore_started", &serde_json::json!({"checkpoint_id": cp_arg, "force": force}))
@@ -842,6 +873,52 @@ mod tests {
         fs::write(&path, "after").unwrap();
         store.record_after(&cp).unwrap();
         (path, cp)
+    }
+
+    #[tokio::test]
+    async fn large_unchanged_restore_needs_no_force_unknown_needs_truthful_consent() {
+        let h = setup_harness();
+        let (path, cp) = edit(&h, h.run_id, "large.txt");
+        let store = CheckpointStore::new(h.dir.path());
+        fs::write(&path, vec![b'x'; 1024 * 1024]).unwrap();
+        store.record_after(&cp).unwrap();
+        let base = format!("/v1/runs/{}/changes/{cp}", h.run_id);
+        let (_, preview) = call(&h.app, Method::GET, &format!("{base}/preview"), None, true).await;
+        assert_eq!(preview["entries"][0]["verification"], "matched");
+        assert_eq!(
+            call(&h.app, Method::POST, &format!("{base}/restore"), None, true)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before");
+
+        // Legacy manifests without an after-state cannot prove a user edit.
+        let legacy = store
+            .create(&h.run_id.0.to_string(), "fs_write", &[&path])
+            .unwrap();
+        let base = format!("/v1/runs/{}/changes/{legacy}", h.run_id);
+        let (_, preview) = call(&h.app, Method::GET, &format!("{base}/preview"), None, true).await;
+        assert_eq!(preview["entries"][0]["verification"], "unknown");
+        assert_eq!(preview["modified_since"], json!([]));
+        assert_eq!(preview["could_not_verify"].as_array().unwrap().len(), 1);
+        let (status, body) =
+            call(&h.app, Method::POST, &format!("{base}/restore"), None, true).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"]["code"], "could_not_verify");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before");
+        assert_eq!(
+            call(
+                &h.app,
+                Method::POST,
+                &format!("{base}/restore"),
+                Some(json!({"force":true})),
+                true
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]

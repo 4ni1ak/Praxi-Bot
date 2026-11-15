@@ -381,8 +381,10 @@
         "titleAll": "Undo all file changes from this run?",
         "previewLoading": "Checking current files on disk...",
         "safetyNote": "Undo affects every related file operation; review all paths below. A safety checkpoint saves the current state so this undo can be undone.",
-        "modifiedWarning": "These files changed after this run, or their after-state could not be recorded. Another run is identified when known; other changes may be your edits. Confirm before overwriting.",
+        "modifiedWarning": "These files changed after this run. Another run is identified when known; other changes may be your edits. Confirm before overwriting.",
         "overwriteLabel": "Overwrite my newer changes",
+        "unverifiedWarning": "Could not verify some current files. Files listed as changed have a verified difference. Confirm before overwriting changed or unverified files.",
+        "unverifiedOverwriteLabel": "Overwrite changed or unverified files",
         "confirm": "Restore",
         "restoring": "Restoring...",
         "cancel": "Cancel",
@@ -398,7 +400,8 @@
       "safetyCheckpoint": "Safety checkpoint: {{id}}",
       "undoUndo": "Undo this undo",
       "changedByRun": "Changed by another run ({{run}})",
-      "changedOutsideRun": "Changed outside this run, or after-state unavailable",
+      "changedOutsideRun": "Changed outside this run",
+      "couldNotVerify": "Could not verify the current file state",
       "restorePartial": "Restore failed; review the rollback warning and safety checkpoint below."
     },
     "route": {

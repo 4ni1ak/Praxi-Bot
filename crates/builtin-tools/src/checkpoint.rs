@@ -97,6 +97,28 @@ pub struct UnifiedDiff {
     pub hunks: usize,
 }
 
+/// Result of bounded verification against recorded post-operation state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verification {
+    /// The complete current state matches the recorded digest.
+    Matched,
+    /// A verified difference exists.
+    Changed,
+    /// Missing metadata, policy or resource limits prevented verification.
+    Unknown,
+}
+
+impl Verification {
+    fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Changed, _) | (_, Self::Changed) => Self::Changed,
+            (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
+            _ => Self::Matched,
+        }
+    }
+}
+
 /// Net file change produced by a run for UI/API review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
@@ -125,6 +147,8 @@ pub struct FileChange {
     pub diff_omitted_reason: Option<DiffOmittedReason>,
     /// Whether current on-disk state matches the run's last recorded after-state.
     pub current_matches_after: bool,
+    /// Truthful verification outcome; unknown still requires confirmation.
+    pub verification: Verification,
     /// Original tool-input symlink path when this change modified a link target.
     pub via_link_of: Option<String>,
     /// Whether the target is/was a directory.
@@ -154,6 +178,8 @@ pub struct RestorePreviewEntry {
     pub path: String,
     /// Whether current on-disk bytes still match the run's last recorded after-state.
     pub current_matches_after: bool,
+    /// Truthful verification outcome; unknown still requires confirmation.
+    pub verification: Verification,
     /// Planned restore action on this path.
     pub action: RestoreAction,
     /// Original symlink path if accessed via link.
@@ -373,6 +399,7 @@ fn digest_node(path: &Path, depth: usize, budget: &mut CopyBudget) -> io::Result
     if is_reparse(&meta) {
         return Err(budget_err("checkpoint payload is a link or reparse point"));
     }
+    charge_review_budget(if meta.is_file() { meta.len() } else { 0 })?;
     let mut hash = PayloadSha256::new();
     if meta.is_file() {
         budget.charge(meta.len())?;
@@ -2002,17 +2029,18 @@ impl CheckpointStore {
                                 Ok(matches) => matches,
                                 Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
                                     accessible = false;
-                                    false
+                                    Verification::Unknown
                                 }
                                 Err(err) => return Err(err),
                             }
                         } else {
-                            false
+                            Verification::Unknown
                         };
                         out.push(RestorePreviewEntry {
                             accessible,
                             path: entry.path.clone(),
-                            current_matches_after: matches,
+                            current_matches_after: matches == Verification::Matched,
+                            verification: matches,
                             action: if accessible {
                                 checkpoint_action(entry, &links)
                             } else {
@@ -2261,6 +2289,7 @@ fn current_state_digest(path: &Path) -> io::Result<DiskState> {
     if is_link(&meta) || is_reparse(&meta) {
         let target = fs::read_link(path)?;
         let mut hash = PayloadSha256::new();
+        charge_review_budget(target.as_os_str().as_encoded_bytes().len() as u64)?;
         hash.update(b"praxi-checkpoint-link\0");
         hash.update(&[u8::from(meta.is_dir())]);
         hash.update(target.as_os_str().as_encoded_bytes());
@@ -2280,55 +2309,69 @@ fn current_state_digest(path: &Path) -> io::Result<DiskState> {
     })
 }
 
+// Review is always called on the daemon blocking pool. Memory stays at the
+// digest's 16 KiB buffer; bytes AND directory entries share a request-wide cap.
+const MAX_REVIEW_HASH_BYTES: u64 = 256 * 1024 * 1024;
 thread_local! {
-    static REVIEW_HASH_BYTES: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static REVIEW_BUDGET: std::cell::Cell<Option<(u64, usize)>> = const { std::cell::Cell::new(None) };
 }
 fn with_review_budget<T>(f: impl FnOnce() -> T) -> T {
-    struct Reset(Option<u64>);
+    struct Reset(Option<(u64, usize)>);
     impl Drop for Reset {
         fn drop(&mut self) {
-            REVIEW_HASH_BYTES.with(|budget| budget.set(self.0));
+            REVIEW_BUDGET.with(|budget| budget.set(self.0));
         }
     }
-    let _reset = Reset(REVIEW_HASH_BYTES.with(|budget| budget.replace(Some(16 * 1024 * 1024))));
+    let _reset = Reset(
+        REVIEW_BUDGET
+            .with(|budget| budget.replace(Some((MAX_REVIEW_HASH_BYTES, MAX_CHECKPOINT_ENTRIES)))),
+    );
     f()
 }
 
-fn matches_recorded_after(entry: &CheckpointEntry) -> io::Result<bool> {
+fn charge_review_budget(bytes: u64) -> io::Result<()> {
+    REVIEW_BUDGET.with(|budget| match budget.get() {
+        Some((left, entries)) if bytes > left || entries == 0 => {
+            Err(budget_err("review verification budget exhausted"))
+        }
+        Some((left, entries)) => {
+            budget.set(Some((left - bytes, entries - 1)));
+            Ok(())
+        }
+        None => Ok(()),
+    })
+}
+
+fn matches_recorded_after(entry: &CheckpointEntry) -> io::Result<Verification> {
     let Some(after_existed) = entry.after_existed else {
-        return Ok(false);
+        return Ok(Verification::Unknown);
     };
     let path = Path::new(&entry.path);
     crate::files::vet_checkpoint_path(path)?;
-    if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() || m.len() > MAX_DIFF_FILE_BYTES) {
-        return Ok(false);
-    }
-    let size = fs::symlink_metadata(path).map_or(0, |m| m.len());
-    if !REVIEW_HASH_BYTES.with(|budget| match budget.get() {
-        Some(left) if left < size => false,
-        Some(left) => {
-            budget.set(Some(left - size));
-            true
-        }
-        None => true,
-    }) {
-        return Ok(false);
-    }
     let state = match current_state_digest(path) {
         Ok(state) => state,
-        Err(err) if err.kind() != io::ErrorKind::PermissionDenied => return Ok(false),
+        Err(err) if err.kind() != io::ErrorKind::PermissionDenied => {
+            return Ok(Verification::Unknown);
+        }
         Err(err) => return Err(err),
     };
     if state.existed != after_existed {
-        return Ok(false);
+        return Ok(Verification::Changed);
     }
     if !after_existed {
-        return Ok(true);
+        return Ok(Verification::Matched);
     }
     let _ = state.is_link;
-    Ok(state.size == entry.after_size
-        && state.sha256.is_some()
-        && state.sha256 == entry.after_sha256)
+    if entry.after_sha256.is_none() || entry.after_size.is_none() {
+        return Ok(Verification::Unknown);
+    }
+    Ok(
+        if state.size == entry.after_size && state.sha256 == entry.after_sha256 {
+            Verification::Matched
+        } else {
+            Verification::Changed
+        },
+    )
 }
 
 fn checkpoint_action(entry: &CheckpointEntry, links: &[LinkRecord]) -> RestoreAction {
@@ -2552,20 +2595,20 @@ fn build_file_change(item: CollapsedEntry, used_run_bytes: &mut u64) -> io::Resu
                 .into_iter()
                 .all(|v| v);
         if !accessible {
-            return Ok((false, false, ReadBounded::Missing, None));
+            return Ok((false, Verification::Unknown, ReadBounded::Missing, None));
         }
         let mut matches = matches_recorded_after(&item.latest_entry)?;
         for extra in &item.extra_after_checks {
-            matches &= matches_recorded_after(extra)?;
+            matches = matches.combine(matches_recorded_after(extra)?);
         }
         let before = read_before_bytes(&item.before_dir, &item.before_entry, &item.before_links)?;
-        let after = read_after_bytes(&item.latest_entry, matches)?;
+        let after = read_after_bytes(&item.latest_entry, matches == Verification::Matched)?;
         Ok((true, matches, before, after))
     })();
-    let (accessible, current_matches_after, before_read, after_read) = match reads {
+    let (accessible, verification, before_read, after_read) = match reads {
         Ok(reads) => reads,
         Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
-            (false, false, ReadBounded::Missing, None)
+            (false, Verification::Unknown, ReadBounded::Missing, None)
         }
         Err(err) => return Err(err),
     };
@@ -2637,7 +2680,8 @@ fn build_file_change(item: CollapsedEntry, used_run_bytes: &mut u64) -> io::Resu
         } else {
             Some(DiffOmittedReason::NotAccessible)
         },
-        current_matches_after,
+        current_matches_after: verification == Verification::Matched,
+        verification,
         accessible,
         via_link_of,
         is_dir,
@@ -2869,6 +2913,61 @@ mod tests {
         let cp = store.create("run", "fs_delete", &[&tree]).unwrap();
         store.record_after(&cp).unwrap();
         assert!(!store.restore_preview(&cp).unwrap()[0].current_matches_after);
+    }
+
+    #[test]
+    fn review_streams_large_files_and_directories_and_reports_unknown_budget() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let store = CheckpointStore::new(data.path());
+        let file = work.path().join("large.bin");
+        fs::write(&file, "before").unwrap();
+        let cp = store.create("run", "fs_write", &[&file]).unwrap();
+        fs::write(&file, vec![b'x'; 1024 * 1024]).unwrap();
+        store.record_after(&cp).unwrap();
+        assert_eq!(
+            store.changes_for_run("run").unwrap()[0].verification,
+            Verification::Matched
+        );
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Matched
+        );
+        let (_, checkpoint) = store.find(&cp).unwrap();
+        with_review_budget(|| {
+            REVIEW_BUDGET.with(|b| b.set(Some((1024 * 1024, 10))));
+            assert_eq!(
+                matches_recorded_after(&checkpoint.entries[0]).unwrap(),
+                Verification::Matched
+            );
+            assert_eq!(
+                matches_recorded_after(&checkpoint.entries[0]).unwrap(),
+                Verification::Unknown
+            );
+        });
+        fs::write(&file, vec![b'y'; 1024 * 1024]).unwrap();
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Changed
+        );
+
+        let folder = work.path().join("folder");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("child.txt"), "before").unwrap();
+        let cp = store
+            .create("directory-run", "fs_edit", &[&folder])
+            .unwrap();
+        fs::write(folder.join("child.txt"), "after").unwrap();
+        store.record_after(&cp).unwrap();
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Matched
+        );
+        fs::write(folder.join("child.txt"), "newer").unwrap();
+        assert_eq!(
+            store.restore_preview(&cp).unwrap()[0].verification,
+            Verification::Changed
+        );
     }
 
     #[test]

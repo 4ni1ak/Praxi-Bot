@@ -381,8 +381,10 @@
         "titleAll": "Bu çalıştırmadaki tüm dosya değişiklikleri geri alınsın mı?",
         "previewLoading": "Diskteki güncel dosyalar denetleniyor...",
         "safetyNote": "Geri alma, bağlantılı tüm dosya işlemlerini etkiler; aşağıdaki yolları inceleyin. Güvenlik denetim noktası, bu geri almayı geri alabilmeniz için güncel durumu saklar.",
-        "modifiedWarning": "Bu dosyalar çalışmadan sonra değişti veya son durumları kaydedilemedi. Biliniyorsa diğer çalışma gösterilir; diğer değişiklikler sizin düzenlemeleriniz olabilir. Üzerine yazmadan önce onaylayın.",
+        "modifiedWarning": "Bu dosyalar çalıştırmadan sonra değişti. Biliniyorsa değiştiren çalıştırma gösterilir; diğer değişiklikler size ait olabilir. Üzerine yazmadan önce onaylayın.",
         "overwriteLabel": "Yeni değişikliklerimin üzerine yaz",
+        "unverifiedWarning": "Bazı dosyaların mevcut durumu doğrulanamadı. Değişti olarak listelenen dosyalarda doğrulanmış fark var. Değişen veya doğrulanamayan dosyaların üzerine yazmadan önce onaylayın.",
+        "unverifiedOverwriteLabel": "Değişen veya doğrulanamayan dosyaların üzerine yaz",
         "confirm": "Geri yükle",
         "restoring": "Geri yükleniyor...",
         "cancel": "İptal",
@@ -398,7 +400,8 @@
       "safetyCheckpoint": "Güvenlik denetim noktası: {{id}}",
       "undoUndo": "Bu geri almayı geri al",
       "changedByRun": "Başka bir çalışma değiştirdi ({{run}})",
-      "changedOutsideRun": "Bu çalışma dışında değişti veya son durum kaydı yok",
+      "changedOutsideRun": "Bu çalıştırma dışında değiştirildi",
+      "couldNotVerify": "Dosyanın mevcut durumu doğrulanamadı",
       "restorePartial": "Geri alma başarısız; aşağıdaki geri dönüş uyarısını ve güvenlik denetim noktasını inceleyin."
     },
     "route": {

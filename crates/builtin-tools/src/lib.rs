@@ -47,7 +47,7 @@ pub use browser::{BrowserDriver, BrowserSettings, CdpDriver, Wait};
 pub use checkpoint::{
     ChangeKind, Checkpoint, CheckpointEntry, CheckpointStore, DiffOmittedReason, FileChange,
     MAX_DIFF_FILE_BYTES, MAX_DIFF_RUN_BYTES, RestoreAction, RestorePreviewEntry, RestoreReport,
-    UnifiedDiff,
+    UnifiedDiff, Verification,
 };
 pub use control::{
     ActionPermit, ControlRequest, DesktopControlGate, OBSERVATION_DISCARDED, PermitValidator,

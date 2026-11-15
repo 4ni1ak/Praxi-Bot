@@ -156,10 +156,25 @@ export function evaluateRestoreGate(
       requiresForce: false
     };
   }
-  const needsOverwriteConfirm = conflictRequiresConfirm || preview.modified_since.length > 0;
+  const needsOverwriteConfirm = conflictRequiresConfirm || (preview.modified_since.length > 0 || preview.could_not_verify.length > 0);
   return {
     needsOverwriteConfirm,
     canConfirm: preview.entries.some((entry) => entry.accessible && entry.action !== "keep") && (!needsOverwriteConfirm || overwriteChecked),
     requiresForce: needsOverwriteConfirm && overwriteChecked
+  };
+}
+
+/** Keep unknown verification distinct from a proven post-run edit. */
+export function verificationLabel(entry: { verification: "matched" | "changed" | "unknown"; changed_by_run: string | null }): string | null {
+  if (entry.verification === "matched") return null;
+  if (entry.verification === "unknown") return "chat.changes.couldNotVerify";
+  return entry.changed_by_run ? "chat.changes.changedByRun" : "chat.changes.changedOutsideRun";
+}
+
+export function restoreConsentKeys(preview: RestorePreview) {
+  const unknown = preview.could_not_verify.length > 0;
+  return {
+    warning: unknown ? "chat.changes.modal.unverifiedWarning" : "chat.changes.modal.modifiedWarning",
+    label: unknown ? "chat.changes.modal.unverifiedOverwriteLabel" : "chat.changes.modal.overwriteLabel"
   };
 }
