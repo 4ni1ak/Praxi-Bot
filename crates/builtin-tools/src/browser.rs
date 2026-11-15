@@ -43,8 +43,9 @@ pub const MAX_ACT_STEPS: usize = 12;
 /// there is no `eval` and no navigation by URL.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActStep {
-    /// Click the element.
-    Click { r: String },
+    /// Click the element. With `checked` the click is a state set for a checkbox, radio or
+    /// switch: idempotent, read back, never repeated.
+    Click { r: String, checked: Option<bool> },
     /// Replace the text of the input.
     Fill { r: String, text: String },
     /// Choose an option of the select.
@@ -65,7 +66,7 @@ impl ActStep {
     #[must_use]
     pub fn target(&self) -> Option<&str> {
         match self {
-            Self::Click { r } | Self::Fill { r, .. } | Self::Select { r, .. } => Some(r),
+            Self::Click { r, .. } | Self::Fill { r, .. } | Self::Select { r, .. } => Some(r),
             Self::Scroll { r, .. } => r.as_deref(),
             Self::Press { .. } | Self::Wait { .. } => None,
         }
@@ -76,7 +77,14 @@ impl ActStep {
     #[must_use]
     pub fn describe(&self) -> String {
         match self {
-            Self::Click { r } => format!("click {r}"),
+            Self::Click {
+                r,
+                checked: Some(c),
+            } => format!(
+                "click {r} (set {})",
+                if *c { "checked" } else { "unchecked" }
+            ),
+            Self::Click { r, .. } => format!("click {r}"),
             Self::Fill { r, text } => format!("fill {r} ({} chars)", text.chars().count()),
             Self::Select { r, value } => {
                 format!(
@@ -104,7 +112,7 @@ impl ActStep {
     /// `(action, label)` for the control gate, the same pair the single tool uses.
     fn gate_request(&self) -> Option<(&'static str, String)> {
         match self {
-            Self::Click { r } | Self::Select { r, .. } => Some(("click", r.clone())),
+            Self::Click { r, .. } | Self::Select { r, .. } => Some(("click", r.clone())),
             Self::Fill { r, .. } => Some(("type", r.clone())),
             Self::Press { key } => Some(("key", key.clone())),
             Self::Scroll { r, .. } => Some(("scroll", r.clone().unwrap_or_default())),
@@ -282,6 +290,11 @@ pub trait BrowserDriver: Send + Sync {
     ) -> Result<String, String> {
         let _ = (dialog, prompt_text);
         self.click(r).await
+    }
+    /// Set the checkbox, radio button or switch `r` to `checked`: idempotent, read back.
+    async fn set_checked(&self, r: &str, checked: bool) -> Result<String, String> {
+        let _ = (r, checked);
+        Err("this browser driver cannot set checkbox state".into())
     }
     /// Replace the text of input `r`.
     async fn fill(&self, r: &str, text: &str) -> Result<String, String>;
@@ -867,6 +880,13 @@ impl BrowserDriver for CdpDriver {
         self.click_opts(r, None, None).await
     }
 
+    async fn set_checked(&self, r: &str, checked: bool) -> Result<String, String> {
+        let acted = with_session!(self, None, |sess| {
+            sess.page.set_checked(r, checked).await
+        })?;
+        render_action(&acted)
+    }
+
     async fn fill(&self, r: &str, text: &str) -> Result<String, String> {
         let acted = with_session!(self, None, |sess| { sess.page.fill(r, text).await })?;
         render_action(&acted)
@@ -1015,7 +1035,13 @@ impl BrowserDriver for CdpDriver {
                 }
                 let page = &sess.page;
                 Ok(Ok(match step {
-                    ActStep::Click { r } => page.click_with(r, &DialogOptions::default()).await?,
+                    ActStep::Click {
+                        r,
+                        checked: Some(c),
+                    } => page.set_checked(r, *c).await?,
+                    ActStep::Click { r, .. } => {
+                        page.click_with(r, &DialogOptions::default()).await?
+                    }
                     ActStep::Fill { r, text } => page.fill(r, text).await?,
                     ActStep::Select { r, value } => page.select_option(r, value).await?,
                     ActStep::Press { key } => page.press_key(key).await?,
@@ -1235,7 +1261,8 @@ fn tools_with_pool(
                 json!({"type":"object","properties":{
                     "ref":ref_prop,
                     "dialog":{"type":"string","enum":["accept","dismiss"],"description":"How to handle any dialog (e.g. confirm, prompt, beforeunload) during click. Default is dismiss (alerts are still accepted)."},
-                    "prompt_text":{"type":"string","description":"Optional text to enter when accepting a prompt dialog."}
+                    "prompt_text":{"type":"string","description":"Optional text to enter when accepting a prompt dialog."},
+                    "checked":{"type":"boolean","description":"For a checkbox, radio button or switch: set it to this state instead of clicking. Does nothing when it is already in that state; reads the state back afterwards. Never clicks twice."}
                 },"required":["ref"]}),
                 Effect::Write,
                 b,
@@ -1369,6 +1396,7 @@ fn tools_with_pool(
                         "text":{"type":"string","description":"fill: the new text. wait: text to wait for."},
                         "value":{"type":"string","description":"select: option value or label."},
                         "key":{"type":"string","description":"press: key such as Enter, Tab, Control+a."},
+                        "checked":{"type":"boolean","description":"click: set a checkbox, radio or switch to this state (no-op when already so, read back)."},
                         "dx":{"type":"number"},
                         "dy":{"type":"number"},
                         "selector":{"type":"string","description":"wait: CSS selector to wait for."},
@@ -1412,6 +1440,8 @@ struct RefIn {
     r#ref: String,
     dialog: Option<String>,
     prompt_text: Option<String>,
+    /// Set a checkbox, radio button or switch to this state instead of clicking blindly.
+    checked: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -1491,6 +1521,8 @@ struct ActStepIn {
     text: Option<String>,
     value: Option<String>,
     key: Option<String>,
+    /// `click` only: set a checkbox/radio/switch instead of toggling it.
+    checked: Option<bool>,
     #[serde(default)]
     dx: f64,
     #[serde(default)]
@@ -1518,6 +1550,7 @@ fn parse_act_steps(steps: Vec<ActStepIn>) -> Result<Vec<ActStep>, ToolError> {
             Ok(match st.action.as_str() {
                 "click" => ActStep::Click {
                     r: need_ref(st.r#ref)?,
+                    checked: st.checked,
                 },
                 "fill" => ActStep::Fill {
                     r: need_ref(st.r#ref)?,
@@ -1894,6 +1927,9 @@ impl BrowserTool {
                 }
                 permit
                     .protect(async move {
+                        if let Some(want) = i.checked {
+                            return d.set_checked(&i.r#ref, want).await;
+                        }
                         d.click_opts(&i.r#ref, i.dialog.as_deref(), i.prompt_text.as_deref())
                             .await
                     })
@@ -2333,6 +2369,9 @@ pub(crate) mod fake {
         async fn click(&self, r: &str) -> Result<String, String> {
             self.click_opts(r, None, None).await
         }
+        async fn set_checked(&self, r: &str, c: bool) -> Result<String, String> {
+            self.rec(&format!("set_checked:{r}:{c}"))
+        }
         async fn fill(&self, r: &str, t: &str) -> Result<String, String> {
             self.rec(&format!("fill:{r}:{t}"))
         }
@@ -2617,6 +2656,33 @@ mod tests {
                 "scroll:-:0:100"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn click_with_checked_sets_state_through_the_driver_and_never_plain_clicks() {
+        let (_d, fake, t) = build();
+        let ctx = ToolContext::default();
+        get(&t, "browser_click")
+            .call(&ctx, json!({"ref": "e1", "checked": true}))
+            .await
+            .unwrap();
+        get(&t, "browser_act")
+            .call(
+                &ctx,
+                json!({"steps": [{"action": "click", "ref": "e2", "checked": false}]}),
+            )
+            .await
+            .unwrap();
+        let calls = fake.calls.lock().clone();
+        assert!(
+            calls.contains(&"set_checked:e1:true".to_string()),
+            "{calls:?}"
+        );
+        assert!(
+            calls.contains(&"act:click e2 (set unchecked)".to_string()),
+            "{calls:?}"
+        );
+        assert!(!calls.iter().any(|c| c.starts_with("click:")), "{calls:?}");
     }
 
     #[tokio::test]
