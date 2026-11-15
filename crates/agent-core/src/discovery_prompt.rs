@@ -161,9 +161,7 @@ mod tests {
     fn dotted_server_ids_remain_distinct_and_the_closing_line_is_capability_neutral() {
         let b = block(["mcp:my.app/x", "mcp:myapp/x", "fs_read"]).unwrap();
         assert!(b.contains("Connected apps (by id): my.app, myapp."));
-        assert!(b.ends_with(
-            "Before you say you cannot do something or lack a capability, call find_tool first."
-        ));
+        assert!(b.ends_with("Answer in the language the user writes in."));
         assert!(!b.contains("browser") && !b.contains("computer"));
     }
 

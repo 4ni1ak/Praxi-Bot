@@ -14,9 +14,7 @@ use crate::lexical::{expand_query, stem_all};
 const NAME_BOOST: usize = 3;
 
 /// Leaf verbs a person reaches for first; hits named after them rank higher.
-const PRIMARY_VERBS: &[&str] = &[
-    "open", "navigate", "search", "read", "write", "run", "fetch", "launch",
-];
+const PRIMARY_VERBS: &[&str] = &["open", "navigate"];
 /// Niche leaf verbs: relevant only when asked for by name.
 const NICHE_VERBS: &[&str] = &[
     "resize", "close", "drag", "hover", "console", "network", "install", "dialog", "upload",
@@ -25,16 +23,14 @@ const NICHE_VERBS: &[&str] = &[
 /// Ranking multipliers (see [`rank_factor`]).
 const PRIMARY_BOOST: f64 = 1.25;
 const NICHE_PENALTY: f64 = 0.7;
-const BUILTIN_BOOST: f64 = 1.1;
 
 /// Multiplier applied to a BM25 score so the tool a person expects first wins:
-/// primary verbs up, niche verbs down, built-in tools slightly above MCP ones
-/// that expose the same family (`browser_open` vs `mcp:playwright/browser_*`).
+/// primary verbs (open/navigate) up, niche verbs down. Built-in-first order is
+/// applied by the grouping in `find_tool`, not here (it hurt the golden set).
 fn rank_factor(name: &str) -> f64 {
-    let (builtin, leaf) = match name.split_once(':') {
-        Some((_, rest)) => (false, rest.rsplit('/').next().unwrap_or(rest)),
-        None => (true, name),
-    };
+    let leaf = name
+        .split_once(':')
+        .map_or(name, |(_, rest)| rest.rsplit('/').next().unwrap_or(rest));
     let leaf = leaf.to_lowercase();
     let has = |verbs: &[&str]| leaf.split(['_', '.', '-']).any(|t| verbs.contains(&t));
     let mut f = 1.0;
@@ -42,9 +38,6 @@ fn rank_factor(name: &str) -> f64 {
         f *= PRIMARY_BOOST;
     } else if has(NICHE_VERBS) {
         f *= NICHE_PENALTY;
-    }
-    if builtin {
-        f *= BUILTIN_BOOST;
     }
     f
 }

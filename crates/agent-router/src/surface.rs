@@ -173,7 +173,7 @@ fn params_of(schema: &Value) -> Vec<String> {
     let mut names: Vec<&String> = props.keys().collect();
     // Required parameters first, then the rest, both alphabetical.
     names.sort_by(|a, b| {
-        let key = |n: &&String| (!required.contains(&n.as_str()), n.to_string());
+        let key = |n: &&String| (!required.contains(&n.as_str()), String::clone(n));
         key(a).cmp(&key(b))
     });
     names

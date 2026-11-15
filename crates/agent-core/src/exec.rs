@@ -302,15 +302,8 @@ impl TurnExecutor {
                 return Ok(Some(user_step(&text)));
             }
             if finished {
-                let g = &self.sh.cfg.guards;
-                let limit = ctx.sub.as_ref().map_or(g.max_steps, |s| s.max_steps);
-                if silent_end(history) && model_steps < limit as usize {
-                    return Ok(Some(StepSpec {
-                        name: STEP_NUDGE.to_owned(),
-                        input: json!({}),
-                        idempotent: true,
-                        retry: None,
-                    }));
+                if let Some(step) = self.nudge_step(&ctx, history, model_steps) {
+                    return Ok(Some(step));
                 }
                 st.closed = true;
                 return Ok(None);
@@ -357,6 +350,23 @@ impl TurnExecutor {
             // which provider errors are worth retrying.
             retry: None,
         }))
+    }
+
+    /// The one-per-turn nudge when the model went silent after tool calls.
+    fn nudge_step(
+        &self,
+        ctx: &RunCtx,
+        history: &[RunStep],
+        model_steps: usize,
+    ) -> Option<StepSpec> {
+        let g = &self.sh.cfg.guards;
+        let limit = ctx.sub.as_ref().map_or(g.max_steps, |s| s.max_steps);
+        (silent_end(history) && model_steps < limit as usize).then(|| StepSpec {
+            name: STEP_NUDGE.to_owned(),
+            input: json!({}),
+            idempotent: true,
+            retry: None,
+        })
     }
 
     /// The closing, tool-less model call that replaces a hard failure when a
@@ -623,7 +633,7 @@ impl TurnExecutor {
                     text: SILENT_FALLBACK.to_owned(),
                 }),
             );
-            out.text = SILENT_FALLBACK.to_owned();
+            SILENT_FALLBACK.clone_into(&mut out.text);
         }
         if let Some(reason) = guard_reason {
             // Tools were disabled: ignore anything the model still tried to call.

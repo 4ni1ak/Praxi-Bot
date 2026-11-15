@@ -2751,7 +2751,7 @@ exclude = [\"email_send\"]
         "excluded family advertised: {first}"
     );
     assert!(first.contains("Connected apps (by id): github."));
-    assert!(first.contains("call find_tool first"));
+    assert!(first.contains("Never say you cannot before you tried find_tool"));
     assert_eq!(
         first,
         system_text(&fake.request(1)),
