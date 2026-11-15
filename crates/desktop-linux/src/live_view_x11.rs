@@ -1640,7 +1640,7 @@ mod linux_x11 {
         h
     }
 
-    impl<S: Stream + Send + Sync> X11CaptureConnection for RealX11Capture<S> {
+    impl<S: Stream + Send + Sync + 'static> X11CaptureConnection for RealX11Capture<S> {
         fn query_layout(&mut self) -> Result<X11DisplayLayout, CaptureFailure> {
             let setup = self.conn.setup();
             let screen = setup
