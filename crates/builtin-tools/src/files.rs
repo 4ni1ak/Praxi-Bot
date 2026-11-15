@@ -2950,14 +2950,14 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         let link = work.path().join("remote");
         // Link text only: nothing is opened at creation time.
-        if !link_for_checkpoint_test(Path::new(r"\praxi-no-such-host\share\dir"), &link, true) {
+        if !link_for_checkpoint_test(Path::new(r"\\praxi-no-such-host\share\dir"), &link, true) {
             return;
         }
         let err = resolve_local_identity(&link.join("child.txt")).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
         let err = resolve_local_identity(&link).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
-        assert!(resolve_local_identity(Path::new(r"\praxi-no-such-host\share\x")).is_err());
+        assert!(resolve_local_identity(Path::new(r"\\praxi-no-such-host\share\x")).is_err());
         // A plain local path (existing or not) still resolves.
         assert!(resolve_local_identity(&work.path().join("missing").join("x")).is_ok());
     }

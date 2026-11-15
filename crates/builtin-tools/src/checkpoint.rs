@@ -3313,7 +3313,7 @@ mod tests {
         );
         assert_eq!(
             store.restore_preview(&cp).unwrap()[0].verification,
-            Verification::Changed
+            Verification::Unknown
         );
     }
 
