@@ -1109,6 +1109,277 @@ mod tests {
         host.shutdown().await;
     }
 
+    /// Fake protected MCP server and authorization server on one loopback
+    /// port: `/mcp` answers 401 unless the bearer is `access`, then speaks MCP.
+    struct FakeRemote {
+        access: &'static str,
+    }
+
+    impl wiremock::Respond for FakeRemote {
+        fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let authorized = request
+                .headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                == Some(format!("Bearer {}", self.access).as_str());
+            if !authorized {
+                return wiremock::ResponseTemplate::new(401)
+                    .insert_header("www-authenticate", "Bearer");
+            }
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            let method = body["method"].as_str().unwrap_or_default();
+            if body.get("id").is_none() {
+                let status = if method.starts_with("notifications/") {
+                    202
+                } else {
+                    405
+                };
+                return wiremock::ResponseTemplate::new(status);
+            }
+            let result = match method {
+                "initialize" => json!({
+                    "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "oauth-host-fixture", "version": "1"},
+                }),
+                "server/discover" => json!({
+                    "resultType": "complete", "supportedVersions": ["2026-07-28"],
+                    "capabilities": {"tools": {}}, "ttlMs": 0, "cacheScope": "private",
+                    "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "oauth-host-fixture", "version": "1"}},
+                }),
+                "tools/list" => json!({
+                    "resultType": "complete", "ttlMs": 0, "cacheScope": "private",
+                    "tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}],
+                }),
+                _ => json!({"resultType": "complete"}),
+            };
+            wiremock::ResponseTemplate::new(200)
+                .set_body_json(json!({"jsonrpc": "2.0", "id": body["id"], "result": result}))
+        }
+    }
+
+    async fn fake_remote(access: &'static str, refresh: &'static str) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        let base = server.uri();
+        Mock::given(path("/mcp"))
+            .respond_with(FakeRemote { access })
+            .mount(&server)
+            .await;
+        Mock::given(path_regex("oauth-protected-resource"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "resource": format!("{base}/mcp"),
+                "authorization_servers": [base],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(path_regex(
+            "oauth-authorization-server|openid-configuration",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": base,
+            "authorization_endpoint": format!("{base}/authorize"),
+            "token_endpoint": format!("{base}/token"),
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "code_challenge_methods_supported": ["S256"],
+            "authorization_response_iss_parameter_supported": true,
+            "token_endpoint_auth_methods_supported": ["none"],
+        })))
+        .mount(&server)
+        .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": access, "token_type": "Bearer",
+                "expires_in": 3600, "refresh_token": refresh,
+            })))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn query_pairs(url: &str) -> HashMap<String, String> {
+        reqwest::Url::parse(url)
+            .unwrap()
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect()
+    }
+
+    /// Play the browser: hit the loopback `redirect_uri` with `query`.
+    async fn browser_redirect(authorization_url: &str, query: &str) -> std::io::Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let redirect =
+            reqwest::Url::parse(&query_pairs(authorization_url)["redirect_uri"]).unwrap();
+        let address = format!(
+            "{}:{}",
+            redirect.host_str().unwrap(),
+            redirect.port().unwrap()
+        );
+        let mut socket = tokio::net::TcpStream::connect(&address).await?;
+        socket
+            .write_all(
+                format!(
+                    "GET {}?{query} HTTP/1.1\r\nHost: {address}\r\n\r\n",
+                    redirect.path()
+                )
+                .as_bytes(),
+            )
+            .await?;
+        let mut out = String::new();
+        socket.read_to_string(&mut out).await?;
+        Ok(out)
+    }
+
+    async fn wait_for(host: &McpHost, name: &str, want: McpStatus) {
+        let reached = tokio::time::timeout(Duration::from_secs(10), async {
+            while host.status_of(name) != want {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(
+            reached.is_ok(),
+            "{name}: wanted {want:?}, is {:?}",
+            host.status_of(name)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn user_sign_in_through_the_host_connects_and_logout_forgets() {
+        const ACCESS: &str = "host-flow-access-sentinel-5d21";
+        const REFRESH: &str = "host-flow-refresh-sentinel-a07e";
+        let remote = fake_remote(ACCESS, REFRESH).await;
+        let base = remote.uri();
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+        config.oauth = Some(mcp_bridge::OAuthConfig {
+            client_id: Some("praxi-host-test".into()),
+            allow_loopback_http: true,
+            ..mcp_bridge::OAuthConfig::default()
+        });
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+        let store = Arc::new(secret_store::MemoryStore::new());
+        let redactor = agent_core::SharedRedactor::default();
+        let registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value| handle.register(value))
+        };
+        let registry = ToolRegistry::new();
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            registry.clone(),
+            Some(store.clone()),
+            None,
+            Some(registrar),
+            fast_policy(),
+        );
+        let mut events = host.subscribe();
+
+        // A 401 waits for the user; it is neither an error nor a quarantine.
+        wait_for(&host, "remote", McpStatus::AuthRequired).await;
+        assert_eq!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::AuthRequired
+        );
+        assert_eq!(
+            host.manager
+                .snapshot("remote")
+                .unwrap()
+                .consecutive_failures,
+            0
+        );
+        assert!(registry.get("mcp:remote/echo").is_none());
+
+        // Sign-in, then cancel: the one-shot listener is gone afterwards.
+        let started = host.auth_start("remote").await.unwrap();
+        assert_eq!(started.expires_in, 300);
+        assert_eq!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::SigningIn
+        );
+        assert!(matches!(
+            host.auth_start("remote").await,
+            Err(McpControlError::Conflict(_))
+        ));
+        let cancelled = host.auth_cancel("remote").await.unwrap();
+        assert_ne!(cancelled, McpAuthState::SigningIn);
+        let params = query_pairs(&started.authorization_url);
+        let late = browser_redirect(
+            &started.authorization_url,
+            &format!("code=c&state={}&iss={base}", params["state"]),
+        )
+        .await;
+        assert!(
+            late.as_ref().map_or(true, |r| !r.contains(" 200 ")),
+            "callback still open: {late:?}"
+        );
+        assert!(store.get("mcp/remote/oauth").unwrap().is_none());
+
+        // Full sign-in: the tool list arrives with the bearer.
+        let started = host.auth_start("remote").await.unwrap();
+        let params = query_pairs(&started.authorization_url);
+        assert_eq!(params["code_challenge_method"], "S256");
+        assert_eq!(params["resource"], format!("{base}/mcp"));
+        browser_redirect(
+            &started.authorization_url,
+            &format!("code=code-1&state={}&iss={base}", params["state"]),
+        )
+        .await
+        .unwrap();
+        wait_for(&host, "remote", McpStatus::Connected).await;
+        assert!(registry.get("mcp:remote/echo").is_some());
+        assert_eq!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::SignedIn
+        );
+        let stored = store.get("mcp/remote/oauth").unwrap().unwrap();
+        assert!(stored.expose().contains(ACCESS));
+        // Neither the DTO, the config file nor the event stream carries a token.
+        let dto = serde_json::to_string(&host.list()).unwrap();
+        let file = std::fs::read_to_string(dir.path().join(MCP_FILE)).unwrap();
+        // The status poller announces the move to `connected` (POLL_EVERY).
+        let mut seen = String::new();
+        while !seen.contains("\"connected\"") {
+            let Ok(Ok(event)) = tokio::time::timeout(POLL_EVERY * 3, events.recv()).await else {
+                break;
+            };
+            seen.push_str(&serde_json::to_string(&event).unwrap());
+        }
+        assert!(
+            seen.contains("auth_required") && seen.contains("connected"),
+            "{seen}"
+        );
+        for text in [&dto, &file, &seen] {
+            assert!(!text.contains(ACCESS) && !text.contains(REFRESH));
+        }
+        assert!(!redactor.redact(ACCESS).contains(ACCESS));
+        assert!(!redactor.redact(REFRESH).contains(REFRESH));
+
+        // Logout forgets the credential and the tools.
+        assert_eq!(
+            host.auth_logout("remote").await.unwrap(),
+            McpAuthState::SignedOut
+        );
+        assert!(store.get("mcp/remote/oauth").unwrap().is_none());
+        assert!(registry.get("mcp:remote/echo").is_none());
+        assert_ne!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::SignedIn
+        );
+
+        // OAuth routes refuse stdio servers.
+        host.add(stdio("local", false)).await.unwrap();
+        assert!(matches!(
+            host.auth_start("local").await,
+            Err(McpControlError::Invalid(_))
+        ));
+        host.shutdown().await;
+    }
+
     fn stdio(name: &str, enabled: bool) -> McpServerInput {
         serde_json::from_value(json!({
             "name": name,
