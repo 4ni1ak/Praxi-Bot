@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use crate::diff::{self, SnapshotDiff};
 use crate::error::{Error, Result};
-use crate::page::{DEFAULT_WAIT, DialogInfo, DialogOptions, Page};
-use crate::snapshot::{RefEntry, Snapshot};
+use crate::page::{DEFAULT_WAIT, DialogInfo, DialogOptions, Page, RefFacts};
+use crate::snapshot::{FieldClass, RefEntry, Snapshot, classify_field};
 
 /// Result of an action: success flag, refreshed view as a diff against what the agent saw before.
 #[derive(Debug, Clone)]
@@ -470,9 +470,44 @@ impl Page {
 
     /// Replace the content of an input/textarea/contenteditable with `text`.
     pub async fn fill(&self, r: &str, text: &str) -> Result<ActionResult> {
+        self.fill_inner(r, text, None).await
+    }
+
+    /// [`Page::fill`] bound to what the caller showed for approval: after the
+    /// field has been located, focused and selected, and immediately before the
+    /// text is inserted, the element's facts are read again from the live page
+    /// (what it is, which document it belongs to, that it really holds the
+    /// focus). If any of it differs from `expected` (the field was swapped or
+    /// retyped, its page navigated, a focus handler moved the focus), nothing is
+    /// typed and the call fails: the caller must show the true view and ask again.
+    pub async fn fill_bound(
+        &self,
+        r: &str,
+        text: &str,
+        expected: &RefFacts,
+    ) -> Result<ActionResult> {
+        self.fill_inner(r, text, Some(expected)).await
+    }
+
+    async fn fill_inner(
+        &self,
+        r: &str,
+        text: &str,
+        expected: Option<&RefFacts>,
+    ) -> Result<ActionResult> {
         let before = self.baseline().await?;
         let res = async {
             let e = self.locate(r).await?;
+            if let Some(x) = expected {
+                if e.backend_id != x.backend_id
+                    || e.session_id != x.session_id
+                    || e.frame_id != x.frame_id
+                    || e.field != x.field
+                    || e.frame_origin != x.frame_origin
+                {
+                    return Err(binding_changed());
+                }
+            }
             self.focus_entry(&e).await?;
             self.call_on(
                 &e,
@@ -482,6 +517,12 @@ impl Page {
                 &[],
             )
             .await?;
+            if let Some(x) = expected {
+                let live = self.call_on(&e, LIVE_FIELD_JS, &[]).await?;
+                if !live_matches(&live, x) {
+                    return Err(binding_changed());
+                }
+            }
             if text.is_empty() {
                 self.key_inner("Delete").await
             } else {
@@ -799,9 +840,139 @@ impl Page {
     }
 }
 
+/// What a fill is checked against at the moment of insertion: the live
+/// element's tag, the `type` the browser resolved, its `autocomplete`, whether
+/// it holds the focus of its own document, and its document's origin.
+const LIVE_FIELD_JS: &str = "function(){ const d = this.ownerDocument; \
+    return { tag: this.tagName ? this.tagName.toLowerCase() : '', \
+             type: this.tagName === 'INPUT' ? this.type : null, \
+             autocomplete: this.getAttribute ? this.getAttribute('autocomplete') : null, \
+             focused: !!d && this.getRootNode().activeElement === this, \
+             origin: d && d.location ? d.location.origin : null }; }";
+
+fn binding_changed() -> Error {
+    Error::Element(
+        "the field is no longer the one that was shown for approval (its type, frame or \
+         origin changed, or focus moved); nothing was typed. Take a fresh snapshot and ask again."
+            .into(),
+    )
+}
+
+/// Whether the live facts `live` (the result of [`LIVE_FIELD_JS`]) are those
+/// `expected` was approved with.
+fn live_matches(live: &Value, expected: &RefFacts) -> bool {
+    let class = classify_field(
+        live["tag"].as_str().unwrap_or_default(),
+        live["type"].as_str(),
+        live["autocomplete"].as_str(),
+    );
+    let origin = crate::page::usable_origin(live["origin"].as_str());
+    live["focused"].as_bool() == Some(true)
+        && class == expected.field
+        && expected.field != FieldClass::Unknown
+        && origin == expected.frame_origin
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn approved(field: FieldClass, origin: Option<&str>) -> RefFacts {
+        RefFacts {
+            role: "textbox".into(),
+            name: "Password".into(),
+            field,
+            backend_id: 7,
+            session_id: None,
+            frame_id: "f".into(),
+            frame_origin: origin.map(str::to_owned),
+            top_origin: Some("https://top.test".into()),
+            in_top_frame: false,
+        }
+    }
+
+    fn live(tag: &str, ty: Option<&str>, focused: bool, origin: &str) -> Value {
+        json!({"tag": tag, "type": ty, "autocomplete": null, "focused": focused, "origin": origin})
+    }
+
+    #[test]
+    fn a_fill_is_bound_to_the_field_that_was_approved() {
+        let pw = approved(FieldClass::Credential, Some("https://evil.test"));
+        // Unchanged: fill.
+        assert!(live_matches(
+            &live("input", Some("password"), true, "https://evil.test"),
+            &pw
+        ));
+        // password -> ordinary text after the snapshot: the approval said "masked".
+        assert!(!live_matches(
+            &live("input", Some("text"), true, "https://evil.test"),
+            &pw
+        ));
+        // ordinary -> password after the snapshot: the approval showed the text.
+        let plain = approved(FieldClass::Ordinary, Some("https://evil.test"));
+        assert!(!live_matches(
+            &live("input", Some("password"), true, "https://evil.test"),
+            &plain
+        ));
+        assert!(live_matches(
+            &live("input", Some("text"), true, "https://evil.test"),
+            &plain
+        ));
+        // A focus handler moved the focus elsewhere.
+        assert!(!live_matches(
+            &live("input", Some("password"), false, "https://evil.test"),
+            &pw
+        ));
+        // The frame navigated to another origin (or an opaque one).
+        assert!(!live_matches(
+            &live("input", Some("password"), true, "https://trusted.test"),
+            &pw
+        ));
+        assert!(!live_matches(
+            &live("input", Some("password"), true, "null"),
+            &pw
+        ));
+        // An element that became a textarea is no credential.
+        assert!(!live_matches(
+            &live("textarea", None, true, "https://evil.test"),
+            &pw
+        ));
+        // An opaque origin matches only an opaque origin, and Unknown never binds.
+        let opaque = approved(FieldClass::Credential, None);
+        assert!(live_matches(
+            &live("input", Some("password"), true, "null"),
+            &opaque
+        ));
+        assert!(!live_matches(
+            &live("input", Some("password"), true, "https://a.test"),
+            &opaque
+        ));
+        let unknown = approved(FieldClass::Unknown, Some("https://evil.test"));
+        assert!(!live_matches(
+            &live("input", Some("text"), true, "https://evil.test"),
+            &unknown
+        ));
+    }
+
+    #[test]
+    fn only_a_usable_origin_is_kept() {
+        use crate::page::usable_origin;
+        assert_eq!(
+            usable_origin(Some("https://a.test:8443")).as_deref(),
+            Some("https://a.test:8443")
+        );
+        for bad in [
+            None,
+            Some(""),
+            Some("null"),
+            Some("://"),
+            Some("https://"),
+            Some("https://u:p@a.test"),
+            Some("https://a.test/x"),
+        ] {
+            assert_eq!(usable_origin(bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn named_keys() {

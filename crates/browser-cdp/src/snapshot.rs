@@ -78,6 +78,57 @@ pub struct SnapshotOptions {
     pub max_depth: Option<usize>,
 }
 
+/// What a field is, for deciding whether text typed into it may be shown as a
+/// mask (see [`classify_field`]). Only [`FieldClass::Credential`] ever may.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FieldClass {
+    /// A single-line `<input>` the browser treats as a credential: `type=password`,
+    /// or an `autocomplete` of `current-password`, `new-password`, `one-time-code`,
+    /// `cc-number` or `cc-csc`.
+    Credential,
+    /// Any other element: a text input, a textarea, a contenteditable, a button.
+    #[default]
+    Ordinary,
+    /// The DOM facts of the element's frame could not be read, so it cannot be
+    /// told apart. Nothing may be hidden for it and a fill into it is refused.
+    Unknown,
+}
+
+/// The `autocomplete` tokens that make an `<input>` a credential field.
+const CREDENTIAL_AUTOCOMPLETE: &[&str] = &[
+    "current-password",
+    "new-password",
+    "one-time-code",
+    "cc-number",
+    "cc-csc",
+];
+
+/// [`FieldClass::Credential`] or [`FieldClass::Ordinary`] from the facts the
+/// browser reports for an element: its lower-case tag, the `type` the browser
+/// resolved for an `<input>` and the raw `autocomplete` attribute. Never
+/// `Credential` for anything but an `<input>` (a page cannot turn a textarea
+/// or a contenteditable into a hiding place by labelling it).
+#[must_use]
+pub fn classify_field(
+    tag: &str,
+    input_type: Option<&str>,
+    autocomplete: Option<&str>,
+) -> FieldClass {
+    if tag != "input" {
+        return FieldClass::Ordinary;
+    }
+    let by_type = input_type.is_some_and(|t| t.eq_ignore_ascii_case("password"));
+    let by_autocomplete = autocomplete.is_some_and(|a| {
+        a.split_ascii_whitespace()
+            .any(|tok| CREDENTIAL_AUTOCOMPLETE.contains(&tok.to_ascii_lowercase().as_str()))
+    });
+    if by_type || by_autocomplete {
+        FieldClass::Credential
+    } else {
+        FieldClass::Ordinary
+    }
+}
+
 /// Extra DOM facts for one element, gathered with `DOMSnapshot.captureSnapshot`.
 #[derive(Debug, Clone, Default)]
 pub struct DomExtra {
@@ -108,7 +159,17 @@ impl DomExtra {
             && (self.cursor_pointer || self.onclick || self.tabindex.is_some())
     }
 
-    /// Whether the value of this element must never be shown.
+    /// What the element is for typed text (see [`classify_field`]).
+    pub fn field_class(&self) -> FieldClass {
+        classify_field(
+            &self.tag,
+            self.input_type.as_deref(),
+            self.autocomplete.as_deref(),
+        )
+    }
+
+    /// Whether the value of this element must never be shown (observation
+    /// redaction; broader than [`DomExtra::field_class`]).
     pub fn is_sensitive(&self) -> bool {
         self.input_type
             .as_deref()
@@ -133,6 +194,9 @@ pub struct FrameInput {
     pub session_id: Option<String>,
     /// Loader id: identifies the current document of the frame.
     pub loader_id: Option<String>,
+    /// The origin the browser reports for the frame's document (`scheme://host[:port]`);
+    /// `None` when it is opaque or unknown.
+    pub security_origin: Option<String>,
     /// Raw `Accessibility.getFullAXTree` nodes.
     pub ax_nodes: Vec<Value>,
     /// DOM facts for inputs and cursor-interactive candidates.
@@ -155,9 +219,11 @@ pub struct RefEntry {
     pub role: String,
     /// Accessible name.
     pub name: String,
-    /// The element takes a secret (a password, card number or one-time code
-    /// field, or a text field whose type could not be read: fail closed).
-    pub sensitive: bool,
+    /// What the element is for typed text (see [`FieldClass`]).
+    pub field: FieldClass,
+    /// Origin of the FRAME that contains the element (not the top-level page);
+    /// `None` when opaque or unknown.
+    pub frame_origin: Option<String>,
 }
 
 type RefKey = (Option<String>, String, i64);
@@ -512,7 +578,7 @@ impl Builder<'_> {
                     None,
                     Vec::new(),
                     true,
-                    false,
+                    FieldClass::Ordinary,
                 );
             }
         }
@@ -529,7 +595,7 @@ impl Builder<'_> {
         value: Option<String>,
         states: Vec<String>,
         with_ref: bool,
-        sensitive: bool,
+        field: FieldClass,
     ) {
         let frame = &self.frames[f];
         let ref_id = with_ref.then(|| {
@@ -541,7 +607,8 @@ impl Builder<'_> {
                     frame_id: frame.frame_id.clone(),
                     role: role.to_string(),
                     name: name.to_string(),
-                    sensitive,
+                    field,
+                    frame_origin: frame.security_origin.clone(),
                 },
             )
         });
@@ -606,7 +673,17 @@ impl Builder<'_> {
             let t = node.name.trim();
             let repeats_parent = self.opts.compact && t == parent_name.trim();
             if !(self.opts.interactive_only || t.is_empty() || repeats_parent) {
-                self.push(f, nd, "text", t, 0, None, Vec::new(), false, false);
+                self.push(
+                    f,
+                    nd,
+                    "text",
+                    t,
+                    0,
+                    None,
+                    Vec::new(),
+                    false,
+                    FieldClass::Ordinary,
+                );
             }
             return;
         }
@@ -629,6 +706,12 @@ impl Builder<'_> {
         if sensitive && value.is_some() {
             value = Some(MASK.to_string());
         }
+        // What the element is for typed text: from the browser's own facts only.
+        let field = match extra.as_ref().map(DomExtra::field_class) {
+            Some(FieldClass::Credential) => FieldClass::Credential,
+            _ if unknown_sensitivity => FieldClass::Unknown,
+            _ => FieldClass::Ordinary,
+        };
 
         let child_depth = if skip_line { depth } else { depth + 1 };
         if !skip_line {
@@ -646,7 +729,7 @@ impl Builder<'_> {
                 value,
                 node.states.clone(),
                 interactive || clickable,
-                sensitive,
+                field,
             );
         }
         // Interactive leaves with the same text children would only repeat the name.
@@ -799,45 +882,122 @@ mod tests {
         line.split(['[', ']']).nth(1).unwrap().to_owned()
     }
 
-    #[test]
-    fn refs_remember_whether_the_field_takes_a_secret() {
+    fn field_of(
+        extra: Option<DomExtra>,
+        blind: bool,
+        origin: Option<&str>,
+    ) -> (FieldClass, Option<String>) {
         let mut f = main_frame(LOGIN);
-        f.extras.push(DomExtra {
-            backend_id: 12,
-            tag: "input".into(),
-            input_type: Some("password".into()),
-            ..Default::default()
-        });
+        f.extras_failed = blind;
+        f.security_origin = origin.map(str::to_owned);
+        f.extras.extend(extra);
         let mut refs = RefMap::new();
         let t = text(&[f], &SnapshotOptions::default(), &mut refs);
-        assert!(
-            refs.get(&ref_of(&t, "textbox \"Password\""))
-                .unwrap()
-                .sensitive
+        let e = refs.get(&ref_of(&t, "textbox \"Password\"")).unwrap();
+        (e.field, e.frame_origin.clone())
+    }
+
+    fn dom(tag: &str, ty: Option<&str>, ac: Option<&str>) -> DomExtra {
+        DomExtra {
+            backend_id: 12,
+            tag: tag.into(),
+            input_type: ty.map(str::to_owned),
+            autocomplete: ac.map(str::to_owned),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn only_a_real_credential_input_is_classified_as_one() {
+        use FieldClass::{Credential, Ordinary};
+        for (tag, ty, ac, want) in [
+            ("input", Some("password"), None, Credential),
+            ("input", Some("PASSWORD"), None, Credential),
+            ("input", Some("text"), Some("current-password"), Credential),
+            ("input", Some("text"), Some("new-password"), Credential),
+            ("input", Some("text"), Some("one-time-code"), Credential),
+            (
+                "input",
+                Some("text"),
+                Some("section-pay cc-number"),
+                Credential,
+            ),
+            ("input", Some("text"), Some("CC-CSC"), Credential),
+            ("input", Some("text"), None, Ordinary),
+            ("input", Some("text"), Some("username"), Ordinary),
+            // A page cannot turn another element into a hiding place by labelling it.
+            ("textarea", Some("text"), Some("current-password"), Ordinary),
+            ("textarea", Some("password"), None, Ordinary),
+            ("div", None, Some("cc-number"), Ordinary),
+            ("input", Some("text"), Some("cc-name"), Ordinary),
+        ] {
+            assert_eq!(classify_field(tag, ty, ac), want, "{tag} {ty:?} {ac:?}");
+        }
+    }
+
+    #[test]
+    fn refs_remember_what_the_field_is_and_the_origin_of_its_frame() {
+        let (class, origin) = field_of(
+            Some(dom("input", Some("password"), None)),
+            false,
+            Some("https://login.test"),
         );
-        assert!(
-            !refs
-                .get(&ref_of(&t, "button \"Sign in\""))
-                .unwrap()
-                .sensitive
+        assert_eq!(class, FieldClass::Credential);
+        assert_eq!(origin.as_deref(), Some("https://login.test"));
+
+        // The button is never a credential.
+        let mut f = main_frame(LOGIN);
+        f.extras.push(dom("input", Some("password"), None));
+        let mut refs = RefMap::new();
+        let t = text(&[f], &SnapshotOptions::default(), &mut refs);
+        assert_eq!(
+            refs.get(&ref_of(&t, "button \"Sign in\"")).unwrap().field,
+            FieldClass::Ordinary
         );
 
-        // Without DOM facts a text field cannot be told apart: fail closed.
-        let mut blind = main_frame(LOGIN);
-        blind.extras_failed = true;
+        // Hostile: a textarea that claims to be a password, or a field the
+        // page labelled with a card autocomplete only on a non-input.
+        for extra in [
+            dom("textarea", Some("text"), Some("current-password")),
+            dom("div", None, Some("cc-number")),
+        ] {
+            assert_eq!(field_of(Some(extra), false, None).0, FieldClass::Ordinary);
+        }
+
+        // Without DOM facts a text field cannot be told apart: Unknown (not
+        // "credential": nothing may be hidden for it, and a fill is refused).
+        assert_eq!(field_of(None, true, None).0, FieldClass::Unknown);
+        // An opaque origin is recorded as unknown, not as the top-level one.
+        assert_eq!(
+            field_of(Some(dom("input", Some("password"), None)), false, None).1,
+            None
+        );
+    }
+
+    #[test]
+    fn a_ref_in_an_iframe_carries_the_origin_of_the_iframe() {
+        let main = FrameInput {
+            frame_id: "main".into(),
+            loader_id: Some("L1".into()),
+            security_origin: Some("https://trusted.test".into()),
+            ax_nodes: nodes(EXAMPLE),
+            ..Default::default()
+        };
+        let child = FrameInput {
+            frame_id: "child".into(),
+            parent_frame_id: Some("main".into()),
+            owner_backend_id: Some(30),
+            session_id: Some("OOPIF-1".into()),
+            loader_id: Some("C1".into()),
+            security_origin: Some("https://evil.test".into()),
+            ax_nodes: nodes(IFRAME_CHILD),
+            ..Default::default()
+        };
         let mut refs = RefMap::new();
-        let t = text(&[blind], &SnapshotOptions::default(), &mut refs);
-        assert!(
-            refs.get(&ref_of(&t, "textbox \"Password\""))
-                .unwrap()
-                .sensitive
-        );
-        assert!(
-            !refs
-                .get(&ref_of(&t, "button \"Sign in\""))
-                .unwrap()
-                .sensitive
-        );
+        let _ = text(&[main, child], &SnapshotOptions::default(), &mut refs);
+        let pay = refs.get("e2").unwrap();
+        assert_eq!(pay.frame_id, "child");
+        assert_eq!(pay.frame_origin.as_deref(), Some("https://evil.test"));
     }
 
     #[test]

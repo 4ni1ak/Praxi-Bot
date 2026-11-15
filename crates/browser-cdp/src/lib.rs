@@ -49,4 +49,7 @@ pub use live_view::{
     ViewportGeometry,
 };
 pub use page::{DialogAction, DialogInfo, DialogOptions, Page, RefFacts};
-pub use snapshot::{RefEntry, RefMap, SnapNode, Snapshot, SnapshotOptions, build_snapshot};
+pub use snapshot::{
+    FieldClass, RefEntry, RefMap, SnapNode, Snapshot, SnapshotOptions, build_snapshot,
+    classify_field,
+};

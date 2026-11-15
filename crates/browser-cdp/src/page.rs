@@ -16,7 +16,7 @@ use crate::dom::{self, COMPUTED_STYLES};
 use crate::error::{Error, Result};
 use crate::live_view::{BrowserViewConfig, BrowserViewTarget};
 use crate::snapshot::{
-    DomExtra, FrameInput, RefEntry, RefMap, Snapshot, SnapshotOptions, build_snapshot,
+    DomExtra, FieldClass, FrameInput, RefEntry, RefMap, Snapshot, SnapshotOptions, build_snapshot,
 };
 
 /// Default navigation / wait timeout.
@@ -157,6 +157,7 @@ impl Default for Shared {
 #[derive(Debug, Clone)]
 pub(crate) struct FrameMeta {
     pub id: String,
+    pub origin: Option<String>,
     pub parent: Option<String>,
     pub owner_backend: Option<i64>,
     pub session: Option<String>,
@@ -171,18 +172,40 @@ pub(crate) struct State {
     pub gen_seen: u64,
 }
 
-/// What a snapshot knows about one element ref (see [`Page::ref_facts`]).
+/// What a snapshot knows about one element ref (see [`Page::ref_facts`]) and,
+/// at dispatch, what a fill is bound to (see [`Page::fill_bound`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefFacts {
     /// Role as displayed.
     pub role: String,
     /// Accessible name.
     pub name: String,
-    /// The element takes a secret (password, card or one-time-code field, or a
-    /// text field whose type could not be read).
-    pub sensitive: bool,
-    /// URL of the page the snapshot was taken on.
-    pub url: String,
+    /// What the element is for typed text, from the browser's own facts.
+    pub field: FieldClass,
+    /// Backend node id of the element.
+    pub backend_id: i64,
+    /// Session that serves the element's frame (`None` = the page's own).
+    pub session_id: Option<String>,
+    /// The frame that contains the element.
+    pub frame_id: String,
+    /// Origin of that frame's document; `None` when opaque or unknown.
+    pub frame_origin: Option<String>,
+    /// Origin of the top-level document; `None` when opaque or unknown.
+    pub top_origin: Option<String>,
+    /// The element is in the top-level frame (not an iframe).
+    pub in_top_frame: bool,
+}
+
+/// `origin` when the browser reported a usable origin (`scheme://host[:port]`);
+/// `None` for an empty, opaque (`null`, `://`) or credential-bearing value.
+pub(crate) fn usable_origin(origin: Option<&str>) -> Option<String> {
+    let o = origin?.trim();
+    let (scheme, host) = o.split_once("://")?;
+    let usable = !scheme.is_empty()
+        && !host.is_empty()
+        && !o.contains(['@', '?', '#'])
+        && !host.contains('/');
+    usable.then(|| o.to_owned())
 }
 
 /// One browser tab, attached over a flattened CDP session.
@@ -532,6 +555,7 @@ impl Page {
                         owner_backend_id: owner,
                         session_id: job.session.clone(),
                         loader_id: f["loaderId"].as_str().map(str::to_string),
+                        security_origin: usable_origin(f["securityOrigin"].as_str()),
                         ax_nodes: ax,
                         extras: Vec::new(),
                         extras_failed: false,
@@ -679,6 +703,7 @@ impl Page {
             .iter()
             .map(|f| FrameMeta {
                 id: f.frame_id.clone(),
+                origin: f.security_origin.clone(),
                 parent: f.parent_frame_id.clone(),
                 owner_backend: f.owner_backend_id,
                 session: f.session_id.clone(),
@@ -703,20 +728,27 @@ impl Page {
         self.state.lock().await.last.clone()
     }
 
-    /// What the latest snapshot knows about `r`: role, accessible name, whether
-    /// the element takes a secret, and the page URL. No page round trip; `None`
-    /// when the ref is unknown or from before a navigation.
+    /// What the latest snapshot knows about `r`: role, accessible name, what
+    /// the element is for typed text, and the frame (with its origin) that
+    /// contains it. No page round trip; `None` when the ref is unknown or from
+    /// before a navigation.
     pub async fn ref_facts(&self, r: &str) -> Option<RefFacts> {
         let st = self.state.lock().await;
         if st.gen_seen != self.shared.nav_gen.load(Ordering::SeqCst) {
             return None;
         }
         let e = st.refs.get(r)?;
+        let top = st.frames.iter().find(|f| f.parent.is_none());
         Some(RefFacts {
             role: e.role.clone(),
             name: e.name.clone(),
-            sensitive: e.sensitive,
-            url: st.last.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
+            field: e.field,
+            backend_id: e.backend_id,
+            session_id: e.session_id.clone(),
+            frame_id: e.frame_id.clone(),
+            frame_origin: e.frame_origin.clone(),
+            top_origin: top.and_then(|f| f.origin.clone()),
+            in_top_frame: top.is_some_and(|f| f.id == e.frame_id),
         })
     }
 
