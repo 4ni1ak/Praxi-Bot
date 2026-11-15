@@ -179,7 +179,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       controlStateRef.current = dto;
       controlClientRef.current = clientRef.current;
       setControlStateRaw(dto);
-      takeoverStopRef.current?.pump();
+      // No pump here: every caller updates `stateRef` next and then pumps, so the
+      // owed override never decides from a stale state.
     },
     [sequencer]
   );
@@ -293,11 +294,12 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         controlSnapshotKey(controlStateRef.current) !== controlSnapshotKey(dto);
       controlStateRef.current = dto;
       controlClientRef.current = clientRef.current;
-      takeoverStopRef.current?.pump();
       if (changed) {
         setControlStateRaw(dto);
         updateState((prev) => applyControlStateDto(prev, dto));
       }
+      // After the state ref is current: the owed override decides from the new snapshot.
+      takeoverStopRef.current?.pump();
     },
     [sequencer, updateState]
   );
@@ -327,9 +329,9 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         controlStateRef.current = nextCtrl;
         controlClientRef.current = clientRef.current;
         setControlStateRaw(nextCtrl);
-        takeoverStopRef.current?.pump();
         registry.syncControlState(nextCtrl);
         updateState((prev) => applyControlStateDto(prev, nextCtrl));
+        takeoverStopRef.current?.pump();
       }
     } catch {
       // keep existing snapshot; next poll/action retries
@@ -829,6 +831,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!payload) {
         return false;
       }
+      takeoverStopRef.current?.retire(); // the user's newer decision: no stale override
       inputQueueRef.current.clear();
       updateState((prev) =>
         applyReleaseStarted(prev, payload.request_id, payload.human_action ?? null)
@@ -849,6 +852,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         setControlState(outcome.dto);
         registry.syncControlState(outcome.dto);
         updateState((prev) => applyReleaseConfirmed(prev, outcome.dto));
+        takeoverStopRef.current?.pump();
         void refreshTargets();
         return true;
       }
@@ -859,6 +863,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         setControlState(dto);
         registry.syncControlState(dto);
         updateState((prev) => applyControlStateDto(prev, dto));
+        takeoverStopRef.current?.pump();
       }
       updateState((prev) =>
         prev.pendingRequest?.kind === "release"
@@ -896,6 +901,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!client) {
         return;
       }
+      takeoverStopRef.current?.retire(); // the user's newer decision: no stale override
       const cur = stateRef.current;
       const ctl = controlStateRef.current;
       let target: ClearTarget | null = null;
@@ -923,6 +929,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           ...applyControlStateDto(prev, outcome.dto),
           lastError: null
         }));
+        takeoverStopRef.current?.pump();
         void refreshTargets();
         return;
       }
@@ -998,6 +1005,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     registry.syncControlState(dto);
     setControlState(dto);
     updateState((prev) => applyControlStateDto(prev, dto));
+    takeoverStopRef.current?.pump();
     void refreshTargets();
   };
 

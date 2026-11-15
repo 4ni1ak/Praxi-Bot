@@ -1019,6 +1019,15 @@ export class RunLedger {
       for (const other of this.records.values()) {
         if (other.phase === "unconfirmed") {
           other.watchFromObs = null;
+          // A run the older Stop quarantined that this sweep did not list is not open
+          // on the daemon any more (every run seen after this Stop was created is
+          // quarantined by THIS Stop, never by the older one): positive absence, so it
+          // is resolved here instead of staying quarantined with nobody watching it.
+          for (const entry of this.runs.values()) {
+            if (entry.quarantinedBy === other.id && !inT.has(entry.id)) {
+              this.markTerminal(entry);
+            }
+          }
         }
       }
     }

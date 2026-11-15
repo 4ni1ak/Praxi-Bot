@@ -536,3 +536,69 @@ test("r-94b #4: with the reconciliation list hung, a later user Stop that sweeps
   assert.equal(h.ledger.stop(a.id)?.phase, "settled", "the sweep is the evidence A waited for");
   assert.deepEqual(h.native.acks, [1], "A's sequence is acknowledged; B's waits for R");
 });
+
+test("r-94c #1: a later sweeping Stop resolves an older unconfirmed Stop's runs that already finished", async () => {
+  const h = host();
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, null);
+  await flush();
+  const a = h.runtime.requestStop("banner"); // all_existing, unreached
+  h.pumpNative();
+  h.daemon.processAndLose(0); // the daemon fixed T(A); the reply was lost
+  await flush();
+  h.daemon.forgetBook(); // TTL: A's id is remembered, its target set is not
+  h.clock.advance(1000);
+  h.clock.advance(1000);
+  h.runtime.requestStop("hotkey"); // all_existing too, still in flight below
+  h.pumpNative();
+  await flush();
+  h.daemon.start("R", "running");
+  h.event({ type: "run_started", run_id: "R", chat_id: "c", bot_id: "b" }); // quarantined by the older A
+  await flush();
+  assert.equal(h.ledger.run("R")?.quarantinedBy, a.id);
+  h.daemon.deliver(3); // A's retry: the daemon forgot the id -> expired before T was known
+  await flush();
+  assert.equal(h.ledger.stop(a.id)?.phase, "unconfirmed");
+  assert.equal(h.ledger.run("R")?.quarantinedBy, a.id, "R stays held by the older Stop");
+  h.holdLists(true); // no list ever answers
+  h.daemon.end("R"); // R finished; its run_finished event was lost
+  h.daemon.deliver(2); // B's first receipt sweeps what is open now: R is not in it
+  await flush();
+  assert.equal(h.ledger.stop(a.id)?.phase, "settled", "A resolves on the sweep's evidence");
+  assert.equal(h.ledger.run("R")?.quarantinedBy ?? null, null, "nothing is left held by A");
+  assert.ok(h.status()?.kind !== "unconfirmed", "no stuck 'not confirmed' notice");
+});
+
+test("r-94c #2: a user's Clear pause / release retires the owed override; input stays halted", async () => {
+  const h = host();
+  await h.runtime.readNative();
+  h.runtime.attach(h.client, null);
+  h.overrideMode("hang"); // the override never completes: still owed
+  h.runtime.requestStop("viewer");
+  assert.deepEqual(h.overrides, ["A"]);
+  assert.equal(h.takeover.owes(), true);
+  h.takeover.retire(); // clearPause / performRelease
+  assert.equal(h.takeover.owes(), false);
+  h.setControl(activeTakeover()); // a snapshot arrives after the user's decision
+  h.switchClient("B");
+  h.setControl(activeTakeover());
+  assert.deepEqual(h.overrides, ["A"], "the stale override is never re-sent");
+  assert.equal(h.takeover.inputAllowed(), false, "only taking control again re-enables input");
+});
+
+test("r-94c #2: LiveViewContext retires on Clear pause / release and pumps only after the state ref is current", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./LiveViewContext.tsx", import.meta.url), "utf8");
+  const body = (name: string, next: string) => {
+    const from = src.indexOf(name);
+    assert.ok(from >= 0, name);
+    return src.slice(from, src.indexOf(next, from));
+  };
+  assert.match(body("const clearPause = useCallback", "const recoverTakeover"), /takeoverStopRef\.current\?\.retire\(\)/);
+  assert.match(body("const performRelease = useCallback", "const releaseTakeover"), /takeoverStopRef\.current\?\.retire\(\)/);
+  const ingest = body("const ingestControlSnapshot = useCallback", "const issueSnapshotTicket");
+  assert.ok(ingest.indexOf("updateState(") < ingest.indexOf("pump()"), "ingest: state before pump");
+  const refresh = body("const refreshTargets = useCallback", "// Refresh targets");
+  assert.ok(refresh.indexOf("updateState((prev) => applyControlStateDto(prev, nextCtrl))") < refresh.indexOf("pump()"));
+  assert.doesNotMatch(body("const setControlState = useCallback", "const takeoverStopRef"), /pump\(\)/);
+});

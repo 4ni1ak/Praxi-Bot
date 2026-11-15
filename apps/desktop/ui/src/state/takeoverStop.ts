@@ -73,6 +73,18 @@ export class TakeoverStop<C> {
     this.abandon();
   }
 
+  /**
+   * The user made a newer explicit decision about the pause itself (Clear pause,
+   * release): the owed override and any attempt in flight are retired by the same
+   * generation rule as `resume()`. Input stays halted: only taking control again
+   * (`resume()`) re-enables it.
+   */
+  retire(): void {
+    this.gen += 1;
+    this.owed = null;
+    this.abandon();
+  }
+
   /** May this app send takeover input / renew the input lease right now? */
   inputAllowed(): boolean {
     return !this.halted;
