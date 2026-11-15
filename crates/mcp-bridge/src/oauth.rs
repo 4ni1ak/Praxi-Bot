@@ -106,8 +106,10 @@ struct Bound {
     credentials: StoredCredentials,
 }
 
-/// Scheme, host and port in lower case plus the path, without query or
-/// fragment: the identity of an MCP server for credential binding.
+/// Scheme, host and port in lower case plus the path and the query, without
+/// the fragment: the identity of an MCP server for credential binding.  The
+/// query is part of it (review finding 11): a gateway that selects the MCP
+/// resource by query (`?tenant=A`) must not receive A's token for B.
 ///
 /// # Errors
 /// `url` is not an absolute `http(s)` URL.
@@ -130,7 +132,8 @@ pub fn canonical_resource(url: &str) -> Result<String> {
     if !matches!(scheme.as_str(), "http" | "https") || authority.contains('@') {
         return Err(bad());
     }
-    Ok(format!("{scheme}://{authority}{}", uri.path()))
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    Ok(format!("{scheme}://{authority}{}{query}", uri.path()))
 }
 
 impl std::fmt::Debug for SecretCredentialStore {
@@ -1185,6 +1188,33 @@ mod tests {
         assert!(moved.load().await.unwrap().is_none());
         assert_eq!(seen.lock().len(), 2);
         assert_eq!(backend.list_names().unwrap(), Vec::<String>::new());
+
+        // Review finding 11: the same gateway, another query-selected
+        // resource, is another binding.
+        let tenant_a = SecretCredentialStore::new(
+            backend.clone(),
+            "gateway",
+            "https://gateway.example/mcp?tenant=A",
+            None,
+        )
+        .unwrap();
+        tenant_a
+            .save(credentials("tenant-a-access", "tenant-a-refresh"))
+            .await
+            .unwrap();
+        assert!(tenant_a.load().await.unwrap().is_some());
+        let tenant_b = SecretCredentialStore::new(
+            backend.clone(),
+            "gateway",
+            "https://gateway.example/mcp?tenant=B",
+            None,
+        )
+        .unwrap();
+        assert!(tenant_b.load().await.unwrap().is_none());
+        assert!(
+            tenant_a.load().await.unwrap().is_none(),
+            "A's token was kept after B looked"
+        );
         assert!(store.load().await.unwrap().is_none());
         store
             .save(credentials("access-sentinel-1", "refresh-sentinel-1"))
@@ -1242,7 +1272,11 @@ mod tests {
     fn resources_are_canonical_and_metadata_is_checked() {
         assert_eq!(
             canonical_resource("HTTPS://Mcp.Example.com:8443/mcp?x=1#f").unwrap(),
-            "https://mcp.example.com:8443/mcp"
+            "https://mcp.example.com:8443/mcp?x=1"
+        );
+        assert_eq!(
+            canonical_resource("https://mcp.example.com/mcp#f").unwrap(),
+            "https://mcp.example.com/mcp"
         );
         for bad in [
             "mcp.example.com/mcp",
