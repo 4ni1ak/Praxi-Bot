@@ -180,8 +180,11 @@ async fn missing_launcher_is_classified_not_retried_and_carries_an_install_hint(
 async fn filesystem_server_without_a_chosen_folder_is_not_started() {
     let reg = ToolRegistry::new();
     let guard: mcp_bridge::PathGuard = std::sync::Arc::new(|p| {
-        p.ends_with("forbidden")
-            .then(|| "protected folder".to_owned())
+        if p.ends_with("forbidden") {
+            Err("protected folder".to_owned())
+        } else {
+            Ok(p.to_path_buf())
+        }
     });
     let mgr = McpManager::with_policy(reg, fast_policy(3)).with_path_guard(guard);
     let pkg = "@modelcontextprotocol/server-filesystem@2.2.0";

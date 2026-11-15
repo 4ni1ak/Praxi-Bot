@@ -17,7 +17,7 @@ use crate::{
     diagnostics::StderrLog,
     discovery::discover,
     error::{McpError, McpErrorKind, Result},
-    roots::{PathGuard, filesystem_roots, root_problem},
+    roots::{PathGuard, canonicalize_filesystem_args},
     session::Session,
     tool::{McpToolAdapter, qualified_name},
     transport::{open, resolve_secrets},
@@ -261,9 +261,9 @@ impl Server {
         }
         self.check_usable()?;
         // A filesystem server is never started without an explicit, usable folder.
-        if let McpTransport::Stdio { args, .. } = &self.config.transport
-            && let Some(roots) = filesystem_roots(args)
-            && let Some(reason) = root_problem(&roots, self.path_guard.as_ref())
+        let mut launch_config = self.config.clone();
+        if let McpTransport::Stdio { args, .. } = &mut launch_config.transport
+            && let Err(reason) = canonicalize_filesystem_args(args, self.path_guard.as_ref())
         {
             let e = McpError::NeedsFolder {
                 server: self.config.id.clone(),
@@ -286,7 +286,7 @@ impl Server {
         let mut last = None;
         for attempt in 0..attempts {
             match open(
-                &self.config,
+                &launch_config,
                 &secrets,
                 &self.stderr,
                 self.policy.connect_timeout,

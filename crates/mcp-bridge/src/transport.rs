@@ -619,6 +619,35 @@ mod tests {
         assert!(err.to_string().contains("was not found on PATH"), "{err}");
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_cmd_shim_preserves_one_folder_argument() {
+        use tokio::io::AsyncReadExt;
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("argv fixture.cmd");
+        // This is an argv echo fixture, not an MCP server.
+        std::fs::write(
+            &shim,
+            "@echo off\r\n@echo %1\r\n@if not [%2]==[] exit /b 9\r\n",
+        )
+        .unwrap();
+        let folder = dir.path().join("chosen folder & echo injected");
+        std::fs::create_dir(&folder).unwrap();
+        let cfg = McpServerConfig::stdio(
+            "argv",
+            shim.display().to_string(),
+            [folder.display().to_string()],
+        );
+        let mut cmd = build_command("argv", &cfg.transport, &ResolvedSecrets::default()).unwrap();
+        cmd.command_mut().stdout(Stdio::piped());
+        let mut child = cmd.spawn().unwrap();
+        let mut stdout = child.inner_mut().stdout().take().unwrap();
+        let mut text = String::new();
+        stdout.read_to_string(&mut text).await.unwrap();
+        assert!(child.wait().await.unwrap().success());
+        assert_eq!(text.trim(), format!("\"{}\"", folder.display()));
+    }
+
     #[test]
     fn install_hints_name_the_runtime() {
         assert!(runtime_install_hint("npx").contains("nodejs.org"));
