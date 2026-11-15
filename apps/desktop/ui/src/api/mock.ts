@@ -1303,14 +1303,14 @@ export class MockApiClient extends ApiClient {
 function mockLiveRunId(): string | null {
   if (typeof window === "undefined") return null;
   const screen = new URLSearchParams(window.location.search).get("screen");
-  return screen === "working" || screen === "approval" ? "mock-live" : null;
+  return screen === "working" || screen === "approval" || screen === "subagents" ? "mock-live" : null;
 }
 
 /** Review-state events for `?mock=1&screen=...` (approval, streaming, default run). */
 export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["event"] }[] {
   const out: { ts_ms: number; event: GlobalEnvelope["event"] }[] = [];
   const screen = new URLSearchParams(window.location.search).get("screen");
-  if (screen === "approval" || screen?.startsWith("approval-schedule") || screen === "streaming" || screen === "working") {
+  if (screen === "approval" || screen?.startsWith("approval-schedule") || screen === "streaming" || screen === "working" || screen === "subagents") {
     const bot_id = "11111111-1111-4111-8111-111111111111";
     const chat_id = "33333333-3333-4333-8333-333333333333";
     const events: GlobalEnvelope["event"][] = [
@@ -1323,6 +1323,20 @@ export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["even
         { type: "tool_call_requested", run_id: "mock-live", call_id: "mock-w2", tool_name: "web_extract", input: { url: "https://huggingface.co/blog/cpu-inference" } },
         { type: "tool_call_completed", run_id: "mock-live", call_id: "mock-w2", error: null },
         { type: "tool_call_requested", run_id: "mock-live", call_id: "mock-w3", tool_name: "github.search_issues", input: { query: "gguf arm" } }
+      ] as GlobalEnvelope["event"][] : []),
+      ...(screen === "subagents" ? [
+        { type: "subagent_started", run_id: "mock-sub-1", parent_run_id: "mock-live", task: "GitHub'da son haftanın birleşen PR'larını tara", call_id: "mock-s1" },
+        { type: "subagent_started", run_id: "mock-sub-2", parent_run_id: "mock-live", task: "Özeti ekibe e-postayla gönder", call_id: "mock-s2" },
+        { type: "subagent_started", run_id: "mock-sub-3", parent_run_id: "mock-live", task: "CI sonuçlarını kontrol et", call_id: "mock-s3" },
+        { type: "tool_call_requested", run_id: "mock-sub-1", call_id: "mock-s1a", tool_name: "find_tool", input: { query: "github" } },
+        { type: "tool_call_completed", run_id: "mock-sub-1", call_id: "mock-s1a", error: null },
+        { type: "tool_call_requested", run_id: "mock-sub-1", call_id: "mock-s1b", tool_name: "github.search_issues", input: { query: "is:pr is:merged" } },
+        { type: "tool_call_requested", run_id: "mock-sub-2", call_id: "mock-s2a", tool_name: "email_send", input: { to: "ekip@praxi.dev" } },
+        { type: "approval_needed", run_id: "mock-sub-2", call_id: "mock-s2a", tool_name: "email_send", input: { to: "ekip@praxi.dev" }, summary: "Haftalık özet e-postasını gönder" },
+        { type: "tool_call_requested", run_id: "mock-sub-3", call_id: "mock-s3a", tool_name: "web_extract", input: { url: "https://ci.praxi.dev/runs/main" } },
+        { type: "tool_call_completed", run_id: "mock-sub-3", call_id: "mock-s3a", error: null },
+        { type: "message_delta", run_id: "mock-sub-3", text: "Tüm kontroller yeşil." },
+        { type: "subagent_finished", run_id: "mock-sub-3", parent_run_id: "mock-live", state: "succeeded", summary: "CI son 24 saatte 12 çalışmada tamamen yeşil." }
       ] as GlobalEnvelope["event"][] : []),
       ...(screen?.startsWith("approval-schedule") ? [
         { type: "tool_call_requested", run_id: "mock-live", call_id: "mock-sch", tool_name: "schedule_create", input: {} },

@@ -1918,12 +1918,24 @@
     "close": "Close panel",
     "profile": "Bot profile",
     "chats": "Chats",
-    "noChats": "No chats yet.",
     "untitled": "New chat",
     "computer": "Computer",
     "edit": "Edit bot",
     "runsOnHost": "Runs on {{name}} (host)",
-    "runsOnLocal": "Runs on this computer"
+    "runsOnLocal": "Runs on this computer",
+    "tabs": { "label": "Panel sections", "activity": "Activity", "library": "Library" },
+    "subagents": {
+      "title": "Sub-agents",
+      "noTask": "Sub-agent",
+      "starting": "Starting…",
+      "waitingFor": "Waiting for your approval: {{step}}",
+      "open": "Open details: {{task}}",
+      "stop": "Stop",
+      "stopLabel": "Stop sub-agent: {{task}}",
+      "state": { "running": "Running", "waiting": "Needs approval", "done": "Done", "failed": "Failed", "stopped": "Stopped", "paused": "Paused" },
+      "detail": { "title": "Sub-agent details", "task": "Task", "steps": "Steps", "result": "Result", "approval": "Waiting for your approval. Decide in the chat." }
+    },
+    "upcoming": { "title": "Upcoming", "paused": "Paused", "trigger": "When something happens", "toggle": "Turn {{name}} on or off" }
   },
   "knowledge": {
     "title": "Knowledge and shared brain",
