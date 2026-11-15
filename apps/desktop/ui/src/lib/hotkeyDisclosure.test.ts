@@ -71,11 +71,11 @@ for (const [language, focus, widgetScope, stopButton] of [
   test(`${language} onboarding explains shortcut focus and the actual Stop button`, async () => {
     await i18n.changeLanguage(language);
     const html = renderToStaticMarkup(createElement(OnboardingView, {
-      settings: { ...defaults, onboardingStep: 3, stopHotkey: "Ctrl+Shift+Esc" },
-      onUpdateSettings: noop, onLanguageChange: noop, onSkip: noop, onComplete: noop
+      settings: { ...defaults, stopHotkey: "Ctrl+Shift+Esc" },
+      initialStep: "freedom", onLanguageChange: noop, onSkip: noop, onComplete: noop
     }));
     const hint = html.match(/<li>[^<]*Ctrl\+Shift\+Esc[^<]*<\/li>/)?.[0];
-    assert.ok(hint, "the actual safety step renders the configured shortcut");
+    assert.ok(hint, "the freedom screen renders the configured shortcut");
     assert.match(hint, /Windows/);
     assert.match(hint, focus);
     assert.match(hint, stopButton);
