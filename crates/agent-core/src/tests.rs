@@ -2936,6 +2936,44 @@ async fn discovery_prompt_composes_with_skills_and_is_byte_stable_across_turns_a
 }
 
 #[tokio::test]
+async fn desktop_window_list_is_callable_on_the_first_turn_and_prompt_says_to_look() {
+    // "What am I watching in the browser?": the cheap observation tool must be
+    // in the first request's tool list (no find_tool round-trip), and the
+    // system prompt must separate the managed browser from the user's screen.
+    let env = setup();
+    let mut desktop = tool("desktop_list_apps", Effect::Read, "ok");
+    desktop.spec.category = PermissionCategory::Desktop;
+    let desktop = Arc::new(desktop);
+    let browser = Arc::new(tool("browser_open", Effect::Read, "ok"));
+    let files = Arc::new(tool("fs_read", Effect::Read, "ok"));
+    let fake = Fake::new(vec![text("done")]);
+    let mut config = cfg(Policy::full());
+    config.discovery_threshold = 0;
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[&desktop, &browser, &files],
+        profile("").with_computer_access(true, true),
+        config,
+    );
+    let run = lp
+        .run_turn(env.chat, "mesela ben tarayicida ne izliyorum suanda?")
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let req = fake.request(0);
+    let names: Vec<&str> = req
+        .tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .collect();
+    assert!(names.contains(&"find_tool") && names.contains(&"desktop_list_apps"));
+    assert!(!names.contains(&"browser_open"), "{names:?}");
+    let prompt = system_text(&req);
+    assert!(prompt.contains("separate managed browser") && prompt.contains("desktop_list_apps"));
+}
+
+#[tokio::test]
 async fn discovery_prompt_hides_computer_families_and_mcp_servers_for_other_bots() {
     for computer in [true, false] {
         let env = setup();

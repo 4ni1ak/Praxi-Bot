@@ -38,6 +38,12 @@ pub const DEFAULT_FIND_K: usize = 6;
 /// Upper bound on `k` accepted by `find_tool`.
 pub const MAX_FIND_K: usize = 25;
 
+/// Cheap read-only observation tools that stay directly callable in discovery
+/// mode (no `find_tool` round-trip), so a weak model answers "what is on my
+/// screen / which windows are open" in one step. Listed only when the tool is
+/// registered and visible to the caller.
+pub const PINNED_DIRECT: &[&str] = &["desktop_list_apps"];
+
 fn is_meta(name: &str) -> bool {
     matches!(name, FIND_TOOL | GET_TOOL_DETAILS | USE_TOOL)
 }
@@ -584,7 +590,15 @@ impl ToolSurface {
     pub fn specs_for(&self, visible: &dyn Fn(&ToolSpec) -> bool) -> Vec<ToolSpec> {
         let meta = || self.meta.iter().map(|t| t.spec().clone());
         match self.mode_for(visible) {
-            SurfaceMode::Discovery => meta().collect(),
+            SurfaceMode::Discovery => meta()
+                .chain(
+                    PINNED_DIRECT
+                        .iter()
+                        .filter_map(|n| self.discovery.registry.get(n))
+                        .map(|t| t.spec().clone())
+                        .filter(|s| visible(s)),
+                )
+                .collect(),
             SurfaceMode::Direct => {
                 let mut specs: Vec<ToolSpec> = self
                     .discovery
@@ -665,7 +679,13 @@ impl ToolSurface {
     ) -> Option<Arc<dyn Tool>> {
         let meta = || self.meta.iter().find(|t| t.spec().name == name).cloned();
         match self.mode_for(visible) {
-            SurfaceMode::Discovery => meta(),
+            SurfaceMode::Discovery => meta().or_else(|| {
+                PINNED_DIRECT
+                    .contains(&name)
+                    .then(|| self.discovery.registry.get(name))
+                    .flatten()
+                    .filter(|t| visible(t.spec()))
+            }),
             SurfaceMode::Direct => {
                 if is_namespaced(name) {
                     return None;
@@ -782,6 +802,23 @@ mod tests {
         assert!(surface.resolve(USE_TOOL).is_some());
         // Real tools are not directly addressable in discovery mode.
         assert!(surface.resolve("tool3").is_none());
+    }
+
+    #[test]
+    fn pinned_observation_tool_stays_directly_callable_in_discovery_mode() {
+        let reg = registry_with(6);
+        reg.register(fake("desktop_list_apps", "windows", Effect::Read));
+        let surface = ToolSurface::new(reg, 5);
+        assert_eq!(surface.mode(), SurfaceMode::Discovery);
+        let names: Vec<_> = surface.specs().into_iter().map(|s| s.name).collect();
+        assert_eq!(
+            names,
+            [FIND_TOOL, GET_TOOL_DETAILS, USE_TOOL, "desktop_list_apps"]
+        );
+        assert!(surface.resolve("desktop_list_apps").is_some());
+        assert!(surface.resolve("tool3").is_none());
+        let hide = |s: &ToolSpec| s.name != "desktop_list_apps";
+        assert!(surface.resolve_with("desktop_list_apps", &hide).is_none());
     }
 
     #[test]
