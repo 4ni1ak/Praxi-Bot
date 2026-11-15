@@ -17,9 +17,14 @@ import { useDaemon } from "./DaemonContext";
 import {
   ControlBridge,
   HEARTBEAT_MS,
-  resolveTargetScope
+  planNativeReplay,
+  resolveTargetScope,
+  waitBounded
 } from "./controlBridge";
 import { useLiveView } from "./LiveViewContext";
+
+/** Longest the next bridge waits for the retired bridge's queued cancels. */
+const RETIRING_WAIT_MS = 3000;
 
 /**
  * Connects the daemon to the on-screen overlay (task 017b) and live-view
@@ -31,6 +36,7 @@ export function ControlBridgeHost() {
   const { client, bots, onDaemonEvent } = useDaemon();
   const {
     targets,
+    targetsSettled,
     selectedTarget,
     showPanelAction,
     registerBridge,
@@ -42,6 +48,9 @@ export function ControlBridgeHost() {
   botsRef.current = bots;
   const targetsRef = useRef(targets);
   targetsRef.current = targets;
+  const targetsSettledRef = useRef(targetsSettled);
+  targetsSettledRef.current = targetsSettled;
+  const settingsLoadedRef = useRef(false);
   const selectedRef = useRef(selectedTarget);
   selectedRef.current = selectedTarget;
   const computerTargetRef = useRef<ComputerTarget>(DEFAULT_SETTINGS.computerTarget);
@@ -51,6 +60,7 @@ export function ControlBridgeHost() {
   // and the retired bridge's queued cancels, which the next bridge waits for.
   const cancelledRef = useRef(new Set<string>());
   const retiringRef = useRef<Promise<void>>(Promise.resolve());
+  const carryRef = useRef<{ stopAt: number | null }>({ stopAt: null });
 
   useEffect(() => {
     if (!client || !isTauriRuntime()) {
@@ -63,9 +73,12 @@ export function ControlBridgeHost() {
         .then((s) => {
           if (alive) {
             computerTargetRef.current = s.computerTarget;
+            settingsLoadedRef.current = true;
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          settingsLoadedRef.current = true; // settled: defaults apply
+        });
     };
     refreshComputerTarget();
     const bridge = new ControlBridge({
@@ -89,7 +102,9 @@ export function ControlBridgeHost() {
           computerTarget: computerTargetRef.current
         }),
       cancelled: cancelledRef.current,
-      targetsLoaded: () => targetsRef.current.length > 0,
+      carry: carryRef.current,
+      // Scope is never guessed: wait until targets AND the computer-target setting settled.
+      targetsLoaded: () => targetsSettledRef.current && settingsLoadedRef.current,
       onSnapshot: ingestControlSnapshot,
       issueSnapshotTicket,
       panelOverlay: {
@@ -136,26 +151,64 @@ export function ControlBridgeHost() {
     // Both subscriptions are installed before either initial snapshot starts.
     let disposed = false;
     let initializing = false;
+    // Judge the buffered native events against the snapshot (see planNativeReplay)
+    // and hand them to the bridge: events older than the snapshot are dropped, the
+    // generation walk starts at the lowest buffered generation.
+    const applyInitial = async (snap: { mode: string; runGeneration: number }) => {
+      const plan = planNativeReplay(
+        { mode: snap.mode as ControlMode, generation: snap.runGeneration },
+        buffered
+      );
+      buffered.length = 0;
+      await bridge.initializeNativeState(snap.mode as ControlMode, plan.baseline);
+      nativeReady = true;
+      for (const ev of plan.replay) {
+        void bridge.onNativeState(ev.mode, ev.generation);
+      }
+    };
+    const retire = () => {
+      bridge.dispose();
+      retiringRef.current = bridge.drain();
+    };
     const tick = async () => {
       if (disposed || initializing) return;
       if (!nativeReady) {
         initializing = true;
+        let snap: { mode: string; runGeneration: number } | null = null;
         try {
-          const snap = await getControlState();
-          if (disposed) return;
-          await bridge.initializeNativeState(snap.mode, snap.runGeneration);
-          nativeReady = true;
-          for (const ev of buffered.splice(0)) {
-            void bridge.onNativeState(ev.mode, ev.generation);
-          }
+          snap = await getControlState();
         } catch {
           // Retry initialization on the next heartbeat without changing control.
+        }
+        if (disposed) {
+          // Torn down while the snapshot was in flight: still carry the buffered
+          // Stop (judged against the snapshot) onto the bridge before retiring it.
+          if (snap && !nativeReady) {
+            try {
+              await applyInitial(snap);
+            } catch {
+              // best effort
+            }
+          }
+          retire();
+          return;
+        }
+        try {
+          if (snap) await applyInitial(snap);
+        } catch {
+          // retry next tick
         } finally {
           initializing = false;
         }
+        if (disposed) {
+          retire(); // torn down while the buffer was being applied
+          return;
+        }
       }
       if (disposed || !nativeReady) return;
-      await retiringRef.current; // a Stop on the previous bridge issues its cancels first
+      // A Stop on the previous bridge issues its cancels first, but a hung retired
+      // client must not stop this bridge from ever restoring.
+      await waitBounded(retiringRef.current, RETIRING_WAIT_MS);
       if (disposed) return;
       void bridge.restoreRuns();
       void bridge.retryDeferredStarts();
@@ -169,8 +222,7 @@ export function ControlBridgeHost() {
       disposed = true;
       alive = false;
       registerBridge(null);
-      bridge.dispose();
-      retiringRef.current = bridge.drain();
+      if (!initializing) retire(); // otherwise `tick` retires it after the snapshot
       offEvents();
       offState();
       window.clearInterval(beat);

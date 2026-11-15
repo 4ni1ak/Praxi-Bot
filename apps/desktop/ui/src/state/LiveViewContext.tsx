@@ -81,6 +81,8 @@ const OVERLAY_ACTION_TTL_MS = 1400;
 
 interface LiveViewContextValue {
   targets: TargetInfo[];
+  /** A target fetch has succeeded at least once. */
+  targetsSettled: boolean;
   selectedTarget: TargetInfo | null;
   controlState: ControlStateDto | null;
   state: LiveViewControllerState;
@@ -149,6 +151,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   const [targets, setTargets] = useState<TargetInfo[]>([]);
   const [loadingTargets, setLoadingTargets] = useState(false);
+  // True once a target fetch has succeeded: scope decisions never guess before that.
+  const [targetsSettled, setTargetsSettled] = useState(false);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
     null
@@ -278,6 +282,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         client.getControlState().catch(() => null)
       ]);
       setTargets(nextTargets);
+      setTargetsSettled(true);
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
         setControlStateRaw(nextCtrl);
@@ -1011,6 +1016,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const value = useMemo<LiveViewContextValue>(
     () => ({
       targets,
+      targetsSettled,
       selectedTarget,
       controlState,
       state,
@@ -1041,6 +1047,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     }),
     [
       targets,
+      targetsSettled,
       selectedTarget,
       controlState,
       state,

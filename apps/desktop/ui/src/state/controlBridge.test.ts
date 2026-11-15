@@ -15,10 +15,12 @@ import {
   ControlBridge,
   createBridgeRegistry,
   type PanelActionHighlight,
+  planNativeReplay,
   type Rect,
   refusalReason,
   resolveTargetScope,
-  type TargetScope
+  type TargetScope,
+  waitBounded
 } from "./controlBridge.ts";
 
 const NOW = 1_000_000;
@@ -58,6 +60,8 @@ function setup(
     panelOverlay: []
   };
   let now = NOW;
+  const hold: { current: Promise<void> } = { current: Promise.resolve() };
+  const cancelFail = { current: false };
   let listRuns: () => Promise<Pick<Run, "id" | "bot_id" | "state">[]> = async () => [];
   const idleDto = (): ControlStateDto => ({
     app_connected: true,
@@ -73,10 +77,16 @@ function setup(
       putControlState: async (m, release) => {
         calls.put.push(m);
         calls.release.push(release === true);
+        await hold.current;
       },
       decideControl: async (id, decision, reason) =>
         void calls.decide.push({ id, decision, reason }),
-      cancelRun: async (id) => void calls.cancel.push(id),
+      cancelRun: async (id) => {
+        if (cancelFail.current) {
+          throw new Error("cancel failed");
+        }
+        calls.cancel.push(id);
+      },
       releaseControl: async (req) => {
         if (req) {
           calls.releaseTakeover.push(req);
@@ -125,6 +135,8 @@ function setup(
     calls,
     feed,
     snapshot: (read: typeof listRuns) => { listRuns = read; },
+    hold,
+    cancelFail,
     advance: (ms: number) => {
       now += ms;
     }
@@ -1068,3 +1080,131 @@ for (const row of idleRows) {
     assert.deepEqual(t.calls.cancel, row.cancelled ? ["r"] : []);
   });
 }
+
+// ---- second look at #62: startup buffer, unknown scope, hung client / failed cancel ----
+
+test("a Stop already contained in the initial snapshot is recognised via the buffered earlier generation", async () => {
+  // opening against a live daemon (bot_driving, gen 5); the user hits Stop (idle, gen 6)
+  // while getControlState is in flight, and the snapshot already carries gen 6
+  const plan = planNativeReplay(
+    { mode: "idle", generation: 6 },
+    [
+      { mode: "bot_driving", generation: 5 },
+      { mode: "idle", generation: 6 }
+    ]
+  );
+  assert.equal(plan.baseline, 5, "walk from the lower buffered generation");
+  assert.deepEqual(plan.replay, [{ mode: "idle", generation: 6 }], "older event not applied");
+
+  const t = setup();
+  await t.feed({ type: "run_started", run_id: "r", chat_id: "c", bot_id: "b1" });
+  await t.bridge.initializeNativeState("idle", plan.baseline);
+  for (const ev of plan.replay) await t.bridge.onNativeState(ev.mode, ev.generation);
+  assert.deepEqual(t.calls.cancel, ["r"], "the Stop cancels");
+  assert.equal(t.bridge.mode, "idle", "the older bot_driving was not re-applied");
+
+  // no lower generation buffered: indistinguishable from "already idle" (not a Stop)
+  const plain = planNativeReplay({ mode: "idle", generation: 6 }, [{ mode: "idle", generation: 6 }]);
+  assert.equal(plain.baseline, 6);
+});
+
+test("a Stop flushed while the host is torn down during init reaches the next bridge", async () => {
+  const carry: { stopAt: number | null } = { stopAt: null };
+  const cancelled = new Set<string>();
+  const old = setup(true, undefined, { carry, cancelled });
+  const plan = planNativeReplay(
+    { mode: "idle", generation: 6 },
+    [{ mode: "bot_driving", generation: 5 }, { mode: "idle", generation: 6 }]
+  );
+  await old.bridge.initializeNativeState("idle", plan.baseline);
+  for (const ev of plan.replay) void old.bridge.onNativeState(ev.mode, ev.generation);
+  old.bridge.dispose(); // cleanup right after the flush
+  await old.bridge.drain();
+  assert.notEqual(carry.stopAt, null, "the Stop is carried");
+
+  const fresh = setup(true, undefined, { carry, cancelled });
+  fresh.snapshot(async () => [{ id: "live", bot_id: "b1", state: "running" }]);
+  await fresh.bridge.restoreRuns();
+  assert.deepEqual(fresh.calls.cancel, ["live"], "the next bridge cancels what it finds");
+  assert.equal(carry.stopAt, null, "consumed once restored");
+});
+
+test("unknown scope never becomes the local overlay: no startRun before targets and settings settled", async () => {
+  let settled = false;
+  const t = setup(true, () => "local_desktop", { targetsLoaded: () => settled });
+  t.snapshot(async () => [{ id: "web", bot_id: "other", state: "running" }]);
+  await t.bridge.restoreRuns();
+  for (let i = 0; i < 6; i += 1) await t.bridge.retryDeferredStarts(); // far past the old 3-try give-up
+  assert.equal(t.calls.start.length, 0, "still waiting");
+  assert.deepEqual(t.bridge.liveRuns(), ["web"], "but cancellable");
+
+  // a settled fetch that lacks the run keeps the resolver's fallback
+  settled = true;
+  await t.bridge.retryDeferredStarts();
+  assert.equal(t.calls.start.length, 1);
+});
+
+test("a settled fetch with the browser target present still keeps the local overlay closed", async () => {
+  const t = setup(
+    true,
+    (info) =>
+      resolveTargetScope({
+        ...info,
+        targets: [browserTarget],
+        selectedTarget: null,
+        computerTarget: "this-pc"
+      }),
+    { targetsLoaded: () => true }
+  );
+  t.snapshot(async () => [{ id: "web", bot_id: "other", state: "running" }]);
+  await t.bridge.restoreRuns();
+  await t.bridge.retryDeferredStarts();
+  assert.equal(t.calls.start.length, 0);
+});
+
+test("the shared cancelled set is filled at the Stop decision, before the heartbeat completes", async () => {
+  const cancelled = new Set<string>();
+  const t = setup(true, undefined, { cancelled });
+  await t.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
+  let release!: () => void;
+  t.hold.current = new Promise<void>((r) => { release = r; }); // the PUT /control/state hangs
+  const stopping = t.bridge.onNativeState("idle", 2);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(cancelled.has("r1"), "recorded while the heartbeat is still pending");
+  release();
+  await stopping;
+});
+
+test("a bounded wait lets the next bridge restore although the retired client hangs", async () => {
+  const never = new Promise<void>(() => undefined);
+  const started = Date.now();
+  await waitBounded(never, 20);
+  assert.ok(Date.now() - started < 1000);
+  await waitBounded(Promise.reject(new Error("x")), 1000); // a rejection also releases the wait
+});
+
+test("a cancel that rejects is not recorded: the run is tracked again and a later bridge tracks it too", async () => {
+  const cancelled = new Set<string>();
+  const old = setup(true, undefined, { cancelled });
+  await old.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
+  old.cancelFail.current = true;
+  await old.bridge.onNativeState("idle", 2);
+  assert.ok(!cancelled.has("r1"), "not suppressed");
+  assert.deepEqual(old.bridge.liveRuns(), ["r1"], "tracked again so Stop can retry");
+  old.cancelFail.current = false;
+  await old.bridge.onNativeState("idle", 3);
+  assert.deepEqual(old.calls.cancel, ["r1"], "the retry cancels it");
+
+  const other = setup(true, undefined, { cancelled: new Set<string>() });
+  other.cancelFail.current = true;
+  const swapped = new Set<string>();
+  const a = setup(true, undefined, { cancelled: swapped });
+  await a.feed({ type: "run_started", run_id: "r2", chat_id: "c", bot_id: "b1" });
+  a.cancelFail.current = true;
+  await a.bridge.onNativeState("idle", 2);
+  const next = setup(true, undefined, { cancelled: swapped });
+  next.snapshot(async () => [{ id: "r2", bot_id: "b1", state: "running" }]);
+  await next.bridge.restoreRuns();
+  assert.deepEqual(next.bridge.liveRuns(), ["r2"], "a later bridge still tracks the live run");
+  void other;
+});
