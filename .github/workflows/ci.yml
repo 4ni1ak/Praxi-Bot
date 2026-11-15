@@ -134,3 +134,6 @@ jobs:
 
       - name: UI theme contrast
         run: pnpm --dir apps/desktop/ui check:themes
+
+      - name: UI shell layout
+        run: pnpm --dir apps/desktop/ui check:layout

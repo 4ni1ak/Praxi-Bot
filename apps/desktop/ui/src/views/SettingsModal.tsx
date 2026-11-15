@@ -1,4 +1,4 @@
-import { BrainCircuit, ChartNoAxesCombined, Monitor, Palette, Search, Settings2, RefreshCw, X } from "lucide-react";
+import { BrainCircuit, ChartNoAxesCombined, Monitor, Palette, Search, Settings2, RefreshCw, Stethoscope, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Modal } from "../components/Modal";
@@ -17,7 +17,7 @@ import {
 } from "./settings/types";
 import styles from "./SettingsModal.module.css";
 
-const SECTION_ICONS = { general: Settings2, appearance: Palette, ai: BrainCircuit, computer: Monitor, usage: ChartNoAxesCombined, updates: RefreshCw };
+const SECTION_ICONS = { general: Settings2, appearance: Palette, ai: BrainCircuit, computer: Monitor, usage: ChartNoAxesCombined, diagnostics: Stethoscope, updates: RefreshCw };
 
 
 /** Consecutive `row` cards share one rounded group; `block` cards stand alone. */

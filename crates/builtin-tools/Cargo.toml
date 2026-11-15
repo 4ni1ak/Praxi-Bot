@@ -30,6 +30,7 @@ script-runtime = { path = "../script-runtime", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+similar.workspace = true
 storage.workspace = true
 tokio.workspace = true
 tool-registry = { path = "../tool-registry", version = "0.1.0" }

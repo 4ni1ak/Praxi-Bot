@@ -404,3 +404,26 @@ test("approval details reach the tool item for the card", () => {
   const tool = s.runs[RUN].items.find((i) => i.kind === "tool") as ToolItem;
   assert.deepEqual(tool.details, { kind: "schedule", action: "create", prompt: "p" });
 });
+
+test("checkpoint_restored appends an informational notice item", () => {
+  let s = started();
+  s = feed(s, { type: "run_finished", run_id: RUN, error: null });
+  s = feed(s, {
+    type: "checkpoint_restored",
+    run_id: RUN,
+    checkpoint_id: "cp-abc",
+    safety_checkpoint_id: "cp-safe",
+    restored: ["/tmp/a.txt", "/tmp/b.txt"]
+  });
+  const notice = s.runs[RUN].items.find((i) => i.kind === "notice");
+  assert.equal(notice?.i18nKey, "chat.notice.checkpointRestored");
+  assert.deepEqual(notice?.values, { count: "2", checkpointId: "cp-abc", safetyId: "cp-safe" });
+});
+
+test("partial restore persists a warning and the safety recovery id", () => {
+  const state = feed(started(), { type: "checkpoint_restored", run_id: RUN, checkpoint_id: "all", safety_checkpoint_id: "cp-safe", restored: [], partial: true });
+  const notice = state.runs[RUN].items.find((item) => item.kind === "notice");
+  assert.equal(notice?.tone, "danger");
+  assert.equal(notice?.i18nKey, "chat.notice.checkpointRestorePartial");
+  assert.equal(notice?.values?.safetyId, "cp-safe");
+});

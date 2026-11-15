@@ -32,7 +32,7 @@ export function SidebarLayout({
       <div className={styles.backgroundDimLayer} aria-hidden="true" />
       <div className={styles.foregroundContainer}>
         {sidebar}
-        <main className={styles.mainPane}>{children}</main>
+        <main className={styles.mainPane} data-shell-part="main">{children}</main>
         {aside}
       </div>
     </div>
@@ -158,10 +158,11 @@ export function SidePanel({ open, width, className, style, children, ...props }:
       data-open={open}
       aria-hidden={!open}
       inert={!open}
+      data-shell-part="panel"
       style={{ ...style, "--panel-w": `${width}px` } as CSSProperties}
       {...props}
     >
-      <div className={styles.panelInner}>{children}</div>
+      <div className={styles.panelInner} data-shell-part="panel-inner">{children}</div>
     </aside>
   );
 }
