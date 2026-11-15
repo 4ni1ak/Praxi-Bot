@@ -1,0 +1,540 @@
+//! Loop-level guarantees of owner-stored secret references for the fill
+//! tools: always ask (whatever the policy), no value in any sink, exact
+//! standing grants, restart mid-approval, and the redactor.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use builtin_tools::browser::{BrowserDriver, FieldTarget, Wait};
+use secret_store::{FillSecrets, MemoryStore, SecretStore};
+
+use super::*;
+
+const VALUE: &str = "hunter2-Correct-Horse-9!";
+const PLANTED: &str = "planted-control-string-7731";
+const GITHUB: &str = "https://github.com";
+
+/// A scripted browser: knows where each ref lives, remembers what reached the page.
+#[derive(Default)]
+struct Page {
+    targets: Mutex<HashMap<String, FieldTarget>>,
+    typed_secrets: Mutex<Vec<String>>,
+    typed_text: Mutex<Vec<String>>,
+    snapshot_text: Mutex<String>,
+    echo: bool,
+}
+
+fn target(frame: &str) -> FieldTarget {
+    FieldTarget {
+        name: "Password".into(),
+        role: "textbox".into(),
+        frame_origin: Some(frame.into()),
+        top_origin: Some(frame.into()),
+    }
+}
+
+#[async_trait]
+impl BrowserDriver for Page {
+    async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+        self.targets
+            .lock()
+            .get(r)
+            .cloned()
+            .ok_or_else(|| format!("unknown ref {r}"))
+    }
+    async fn fill_secret(
+        &self,
+        r: &str,
+        text: &str,
+        accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+    ) -> Result<String, String> {
+        let live = self
+            .targets
+            .lock()
+            .get(r)
+            .and_then(|t| t.frame_origin.clone());
+        if !accept(live) {
+            return Err("refused: nothing was typed".into());
+        }
+        self.typed_secrets.lock().push(text.to_owned());
+        Ok(if self.echo {
+            format!("filled {r}; field shows {text}")
+        } else {
+            format!("filled {r}")
+        })
+    }
+    async fn open(&self, _: &str, _: Option<&str>) -> Result<String, String> {
+        Ok("opened".into())
+    }
+    async fn snapshot(&self, _: bool) -> Result<String, String> {
+        Ok(self.snapshot_text.lock().clone())
+    }
+    async fn click(&self, _: &str) -> Result<String, String> {
+        Ok("clicked".into())
+    }
+    async fn fill(&self, r: &str, t: &str) -> Result<String, String> {
+        self.typed_text.lock().push(t.to_owned());
+        Ok(format!("filled {r}"))
+    }
+    async fn select(&self, _: &str, _: &str) -> Result<String, String> {
+        Ok("selected".into())
+    }
+    async fn press(&self, _: &str) -> Result<String, String> {
+        Ok("pressed".into())
+    }
+    async fn scroll(&self, _: Option<&str>, _: f64, _: f64) -> Result<String, String> {
+        Ok("scrolled".into())
+    }
+    async fn wait(&self, _: Wait, _: Option<Duration>) -> Result<String, String> {
+        Ok("waited".into())
+    }
+    async fn back(&self) -> Result<String, String> {
+        Ok("back".into())
+    }
+    async fn tabs(&self, _: Option<usize>) -> Result<String, String> {
+        Ok("tabs".into())
+    }
+    async fn screenshot(
+        &self,
+        _: bool,
+        _: Option<&str>,
+    ) -> Result<(Vec<u8>, &'static str), String> {
+        Ok((vec![0xFF, 0xD8, 0xFF], "jpg"))
+    }
+    async fn eval(&self, _: &str) -> Result<Value, String> {
+        Ok(Value::Null)
+    }
+}
+
+struct Rig {
+    env: Env,
+    lp: AgentLoop,
+    fake: Arc<Fake>,
+    page: Arc<Page>,
+    secrets: Arc<FillSecrets>,
+    store: Arc<MemoryStore>,
+    redactor: crate::SharedRedactor,
+}
+
+fn rig(policy: Policy, echo: bool, replies: Vec<Reply>) -> Rig {
+    let env = setup();
+    let store = Arc::new(MemoryStore::new());
+    let redactor = crate::SharedRedactor::default();
+    let hook = redactor.clone();
+    let secrets = Arc::new(
+        FillSecrets::in_memory(store.clone() as Arc<dyn SecretStore>)
+            .with_value_hook(Arc::new(move |v: &str| hook.register(v))),
+    );
+    secrets
+        .upsert(
+            "login/github",
+            Some(VALUE),
+            Some(&[GITHUB.to_owned()]),
+            None,
+        )
+        .unwrap();
+    let page = Arc::new(Page {
+        echo,
+        ..Page::default()
+    });
+    page.targets.lock().insert("e5".into(), target(GITHUB));
+    let fake = Fake::new(replies);
+    let mut config = cfg(policy);
+    config.redactor = Some(redactor.clone());
+    let lp = make_loop(&env.storage, env.bot, &fake, &[], profile(""), config);
+    for t in builtin_tools::browser::tools_with_secrets(
+        page.clone(),
+        &env.dir.path().join("bt"),
+        None,
+        Some(Arc::clone(&secrets)),
+    ) {
+        lp.sh.tools.register(t);
+    }
+    lp.sh
+        .tools
+        .register(builtin_tools::secrets_list_tool(Arc::clone(&secrets)));
+    Rig {
+        env,
+        lp,
+        fake,
+        page,
+        secrets,
+        store,
+        redactor,
+    }
+}
+
+/// Every byte under `dir`, file by file.
+fn files_containing(dir: &Path, needle: &str) -> Vec<String> {
+    fn walk(dir: &Path, needle: &str, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, needle, out);
+            } else if let Ok(bytes) = std::fs::read(&p) {
+                let n = needle.as_bytes();
+                if bytes.windows(n.len()).any(|w| w == n) {
+                    out.push(p.display().to_string());
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, needle, &mut out);
+    out
+}
+
+fn sinks_text(r: &Rig) -> String {
+    // Events, approvals, audit, messages and steps, as the stores hold them.
+    let mut s = String::new();
+    for chat in [r.env.chat] {
+        for m in r.env.storage.list_messages(chat).unwrap() {
+            s.push_str(&m.content);
+        }
+    }
+    s.push_str(&serde_json::to_string(&r.env.storage.list_audit(r.env.user).unwrap()).unwrap());
+    for run in r.env.storage.list_runs(r.env.user).unwrap() {
+        for st in r.env.storage.list_steps(run.id).unwrap() {
+            s.push_str(&st.input.to_string());
+            s.push_str(&st.output.map(|o| o.to_string()).unwrap_or_default());
+        }
+        for a in r.env.storage.list_approvals(run.id).unwrap() {
+            s.push_str(&a.summary);
+        }
+    }
+    s
+}
+
+fn fill_secret_call() -> Reply {
+    calls(&[(
+        "c1",
+        "browser_fill",
+        json!({"ref": "e5", "secret": "login/github"}),
+    )])
+}
+
+/// Guard: `Tool::always_ask_for` in `Shared::must_ask`. A secret fill asks under
+/// the FULL policy (and with read shortcuts on); the same fill with ordinary
+/// text does not. Fails if `decide` stops consulting `always_ask_for`.
+#[tokio::test]
+async fn a_secret_fill_asks_even_under_the_full_policy_but_text_does_not() {
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![fill_secret_call(), text("done")],
+    );
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "log in").unwrap();
+    let Event::ApprovalNeeded(a) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(a.tool_name, "browser_fill");
+    let d = a.details.clone().expect("the card carries the facts");
+    assert_eq!(d["secret"], "login/github");
+    assert_eq!(d["frame_origin"], GITHUB);
+    assert!(!serde_json::to_string(&a).unwrap().contains(VALUE));
+    assert!(
+        r.page.typed_secrets.lock().is_empty(),
+        "nothing typed before approval"
+    );
+    r.lp.approve(a.call_id, ApprovalScope::Once, r.env.user)
+        .unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(r.page.typed_secrets.lock().as_slice(), [VALUE]);
+
+    // Control: the same tool with text under the same policy runs unasked.
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![
+            calls(&[("c1", "browser_fill", json!({"ref": "e5", "text": "hello"}))]),
+            text("done"),
+        ],
+    );
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "type").unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    while let Ok(i) = rx.try_recv() {
+        assert!(!matches!(i.envelope.event, Event::ApprovalNeeded(_)));
+    }
+    assert_eq!(r.page.typed_text.lock().as_slice(), ["hello"]);
+}
+
+/// Guard: approving with an "always" scope never turns a secret fill into an
+/// unasked one (`must_ask` also forces `ApprovalScope::Once` in `commit`).
+#[tokio::test]
+async fn an_always_grant_never_waives_the_next_secret_fill() {
+    let r = rig(
+        Policy::approve_destructive(),
+        false,
+        vec![
+            fill_secret_call(),
+            calls(&[(
+                "c2",
+                "browser_fill",
+                json!({"ref": "e5", "secret": "login/github"}),
+            )]),
+            text("done"),
+        ],
+    );
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "log in twice").unwrap();
+    for _ in 0..2 {
+        let Event::ApprovalNeeded(a) =
+            until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+        else {
+            unreachable!()
+        };
+        r.lp.approve(a.call_id, ApprovalScope::Always, r.env.user)
+            .unwrap();
+    }
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(r.page.typed_secrets.lock().len(), 2);
+}
+
+/// Guard: the value is in no sink. The scan covers the databases, the event
+/// log and the journal on disk, the stored steps / approvals / audit / messages,
+/// and what the model was sent; a planted string in an ordinary fill proves the
+/// scan can see those places.
+#[tokio::test]
+async fn the_value_is_absent_from_every_sink_with_a_positive_control() {
+    let r = rig(
+        Policy::full(),
+        true, // the page echoes the typed value
+        vec![
+            calls(&[("p1", "browser_fill", json!({"ref": "e5", "text": PLANTED}))]),
+            fill_secret_call(),
+            text("done"),
+        ],
+    );
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "log in").unwrap();
+    let Event::ApprovalNeeded(a) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    r.lp.approve(a.call_id, ApprovalScope::Once, r.env.user)
+        .unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(r.page.typed_secrets.lock().as_slice(), [VALUE]);
+    r.lp.shutdown(Duration::from_millis(300)).await;
+
+    // Everything the model was sent.
+    let mut sent = String::new();
+    for i in 0..r.fake.n_requests() {
+        sent.push_str(&serde_json::to_string(&r.fake.request(i).messages).unwrap());
+    }
+    // Events as streamed.
+    let mut streamed = String::new();
+    while let Ok(i) = rx.try_recv() {
+        streamed.push_str(&serde_json::to_string(&i.envelope.event).unwrap());
+    }
+    let stored = sinks_text(&r);
+
+    // Positive control: the planted string IS found in each place we scan.
+    assert!(sent.contains(PLANTED), "control: model history");
+    assert!(streamed.contains(PLANTED), "control: event stream");
+    assert!(stored.contains(PLANTED), "control: stored steps");
+    assert!(
+        !files_containing(r.env.dir.path(), PLANTED).is_empty(),
+        "control: the disk scan can see the planted string"
+    );
+
+    // The value itself, and its distinctive part, are nowhere.
+    for needle in [VALUE, "Correct-Horse"] {
+        assert!(!sent.contains(needle), "model history leaked {needle}");
+        assert!(!streamed.contains(needle), "event stream leaked {needle}");
+        assert!(!stored.contains(needle), "stores leaked {needle}");
+        assert_eq!(
+            files_containing(r.env.dir.path(), needle),
+            Vec::<String>::new(),
+            "files leaked {needle}"
+        );
+    }
+    // The tool result the model read says what happened, without the value.
+    let result = tool_messages(&r.fake.request(2)).join("\n");
+    assert!(result.contains("filled e5"), "{result}");
+    assert!(!result.contains("Correct-Horse"), "{result}");
+}
+
+/// Guard: a restart while the card is open leaves nothing on disk: the value is
+/// not read until after the approval, so a parked / interrupted run never had
+/// it. Control: the planted text of an ordinary parked fill IS on disk.
+#[tokio::test]
+async fn a_restart_mid_approval_leaves_no_value_on_disk() {
+    let r = rig(Policy::full(), false, vec![fill_secret_call()]);
+    let mut rx = r.lp.subscribe();
+    let _run = r.lp.run_turn(r.env.chat, "log in").unwrap();
+    let Event::ApprovalNeeded(_) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    // The card is open: nothing typed, value not read into any file.
+    assert!(r.page.typed_secrets.lock().is_empty());
+    let paused = r.lp.shutdown(Duration::from_millis(300)).await;
+    assert!(!paused.is_empty(), "the run was paused mid-approval");
+    let dir = r.env.dir.path().to_path_buf();
+    assert_eq!(files_containing(&dir, VALUE), Vec::<String>::new());
+    assert_eq!(
+        files_containing(&dir, "Correct-Horse"),
+        Vec::<String>::new()
+    );
+    // The reference (name) is what is stored.
+    assert!(!files_containing(&dir, "login/github").is_empty());
+
+    // Control: an ordinary parked fill leaves its text on disk, so the scan works.
+    let r = rig(
+        Policy::approve_destructive(),
+        false,
+        vec![calls(&[(
+            "c1",
+            "browser_fill",
+            json!({"ref": "e5", "text": PLANTED}),
+        )])],
+    );
+    let mut rx = r.lp.subscribe();
+    let _ = r.lp.run_turn(r.env.chat, "type").unwrap();
+    let _ = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    r.lp.shutdown(Duration::from_millis(300)).await;
+    assert!(!files_containing(r.env.dir.path(), PLANTED).is_empty());
+}
+
+/// Guard: a field on a wrong origin is refused before any approval exists.
+#[tokio::test]
+async fn a_wrong_origin_never_produces_an_approvable_card() {
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![fill_secret_call(), text("done")],
+    );
+    r.page
+        .targets
+        .lock()
+        .insert("e5".into(), target("https://evil.test"));
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "log in").unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    while let Ok(i) = rx.try_recv() {
+        assert!(
+            !matches!(i.envelope.event, Event::ApprovalNeeded(_)),
+            "no card may be offered for an origin the owner did not allow"
+        );
+    }
+    assert!(r.page.typed_secrets.lock().is_empty());
+    let result = tool_messages(&r.fake.request(1)).join("\n");
+    assert!(
+        result.contains("not allowed on https://evil.test"),
+        "{result}"
+    );
+    assert!(r.env.storage.list_approvals(run).unwrap().is_empty());
+}
+
+/// Guard: a standing grant for exactly this secret + origin stands in for the
+/// card, is audited by id, and does not extend to another origin.
+#[tokio::test]
+async fn an_exact_standing_grant_skips_the_card_and_is_audited() {
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![
+            fill_secret_call(),
+            calls(&[(
+                "c2",
+                "browser_fill",
+                json!({"ref": "e6", "secret": "login/github"}),
+            )]),
+            text("done"),
+        ],
+    );
+    r.secrets
+        .upsert(
+            "login/github",
+            None,
+            Some(&[GITHUB.to_owned(), "https://gitlab.com".to_owned()]),
+            None,
+        )
+        .unwrap();
+    // e6 lives on the other allowed origin, which has no grant.
+    r.page
+        .targets
+        .lock()
+        .insert("e6".into(), target("https://gitlab.com"));
+    let grant = r.secrets.grant_create("login/github", GITHUB).unwrap();
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "log in").unwrap();
+    // The granted origin runs without a card; the other one asks.
+    let Event::ApprovalNeeded(a) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(a.input["ref"], "e6", "only the un-granted origin asks");
+    assert_eq!(
+        r.page.typed_secrets.lock().as_slice(),
+        [VALUE],
+        "e5 ran unasked"
+    );
+    r.lp.approve(a.call_id, ApprovalScope::Once, r.env.user)
+        .unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(r.page.typed_secrets.lock().len(), 2);
+    let used: Vec<_> = r
+        .env
+        .storage
+        .list_audit(r.env.user)
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.action == "secret.standing_grant_used")
+        .collect();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0].detail["grant"], grant.id.as_str());
+    assert!(!used[0].detail.to_string().contains(VALUE));
+}
+
+/// Guard: the production redactor masks a value a page echoes in tool output
+/// (registered through the secrets service, and through a store refresh).
+#[tokio::test]
+async fn an_echoed_value_is_masked_by_the_production_redactor() {
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![
+            calls(&[("c1", "browser_snapshot", json!({}))]),
+            text("done"),
+        ],
+    );
+    *r.page.snapshot_text.lock() = format!("textbox \"Password\" value=\"{VALUE}\"");
+    let run = r.lp.run_turn(r.env.chat, "look").unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let result = tool_messages(&r.fake.request(1)).join("\n");
+    assert!(result.contains("[REDACTED]"), "{result}");
+    assert!(!result.contains("Correct-Horse"), "{result}");
+
+    // A refresh from the store alone (a restart) masks it as well: the fill
+    // namespace is part of "every value in the store".
+    let fresh = crate::SharedRedactor::default();
+    fresh.refresh_from_store(Some(&*r.store), &[]).unwrap();
+    assert_eq!(fresh.redact(&format!("x {VALUE} y")), "x [REDACTED] y");
+    assert!(!r.redactor.redact(VALUE).contains("Correct"));
+}
+
+/// Guard: the model can learn names and allowed origins, and only those.
+#[tokio::test]
+async fn the_model_can_list_secret_names_but_never_values() {
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![calls(&[("c1", "secrets_list", json!({}))]), text("done")],
+    );
+    let run = r.lp.run_turn(r.env.chat, "what can you type").unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let result = tool_messages(&r.fake.request(1)).join("\n");
+    assert!(
+        result.contains("login/github: https://github.com"),
+        "{result}"
+    );
+    assert!(!result.contains(VALUE));
+}

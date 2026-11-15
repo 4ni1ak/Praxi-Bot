@@ -780,6 +780,7 @@ mod tests {
             action: DesktopActionKind::Type,
             value: Some("{text}".into()),
             method: None,
+            secret: None,
         }));
         w.steps.push(Step::Tool(ToolStep {
             tool: "fs_write".into(),

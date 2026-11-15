@@ -21,6 +21,8 @@ pub mod control;
 pub mod desktop;
 pub mod files;
 pub mod fill_secret;
+#[cfg(test)]
+mod fill_secret_tests;
 pub mod knowledge;
 pub mod meta;
 pub mod schedule;

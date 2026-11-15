@@ -1571,6 +1571,8 @@ pub(crate) mod fake {
         pub launched_at: Mutex<Option<tokio::time::Instant>>,
         /// Runs inside `screenshot` / `windows` (a takeover landing mid-capture).
         pub hook: Mutex<Option<FakeHook>>,
+        /// The verified program identity this backend reports (`None` = it cannot verify).
+        pub identity: Mutex<Option<String>>,
     }
 
     impl FakeDesktop {
@@ -1589,6 +1591,7 @@ pub(crate) mod fake {
                 launched_window_pid: 4242,
                 launched_at: Mutex::new(None),
                 hook: Mutex::new(None),
+                identity: Mutex::new(None),
             }
         }
     }
@@ -1732,6 +1735,10 @@ pub(crate) mod fake {
         async fn launch(&self, _app: AppSpec) -> Result<Pid, DesktopError> {
             *self.launched_at.lock() = Some(tokio::time::Instant::now());
             Ok(self.launch_pid)
+        }
+
+        async fn program_identity(&self, _window: &WindowInfo) -> Option<String> {
+            self.identity.lock().clone()
         }
 
         fn capabilities(&self) -> Capabilities {

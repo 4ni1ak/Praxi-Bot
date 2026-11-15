@@ -955,6 +955,46 @@ mod tests {
         assert!(rec.warnings.iter().any(|w| w.contains("incomplete")));
     }
 
+    /// Guard: a recorded secret fill keeps the reference and no value; the
+    /// text of an ordinary fill is still lifted as before.
+    #[test]
+    fn a_recorded_secret_fill_keeps_only_the_reference() {
+        let page = "# Login (https://github.com/login)\n  [e1] textbox \"Password\"\n";
+        let steps = vec![
+            user_step("log in to github"),
+            tool_step(
+                1,
+                json!([call(
+                    "o",
+                    "browser_open",
+                    &json!({"url": "https://github.com/login"})
+                )]),
+                json!([res("o", "browser_open", page, false)]),
+            ),
+            tool_step(
+                2,
+                json!([call(
+                    "f",
+                    "browser_fill",
+                    &json!({"ref": "e1", "secret": "login/github"})
+                )]),
+                json!([res("f", "browser_fill", "filled e1", false)]),
+            ),
+        ];
+        let rec = Recorder::new()
+            .from_steps(&steps, &RecordOptions::default())
+            .unwrap();
+        let Step::BrowserAction(b) = &rec.workflow.steps[1] else {
+            panic!("{:?}", rec.workflow.steps)
+        };
+        assert_eq!(b.secret.as_deref(), Some("login/github"));
+        assert!(b.value.is_none());
+        assert!(rec.workflow.params.iter().all(|p| p.name != "text"));
+        let json = rec.workflow.to_json().unwrap();
+        assert!(json.contains("login/github"));
+        rec.workflow.validate().unwrap();
+    }
+
     #[test]
     fn browser_refs_become_locators_and_urls_become_params() {
         let page =

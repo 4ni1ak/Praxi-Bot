@@ -1841,6 +1841,17 @@ pub(crate) mod fake {
         pub on_desktop: bool,
         /// Runs inside every backend call (a human takeover landing mid-call).
         pub hook: PMutex<Option<FakeHook>>,
+        /// Where each ref lives (for `field_target`); an unknown ref errors.
+        pub targets: PMutex<std::collections::HashMap<String, FieldTarget>>,
+        /// The origin the browser reports at insertion time when it differs
+        /// from the target's (a navigation after the card was shown).
+        pub origin_at_insert: PMutex<Option<Option<String>>>,
+        /// What actually reached the page through `fill_secret`.
+        pub typed_secrets: PMutex<Vec<String>>,
+        /// The raw (pre-scrub) text `fill_secret` produced.
+        pub raw_secret_output: PMutex<String>,
+        /// Make the page echo the typed value in the action result.
+        pub echo_value: bool,
     }
 
     impl FakeBrowser {
@@ -1906,6 +1917,45 @@ pub(crate) mod fake {
         }
         async fn fill(&self, r: &str, t: &str) -> Result<String, String> {
             self.rec(&format!("fill:{r}:{t}"))
+        }
+        async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+            self.rec(&format!("field_target:{r}"))?;
+            self.targets
+                .lock()
+                .get(r)
+                .cloned()
+                .ok_or_else(|| format!("unknown ref {r}"))
+        }
+        async fn fill_secret(
+            &self,
+            r: &str,
+            text: &str,
+            accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+        ) -> Result<String, String> {
+            // The call log never carries the value.
+            self.rec(&format!("fill_secret:{r}"))?;
+            let live = match self.origin_at_insert.lock().clone() {
+                Some(o) => o,
+                None => self
+                    .targets
+                    .lock()
+                    .get(r)
+                    .and_then(|t| t.frame_origin.clone()),
+            };
+            if !accept(live) {
+                return Err(
+                    "refused: the frame is not an origin the owner allowed; nothing was typed"
+                        .into(),
+                );
+            }
+            self.typed_secrets.lock().push(text.to_owned());
+            let out = if self.echo_value {
+                format!("filled {r}; the field now shows value={text}")
+            } else {
+                format!("filled {r}")
+            };
+            self.raw_secret_output.lock().clone_from(&out);
+            Ok(out)
         }
         async fn select(&self, r: &str, v: &str) -> Result<String, String> {
             self.rec(&format!("select:{r}:{v}"))
