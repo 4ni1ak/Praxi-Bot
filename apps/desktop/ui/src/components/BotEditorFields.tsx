@@ -340,6 +340,38 @@ export function PermissionFields({ draft, patch }: { draft: BotDraft; patch: Pat
           </SettingGroup>
         </section>
       ) : null}
+      <section className={dialogStyles.block}>
+        <div className={dialogStyles.blockHead}>
+          <h3 className={dialogStyles.blockTitle}>{t("botForm.files.label")}</h3>
+          <p className={dialogStyles.blockLead}>{t(`botForm.files.${draft.files.mode}.hint`)}</p>
+        </div>
+        <SettingGroup>
+          <SettingRow title={t("botForm.files.label")}>
+            <Segmented
+              label={t("botForm.files.label")}
+              value={draft.files.mode}
+              options={(["computer", "folder"] as const).map((m) => ({
+                value: m,
+                label: t(`botForm.files.${m}.name`),
+                testId: `bot-edit-files-${m}`
+              }))}
+              onChange={(mode) => patch({ files: { ...draft.files, mode } })}
+            />
+          </SettingRow>
+        </SettingGroup>
+        {draft.files.mode === "folder" ? (
+          <textarea
+            className={dialogStyles.textarea}
+            rows={3}
+            aria-label={t("botForm.files.foldersLabel")}
+            placeholder={t("botForm.files.foldersPlaceholder")}
+            value={draft.files.folders.join("\n")}
+            onChange={(e) =>
+              patch({ files: { ...draft.files, folders: e.target.value.split("\n") } })
+            }
+          />
+        ) : null}
+      </section>
     </>
   );
 }

@@ -56,6 +56,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{bot}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The bot's file access mode. */
+        get: operations["get_files"];
+        /** Set the bot's file access mode. Local owner only. */
+        put: operations["put_files"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{bot}/knowledge/email-captures": {
         parameters: {
             query?: never;
@@ -3104,6 +3122,13 @@ export interface components {
             read_only: boolean;
             untrusted_output: boolean;
         };
+        /** @description A bot's file access mode. */
+        FileAccessDto: {
+            /** @description Absolute folders for `folder` mode. */
+            folders?: string[];
+            /** @description `computer` (This computer, default) or `folder` (Folder only). */
+            mode: string;
+        };
         /** @description One collapsed file change recorded during a run. */
         FileChangeDto: {
             accessible: boolean;
@@ -5097,6 +5122,86 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_files: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileAccessDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_files: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileAccessDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileAccessDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

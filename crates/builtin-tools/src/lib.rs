@@ -114,10 +114,42 @@ pub struct BuiltinConfig {
     /// Credential paths the host explicitly grants to `fs_*`. A grant does not
     /// permit UNC, device, or out-of-root paths.
     pub fs_granted_paths: Vec<PathBuf>,
+    /// Per-bot file access mode. With `Some`, `fs_allowed_roots` is ignored:
+    /// each call asks the provider for the calling bot's scope.
+    pub fs_access: Option<Arc<dyn FsAccessProvider>>,
+    /// Base for relative `fs_*` paths and anchor of the sensitive-location
+    /// denylist when `fs_access` is set. Defaults to the user's home.
+    pub fs_home: Option<PathBuf>,
     /// Owner-stored fill secrets. With `Some`, `browser_fill`, `desktop_type`
     /// and `desktop_set_value` accept `secret: "<name>"` and the model gets
     /// `secrets_list`; with `None` a `secret` parameter is refused.
     pub fill_secrets: Option<Arc<secret_store::FillSecrets>>,
+}
+
+/// What the built-in file tools may reach for one bot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FsScope {
+    /// "This computer": anywhere the user can read; credential, CLI-config,
+    /// Praxi data and OS-critical locations stay refused.
+    Computer,
+    /// "Folder only": these folders and nothing else (empty denies everything).
+    Folders(Vec<PathBuf>),
+}
+
+/// Looks up the file access scope of the bot making a call.
+pub trait FsAccessProvider: Send + Sync {
+    /// Scope for `bot_id` (`None` = not a bot: the narrowest sensible default
+    /// is the provider's choice).
+    fn scope(&self, bot_id: Option<&str>) -> FsScope;
+}
+
+/// The user's home directory from the environment.
+#[must_use]
+pub fn user_home() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_dir())
 }
 
 impl BuiltinConfig {
@@ -143,6 +175,8 @@ impl BuiltinConfig {
             knowledge: None,
             fs_allowed_roots: Vec::new(),
             fs_granted_paths: Vec::new(),
+            fs_access: None,
+            fs_home: None,
             fill_secrets: None,
         }
     }
@@ -195,10 +229,16 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     if let Some(secrets) = &cfg.fill_secrets {
         all.push(fill_secret::secrets_list_tool(Arc::clone(secrets)));
     }
-    all.extend(files::tools_bounded(
+    let fs_home = cfg
+        .fs_access
+        .as_ref()
+        .and_then(|_| cfg.fs_home.clone().or_else(user_home));
+    all.extend(files::tools_scoped(
         &cfg.data_dir,
         &cfg.fs_allowed_roots,
         &cfg.fs_granted_paths,
+        cfg.fs_access.clone(),
+        fs_home,
     ));
     all.push(shell::tool(&cfg.data_dir));
     all.push(script::tool_with_control(

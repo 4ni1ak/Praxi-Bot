@@ -27,6 +27,7 @@ mod email_routes;
 pub mod error;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod file_access;
 mod fill_routes;
 pub mod host;
 pub mod host_links;
@@ -296,6 +297,7 @@ impl AppState {
     /// Assemble with the same target registry supplied to `BuiltinConfig`.
     /// # Errors
     /// Returns storage errors while loading or creating the local user.
+    #[allow(clippy::too_many_lines)] // one ordered construction of the shared state
     pub fn with_view_registry(
         agent: AgentLoop,
         storage: Arc<Storage>,
@@ -403,8 +405,19 @@ impl AppState {
             host_config,
             state.downgrade(),
         ));
+        state.install_unset_file_access();
         knowledge_runtime::install(&state);
         Ok(state)
+    }
+
+    /// An always-on host does not hand its account's files to bots nobody
+    /// configured: an unset file access mode means no access there.
+    fn install_unset_file_access(&self) {
+        let weak = self.downgrade();
+        self.agent().set_unset_file_access_denied(move || {
+            weak.upgrade()
+                .is_some_and(|s| s.leader().config().mode == host::HostMode::Host)
+        });
     }
 
     /// Let `/v1/providers` list the catalog and reload the providers (call
@@ -954,6 +967,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/view/privileges/{peer_key}", put(v::set_privileges))
         .route("/v1/openapi.json", get(openapi::serve_openapi))
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
+        .route(
+            "/v1/bots/{bot}/files",
+            get(file_access::get_files).put(file_access::put_files),
+        )
         .route(
             "/v1/bots/{bot}/knowledge/sources",
             get(knowledge::list_sources)

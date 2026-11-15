@@ -105,6 +105,67 @@ struct Shared {
     /// not be resolved. Every `fs_*` call fails until this is false.
     roots_unresolved: bool,
     drives: DriveCache,
+    /// Per-bot scope source (file access mode). `None` keeps the static roots.
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
+    /// The user's home. With a scope source it is the base for relative paths
+    /// in "This computer" mode and anchors the sensitive-location denylist.
+    home: Option<PathBuf>,
+    /// Base directory relative paths resolve against (`None`: process cwd).
+    workdir: Option<PathBuf>,
+}
+
+impl Shared {
+    /// This call's view of the shared state under the bot's file access scope.
+    fn scoped(&self, scope: &crate::FsScope) -> Self {
+        let (roots, unresolved, workdir) = match scope {
+            crate::FsScope::Computer => (Vec::new(), self.home.is_none(), self.home.clone()),
+            crate::FsScope::Folders(folders) if folders.is_empty() => (Vec::new(), true, None),
+            crate::FsScope::Folders(folders) => match prepare_roots(folders, &self.drives) {
+                Ok(roots) => {
+                    let first = roots.first().cloned();
+                    (roots, false, first)
+                }
+                Err(()) => (Vec::new(), true, None),
+            },
+        };
+        Self {
+            checkpoints: self.checkpoints.clone(),
+            spill_dir: self.spill_dir.clone(),
+            data_dir: self.data_dir.clone(),
+            allowed_roots: roots,
+            grants: self.grants.clone(),
+            roots_unresolved: unresolved,
+            drives: DriveCache::new(),
+            access: None,
+            home: self.home.clone(),
+            workdir,
+        }
+    }
+}
+
+thread_local! {
+    static BASE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+fn with_base_dir<T>(base: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            BASE_DIR.with(|b| *b.borrow_mut() = None);
+        }
+    }
+    BASE_DIR.with(|b| *b.borrow_mut() = base);
+    let _reset = Reset;
+    f()
+}
+
+/// Directory relative tool paths start from: the bot's workspace or the user's
+/// home when a file access scope is active, else the process directory.
+fn base_dir() -> Result<PathBuf, ToolError> {
+    match BASE_DIR.with(|b| b.borrow().clone()) {
+        Some(dir) => Ok(dir),
+        None => std::env::current_dir().map_err(|e| exec_err(format!("current directory: {e}"))),
+    }
 }
 
 /// Filename and metadata only; never a file's bytes.
@@ -144,6 +205,9 @@ pub fn watch_snapshot(
         grants: Vec::new(),
         roots_unresolved,
         drives,
+        access: None,
+        home: None,
+        workdir: None,
     };
     let root = validate_path(&sh, raw, Follow::Watch)?;
     if root.parent().is_none() {
@@ -259,6 +323,18 @@ pub(crate) fn tools_bounded(
     allowed_roots: &[PathBuf],
     grants: &[PathBuf],
 ) -> Vec<Arc<dyn Tool>> {
+    tools_scoped(data_dir, allowed_roots, grants, None, None)
+}
+
+/// Like [`tools_bounded`] with a per-bot scope source and the home directory.
+#[must_use]
+pub(crate) fn tools_scoped(
+    data_dir: &Path,
+    allowed_roots: &[PathBuf],
+    grants: &[PathBuf],
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
+    home: Option<PathBuf>,
+) -> Vec<Arc<dyn Tool>> {
     let drives = DriveCache::new();
     let (allowed_roots, roots_unresolved) = match prepare_roots(allowed_roots, &drives) {
         Ok(roots) => (roots, false),
@@ -274,6 +350,9 @@ pub(crate) fn tools_bounded(
         grants,
         roots_unresolved,
         drives,
+        workdir: home.clone(),
+        access,
+        home,
     });
     let fs = PermissionCategory::Fs;
     let defs: Vec<(Op, ToolSpec)> = vec![
@@ -753,8 +832,7 @@ fn lexical_absolute(raw: &str) -> Result<PathBuf, ToolError> {
     } else if is_root_relative(path) {
         prefix_current_drive(path)?
     } else {
-        let cwd =
-            std::env::current_dir().map_err(|e| exec_err(format!("current directory: {e}")))?;
+        let cwd = base_dir()?;
         reject_syntax(&cwd.to_string_lossy())?;
         cwd.join(path)
     };
@@ -1318,7 +1396,7 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
 /// test the file tools do not need for single files.
 #[must_use]
 pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
-    if is_protected(root, data_dir) {
+    if hard_denied(root) || is_protected(root, data_dir) {
         return true;
     }
     let r = norm_parts(&widen_for_compare(root));
@@ -1489,8 +1567,256 @@ fn credential_blocked(sh: &Shared, lexical: &Path, resolved: &Path) -> bool {
         || protected_ungranted(resolved, &sh.data_dir, &sh.grants)
 }
 
+// ---- The ONE table of locations no file tool may touch --------------------
+//
+// Matched on canonical (widened, case-folded on Windows) paths at every depth
+// by `hard_denied`, which `protected_ungranted` applies to every operation:
+// read, list, search, write, edit, move (both ends), delete and checkpoints,
+// including each descendant a recursive operation visits. A host grant never
+// lifts these.
+
+/// Consecutive path components (lower case) that are credential, key,
+/// browser-profile, password-manager or CLI-config stores wherever they sit,
+/// so another user's profile or a copied tree is covered too.
+const SENSITIVE_SEQUENCES: &[&[&str]] = &[
+    // ssh / cloud / dev credentials (all platforms)
+    &[".ssh"],
+    &[".aws"],
+    &[".gnupg"],
+    &[".azure"],
+    &[".kube"],
+    &[".docker"],
+    &[".password-store"],
+    &[".terraform.d"],
+    &[".cargo", "credentials"],
+    &[".cargo", "credentials.toml"],
+    &[".config", "git", "credentials"],
+    &[".config", "gh"],
+    &[".config", "gcloud"],
+    &[".config", "op"],
+    &[".config", "rclone"],
+    &[".config", "1password"],
+    &[".config", "bitwarden"],
+    &[".config", "keepassxc"],
+    // agent / CLI configuration
+    &[".claude"],
+    &[".codex"],
+    &[".gemini"],
+    &[".opencode"],
+    // Linux keyrings, wallets, browsers
+    &[".local", "share", "keyrings"],
+    &[".local", "share", "kwalletd"],
+    &[".kde", "share", "apps", "kwallet"],
+    &[".mozilla"],
+    &[".thunderbird"],
+    &[".config", "google-chrome"],
+    &[".config", "google-chrome-beta"],
+    &[".config", "chromium"],
+    &[".config", "microsoft-edge"],
+    &[".config", "bravesoftware"],
+    &[".config", "opera"],
+    &[".config", "vivaldi"],
+    &["snap", "chromium"],
+    &["snap", "firefox"],
+    &["snap", "brave"],
+    &[".var", "app", "org.mozilla.firefox"],
+    &[".var", "app", "com.google.chrome"],
+    &[".var", "app", "org.chromium.chromium"],
+    &[".var", "app", "com.brave.browser"],
+    // Windows (under any profile)
+    &["appdata", "roaming", "gh"],
+    &["appdata", "roaming", "github cli"],
+    &["appdata", "roaming", "gcloud"],
+    &["appdata", "roaming", "claude"],
+    &["appdata", "roaming", "microsoft", "credentials"],
+    &["appdata", "roaming", "microsoft", "vault"],
+    &["appdata", "roaming", "microsoft", "protect"],
+    &["appdata", "roaming", "microsoft", "crypto"],
+    &["appdata", "local", "microsoft", "credentials"],
+    &["appdata", "local", "microsoft", "vault"],
+    &["appdata", "local", "microsoft", "edge"],
+    &["appdata", "local", "google", "chrome"],
+    &["appdata", "local", "bravesoftware"],
+    &["appdata", "local", "vivaldi"],
+    &["appdata", "roaming", "opera software"],
+    &["appdata", "roaming", "mozilla"],
+    &["appdata", "local", "mozilla"],
+    &["appdata", "roaming", "thunderbird"],
+    &["appdata", "roaming", "1password"],
+    &["appdata", "local", "1password"],
+    &["appdata", "roaming", "bitwarden"],
+    &["appdata", "roaming", "keepassxc"],
+    &["programdata", "microsoft", "crypto"],
+    &["programdata", "microsoft", "vault"],
+    &["system volume information"],
+    // macOS
+    &["library", "keychains"],
+    &["library", "cookies"],
+    &["library", "safari"],
+    &["library", "group containers"],
+    &["library", "application support", "google", "chrome"],
+    &["library", "application support", "microsoft edge"],
+    &["library", "application support", "bravesoftware"],
+    &["library", "application support", "firefox"],
+    &["library", "application support", "1password"],
+    &["library", "application support", "bitwarden"],
+    &["library", "application support", "vivaldi"],
+    &["library", "application support", "com.operasoftware.opera"],
+    &["library", "application support", "keepassxc"],
+];
+
+/// File names (lower case) that hold credentials wherever they are: browser
+/// stores, Windows account hives, private keys, dotfile credential stores.
+const SENSITIVE_NAMES: &[&str] = &[
+    "login data",
+    "login data for account",
+    "web data",
+    "local state",
+    "key3.db",
+    "key4.db",
+    "logins.json",
+    "cert9.db",
+    "cookies.sqlite",
+    "usrclass.dat",
+    ".netrc",
+    "_netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    ".pgpass",
+    ".vault-token",
+    ".my.cnf",
+    "credentials.tfrc.json",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+];
+
+/// File-name suffixes (lower case) of password-manager vaults and key stores.
+const SENSITIVE_SUFFIXES: &[&str] = &[
+    ".kdbx",
+    ".kdb",
+    ".opvault",
+    ".agilekeychain",
+    ".1pif",
+    ".keychain",
+    ".keychain-db",
+    ".p12",
+    ".pfx",
+];
+
+/// Names too generic to refuse alone: refused only directly inside a
+/// `config` directory (the Windows registry hives under `System32\config`).
+const HIVE_NAMES: &[&str] = &["sam", "security", "system", "software", "default"];
+
+/// OS trees (absolute prefixes) that stay refused.
+fn sensitive_roots() -> &'static Vec<Vec<String>> {
+    static ROOTS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            dirs.push(env_abs_dir("SystemRoot").unwrap_or_else(|| PathBuf::from(r"C:\Windows")));
+        } else {
+            for d in [
+                "/etc",
+                "/proc",
+                "/sys",
+                "/dev",
+                "/boot",
+                "/root",
+                "/private/etc",
+                "/private/var/root",
+                "/private/var/db",
+                "/Library/Keychains",
+                "/var/lib/sss",
+                "/var/db",
+            ] {
+                dirs.push(PathBuf::from(d));
+            }
+        }
+        dirs.iter()
+            .map(|d| norm_parts(&widen_for_compare(d)))
+            .collect()
+    })
+}
+
+/// The daemon account's own home (environment, fixed at startup) and the
+/// directories whose other children are OTHER users' profiles.
+#[allow(clippy::type_complexity)]
+fn user_dirs() -> &'static (Option<Vec<String>>, Vec<Vec<String>>) {
+    static DIRS: std::sync::OnceLock<(Option<Vec<String>>, Vec<Vec<String>>)> =
+        std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let home = crate::user_home();
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            let drive = env_abs_dir("SystemDrive").unwrap_or_else(|| PathBuf::from(r"C:\"));
+            roots.push(drive.join("Users"));
+        } else {
+            roots.extend(["/home", "/Users"].map(PathBuf::from));
+        }
+        if let Some(parent) = home.as_deref().and_then(Path::parent)
+            && parent.components().count() > 1
+        {
+            roots.push(parent.to_path_buf());
+        }
+        (
+            home.map(|h| norm_parts(&widen_for_compare(&h))),
+            roots
+                .iter()
+                .map(|r| norm_parts(&widen_for_compare(r)))
+                .collect(),
+        )
+    })
+}
+
+/// Whether `path` is in the table: a credential, key, browser, vault or OS
+/// location, or inside another user's profile. Pure text on the canonical
+/// form, so it holds for every descendant a walk meets.
+fn hard_denied(path: &Path) -> bool {
+    let parts = norm_parts(&widen_for_compare(path));
+    if SENSITIVE_SEQUENCES
+        .iter()
+        .any(|seq| sequence_in(&parts, seq))
+    {
+        return true;
+    }
+    if let Some(name) = parts.last().map(|p| canonical_name(p)) {
+        let hive_dir = parts
+            .len()
+            .checked_sub(2)
+            .and_then(|i| parts.get(i))
+            .is_some_and(|p| canonical_name(p) == "config");
+        let hit = if HIVE_NAMES.contains(&name.as_str()) {
+            hive_dir
+        } else {
+            SENSITIVE_NAMES.contains(&name.as_str())
+        };
+        if hit
+            || SENSITIVE_SUFFIXES.iter().any(|s| name.ends_with(s))
+            || name.starts_with("ntuser.dat")
+        {
+            return true;
+        }
+    }
+    if sensitive_roots()
+        .iter()
+        .any(|r| !r.is_empty() && parts.starts_with(r))
+    {
+        return true;
+    }
+    let (home, roots) = user_dirs();
+    roots.iter().any(|root| {
+        parts.len() > root.len()
+            && parts.starts_with(root)
+            && !home.as_ref().is_some_and(|h| parts.starts_with(h))
+    })
+}
+
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
-    is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path))
+    hard_denied(path)
+        || (is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path)))
 }
 
 /// Exact path, or the same file under its 8.3 and long names.
@@ -2803,7 +3129,13 @@ fn matcher(glob: Option<&str>) -> Result<Option<(globset::GlobMatcher, bool)>, T
 
 /// Walk `root` recursively (depth-limited), calling `f(path, is_dir)`.
 /// Returning `false` stops the walk.
-fn walk(root: &Path, depth: usize, f: &mut dyn FnMut(&Path, bool) -> bool) -> bool {
+/// [`walk`] that neither reports nor enters entries `skip` accepts.
+fn walk_skipping(
+    root: &Path,
+    depth: usize,
+    skip: &dyn Fn(&Path) -> bool,
+    f: &mut dyn FnMut(&Path, bool) -> bool,
+) -> bool {
     let Ok(rd) = fs::read_dir(root) else {
         return true;
     };
@@ -2821,10 +3153,13 @@ fn walk(root: &Path, depth: usize, f: &mut dyn FnMut(&Path, bool) -> bool) -> bo
         if is_dir && SKIP_DIRS.iter().any(|s| e.file_name() == *s) {
             continue;
         }
+        if skip(&p) {
+            continue;
+        }
         if !f(&p, is_dir) {
             return false;
         }
-        if is_dir && depth > 0 && !walk(&p, depth - 1, f) {
+        if is_dir && depth > 0 && !walk_skipping(&p, depth - 1, skip, f) {
             return false;
         }
     }
@@ -2857,6 +3192,7 @@ fn do_list(sh: &Shared, i: &ListIn) -> Result<String, ToolError> {
         return Err(exec_err(format!("{} is not a directory", i.path)));
     }
     let m = matcher(i.glob.as_deref())?;
+    let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
     let mut lines = Vec::new();
     let mut truncated = false;
     let mut push = |p: &Path, is_dir: bool| -> bool {
@@ -2881,10 +3217,10 @@ fn do_list(sh: &Shared, i: &ListIn) -> Result<String, ToolError> {
     };
     match &m {
         None => {
-            walk(&root, 0, &mut |p, d| push(p, d));
+            walk_skipping(&root, 0, &protected, &mut |p, d| push(p, d));
         }
         Some(m) => {
-            walk(&root, 10, &mut |p, d| {
+            walk_skipping(&root, 10, &protected, &mut |p, d| {
                 if glob_hit(m, &root, p) {
                     push(p, d)
                 } else {
@@ -2956,7 +3292,8 @@ fn do_search(sh: &Shared, i: &SearchIn) -> Result<String, ToolError> {
         let parent = root.parent().unwrap_or(&root);
         search_file(sh, &root, &q, parent, &mut out);
     } else if is_dir_nofollow(&root) {
-        walk(&root, 12, &mut |p, is_dir| {
+        let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
+        walk_skipping(&root, 12, &protected, &mut |p, is_dir| {
             if !is_dir && m.as_ref().is_none_or(|m| glob_hit(m, &root, p)) {
                 search_file(sh, p, &q, &root, &mut out);
             }
@@ -3226,48 +3563,55 @@ impl Tool for FsTool {
     }
 
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
-        if self.shared.roots_unresolved {
+        let sh = match &self.shared.access {
+            Some(access) => {
+                let scope = access.scope(ctx.bot_id.as_deref());
+                Arc::new(self.shared.scoped(&scope))
+            }
+            None => self.shared.clone(),
+        };
+        if sh.roots_unresolved {
             return Err(denied(ROOT_UNRESOLVED_MSG));
         }
-        let sh = self.shared.clone();
+        let base = sh.workdir.clone();
         let run = ctx.run_id.clone();
         let text = match self.op {
             Op::Read => {
                 let i: ReadIn = parse(input)?;
-                blocking(move || do_read(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_read(&sh, &run, &i))).await?
             }
             Op::List => {
                 let i: ListIn = parse(input)?;
-                blocking(move || do_list(&sh, &i)).await?
+                blocking(move || with_base_dir(base, || do_list(&sh, &i))).await?
             }
             Op::Search => {
                 let i: SearchIn = parse(input)?;
-                blocking(move || do_search(&sh, &i)).await?
+                blocking(move || with_base_dir(base, || do_search(&sh, &i))).await?
             }
             Op::Write => {
                 let i: WriteIn = parse(input)?;
-                blocking(move || do_write(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_write(&sh, &run, &i))).await?
             }
             Op::Edit => {
                 let i: EditIn = parse(input)?;
-                blocking(move || do_edit(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_edit(&sh, &run, &i))).await?
             }
             Op::Move => {
                 let i: MoveIn = parse(input)?;
-                blocking(move || do_move(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_move(&sh, &run, &i))).await?
             }
             Op::Delete => {
                 let i: DeleteIn = parse(input)?;
-                blocking(move || do_delete(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_delete(&sh, &run, &i))).await?
             }
             Op::CheckpointList => {
                 let i: CpListIn = parse(input)?;
                 let run = i.run.unwrap_or(run);
-                blocking(move || do_cp_list(&sh, &run)).await?
+                blocking(move || with_base_dir(base, || do_cp_list(&sh, &run))).await?
             }
             Op::CheckpointRestore => {
                 let i: CpRestoreIn = parse(input)?;
-                blocking(move || do_cp_restore(&sh, &i.id)).await?
+                blocking(move || with_base_dir(base, || do_cp_restore(&sh, &i.id))).await?
             }
         };
         Ok(finish_text(ctx, &self.shared.spill_dir, text))
@@ -5333,6 +5677,189 @@ mod tests {
         assert!(ok.contains("safe"), "in-root reparse: {ok}");
     }
 
+    fn sep(parts: &[&str]) -> PathBuf {
+        let mut p = PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" });
+        for part in parts {
+            p.push(part);
+        }
+        p
+    }
+
+    #[test]
+    fn credential_table_covers_browsers_vaults_hives_and_other_profiles() {
+        for denied in [
+            &["u", "AppData", "Roaming", "gh", "hosts.yml"][..],
+            &[
+                "u",
+                "AppData",
+                "Local",
+                "Google",
+                "Chrome",
+                "User Data",
+                "Local State",
+            ],
+            &[
+                "u",
+                "AppData",
+                "Local",
+                "Microsoft",
+                "Edge",
+                "User Data",
+                "Default",
+                "Login Data",
+            ],
+            &[
+                "u",
+                "AppData",
+                "Roaming",
+                "Mozilla",
+                "Firefox",
+                "Profiles",
+                "x.default",
+                "key4.db",
+            ],
+            &["u", "AppData", "Roaming", "Microsoft", "Credentials", "ABC"],
+            &[
+                "u",
+                "AppData",
+                "Roaming",
+                "Microsoft",
+                "Protect",
+                "S-1-5-21",
+                "key",
+            ],
+            &["u", "NTUSER.DAT"],
+            &["Windows", "System32", "config", "SAM"],
+            &["u", ".local", "share", "keyrings", "login.keyring"],
+            &["u", ".password-store", "mail.gpg"],
+            &["u", ".config", "google-chrome", "Default", "Cookies"],
+            &["u", ".mozilla", "firefox", "p.default", "logins.json"],
+            &["u", "Library", "Keychains", "login.keychain-db"],
+            &["u", "Library", "Application Support", "1Password", "data"],
+            &["u", "Documents", "family.kdbx"],
+            &["u", ".config", "gh", "hosts.yml"],
+        ] {
+            assert!(hard_denied(&sep(denied)), "{denied:?}");
+        }
+        assert!(!hard_denied(&sep(&["u", "Documents", "report.txt"])));
+        assert!(!hard_denied(&sep(&["u", "src", "config", "settings.toml"])));
+    }
+
+    #[tokio::test]
+    async fn recursive_tools_skip_protected_descendants_at_every_depth() {
+        let data = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let t = tools(data.path());
+        let cfg = w.path().join(".config");
+        fs::create_dir_all(cfg.join("gh")).unwrap();
+        fs::write(cfg.join("gh").join("hosts.yml"), "oauth_token: TOKEN123").unwrap();
+        fs::write(cfg.join("other.txt"), "fine").unwrap();
+        let c = ctx();
+        let listed = text(
+            &get(&t, "fs_list")
+                .call(&c, json!({"path": w.path(), "glob": "**/*"}))
+                .await
+                .unwrap(),
+        );
+        assert!(
+            !listed.contains("hosts.yml") && listed.contains("other.txt"),
+            "{listed}"
+        );
+        let found = text(
+            &get(&t, "fs_search")
+                .call(&c, json!({"query": "TOKEN123", "path": w.path()}))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(found, "no matches");
+        // Moving the parent must not carry the protected child along.
+        let copy = w.path().join("config-copy");
+        get(&t, "fs_move")
+            .call(&c, json!({"from": &cfg, "to": &copy}))
+            .await
+            .unwrap();
+        assert!(copy.join("other.txt").exists());
+        assert!(!copy.join("gh").exists(), "protected child was moved");
+        assert!(
+            cfg.join("gh").join("hosts.yml").exists(),
+            "protected child stays"
+        );
+        // Recursive delete keeps it too.
+        get(&t, "fs_delete")
+            .call(&c, json!({"path": &cfg, "recursive": true}))
+            .await
+            .ok();
+        assert!(cfg.join("gh").join("hosts.yml").exists());
+    }
+
+    struct FixedScope(crate::FsScope);
+    impl crate::FsAccessProvider for FixedScope {
+        fn scope(&self, _bot: Option<&str>) -> crate::FsScope {
+            self.0.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn file_access_modes_computer_folder_and_home_base() {
+        let data = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let sandbox = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        fs::write(home.path().join("hello.txt"), "from-home").unwrap();
+        fs::write(elsewhere.path().join("note.txt"), "outside").unwrap();
+        fs::write(data.path().join("secrets.enc"), "secret-store").unwrap();
+        fs::create_dir_all(home.path().join(".ssh")).unwrap();
+        fs::write(home.path().join(".ssh").join("config"), "secret-ssh").unwrap();
+        let make = |scope| {
+            tools_scoped(
+                data.path(),
+                &[],
+                &[],
+                Some(Arc::new(FixedScope(scope))),
+                Some(home.path().to_path_buf()),
+            )
+        };
+
+        // This computer: reads outside any folder, relative paths start in home,
+        // protected locations stay refused.
+        let t = make(crate::FsScope::Computer);
+        let read = |t: &[Arc<dyn Tool>], path: String| {
+            let tool = get(t, "fs_read");
+            let c = ctx();
+            async move { tool.call(&c, json!({ "path": path })).await }
+        };
+        let out = read(&t, p(&elsewhere, "note.txt")).await.unwrap();
+        assert!(text(&out).contains("outside"));
+        let out = read(&t, "hello.txt".into()).await.unwrap();
+        assert!(
+            text(&out).contains("from-home"),
+            "relative path must use home"
+        );
+        let err = read(
+            &t,
+            home.path()
+                .join(".ssh")
+                .join("config")
+                .display()
+                .to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+        let err = read(&t, data.path().join("secrets.enc").display().to_string())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+
+        // Folder only: outside is refused, inside works, relative = the folder.
+        fs::write(sandbox.path().join("in.txt"), "inside").unwrap();
+        let t = make(crate::FsScope::Folders(vec![sandbox.path().to_path_buf()]));
+        let err = read(&t, p(&elsewhere, "note.txt")).await.unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+        let out = read(&t, "in.txt".into()).await.unwrap();
+        assert!(text(&out).contains("inside"));
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn windows_local_files_work_and_unc_is_not_opened() {
@@ -5432,6 +5959,9 @@ mod tests {
             grants,
             roots_unresolved: false,
             drives: DriveCache::new(),
+            access: None,
+            home: None,
+            workdir: None,
         }
     }
 

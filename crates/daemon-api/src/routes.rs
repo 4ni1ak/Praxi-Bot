@@ -339,6 +339,12 @@ pub(crate) async fn create_bot(
         None,
         &mut config,
     )?;
+    crate::file_access::guard_files_config(
+        &s,
+        peer.as_ref().map(|peer| &peer.0),
+        None,
+        &mut config,
+    )?;
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -456,6 +462,12 @@ pub(crate) async fn update_bot(
         peer.as_ref().map(|peer| &peer.0),
         s.leader().config().mode == crate::host::HostMode::Host,
         Some(&bot.config),
+        &mut config,
+    )?;
+    crate::file_access::guard_files_config(
+        &s,
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("files"),
         &mut config,
     )?;
     // Engine settings (who runs files and shell) change only through

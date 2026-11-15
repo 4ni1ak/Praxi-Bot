@@ -78,6 +78,44 @@ impl Default for RouterSettings {
     }
 }
 
+/// `[files]` table: what the built-in file tools may reach.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct FilesConfig {
+    /// `computer` or `folder`; unset = the loop's default (This computer, but
+    /// nothing on an always-on host until its owner chooses).
+    #[serde(default)]
+    pub mode: Option<FileAccessMode>,
+    /// Folders for `folder` mode. Empty in that mode denies every file call.
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
+/// Where the file tools may go.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileAccessMode {
+    /// "This computer": anywhere the user can, protected locations excepted.
+    #[default]
+    Computer,
+    /// "Folder only": `folders` and nothing else.
+    Folder,
+}
+
+impl FilesConfig {
+    /// The scope the file tools enforce; `unset_default` applies when the
+    /// owner never chose a mode.
+    #[must_use]
+    pub fn scope(&self, unset_default: &builtin_tools::FsScope) -> builtin_tools::FsScope {
+        match self.mode {
+            None => unset_default.clone(),
+            Some(FileAccessMode::Computer) => builtin_tools::FsScope::Computer,
+            Some(FileAccessMode::Folder) => builtin_tools::FsScope::Folders(
+                self.folders.iter().map(std::path::PathBuf::from).collect(),
+            ),
+        }
+    }
+}
+
 /// When the owner consented to the risky engine settings of this bot.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -122,6 +160,8 @@ struct Raw {
     #[serde(default)]
     runtime: computer_target::RuntimeConfig,
     #[serde(default)]
+    files: FilesConfig,
+    #[serde(default)]
     engine: EngineSettings,
 }
 
@@ -146,6 +186,8 @@ pub struct BotProfile {
     pub router: RouterSettings,
     /// Runtime configuration (`[runtime]`, including `computer` target).
     pub runtime: computer_target::RuntimeConfig,
+    /// File access mode (`[files]`).
+    pub files: FilesConfig,
     /// Engine mode, approval level and workspace of a CLI-backed bot.
     pub engine: EngineSettings,
     allow: GlobSet,
@@ -199,6 +241,7 @@ impl TryFrom<Raw> for BotProfile {
             tools: r.tools,
             router: r.router,
             runtime: r.runtime,
+            files: r.files,
             engine: r.engine,
         })
     }
@@ -271,7 +314,11 @@ impl BotProfile {
     /// computer availability.
     #[must_use]
     pub fn tool_visible(&self, tool_name: &str) -> bool {
-        (!self.hide_desktop || !tool_name.starts_with("desktop_"))
+        // Shell commands and scripts cannot be confined to folders, so a
+        // "Folder only" bot does not get them (honest sandbox, not a pretence).
+        (self.files.mode != Some(FileAccessMode::Folder)
+            || !(tool_name.starts_with("shell_") || tool_name.starts_with("script_")))
+            && (!self.hide_desktop || !tool_name.starts_with("desktop_"))
             && (!self.hide_browser || !tool_name.starts_with("browser_"))
             && (self.tools.allow.is_empty() || self.allow.is_match(tool_name))
             && !self.exclude.is_match(tool_name)

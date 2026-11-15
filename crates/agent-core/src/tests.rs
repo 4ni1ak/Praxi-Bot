@@ -8349,3 +8349,58 @@ async fn a_this_chat_grant_of_one_bot_does_not_cover_another_bot_in_the_chat() {
     assert_eq!(w.count.load(Ordering::SeqCst), 1);
     lp.deny(b.call_id, env.user, None).unwrap();
 }
+
+#[tokio::test]
+async fn folder_only_bot_has_no_shell_and_its_checkpoint_access_follows_its_folders() {
+    let env = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir
+        .path()
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let confined = second_bot(&env, "Boxed");
+    let open = second_bot(&env, "Open");
+    let fake = Fake::new(vec![]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let boxed = profile(&format!(
+        "[files]
+mode = \"folder\"
+folders = [\"{folder}\"]
+"
+    ));
+    assert!(!boxed.tool_visible("shell_run") && !boxed.tool_visible("script_run"));
+    assert!(boxed.tool_visible("fs_read"));
+    lp.add_profile(confined, boxed);
+    lp.add_profile(
+        open,
+        profile(
+            "[files]
+mode = \"computer\"
+",
+        ),
+    );
+    assert_eq!(
+        lp.checkpoint_access_for(confined).0,
+        [std::path::PathBuf::from(dir.path())]
+    );
+    assert!(lp.checkpoint_access_for(open).0.is_empty());
+    // A bot that never chose a mode: This computer, but nothing on a host.
+    assert!(lp.checkpoint_access_for(env.bot).0.is_empty());
+    lp.set_unset_file_access_denied(|| true);
+    assert_eq!(
+        lp.checkpoint_access_for(env.bot).0.len(),
+        1,
+        "host: deny-all sentinel"
+    );
+    assert!(
+        lp.checkpoint_access_for(open).0.is_empty(),
+        "explicit choice still wins"
+    );
+}

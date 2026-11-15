@@ -742,6 +742,19 @@
     }
   },
   "botForm": {
+    "files": {
+      "label": "Files",
+      "computer": {
+        "name": "This computer",
+        "hint": "Read files anywhere you can. Protected places (Praxi data, passwords, CLI settings, system folders) stay off limits. Changes still ask per the permission level."
+      },
+      "folder": {
+        "name": "Folder only",
+        "hint": "Sandbox for the file tools: only the folders below, nothing else. Shell commands and scripts are switched off for this bot; connected apps and CLI engines are not confined."
+      },
+      "foldersLabel": "Allowed folders",
+      "foldersPlaceholder": "One absolute folder per line"
+    },
     "apps": {
       "title": "Apps",
       "hint": "Connected apps this bot may use. Unticking an app that is open to every bot limits it to your other bots. Manage apps from the Apps screen.",

@@ -2,7 +2,7 @@
   {
     "id": "filesystem",
     "name": "Filesystem",
-    "description": "Read, write and search files inside one folder you choose.",
+    "description": "Optional. Praxi already has file access built in; add this only for an extra server limited to one folder you choose.",
     "category": "fs",
     "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
     "icon": null,
