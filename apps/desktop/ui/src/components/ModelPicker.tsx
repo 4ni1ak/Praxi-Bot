@@ -32,7 +32,8 @@ export function ModelPicker({
   reviewOpen = true,
   thinking = false,
   placement = "bottom-end",
-  testId = "model-picker"
+  testId = "model-picker",
+  labelFor
 }: {
   groups: ModelGroup[];
   value: string;
@@ -45,6 +46,8 @@ export function ModelPicker({
   thinking?: boolean;
   placement?: PopoverPlacement;
   testId?: string;
+  /** Text shown for a model instead of its raw id (e.g. a human model name). */
+  labelFor?: (provider: string, model: string) => string;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(
@@ -111,7 +114,9 @@ export function ModelPicker({
         <span className={styles.triggerText}>
           {autoOption?.selected
             ? autoOption.label
-            : valueModel || placeholder || t("modelPicker.none")}
+            : (valueModel && labelFor ? labelFor(valueProvider, valueModel) : valueModel) ||
+              placeholder ||
+              t("modelPicker.none")}
         </span>
         <ChevronDown />
       </button>
@@ -197,7 +202,9 @@ export function ModelPicker({
                           onClick={() => pick(m.ref)}
                         >
                           <BrandMark name={productBrandKey(m.provider, m.model)} size={16} />
-                          <span className={styles.optionText}>{m.model}</span>
+                          <span className={styles.optionText} title={labelFor ? m.model : undefined}>
+                            {labelFor ? labelFor(m.provider, m.model) : m.model}
+                          </span>
                           {active ? <Check aria-hidden="true" /> : null}
                         </button>
                       );

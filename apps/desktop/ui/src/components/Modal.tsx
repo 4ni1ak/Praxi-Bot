@@ -24,7 +24,7 @@ export function Modal({
   onClose: () => void;
   /** Accessible name of the dialog. */
   label: string;
-  size?: "sm" | "md" | "lg" | "apps";
+  size?: "confirm" | "sm" | "md" | "lg" | "apps";
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -53,7 +53,10 @@ export function Modal({
         return;
       }
       if (e.key === "Tab" && node) {
-        const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
+        // Hidden controls (a `display: none` file input) cannot take focus and would break the trap.
+        const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+          (el) => el.getClientRects().length > 0
+        );
         if (items.length === 0) {
           e.preventDefault();
           return;
