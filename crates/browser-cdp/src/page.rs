@@ -171,6 +171,20 @@ pub(crate) struct State {
     pub gen_seen: u64,
 }
 
+/// What a snapshot knows about one element ref (see [`Page::ref_facts`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefFacts {
+    /// Role as displayed.
+    pub role: String,
+    /// Accessible name.
+    pub name: String,
+    /// The element takes a secret (password, card or one-time-code field, or a
+    /// text field whose type could not be read).
+    pub sensitive: bool,
+    /// URL of the page the snapshot was taken on.
+    pub url: String,
+}
+
 /// One browser tab, attached over a flattened CDP session.
 pub struct Page {
     pub(crate) client: Arc<CdpClient>,
@@ -687,6 +701,23 @@ impl Page {
     /// The most recent snapshot, if any.
     pub async fn last_snapshot(&self) -> Option<Snapshot> {
         self.state.lock().await.last.clone()
+    }
+
+    /// What the latest snapshot knows about `r`: role, accessible name, whether
+    /// the element takes a secret, and the page URL. No page round trip; `None`
+    /// when the ref is unknown or from before a navigation.
+    pub async fn ref_facts(&self, r: &str) -> Option<RefFacts> {
+        let st = self.state.lock().await;
+        if st.gen_seen != self.shared.nav_gen.load(Ordering::SeqCst) {
+            return None;
+        }
+        let e = st.refs.get(r)?;
+        Some(RefFacts {
+            role: e.role.clone(),
+            name: e.name.clone(),
+            sensitive: e.sensitive,
+            url: st.last.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
+        })
     }
 
     /// Forget every ref (they become unknown until the next snapshot).

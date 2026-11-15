@@ -155,6 +155,9 @@ pub struct RefEntry {
     pub role: String,
     /// Accessible name.
     pub name: String,
+    /// The element takes a secret (a password, card number or one-time code
+    /// field, or a text field whose type could not be read: fail closed).
+    pub sensitive: bool,
 }
 
 type RefKey = (Option<String>, String, i64);
@@ -509,6 +512,7 @@ impl Builder<'_> {
                     None,
                     Vec::new(),
                     true,
+                    false,
                 );
             }
         }
@@ -525,6 +529,7 @@ impl Builder<'_> {
         value: Option<String>,
         states: Vec<String>,
         with_ref: bool,
+        sensitive: bool,
     ) {
         let frame = &self.frames[f];
         let ref_id = with_ref.then(|| {
@@ -536,6 +541,7 @@ impl Builder<'_> {
                     frame_id: frame.frame_id.clone(),
                     role: role.to_string(),
                     name: name.to_string(),
+                    sensitive,
                 },
             )
         });
@@ -600,7 +606,7 @@ impl Builder<'_> {
             let t = node.name.trim();
             let repeats_parent = self.opts.compact && t == parent_name.trim();
             if !(self.opts.interactive_only || t.is_empty() || repeats_parent) {
-                self.push(f, nd, "text", t, 0, None, Vec::new(), false);
+                self.push(f, nd, "text", t, 0, None, Vec::new(), false, false);
             }
             return;
         }
@@ -619,9 +625,8 @@ impl Builder<'_> {
         // Mask sensitive values.
         let mut value = node.value.clone();
         let unknown_sensitivity = self.frames[f].extras_failed && FREE_TEXT_ROLES.contains(&role);
-        if (extra.as_ref().is_some_and(DomExtra::is_sensitive) || unknown_sensitivity)
-            && value.is_some()
-        {
+        let sensitive = extra.as_ref().is_some_and(DomExtra::is_sensitive) || unknown_sensitivity;
+        if sensitive && value.is_some() {
             value = Some(MASK.to_string());
         }
 
@@ -641,6 +646,7 @@ impl Builder<'_> {
                 value,
                 node.states.clone(),
                 interactive || clickable,
+                sensitive,
             );
         }
         // Interactive leaves with the same text children would only repeat the name.
@@ -785,6 +791,53 @@ mod tests {
         assert!(!t.contains("hunter2"), "{t}");
         // A normal field keeps its value.
         assert!(t.contains("value=\"alice@example.com\""), "{t}");
+    }
+
+    /// The ref of the first line of `t` containing `needle`.
+    fn ref_of(t: &str, needle: &str) -> String {
+        let line = t.lines().find(|l| l.contains(needle)).unwrap();
+        line.split(['[', ']']).nth(1).unwrap().to_owned()
+    }
+
+    #[test]
+    fn refs_remember_whether_the_field_takes_a_secret() {
+        let mut f = main_frame(LOGIN);
+        f.extras.push(DomExtra {
+            backend_id: 12,
+            tag: "input".into(),
+            input_type: Some("password".into()),
+            ..Default::default()
+        });
+        let mut refs = RefMap::new();
+        let t = text(&[f], &SnapshotOptions::default(), &mut refs);
+        assert!(
+            refs.get(&ref_of(&t, "textbox \"Password\""))
+                .unwrap()
+                .sensitive
+        );
+        assert!(
+            !refs
+                .get(&ref_of(&t, "button \"Sign in\""))
+                .unwrap()
+                .sensitive
+        );
+
+        // Without DOM facts a text field cannot be told apart: fail closed.
+        let mut blind = main_frame(LOGIN);
+        blind.extras_failed = true;
+        let mut refs = RefMap::new();
+        let t = text(&[blind], &SnapshotOptions::default(), &mut refs);
+        assert!(
+            refs.get(&ref_of(&t, "textbox \"Password\""))
+                .unwrap()
+                .sensitive
+        );
+        assert!(
+            !refs
+                .get(&ref_of(&t, "button \"Sign in\""))
+                .unwrap()
+                .sensitive
+        );
     }
 
     #[test]

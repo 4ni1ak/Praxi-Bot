@@ -6,7 +6,7 @@
 //! * When the accessibility tree is `Weak`, the state also lists OCR text boxes
 //!   with set-of-marks numbers; `index: "mark:<n>"` clicks a mark by coordinates.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -102,6 +102,10 @@ struct State {
     marks: BTreeMap<u32, (f64, f64)>,
     /// Element index to its label and on-screen bounds (for the control gate).
     targets: BTreeMap<u32, (String, Option<ControlRect>)>,
+    /// Indexes of fields that take a secret (the backend reports them `secure`).
+    secure: BTreeSet<u32>,
+    /// Title of the observed window (what the user is shown with a masked value).
+    window_title: String,
 }
 
 /// A small capped map of per-run states (LRU eviction: touch on every use).
@@ -480,6 +484,12 @@ impl Shared {
                 st.generation = Some(snap.generation);
                 st.observation_epoch = observation_epoch;
                 st.marks.clear();
+                st.window_title.clone_from(&snap.window.title);
+                st.secure = rendered_nodes
+                    .iter()
+                    .filter(|n| n.states.iter().any(|s| s == "secure"))
+                    .map(|n| n.index)
+                    .collect();
                 st.targets = rendered_nodes
                     .iter()
                     .map(|n| {
@@ -1364,6 +1374,44 @@ impl Tool for DesktopTool {
             .await?;
         Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
     }
+
+    /// `desktop_type` / `desktop_set_value` into a field the backend reports
+    /// `secure` (a password box): the value is shown masked, with the field
+    /// and window named. Read from the observation the call is bound to; a
+    /// stale generation, an unknown index or a `mark:` point is not known to
+    /// be secure and shows as given.
+    async fn display_input(&self, ctx: &ToolContext, input: &Value) -> Option<Value> {
+        let (key, text) = match self.op {
+            Op::Type => ("text", input.get("text")?.as_str()?),
+            Op::SetValue => ("value", input.get("value")?.as_str()?),
+            _ => return None,
+        };
+        let ElementRef::Index(index) = parse_ref(input.get("index")?).ok()? else {
+            return None;
+        };
+        let expect_gen = input.get("gen").and_then(Value::as_u64);
+        let (field, window) = {
+            let mut states = self.shared.state.lock();
+            let st = states.get(&ctx.run_id)?;
+            if expect_gen.is_none_or(|g| Some(g) != st.generation) || !st.secure.contains(&index) {
+                return None;
+            }
+            (
+                st.targets
+                    .get(&index)
+                    .map(|t| t.0.clone())
+                    .unwrap_or_default(),
+                st.window_title.clone(),
+            )
+        };
+        let mut view = input.clone();
+        view[key] = json!(tool_registry::masked_secret(text, "password field"));
+        view["field"] = json!(field);
+        if !window.is_empty() {
+            view["window"] = json!(window);
+        }
+        Some(view)
+    }
 }
 
 #[cfg(test)]
@@ -1400,6 +1448,8 @@ pub(crate) mod fake {
         pub launched_at: Mutex<Option<tokio::time::Instant>>,
         /// Runs inside `screenshot` / `windows` (a takeover landing mid-capture).
         pub hook: Mutex<Option<FakeHook>>,
+        /// Index of the node reported as a secure (password) field; its value is never shown.
+        pub secure: Mutex<Option<u32>>,
     }
 
     impl FakeDesktop {
@@ -1418,6 +1468,7 @@ pub(crate) mod fake {
                 launched_window_pid: 4242,
                 launched_at: Mutex::new(None),
                 hook: Mutex::new(None),
+                secure: Mutex::new(None),
             }
         }
     }
@@ -1453,6 +1504,7 @@ pub(crate) mod fake {
                 vec![UiNode::new(0, "pane", "", None, None, vec![])]
             } else {
                 let extra = *self.extra_rows.lock();
+                let secure = *self.secure.lock();
                 (0..6 + extra)
                     .map(|i| {
                         UiNode::new(
@@ -1463,14 +1515,18 @@ pub(crate) mod fake {
                             } else {
                                 format!("w{win}_el{i}")
                             },
-                            (i == 3).then(|| value.clone()),
+                            (i == 3 && secure != Some(i)).then(|| value.clone()),
                             (i == 2).then_some(Rect {
                                 x: 120.0,
                                 y: 230.0,
                                 width: 80.0,
                                 height: 24.0,
                             }),
-                            vec![],
+                            if secure == Some(i) {
+                                vec!["secure".to_owned()]
+                            } else {
+                                vec![]
+                            },
                         )
                     })
                     .collect()
@@ -1696,6 +1752,76 @@ mod tests {
             }
         ));
         assert!(matches!(&actions[1], Action::TypeText { text } if text == "hello"));
+    }
+
+    #[tokio::test]
+    async fn typing_and_setting_a_value_in_a_secure_field_show_masked_but_type_the_real_value() {
+        const SECRET: &str = "hunter2-fake-fixture-value";
+        let fake = Arc::new(FakeDesktop::new(false));
+        *fake.secure.lock() = Some(3);
+        let (_d, t) = build(fake.clone(), None);
+        let ctx = ToolContext::default();
+        get(&t, "desktop_get_state")
+            .call(&ctx, json!({}))
+            .await
+            .unwrap();
+
+        for (tool, key) in [("desktop_type", "text"), ("desktop_set_value", "value")] {
+            let input = json!({"index": 3, "gen": 1, key: SECRET});
+            let shown = get(&t, tool)
+                .display_input(&ctx, &input)
+                .await
+                .unwrap_or_else(|| panic!("{tool}: a secure field is masked"));
+            let shown_text = shown.to_string();
+            assert!(!shown_text.contains(SECRET), "{tool}: {shown_text}");
+            assert!(
+                !shown_text.contains("hunter"),
+                "{tool}: no prefix: {shown_text}"
+            );
+            assert_eq!(shown["index"], 3, "{tool}");
+            assert_eq!(shown["gen"], 1, "{tool}");
+            assert_eq!(shown["window"], "Fake Notepad", "{tool}");
+            assert!(shown["field"].as_str().unwrap().contains("edit"), "{tool}");
+            assert!(tool_registry::is_masked_secret(
+                shown[key].as_str().unwrap()
+            ));
+
+            // Positive control: any other field shows as typed.
+            let other = json!({"index": 1, "gen": 1, key: "plain words"});
+            assert!(get(&t, tool).display_input(&ctx, &other).await.is_none());
+            // A stale generation, a missing one and a mark are not known to be secure.
+            for odd in [
+                json!({"index": 3, "gen": 9, key: SECRET}),
+                json!({"index": 3, key: SECRET}),
+                json!({"index": "mark:1", "gen": 1, key: SECRET}),
+            ] {
+                assert!(get(&t, tool).display_input(&ctx, &odd).await.is_none());
+            }
+        }
+
+        // The tools still use the real value.
+        get(&t, "desktop_type")
+            .call(&ctx, json!({"index": 3, "gen": 1, "text": SECRET}))
+            .await
+            .unwrap();
+        let actions = fake.actions.lock();
+        assert!(matches!(&actions[1], Action::TypeText { text } if text == SECRET));
+    }
+
+    #[tokio::test]
+    async fn other_desktop_tools_have_no_display_input() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        *fake.secure.lock() = Some(3);
+        let (_d, t) = build(fake, None);
+        let ctx = ToolContext::default();
+        get(&t, "desktop_get_state")
+            .call(&ctx, json!({}))
+            .await
+            .unwrap();
+        for name in ["desktop_click", "desktop_key", "desktop_scroll"] {
+            let input = json!({"index": 3, "gen": 1, "text": "x", "keys": ["a"]});
+            assert!(get(&t, name).display_input(&ctx, &input).await.is_none());
+        }
     }
 
     #[tokio::test]

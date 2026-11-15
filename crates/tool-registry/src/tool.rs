@@ -120,6 +120,24 @@ pub trait Tool: Send + Sync {
         Ok(None)
     }
 
+    /// The input of this call as every place that is not the tool itself may
+    /// show it: the approval card and summary, the event stream, the journal,
+    /// the stored step records, and the Telegram, CLI and desktop renderers.
+    ///
+    /// `Ok`/`Some(view)` replaces the raw input there; `None` (the default)
+    /// means the raw input may be shown. The tool still receives the raw input
+    /// in [`Tool::call`]: a value typed into a password field must reach the
+    /// field and never any of those places. Build the replacement with
+    /// [`masked_secret`] so the user still sees *which* field gets a masked
+    /// value, and leave ordinary text alone: approvals must stay readable.
+    ///
+    /// Must be cheap and must not change anything: it runs for every call,
+    /// before the user is asked, from facts the tool already holds (no new
+    /// round trip to a page or an app).
+    async fn display_input(&self, _ctx: &ToolContext, _input: &Value) -> Option<Value> {
+        None
+    }
+
     /// Called when an approval that [`Tool::approval_details`] prepared ends
     /// without the call running (denied, cancelled, timed out, rejected before
     /// it was shown, or approved but never executed), so the tool can drop what
@@ -173,6 +191,9 @@ pub trait ToolWrapper: Send + Sync {
 
     /// Forward [`Tool::approval_closed`] to the wrapped tool.
     fn approval_closed(&self, ctx: &ToolContext, input: &Value, token: Option<&str>);
+
+    /// Forward [`Tool::display_input`] to the wrapped tool.
+    async fn display_input(&self, ctx: &ToolContext, input: &Value) -> Option<Value>;
 }
 
 #[async_trait]
@@ -204,6 +225,34 @@ impl<W: ToolWrapper> Tool for W {
     fn always_ask(&self) -> bool {
         ToolWrapper::always_ask(self)
     }
+
+    async fn display_input(&self, ctx: &ToolContext, input: &Value) -> Option<Value> {
+        ToolWrapper::display_input(self, ctx, input).await
+    }
+}
+
+/// The mask a secret value is shown as. Never followed by any part of the value.
+pub const SECRET_MASK: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
+
+/// The placeholder shown instead of a secret `value`: the mask, why it is
+/// secret (`source`, for example `password field`) and a coarse length class
+/// (`empty`, `short`, `medium`, `long`). Never the value, a prefix, a suffix
+/// or its exact length.
+#[must_use]
+pub fn masked_secret(value: &str, source: &str) -> String {
+    let class = match value.chars().count() {
+        0 => "empty",
+        1..=7 => "short",
+        8..=15 => "medium",
+        _ => "long",
+    };
+    format!("{SECRET_MASK} ({source}, {class})")
+}
+
+/// Whether `text` is a placeholder made by [`masked_secret`].
+#[must_use]
+pub fn is_masked_secret(text: &str) -> bool {
+    text.starts_with(SECRET_MASK)
 }
 
 #[cfg(test)]
@@ -511,6 +560,22 @@ mod delegation_guard {
     }
 
     #[test]
+    fn a_masked_secret_names_the_source_and_a_length_class_but_not_the_value() {
+        use super::{is_masked_secret, masked_secret};
+        let long = masked_secret("correct-horse-battery", "password field");
+        assert!(is_masked_secret(&long));
+        assert!(
+            long.contains("password field") && long.contains("long"),
+            "{long}"
+        );
+        assert!(!long.contains("correct") && !long.contains("21"), "{long}");
+        assert!(masked_secret("", "x").contains("empty"));
+        assert!(masked_secret("abc", "x").contains("short"));
+        assert!(masked_secret("12345678", "x").contains("medium"));
+        assert!(!is_masked_secret("hello"));
+    }
+
+    #[test]
     fn delegating_tools_forward_the_approval_hooks() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut files = Vec::new();
@@ -736,6 +801,13 @@ impl tool_registry::Tool for Good {
                 token: Option<&str>,
             ) {
                 self.0.approval_closed(ctx, input, token);
+            }
+            async fn display_input(
+                &self,
+                ctx: &crate::ToolContext,
+                input: &serde_json::Value,
+            ) -> Option<serde_json::Value> {
+                self.0.display_input(ctx, input).await
             }
         }
 

@@ -104,6 +104,26 @@ pub trait BrowserDriver: Send + Sync {
     ) -> Result<(Vec<u8>, &'static str), String>;
     /// Evaluate JavaScript in the page.
     async fn eval(&self, js: &str) -> Result<Value, String>;
+    /// What the latest snapshot says about element `r`, for what the user is
+    /// shown of a call (see [`fill_view`]). Must not touch the page or start a
+    /// browser. `None` when unknown.
+    async fn field_facts(&self, r: &str) -> Option<FieldFacts> {
+        let _ = r;
+        None
+    }
+}
+
+/// What a snapshot says about one element (see [`BrowserDriver::field_facts`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldFacts {
+    /// Role as displayed (`textbox`).
+    pub role: String,
+    /// Accessible name (`Password`).
+    pub name: String,
+    /// The field takes a secret.
+    pub sensitive: bool,
+    /// URL of the page the snapshot was taken on.
+    pub url: String,
 }
 
 /// Runtime browser settings.
@@ -611,6 +631,18 @@ impl BrowserDriver for CdpDriver {
             sess.page.select_option(r, value).await
         })?;
         render_action(&acted)
+    }
+
+    async fn field_facts(&self, r: &str) -> Option<FieldFacts> {
+        // The current session only: never starts a browser and never touches the idle clock.
+        let guard = self.session.lock().await;
+        let facts = guard.as_ref()?.page.ref_facts(r).await?;
+        Some(FieldFacts {
+            role: facts.role,
+            name: facts.name,
+            sensitive: facts.sensitive,
+            url: facts.url,
+        })
     }
 
     async fn press(&self, key: &str) -> Result<String, String> {
@@ -1588,6 +1620,25 @@ impl Tool for BrowserTool {
                 "browser is unavailable for this run's computer target",
             ));
         }
+        let selected = self.scoped(ctx)?;
+        let text = selected.run(&ctx.run_id, input).await?;
+        Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
+    }
+
+    async fn display_input(&self, ctx: &ToolContext, input: &Value) -> Option<Value> {
+        if !matches!(self.op, Op::Fill) {
+            return None;
+        }
+        let i: FillIn = serde_json::from_value(input.clone()).ok()?;
+        let selected = self.scoped(ctx).ok()?;
+        fill_view(selected.shared.driver.as_ref(), &i.r#ref, &i.text).await
+    }
+}
+
+impl BrowserTool {
+    /// This tool bound to the driver a call of `ctx` runs on: the bot's own
+    /// managed browser, or the headless/headed alternate its computer target asks for.
+    fn scoped(&self, ctx: &ToolContext) -> Result<BrowserTool, ToolError> {
         let mut shared = self.shared.for_bot(ctx.bot_id.as_deref())?;
         if let Some(headless) = self
             .shared
@@ -1606,14 +1657,49 @@ impl Tool for BrowserTool {
                 observed_epoch: shared.observed_epoch.clone(),
             });
         }
-        let selected = BrowserTool {
+        Ok(BrowserTool {
             spec: self.spec.clone(),
             op: self.op,
             shared,
-        };
-        let text = selected.run(&ctx.run_id, input).await?;
-        Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
+        })
     }
+}
+
+/// Origin (`scheme://host[:port]`) of `url`; no path, query, fragment or
+/// credentials. The whole text is dropped when it has no scheme.
+fn origin_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    (!host.is_empty()).then(|| format!("{scheme}://{host}"))
+}
+
+/// What the approval, the events, the journal and the stored history show of a
+/// `browser_fill` call: when the field takes a secret (a password, card or
+/// one-time-code field, or a text field the page snapshot could not classify),
+/// the typed text is a masked placeholder and the field and origin are named;
+/// otherwise `None` (ordinary text stays readable). Reads what the last
+/// snapshot already holds, so there is no page round trip. A batch tool must
+/// call this for every `fill` step.
+pub async fn fill_view(driver: &dyn BrowserDriver, r: &str, text: &str) -> Option<Value> {
+    let facts = driver.field_facts(r).await?;
+    if !facts.sensitive {
+        return None;
+    }
+    let field = if facts.name.is_empty() {
+        facts.role
+    } else {
+        format!("{} \"{}\"", facts.role, facts.name)
+    };
+    let mut view = json!({
+        "ref": r,
+        "field": field,
+        "text": tool_registry::masked_secret(text, "password field"),
+    });
+    if let Some(origin) = origin_of(&facts.url) {
+        view["origin"] = json!(origin);
+    }
+    Some(view)
 }
 
 #[cfg(test)]
@@ -1632,6 +1718,8 @@ pub(crate) mod fake {
         pub on_desktop: bool,
         /// Runs inside every backend call (a human takeover landing mid-call).
         pub hook: PMutex<Option<FakeHook>>,
+        /// What the latest snapshot says about a ref (`field_facts`).
+        pub facts: PMutex<std::collections::HashMap<String, FieldFacts>>,
     }
 
     impl FakeBrowser {
@@ -1735,6 +1823,9 @@ pub(crate) mod fake {
             self.calls.lock().push(format!("eval:{js}"));
             Ok(json!({"title": "Example"}))
         }
+        async fn field_facts(&self, r: &str) -> Option<FieldFacts> {
+            self.facts.lock().get(r).cloned()
+        }
     }
 }
 
@@ -1789,6 +1880,105 @@ mod tests {
             dialogs: Vec::new(),
             settle_note: None,
         }
+    }
+
+    fn facts(role: &str, name: &str, sensitive: bool) -> FieldFacts {
+        FieldFacts {
+            role: role.into(),
+            name: name.into(),
+            sensitive,
+            url: "https://user:pw@login.example.test:8443/path?q=1#f".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_password_fill_shows_masked_with_field_and_origin_but_types_the_real_value() {
+        const SECRET: &str = "hunter2-fake-fixture-value";
+        let (_d, fake, t) = build();
+        fake.facts
+            .lock()
+            .insert("e5".into(), facts("textbox", "Password", true));
+        fake.facts
+            .lock()
+            .insert("e6".into(), facts("textbox", "Search", false));
+        let fill = get(&t, "browser_fill");
+        let ctx = ToolContext::default();
+
+        let shown = fill
+            .display_input(&ctx, &json!({"ref": "e5", "text": SECRET}))
+            .await
+            .expect("a password field is masked");
+        let shown_text = shown.to_string();
+        assert!(!shown_text.contains(SECRET), "{shown_text}");
+        assert!(
+            !shown_text.contains("hunter"),
+            "no prefix either: {shown_text}"
+        );
+        assert_eq!(shown["ref"], "e5");
+        assert_eq!(shown["field"], "textbox \"Password\"");
+        assert_eq!(shown["origin"], "https://login.example.test:8443");
+        assert!(tool_registry::is_masked_secret(
+            shown["text"].as_str().unwrap()
+        ));
+        assert!(shown["text"].as_str().unwrap().contains("long"));
+
+        // Positive control: an ordinary field is shown as typed.
+        assert!(
+            fill.display_input(&ctx, &json!({"ref": "e6", "text": "plain words"}))
+                .await
+                .is_none()
+        );
+        // An unknown ref is not known to be secret; the call itself fails later.
+        assert!(
+            fill.display_input(&ctx, &json!({"ref": "e99", "text": "x"}))
+                .await
+                .is_none()
+        );
+
+        // The tool still types the real value.
+        fill.call(&ctx, json!({"ref": "e5", "text": SECRET}))
+            .await
+            .unwrap();
+        assert!(
+            fake.calls
+                .lock()
+                .iter()
+                .any(|c| c == &format!("fill:e5:{SECRET}")),
+            "{:?}",
+            fake.calls.lock()
+        );
+    }
+
+    #[tokio::test]
+    async fn only_browser_fill_has_a_display_input() {
+        let (_d, fake, t) = build();
+        fake.facts
+            .lock()
+            .insert("e5".into(), facts("textbox", "Password", true));
+        for name in [
+            "browser_click",
+            "browser_select",
+            "browser_press",
+            "browser_open",
+        ] {
+            assert!(
+                get(&t, name)
+                    .display_input(&ToolContext::default(), &json!({"ref": "e5", "value": "x"}))
+                    .await
+                    .is_none(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn origin_drops_credentials_path_query_and_fragment() {
+        assert_eq!(
+            origin_of("https://u:p@a.example/x?y#z").as_deref(),
+            Some("https://a.example")
+        );
+        assert_eq!(origin_of("about:blank"), None);
+        assert_eq!(origin_of(""), None);
     }
 
     #[test]

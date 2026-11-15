@@ -48,5 +48,5 @@ pub use live_view::{
     BrowserViewStatus, BrowserViewTarget, ManualClock, TakeoverPinHook, ViewClock,
     ViewportGeometry,
 };
-pub use page::{DialogAction, DialogInfo, DialogOptions, Page};
+pub use page::{DialogAction, DialogInfo, DialogOptions, Page, RefFacts};
 pub use snapshot::{RefEntry, RefMap, SnapNode, Snapshot, SnapshotOptions, build_snapshot};

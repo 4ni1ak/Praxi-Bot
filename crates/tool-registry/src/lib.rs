@@ -13,4 +13,7 @@ pub use registry::ToolRegistry;
 // PermissionCategory and Platform are defined in `protocol` and re-exported here
 // for convenience.
 pub use spec::{Effect, ObservationScope, PermissionCategory, Platform, ToolSpec};
-pub use tool::{ContentPart, SpillRef, Tool, ToolContext, ToolOutput, ToolWrapper};
+pub use tool::{
+    ContentPart, SECRET_MASK, SpillRef, Tool, ToolContext, ToolOutput, ToolWrapper,
+    is_masked_secret, masked_secret,
+};

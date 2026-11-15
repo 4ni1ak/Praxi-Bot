@@ -866,6 +866,38 @@ impl Storage {
         Ok(())
     }
 
+    /// Replace a step's stored input and/or output JSON without touching its
+    /// status, attempt, error or timestamps. For scrubbing a value that must
+    /// not stay in the record once the step has run.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors or if the step does not exist.
+    pub fn rewrite_step_json(
+        &self,
+        id: Uuid,
+        input: Option<&Value>,
+        output: Option<&Value>,
+    ) -> Result<()> {
+        let conn = self.conn();
+        let mut n = 0;
+        if let Some(input) = input {
+            n += conn.execute(
+                "UPDATE run_steps SET input_json = ?2 WHERE id = ?1",
+                params![id.to_string(), serde_json::to_string(input)?],
+            )?;
+        }
+        if let Some(output) = output {
+            n += conn.execute(
+                "UPDATE run_steps SET output_json = ?2 WHERE id = ?1",
+                params![id.to_string(), serde_json::to_string(output)?],
+            )?;
+        }
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("step {id}")));
+        }
+        Ok(())
+    }
+
     /// Re-label every step of `run_id` whose status is `from` as `to`;
     /// returns the number changed.
     ///
@@ -1607,6 +1639,47 @@ mod tests {
         assert_eq!(got.output, Some(json!("ok")));
         assert!(got.finished_at_ms.is_some());
         assert_eq!(f.st.relabel_steps(r.id, "succeeded", "x").unwrap(), 1);
+    }
+
+    #[test]
+    fn rewrite_step_json_changes_only_the_json_columns() {
+        let f = fx();
+        let r = run(&f);
+        let s = RunStep {
+            id: Uuid::now_v7(),
+            run_id: r.id,
+            user_id: f.user.id,
+            idx: 0,
+            name: "s".into(),
+            input: json!({"a": "raw"}),
+            idempotent: false,
+            retry: None,
+            status: "succeeded".into(),
+            attempt: 2,
+            output: Some(json!({"b": "raw"})),
+            error: Some("e".into()),
+            started_at_ms: 6,
+            finished_at_ms: Some(9),
+        };
+        f.st.insert_step(&s).unwrap();
+        f.st.rewrite_step_json(s.id, Some(&json!({"a": "x"})), Some(&json!({"b": "y"})))
+            .unwrap();
+        let got = f.st.get_step(s.id).unwrap().unwrap();
+        assert_eq!(got.input, json!({"a": "x"}));
+        assert_eq!(got.output, Some(json!({"b": "y"})));
+        assert_eq!(
+            (
+                got.status.as_str(),
+                got.attempt,
+                got.error.as_deref(),
+                got.finished_at_ms
+            ),
+            ("succeeded", 2, Some("e"), Some(9))
+        );
+        assert!(matches!(
+            f.st.rewrite_step_json(Uuid::now_v7(), Some(&json!(1)), None),
+            Err(StorageError::NotFound(_))
+        ));
     }
 
     #[test]
