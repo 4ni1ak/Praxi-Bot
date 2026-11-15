@@ -82,6 +82,11 @@ pub enum CliSettings {
 pub enum CliEngine {
     Claude,
     Codex,
+    /// Native-tools engines (no confined mode): Cursor, OpenCode, Gemini CLI.
+    Cursor,
+    #[serde(rename = "opencode")]
+    OpenCode,
+    Gemini,
 }
 
 impl CliEngine {
@@ -91,6 +96,9 @@ impl CliEngine {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Cursor => "cursor",
+            Self::OpenCode => "opencode",
+            Self::Gemini => "gemini",
         }
     }
 }
@@ -376,6 +384,9 @@ impl ProviderConfig {
                 let id = match engine {
                     CliEngine::Claude => "cli:claude",
                     CliEngine::Codex => "cli:codex",
+                    CliEngine::Cursor => "cli:cursor",
+                    CliEngine::OpenCode => "cli:opencode",
+                    CliEngine::Gemini => "cli:gemini",
                 };
                 if p.id != id
                     || p.key.is_some()

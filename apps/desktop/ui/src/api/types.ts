@@ -344,4 +344,5 @@ export type BotSkills = S["BotSkillsDto"];
 export type PutBotSkillsInput = S["PutBotSkillsInput"];
 
 export type CliEngineDto = S["CliEngineDto"];
+export type BotEngineInput = S["BotEngineInput"];
 export type CliInstallApproval = S["CliInstallApproval"];

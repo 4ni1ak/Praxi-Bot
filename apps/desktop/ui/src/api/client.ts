@@ -4,6 +4,7 @@ import type {
   AcceptedResponse,
   Approval,
   Bot,
+  BotEngineInput,
   BotInput,
   Chat,
   ConfiguredProviderDto,
@@ -218,6 +219,14 @@ export class ApiClient {
   }
   updateBot(id: string, input: BotInput): Promise<Bot> {
     return this.request("PUT", `/bots/${id}`, { body: input });
+  }
+  /** Owner-only: engine mode, approval level and workspace of a bot. */
+  putBotEngine(id: string, input: BotEngineInput): Promise<Bot> {
+    return this.request("PUT", `/bots/${id}/engine`, { body: input });
+  }
+  /** Owner kill switch: back to Praxi-governed and end the bot's CLI processes. */
+  killBotEngine(id: string): Promise<Bot> {
+    return this.request("POST", `/bots/${id}/engine/kill`);
   }
   deleteBot(id: string): Promise<void> {
     return this.request("DELETE", `/bots/${id}`);

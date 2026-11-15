@@ -19,8 +19,30 @@ pub struct CliInstallDto {
     pub executable: bool,
 }
 
+/// One approval level for a CLI that runs with its own tools.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CliLevelDto {
+    /// `ask`, `accept_edits`, `auto` or `full`.
+    pub level: String,
+    /// `false` when the CLI has no such mode: it would run as `applied`.
+    pub offered: bool,
+    pub applied: String,
+    /// The CLI's own setting this level maps to (shown to the owner).
+    pub native_setting: String,
+}
+
+/// Native-tools mode of a CLI: the CLI runs files and shell itself.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CliNativeDto {
+    /// `verified` (flags confirmed in the installed CLI) or `experimental`.
+    pub support: String,
+    pub levels: Vec<CliLevelDto>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CliEngineDto {
+    /// Present when bots can use this CLI with its own tools.
+    pub native: Option<CliNativeDto>,
     pub detected: DetectedProviderDto,
     pub executable_names: Vec<String>,
     pub version_args: Vec<String>,
@@ -161,11 +183,29 @@ pub(crate) async fn list(
                     verified: i.verified,
                     executable: i.verified && i.executable,
                 }),
+                native: spec.driver().map(|driver| CliNativeDto {
+                    support: match driver.support() {
+                        cli_provider::Support::Verified => "verified",
+                        cli_provider::Support::Experimental => "experimental",
+                    }
+                    .into(),
+                    levels: cli_provider::ApprovalLevel::ALL
+                        .into_iter()
+                        .map(|level| {
+                            let plan = cli_provider::level_plan(driver, level);
+                            CliLevelDto {
+                                level: level.as_str().into(),
+                                offered: plan.offered,
+                                applied: plan.applied.as_str().into(),
+                                native_setting: plan.native.into(),
+                            }
+                        })
+                        .collect(),
+                }),
+                // Not runnable under Praxi's own tools; usable with its own tools per bot.
                 limitation: (!spec.runnable).then(|| {
-                    if spec.id == "opencode" {
-                        "native_tools_not_confined"
-                    } else if spec.id == "codex" {
-                        "codex_unconfinable"
+                    if spec.driver().is_some() {
+                        "native_only"
                     } else {
                         "detection_only"
                     }

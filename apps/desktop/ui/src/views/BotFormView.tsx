@@ -10,6 +10,7 @@ import {
   BotRuntimeFields,
   useBotFormDeps
 } from "../components/BotAdvancedFields";
+import { BotEngineBlock } from "../components/BotEngineBlock";
 import { CharacterColorRow, CharacterShapeGrid } from "../components/CharacterPicker";
 import formStyles from "../components/Form.module.css";
 import {
@@ -240,6 +241,13 @@ function BotFormBody({
             patch={patch}
           />
         </Card>
+
+        {existing ? (
+          <Card padding="md" className={styles.section}>
+            <h2 className={styles.heading}>{t("botForm.engine.title")}</h2>
+            <BotEngineBlock bot={existing} />
+          </Card>
+        ) : null}
 
         <Card padding="md" className={styles.section}>
           <h2 className={styles.heading}>{t("botForm.permissions")}</h2>

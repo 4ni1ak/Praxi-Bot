@@ -112,3 +112,31 @@ Praxi PR #97's branch `fix/c244a-mcp-start-and-tool-availability`,
 parent's executable before clearing the child environment and preserves only
 explicit OS essentials. CLI discovery adds deterministic GUI install paths
 without executing login-shell startup scripts.
+
+## Running a CLI with its own tools (engine mode)
+
+Each bot has an engine mode, set by the local owner only (bot settings, "Engine"):
+
+- **Praxi-governed** (default): Praxi runs files and shell with its own tools and
+  permission engine; the CLI's native tools are off (Claude Code only today).
+- **Native tools**: the CLI keeps its own file and shell tools in a workspace folder
+  you choose. The bot's approval level maps to the CLI's own permission mode, and
+  every permission request the CLI forwards becomes a normal Praxi approval card.
+  Praxi's own tools (browser, apps, secrets, memory) are offered to the CLI over a
+  per-run local MCP endpoint and keep Praxi's approvals.
+
+The default level is **Ask**. **Full access** needs its own consent per bot. Switching
+a bot to native tools needs a consent too; both are recorded in the audit log.
+
+| CLI | Ask | Accept edits | Auto | Full access |
+| --- | --- | --- | --- | --- |
+| Claude Code | `--permission-mode default` (`manual` on newer builds) | `acceptEdits` | `auto` | `bypassPermissions` |
+| Codex | `on-request` + `workspace-write` | runs as Ask | + `auto_review` reviewer | `never` + `danger-full-access` |
+| Cursor (`acp`) | default | runs as Ask | `--auto-review` | `--force` |
+| OpenCode (`acp`) | every request asks | runs as Ask | runs as Ask | requests approved automatically |
+| Gemini CLI (`--acp`, experimental) | default | `--approval-mode auto_edit` | runs as Ask | `--yolo` |
+
+A level a CLI has no mode for runs as Ask, never as something wider. The workspace
+cannot be a drive root, your home folder, Praxi's data folder or a credential or CLI
+settings folder. The CLI runs with an allowlisted environment (no Praxi secrets, no
+provider keys) and Stop or the per-bot kill switch ends its whole process tree.

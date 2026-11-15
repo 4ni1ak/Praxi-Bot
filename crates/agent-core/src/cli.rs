@@ -5,7 +5,10 @@ use crate::{
     shared::{ModelOut, STEP_TOOLS, Shared, xe},
 };
 use async_trait::async_trait;
-use cli_provider::runtime::{CliEngine, CliError, Engine, ToolReply, Turn, TurnHost};
+use cli_provider::runtime::{
+    CliEngine, CliError, Engine, NativePermission, NativeTurn, ToolReply, Turn, TurnHost,
+    run_native_turn,
+};
 use permission_engine::Decision;
 use protocol::{Event, ToolCallId, event::MessageDelta};
 use provider_catalog::{
@@ -19,6 +22,9 @@ use storage::Run;
 use task_runtime::{ExecError, StepSpec};
 use tokio_util::sync::CancellationToken;
 use tool_registry::ToolSpec;
+
+/// Upper bound of one native-tools turn (Stop and the kill switch end it sooner).
+const NATIVE_TURN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 struct Host {
     sh: Arc<Shared>,
@@ -136,6 +142,52 @@ impl TurnHost for Host {
     }
 }
 
+impl Host {
+    /// A permission request for the CLI's own tool becomes a normal approval card.
+    /// The CLI's text is untrusted: it is shown, never executed or trusted, and
+    /// the answer is a single allow or deny for exactly this request.
+    async fn native_permission(&self, request: NativePermission) -> bool {
+        let Ok(ctx) = self.sh.ctx(&self.run) else {
+            return false;
+        };
+        let name = format!("cli.native.{}", sanitize_tool_label(&request.tool));
+        let details = json!({
+            "kind": "cli_native_action",
+            "engine_label": ctx.profile.models.executor,
+            "tool": request.tool,
+            "summary": request.summary,
+            "input": request.input,
+        });
+        // `Meta` is never denied by policy: the owner's level decides which requests reach
+        // this card, and a click here is the whole decision (no grant is recorded).
+        self.sh
+            .request_approval(
+                &ctx,
+                ToolCallId::new(),
+                &name,
+                tool_registry::Effect::Write,
+                protocol::PermissionCategory::Meta,
+                &json!({"summary": request.summary, "input": request.input}),
+                Some(details),
+            )
+            .await
+            .is_ok()
+    }
+}
+
+fn sanitize_tool_label(label: &str) -> String {
+    let clean: String = label
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        .take(32)
+        .collect();
+    if clean.is_empty() {
+        "action".into()
+    } else {
+        clean
+    }
+}
+
 struct RecordingHost {
     inner: Host,
     text: parking_lot::Mutex<String>,
@@ -152,9 +204,45 @@ impl TurnHost for RecordingHost {
     async fn approve(&self, name: &str, input: Value) -> bool {
         self.inner.approve(name, input).await
     }
+    async fn permission(&self, request: NativePermission) -> bool {
+        self.inner.native_permission(request).await
+    }
 }
 
 impl TurnExecutor {
+    /// The settings of a native-tools bot, re-checked at every turn: consent on
+    /// record and a workspace the protected-path rules still accept.
+    fn native_turn(
+        &self,
+        engine: &crate::profile::EngineSettings,
+        driver: cli_provider::Driver,
+        turn: Turn,
+    ) -> Result<NativeTurn, ExecError> {
+        if engine.consent.native_tools_at_ms.is_none()
+            || (engine.approval_level == cli_provider::ApprovalLevel::Full
+                && engine.consent.full_access_at_ms.is_none())
+        {
+            return Err(xe(
+                "the owner has not agreed to this engine setting; open the bot's engine settings",
+            ));
+        }
+        let workspace = engine
+            .workspace
+            .as_deref()
+            .ok_or_else(|| xe("this bot has no workspace folder"))?;
+        let workspace = std::path::PathBuf::from(workspace);
+        if let Some(why) = builtin_tools::workspace_refusal(&workspace, self.sh.storage.data_dir())
+        {
+            return Err(xe(format!("workspace refused: {why}")));
+        }
+        Ok(NativeTurn {
+            turn,
+            driver,
+            level: engine.approval_level,
+            workspace,
+        })
+    }
+
     pub(crate) async fn exec_cli(
         &self,
         run: &Run,
@@ -172,16 +260,10 @@ impl TurnExecutor {
             .cli
             .as_ref()
             .ok_or_else(|| xe("CLI provider is not configured"))?;
-        let (engine, command) = cli.parts();
-        let engine = match engine {
-            ConfigEngine::Claude => Engine::Claude,
-            ConfigEngine::Codex => Engine::Codex,
-        };
-        let runtime = CliEngine {
-            engine,
-            command: command.into(),
-            env: cli_provider::PathEnv::from_ambient(),
-        };
+        let (cfg_engine, command) = cli.parts();
+        let ctx = self.sh.ctx(run).map_err(xe)?;
+        let engine_settings = ctx.profile.engine.clone();
+        let native = engine_settings.mode == cli_provider::EngineMode::NativeTools;
         let host = Arc::new(RecordingHost {
             inner: Host {
                 sh: self.sh.clone(),
@@ -205,24 +287,95 @@ impl TurnExecutor {
             }
         }
         // MCP encodes names reversibly; permissions receive the original name.
-        let tools = specs.to_vec();
+        // In native mode the CLI has its own file, shell and script tools, so Praxi's
+        // versions are not offered next to them (everything else is).
+        let tools: Vec<ToolSpec> = specs
+            .iter()
+            .filter(|s| {
+                !native
+                    || !matches!(
+                        s.category,
+                        protocol::PermissionCategory::Fs
+                            | protocol::PermissionCategory::Shell
+                            | protocol::PermissionCategory::Script
+                    )
+            })
+            .cloned()
+            .collect();
         let model = cli_model_arg(&req.model).map_err(xe)?;
-        let usage = tokio::time::timeout(
-            self.sh.cfg.guards.model_timeout,
-            runtime.run_turn(
+        let usage = if native {
+            let driver = cli_provider::Driver::from_id(cfg_engine.as_str())
+                .ok_or_else(|| xe("this CLI has no native-tools driver"))?;
+            let nt = self.native_turn(
+                &engine_settings,
+                driver,
                 Turn {
                     prompt,
                     system,
                     model,
                     tools,
                 },
-                host.clone(),
-                cancel.clone(),
-            ),
-        )
-        .await
-        .map_err(|_| xe("CLI turn timed out"))?
-        .map_err(|e| cli_exec_error(engine, &e))?;
+            )?;
+            let token = cancel.child_token();
+            let key = uuid::Uuid::now_v7();
+            self.sh
+                .native_runs
+                .lock()
+                .entry(ctx.bot_id)
+                .or_default()
+                .push((key, token.clone()));
+            // Coding turns outlast a chat completion and wait on approval cards.
+            let result = tokio::time::timeout(
+                self.sh.cfg.guards.model_timeout.max(NATIVE_TURN_TIMEOUT),
+                run_native_turn(
+                    command,
+                    &cli_provider::PathEnv::from_ambient(),
+                    nt,
+                    host.clone(),
+                    token,
+                ),
+            )
+            .await;
+            if let Some(list) = self.sh.native_runs.lock().get_mut(&ctx.bot_id) {
+                list.retain(|(k, _)| *k != key);
+            }
+            result
+                .map_err(|_| xe("CLI turn timed out"))?
+                .map_err(|e| cli_exec_error_for(driver.display_name(), driver.id(), &e))?
+        } else {
+            let engine = match cfg_engine {
+                ConfigEngine::Claude => Engine::Claude,
+                ConfigEngine::Codex => Engine::Codex,
+                other => {
+                    return Err(xe(format!(
+                        "{} only runs with its own tools: set this bot's engine mode to \"native tools\" in its settings",
+                        other.as_str()
+                    )));
+                }
+            };
+            let runtime = CliEngine {
+                engine,
+                command: command.into(),
+                env: cli_provider::PathEnv::from_ambient(),
+            };
+            let usage = tokio::time::timeout(
+                self.sh.cfg.guards.model_timeout,
+                runtime.run_turn(
+                    Turn {
+                        prompt,
+                        system,
+                        model,
+                        tools,
+                    },
+                    host.clone(),
+                    cancel.clone(),
+                ),
+            )
+            .await
+            .map_err(|_| xe("CLI turn timed out"))?
+            .map_err(|e| cli_exec_error(engine, &e))?;
+            usage
+        };
         Ok(ModelOut {
             text: self.sh.redact(host.text.lock().clone()),
             model: req.model.0.clone(),
@@ -243,6 +396,10 @@ fn cli_exec_error(engine: Engine, err: &CliError) -> ExecError {
         Engine::Claude => ("Claude Code", "claude"),
         Engine::Codex => ("Codex CLI", "codex"),
     };
+    cli_exec_error_for(name, cmd, err)
+}
+
+fn cli_exec_error_for(name: &str, cmd: &str, err: &CliError) -> ExecError {
     let code = err.code();
     let msg = match err {
         CliError::Cancelled => return ExecError(code.to_owned()),
@@ -272,6 +429,9 @@ fn cli_exec_error(engine: Engine, err: &CliError) -> ExecError {
         ),
         CliError::CodexUnconfinable => format!(
             "The installed Codex cannot disable unified_exec, so Praxi will not run it. ({code})"
+        ),
+        CliError::WorkspaceUnavailable => format!(
+            "The workspace folder chosen for this bot is missing. Choose it again in the bot's engine settings. ({code})"
         ),
     };
     ExecError(msg)

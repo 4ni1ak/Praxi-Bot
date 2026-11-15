@@ -13,6 +13,7 @@
 //! browser `EventSource` clients (Host / Origin still apply).
 
 pub mod auth;
+mod bot_engine;
 pub mod changes;
 mod cli_engines;
 pub mod control;
@@ -864,6 +865,8 @@ fn api_routes() -> Router<AppState> {
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )
+        .route("/v1/bots/{id}/engine", put(bot_engine::put_engine))
+        .route("/v1/bots/{id}/engine/kill", post(bot_engine::kill_engine))
         .route(
             "/v1/bots/{id}/skills",
             get(skills::get_bot_skills).put(skills::put_bot_skills),

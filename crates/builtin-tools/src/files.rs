@@ -975,6 +975,67 @@ fn cli_home_override(path: &Path) -> bool {
     })
 }
 
+/// Why `dir` may not be the workspace of an engine that runs with its own
+/// file and shell tools, or `None` when it is acceptable. The folder must be an
+/// existing absolute directory that is not a drive root, not the user's home
+/// folder or one of its parents, not Praxi's data folder or a parent or child
+/// of it, and not a credential or CLI configuration location (or a parent of
+/// one), so the engine's own tools cannot reach what Praxi's file tools never may.
+#[must_use]
+pub fn workspace_refusal(dir: &Path, data_dir: &Path) -> Option<&'static str> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from);
+    workspace_refusal_with_home(dir, data_dir, home.as_deref())
+}
+
+fn workspace_refusal_with_home(
+    dir: &Path,
+    data_dir: &Path,
+    home: Option<&Path>,
+) -> Option<&'static str> {
+    if !dir.is_absolute() {
+        return Some("the workspace must be an absolute folder path");
+    }
+    let Ok(real) = fs::canonicalize(dir) else {
+        return Some("the workspace folder does not exist");
+    };
+    if !real.is_dir() {
+        return Some("the workspace must be a folder");
+    }
+    let wide = widen_for_compare(&real);
+    let parts = norm_parts(&wide);
+    if !wide.components().any(|c| matches!(c, Component::Normal(_))) {
+        return Some("a drive root cannot be a workspace");
+    }
+    let data = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    let data_parts = norm_parts(&widen_for_compare(&data));
+    if parts.starts_with(&data_parts) || data_parts.starts_with(&parts) {
+        return Some("the workspace cannot contain or be inside Praxi's data folder");
+    }
+    if is_protected(&real, data_dir) || is_protected(dir, data_dir) {
+        return Some("the workspace cannot be a credential or CLI configuration location");
+    }
+    if let Some(home) = home {
+        let home = fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+        if norm_parts(&widen_for_compare(&home)).starts_with(&parts) {
+            return Some("the home folder (or a folder containing it) cannot be a workspace");
+        }
+        // The CLIs keep credentials and configuration under these folders.
+        for name in [
+            ".claude", ".codex", ".gemini", ".cursor", ".config", ".local",
+        ] {
+            if norm_parts(&widen_for_compare(&home.join(name))).starts_with(&parts) {
+                return Some("the workspace cannot contain a CLI configuration folder");
+            }
+        }
+    }
+    if cli_home_override(&real) {
+        return Some("the workspace cannot be a CLI configuration location");
+    }
+    None
+}
+
 fn is_protected(path: &Path, data_dir: &Path) -> bool {
     let named = path.components().any(|c| match c {
         Component::Normal(name) => name_is_credential(&name.to_string_lossy()),
@@ -5568,5 +5629,32 @@ mod tests {
                 .unwrap(),
         );
         assert!(ok.contains("subst-ok"), "{ok}");
+    }
+}
+
+#[cfg(test)]
+mod workspace_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn engine_workspace_refuses_protected_places() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let data = home.join("praxi-data");
+        let project = home.join("projects").join("app");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        fs::create_dir_all(&project).unwrap();
+        let check = |p: &Path| workspace_refusal_with_home(p, &data, Some(&home));
+        assert_eq!(check(&project), None);
+        assert!(check(Path::new("relative/dir")).is_some());
+        assert!(check(&home.join("missing")).is_some());
+        assert!(check(&data).is_some(), "Praxi data dir");
+        assert!(check(&data.join("bots")).is_some(), "inside the data dir");
+        assert!(check(&home).is_some(), "home folder");
+        assert!(check(tmp.path()).is_some(), "parent of home");
+        assert!(check(&home.join(".claude")).is_some(), "CLI configuration");
+        let root = tmp.path().ancestors().last().unwrap();
+        assert!(check(root).is_some(), "drive root");
     }
 }

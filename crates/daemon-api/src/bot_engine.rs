@@ -1,0 +1,321 @@
+//! Owner-only engine settings of a bot: who runs its file and shell actions.
+//!
+//! `PUT /v1/bots/{id}/engine` and `POST /v1/bots/{id}/engine/kill` are the only
+//! ways to change the stored `engine` table. Bot create / update refuse it, peers
+//! are refused by the guard, and no tool can reach either route.
+use crate::{ApiError, AppState, dto::BotDto, error::ErrorBody, live_view::Actor, routes::ApiJson};
+use agent_core::{EngineConsent, EngineSettings};
+use axum::{
+    Extension, Json,
+    extract::{Path, State},
+};
+use cli_provider::{ApprovalLevel, Driver, EngineMode, level_plan};
+use protocol::BotId;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use utoipa::ToSchema;
+
+/// New engine settings for one bot.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BotEngineInput {
+    /// `praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does).
+    pub mode: String,
+    /// `ask` (default), `accept_edits`, `auto` or `full`.
+    #[serde(default)]
+    pub approval_level: Option<String>,
+    /// Absolute workspace folder; required for `native_tools`.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// The owner confirms that a CLI runs this bot's file and shell actions.
+    #[serde(default)]
+    pub consent_native_tools: bool,
+    /// The owner confirms Full access (no approval prompts) for this bot.
+    #[serde(default)]
+    pub consent_full_access: bool,
+}
+
+fn refuse(message: impl Into<String>) -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+        "bad_engine",
+        message,
+    )
+}
+
+/// The native driver behind an executor model reference (`cli:claude/sonnet`).
+fn executor_driver(executor: &str) -> Option<Driver> {
+    let id = executor.strip_prefix("cli:")?.split('/').next()?;
+    Driver::from_id(id)
+}
+
+/// Validate a change and return the settings to store. Pure apart from the
+/// workspace folder check; consent flags are required on each widening switch.
+fn next_settings(
+    current: &EngineSettings,
+    executor: &str,
+    input: &BotEngineInput,
+    data_dir: &std::path::Path,
+    now_ms: i64,
+) -> Result<EngineSettings, ApiError> {
+    let mode: EngineMode = input.mode.parse().map_err(refuse)?;
+    if mode == EngineMode::PraxiGoverned {
+        return Ok(EngineSettings::default());
+    }
+    let driver = executor_driver(executor).ok_or_else(|| {
+        refuse("choose a coding CLI model for this bot (a `cli:<engine>` model) before using its own tools")
+    })?;
+    let level: ApprovalLevel = input
+        .approval_level
+        .as_deref()
+        .map_or(Ok(ApprovalLevel::Ask), str::parse)
+        .map_err(refuse)?;
+    let plan = level_plan(driver, level);
+    if !plan.offered {
+        return Err(refuse(format!(
+            "{} has no \"{}\" level; it would run as \"{}\"",
+            driver.display_name(),
+            level.as_str(),
+            plan.applied.as_str()
+        )));
+    }
+    let workspace = input
+        .workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+        .ok_or_else(|| refuse("a workspace folder is required"))?;
+    if let Some(why) = builtin_tools::workspace_refusal(std::path::Path::new(workspace), data_dir) {
+        return Err(refuse(why));
+    }
+    let mut consent: EngineConsent = current.consent.clone();
+    let was_native = current.mode == EngineMode::NativeTools;
+    if !was_native {
+        if !input.consent_native_tools {
+            return Err(refuse(
+                "consent is required: the CLI will run file and shell actions itself",
+            ));
+        }
+        consent.native_tools_at_ms = Some(now_ms);
+    }
+    if level == ApprovalLevel::Full
+        && !(was_native && current.approval_level == ApprovalLevel::Full)
+    {
+        if !input.consent_full_access {
+            return Err(refuse(
+                "consent is required for Full access: the CLI will not ask before acting",
+            ));
+        }
+        consent.full_access_at_ms = Some(now_ms);
+    }
+    Ok(EngineSettings {
+        mode,
+        approval_level: level,
+        workspace: Some(workspace.to_owned()),
+        consent,
+    })
+}
+
+fn summary(e: &EngineSettings) -> Value {
+    json!({
+        "mode": e.mode.as_str(),
+        "approval_level": e.approval_level.as_str(),
+        "workspace": e.workspace,
+    })
+}
+
+fn store(s: &AppState, bot: &mut storage::Bot, settings: &EngineSettings) -> Result<(), ApiError> {
+    let obj = bot
+        .config
+        .as_object_mut()
+        .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?;
+    obj.insert(
+        "engine".into(),
+        serde_json::to_value(settings).map_err(ApiError::internal)?,
+    );
+    s.storage()
+        .update_bot(bot.id, &bot.name, &bot.config)
+        .map_err(ApiError::internal)?;
+    s.refresh_profile(bot);
+    Ok(())
+}
+
+fn dto(bot: storage::Bot) -> BotDto {
+    crate::routes::bot_dto(bot)
+}
+
+/// Set a bot's engine mode, approval level and workspace (local owner only).
+#[utoipa::path(put, path = "/v1/bots/{id}/engine", tag = "bots", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Bot id")),
+    request_body = BotEngineInput,
+    responses((status = 200, body = BotDto), (status = 403, body = ErrorBody),
+              (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
+pub(crate) async fn put_engine(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(bid): Path<String>,
+    ApiJson(input): ApiJson<BotEngineInput>,
+) -> Result<Json<BotDto>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
+    let mut bot = s.bot_of_user(BotId(crate::routes::id(&bid)?))?;
+    let profile: agent_core::BotProfile =
+        serde_json::from_value(bot.config.clone()).map_err(ApiError::internal)?;
+    let data_dir = s.storage().data_dir().to_path_buf();
+    let next = next_settings(
+        &profile.engine,
+        &profile.models.executor,
+        &input,
+        &data_dir,
+        storage::now_ms(),
+    )?;
+    // Fail closed: the audit row is written before the setting takes effect.
+    s.storage()
+        .append_audit(
+            s.user_id(),
+            None,
+            "user",
+            "engine.updated",
+            &json!({
+                "bot_id": bot.id.to_string(),
+                "from": summary(&profile.engine),
+                "to": summary(&next),
+                "consent_native_tools": input.consent_native_tools,
+                "consent_full_access": input.consent_full_access,
+            }),
+        )
+        .map_err(ApiError::internal)?;
+    store(&s, &mut bot, &next)?;
+    if next.mode == EngineMode::PraxiGoverned {
+        s.agent().kill_native_runs(bot.id);
+    }
+    Ok(Json(dto(bot)))
+}
+
+/// Kill switch: back to Praxi-governed and end the bot's running CLI processes.
+#[utoipa::path(post, path = "/v1/bots/{id}/engine/kill", tag = "bots", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Bot id")),
+    responses((status = 200, body = BotDto), (status = 403, body = ErrorBody),
+              (status = 404, body = ErrorBody)))]
+pub(crate) async fn kill_engine(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(bid): Path<String>,
+) -> Result<Json<BotDto>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
+    let mut bot = s.bot_of_user(BotId(crate::routes::id(&bid)?))?;
+    let killed = s.agent().kill_native_runs(bot.id);
+    s.storage()
+        .append_audit(
+            s.user_id(),
+            None,
+            "user",
+            "engine.killed",
+            &json!({"bot_id": bot.id.to_string(), "processes": killed}),
+        )
+        .map_err(ApiError::internal)?;
+    store(&s, &mut bot, &EngineSettings::default())?;
+    Ok(Json(dto(bot)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(
+        mode: &str,
+        level: Option<&str>,
+        ws: &std::path::Path,
+        native: bool,
+        full: bool,
+    ) -> BotEngineInput {
+        BotEngineInput {
+            mode: mode.into(),
+            approval_level: level.map(str::to_owned),
+            workspace: Some(ws.display().to_string()),
+            consent_native_tools: native,
+            consent_full_access: full,
+        }
+    }
+
+    #[test]
+    fn switching_to_native_and_full_needs_consent_and_a_safe_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let cur = EngineSettings::default();
+        let go = |i: &BotEngineInput, cur: &EngineSettings, exec: &str| {
+            next_settings(cur, exec, i, &data, 7)
+        };
+        // Default level is Ask, and consent is mandatory to switch.
+        assert!(
+            go(
+                &input("native_tools", None, &work, false, false),
+                &cur,
+                "cli:claude/sonnet"
+            )
+            .is_err()
+        );
+        let native = go(
+            &input("native_tools", None, &work, true, false),
+            &cur,
+            "cli:claude/sonnet",
+        )
+        .unwrap();
+        assert_eq!(native.approval_level, ApprovalLevel::Ask);
+        assert_eq!(native.consent.native_tools_at_ms, Some(7));
+        assert_eq!(native.consent.full_access_at_ms, None);
+        // Full needs its own consent even for a bot already in native mode.
+        assert!(
+            go(
+                &input("native_tools", Some("full"), &work, true, false),
+                &native,
+                "cli:claude"
+            )
+            .is_err()
+        );
+        let full = go(
+            &input("native_tools", Some("full"), &work, false, true),
+            &native,
+            "cli:claude",
+        )
+        .unwrap();
+        assert_eq!(full.consent.full_access_at_ms, Some(7));
+        // The Praxi data dir, an HTTP model and an unoffered level are refused.
+        assert!(
+            go(
+                &input("native_tools", None, &data, true, false),
+                &cur,
+                "cli:claude"
+            )
+            .is_err()
+        );
+        assert!(
+            go(
+                &input("native_tools", None, &work, true, false),
+                &cur,
+                "openai/gpt"
+            )
+            .is_err()
+        );
+        assert!(
+            go(
+                &input("native_tools", Some("accept_edits"), &work, true, false),
+                &cur,
+                "cli:cursor"
+            )
+            .is_err()
+        );
+        // Going back to Praxi-governed resets everything, no consent needed.
+        assert_eq!(
+            go(
+                &input("praxi_governed", None, &work, false, false),
+                &full,
+                "cli:claude"
+            )
+            .unwrap(),
+            EngineSettings::default()
+        );
+    }
+}

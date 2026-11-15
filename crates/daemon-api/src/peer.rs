@@ -93,6 +93,9 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     {
         return Some("host-local provider management is not allowed for peers");
     }
+    if is_bot_engine_path(check_path) && *method != Method::GET {
+        return Some("a bot's engine settings can only be changed at this computer");
+    }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
 }
 
@@ -112,6 +115,15 @@ fn stop_refused(method: &Method, check_path: &str, role: PeerRole) -> bool {
 // File contents and host restores require a desktop user.
 fn host_file_review(path: &str) -> bool {
     path.starts_with("/v1/runs/") && path.split('/').nth(4) == Some("changes")
+}
+
+/// `/v1/bots/{id}/engine[...]` decides who runs a bot's files and shell.
+fn is_bot_engine_path(path: &str) -> bool {
+    path.strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.split_once("/engine"))
+        .is_some_and(|(id, tail)| {
+            !id.is_empty() && !id.contains('/') && (tail.is_empty() || tail == "/kill")
+        })
 }
 
 /// `/v1/bots/{id}/skills` mutates a bot's prompt-trust boundary.
@@ -232,6 +244,19 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peers_never_change_a_bots_engine() {
+        for path in ["/v1/bots/abc/engine", "/v1/bots/abc/engine/kill"] {
+            for method in [Method::PUT, Method::POST] {
+                assert!(
+                    host_local_denial(&method, path).is_some(),
+                    "{method} {path}"
+                );
+            }
+        }
+        assert!(host_local_denial(&Method::PUT, "/v1/bots/abc").is_none());
+    }
 
     #[test]
     fn only_phone_and_desktop_may_post_run_stop() {

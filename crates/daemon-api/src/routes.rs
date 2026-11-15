@@ -57,7 +57,7 @@ pub(crate) fn id(s: &str) -> Result<Uuid, ApiError> {
     s.parse().map_err(|_| ApiError::bad_request("malformed id"))
 }
 
-fn bot_dto(b: Bot) -> BotDto {
+pub(crate) fn bot_dto(b: Bot) -> BotDto {
     let runtime = serde_json::from_value::<BotProfile>(b.config.clone())
         .ok()
         .map(|p| RuntimeConfigDto {
@@ -218,6 +218,14 @@ fn decide(list: &mut [ApprovalDto], call: ToolCallId, what: &str, at_ms: i64) {
     }
 }
 
+fn engine_in_profile() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "engine_owner_only",
+        "engine settings can only be changed by the local owner through the engine endpoint",
+    )
+}
+
 /// Validate a bot definition; returns `(name, config json)`.
 fn resolve_bot(input: BotInput) -> Result<(String, Value), ApiError> {
     let mut config = match (input.config, input.profile_toml) {
@@ -318,6 +326,9 @@ pub(crate) async fn create_bot(
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, config) = resolve_bot(input)?;
+    if config.get("engine").is_some() {
+        return Err(engine_in_profile());
+    }
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -407,6 +418,42 @@ pub(crate) async fn update_bot(
             .as_object_mut()
             .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
             .insert("runtime".into(), runtime.clone());
+    }
+    // Engine settings (who runs files and shell) change only through
+    // `PUT /v1/bots/{id}/engine`: an edit keeps the stored table, and a profile
+    // that carries a different one is refused.
+    match (config.get("engine"), bot.config.get("engine")) {
+        (Some(sent), stored) if Some(sent) != stored => return Err(engine_in_profile()),
+        _ => {}
+    }
+    {
+        let obj = config
+            .as_object_mut()
+            .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?;
+        match bot.config.get("engine") {
+            Some(engine) => {
+                obj.insert("engine".into(), engine.clone());
+            }
+            None => {
+                obj.remove("engine");
+            }
+        }
+    }
+    let after: BotProfile = serde_json::from_value(config.clone()).map_err(|e| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bad_profile",
+            e.to_string(),
+        )
+    })?;
+    if after.engine.mode == cli_provider::EngineMode::NativeTools
+        && !after.models.executor.starts_with("cli:")
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bad_engine",
+            "this bot runs a CLI with its own tools; switch it back to Praxi-governed before choosing a non-CLI model",
+        ));
     }
     s.storage().update_bot(bot.id, &name, &config)?;
     bot.name = name;
@@ -1296,13 +1343,17 @@ pub(crate) async fn enable_cli_provider(
     ApiJson(body): ApiJson<EnableCliProviderInput>,
 ) -> Result<Json<ConfiguredProviderDto>, ApiError> {
     crate::cli_engines::local_owner(&actor)?;
-    let Some(spec) = cli_provider::engine_spec(&body.id).filter(|spec| spec.runnable) else {
+    let Some(spec) = cli_provider::engine_spec(&body.id).filter(|spec| spec.can_enable()) else {
         return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
             &body.id,
         )));
     };
     let engine = match spec.id {
         "claude" => provider_catalog::config::CliEngine::Claude,
+        "codex" => provider_catalog::config::CliEngine::Codex,
+        "cursor" => provider_catalog::config::CliEngine::Cursor,
+        "opencode" => provider_catalog::config::CliEngine::OpenCode,
+        "gemini" => provider_catalog::config::CliEngine::Gemini,
         _ => {
             return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
                 spec.id,

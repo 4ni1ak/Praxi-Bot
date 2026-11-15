@@ -780,7 +780,10 @@
     "browser": "Browser",
     "local": "Local (this machine)",
     "remoteSoon": "Remote (coming soon)",
-    "runtimeHint": "Only this machine is supported for now."
+    "runtimeHint": "Only this machine is supported for now.",
+    "engine": {
+      "title": "Engine"
+    }
   },
   "usage": {
     "title": "Usage",
@@ -1271,7 +1274,8 @@
           "timeout": "Installation exceeded ten minutes and was stopped. Check the output before retrying.",
           "output_limit": "Installer output exceeded the limit and installation was stopped. Use your terminal to continue.",
           "install_failed": "Installation did not finish successfully. Check the output or run the command in your terminal."
-        }
+        },
+        "nativeOnly": "Runs with its own tools: choose this in a bot's Engine settings."
       },
       "advanced": "Advanced provider settings"
     },
@@ -1876,5 +1880,48 @@
     "openScreen": "Open screen",
     "connectionLost": "Connection to the screen lost. Reconnecting…",
     "clearForeignPause": "Clear {{owner}}'s pause"
+  },
+  "botEngine": {
+    "hint": "Who runs this bot's files and shell commands. Praxi's own tools (browser, apps, secrets, memory) always keep Praxi's approvals.",
+    "needCli": "Choose a coding CLI model for this bot above and save it first (a model that starts with cli:). Enable the CLI in Settings, AI, Detected accounts.",
+    "mode": "Engine mode",
+    "label": "Files and shell: governed by {{cli}}",
+    "governed": {
+      "name": "Praxi-governed",
+      "text": "Praxi runs files and shell with its own tools and asks you per action. The CLI's own tools are off."
+    },
+    "native": {
+      "name": "{{cli}} with its own tools",
+      "text": "{{cli}} reads, edits and runs commands itself in the workspace folder, under the approval level below. Praxi does not see or control those actions."
+    },
+    "experimental": "Experimental: the {{cli}} interface was taken from its documentation, not tried here. Expect rough edges.",
+    "level": {
+      "title": "Approval level",
+      "ask": {
+        "name": "Ask",
+        "text": "The CLI asks before it changes anything. Each question appears as an approval card."
+      },
+      "accept_edits": {
+        "name": "Accept edits",
+        "text": "File edits in the workspace go through; commands and everything else still ask."
+      },
+      "auto": {
+        "name": "Auto",
+        "text": "The CLI's own automatic reviewer decides what is safe. Only where the CLI has one."
+      },
+      "full": {
+        "name": "Full access",
+        "text": "No approval prompts. The CLI can change files and run commands without asking."
+      },
+      "maps": "{{cli}} setting: {{setting}}",
+      "notOffered": "{{cli}} has no such mode; it would run as {{applied}}."
+    },
+    "workspace": "Workspace folder",
+    "workspacePlaceholder": "Absolute path, for example C:/Projects/my-app",
+    "workspaceHint": "The CLI works in this folder. Praxi's data folder, your home folder, drive roots and credential or CLI settings folders are refused.",
+    "consentNative": "I understand {{cli}} will run file and shell actions on this computer, in this folder, and Praxi will not control them.",
+    "consentFull": "I understand Full access means {{cli}} will not ask before changing files or running commands.",
+    "apply": "Apply engine settings",
+    "kill": "Stop and turn off"
   }
 }

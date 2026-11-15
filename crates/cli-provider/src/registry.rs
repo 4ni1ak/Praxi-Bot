@@ -49,6 +49,19 @@ pub struct CliEngineSpec {
 }
 
 impl CliEngineSpec {
+    /// The native-tools driver for this engine, if it has one.
+    #[must_use]
+    pub fn driver(&self) -> Option<crate::levels::Driver> {
+        crate::levels::Driver::from_id(self.id)
+    }
+
+    /// Can be enabled as a provider: the confined engine runs it, or it has a
+    /// native-tools driver (which only runs with the CLI's own tools).
+    #[must_use]
+    pub fn can_enable(&self) -> bool {
+        self.runnable || self.driver().is_some()
+    }
+
     #[must_use]
     pub const fn install(&self) -> Option<InstallCommand> {
         if cfg!(windows) {

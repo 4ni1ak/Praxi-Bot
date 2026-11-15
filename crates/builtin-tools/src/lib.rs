@@ -54,7 +54,7 @@ pub use control::{
     ActionPermit, ControlRequest, DesktopControlGate, OBSERVATION_DISCARDED, PermitValidator,
 };
 pub use desktop::{DesktopSettings, SharedOcr};
-pub use files::{try_with_exclusive_file_access, with_checkpoint_access};
+pub use files::{try_with_exclusive_file_access, with_checkpoint_access, workspace_refusal};
 pub use meta::{META_TOOL_NAMES, QUESTION_CARD_KIND, TODO_LIST_KIND, TodoItem, TodoStatus};
 pub use schedule::{
     PreviousSchedule, SCHEDULE_TOOL_NAMES, ScheduleCaller, ScheduleChange, ScheduleHost,

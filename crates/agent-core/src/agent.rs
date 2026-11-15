@@ -118,6 +118,7 @@ impl AgentLoop {
                 identity_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
                 exec_gate: Mutex::new(()),
+                native_runs: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 task_reap_gate: Mutex::new(None),
                 #[cfg(test)]
@@ -306,6 +307,21 @@ impl AgentLoop {
     #[must_use]
     pub fn price_for(&self, model: &str) -> Option<ModelPrice> {
         self.sh.price_for(model)
+    }
+
+    /// Owner kill switch: end every running native-tools engine process of
+    /// `bot_id` (the whole process tree). Returns how many were signalled.
+    pub fn kill_native_runs(&self, bot_id: BotId) -> usize {
+        let runs = self
+            .sh
+            .native_runs
+            .lock()
+            .remove(&bot_id)
+            .unwrap_or_default();
+        for (_, token) in &runs {
+            token.cancel();
+        }
+        runs.len()
     }
 
     /// Register the profile used by `bot_id` (otherwise the bot row's JSON
