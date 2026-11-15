@@ -5,7 +5,7 @@ import { BotAvatar, Button } from "ui";
 import { BrandIcon } from "../components/BrandIcon";
 import { brandIcon } from "../lib/brandIcons";
 import { botView } from "../lib/botProfile";
-import type { McpCatalogEntry, McpServer } from "../api/types";
+import type { McpAuthState, McpCatalogEntry, McpServer } from "../api/types";
 import formStyles from "../components/Form.module.css";
 import { BotAccessPicker } from "../components/BotAccessPicker";
 import { Modal } from "../components/Modal";
@@ -24,7 +24,9 @@ import {
   filterCatalog,
   filterServers,
   isConnected,
+  McpBrowserOpenError,
   MissingSecretError,
+  signInMcpServer,
   statusTone
 } from "../lib/mcpApps";
 import { useDaemon } from "../state/DaemonContext";
@@ -41,27 +43,61 @@ const MAX_FACES = 4;
 /**
  * A connected app: bare logo, name, the bots that use it, state.  "Manage"
  * (on hover / focus, always while open or broken) opens bot access,
- * reconnect and disconnect below the row.
+ * reconnect and disconnect below the row.  An HTTP server that waits for
+ * OAuth offers "Sign in" (opens the browser); a signed-in one "Sign out".
  */
 function ConnectedCell({
   server,
   description,
   busy,
+  signingIn,
   onReconnect,
+  onSignIn,
+  onCancelSignIn,
+  onPasteRedirect,
+  onSignOut,
   onDisconnect,
   onSaveBots
 }: {
   server: McpServer;
   description?: string;
   busy: boolean;
+  signingIn: boolean;
   onReconnect: () => void;
+  onSignIn: () => void;
+  onCancelSignIn: () => void;
+  onPasteRedirect: (url: string) => void;
+  onSignOut: () => void;
   onDisconnect: () => void;
   onSaveBots: (from: BotScope, to: BotScope) => void;
 }) {
   const { t } = useTranslation();
-  const { bots } = useDaemon();
+  const { bots, client } = useDaemon();
   const [confirm, setConfirm] = useState(false);
   const [open, setOpen] = useState(false);
+  const [auth, setAuth] = useState<McpAuthState | null>(null);
+  const [pasted, setPasted] = useState("");
+  const isHttp = server.transport === "http";
+  const needsSignIn = server.status === "auth_required";
+  // Ask the daemon (never the server) whether a sign-in is stored, so
+  // header-authenticated servers do not get a meaningless "Sign out".
+  useEffect(() => {
+    if (!open || !isHttp || !client) {
+      return;
+    }
+    let live = true;
+    client
+      .mcpAuthStatus(server.name)
+      .then((state) => {
+        if (live) setAuth(state);
+      })
+      .catch(() => {
+        if (live) setAuth(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, isHttp, client, server.name, server.status, signingIn]);
   const [scope, setScope] = useState<BotScope>(() => botScope(server));
   // The scope the editor opened with: the saved diff is against this, not
   // against whatever the live server says at click time.
@@ -69,6 +105,7 @@ function ConnectedCell({
   const access = botAccessLabels(server, bots, t("apps.access.deletedBot"));
   const tone = statusTone(server.status);
   const needsReconnect =
+    needsSignIn ||
     server.status === "error" ||
     server.status === "disconnected" ||
     server.status === "quarantined";
@@ -148,9 +185,68 @@ function ConnectedCell({
             >
               {t("apps.access.save")}
             </Button>
-            {needsReconnect ? (
+            {needsSignIn && !signingIn ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                data-testid={`mcp-sign-in-${server.name}`}
+                onClick={onSignIn}
+              >
+                {t("apps.auth.signIn")}
+              </Button>
+            ) : null}
+            {signingIn ? (
+              <>
+                <span className={styles.panelLabel} role="status">
+                  {t("apps.auth.waiting")}
+                </span>
+                <Button size="sm" variant="ghost" onClick={onCancelSignIn}>
+                  {t("common.cancel")}
+                </Button>
+              </>
+            ) : null}
+          </div>
+          {signingIn ? (
+            <form
+              className={styles.actions}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (pasted.trim()) {
+                  onPasteRedirect(pasted.trim());
+                  setPasted("");
+                }
+              }}
+            >
+              <input
+                className={formStyles.input}
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+                placeholder="http://127.0.0.1:…/callback?…"
+                aria-label={t("apps.auth.pasteLabel")}
+                data-testid={`mcp-paste-${server.name}`}
+              />
+              <Button size="sm" variant="secondary" type="submit" disabled={!pasted.trim()}>
+                {t("apps.auth.pasteSubmit")}
+              </Button>
+            </form>
+          ) : null}
+          {signingIn ? <p className={formStyles.hint}>{t("apps.auth.pasteHint")}</p> : null}
+          <div className={styles.actions}>
+            {needsReconnect && !needsSignIn ? (
               <Button size="sm" variant="secondary" disabled={busy} onClick={onReconnect}>
                 {t("apps.reconnect")}
+              </Button>
+            ) : null}
+            {isHttp && auth === "signed_in" && !signingIn ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                data-testid={`mcp-sign-out-${server.name}`}
+                onClick={onSignOut}
+              >
+                {t("apps.auth.signOut")}
               </Button>
             ) : null}
             <span className={styles.grow} />
@@ -442,6 +538,36 @@ export function AppsModal({
   const [query, setQuery] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // Pending sign-ins by server; the flag stops the poll and cancels the flow.
+  const [signing, setSigning] = useState<Record<string, { aborted: boolean }>>({});
+
+  const signIn = async (name: string) => {
+    if (!client || signing[name]) {
+      return;
+    }
+    const signal = { aborted: false };
+    setSigning((m) => ({ ...m, [name]: signal }));
+    try {
+      const state = await signInMcpServer(client, name, openExternal, { signal });
+      if (state === "signed_in") {
+        toast.show(t("apps.auth.signedInToast", { name }), "success");
+      } else if (!signal.aborted) {
+        toast.show(t("apps.auth.failedToast", { name }), "danger");
+      }
+    } catch (e) {
+      toast.show(
+        e instanceof McpBrowserOpenError ? t("apps.auth.openFailed", { name }) : errorText(e),
+        "danger"
+      );
+    } finally {
+      setSigning((m) => {
+        const next = { ...m };
+        delete next[name];
+        return next;
+      });
+      await reload();
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -562,6 +688,27 @@ export function AppsModal({
                         server={s}
                         description={describe(s.name)}
                         busy={busy === s.name}
+                        signingIn={Boolean(signing[s.name])}
+                        onSignIn={() => void signIn(s.name)}
+                        onCancelSignIn={() => {
+                          const signal = signing[s.name];
+                          if (signal) {
+                            signal.aborted = true;
+                          }
+                        }}
+                        onPasteRedirect={(url) =>
+                          void run(s.name, async () => {
+                            // The poll in signIn() sees the finished flow.
+                            await client?.completeMcpAuth(s.name, url);
+                          })
+                        }
+                        onSignOut={() =>
+                          void run(s.name, async () => {
+                            await client?.logoutMcpAuth(s.name);
+                            toast.show(t("apps.auth.signedOutToast", { name: s.name }), "info");
+                            await reload();
+                          })
+                        }
                         onReconnect={() =>
                           void run(s.name, async () => {
                             await client?.reconnectMcpServer(s.name);

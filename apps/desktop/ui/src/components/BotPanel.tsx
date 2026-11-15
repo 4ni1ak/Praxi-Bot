@@ -17,6 +17,7 @@ import type { PresetChoice } from "../lib/botProfile";
 import { modelLine } from "../lib/modelName";
 import type { BotSkillsState } from "../state/useBotSkills";
 import { BotComputerBlock } from "./BotComputerBlock";
+import { StopStatusNotice } from "./StopStatusNotice";
 import styles from "./BotPanel.module.css";
 import { BotPanelSkills } from "./BotPanelSkills";
 import { BrandMark } from "./BrandMark";
@@ -205,7 +206,7 @@ export function BotPanel({
           </ul>
         )}
       </section>
-
+      <StopStatusNotice variant="panel" />
       <BotComputerBlock />
       <QuotaBlock />
     </div>

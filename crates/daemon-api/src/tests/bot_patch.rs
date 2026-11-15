@@ -331,7 +331,7 @@ async fn peer_roles_treat_patch_like_put() {
 }
 
 #[tokio::test]
-async fn review95_patch_cannot_change_knowledge_settings_for_paired_peers() {
+async fn review95_patch_never_changes_knowledge_settings() {
     let t = setup();
     let (path, bot) = make_bot(&t).await;
     let body = json!({"expected_version": bot["version"],
@@ -346,9 +346,12 @@ async fn review95_patch_cannot_change_knowledge_settings_for_paired_peers() {
     let after = call(&t, Method::GET, &path, None).await.json();
     assert_eq!(after["version"], bot["version"]);
     assert!(after["config"].get("knowledge").is_none());
-    // The local owner may.
+    // Generic profile edits never change knowledge for anyone: the dedicated
+    // endpoint owns it, so the local owner is refused too and nothing is written.
     let r = call(&t, Method::PATCH, &path, Some(body)).await;
-    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let still = call(&t, Method::GET, &path, None).await.json();
+    assert_eq!(still["version"], bot["version"]);
 }
 
 #[tokio::test]

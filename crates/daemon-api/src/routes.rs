@@ -322,6 +322,11 @@ pub(crate) async fn create_bot(
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, mut config) = resolve_bot(input)?;
     crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
+    if config.get("knowledge").is_some() {
+        return Err(ApiError::bad_request(
+            "configure knowledge through the bot knowledge settings endpoint",
+        ));
+    }
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -422,7 +427,20 @@ pub(crate) async fn update_bot(
         bot.config.get("knowledge"),
         &mut config,
     )?;
-    revoke_if_embedding_changes(&s, &bot, &config)?;
+    if config.get("knowledge").is_some()
+        && bot.config.pointer("/knowledge/embedding") != config.pointer("/knowledge/embedding")
+    {
+        // Even a stale profile cannot revive authority after an owner submits
+        // a changed embedding profile. Dedicated settings own the saved value.
+        crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
+    }
+    // Generic profile saves may contain stale snapshots. Only the dedicated
+    // knowledge endpoint may update retrieval configuration or query grants.
+    if let Some(current) = bot.config.get("knowledge") {
+        config["knowledge"] = current.clone();
+    } else if let Some(object) = config.as_object_mut() {
+        object.remove("knowledge");
+    }
     let outcome = s.storage().patch_bot(bot.id, expected, |_, stored| {
         if preserve_runtime
             && config.get("runtime").is_none()
@@ -615,9 +633,8 @@ pub(crate) async fn patch_bot(
         check_profile_bounds(&op.value, depth).map_err(ApiError::bad_request)?;
     }
     {
-        // Dry run on the profile read under the authority lock: knowledge
-        // settings stay owner-only for paired peers, and an embedding change
-        // revokes grants BEFORE the new profile is committed.
+        // Dry run on the profile read under the authority lock. Generic profile
+        // edits never change knowledge settings (the dedicated endpoint owns them).
         let mut next = bot.config.clone();
         if apply_patch_ops(&mut next, &ops).is_ok() {
             crate::peer::protect_knowledge_config(
@@ -625,7 +642,12 @@ pub(crate) async fn patch_bot(
                 bot.config.get("knowledge"),
                 &mut next,
             )?;
-            revoke_if_embedding_changes(&s, &bot, &next)?;
+            if next.get("knowledge") != bot.config.get("knowledge") {
+                return Err(ApiError::bad_request(
+                    "configure knowledge through the bot knowledge settings endpoint",
+                )
+                .into());
+            }
         }
     }
     let outcome = s
@@ -638,15 +660,6 @@ pub(crate) async fn patch_bot(
             Ok((new_name.unwrap_or_else(|| name.to_owned()), next))
         })?;
     profile_write_response(&s, outcome)
-}
-
-/// Raw profile edits cannot revive a knowledge grant after disable/restore:
-/// revoke first, so a failed write leaves authority closed.
-fn revoke_if_embedding_changes(s: &AppState, bot: &Bot, next: &Value) -> Result<(), ApiError> {
-    if bot.config.pointer("/knowledge/embedding") != next.pointer("/knowledge/embedding") {
-        crate::knowledge_runtime::revoke_bot_grants(s, bot.id)?;
-    }
-    Ok(())
 }
 
 fn profile_write_response(
@@ -684,14 +697,34 @@ pub(crate) async fn delete_bot(
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
-    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
+    let authority = crate::knowledge::authority_lock(&s, bot.id)
         .lock_owned()
         .await;
     crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
-    s.storage()
-        .delete_bot(bot.id)
-        .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
-    crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
+    let state = s.clone();
+    let removed = bot.clone();
+    crate::knowledge::blocking_with_permit(permit, move || {
+        let _authority = authority;
+        state
+            .storage()
+            .delete_bot_with_cleanup(removed.id, || {
+                crate::knowledge_runtime::revoke_bot_grants(&state, removed.id).map_err(|_| {
+                    storage::StorageError::Io(std::io::Error::other(
+                        "knowledge authority could not be revoked",
+                    ))
+                })?;
+                crate::knowledge::remove_bot_index(&state, &removed)
+                    .map_err(storage::StorageError::Io)
+            })
+            .map_err(|_| {
+                ApiError::conflict(
+                    "bot still has chats or runs, or its knowledge files could not be removed",
+                )
+            })?;
+        Ok(())
+    })
+    .await?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.

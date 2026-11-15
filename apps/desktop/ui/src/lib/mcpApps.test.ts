@@ -27,7 +27,9 @@ import {
   filterServers,
   isConnected,
   MissingSecretError,
+  McpBrowserOpenError,
   secretStoreName,
+  signInMcpServer,
   splitArgs,
   statusTone,
   toggleBotInScope
@@ -449,4 +451,59 @@ test("the server editor reports a list edit that hit an open server", async () =
   assert.equal(applied, false);
   assert.equal(server.bots, null, "the server is not silently converted to a list");
   assert.equal(scopeApplied(opened, { mode: "all" }, server), true);
+});
+
+test("sign-in opens the daemon's URL and polls until the callback finished", async () => {
+  const calls: string[] = [];
+  const states = ["signing_in", "signing_in", "signed_in"] as const;
+  let polled = 0;
+  const api = {
+    startMcpAuth: async (name: string) => {
+      calls.push(`start ${name}`);
+      return { authorization_url: "https://auth.example/authorize?state=s", expires_in: 300 };
+    },
+    mcpAuthStatus: async () => states[polled++],
+    cancelMcpAuth: async () => {
+      calls.push("cancel");
+      return "signed_out" as const;
+    }
+  };
+  const opened: string[] = [];
+  const result = await signInMcpServer(api, "linear", (u) => opened.push(u) > 0, {
+    sleep: async () => {}
+  });
+  assert.equal(result, "signed_in");
+  assert.deepEqual(opened, ["https://auth.example/authorize?state=s"]);
+  assert.deepEqual(calls, ["start linear"]);
+  assert.equal(polled, 3);
+});
+
+test("sign-in cancels the daemon flow when the browser cannot open or the user stops", async () => {
+  const calls: string[] = [];
+  const api = {
+    startMcpAuth: async () => ({ authorization_url: "https://auth.example/a", expires_in: 300 }),
+    mcpAuthStatus: async () => "signing_in" as const,
+    cancelMcpAuth: async () => {
+      calls.push("cancel");
+      return "auth_required" as const;
+    }
+  };
+  await assert.rejects(
+    signInMcpServer(api, "x", () => false, { sleep: async () => {} }),
+    (e: unknown) => e instanceof McpBrowserOpenError
+  );
+  assert.deepEqual(calls, ["cancel"]);
+  const signal = { aborted: false };
+  let polls = 0;
+  const result = await signInMcpServer(api, "x", () => true, {
+    signal,
+    sleep: async () => {
+      polls += 1;
+      if (polls === 3) {
+        signal.aborted = true;
+      }
+    }
+  });
+  assert.equal(result, "auth_required");
+  assert.deepEqual(calls, ["cancel", "cancel"]);
 });

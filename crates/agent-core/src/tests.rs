@@ -1036,7 +1036,13 @@ async fn large_output_is_spilled_with_preview_and_path() {
             .expect("path in message")
             .trim_end_matches(']'),
     );
-    assert!(path.starts_with(env.dir.path().join("spill")));
+    // The data dir is canonical (a CI `RUNNER~1` temp dir resolves to its long
+    // name) but never a `\?\` verbatim path, so the model-visible path is the
+    // ordinary spelling of the canonical temp dir.
+    let spill_root =
+        storage::without_verbatim_prefix(std::fs::canonicalize(env.dir.path()).unwrap())
+            .join("spill");
+    assert!(path.starts_with(&spill_root), "{path:?} vs {spill_root:?}");
     // The file is the run's own and goes away when the run has ended.
     assert!(
         !path.exists(),
