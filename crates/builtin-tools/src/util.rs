@@ -20,15 +20,12 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         // Questions, todos, schedule lifecycle, a local write, or a listing
         // of the bot's own bookkeeping. A write does not bring content in:
         // the model already had the bytes, and the result is not a private read.
-        "ask_user" | "todo_write" | "schedule_pause" | "schedule_delete" | "checkpoint_list"
-        | "schedule_list" => ContentClass::none(),
-        // A write does not bring content in. While the run is tainted it still
-        // asks, because the bytes can become instructions for another program.
-        "fs_write" | "fs_move" | "fs_delete" | "checkpoint_restore" => {
-            ContentClass::none().file_write()
+        "ask_user" | "todo_write" | "schedule_pause" | "schedule_delete" | "fs_write"
+        | "fs_move" | "fs_delete" | "checkpoint_list" | "checkpoint_restore" | "schedule_list" => {
+            ContentClass::none()
         }
         // Editing reads old content and reports match counts, including no-op edits.
-        "fs_edit" => ContentClass::private_read().file_write(),
+        "fs_edit" => ContentClass::private_read(),
         // Observation, including a click or a scroll. Those pick an on-screen
         // target and cannot carry bytes off the machine. A drag can drop a
         // file or a selection onto an upload. Typing, keys, fill, launch, and
@@ -42,11 +39,12 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         // launches a program can read and can send data off the machine. Tab
         // changes stay here: a page can turn them into network requests. The
         // desktop control gate is about who owns the computer, not about egress.
-        // A shell or a script can write any path the user can write, including
-        // files another program loads as code. The command is the content.
-        "shell_run" | "script_run" => ContentClass::all().file_write(),
+        // A shell, a script, and a desktop launch start a program chosen by
+        // their arguments. In a run that read untrusted content they ask even
+        // when the egress waiver is on; the command is the content.
+        "shell_run" | "script_run" | "desktop_launch" => ContentClass::all().executes(),
         "browser_open" | "browser_back" | "browser_click" | "browser_fill" | "browser_select"
-        | "browser_press" | "browser_eval" | "browser_tabs" | "desktop_launch" | "desktop_type"
+        | "browser_press" | "browser_eval" | "browser_tabs" | "desktop_type"
         | "desktop_set_value" | "desktop_key" | "desktop_drag" => ContentClass::all(),
         "schedule_create" | "schedule_update" | "schedule_resume" => ContentClass::egress(),
         _ => return None,

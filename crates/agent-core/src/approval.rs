@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use async_trait::async_trait;
 use builtin_tools::{GateRequest, ToolGate, raw_command_for};
 use parking_lot::Mutex;
-use permission_engine::{ActionRequest, Decision, Policy, egress_must_ask, tainted_write_must_ask};
+use permission_engine::{ActionRequest, Decision, Policy, egress_must_ask, executes_must_ask};
 use protocol::event::{ApprovalNeeded, QuestionAsked, ToolCallApproved, ToolCallDenied};
 use protocol::{BotId, Event, InitiatorKind, PermissionCategory, RunId, ToolCallId};
 use serde_json::{Value, json};
@@ -204,13 +204,14 @@ impl Shared {
         // other egress tool, including fetch, can be aimed at an arbitrary host.
         // A click or a scroll does not carry bytes; a drag can, and
         // `browser_click` does when `prompt_text` is set.
-        let must_ask =
-            egress_must_ask(
-                exposure,
-                taint::call_can_egress(name, class, input),
-                name == "web_search",
-                ctx.profile.permissions.allow_egress_after_reads,
-            ) || tainted_write_must_ask(exposure, taint::call_writes_files(name, class, input));
+        // A call that starts a program chosen by its arguments also asks after
+        // untrusted content, and the egress waiver does not cover it.
+        let must_ask = egress_must_ask(
+            exposure,
+            taint::call_can_egress(name, class, input),
+            name == "web_search",
+            ctx.profile.permissions.allow_egress_after_reads,
+        ) || executes_must_ask(exposure, class.executes);
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
         if self.always_ask(name) {
@@ -239,8 +240,10 @@ impl Shared {
         if floor {
             return d;
         }
-        // The egress gate and a tainted file write are not grants and not the
-        // read shortcut. The egress waiver does not cover a file write.
+        // The egress gate and the executor rule are not grants and not the read
+        // shortcut. The only way past the egress gate is the bot's explicit
+        // `allow_egress_after_reads` flag, which already made that term false;
+        // it does not make the executor term false.
         if must_ask {
             return d;
         }
@@ -270,53 +273,42 @@ impl Shared {
         self.tools.get(name).is_some_and(|t| t.always_ask())
     }
 
-    /// Disclosure card for a tainted run. `None` when the run is clean, or the
-    /// tool neither sends data off the machine nor writes a file. Attached
-    /// even when the ask came from `always_ask` or a floor, so the card still
-    /// names the read and the path or host.
+    /// Egress card for a tainted run. `None` when the run is clean, or the tool
+    /// cannot send data off the machine. Attached even when the ask came from
+    /// `always_ask` or a floor, so the card still names the read and the host.
     ///
     /// The payload is the revealed text. Tool-injected defaults (the browser
-    /// profile, the search backend, a skill body) are part of that text. A
-    /// file write shows the path and the content, or the diff.
+    /// profile, the search backend, a skill body) are part of that text.
+    /// Every tool that starts a program is also an egress tool (the production
+    /// registry audit checks it), so its card carries the full command.
     fn egress_card(&self, ctx: &RunCtx, name: &str, input: &Value) -> Option<Value> {
         let class = self
             .tools
             .get(name)
             .map_or_else(ContentClass::unspecified, |t| t.spec().content);
-        if !ctx.taint.lock().exposure.is_tainted() {
-            return None;
-        }
-        let egress = taint::call_can_egress(name, class, input);
-        let writes = taint::call_writes_files(name, class, input);
-        if !egress && !writes {
+        if !taint::call_can_egress(name, class, input) {
             return None;
         }
         let mut details = {
             let taint = ctx.taint.lock();
-            if egress {
-                taint::egress_record(&taint, name, input)?
-            } else {
-                taint::file_write_record(&taint, name, input)?
-            }
+            taint::egress_record(&taint, name, input)?
         };
-        if egress {
-            let tctx = tool_registry::ToolContext {
-                run_id: ctx.run_id.to_string(),
-                bot_id: Some(ctx.bot_id.to_string()),
-                content_tainted: true,
-                ..tool_registry::ToolContext::default()
-            };
-            if let Some(tool) = self.tools.get(name) {
-                if let Some(host) = tool.egress_host(input) {
-                    taint::set_egress_host(&mut details, &host);
-                }
-                if let Some(extra) = tool.egress_extra(&tctx, input) {
-                    taint::append_payload(&mut details, &extra);
-                }
+        let tctx = tool_registry::ToolContext {
+            run_id: ctx.run_id.to_string(),
+            bot_id: Some(ctx.bot_id.to_string()),
+            content_tainted: true,
+            ..tool_registry::ToolContext::default()
+        };
+        if let Some(tool) = self.tools.get(name) {
+            if let Some(host) = tool.egress_host(input) {
+                taint::set_egress_host(&mut details, &host);
             }
-            if writes {
-                taint::note_file_write_on_egress(&mut details);
+            if let Some(extra) = tool.egress_extra(&tctx, input) {
+                taint::append_payload(&mut details, &extra);
             }
+        }
+        if executes_must_ask(ctx.taint.lock().exposure, class.executes) {
+            taint::note_executes_on_egress(&mut details);
         }
         taint::finalize_egress_record(&mut details);
         Some(details)
@@ -656,27 +648,19 @@ impl Shared {
             .tools
             .get(name)
             .map_or_else(ContentClass::unspecified, |t| t.spec().content);
-        let egress = taint::call_can_egress(name, class, input);
-        let writes = taint::call_writes_files(name, class, input);
-        if (!egress && !writes) || !ctx.taint.lock().exposure.is_tainted() {
+        if !taint::call_can_egress(name, class, input) || !ctx.taint.lock().exposure.is_tainted() {
             return Ok(());
         }
         let message = if taint::input_forbids_egress(input) {
-            Some(if egress {
+            Some(
                 "the outgoing text contains characters that cannot be sent (hidden tags, direction overrides, private-use or similar); remove them and ask again"
-                    .to_owned()
-            } else {
-                "the file contents contain characters that cannot be written (hidden tags, direction overrides, private-use or similar); remove them and ask again"
-                    .to_owned()
-            })
+                    .to_owned(),
+            )
         } else if !showing_card && taint::input_needs_a_card_to_show(input) {
-            Some(if egress {
+            Some(
                 "the outgoing text contains characters that would not be visible, and this call is not shown for approval; remove them and ask again"
-                    .to_owned()
-            } else {
-                "the file contents contain characters that would not be visible, and this call is not shown for approval; remove them and ask again"
-                    .to_owned()
-            })
+                    .to_owned(),
+            )
         } else {
             None
         };
@@ -964,7 +948,7 @@ pub(crate) struct ExecPermit {
     scope: ApprovalScope,
     by: protocol::UserId,
     parked_at: u64,
-    /// True when the card built for this permit included the egress or file
+    /// True when the card built for this permit included the egress
     /// disclosure. Captured then, not recomputed after the user answers:
     /// another call can taint the run while this card is open.
     pub(crate) showed_disclosure: bool,

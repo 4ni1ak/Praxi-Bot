@@ -51,12 +51,11 @@ fn spec(name: &str, description: &str, schema: Value, effect: Effect) -> ToolSpe
         effect,
         category: PermissionCategory::Fs,
         platforms: vec![Platform::All],
-        content: match name {
-            // Committing writes git objects. Branching writes a ref.
-            "git_commit" => ContentClass::private_read().file_write(),
-            "git_branch" => ContentClass::untrusted_private().file_write(),
-            // status/diff/log/show read the repo, which can hold anything.
-            _ => ContentClass::untrusted_private(),
+        content: if name == "git_commit" {
+            ContentClass::private_read()
+        } else {
+            // status/diff/log/show/branch read the repo, which can hold anything.
+            ContentClass::untrusted_private()
         },
     }
 }

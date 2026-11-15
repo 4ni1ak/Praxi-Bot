@@ -83,15 +83,17 @@ pub const fn egress_must_ask(
     !configured_search
 }
 
-/// Whether a file-writing call must ask because the run is tainted.
+/// Whether a call that starts an arbitrary program must ask because the run
+/// read untrusted content.
 ///
-/// Clean runs are unchanged. A tainted run asks for every call that can
-/// create, modify, or delete a file. A standing grant, the read shortcut, a
-/// Full preset, and the egress waiver do not satisfy it: the waiver allows
-/// sending data out, not writing files other programs will trust.
+/// Only the `untrusted` bit counts: a program is steered by instructions, and
+/// a run that has only read the user's own private files holds none from an
+/// attacker. A standing grant, the read shortcut, a Full preset, and the
+/// egress waiver do not satisfy it. The waiver allows sending data out; it is
+/// not consent to run a command a page asked for.
 #[must_use]
-pub const fn tainted_write_must_ask(exposure: ContentExposure, writes_files: bool) -> bool {
-    writes_files && exposure.is_tainted()
+pub const fn executes_must_ask(exposure: ContentExposure, executes: bool) -> bool {
+    executes && exposure.untrusted
 }
 
 #[cfg(test)]
@@ -137,17 +139,20 @@ mod tests {
     }
 
     #[test]
-    fn a_tainted_file_write_asks_and_a_clean_one_does_not() {
+    fn an_executor_asks_only_after_untrusted_content() {
         let clean = ContentExposure::clean();
-        assert!(!tainted_write_must_ask(clean, true));
-        assert!(!tainted_write_must_ask(clean, false));
+        assert!(!executes_must_ask(clean, true));
+        assert!(!executes_must_ask(clean, false));
         let mut untrusted = ContentExposure::clean();
         untrusted.observe(true, false);
-        assert!(tainted_write_must_ask(untrusted, true));
-        assert!(!tainted_write_must_ask(untrusted, false));
+        assert!(executes_must_ask(untrusted, true));
+        assert!(!executes_must_ask(untrusted, false));
+        let mut both = ContentExposure::clean();
+        both.observe(true, true);
+        assert!(executes_must_ask(both, true));
         let mut private = ContentExposure::clean();
         private.observe(false, true);
-        assert!(tainted_write_must_ask(private, true));
+        assert!(!executes_must_ask(private, true));
     }
 
     #[test]

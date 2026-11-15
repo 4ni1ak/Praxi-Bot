@@ -120,8 +120,8 @@ fn card_covers(decision: &Decision, card: &CliApproval) -> bool {
     }
 }
 
-/// A tainted egress or file write needs a card. Used when a CLI permit was
-/// minted before the run became tainted.
+/// A tainted egress needs a card. Used when a CLI permit was minted before the
+/// run became tainted.
 fn disclosure_now_required(
     ctx: &RunCtx,
     name: &str,
@@ -135,7 +135,6 @@ fn disclosure_now_required(
         return false;
     }
     taint::call_can_egress(name, spec.content, input)
-        || taint::call_writes_files(name, spec.content, input)
 }
 
 /// Remove the card for this exact invocation, leaving any other card in place.
@@ -912,7 +911,7 @@ impl TurnExecutor {
                 _ => None,
             };
             // A permit answered before this run was tainted did not show the
-            // egress or file card. Drop it and ask with the disclosure. The
+            // egress card. Drop it and ask with the disclosure. The
             // flag was stored when that card was built, not recomputed now.
             let redisclose = carried.as_ref().is_some_and(|permit| {
                 !permit.showed_disclosure

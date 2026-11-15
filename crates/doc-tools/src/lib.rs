@@ -175,14 +175,10 @@ pub(crate) fn mk_spec(
         platforms: vec![Platform::All],
         content: match name {
             // Documents can carry prompt injection and are private files.
-            "pdf_extract" | "docx_read" | "xlsx_read" | "csv_read" | "json_query" => {
-                tool_registry::ContentClass::untrusted_private()
-            }
-            // Optional output is still a file write. A call with no output path
-            // does not ask; `call_writes_files` checks the path.
-            "csv_transform" => tool_registry::ContentClass::untrusted_private().file_write(),
+            "pdf_extract" | "docx_read" | "xlsx_read" | "csv_read" | "csv_transform"
+            | "json_query" => tool_registry::ContentClass::untrusted_private(),
             // The model already holds the document it is writing.
-            "docx_write" | "xlsx_write" => tool_registry::ContentClass::none().file_write(),
+            "docx_write" | "xlsx_write" => tool_registry::ContentClass::none(),
             _ => tool_registry::ContentClass::unspecified(),
         },
     }
@@ -204,7 +200,6 @@ mod tests {
         assert!(!reg.get("docx_write").unwrap().spec().content.reads_private);
         assert!(!reg.get("xlsx_write").unwrap().spec().content.reads_private);
         assert_eq!(reg.get("pdf_extract").unwrap().spec().effect, Effect::Read);
-        assert!(reg.get("docx_write").unwrap().spec().content.writes_files);
     }
 
     #[test]

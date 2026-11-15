@@ -226,13 +226,23 @@ run even when the file was just written by the model or the text was pasted by
 the user. Narrowing that would reopen the match-count oracle, so a later egress
 asks. The cost is an edit that did not follow a private read.
 
-A tainted run asks before every file-writing tool, once per call. That includes
-a shell or a script, a skill write, a document writer, and a git commit or
-branch. A standing grant, the read shortcut, a Full preset, and
-`allow_egress_after_reads` do not cover the ask. The card shows the path and
-the content or the diff. A clean run is unchanged. The shell card shows the
-command; it does not parse redirections. An approved shell still runs with the
-user's rights.
+A shell, a script and a desktop launch start a program chosen by the model.
+After a run has read untrusted content (a page, a mailbox, a file from outside,
+an MCP result) each of them asks every time, once, with the full command on the
+card. A standing grant, the read shortcut, a Full preset and
+`allow_egress_after_reads` do not cover that ask. A run that has only read your
+own private files is not held by this rule. The shell card shows the command;
+it does not parse redirections. An approved shell still runs with the user's
+rights.
+
+This does not make file writes safe. Outside the daemon data directory, a run
+that read untrusted content can still create or change a file with `fs_write`,
+`fs_edit`, `fs_move`, a document writer or a git commit under whatever grant
+you gave, and a program that later trusts that file (an agent instruction file
+such as `AGENTS.md`, an editor or tool configuration file, a shell profile, a
+startup entry) will read it. A local MCP server that can write files is not
+classified as a writer either. Review changes to such files yourself. A
+separate consent design for file writes is tracked outside this change.
 
 File tools cannot modify anything under the daemon data directory, even with
 an exact file grant. Existing path resolution checks also apply to move
@@ -243,11 +253,8 @@ workflows must use their owning tools. The same daemon boundary is enforced
 for document/converter output paths (including CSV output), both in the
 permission decision and in the writer itself.
 
-A workflow this daemon saved from a run that read no untrusted content replays
-without a blanket taint. The proof is a hash of the file bytes in
-`workflows/.praxi-clean.json`, which a state transfer does not carry. An
-imported workflow, a hand edit, a workflow saved from a tainted run, or a file
-with no proof replays as untrusted private input before its first step.
+A saved workflow replays as untrusted private input before its first step,
+including a workflow this daemon saved itself and a legacy file.
 
 Native CLI authority outside the daemon directory is protected too: the user's
 `.codex`, `.claude`, and `.claude.json`, plus the configured `CODEX_HOME` and

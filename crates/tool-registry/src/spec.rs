@@ -47,7 +47,7 @@ fn is_false(value: &bool) -> bool {
 /// flags true) and is **not** a declaration: the registry refuses it.
 ///
 /// The classification bits and whether an author declared them are
-/// independent. `writes_files` defaults to false so an older spec does not
+/// independent. `executes` defaults to false so an older spec does not
 /// start asking on every call. Folding the bits into an enum would hide the
 /// "missing means all three, undeclared" serde default.
 #[allow(clippy::struct_excessive_bools)]
@@ -64,10 +64,12 @@ pub struct ContentClass {
     /// The call can send data off the machine.
     #[serde(default = "default_true")]
     pub egress: bool,
-    /// The call can create, modify, or delete a file on disk. A tainted run
-    /// must ask before any such call. Missing on the wire means it does not.
+    /// The call starts an arbitrary program chosen by its arguments (a shell,
+    /// a script, a desktop launch). A run tainted by untrusted content asks
+    /// before every such call, once, and the egress waiver does not cover it.
+    /// Missing on the wire means it does not.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub writes_files: bool,
+    pub executes: bool,
     /// `false` only for [`ContentClass::unspecified`] and for a spec that was
     /// deserialized without an explicit declaration.
     #[serde(default)]
@@ -94,16 +96,16 @@ impl ContentClass {
             ingests_untrusted,
             reads_private,
             egress,
-            writes_files: false,
+            executes: false,
             declared: true,
             external_metadata: false,
         }
     }
 
-    /// This call can create, modify, or delete a file on disk.
+    /// This call starts an arbitrary program.
     #[must_use]
-    pub const fn file_write(mut self) -> Self {
-        self.writes_files = true;
+    pub const fn executes(mut self) -> Self {
+        self.executes = true;
         self
     }
 
@@ -166,7 +168,7 @@ impl ContentClass {
             ingests_untrusted: true,
             reads_private: true,
             egress: true,
-            writes_files: false,
+            executes: false,
             declared: false,
             external_metadata: false,
         }

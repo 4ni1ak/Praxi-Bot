@@ -1464,22 +1464,25 @@ host = "smtp.example.com"
                 "missing {name}: {audited:?}"
             );
         }
-        assert!(
-            !registry
-                .get("mcp:srv/echo")
-                .unwrap()
-                .spec()
-                .content
-                .writes_files
-        );
-        assert!(
-            !registry
-                .get("listPets")
-                .unwrap()
-                .spec()
-                .content
-                .writes_files
-        );
+        // A local MCP server tool is not classified as an executor in this
+        // scope (deferred to card 238); the fixture records that choice.
+        for name in ["mcp:srv/echo", "listPets"] {
+            assert!(
+                !registry.get(name).unwrap().spec().content.executes,
+                "{name}"
+            );
+        }
+        // Every tool that starts a program is egress, so its card carries the
+        // command, and the executors registered here are exactly these.
+        let mut executors: Vec<String> = registry
+            .list()
+            .into_iter()
+            .filter(|spec| spec.content.executes)
+            .inspect(|spec| assert!(spec.content.egress, "{}", spec.name))
+            .map(|spec| spec.name)
+            .collect();
+        executors.sort();
+        assert_eq!(executors, ["script_run", "shell_run"]);
     }
 
     #[test]

@@ -237,6 +237,43 @@ mod tests {
     }
 
     #[test]
+    fn only_programs_launchers_are_classified_as_executing() {
+        // The built-in names that start a program chosen by their arguments.
+        // A new tool that does the same must be added here and in `classify`.
+        let executors = ["shell_run", "script_run", "desktop_launch"];
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new();
+        let cfg = BuiltinConfig::new(dir.path().into(), Arc::new(AllowAll));
+        let tools = build_builtin_tools(cfg, &registry);
+        let mut names: Vec<String> = tools.iter().map(|tool| tool.spec().name.clone()).collect();
+        names.extend(
+            [
+                "desktop_list_apps",
+                "desktop_launch",
+                "desktop_get_state",
+                "desktop_click",
+                "desktop_type",
+                "desktop_set_value",
+                "desktop_key",
+                "desktop_scroll",
+                "desktop_drag",
+            ]
+            .map(str::to_owned),
+        );
+        for name in &names {
+            let class = crate::util::classify(name).unwrap();
+            assert_eq!(class.executes, executors.contains(&name.as_str()), "{name}");
+            assert!(
+                !class.executes || class.egress,
+                "{name} must show its command"
+            );
+        }
+        for name in executors {
+            assert!(names.iter().any(|n| n == name), "{name} was not audited");
+        }
+    }
+
+    #[test]
     fn every_builtin_declares_its_classification() {
         let dir = tempfile::tempdir().unwrap();
         let registry = ToolRegistry::new();
