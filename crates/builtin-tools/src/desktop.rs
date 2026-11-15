@@ -1147,6 +1147,7 @@ impl DesktopTool {
             }
             Op::Type => {
                 let i: TypeIn = parse(input)?;
+                refuse_placeholder(&i.text)?;
                 if i.expect_gen.is_none() {
                     return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
                 }
@@ -1185,6 +1186,7 @@ impl DesktopTool {
             }
             Op::SetValue => {
                 let i: SetValueIn = parse(input)?;
+                refuse_placeholder(&i.value)?;
                 if i.expect_gen.is_none() {
                     return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
                 }
@@ -1377,9 +1379,10 @@ impl Tool for DesktopTool {
 
     /// `desktop_type` / `desktop_set_value` into a field the backend reports
     /// `secure` (a password box): the value is shown masked, with the field
-    /// and window named. Read from the observation the call is bound to; a
-    /// stale generation, an unknown index or a `mark:` point is not known to
-    /// be secure and shows as given.
+    /// and window named, from the run's latest observation (whatever
+    /// generation the call carries; a stale one is refused when it runs). An
+    /// unknown index or a `mark:` point is not known to be secure, and text that
+    /// is not a short single-line token is never masked: it shows as given.
     async fn display_input(&self, ctx: &ToolContext, input: &Value) -> Option<Value> {
         let (key, text) = match self.op {
             Op::Type => ("text", input.get("text")?.as_str()?),
@@ -1389,11 +1392,15 @@ impl Tool for DesktopTool {
         let ElementRef::Index(index) = parse_ref(input.get("index")?).ok()? else {
             return None;
         };
-        let expect_gen = input.get("gen").and_then(Value::as_u64);
+        // Not bound to the call's `gen`: a call with a missing or stale one is
+        // refused when it runs, but its payload must not be shown in clear on
+        // the way (request event, stored record), so the latest observation of
+        // the run decides. At most a short single-line token is hidden.
+        let masked = tool_registry::display_secret(text, "password field")?;
         let (field, window) = {
             let mut states = self.shared.state.lock();
             let st = states.get(&ctx.run_id)?;
-            if expect_gen.is_none_or(|g| Some(g) != st.generation) || !st.secure.contains(&index) {
+            if !st.secure.contains(&index) {
                 return None;
             }
             (
@@ -1405,13 +1412,22 @@ impl Tool for DesktopTool {
             )
         };
         let mut view = input.clone();
-        view[key] = json!(tool_registry::masked_secret(text, "password field"));
+        view[key] = json!(masked);
         view["field"] = json!(field);
         if !window.is_empty() {
             view["window"] = json!(window);
         }
         Some(view)
     }
+}
+
+/// A display placeholder is never a value to type (a model copying its own
+/// masked history, a replay given the mask).
+fn refuse_placeholder(text: &str) -> Result<(), ToolError> {
+    if tool_registry::is_masked_secret(text) {
+        return Err(ToolError::InvalidInput(tool_registry::placeholder_refusal()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1789,14 +1805,42 @@ mod tests {
             // Positive control: any other field shows as typed.
             let other = json!({"index": 1, "gen": 1, key: "plain words"});
             assert!(get(&t, tool).display_input(&ctx, &other).await.is_none());
-            // A stale generation, a missing one and a mark are not known to be secure.
+            // A stale or a missing generation is refused when it runs, but its
+            // payload is masked on the way all the same (the latest observation decides).
             for odd in [
                 json!({"index": 3, "gen": 9, key: SECRET}),
                 json!({"index": 3, key: SECRET}),
-                json!({"index": "mark:1", "gen": 1, key: SECRET}),
             ] {
-                assert!(get(&t, tool).display_input(&ctx, &odd).await.is_none());
+                let shown = get(&t, tool).display_input(&ctx, &odd).await.unwrap();
+                assert!(!shown.to_string().contains(SECRET), "{tool}: {shown}");
             }
+            // A mark is not known to be secure, and text a person must read is
+            // never masked, even in a secure field.
+            for (odd, why) in [
+                (json!({"index": "mark:1", "gen": 1, key: SECRET}), "mark"),
+                (
+                    json!({"index": 3, "gen": 1, key: "rm -rf ~ now"}),
+                    "sentence",
+                ),
+                (
+                    json!({"index": 3, "gen": 1, key: "line1
+line2"}),
+                    "multi-line",
+                ),
+                (json!({"index": 3, "gen": 1, key: "a".repeat(200)}), "long"),
+            ] {
+                assert!(
+                    get(&t, tool).display_input(&ctx, &odd).await.is_none(),
+                    "{tool}: {why}"
+                );
+            }
+            // The tool refuses a display placeholder as a value.
+            let placeholder = tool_registry::masked_secret(SECRET, "password field");
+            let err = get(&t, tool)
+                .call(&ctx, json!({"index": 3, "gen": 1, key: placeholder}))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("placeholder"), "{tool}: {err}");
         }
 
         // The tools still use the real value.
