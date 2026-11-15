@@ -404,7 +404,9 @@ pub fn build_providers(
     let mut cli_built: Vec<String> = Vec::new();
     for s in cfg.providers.iter().filter(|p| p.enabled) {
         if let Some(CliSettings::Cli { engine, .. }) = &s.cli {
-            if cli_provider::engine_spec(engine.as_str()).is_some_and(|spec| spec.runnable) {
+            if cli_provider::engine_spec(engine.as_str())
+                .is_some_and(cli_provider::CliEngineSpec::can_enable)
+            {
                 cli_built.push(s.id.clone());
             } else {
                 warn(&format!(
@@ -775,6 +777,9 @@ pub(crate) struct Shared {
     /// Serialises a global-policy install with the decision to execute an
     /// already-approved tool. Not held across `.await`.
     pub exec_gate: Mutex<()>,
+    /// Cancellation tokens of the native-tools engine processes running per bot,
+    /// so the owner's kill switch can end them at once.
+    pub native_runs: Mutex<HashMap<BotId, Vec<(uuid::Uuid, tokio_util::sync::CancellationToken)>>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]

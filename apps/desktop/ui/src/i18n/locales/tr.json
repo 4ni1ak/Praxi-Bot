@@ -811,7 +811,10 @@
     "computer": "Bilgisayar",
     "browser": "Tarayıcı",
     "local": "Yerel (bu makine)",
-    "runtimeHint": "Şimdilik yalnızca bu makine desteklenir."
+    "runtimeHint": "Şimdilik yalnızca bu makine desteklenir.",
+    "engine": {
+      "title": "Motor"
+    }
   },
   "usage": {
     "title": "Kullanım",
@@ -1238,7 +1241,8 @@
       "medium": "Orta",
       "high": "Yüksek",
       "max": "Maks"
-    }
+    },
+    "otherId": "\"{{id}}\" modelini {{provider}} ile kullan"
   },
   "settingsModal": {
     "title": "Ayarlar",
@@ -1341,7 +1345,9 @@
           "timeout": "Kurulum on dakikayı aştığı için durduruldu. Yeniden denemeden önce çıktıyı kontrol edin.",
           "output_limit": "Kurulum çıktısı sınırı aştığı için kurulum durduruldu. Devam etmek için terminalinizi kullanın.",
           "install_failed": "Kurulum başarıyla tamamlanamadı. Çıktıyı kontrol edin veya komutu terminalinizden çalıştırın."
-        }
+        },
+        "nativeOnly": "Kendi araçlarıyla çalışır: botun Motor ayarlarından seçin.",
+        "experimental": "Deneysel: arayüz gerçek bir kurulumda doğrulanmadı."
       },
       "advanced": "Gelişmiş sağlayıcı ayarları"
     },
@@ -2346,5 +2352,48 @@
     "versionWarning": "Uygulama {{local}}, {{name}} {{host}}: küçük bir fark, her şeyin çalışması beklenir.",
     "noModelKey": "{{name}} sunucusunda henüz model anahtarı yok. Ekranını izleyebilir ve botlarını yönetebilirsin; sunucuya bir anahtar eklenene kadar sohbetlere yanıt gelmez.",
     "useThisComputer": "Bu bilgisayarı kullan"
+  },
+  "botEngine": {
+    "hint": "Bu botun dosya ve komut işlerini kimin yürüttüğü. Praxi'nin kendi araçları (tarayıcı, uygulamalar, sırlar, bellek) her zaman Praxi onaylarıyla çalışır.",
+    "needCli": "Önce yukarıdan bu bota bir kodlama CLI modeli seçip kaydedin (cli: ile başlayan). CLI'yi Ayarlar, Yapay zekâ, Algılanan hesaplar bölümünden açın.",
+    "mode": "Motor kipi",
+    "label": "Dosya ve komutlar: {{cli}} yönetiyor",
+    "governed": {
+      "name": "Praxi yönetir",
+      "text": "Praxi dosya ve komutları kendi araçlarıyla yürütür ve her işlem için size sorar. CLI'nin kendi araçları kapalıdır."
+    },
+    "native": {
+      "name": "{{cli}} kendi araçlarıyla",
+      "text": "{{cli}} çalışma klasöründe dosyaları okur, düzenler ve komut çalıştırır; aşağıdaki onay düzeyine tabidir. Praxi bu işlemleri görmez ve denetlemez."
+    },
+    "experimental": "Deneysel: {{cli}} arayüzü belgelerinden alındı, burada denenmedi. Pürüzler olabilir.",
+    "level": {
+      "title": "Onay düzeyi",
+      "ask": {
+        "name": "Sor",
+        "text": "CLI bir şeyi değiştirmeden önce sorar. Her soru bir onay kartı olarak görünür."
+      },
+      "accept_edits": {
+        "name": "Düzenlemeleri kabul et",
+        "text": "Çalışma klasöründeki dosya düzenlemeleri geçer; komutlar ve diğer her şey yine sorar."
+      },
+      "auto": {
+        "name": "Otomatik",
+        "text": "CLI'nin kendi otomatik gözden geçireni neyin güvenli olduğuna karar verir. Yalnızca böyle bir özelliği olan CLI'lerde."
+      },
+      "full": {
+        "name": "Tam erişim",
+        "text": "Onay istemi yok. CLI sormadan dosyaları değiştirebilir ve komut çalıştırabilir."
+      },
+      "maps": "{{cli}} ayarı: {{setting}}",
+      "notOffered": "{{cli}} bu düzeyi sağlayamaz ({{setting}}); {{applied}} olarak çalışırdı, bu yüzden sunulmuyor."
+    },
+    "workspace": "Çalışma klasörü",
+    "workspacePlaceholder": "Mutlak yol, örneğin C:/Projeler/uygulamam",
+    "workspaceHint": "CLI bu klasörde çalışır. Praxi veri klasörü, ana klasörünüz, sürücü kökleri ve kimlik bilgisi ya da CLI ayar klasörleri reddedilir.",
+    "consentNative": "{{cli}} dosya ve komut işlemlerini bu bilgisayarda, bu klasörde yürüteceğini ve Praxi'nin bunları denetlemeyeceğini anlıyorum.",
+    "consentFull": "Tam erişimin, {{cli}} dosyaları değiştirmeden veya komut çalıştırmadan önce sormayacağı anlamına geldiğini anlıyorum.",
+    "apply": "Motor ayarlarını uygula",
+    "kill": "Durdur ve kapat"
   }
 }

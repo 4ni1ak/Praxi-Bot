@@ -33,6 +33,7 @@ import {
   DialogHeader,
   dialogStyles
 } from "../components/DialogParts";
+import { BotEngineBlock } from "../components/BotEngineBlock";
 import { Modal } from "../components/Modal";
 import { SkillsEditor } from "../components/SkillsEditor";
 import { useToast } from "../components/Toast";
@@ -434,7 +435,13 @@ function BotEditDialog({
               onPendingFallback={setPendingFallback}
             />
           ) : null}
-          {section === "permissions" ? <PermissionFields draft={draft} patch={patch} /> : null}
+          {section === "permissions" ? (
+            <>
+              <PermissionFields draft={draft} patch={patch} />
+              <h3>{t("botForm.engine.title")}</h3>
+              <BotEngineBlock bot={baseline} />
+            </>
+          ) : null}
           {section === "skills" ? (
             skills.error && !skills.data ? (
               <Callout tone="danger" title={t("bots.skills.loadFailed")} role="alert">

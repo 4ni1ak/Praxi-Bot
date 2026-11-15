@@ -2851,14 +2851,8 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
     let t = setup();
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
 
-    for id in [
-        "codex",
-        "chatgpt-plan",
-        "cursor",
-        "opencode",
-        "gemini",
-        "unknown",
-    ] {
+    // CLIs with a native-tools driver can be enabled; they only run with their own tools.
+    for id in ["chatgpt-plan", "unknown"] {
         let r = call(
             &t,
             Method::POST,
@@ -2894,6 +2888,15 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
         !cfg_path.exists(),
         "no providers.toml should be written when all enables were refused"
     );
+    let native = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/enable",
+        Some(json!({ "id": "opencode" })),
+    )
+    .await;
+    assert_eq!(native.status, StatusCode::OK, "{:?}", native.json());
+    assert_eq!(native.json()["id"], "cli:opencode");
 }
 
 #[test]
@@ -3357,6 +3360,90 @@ async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_overri
     assert_eq!(conflict.status, StatusCode::BAD_REQUEST);
     let current = call(&t, Method::GET, &path, None).await;
     assert_eq!(current.json()["runtime"]["computer"], "pc");
+}
+
+#[tokio::test]
+async fn engine_settings_change_only_through_the_owner_endpoint_with_consent() {
+    let t = setup();
+    let workspace = tempfile::tempdir().unwrap();
+    let profile = PROFILE.replace("fake/echo", "cli:claude/sonnet");
+    let engine = format!(
+        "{profile}
+[engine]
+mode = \"native_tools\"
+"
+    );
+    // Create and update refuse an engine table that arrives through the profile.
+    let denied = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": engine})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    let created = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": profile})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let bot = created.json()["id"].as_str().unwrap().to_owned();
+    let path = format!("/v1/bots/{bot}");
+    let denied = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": engine, "expected_version": 1})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    // The engine endpoint needs the consent flag and a safe workspace.
+    let body = |consent: bool| {
+        json!({
+            "mode": "native_tools", "workspace": workspace.path().display().to_string(),
+            "consent_native_tools": consent
+        })
+    };
+    let no = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(body(false)),
+    )
+    .await;
+    assert_eq!(no.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let data = t.state.storage().data_dir().display().to_string();
+    let bad = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(json!({
+            "mode": "native_tools", "workspace": data, "consent_native_tools": true
+        })),
+    )
+    .await;
+    assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ok = call(&t, Method::PUT, &format!("{path}/engine"), Some(body(true))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.json());
+    assert_eq!(ok.json()["config"]["engine"]["approval_level"], "ask");
+    assert!(ok.json()["config"]["engine"]["consent"]["native_tools_at_ms"].is_number());
+    // A profile edit that does not mention the engine keeps it.
+    let kept = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": profile, "expected_version": ok.json()["version"]})),
+    )
+    .await;
+    assert_eq!(kept.status, StatusCode::OK);
+    assert_eq!(kept.json()["config"]["engine"]["mode"], "native_tools");
+    // The kill switch returns the bot to Praxi-governed.
+    let killed = call(&t, Method::POST, &format!("{path}/engine/kill"), None).await;
+    assert_eq!(killed.status, StatusCode::OK);
+    assert_eq!(killed.json()["config"]["engine"]["mode"], "praxi_governed");
 }
 
 // ------------------------------------------------------ POST /v1/runs/stop

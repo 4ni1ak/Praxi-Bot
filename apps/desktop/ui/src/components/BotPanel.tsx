@@ -78,6 +78,7 @@ export function BotPanel({
   bot,
   model,
   preset,
+  engineCli,
   state,
   chats,
   activeChatId,
@@ -97,6 +98,8 @@ export function BotPanel({
   /** `provider/model` the bot runs on. */
   model?: string;
   preset: PresetChoice;
+  /** Name of the CLI that runs this bot's files and shell (native-tools engine), if any. */
+  engineCli?: string | null;
   state?: BotAvatarState;
   chats: readonly BotPanelChat[];
   activeChatId?: string;
@@ -131,6 +134,7 @@ export function BotPanel({
         <div className={styles.meta}>
           <ModelLineText model={model} />
           <PermissionChip preset={preset} />
+          {engineCli ? <span data-testid="bot-engine-label">{t("botEngine.label", { cli: engineCli })}</span> : null}
         </div>
       </header>
 

@@ -252,6 +252,40 @@ export interface paths {
         patch: operations["patch_bot"];
         trace?: never;
     };
+    "/v1/bots/{id}/engine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a bot's engine mode, approval level and workspace (local owner only). */
+        put: operations["put_engine"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/engine/kill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Kill switch: back to Praxi-governed and end the bot's running CLI processes. */
+        post: operations["kill_engine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}/grants": {
         parameters: {
             query?: never;
@@ -1976,6 +2010,19 @@ export interface components {
              */
             version: number;
         };
+        /** @description New engine settings for one bot. */
+        BotEngineInput: {
+            /** @description `ask` (default), `accept_edits`, `auto` or `full`. */
+            approval_level?: string | null;
+            /** @description The owner confirms Full access (no approval prompts) for this bot. */
+            consent_full_access?: boolean;
+            /** @description The owner confirms that a CLI runs this bot's file and shell actions. */
+            consent_native_tools?: boolean;
+            /** @description `praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does). */
+            mode: string;
+            /** @description Absolute workspace folder; required for `native_tools`. */
+            workspace?: string | null;
+        };
         /**
          * @description Create (`POST /v1/bots`) or replace (`PUT /v1/bots/{id}`) a bot.  Exactly
          *     one of `config` / `profile_toml` is required.
@@ -2208,6 +2255,7 @@ export interface components {
             limitation?: string | null;
             login: string;
             minimum_version?: string | null;
+            native?: null | components["schemas"]["CliNativeDto"];
             outdated: boolean;
             path?: string | null;
             version_args: string[];
@@ -2232,6 +2280,22 @@ export interface components {
         };
         CliInstallInput: {
             id: string;
+        };
+        /** @description One approval level for a CLI that runs with its own tools. */
+        CliLevelDto: {
+            applied: string;
+            /** @description `ask`, `accept_edits`, `auto` or `full`. */
+            level: string;
+            /** @description The CLI's own setting this level maps to (shown to the owner). */
+            native_setting: string;
+            /** @description `false` when the CLI has no such mode: it would run as `applied`. */
+            offered: boolean;
+        };
+        /** @description Native-tools mode of a CLI: the CLI runs files and shell itself. */
+        CliNativeDto: {
+            levels: components["schemas"]["CliLevelDto"][];
+            /** @description `verified` (flags confirmed in the installed CLI) or `experimental`. */
+            support: string;
         };
         /** @enum {string} */
         Codec: "jpeg" | "webp";
@@ -5180,6 +5244,94 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_engine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotEngineInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    kill_engine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

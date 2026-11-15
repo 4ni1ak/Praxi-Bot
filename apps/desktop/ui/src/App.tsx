@@ -53,6 +53,7 @@ import {
   botDialogFromScreen,
   botLanding
 } from "./lib/botLanding";
+import { nativeEngineName } from "./lib/botEngine";
 import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { RunBar } from "./components/RunBar";
@@ -642,6 +643,7 @@ function AppShell() {
             <BotPanel
               bot={panelBotView}
               model={panelBotView.executor}
+              engineCli={nativeEngineName(selectedBot.config)}
               chats={panelChats}
               activeChatId={route.kind === "chat" ? route.chatId : undefined}
               onClose={closePanel}
