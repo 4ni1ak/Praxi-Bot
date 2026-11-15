@@ -19,6 +19,7 @@ mod control;
 pub mod control_note;
 mod exec;
 mod history;
+mod knowledge;
 mod memory;
 mod profile;
 mod router;
@@ -43,6 +44,9 @@ pub use config::{
     secret_variants,
 };
 pub use control::{ControlGate, ControlRequest};
+pub use knowledge::{
+    HeuristicKnowledgeDecider, KnowledgeDecider, knowledge_auto_retrieval_available,
+};
 pub use permission_engine::Decision as PolicyDecision;
 pub use profile::{
     BotProfile, ModelsConfig, PermissionsConfig, ProfileError, RouterSettings, ToolFilter,
