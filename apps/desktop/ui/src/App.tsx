@@ -45,6 +45,7 @@ import { AccountMenu, type AccountAction } from "./components/AccountMenu";
 import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
+import { editorSection } from "./lib/botEditor";
 import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
 import {
   backFromChatOpensPanel,
@@ -152,6 +153,11 @@ function AppShell() {
   const [botProfileOpen, setBotProfileOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [addSkillOpen, setAddSkillOpen] = useState(false);
+  // Review hooks (mock mode only): `?screen=botform&section=models`, `?screen=addskill&step=install`.
+  const [review] = useState(() => {
+    const q = isMockMode() && typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    return { section: editorSection(q?.get("section")), installStep: q?.get("step") === "install" };
+  });
   const [newChatBusy, setNewChatBusy] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
   const [botSearch, setBotSearch] = useState<string | null>(null);
@@ -913,6 +919,7 @@ function AppShell() {
         open={botEditOpen && botInView}
         bot={selectedBot}
         skills={botSkills}
+        initialSection={review.section}
         onClose={() => setBotEditOpen(false)}
         onAddSkill={() => setAddSkillOpen(true)}
         onDeleted={() => {
@@ -932,6 +939,7 @@ function AppShell() {
         client={client}
         botName={panelBotView?.name ?? ""}
         skills={botSkills}
+        initialStep={review.installStep ? "install" : undefined}
         onClose={() => setAddSkillOpen(false)}
       />
       <HelpModal

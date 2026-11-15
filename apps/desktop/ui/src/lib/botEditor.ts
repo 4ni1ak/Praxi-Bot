@@ -23,6 +23,11 @@ export const BOT_EDITOR_SECTIONS = [
 
 export type BotEditorSection = (typeof BOT_EDITOR_SECTIONS)[number];
 
+/** A section name from outside (a review URL): only known sections pass. */
+export function editorSection(value: string | null | undefined): BotEditorSection | undefined {
+  return BOT_EDITOR_SECTIONS.find((s) => s === value);
+}
+
 /** Arrow / Home / End navigation of the section list (wraps around). */
 export function stepSection(
   current: BotEditorSection,

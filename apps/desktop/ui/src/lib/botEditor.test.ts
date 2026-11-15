@@ -10,6 +10,7 @@ import {
   dirtySections,
   draftsEqual,
   editorProblems,
+  editorSection,
   fallbackList,
   isEditorDirty,
   permissionTone,
@@ -92,6 +93,13 @@ test("section keyboard navigation wraps and ignores other keys", () => {
   assert.equal(stepSection("skills", "End"), "advanced");
   assert.equal(stepSection("skills", "Enter"), null);
   assert.equal(new Set(BOT_EDITOR_SECTIONS).size, BOT_EDITOR_SECTIONS.length);
+});
+
+test("only known section names are accepted from a URL", () => {
+  assert.equal(editorSection("models"), "models");
+  assert.equal(editorSection("advanced"), "advanced");
+  assert.equal(editorSection("general"), undefined);
+  assert.equal(editorSection(null), undefined);
 });
 
 test("fallback models: ordered, de-duplicated, add and remove", () => {

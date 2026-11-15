@@ -171,9 +171,7 @@ function ProfileDialog({
             <SettingRow
               title={t(`botForm.preset.${draft.preset}.name`)}
               description={t(`botForm.preset.${draft.preset}.hint`)}
-            >
-              <PermissionChip preset={draft.preset} />
-            </SettingRow>
+            />
             {draft.preset === "custom"
               ? PERMISSION_CATEGORIES.map((c) => (
                   <SettingRow key={c} title={t(`botForm.category.${c}`)}>
