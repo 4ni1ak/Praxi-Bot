@@ -135,6 +135,33 @@ const CHATS: Chat[] = [
   }
 ];
 
+/** An aggregator with 400+ models (design review of the model picker): a few curated, mostly the long tail. */
+const OPENROUTER_MODELS = (() => {
+  const makers = ["meta-llama", "mistralai", "qwen", "deepseek", "cohere", "nousresearch", "perplexity", "x-ai", "amazon", "microsoft"];
+  // Paid and free (`:free`) models; the picker ranks them from the data, nothing is flagged here.
+  const out = [
+    { ...mockModel("anthropic/claude-sonnet-5.5", "Claude Sonnet 5.5", null) },
+    { ...mockModel("openai/gpt-5-mini", "GPT-5 Mini", null) },
+    { ...mockModel("google/gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", null) },
+    { ...mockModel("deepseek/deepseek-chat", "DeepSeek Chat", null) },
+    { ...mockModel("deepseek/deepseek-r1:free", "DeepSeek R1 (free)", null), note: "free" },
+    { ...mockModel("meta-llama/llama-4-maverick:free", "Llama 4 Maverick (free)", null), note: "free" },
+    { ...mockModel("qwen/qwen3-235b-a22b:free", "Qwen3 235B (free)", null), note: "free" },
+    { ...mockModel("google/gemini-2.5-flash-lite:free", "Gemini 2.5 Flash-Lite (free)", null), note: "free" },
+    { ...mockModel("mistralai/mistral-small-3.2:free", "Mistral Small 3.2 (free)", null), note: "free" }
+  ];
+  const tail = [
+    { ...mockModel("openai/text-embedding-3-large", "Text Embedding 3 Large", null), kind: "embedding" },
+    { ...mockModel("openai/gpt-4o-2024-08-06", "GPT-4o (2024-08-06)", null) },
+    { ...mockModel("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro (preview)", null), note: "preview" },
+    { ...mockModel("openai/tts-1-hd", "TTS 1 HD", null), kind: "audio" }
+  ];
+  for (let i = 0; i < 406; i += 1) {
+    const maker = makers[i % makers.length];
+    out.push({ ...mockModel(`${maker}/model-${Math.floor(i / makers.length) + 1}b-${i % 3 === 0 ? "instruct" : "chat"}`, "", null) });
+  }
+  return [...out, ...tail].map((m) => ({ ...m, display_name: m.display_name || m.id.split("/")[1].replace(/-/g, " ") }));
+})();
 const PROVIDERS: ProvidersDto = {
   active: ["anthropic", "openai", "gemini", "ollama"],
   default_provider: "anthropic",
@@ -163,7 +190,7 @@ const PROVIDERS: ProvidersDto = {
       id: "openrouter",
       auth: "api_key_env",
       base_url: "https://openrouter.ai/api/v1",
-      configured: false,
+      configured: true,
       key_env: "OPENROUTER_API_KEY",
       kind: "openai_compatible",
       tools: true,
@@ -190,11 +217,17 @@ const PROVIDERS: ProvidersDto = {
       enabled: true,
       has_key: true,
       is_default: true,
-      models: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"],
+      models: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-1", "claude-sonnet-5-0", "claude-opus-4-1-20250805", "claude-3-5-haiku-20241022"],
       model_details: [
-        mockModel("claude-sonnet-5-5", "Claude Sonnet 5.5", 1),
-        mockModel("claude-opus-5-5", "Claude Opus 5.5", 2),
-        mockModel("claude-haiku-5-5", "Claude Haiku 5.5", 3)
+        mockModel("claude-sonnet-5-5", "Claude Sonnet 5.5", null),
+        mockModel("claude-opus-5-5", "Claude Opus 5.5", null),
+        mockModel("claude-haiku-5-5", "Claude Haiku 5.5", null),
+        mockModel("claude-fable-5-2", "Claude Fable 5.2", null),
+        mockModel("claude-fable-5-1", "Claude Fable 5.1", null),
+        mockModel("claude-opus-5-1", "Claude Opus 5.1", null),
+        mockModel("claude-sonnet-5-0", "Claude Sonnet 5", null),
+        mockModel("claude-opus-4-1-20250805", "Claude Opus 4.1", null),
+        mockModel("claude-3-5-haiku-20241022", "Claude Haiku 3.5", null)
       ]
     },
     {
@@ -205,9 +238,11 @@ const PROVIDERS: ProvidersDto = {
       enabled: true,
       has_key: true,
       is_default: false,
-      models: ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-pro-preview", "antigravity-preview-05-2026", "deep-research-pro-preview"],
+      models: ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-3.5-flash", "antigravity-preview-05-2026", "deep-research-pro-preview"],
       model_details: [
-        mockModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", 1),
+        mockModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", null),
+        mockModel("gemini-2.5-pro", "Gemini 2.5 Pro", null),
+        mockModel("gemini-3.5-flash", "Gemini 3.5 Flash", null),
         mockModel("gemini-2.5-flash", "Gemini 2.5 Flash", null),
         mockModel("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", null),
         mockModel("gemini-3.1-pro-preview", "Gemini 3.1 Pro (preview)", null),
@@ -223,13 +258,44 @@ const PROVIDERS: ProvidersDto = {
       enabled: true,
       has_key: false,
       is_default: false,
-      models: ["default", "sonnet", "opus", "haiku"],
+      models: ["default", "fable", "opus", "sonnet", "haiku"],
       model_details: [
-        mockModel("default", "Claude Code default", 1),
-        mockModel("sonnet", "Claude Sonnet", 2),
-        mockModel("opus", "Claude Opus", 3),
-        mockModel("haiku", "Claude Haiku", 4)
+        mockModel("default", "Claude Code default", null),
+        mockModel("fable", "Claude Fable", null),
+        mockModel("opus", "Claude Opus", null),
+        mockModel("sonnet", "Claude Sonnet", null),
+        mockModel("haiku", "Claude Haiku", null)
       ]
+    },
+    {
+      id: "cli:opencode",
+      active: true,
+      custom: false,
+      default_model: null,
+      enabled: true,
+      has_key: false,
+      is_default: false,
+      models: ["default", "opencode/big-pickle", "opencode/grok-code", "google/gemini-2.5-pro", "anthropic/claude-sonnet-4-5", "openai/gpt-5", "deepseek/deepseek-chat"],
+      model_details: [
+        mockModel("default", "OpenCode default", null),
+        { ...mockModel("opencode/big-pickle", "Big Pickle (free)", null), note: "free" },
+        { ...mockModel("opencode/grok-code", "Grok Code Fast (free)", null), note: "free" },
+        mockModel("google/gemini-2.5-pro", "Gemini 2.5 Pro", null),
+        mockModel("anthropic/claude-sonnet-4-5", "Claude Sonnet 4.5", null),
+        mockModel("openai/gpt-5", "GPT-5", null),
+        mockModel("deepseek/deepseek-chat", "DeepSeek Chat", null)
+      ]
+    },
+    {
+      id: "openrouter",
+      active: true,
+      custom: false,
+      default_model: null,
+      enabled: true,
+      has_key: true,
+      is_default: false,
+      models: OPENROUTER_MODELS.map((m) => m.id),
+      model_details: OPENROUTER_MODELS
     },
     {
       id: "ollama",
@@ -239,7 +305,7 @@ const PROVIDERS: ProvidersDto = {
       enabled: true,
       has_key: false,
       is_default: false,
-      models: ["qwen3:8b", "llama3.2"]
+      models: ["qwen3:8b", "llama3.2", "qwen3:32b", "llama3.3:70b"]
     }
   ]
 };
@@ -247,6 +313,7 @@ const PROVIDERS: ProvidersDto = {
 function mockModel(id: string, display_name: string, rank: number | null) {
   return { id, display_name, kind: "chat", recommended: rank !== null, recommended_rank: rank, deprecated: false, note: null };
 }
+
 
 const DETECTED_PROVIDERS: DetectedProviderDto[] = [
   {

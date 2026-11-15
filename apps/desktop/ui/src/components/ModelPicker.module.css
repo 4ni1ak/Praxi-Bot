@@ -237,12 +237,31 @@
   text-overflow: ellipsis;
 }
 
-.allToggle {
+/* source label (right-aligned on every row): where the model runs and who bills it */
+.source {
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* the two top-level sections (Coding CLIs / API providers) */
+.sectionLabel {
+  padding: var(--space-4) var(--space-3) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+/* collapsible provider / engine header */
+.groupHead {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-2);
   min-height: var(--space-8);
-  margin-top: var(--space-1);
   padding: var(--space-1) var(--space-3);
   border: none;
   border-radius: calc(var(--radius-md) * 1.25);
@@ -250,27 +269,77 @@
   color: var(--color-text-secondary);
   font-family: inherit;
   font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  text-align: left;
   cursor: pointer;
 }
 
-.allToggle:hover,
-.allToggle:focus-visible {
+.groupHead:hover,
+.groupHead:focus-visible {
   outline: none;
   background-color: var(--color-surface-active);
   color: var(--color-text);
 }
 
-.allToggle:focus-visible {
+.groupHead:focus-visible {
   box-shadow: inset 0 0 0 var(--size-border-thick) var(--color-focus);
 }
 
-.allToggle > svg {
+.groupHead > svg:first-child {
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
   color: var(--color-text-faint);
   transition: transform 0.15s ease;
 }
 
-.allToggle > svg.chevOpen {
-  transform: rotate(180deg);
+.groupHead > svg.chevOpen {
+  transform: rotate(90deg);
+}
+
+.groupName {
+  flex: 1;
+  min-width: var(--space-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupCount {
+  margin-left: auto;
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+}
+
+/* "Show all N" under a group */
+.showAll {
+  display: flex;
+  align-items: center;
+  min-height: var(--space-8);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: calc(var(--radius-md) * 1.25);
+  background: none;
+  color: var(--color-accent-text);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.showAll:hover,
+.showAll:focus-visible {
+  outline: none;
+  background-color: var(--color-surface-active);
+}
+
+.showAll:focus-visible {
+  box-shadow: inset 0 0 0 var(--size-border-thick) var(--color-focus);
+}
+
+.noModels {
+  margin: var(--space-0);
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
 }

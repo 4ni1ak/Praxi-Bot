@@ -54,11 +54,45 @@ export function providerBrand(providerId: string): ProviderBrand {
   };
 }
 
-/** The product a model belongs to; falls back to the company logo. */
+const MAKER_PREFIX: Record<string, string> = {
+  anthropic: "anthropic",
+  openai: "openai",
+  google: "googlegemini",
+  deepseek: "deepseek",
+  mistralai: "mistralai",
+  mistral: "mistralai"
+};
+
+/** The model's maker (what the row icon shows), from the id; falls back to the provider's company. */
 export function productBrandKey(providerId: string, model: string): string {
-  const m = model.toLowerCase();
+  const slash = model.lastIndexOf("/");
+  const m = model.slice(slash + 1).toLowerCase();
   if (m.startsWith("claude")) return "claude";
   if (/^(gpt|chatgpt|codex)/.test(m) || /^o\d/.test(m)) return "openai";
   if (m.startsWith("gemini")) return "googlegemini";
+  if (slash > 0) {
+    const maker = MAKER_PREFIX[model.slice(0, model.indexOf("/")).toLowerCase()];
+    if (maker) return maker;
+  }
   return providerBrand(providerId).company;
+}
+
+const API_LABELS: Record<string, string> = {
+  anthropic: "Anthropic API",
+  openai: "OpenAI API",
+  gemini: "Google API",
+  "gemini-openai-compat": "Google API",
+  openrouter: "OpenRouter",
+  ollama: "Ollama (local)",
+  lmstudio: "LM Studio (local)",
+  deepseek: "DeepSeek API"
+};
+
+/** Where a model runs and who bills it: "Google API", "OpenRouter", "Claude Code CLI". */
+export function sourceLabel(providerId: string): string {
+  if (providerId.startsWith("cli:")) {
+    const bare = providerId.slice(4);
+    return `${CLI_LABELS[bare] ?? pretty(providerId)} CLI`;
+  }
+  return API_LABELS[providerId] ?? pretty(providerId);
 }
