@@ -221,8 +221,18 @@ review it again. These commands are user actions, never model tools.
 
 
 `fs_edit` is a private read, including failed and no-op edits: its match counts
-and specific errors reveal file content. Normal editing retains those diagnostics;
-the following egress now asks.
+and specific errors reveal file content. An ordinary edit therefore taints the
+run even when the file was just written by the model or the text was pasted by
+the user. Narrowing that would reopen the match-count oracle, so a later egress
+asks. The cost is an edit that did not follow a private read.
+
+A tainted run asks before every file-writing tool, once per call. That includes
+a shell or a script, a skill write, a document writer, and a git commit or
+branch. A standing grant, the read shortcut, a Full preset, and
+`allow_egress_after_reads` do not cover the ask. The card shows the path and
+the content or the diff. A clean run is unchanged. The shell card shows the
+command; it does not parse redirections. An approved shell still runs with the
+user's rights.
 
 File tools cannot modify anything under the daemon data directory, even with
 an exact file grant. Existing path resolution checks also apply to move
@@ -230,8 +240,14 @@ endpoints, symlink targets, and checkpoint restore destinations. Inert output
 stores (`files`, `spill`, `screenshots`, `logs`, and the daemon-owned checkpoint
 blobs) remain readable; all other stores default to protected. Skills and
 workflows must use their owning tools. The same daemon boundary is enforced
-for document/converter output paths (including CSV output). Saved workflows are treated as untrusted
-private input before replay, including legacy files without a trust proof.
+for document/converter output paths (including CSV output), both in the
+permission decision and in the writer itself.
+
+A workflow this daemon saved from a run that read no untrusted content replays
+without a blanket taint. The proof is a hash of the file bytes in
+`workflows/.praxi-clean.json`, which a state transfer does not carry. An
+imported workflow, a hand edit, a workflow saved from a tainted run, or a file
+with no proof replays as untrusted private input before its first step.
 
 Native CLI authority outside the daemon directory is protected too: the user's
 `.codex`, `.claude`, and `.claude.json`, plus the configured `CODEX_HOME` and
