@@ -95,6 +95,7 @@ function commandsFor(label: string): string[] {
 const UNGRANTED = ["autostart_supported", "get_monitors_geometry", "is_human_driving", "overlay_clear", "overlay_show_target"];
 
 const widgetCommands = [
+  "dismiss_stop_widget",
   "get_control_state",
   "give_back_control",
   "pause_bot_run",

@@ -2455,6 +2455,266 @@
         ]
       }
     },
+    "/v1/mcp/servers/{name}/auth/callback": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Finish a pending sign-in with a pasted redirect URL (host without a browser).",
+        "operationId": "complete_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpAuthCallback"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/cancel": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Close the one-shot listener and cancel a pending token exchange.",
+        "operationId": "cancel_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/logout": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Cancel sign-in and forget stored tokens before disconnecting.",
+        "operationId": "logout_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/start": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Start a sign-in from an authenticated local user's explicit action.",
+        "operationId": "start_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthStart"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/status": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Read authentication state, never credentials.",
+        "operationId": "mcp_auth_status",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp/servers/{name}/reconnect": {
       "post": {
         "tags": [
@@ -7009,6 +7269,48 @@
           }
         }
       },
+      "McpAuthCallback": {
+        "type": "object",
+        "description": "Body of `POST /v1/mcp/servers/{name}/auth/callback`.",
+        "required": [
+          "redirect_url"
+        ],
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "description": "The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "McpAuthStart": {
+        "type": "object",
+        "description": "Browser destination for a user-started, five-minute sign-in.",
+        "required": [
+          "authorization_url",
+          "expires_in"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "McpAuthState": {
+        "type": "string",
+        "description": "Authentication state, independent of transport errors.",
+        "enum": [
+          "signed_out",
+          "signing_in",
+          "signed_in",
+          "auth_required"
+        ]
+      },
       "McpCatalogEntryDto": {
         "type": "object",
         "description": "An entry of the curated MCP catalog (`GET /v1/mcp/catalog`).",
@@ -7173,6 +7475,41 @@
           }
         }
       },
+      "McpOAuthConfig": {
+        "type": "object",
+        "description": "OAuth configuration contains no credential values.",
+        "properties": {
+          "allow_loopback_http": {
+            "type": "boolean"
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_metadata_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_secret_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The authorization server a pre-registered client is bound to;\nrequired with `client_id` / `client_secret_ref`."
+          }
+        },
+        "additionalProperties": false
+      },
       "McpRequiredSecretDto": {
         "type": "object",
         "description": "A secret the user must provide to install a catalog entry.",
@@ -7317,6 +7654,17 @@
           "name": {
             "type": "string",
             "description": "Server name (the `<server>` of `mcp:<server>/<tool>`)."
+          },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "Public OAuth identity and secret names only."
+              }
+            ]
           },
           "secret_env": {
             "type": "object",
@@ -7467,6 +7815,17 @@
               "null"
             ],
             "description": "Server name; `id` is accepted as an alias.  Required on POST; on PUT the\npath wins (a different name in the body is rejected)."
+          },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "HTTP OAuth identity; client secrets are secret-store references."
+              }
+            ]
           },
           "secret_env": {
             "type": "object",
@@ -7624,6 +7983,17 @@
             ],
             "description": "Server name; `id` is accepted as an alias.  The path wins (a different\nname in the body is rejected)."
           },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "HTTP OAuth identity; null clears it."
+              }
+            ]
+          },
           "secret_env": {
             "type": [
               "object",
@@ -7701,6 +8071,7 @@
         "type": "string",
         "description": "Connection state of an MCP server.",
         "enum": [
+          "auth_required",
           "connected",
           "connecting",
           "disconnected",

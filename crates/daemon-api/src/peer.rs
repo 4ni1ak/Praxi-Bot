@@ -123,6 +123,20 @@ fn normalize_deny_path(path: &str) -> String {
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management, MCP management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if check_path
+        .strip_prefix("/v1/mcp/servers/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(_, rest)| rest == "auth" || rest.starts_with("auth/"))
+    {
+        return Some("MCP sign-in is a host-local user action, forbidden to peers");
+    }
+    // MCP configuration decides which secrets are sent where and which
+    // commands run on this host: create / update / delete / reconnect are
+    // host-local user actions for every peer role (no card or ADR grants a
+    // peer role MCP management).  Reading the list and tools stays allowed.
+    if *method != Method::GET && is_mcp_servers_path(check_path) {
+        return Some("MCP server management is a host-local user action, forbidden to peers");
+    }
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
     }
@@ -130,6 +144,17 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
         return Some("MCP server management is only allowed for the local user");
     }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
+}
+
+/// An encoded `/` (`%2F`) inside a path that is under `/v1/mcp`.
+fn encoded_slash_in_mcp_path(raw: &str, decoded: &str) -> bool {
+    is_mcp_path(decoded) && raw.to_ascii_lowercase().contains("%2f")
+}
+
+/// `/v1/mcp/servers` or anything below it (decoded and slash-normalized).
+fn is_mcp_servers_path(path: &str) -> bool {
+    path.strip_prefix("/v1/mcp/servers")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// `POST /v1/control/{request_id}` answers an overlay question: local only.
@@ -157,6 +182,7 @@ fn is_bot_skills_path(path: &str) -> bool {
         .is_some_and(|id| !id.is_empty() && !id.contains('/'))
 }
 
+#[allow(clippy::too_many_lines)] // one ordered list of peer refusals
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(peer) = req.extensions().get::<PeerIdentity>().cloned() else {
         return ApiError::forbidden("paired peer identity required").into_response();
@@ -170,6 +196,11 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     let check_path = normalize_deny_path(&path);
     if let Some(why) = host_local_denial(req.method(), &check_path) {
         return ApiError::forbidden(why).into_response();
+    }
+    // An encoded `/` inside an MCP path (e.g. in the server-name segment) is
+    // never legitimate: refuse it for every method.
+    if encoded_slash_in_mcp_path(req.uri().path(), &check_path) {
+        return ApiError::forbidden("encoded slash in an MCP path").into_response();
     }
     let denied = peer.role != PeerRole::Desktop
         && (host_file_review(&check_path)

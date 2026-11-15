@@ -167,7 +167,7 @@ fn main() {
                 println!(
                     r#"{{"loggedIn": true, "email": "alice@example.com", "accessToken": "SUPER_SECRET_TOKEN_DO_NOT_LEAK", "orgName": "Acme Corp"}}"#
                 );
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!(r#"{{"loggedIn": false}}"#);
             } else {
                 println!(r#"{{"loggedIn": true, "email": "claude@example.com"}}"#);
@@ -176,7 +176,7 @@ fn main() {
         "login status" => {
             if std::env::var("FAKE_CODEX_GARBAGE_STDERR").is_ok() {
                 eprintln!("some garbage traceback without login status");
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!("Not logged in");
             } else {
                 println!("Logged in using ChatGPT");
@@ -188,7 +188,7 @@ fn main() {
             } else if std::env::var("FAKE_CURSOR_PLAIN").is_ok() {
                 eprintln!("flag --format not recognized");
                 std::process::exit(1);
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!(r#"{{"status": "unauthenticated"}}"#);
             } else {
                 println!(r#"{{"status": "authenticated"}}"#);
@@ -197,7 +197,7 @@ fn main() {
         "status" => {
             if let Ok(text) = std::env::var("FAKE_CURSOR_TEXT") {
                 println!("{text}");
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!("not logged in");
             } else {
                 println!("authenticated");

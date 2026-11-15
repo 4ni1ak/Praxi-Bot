@@ -4514,19 +4514,23 @@ dependencies = [
  "futures",
  "globset",
  "http",
+ "oauth2",
  "parking_lot",
  "permission-engine",
  "process-wrap",
+ "reqwest 0.13.5",
  "rmcp",
  "secret-store",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "toml 0.8.2",
  "tool-registry",
  "tracing",
+ "url",
  "windows 0.62.2",
 ]
 
@@ -5259,6 +5263,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "oauth2"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
+dependencies = [
+ "base64 0.21.7",
+ "chrono",
+ "getrandom 0.2.17",
+ "http",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]
@@ -6727,6 +6750,7 @@ version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d24a7e92f4bcaa36b97fa93c4fa7ca8f3e669eced949345b3462dba333c7f909"
 dependencies = [
+ "async-trait",
  "base64 0.23.1",
  "bytes",
  "chrono",
@@ -6734,6 +6758,7 @@ dependencies = [
  "http",
  "indexmap 2.14.2",
  "libc",
+ "oauth2",
  "pastey",
  "pin-project-lite",
  "process-wrap",
@@ -6748,6 +6773,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
  "which",
 ]

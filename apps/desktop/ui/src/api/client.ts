@@ -25,6 +25,8 @@ import type {
   InputBatch,
   InputResult,
   McpCatalogEntry,
+  McpAuthState,
+  McpAuthStart,
   McpServer,
   McpServerPatch,
   McpServerConfig,
@@ -61,7 +63,9 @@ import type {
   RestoreResponse,
   BotSkills,
   PutBotSkillsInput,
-  SkillsCatalog
+  SkillsCatalog,
+  StopRunsInput,
+  StopRunsResponse
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -102,7 +106,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -121,7 +125,7 @@ export class ApiClient {
   private async send(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -141,7 +145,8 @@ export class ApiClient {
       res = await fetch(url, {
         method,
         headers,
-        body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        signal: opts.signal
       });
     } catch (e) {
       throw new ApiError(
@@ -228,6 +233,13 @@ export class ApiClient {
   }
   cancelRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/cancel`);
+  }
+  /**
+   * One user Stop (`POST /v1/runs/stop`). Idempotent per `stop_id`: the daemon fixes the
+   * target set on first receipt, so a retry must reuse the same id. `signal` bounds one attempt.
+   */
+  stopRuns(body: StopRunsInput, signal?: AbortSignal): Promise<StopRunsResponse> {
+    return this.request("POST", "/runs/stop", { body, signal });
   }
   resumeRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/resume`);
@@ -323,12 +335,12 @@ export class ApiClient {
     });
   }
   /** Release an owned screen takeover or clear a legacy latch. */
-  releaseControl(req?: ReleaseRequest): Promise<ControlStateDto> {
-    return this.request("POST", "/control/release", req ? { body: req } : {});
+  releaseControl(req?: ReleaseRequest, signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/release", req ? { body: req, signal } : { signal });
   }
   /** Local Stop override: interrupts any active takeover and keeps the pause latch. */
-  overrideControl(): Promise<ControlStateDto> {
-    return this.request("POST", "/control/override");
+  overrideControl(signal?: AbortSignal): Promise<ControlStateDto> {
+    return this.request("POST", "/control/override", { signal });
   }
   /** Local user recovery: clears an interrupted/recovered latch after key reset. */
   recoverControl(): Promise<ControlStateDto> {
@@ -483,6 +495,24 @@ export class ApiClient {
   }
   mcpCatalog(): Promise<McpCatalogEntry[]> {
     return this.request("GET", "/mcp/catalog");
+  }
+  startMcpAuth(name: string): Promise<McpAuthStart> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/start`);
+  }
+  /** Finish a sign-in with the redirect address pasted from the browser (headless daemon). */
+  completeMcpAuth(name: string, redirectUrl: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/callback`, {
+      body: { redirect_url: redirectUrl }
+    });
+  }
+  cancelMcpAuth(name: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/cancel`);
+  }
+  mcpAuthStatus(name: string): Promise<McpAuthState> {
+    return this.request("GET", `/mcp/servers/${encodeURIComponent(name)}/auth/status`);
+  }
+  logoutMcpAuth(name: string): Promise<McpAuthState> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/logout`);
   }
   /** Store a secret (write-only: the daemon never returns the value). */
   setSecret(name: string, value: string): Promise<void> {
