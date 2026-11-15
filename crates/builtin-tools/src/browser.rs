@@ -1850,6 +1850,8 @@ pub(crate) mod fake {
         pub targets: PMutex<std::collections::HashMap<String, FieldTarget>>,
         /// The origin the browser reports at insertion time when it differs
         /// from the target's (a navigation after the card was shown).
+        #[allow(clippy::option_option)]
+        // outer: "override set", inner: the reported origin
         pub origin_at_insert: PMutex<Option<Option<String>>>,
         /// What actually reached the page through `fill_secret`.
         pub typed_secrets: PMutex<Vec<String>>,

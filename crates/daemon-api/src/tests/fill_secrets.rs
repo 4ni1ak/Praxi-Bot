@@ -172,7 +172,7 @@ async fn the_owner_manages_secrets_and_no_response_or_audit_row_carries_a_value(
 
     let del = call(&r.t, Method::DELETE, "/v1/fill-secrets/login/github", None).await;
     assert_eq!(del.status, StatusCode::NO_CONTENT);
-    assert!(r.secrets.list().unwrap().is_empty());
+    assert_eq!(r.secrets.list().unwrap().len(), 0);
 
     assert!(
         !seen.contains(VALUE) && !seen.contains("Correct-Horse"),
@@ -227,8 +227,8 @@ async fn bad_names_origins_and_grants_are_refused() {
         let resp = create(&r, name, &origins).await;
         assert_eq!(resp.status, expect, "{name} {origins:?}: {:?}", resp.json());
     }
-    assert!(r.secrets.list().unwrap().is_empty());
-    assert!(r.store.writes.lock().is_empty());
+    assert_eq!(r.secrets.list().unwrap().len(), 0);
+    assert_eq!(r.store.writes.lock().len(), 0);
 
     assert_eq!(
         create(&r, "ok/name", &["https://a.test"]).await.status,
@@ -322,18 +322,14 @@ async fn every_peer_role_is_refused_on_every_spelling_of_every_fill_route() {
         crate::PeerRole::Host,
     ] {
         for (method, path, body) in &routes {
-            let mut b = Request::builder().method(method.clone()).uri(path.as_str());
-            let req = match body {
-                Some(v) => b
-                    .header("content-type", "application/json")
-                    .body(Body::from(v.to_string())),
-                None => {
-                    b = b.header("x", "y");
-                    b.body(Body::empty())
-                }
+            let b = Request::builder().method(method.clone()).uri(path.as_str());
+            let mut req = if let Some(v) = body {
+                b.header("content-type", "application/json")
+                    .body(Body::from(v.to_string()))
+            } else {
+                b.body(Body::empty())
             }
             .unwrap();
-            let mut req = req;
             req.extensions_mut().insert(crate::PeerIdentity {
                 key: "peer-key".into(),
                 role,
@@ -357,7 +353,7 @@ async fn every_peer_role_is_refused_on_every_spelling_of_every_fill_route() {
     assert_eq!(r.store.writes.lock().len(), before_writes);
     assert_eq!(r.secrets.list().unwrap().len(), 1);
     assert_eq!(r.secrets.grants().len(), 1);
-    assert!(r.secrets.list().unwrap()[0].origins == ["https://github.com"]);
+    assert_eq!(r.secrets.list().unwrap()[0].origins, ["https://github.com"]);
     // Control: the local owner still reaches the route.
     assert_eq!(
         call(&r.t, Method::GET, "/v1/fill-secrets", None)
@@ -408,5 +404,5 @@ async fn the_generic_secrets_route_cannot_touch_the_fill_namespace() {
             resp.status()
         );
     }
-    assert!(r.store.inner.list_names().unwrap().is_empty());
+    assert_eq!(r.store.inner.list_names().unwrap().len(), 0);
 }

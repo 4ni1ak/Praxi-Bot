@@ -3,6 +3,7 @@
 //! standing grants, restart mid-approval, and the redactor.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use builtin_tools::browser::{BrowserDriver, FieldTarget, Wait};
@@ -195,10 +196,7 @@ fn sinks_text(r: &Rig) -> String {
             s.push_str(&m.content);
         }
     }
-    s.push_str(&format!(
-        "{:?}",
-        r.env.storage.list_audit(r.env.user).unwrap()
-    ));
+    let _ = write!(s, "{:?}", r.env.storage.list_audit(r.env.user).unwrap());
     for run in r.env.storage.list_runs(r.env.user).unwrap() {
         for st in r.env.storage.list_steps(run.id).unwrap() {
             s.push_str(&st.input.to_string());

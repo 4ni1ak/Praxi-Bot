@@ -542,15 +542,16 @@ async fn secrets_list_shows_names_and_places_never_values() {
 
 // ------------------------------------------------------------------ desktop
 
-fn desktop_rig(
-    identity: Option<&str>,
-    allowed: &[&str],
-) -> (
+/// What a desktop test needs: the data dir guard, the fake backend, the secrets
+/// service and the tools built over them.
+type DesktopRig = (
     tempfile::TempDir,
     Arc<FakeDesktop>,
     Arc<FillSecrets>,
     Vec<Arc<dyn Tool>>,
-) {
+);
+
+fn desktop_rig(identity: Option<&str>, allowed: &[&str]) -> DesktopRig {
     let dir = tempfile::tempdir().unwrap();
     let store: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
     let secrets = Arc::new(FillSecrets::in_memory(store));
