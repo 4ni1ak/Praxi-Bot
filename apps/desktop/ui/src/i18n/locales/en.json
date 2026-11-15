@@ -288,6 +288,10 @@
       }
     },
     "approval": {
+      "steps": {
+        "title": "Run these {{count}} browser steps?",
+        "hidden": "hidden (secret field)"
+      },
       "title": "Approval needed",
       "sendTitle": "Send on your behalf?",
       "countdown": "Auto-deny in {{seconds}} s",

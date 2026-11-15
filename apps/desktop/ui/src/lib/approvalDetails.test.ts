@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatFiring, scheduleDetails } from "./approvalDetails.ts";
+import { browserSteps, formatFiring, scheduleDetails } from "./approvalDetails.ts";
 
 const card = {
   kind: "schedule",
@@ -72,4 +72,21 @@ test("a firing keeps the wall-clock time of its own offset", () => {
   assert.match(formatFiring("2026-11-13T10:30:00+03:00", "en"), /10:30$/);
   assert.match(formatFiring("2026-11-13T09:00:00-05:00", "en"), /09:00$/);
   assert.equal(formatFiring("garbage"), "garbage");
+});
+
+test("browserSteps reads every row and rejects other cards", () => {
+  const rows = browserSteps({
+    kind: "browser_steps",
+    steps: [
+      { n: 1, action: "fill", target: 'e1 textbox "Email"', value: "a@b.c", hidden: false },
+      { n: 2, action: "fill", target: 'e2 textbox "Password"', value: "(hidden)", hidden: true },
+      { n: 3, action: "click", target: 'e3 button "Sign in"', value: null, hidden: false }
+    ]
+  });
+  assert.equal(rows?.length, 3);
+  assert.equal(rows?.[1].hidden, true);
+  assert.equal(rows?.[2].value, null);
+  assert.equal(browserSteps({ kind: "schedule" }), null);
+  assert.equal(browserSteps({ kind: "browser_steps", steps: [{ action: "fill" }] }), null);
+  assert.equal(browserSteps(null), null);
 });

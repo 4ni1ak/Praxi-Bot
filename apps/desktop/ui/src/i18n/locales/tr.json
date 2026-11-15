@@ -288,6 +288,10 @@
       }
     },
     "approval": {
+      "steps": {
+        "title": "Bu {{count}} tarayıcı adımı çalıştırılsın mı?",
+        "hidden": "gizli (parola alanı)"
+      },
       "title": "Onay gerekiyor",
       "sendTitle": "Senin adına gönderilsin mi?",
       "countdown": "{{seconds}} sn içinde otomatik reddedilir",
