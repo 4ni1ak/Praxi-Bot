@@ -256,6 +256,7 @@ export type DaemonEvent =
       target_id: string;
       reason?: ViewReason | null;
     }
+  | { type: "view_targets_changed" }
   | { type: "error"; run_id: string; message: string; recoverable: boolean }
   | { type: "mcp_server_changed"; name: string; status: McpStatus }
   | {

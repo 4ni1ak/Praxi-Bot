@@ -1781,6 +1781,18 @@
     "targetsLabel": "Hedef ekran",
     "checkingTargets": "Ekranlar denetleniyor…",
     "queryFailed": "Ekran listesi yüklenemedi. Otomatik olarak yeniden denenecek.",
+    "loadingPreview": "İlk görüntü yükleniyor…",
+    "noScreen": {
+      "desktop_off": "masaüstü denetimi kapalı",
+      "unsupported_platform": "bu platformda ekran yakalama yok",
+      "wayland": "Wayland oturumları desteklenmiyor, X11 oturumu kullanın",
+      "no_display": "kullanılabilir bir ekran yok",
+      "screen_unavailable": "ekran şu an açılamıyor (kilitli oturum veya eksik izin)",
+      "start_failed": "ekran yakalama başlatılamadı",
+      "starting": "ekran denetleniyor…",
+      "timed_out": "ekran yanıt vermedi, yeniden deneniyor",
+      "unknown": "ekran kullanılamıyor"
+    },
     "noTargets": "Henüz bildirilen bir ekran hedefi yok.",
     "hostLabel": "Ana makine: {{host}}",
     "viewOnly": "Salt izleme",

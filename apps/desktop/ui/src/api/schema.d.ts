@@ -526,6 +526,11 @@ export interface paths {
          *     `{"type":"control_state_changed","state","owner","target_id","reason"}`) when
          *     a screen takeover is acquired, becomes active, is interrupted, released or
          *     recovered (no ids, epochs, pixels or text); not replayed.
+         *
+         *     And `view_targets_changed` events (`{"type":"view_targets_changed"}`) when a screen
+         *     target appears, goes idle, attaches to a page or closes, or a missing-screen
+         *     reason changes: a pixel-free hint to refetch `/v1/view/targets` and
+         *     `/v1/view/availability`; not replayed.
          */
         get: operations["events_doc"];
         put?: never;
@@ -1806,6 +1811,13 @@ export interface components {
             title?: string | null;
         };
         CreateSession: {
+            /**
+             * Format: uuid
+             * @description The bot whose panel asks. When set, the target must be this bot's own
+             *     browser or a shared desktop; another bot's browser is refused (403), so
+             *     a bot-scoped view can never resolve to someone else's screen.
+             */
+            bot_id?: string | null;
             /** Format: uuid */
             client_id: string;
             codecs: components["schemas"]["Codec"][];
@@ -3400,12 +3412,20 @@ export interface components {
          *     "No screen: <reason>" instead of an empty panel.
          */
         TargetUnavailable: {
-            /** @description One short, path-free sentence for the user. */
-            detail: string;
+            /** @description Fixed reason code; never free text. */
+            code: components["schemas"]["UnavailableCode"];
             host_id: string;
             kind: components["schemas"]["TargetKind"];
             reason: components["schemas"]["Reason"];
         };
+        /**
+         * @description Why a kind of screen is not offered, as a small FIXED set. Peers only ever
+         *     see these codes (the UI words them in its own language); raw backend
+         *     diagnostics (paths, user names, display names, environment values) stay in
+         *     the local daemon log and never reach this type.
+         * @enum {string}
+         */
+        UnavailableCode: "desktop_off" | "unsupported_platform" | "wayland" | "no_display" | "screen_unavailable" | "start_failed" | "starting" | "timed_out";
         /** @description Unified text diff payload for a single changed text file. */
         UnifiedDiffDto: {
             added_lines: number;
