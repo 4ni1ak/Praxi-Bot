@@ -44,8 +44,11 @@ mod csv_tools;
 mod docx;
 mod json_query;
 mod pdf;
+mod pdf_budget;
+mod pdf_cmap;
 mod xlsx;
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -56,6 +59,113 @@ use tool_registry::{
 };
 
 pub use common::Reply;
+
+/// Extract an already-authorized PDF or DOCX snapshot without reopening a path.
+/// The caller owns path authorization and supplies a display label, never an
+/// instruction. Both input and rendered output are bounded by `cfg`.
+///
+/// # Errors
+/// Rejects unsupported formats, oversized input and malformed documents.
+pub fn extract_bytes(
+    cfg: &DocToolsConfig,
+    extension: &str,
+    label: &str,
+    bytes: &[u8],
+) -> Result<Reply, ToolError> {
+    if bytes.len() as u64 > cfg.max_input_bytes {
+        return Err(ToolError::InvalidInput(
+            "document exceeds input limit".into(),
+        ));
+    }
+    let mut reply = std::panic::catch_unwind(|| match extension {
+        "pdf" => pdf::from_bytes(cfg, label, bytes),
+        "docx" => docx::read_bytes(cfg, label, bytes),
+        _ => Err(ToolError::InvalidInput(
+            "unsupported document format".into(),
+        )),
+    })
+    .map_err(|_| ToolError::Execution("document parser failed; source was not indexed".into()))??;
+    if reply.data["truncated"].as_bool() == Some(true) {
+        return Err(ToolError::InvalidInput(
+            "document source exceeds extraction limits; no truncated snapshot was indexed".into(),
+        ));
+    }
+    // Tool previews deliberately shorten tables/cells and prose. A knowledge
+    // snapshot instead renders all retained structured text or rejects it.
+    let complete = if extension == "pdf" {
+        let mut text = format!("# {label}\n");
+        for page in reply.data["pages"]
+            .as_array()
+            .ok_or_else(|| ToolError::Execution("missing PDF extraction pages".into()))?
+        {
+            if page.get("error").is_some() {
+                return Err(ToolError::Execution(
+                    "PDF source text extraction failed".into(),
+                ));
+            }
+            let _ = write!(
+                text,
+                "\n## Page {}\n\n{}\n",
+                page["page"],
+                page["text"].as_str().unwrap_or_default()
+            );
+        }
+        text
+    } else {
+        complete_docx_text(&reply.data)?
+    };
+    if complete.len() > cfg.max_output_bytes || complete.chars().count() > cfg.max_preview_chars {
+        return Err(ToolError::InvalidInput(
+            "document source exceeds extracted text limit; no truncated snapshot was indexed"
+                .into(),
+        ));
+    }
+    reply.markdown = complete;
+    Ok(reply)
+}
+
+fn complete_docx_text(data: &Value) -> Result<String, ToolError> {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for block in data["blocks"]
+        .as_array()
+        .ok_or_else(|| ToolError::Execution("missing DOCX extraction blocks".into()))?
+    {
+        match block["type"].as_str() {
+            Some("heading") => {
+                let level = usize::try_from(block["level"].as_u64().unwrap_or(1))
+                    .unwrap_or(1)
+                    .clamp(1, 9);
+                let _ = writeln!(
+                    text,
+                    "{} {}\n",
+                    "#".repeat(level),
+                    block["text"].as_str().unwrap_or_default()
+                );
+            }
+            Some("paragraph") => {
+                let _ = writeln!(text, "{}\n", block["text"].as_str().unwrap_or_default());
+            }
+            Some("table") => {
+                let rows: Vec<Vec<String>> = serde_json::from_value(block["rows"].clone())
+                    .map_err(|_| ToolError::Execution("invalid extracted DOCX table".into()))?;
+                for (index, row) in rows.iter().enumerate() {
+                    let cells: Vec<_> = row
+                        .iter()
+                        .map(|cell| cell.replace('|', "\\|").replace(['\r', '\n'], " "))
+                        .collect();
+                    let _ = writeln!(text, "| {} |", cells.join(" | "));
+                    if index == 0 {
+                        let _ = writeln!(text, "|{}|", vec![" --- "; row.len()].join("|"));
+                    }
+                }
+                text.push('\n');
+            }
+            _ => return Err(ToolError::Execution("invalid extracted DOCX block".into())),
+        }
+    }
+    Ok(text)
+}
 
 /// Limits applied by every doc tool.
 #[derive(Debug, Clone)]

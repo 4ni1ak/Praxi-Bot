@@ -275,9 +275,9 @@
   background-image: var(--surface-sheen);
   border: var(--size-border) solid var(--color-border);
 }
+/* No backdrop-filter on bubbles: they scroll, and a blur per bubble re-renders on every frame. */
 :global(:root[data-bubble="glass"]) .assistantBubble,
 :global(:root[data-bubble="glass"]) .userBubble {
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
   border: var(--size-border) solid color-mix(in srgb, var(--color-text) 15%, transparent);
 }
 :global(:root[data-bubble="glass"]) .assistantBubble {
@@ -285,7 +285,7 @@
   max-width: 88%;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--bubble-radius) var(--bubble-radius) var(--bubble-radius) var(--bubble-tail);
-  background-color: color-mix(in srgb, var(--color-surface-elevated-opaque) 42%, transparent);
+  background-color: var(--bubble-glass-fill);
   background-image: none;
 }
 :global(:root[data-bubble="glass"]) .userBubble {
@@ -413,11 +413,16 @@
     box-shadow var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-:global(:root[data-style="glass"]) .box {
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
-  box-shadow:
-    inset 0 var(--size-border) 0 color-mix(in srgb, var(--color-text) 10%, transparent),
-    var(--shadow-card);
+/* The composer is never under a nested blur: the pane behind it is already frosted.  Over a clear
+   chat area it gets its own readable surface (and, in the glass style, the only blur in the pane). */
+:global(:root[data-style="glass"]) .box,
+:global(:root[data-style="tinted"]) .box {
+  box-shadow: var(--float-highlight), var(--shadow-card);
+}
+
+:global(:root[data-chat="clear"]) .box {
+  background-color: var(--composer-fill);
+  backdrop-filter: var(--composer-filter);
 }
 
 .box:focus-within {
@@ -492,10 +497,9 @@
   animation: menuIn var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-:global(:root[data-style="glass"]) .menu {
-  background-color: color-mix(in srgb, var(--color-surface-elevated-opaque) 72%, transparent);
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
-}
+/* The menu is rendered inside the center pane (not in a body portal), over the conversation: it keeps
+   its opaque fill in every style.  A translucent, blurred fill here would be a second blur layer under
+   the pane's own and would let message text show through the list (card 244-E: one blur per panel). */
 
 .menuHead {
   margin: var(--space-0);

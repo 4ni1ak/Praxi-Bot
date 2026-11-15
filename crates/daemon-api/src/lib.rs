@@ -25,6 +25,9 @@ pub mod error;
 pub mod fake;
 mod fill_routes;
 pub mod host;
+mod knowledge;
+pub mod knowledge_runtime;
+mod knowledge_settings;
 pub mod live_view;
 pub mod mcp;
 mod mcp_routes;
@@ -177,6 +180,7 @@ struct Inner {
     live_view: Arc<live_view::LiveView>,
     refresh_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
     provider_host: OnceLock<ProviderHost>,
+    knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
     /// E-mail account management (see [`AppState::set_email`]).
@@ -282,6 +286,8 @@ impl AppState {
         cfg: DaemonConfig,
         registry: Arc<::live_view::TargetRegistry>,
     ) -> Result<Self, storage::StorageError> {
+        memory_store::knowledge::brain::cleanup_stale_staging(storage.data_dir())
+            .map_err(std::io::Error::other)?;
         let user_id = if let Some(u) = storage.list_users()?.into_iter().next() {
             u.id
         } else {
@@ -338,6 +344,7 @@ impl AppState {
             live_view,
             refresh_rx: parking_lot::Mutex::new(Some(refresh_rx)),
             provider_host: OnceLock::new(),
+            knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
@@ -375,6 +382,7 @@ impl AppState {
             host_config,
             state.downgrade(),
         ));
+        knowledge_runtime::install(&state);
         Ok(state)
     }
 
@@ -873,6 +881,50 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/openapi.json", get(openapi::serve_openapi))
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
         .route(
+            "/v1/bots/{bot}/knowledge/sources",
+            get(knowledge::list_sources)
+                .post(knowledge::create_source)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    knowledge::MAX_SOURCE_REQUEST_BYTES,
+                )),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}",
+            put(knowledge::update_source).delete(knowledge::delete_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}/reindex",
+            post(knowledge::reindex_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}/embed",
+            post(knowledge::embed_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/settings",
+            get(knowledge_settings::get_settings).put(knowledge_settings::put_settings),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/email-captures",
+            get(knowledge::email_captures),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-approvals",
+            post(knowledge_settings::request_embedding_approval),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm",
+            post(knowledge_settings::confirm_embedding_approval),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-grants",
+            axum::routing::delete(knowledge_settings::revoke_embedding_grant),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-cooldown/reset",
+            post(knowledge_settings::reset_embedding_cooldown),
+        )
+        .route(
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )
@@ -962,6 +1014,23 @@ fn api_routes() -> Router<AppState> {
             post(m::reconnect_mcp_server),
         )
         .route("/v1/mcp/servers/{name}/tools", get(m::list_mcp_tools))
+        .route("/v1/mcp/servers/{name}/auth/start", post(m::start_mcp_auth))
+        .route(
+            "/v1/mcp/servers/{name}/auth/callback",
+            post(m::complete_mcp_auth),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/cancel",
+            post(m::cancel_mcp_auth),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/status",
+            get(m::mcp_auth_status),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/logout",
+            post(m::logout_mcp_auth),
+        )
         .route("/v1/mcp/catalog", get(m::mcp_catalog))
         .route(
             "/v1/email/accounts",

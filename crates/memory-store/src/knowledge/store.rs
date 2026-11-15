@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::{
-    DocumentInfo, DocumentInput, IndexOutcome, KnowledgeLimits, NewSource, Scope, Source,
-    SourceUpdate, chunk_text, schema,
+    DocumentFormat, DocumentInfo, DocumentInput, IndexOutcome, KnowledgeLimits, NewSource,
+    RemoteEmbeddingConsent, Scope, Source, SourceKind, SourceUpdate, chunk_text, schema,
 };
 use crate::{MemoryError, Result, Trust};
 
@@ -48,7 +48,7 @@ impl KnowledgeStore {
         reject_symlink(&path)?;
         let conn = Connection::open(path)?;
         configure(&conn)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        ensure_wal(&conn)?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, scope)
     }
@@ -93,6 +93,19 @@ impl KnowledgeStore {
         )?)
     }
 
+    /// Whether this bot has a currently enabled source of `kind` (read-only
+    /// check used to offer kind-specific tools only when the owner enabled it).
+    ///
+    /// # Errors
+    /// SQLite or serialization failure.
+    pub fn has_enabled_source_of_kind(&self, kind: SourceKind) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM sources WHERE enabled=1 AND kind=?1)",
+            [serde_json::to_string(&kind)?],
+            |row| row.get(0),
+        )?)
+    }
+
     /// In-memory scoped index, for tests and ephemeral evaluation.
     ///
     /// # Errors
@@ -125,6 +138,21 @@ impl KnowledgeStore {
     #[must_use]
     pub const fn scope(&self) -> Scope {
         self.scope
+    }
+
+    /// Host grant binding, rotated on every portable index import.
+    ///
+    /// # Errors
+    /// Missing or corrupt index identity.
+    pub fn authority_epoch(&self) -> Result<String> {
+        let epoch: String = self.conn().query_row(
+            "SELECT value FROM knowledge_meta WHERE key='embedding_authority_epoch'",
+            [],
+            |row| row.get(0),
+        )?;
+        Uuid::parse_str(&epoch)
+            .map_err(|_| MemoryError::Invalid("invalid embedding authority epoch".into()))?;
+        Ok(epoch)
     }
 
     /// Run bounded local publication while the approved sources stay unchanged.
@@ -179,9 +207,9 @@ impl KnowledgeStore {
         }
         let version = schema::migrate(&mut conn, None)?;
         schema::validate_structure(&conn)?;
-        conn.prepare(&format!("SELECT {SOURCE_COLS} FROM sources"))?;
-        conn.prepare("SELECT id,source_id,locator,title,format,content_hash,mtime_ms,revision FROM documents")?;
-        conn.prepare("SELECT rowid,id,source_id,document_id,ordinal,section,line_start,line_end,content_hash,body FROM chunks")?;
+        validate_import_sources(&conn)?;
+        validate_import_documents(&conn)?;
+        validate_import_chunks(&conn)?;
         if conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
             return Err(MemoryError::Invalid(
                 "knowledge index has invalid foreign keys".into(),
@@ -212,6 +240,24 @@ impl KnowledgeStore {
         schema::migrate(&mut conn, Some(scope))?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("UPDATE sources SET enabled=0,remote_embedding_json=NULL,revision=revision+1,updated_ms=?1", [storage::now_ms()])?;
+        // An archive locator is not an owner selection on the receiving host.
+        tx.execute(
+            "UPDATE sources SET locator='imported:requires-path-selection' WHERE kind IN (?1,?2)",
+            params![
+                serde_json::to_string(&SourceKind::File)?,
+                serde_json::to_string(&SourceKind::Folder)?
+            ],
+        )?;
+        // Imported work never resumes network activity. Explicitly purge these
+        // rows as well as relying on the attested grant-revocation trigger.
+        tx.execute("DELETE FROM embedding_jobs", [])?;
+        tx.execute("DELETE FROM embedding_chunk_failures", [])?;
+        tx.execute(
+            "UPDATE knowledge_meta SET value=?1 WHERE key='embedding_authority_epoch'",
+            [Uuid::now_v7().to_string()],
+        )?;
+        tx.execute("DELETE FROM knowledge_embeddings", [])?;
+        tx.execute("DELETE FROM embedding_cache", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -285,17 +331,8 @@ impl KnowledgeStore {
         if let Some(label) = &update.label {
             validate_metadata(label, 1024, false, "source label")?;
         }
-        if let Some(Some(consent)) = &update.remote_embedding
-            && (consent.profile_fingerprint.len() != 64
-                || !consent
-                    .profile_fingerprint
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                || consent.granted_at_ms < 0)
-        {
-            return Err(MemoryError::Invalid(
-                "invalid embedding profile consent".into(),
-            ));
+        if let Some(Some(consent)) = &update.remote_embedding {
+            validate_consent(consent)?;
         }
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -331,6 +368,49 @@ impl KnowledgeStore {
         tx.execute("DELETE FROM sources WHERE id=?1", [id.to_string()])?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Replace a filesystem binding after the owner selects a local path.
+    /// Keep the source identity and label, but discard its previous content,
+    /// vector cache, pending work and egress permission atomically.
+    ///
+    /// # Errors
+    /// Non-filesystem source, stale revision, invalid locator or SQLite failure.
+    pub fn rebind_source(
+        &self,
+        id: Uuid,
+        expected_revision: u64,
+        locator: String,
+    ) -> Result<Source> {
+        validate_metadata(&locator, 4096, false, "source locator")?;
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut source = require_source(&tx, id, expected_revision, false)?;
+        if !matches!(
+            source.kind,
+            SourceKind::File | SourceKind::Folder | SourceKind::SharedBrain
+        ) {
+            return Err(MemoryError::Invalid(
+                "only filesystem sources can be rebound".into(),
+            ));
+        }
+        source.locator = locator;
+        source.enabled = true;
+        source.remote_embedding = None;
+        source.revision = next_revision(source.revision)?;
+        source.updated_ms = storage::now_ms();
+        tx.execute("DELETE FROM documents WHERE source_id=?1", [id.to_string()])?;
+        tx.execute(
+            "DELETE FROM embedding_cache WHERE source_id=?1",
+            [id.to_string()],
+        )?;
+        tx.execute(
+            "DELETE FROM embedding_jobs WHERE source_id=?1",
+            [id.to_string()],
+        )?;
+        tx.execute("UPDATE sources SET locator=?2,enabled=1,remote_embedding_json=NULL,revision=?3,updated_ms=?4 WHERE id=?1", params![id.to_string(), source.locator, sql_int(source.revision)?, source.updated_ms])?;
+        tx.commit()?;
+        Ok(source)
     }
 
     /// Publish all chunks of one bounded document atomically. Identical text is
@@ -467,6 +547,50 @@ fn configure(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Switch the database to WAL only when it is not already in WAL mode.
+///
+/// Changing the journal mode needs an exclusive lock and SQLite does not run
+/// the busy handler for it, so concurrent first openers failed with
+/// `database is locked` (observed on Windows). The mode is checked first (WAL
+/// is persistent), switches are serialised in-process, and a switch that still
+/// meets `SQLITE_BUSY` (another process) is retried with a short bounded
+/// back-off.
+fn ensure_wal(conn: &Connection) -> Result<()> {
+    static SWITCH: Mutex<()> = Mutex::new(());
+    let is_wal = |conn: &Connection| -> Result<bool> {
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+        Ok(mode.eq_ignore_ascii_case("wal"))
+    };
+    if is_wal(conn)? {
+        return Ok(());
+    }
+    let _guard = SWITCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut attempt = 0_u32;
+    loop {
+        if is_wal(conn)? {
+            return Ok(());
+        }
+        match conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy
+                    || error.code == rusqlite::ErrorCode::DatabaseLocked =>
+            {
+                attempt += 1;
+                if attempt > 40 {
+                    return Err(rusqlite::Error::SqliteFailure(error, None).into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(
+                    25 * u64::from(attempt.min(8)),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 fn reject_symlink(path: &Path) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Err(MemoryError::Invalid(
@@ -476,6 +600,98 @@ fn reject_symlink(path: &Path) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
     }
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn validate_consent(consent: &RemoteEmbeddingConsent) -> Result<()> {
+    if !valid_digest(&consent.profile_fingerprint) || consent.granted_at_ms < 0 {
+        return Err(MemoryError::Invalid(
+            "invalid embedding profile consent".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn text_at<'a>(row: &'a Row<'_>, index: usize) -> rusqlite::Result<&'a str> {
+    row.get_ref(index)?
+        .as_str()
+        .map_err(|error| conversion(index, error))
+}
+
+fn validate_import_uuid(row: &Row<'_>, index: usize) -> Result<()> {
+    // IDs are later looked up using UUID::to_string(). Accepting upper-case,
+    // compact, or URN spellings would leave otherwise parseable rows unreachable.
+    if text_at(row, index)? != uuid_at(row, index)?.to_string() {
+        return Err(MemoryError::Invalid(
+            "knowledge identifier is not canonical".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_import_sources(conn: &Connection) -> Result<()> {
+    // Schema validation already caps every row/field count. Stream through the
+    // same typed conversion as runtime reads; retain at most one source at once.
+    let mut statement = conn.prepare(&format!("SELECT {SOURCE_COLS} FROM sources"))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        validate_import_uuid(row, 0)?;
+        let source = source_row(row)?;
+        validate_metadata(&source.label, 1024, false, "source label")?;
+        validate_metadata(&source.locator, 4096, false, "source locator")?;
+        if let Some(consent) = &source.remote_embedding {
+            validate_consent(consent)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_import_documents(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare(
+        "SELECT id,source_id,locator,title,format,content_hash,mtime_ms,revision FROM documents",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        validate_import_uuid(row, 0)?;
+        validate_import_uuid(row, 1)?;
+        validate_metadata(text_at(row, 2)?, 4096, false, "document locator")?;
+        validate_metadata(text_at(row, 3)?, 1024, true, "document title")?;
+        let _: DocumentFormat = json_at(row, 4)?;
+        if !valid_digest(text_at(row, 5)?) {
+            return Err(MemoryError::Invalid("invalid document content hash".into()));
+        }
+        let _: Option<i64> = row.get(6)?;
+        let _: u64 = integer_at(row, 7)?;
+    }
+    Ok(())
+}
+
+fn validate_import_chunks(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare(
+        "SELECT id,source_id,document_id,ordinal,section,line_start,line_end,content_hash,body FROM chunks",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        for index in [0, 1, 2] {
+            validate_import_uuid(row, index)?;
+        }
+        for index in [3, 5, 6] {
+            let _: usize = integer_at(row, index)?;
+        }
+        // Check SQLite types and UTF-8 without copying the bounded chunk text.
+        text_at(row, 4)?;
+        text_at(row, 8)?;
+        if !valid_digest(text_at(row, 7)?) {
+            return Err(MemoryError::Invalid("invalid chunk content hash".into()));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn validate_metadata(

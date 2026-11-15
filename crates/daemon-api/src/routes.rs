@@ -315,9 +315,16 @@ pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotD
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_bot(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
-    let (name, config) = resolve_bot(input)?;
+    let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
+    if config.get("knowledge").is_some() {
+        return Err(ApiError::bad_request(
+            "configure knowledge through the bot knowledge settings endpoint",
+        ));
+    }
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -394,11 +401,21 @@ pub(crate) async fn revoke_grant(
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    let mut bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("knowledge"),
+        &mut config,
+    )?;
     if preserve_runtime
         && config.get("runtime").is_none()
         && let Some(runtime) = bot.config.get("runtime")
@@ -408,7 +425,22 @@ pub(crate) async fn update_bot(
             .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
             .insert("runtime".into(), runtime.clone());
     }
+    if config.get("knowledge").is_some()
+        && bot.config.pointer("/knowledge/embedding") != config.pointer("/knowledge/embedding")
+    {
+        // Even a stale profile cannot revive authority after an owner submits
+        // a changed embedding profile. Dedicated settings own the saved value.
+        crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
+    }
+    // Generic profile saves may contain stale snapshots. Only the dedicated
+    // knowledge endpoint may update retrieval configuration or query grants.
+    if let Some(current) = bot.config.get("knowledge") {
+        config["knowledge"] = current.clone();
+    } else if let Some(object) = config.as_object_mut() {
+        object.remove("knowledge");
+    }
     s.storage().update_bot(bot.id, &name, &config)?;
+    crate::knowledge_runtime::invalidate_bot(&s, bot.id);
     bot.name = name;
     bot.config = config;
     s.refresh_profile(&bot);
@@ -424,9 +456,34 @@ pub(crate) async fn delete_bot(
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
-    s.storage()
-        .delete_bot(bot.id)
-        .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
+    let authority = crate::knowledge::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
+    let state = s.clone();
+    let removed = bot.clone();
+    crate::knowledge::blocking_with_permit(permit, move || {
+        let _authority = authority;
+        state
+            .storage()
+            .delete_bot_with_cleanup(removed.id, || {
+                crate::knowledge_runtime::revoke_bot_grants(&state, removed.id).map_err(|_| {
+                    storage::StorageError::Io(std::io::Error::other(
+                        "knowledge authority could not be revoked",
+                    ))
+                })?;
+                crate::knowledge::remove_bot_index(&state, &removed)
+                    .map_err(storage::StorageError::Io)
+            })
+            .map_err(|_| {
+                ApiError::conflict(
+                    "bot still has chats or runs, or its knowledge files could not be removed",
+                )
+            })?;
+        Ok(())
+    })
+    .await?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.

@@ -19,6 +19,36 @@ in `knowledge.rs`. PR2 runs the same corpus through its deterministic fake
 embedder and hybrid retriever; that is wiring evidence, not a benchmark of Gemini
 or another semantic model.
 
+The fake embedder constructs a sorted vocabulary from corpus text and returns
+TF-IDF vectors with sublinear term frequency. Corpus document frequency lowers
+the weight of shared boilerplate; repeated topical terms carry more evidence
+than a glossary's one-off mentions. It does not read filenames, source IDs, expected answers or
+query labels. An orthogonal unknown-token coordinate makes the no-match case
+exercise actual zero-similarity abstention. The lexical path uses all 20 positive
+queries with 0.95 recall/MRR gates. The hybrid path retains the original 11
+positive queries, unchanged labels and 0.90 recall/MRR gates over all 15 sources.
+The hybrid test additionally
+checks durable indexing reuse and the bounded query-vector cache. Its scores
+verify vector indexing, cosine ranking, fusion and result budgets; they do not
+establish paraphrase or multilingual quality for a production embedding model.
+
+`cargo test -p memory-store --test retrieval_semantic_eval -- --nocapture` runs a
+separate semantic-path contract: eight held-out natural-language queries have
+no lexical hits and must retrieve their exact matching document first. A small
+concept-vector fixture supplies deterministic embeddings; it is not a learned
+model. Recall@1 and MRR@1 must both equal 1.0, every complete JSON result must fit
+600 actual cl100k tokens, and mean result size must be less than half of the
+complete fixture corpus. An orthogonal query-vector negative control must
+return no hits. Running with `PRAXI_EVAL_BREAK_QUERY_VECTORS=1` intentionally
+fails the quality gate at 0/8; this prevents lexical results from hiding a
+disconnected semantic channel. A local positive run measured 319–323 tokens per
+result on average against a 1,329-token corpus. Dynamic IDs account for the
+small tokenizer variation.
+
+The expanded corpus's TF-IDF hybrid run measured Recall@5 **1.000000**, MRR
+**0.909091**, and a mean **671** cl100k tokens per bounded result against **5,184**
+tokens for the complete corpus. All original quality thresholds remain in place.
+
 The token comparison counts **complete serialized search responses**, including
 citations, provenance and escaping, with the embedded `cl100k_base` reference BPE.
 It also reports the runtime `ceil(Unicode scalars / 4)` estimate and UTF-8 bytes.

@@ -24,6 +24,7 @@ pub mod fill_secret;
 #[cfg(test)]
 mod fill_secret_tests;
 pub mod knowledge;
+pub mod knowledge_brain;
 pub mod meta;
 pub mod schedule;
 pub mod script;

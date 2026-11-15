@@ -293,7 +293,9 @@ fn build_agent_with_skills(
         None,
         InitiatorKind::Human,
     );
-    let mut tools = BuiltinConfig::new(data_dir.to_path_buf(), Arc::new(gate));
+    // Storage resolves symlinks and junctions in the data dir once; the file
+    // tools' protected-path checks must use that same canonical spelling.
+    let mut tools = BuiltinConfig::new(storage.data_dir().to_path_buf(), Arc::new(gate));
     tools.desktop.clone_from(&desktop);
     tools.dynamic_desktop = dynamic_desktop;
     tools.fill_secrets = fill_secrets;
@@ -1068,11 +1070,16 @@ pub fn serve(
             let handle = redactor.clone();
             Arc::new(move |text: &str| handle.redact(text))
         };
+        let mcp_registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value: &str| handle.register(value))
+        };
         let mcp = crate::mcp_host::McpHost::start(
             data_dir,
             mcp_tools,
             telegram_store.clone(),
             Some(mcp_redactor),
+            Some(mcp_registrar),
         );
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
         if let Some(email) = email {

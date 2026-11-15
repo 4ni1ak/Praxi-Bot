@@ -2,6 +2,17 @@ import type { components } from "./schema";
 
 /** Types generated from `docs/api/openapi.json` (`pnpm --filter desktop-ui gen:api`). */
 type S = components["schemas"];
+export type KnowledgeSource = S["KnowledgeSourceDto"];
+export type KnowledgeSourceInput = S["KnowledgeSourceInput"];
+export type KnowledgeSourceKind = S["KnowledgeSourceKind"];
+export type KnowledgeSourceChange = S["KnowledgeSourceChange"];
+export type KnowledgeMutation = S["KnowledgeMutation"];
+export type KnowledgeSettings = S["KnowledgeSettingsDto"];
+export type KnowledgeSettingsInput = S["KnowledgeSettingsInput"];
+export type KnowledgeEmailCapture = S["KnowledgeEmailCapture"];
+export type KnowledgeEmbeddingProgress = S["KnowledgeEmbeddingProgress"];
+export type KnowledgeEmbeddingApproval = S["EmbeddingApprovalChallenge"];
+export type KnowledgeEmbeddingGrantTarget = S["EmbeddingGrantTarget"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];
@@ -13,6 +24,11 @@ export type Message = S["MessageDto"];
  */
 export type Run = S["RunDto"] & { schedule_id?: string | null };
 export type Approval = S["ApprovalDto"];
+export type StopRunsInput = S["StopRunsInput"];
+export type StopRunsResponse = S["StopRunsResponse"];
+export type StopRunResult = S["StopRunResult"];
+export type StopOutcome = S["StopOutcome"];
+export type StopScope = S["StopScope"];
 export type Health = S["Health"];
 export type UsageSummary = S["UsageSummary"];
 export type UsageTotals = S["UsageTotals"];
@@ -291,6 +307,8 @@ export interface GlobalEnvelope extends Envelope {
 
 export type McpTransport = S["McpTransportKind"];
 export type McpStatus = S["McpStatus"];
+export type McpAuthState = S["McpAuthState"];
+export type McpAuthStart = S["McpAuthStart"];
 export type McpServer = S["McpServerDto"];
 /** Body of `POST /v1/mcp/servers`. */
 export type McpServerConfig = S["McpServerInput"] & { name: string };

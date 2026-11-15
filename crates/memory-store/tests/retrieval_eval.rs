@@ -1,15 +1,27 @@
 //! Offline source-quality and reference-token measurement over versioned notes.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use async_trait::async_trait;
 use memory_store::estimate_tokens;
+use memory_store::knowledge::embedding::{
+    EmbeddingConfig, EmbeddingProfile, EmbeddingRuntime, EmbeddingStatus, KnowledgeEmbeddingService,
+};
 use memory_store::knowledge::{
-    DocumentFormat, DocumentInput, KnowledgeStore, NewSource, Scope, SearchRequest, SourceKind,
+    DocumentFormat, DocumentInput, KnowledgeStore, NewSource, Scope, SearchMode, SearchRequest,
+    SourceKind,
 };
 use protocol::{BotId, UserId};
+use provider_catalog::{
+    EmbeddingProvider, EmbeddingRequest, EmbeddingResponse, EmbeddingTask, EmbeddingTaskFormat,
+    ProviderError,
+};
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]
 struct EvalCase {
@@ -195,5 +207,268 @@ fn lexical_quality_and_reference_token_economy() {
         retrieval_tokens.iter().max().unwrap(),
         estimate_tokens(&stuffed),
         stuffed.len()
+    );
+}
+
+/// A deterministic TF-IDF fixture with sublinear term frequency. It has no semantic model and
+/// cannot inspect source IDs, filenames, expected answers, or query labels.
+/// Unknown-only input gets a separate orthogonal coordinate, so the no-match
+/// case tests real vector abstention rather than a scripted search response.
+struct FixtureEmbedder {
+    vocabulary: BTreeMap<String, usize>,
+    inverse_document_frequency: Vec<f32>,
+    documents: AtomicUsize,
+    queries: AtomicUsize,
+}
+
+fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+}
+
+impl FixtureEmbedder {
+    fn new(corpus: &BTreeMap<String, String>) -> Self {
+        let vocabulary: BTreeMap<_, _> = corpus
+            .values()
+            .flat_map(|text| words(text))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .enumerate()
+            .map(|(index, word)| (word, index))
+            .collect();
+        let documents: Vec<BTreeSet<_>> =
+            corpus.values().map(|text| words(text).collect()).collect();
+        let count = f32::from(u16::try_from(documents.len()).unwrap());
+        let mut inverse_document_frequency = vec![0.; vocabulary.len()];
+        for (word, &index) in &vocabulary {
+            let frequency = f32::from(
+                u16::try_from(
+                    documents
+                        .iter()
+                        .filter(|document| document.contains(word))
+                        .count(),
+                )
+                .unwrap(),
+            );
+            inverse_document_frequency[index] = ((count + 1.) / (frequency + 1.)).ln() + 1.;
+        }
+        Self {
+            vocabulary,
+            inverse_document_frequency,
+            documents: AtomicUsize::new(0),
+            queries: AtomicUsize::new(0),
+        }
+    }
+
+    fn dimensions(&self) -> usize {
+        self.vocabulary.len() + 1
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for FixtureEmbedder {
+    fn id(&self) -> &'static str {
+        "fixture"
+    }
+
+    fn endpoint_identity(&self) -> Result<String, ProviderError> {
+        Ok(format!("local-onnx:{}", "f".repeat(64)))
+    }
+
+    fn is_remote(&self) -> bool {
+        false
+    }
+
+    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError> {
+        assert_eq!(request.dimensions, self.dimensions());
+        match request.task {
+            EmbeddingTask::Document => &self.documents,
+            EmbeddingTask::Query => &self.queries,
+        }
+        .fetch_add(request.inputs.len(), Ordering::SeqCst);
+        let vectors = request
+            .inputs
+            .into_iter()
+            .map(|input| {
+                let mut vector = vec![0.0_f32; self.dimensions()];
+                for word in words(&input.text) {
+                    if let Some(&index) = self.vocabulary.get(&word) {
+                        vector[index] += 1.;
+                    }
+                }
+                if vector.iter().all(|&value| value == 0.) {
+                    vector[self.vocabulary.len()] = 1.;
+                } else {
+                    for (value, weight) in vector.iter_mut().zip(&self.inverse_document_frequency) {
+                        if *value > 0. {
+                            *value = (1. + value.ln()) * weight;
+                        }
+                    }
+                }
+                vector
+            })
+            .collect();
+        Ok(EmbeddingResponse {
+            vectors,
+            model: None,
+            input_tokens: None,
+        })
+    }
+}
+
+async fn embedded_fixture(
+    corpus: &BTreeMap<String, String>,
+) -> (KnowledgeEmbeddingService, Arc<FixtureEmbedder>) {
+    let store = Arc::new(indexed_corpus(corpus));
+    let provider = Arc::new(FixtureEmbedder::new(corpus));
+    let config = EmbeddingConfig::new(
+        EmbeddingProfile {
+            provider_id: provider.id().into(),
+            model: "fixture-vocabulary".into(),
+            model_revision: Some("sublinear-tfidf-v2".into()),
+            endpoint_identity: provider.endpoint_identity().unwrap(),
+            dimensions: provider.dimensions(),
+            request_dimensions: false,
+            format: EmbeddingTaskFormat::E5,
+        },
+        "hermetic-eval",
+    );
+    let service = KnowledgeEmbeddingService::new(
+        store.clone(),
+        provider.clone(),
+        Arc::new(EmbeddingRuntime::open_in_memory().unwrap()),
+        config,
+    )
+    .unwrap();
+    let cancel = CancellationToken::new();
+    for source in store.list_sources().unwrap() {
+        loop {
+            let progress = service
+                .embed_source_batch(source.id, &cancel)
+                .await
+                .unwrap();
+            if progress.status == EmbeddingStatus::Complete {
+                break;
+            }
+            assert_eq!(progress.status, EmbeddingStatus::Progress);
+        }
+    }
+    let document_inputs = provider.documents.load(Ordering::SeqCst);
+    assert!(document_inputs >= corpus.len());
+    // Restarting the indexing loop must reuse durable vectors, not re-embed.
+    for source in store.list_sources().unwrap() {
+        assert_eq!(
+            service
+                .embed_source_batch(source.id, &cancel)
+                .await
+                .unwrap()
+                .status,
+            EmbeddingStatus::Complete
+        );
+    }
+    assert_eq!(provider.documents.load(Ordering::SeqCst), document_inputs);
+    (service, provider)
+}
+
+#[tokio::test]
+async fn deterministic_hybrid_quality_and_reference_token_economy() {
+    let corpus = corpus();
+    let (service, provider) = embedded_fixture(&corpus).await;
+    let document_inputs = provider.documents.load(Ordering::SeqCst);
+    let cancel = CancellationToken::new();
+    let queries: Vec<EvalCase> =
+        serde_json::from_str(&std::fs::read_to_string(fixtures().join("queries.json")).unwrap())
+            .unwrap();
+    let tokenizer = tiktoken_rs::cl100k_base().unwrap();
+    let stuffed_tokens = tokenizer.encode_ordinary(&stuffed_context(&corpus)).len();
+    let mut recall_sum = 0.0;
+    let mut reciprocal_rank_sum = 0.0;
+    let mut positives = 0_u32;
+    let mut retrieval_tokens = Vec::new();
+    for query in &queries {
+        let response = service
+            .search(
+                &SearchRequest {
+                    top_k: 5,
+                    budget_tokens: 2000,
+                    max_bytes: 32768,
+                    ..SearchRequest::new(&query.query)
+                },
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.mode, SearchMode::Hybrid);
+        let mut seen = HashSet::new();
+        let ranked_sources: Vec<&str> = response
+            .hits
+            .iter()
+            .map(|hit| hit.locator.as_str())
+            .filter(|name| seen.insert(*name))
+            .collect();
+        if query.expected_sources.is_empty() {
+            assert!(ranked_sources.is_empty(), "{} must abstain", query.id);
+            continue;
+        }
+        positives += 1;
+        let relevant = |name: &&str| {
+            query
+                .expected_sources
+                .iter()
+                .any(|expected| expected == *name)
+        };
+        let found =
+            u32::try_from(ranked_sources.iter().filter(|name| relevant(name)).count()).unwrap();
+        let expected = u32::try_from(query.expected_sources.len()).unwrap();
+        let recall = f64::from(found) / f64::from(expected);
+        let rr = ranked_sources
+            .iter()
+            .position(relevant)
+            .map_or(0.0, |rank| {
+                1.0 / f64::from(u32::try_from(rank + 1).unwrap())
+            });
+        recall_sum += recall;
+        reciprocal_rank_sum += rr;
+        assert!(rr > 0.0, "{} lost relevant evidence", query.id);
+        let bounded = service
+            .search(&SearchRequest::new(&query.query), &cancel)
+            .await
+            .unwrap();
+        let wire = serde_json::to_string(&bounded).unwrap();
+        assert!(estimate_tokens(&wire) <= 600 && wire.len() <= 8192);
+        assert!(
+            query
+                .expected_sources
+                .iter()
+                .any(|expected| bounded.hits.iter().any(|hit| &hit.locator == expected)),
+            "bounded hybrid response lost relevant evidence for {}",
+            query.id
+        );
+        let actual = tokenizer.encode_ordinary(&wire).len();
+        assert!(actual * 4 < stuffed_tokens);
+        retrieval_tokens.push(actual);
+        println!(
+            "hybrid {} recall@5={recall:.3} rr={rr:.3} cl100k={actual} estimated={} bytes={}",
+            query.id,
+            bounded.estimated_tokens,
+            wire.len()
+        );
+    }
+    let recall = recall_sum / f64::from(positives);
+    let mrr = reciprocal_rank_sum / f64::from(positives);
+    assert!(
+        recall >= 0.90,
+        "hybrid recall@5 below quality gate: {recall}"
+    );
+    assert!(mrr >= 0.90, "hybrid MRR below quality gate: {mrr}");
+    assert_eq!(provider.queries.load(Ordering::SeqCst), queries.len());
+    let mean = retrieval_tokens.iter().sum::<usize>() / retrieval_tokens.len();
+    println!(
+        "HYBRID_RETRIEVAL_EVAL corpus_sources={} positive_queries={positives} recall@5={recall:.6} mrr={mrr:.6} stuffed_cl100k={stuffed_tokens} retrieval_cl100k_mean={mean} retrieval_cl100k_max={} document_inputs={document_inputs} query_inputs={} dimensions={}",
+        corpus.len(),
+        retrieval_tokens.iter().max().unwrap(),
+        provider.queries.load(Ordering::SeqCst),
+        provider.dimensions(),
     );
 }
