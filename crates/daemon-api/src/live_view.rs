@@ -54,7 +54,7 @@ impl Actor {
         }
     }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ScreenPrivileges {
     pub view: bool,
     pub input: bool,
@@ -114,6 +114,8 @@ pub struct LiveView {
     #[cfg(test)]
     release_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
+/// Per-device screen grants kept in the data dir (see `set_screen_privileges`).
+const PRIVILEGES_FILE: &str = "view-privileges.json";
 /// Input batches that may queue for the executor: per session and in total.
 /// Beyond that the answer is `input_busy` at once.
 const INPUT_WAITERS_PER_SESSION: usize = 4;
@@ -1575,6 +1577,63 @@ impl AppState {
     /// # Errors
     /// Returns an error if revocation audit cannot be persisted; input stays paused.
     pub async fn set_screen_privileges(
+        &self,
+        actor_key: String,
+        privileges: ScreenPrivileges,
+    ) -> Result<(), ApiError> {
+        let applied = self.apply_screen_privileges(actor_key, privileges).await;
+        // The grant is persisted so a headless host keeps it across restarts
+        // (nobody is at its screen to grant it again). A failed write never
+        // undoes a revocation that was applied above.
+        let saved = self.persist_screen_privileges().map_err(ApiError::internal);
+        applied.and(saved)
+    }
+
+    /// The paired-device screen grants that survive a restart (`peer:` keys
+    /// only; the local user's own rights are never stored).
+    fn persist_screen_privileges(&self) -> std::io::Result<()> {
+        let grants: BTreeMap<String, ScreenPrivileges> = self
+            .live_view()
+            .privileges
+            .lock()
+            .iter()
+            .filter(|(k, p)| k.starts_with("peer:") && (p.view || p.input))
+            .map(|(k, p)| (k.clone(), *p))
+            .collect();
+        let dir = self.data_dir();
+        let mut file = tempfile::NamedTempFile::new_in(&dir)?;
+        std::io::Write::write_all(&mut file, &serde_json::to_vec_pretty(&grants)?)?;
+        file.as_file().sync_all()?;
+        file.persist(dir.join(PRIVILEGES_FILE))
+            .map(|_| ())
+            .map_err(|e| e.error)
+    }
+
+    /// Load the persisted grants at daemon start. A missing, unreadable or
+    /// malformed file means no grants (fail closed); entries that are not a
+    /// well-formed `peer:<key>` are dropped. Pairing reconciliation still
+    /// revokes grants of devices that are no longer paired.
+    pub async fn load_screen_privileges(&self) -> usize {
+        let Ok(bytes) = std::fs::read(self.data_dir().join(PRIVILEGES_FILE)) else {
+            return 0;
+        };
+        let Ok(grants) = serde_json::from_slice::<BTreeMap<String, ScreenPrivileges>>(&bytes)
+        else {
+            return 0;
+        };
+        let mut loaded = 0;
+        for (key, p) in grants {
+            let well_formed = key.strip_prefix("peer:").is_some_and(|k| {
+                !k.is_empty() && k.len() <= 128 && k.chars().all(|c| c.is_ascii_alphanumeric())
+            }) && p.view;
+            if well_formed && self.apply_screen_privileges(key, p).await.is_ok() {
+                loaded += 1;
+            }
+        }
+        loaded
+    }
+
+    async fn apply_screen_privileges(
         &self,
         actor_key: String,
         privileges: ScreenPrivileges,

@@ -1,0 +1,227 @@
+/* The one run-control bar (244-D). Its row animates 0 -> content height, so a run
+   starting or ending never makes the timeline jump. */
+.dock {
+  display: grid;
+  grid-template-rows: 0fr;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+  transition: grid-template-rows var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.dock[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.dockInner {
+  min-height: 0;
+  overflow: hidden;
+  /* a little room so the focus ring and shadow of the bar are not clipped */
+  padding: 0 var(--space-1);
+  opacity: 0;
+  transition: opacity var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.dock[data-open="true"] .dockInner {
+  opacity: 1;
+}
+
+.dock[data-variant="strip"] {
+  padding: 0 var(--space-5);
+}
+
+.dock[data-variant="strip"] .dockInner {
+  width: 100%;
+  max-width: var(--size-content-max);
+  margin: 0 auto;
+}
+
+.bar {
+  --bar-tone: var(--color-accent);
+  --bar-text: var(--color-accent-text);
+
+  container-type: inline-size;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--size-control-lg);
+  margin-bottom: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: var(--size-border) solid color-mix(in srgb, var(--bar-tone) 32%, var(--color-border));
+  border-radius: calc(var(--radius-modal) * 1.25);
+  background-color: color-mix(in srgb, var(--bar-tone) 8%, var(--color-surface-elevated));
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.bar[data-kind="waiting"],
+.bar[data-kind="human"],
+.bar[data-tone="warning"] {
+  --bar-tone: var(--color-warning);
+  --bar-text: var(--color-warning);
+}
+
+.bar[data-kind="paused"] {
+  --bar-tone: var(--color-text-muted);
+  --bar-text: var(--color-text-secondary);
+}
+
+.bar[data-tone="success"] {
+  --bar-tone: var(--color-success);
+  --bar-text: var(--color-success);
+}
+
+.bar[data-tone="danger"] {
+  --bar-tone: var(--color-danger);
+  --bar-text: var(--color-danger);
+}
+
+:global(:root[data-style="glass"]) .bar {
+  /* no blur layer of its own (blur budget): a more opaque tint keeps it legible over a backdrop */
+  background-color: color-mix(in srgb, var(--bar-tone) 10%, var(--color-surface-elevated-opaque));
+}
+
+.lead {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--size-avatar-sm);
+  height: var(--size-avatar-sm);
+  border-radius: var(--radius-pill);
+  background-color: color-mix(in srgb, var(--bar-tone) 18%, transparent);
+  color: var(--bar-text, var(--bar-tone));
+}
+
+.lead svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.lead[data-spin="true"] svg {
+  animation: spin var(--motion-duration-pulse) linear infinite;
+}
+
+.text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--size-border-thick);
+  padding-block: var(--space-1);
+  line-height: var(--line-height-tight);
+}
+
+.title {
+  overflow: hidden;
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.elapsed {
+  flex: none;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.actions svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  flex: none;
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.iconButton:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.meter {
+  display: block;
+  flex: none;
+  width: calc(var(--space-16) + var(--space-4));
+  height: var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background-color: color-mix(in srgb, var(--bar-tone) 16%, transparent);
+}
+
+.meterFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--bar-tone);
+  transition: inline-size var(--motion-duration-slow) var(--motion-easing-standard);
+}
+
+/* Narrow chat column: secondary controls keep their icon, lose the word. */
+/* stylelint-disable-next-line unit-disallowed-list -- container breakpoint in characters */
+@container (width < 58ch) {
+  .label {
+    display: none;
+  }
+
+  .meter {
+    display: none;
+  }
+}
+
+/* stylelint-disable-next-line unit-disallowed-list -- container breakpoint in characters */
+@container (width < 38ch) {
+  .elapsed {
+    display: none;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock,
+  .dockInner,
+  .meterFill {
+    transition: none;
+  }
+
+  .lead[data-spin="true"] svg {
+    animation: none;
+  }
+}

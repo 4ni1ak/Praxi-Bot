@@ -10,6 +10,7 @@
     "allow-resume-bot-run",
     "allow-take-the-wheel",
     "allow-give-back-control",
-    "allow-stop-bot-run"
+    "allow-stop-bot-run",
+    "allow-dismiss-stop-widget"
   ]
 }

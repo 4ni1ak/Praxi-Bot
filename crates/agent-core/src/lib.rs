@@ -17,6 +17,7 @@ mod compaction;
 mod config;
 mod control;
 pub mod control_note;
+mod discovery_prompt;
 mod exec;
 mod history;
 mod knowledge;

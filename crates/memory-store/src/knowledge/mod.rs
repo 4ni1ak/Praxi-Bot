@@ -5,11 +5,13 @@
 //! needed to open it, index text, or search. Source adapters decide what may be
 //! read; all text returned here is data, never trusted instructions.
 
+pub mod brain;
 mod chunk;
 pub mod embedding;
 mod embedding_runtime;
 mod schema;
 mod search;
+pub mod source_adapters;
 mod store;
 mod types;
 

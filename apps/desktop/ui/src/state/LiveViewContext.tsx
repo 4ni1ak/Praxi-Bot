@@ -16,7 +16,7 @@ import type {
   TargetInfo,
   TargetUnavailable
 } from "../api/types.ts";
-import { ApiError } from "../api/client.ts";
+import { type ApiClient, ApiError } from "../api/client.ts";
 import { isMockMode } from "../api/mockMode.ts";
 import {
   applyControlStateDto,
@@ -74,6 +74,7 @@ import {
   type PanelActionHighlight
 } from "./controlBridge.ts";
 import { useDaemon } from "./DaemonContext.tsx";
+import { TakeoverStop } from "./takeoverStop.ts";
 
 const SESSION_HEARTBEAT_MS = 5000;
 const CONTROL_POLL_MS = 5000;
@@ -113,6 +114,11 @@ interface LiveViewContextValue {
    * Stop never latches the whole daemon paused.
    */
   overrideStop: (opts?: { onlyIfControlled?: boolean }) => Promise<void>;
+  /**
+   * The view targets of the CURRENT daemon client, or `null` while that client's
+   * list has not loaded (an older client's list never counts).
+   */
+  currentTargets: () => { client: ApiClient; targets: readonly TargetInfo[] } | null;
   enqueueInput: (event: InputEvent, flushNow?: boolean) => void;
   resetInputState: (flushNow?: boolean) => void;
   setComposing: (composing: boolean) => void;
@@ -138,6 +144,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   const clientIdRef = useRef<string>(crypto.randomUUID());
   const controlStateRef = useRef<ControlStateDto | null>(null);
+  /** The client whose snapshot `controlStateRef` holds (the Stop override decides from it). */
+  const controlClientRef = useRef<unknown>(null);
   // One registry for the provider's lifetime: `registerBridge` keeps its identity
   // across control-state refreshes, so the bridge (and its live runs) survives them.
   const registry = useMemo(
@@ -152,6 +160,15 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const flushAgainRef = useRef<boolean>(false);
 
   const [targets, setTargets] = useState<TargetInfo[]>([]);
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  // Targets together with the client that listed them (N7: a stale client's list
+  // can never make an unknown scope look local for the new client).
+  const targetsForRef = useRef<{ client: ApiClient; targets: TargetInfo[] } | null>(null);
+  const currentTargets = useCallback(() => {
+    const t = targetsForRef.current;
+    return t && t.client === clientRef.current ? t : null;
+  }, []);
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [targetsStatus, setTargetsStatus] = useState<TargetsStatus>("unknown");
   const [availability, setAvailability] = useState<TargetUnavailable[]>([]);
@@ -166,10 +183,17 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     (dto: ControlStateDto | null) => {
       sequencer.markFresh();
       controlStateRef.current = dto;
+      controlClientRef.current = clientRef.current;
       setControlStateRaw(dto);
+      // No pump here: every caller updates `stateRef` next and then pumps, so the
+      // owed override never decides from a stale state.
     },
     [sequencer]
   );
+  // The takeover half of every Stop: input halts synchronously, the override is owed
+  // until delivered through the current client (review r-94 #2, #9).
+  const takeoverStopRef = useRef<TakeoverStop<ApiClient> | null>(null);
+  const applyOverrideRef = useRef<(dto: ControlStateDto) => void>(() => {});
   const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
   const [thumbDemand, setThumbDemand] = useState<{
     active: boolean;
@@ -187,6 +211,22 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     createInitialLiveViewState(null)
   );
   const stateRef = useRef(state);
+  if (!takeoverStopRef.current) {
+    takeoverStopRef.current = new TakeoverStop<ApiClient>({
+      client: () => clientRef.current,
+      // Decided only from a snapshot of the CURRENT client; unknown otherwise.
+      controlled: () =>
+        clientRef.current !== null &&
+        controlClientRef.current === clientRef.current &&
+        controlStateRef.current !== null
+          ? shouldOverrideOnStop(stateRef.current, controlStateRef.current)
+          : null,
+      post: (c, signal) => c.overrideControl(signal),
+      apply: (_c, dto) => applyOverrideRef.current(dto),
+      schedule: (fn, ms) => window.setTimeout(fn, ms),
+      cancel: (handle) => window.clearTimeout(handle as number)
+    });
+  }
   const updateState = useCallback(
     (
       updater:
@@ -259,10 +299,13 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         controlStateRef.current === null ||
         controlSnapshotKey(controlStateRef.current) !== controlSnapshotKey(dto);
       controlStateRef.current = dto;
+      controlClientRef.current = clientRef.current;
       if (changed) {
         setControlStateRaw(dto);
         updateState((prev) => applyControlStateDto(prev, dto));
       }
+      // After the state ref is current: the owed override decides from the new snapshot.
+      takeoverStopRef.current?.pump();
     },
     [sequencer, updateState]
   );
@@ -283,6 +326,10 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         client.listViewTargets(),
         client.getControlState().catch(() => null)
       ]);
+      if (clientRef.current !== client) {
+        return; // a replaced client's answer changes nothing
+      }
+      targetsForRef.current = { client, targets: nextTargets };
       setTargets(nextTargets);
       setTargetsStatus("ok");
       // Why a screen is missing is optional context: its failure never hides the targets.
@@ -292,9 +339,11 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         .catch(() => setAvailability([]));
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
+        controlClientRef.current = clientRef.current;
         setControlStateRaw(nextCtrl);
         registry.syncControlState(nextCtrl);
         updateState((prev) => applyControlStateDto(prev, nextCtrl));
+        takeoverStopRef.current?.pump();
       }
     } catch {
       // keep existing snapshot; next poll/action retries
@@ -306,6 +355,10 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   // Refresh targets & control snapshot on client connect and when panel/viewer opens.
   useEffect(() => {
+    targetsForRef.current = null;
+    // A new client: the owed override waits for THIS client's snapshot (or goes now if forced).
+    controlClientRef.current = null;
+    takeoverStopRef.current?.pump();
     if (!client) {
       setTargets([]);
       setTargetsStatus("unknown");
@@ -340,7 +393,11 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       const ticket = sequencer.issue();
       void client
         .getControlState()
-        .then((dto) => ingestControlSnapshot(dto, ticket))
+        .then((dto) => {
+          if (clientRef.current === client) {
+            ingestControlSnapshot(dto, ticket);
+          }
+        })
         .catch(() => undefined);
     }, CONTROL_POLL_MS);
     return () => window.clearInterval(id);
@@ -633,7 +690,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!cur.session) {
         return;
       }
-      const body = buildSessionHeartbeat(cur);
+      // After a Stop this app no longer renews its input lease.
+      const body = takeoverStopRef.current?.inputAllowed() === false ? {} : buildSessionHeartbeat(cur);
       void client
         .heartbeatViewSession(cur.session.session_id, body)
         .catch(() => undefined);
@@ -665,7 +723,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       while (inputQueueRef.current.length > 0) {
         const cur = stateRef.current;
         const gate = canSendLiveInput(cur, Date.now());
-        if (!gate.ok) {
+        if (!gate.ok || takeoverStopRef.current?.inputAllowed() === false) {
           inputQueueRef.current.clear();
           break;
         }
@@ -715,7 +773,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const enqueueInput = useCallback(
     (event: InputEvent, flushNow = true) => {
       const gate = canSendLiveInput(stateRef.current, Date.now());
-      if (!gate.ok) {
+      if (!gate.ok || takeoverStopRef.current?.inputAllowed() === false) {
         return;
       }
       inputQueueRef.current.enqueue(event);
@@ -734,7 +792,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         return;
       }
       const gate = canSendLiveInput(stateRef.current, Date.now());
-      if (gate.ok && flushNow) {
+      if (gate.ok && flushNow && takeoverStopRef.current?.inputAllowed() !== false) {
         inputQueueRef.current.enqueue({ type: "reset" });
         void flushInputQueue();
       }
@@ -750,6 +808,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     if (!client) {
       return;
     }
+    // Taking control again is a new user decision: input may flow again.
+    takeoverStopRef.current?.resume();
     // A takeover whose response was lost is retried with the SAME request id
     // (the daemon treats it idempotently); a definitive error starts afresh.
     const requestId =
@@ -793,6 +853,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!payload) {
         return false;
       }
+      takeoverStopRef.current?.retire(); // the user's newer decision: no stale override
       inputQueueRef.current.clear();
       updateState((prev) =>
         applyReleaseStarted(prev, payload.request_id, payload.human_action ?? null)
@@ -813,6 +874,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         setControlState(outcome.dto);
         registry.syncControlState(outcome.dto);
         updateState((prev) => applyReleaseConfirmed(prev, outcome.dto));
+        takeoverStopRef.current?.pump();
         void refreshTargets();
         return true;
       }
@@ -823,6 +885,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         setControlState(dto);
         registry.syncControlState(dto);
         updateState((prev) => applyControlStateDto(prev, dto));
+        takeoverStopRef.current?.pump();
       }
       updateState((prev) =>
         prev.pendingRequest?.kind === "release"
@@ -860,6 +923,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!client) {
         return;
       }
+      takeoverStopRef.current?.retire(); // the user's newer decision: no stale override
       const cur = stateRef.current;
       const ctl = controlStateRef.current;
       let target: ClearTarget | null = null;
@@ -887,6 +951,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           ...applyControlStateDto(prev, outcome.dto),
           lastError: null
         }));
+        takeoverStopRef.current?.pump();
         void refreshTargets();
         return;
       }
@@ -926,6 +991,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       return;
     }
     const requestId = crypto.randomUUID();
+    takeoverStopRef.current?.resume();
     const req = buildTakeoverRequest(stateRef.current, requestId, {
       reacquireTakeoverId: prompt.takeoverId
     });
@@ -946,34 +1012,24 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     }
   }, [client, clearPause, controlState, refreshTargets, updateState]);
 
+  // A Stop pauses a held takeover. Input halts synchronously here; the override is
+  // owed until delivered through the CURRENT client (see takeoverStop.ts). With
+  // `onlyIfControlled` (every entry point but the viewer button) it is sent only if
+  // the current client's snapshot shows an acquiring / active takeover.
   const overrideStop = useCallback(
     async (opts: { onlyIfControlled?: boolean } = {}) => {
-      if (!client) {
-        return;
-      }
-      if (
-        opts.onlyIfControlled &&
-        !shouldOverrideOnStop(stateRef.current, controlStateRef.current)
-      ) {
-        return;
-      }
       inputQueueRef.current.clear();
-      try {
-        const bridge = registry.current();
-        const dto = bridge
-          ? await bridge.emergencyStop()
-          : await client.overrideControl();
-        if (dto) {
-          setControlState(dto);
-          updateState((prev) => applyControlStateDto(prev, dto));
-        }
-        void refreshTargets();
-      } catch {
-        void refreshTargets();
-      }
+      takeoverStopRef.current?.stop(!opts.onlyIfControlled);
     },
-    [client, refreshTargets, registry, setControlState, updateState]
+    []
   );
+  applyOverrideRef.current = (dto: ControlStateDto) => {
+    registry.syncControlState(dto);
+    setControlState(dto);
+    updateState((prev) => applyControlStateDto(prev, dto));
+    takeoverStopRef.current?.pump();
+    void refreshTargets();
+  };
 
   const openViewer = useCallback((targetId?: string) => {
     // Never retarget while holding/acquiring control.
@@ -1055,6 +1111,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       clearPause,
       isLocalClient,
       overrideStop,
+      currentTargets,
       enqueueInput,
       resetInputState,
       setComposing,
@@ -1087,6 +1144,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       clearPause,
       isLocalClient,
       overrideStop,
+      currentTargets,
       enqueueInput,
       resetInputState,
       setComposing,
