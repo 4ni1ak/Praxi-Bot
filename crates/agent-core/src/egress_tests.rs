@@ -2158,9 +2158,7 @@ allow_egress_after_reads = true
         );
         let details = card.details.expect("a card");
         let payload = details["payload"].as_str().unwrap();
-        for needle in ["PLANTED"] {
-            assert!(payload.contains(needle), "{name}: {payload}");
-        }
+        assert!(payload.contains("PLANTED"), "{name}: {payload}");
         let reason = details["reason"].as_str().unwrap();
         assert!(reason.contains("starts a program"), "{name}: {reason}");
         let err = lp

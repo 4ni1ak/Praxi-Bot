@@ -312,8 +312,10 @@ impl Shared {
                 out.push(c);
             }
         }
-        if let Some(index) = self.skills.get() {
-            for s in index.list().into_iter().filter(|skill| !skill.untrusted) {
+        if let Some(index) = self.skills.get()
+            && let Ok(view) = index.for_bot(Some(&bot.to_string()))
+        {
+            for s in view.list().into_iter().filter(|skill| !skill.untrusted) {
                 let version = format!("{}:{:016x}", s.version, fnv(s.body.as_bytes()));
                 out.push(
                     Candidate::new(CandidateKind::Skill, &s.name, &s.description)
@@ -579,15 +581,21 @@ impl TurnExecutor {
     }
 
     /// The step a schedule-started tool run takes after its user step, or
-    /// `Done` once the tool step exists (it is never run twice, even after an
-    /// interruption).
-    pub(crate) fn directive_plan(history: &[RunStep]) -> Option<RoutePlan> {
+    /// `Done` once the tool step exists unless the user has steered the run.
+    /// The tool is never run twice, even after an interruption.
+    pub(crate) fn directive_plan(history: &[RunStep], steer_empty: bool) -> Option<RoutePlan> {
         let first = history.first().filter(|s| s.name == STEP_USER)?;
         let d = first.input.get("directive")?;
         if d["kind"] != "tool" {
             return None;
         }
         if history.len() > 1 {
+            // A user correction turns this into a normal conversation after
+            // the scheduled tool. Keep doing so once the correction has been
+            // injected, even when no more messages remain in the queue.
+            if !steer_empty || history.iter().skip(1).any(|step| step.name == STEP_USER) {
+                return None;
+            }
             return Some(RoutePlan::Done);
         }
         if status_of(first) != Some(StepStatus::Succeeded) {
@@ -709,6 +717,7 @@ impl TurnExecutor {
         };
         let mut opts = w.opts.clone();
         opts.run_id = run.id.to_string();
+        opts.bot_id = Some(run.bot_id.to_string());
         let gate = LoopGate {
             sh: Arc::downgrade(&self.sh),
         };

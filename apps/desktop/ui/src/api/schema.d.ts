@@ -99,6 +99,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Effective skill assignment, available catalog, and bot-learned skills for one bot. */
+        get: operations["get_bot_skills"];
+        /**
+         * Assign shared/bundled skills to a bot (`mode: "all"` restores the default).
+         *     Local user or paired desktop only; peer phones are refused.
+         */
+        put: operations["put_bot_skills"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels": {
         parameters: {
             query?: never;
@@ -292,6 +313,69 @@ export interface paths {
          *     overlay highlight) or `refuse` it.
          */
         post: operations["decide_control"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run the read-only diagnostics. */
+        get: operations["get_doctor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor/repair/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run one allow-listed repair.  The request is the local user's click in
+         *     Settings (bots have no API token; paired peers are refused by the peer
+         *     router).  An attributed `doctor.repair_requested` audit record is written
+         *     before anything runs (no record, no repair), and `doctor.repair` records
+         *     the outcome.
+         */
+        post: operations["repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A redacted Markdown support report: versions, platform, check results and
+         *     config file names (never contents).  The home directory becomes `~`;
+         *     secrets known to the daemon (and their encoded forms), the API token,
+         *     key-shaped strings, credentials in URLs and assignments, host names, user
+         *     names and e-mail addresses are masked.  Ends within 15 s.
+         */
+        get: operations["report"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1011,6 +1095,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog of shared and bundled skills (metadata only, never bodies). */
+        get: operations["list_skills"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/usage": {
         parameters: {
             query?: never;
@@ -1281,6 +1382,33 @@ export interface components {
             /** @description Tool the model wants to call. */
             tool_name: string;
         };
+        /** @description One explicitly assigned skill name and whether it is currently installed. */
+        AssignedSkillDto: {
+            /** @description Assigned skill name. */
+            name: string;
+            /** @description `ok` when present in catalog, `missing` otherwise. */
+            state: components["schemas"]["AssignedSkillState"];
+        };
+        /**
+         * @description Availability of an assigned skill name in the current catalog.
+         * @enum {string}
+         */
+        AssignedSkillState: "ok" | "missing";
+        /** @description Catalog skill entry annotated with whether it is assigned to the bot. */
+        AvailableSkillDto: {
+            /** @description True when this skill is visible to the bot under its current assignment. */
+            assigned: boolean;
+            /** @description One-line description from frontmatter. */
+            description: string;
+            hub?: null | components["schemas"]["SkillHubInfoDto"];
+            /** @description Unique skill name. */
+            name: string;
+            requires?: null | components["schemas"]["SkillRequiresDto"];
+            /** @description Skill scope (`shared` or `bundled`). */
+            scope: components["schemas"]["SkillScope"];
+            /** @description Skill version string. */
+            version: string;
+        };
         /** @description Public bot representation. */
         BotDto: {
             /** @description Bot profile (ADR-0011) as JSON. */
@@ -1312,6 +1440,24 @@ export interface components {
             /** @description Profile as TOML text (the contents of a bot profile file). */
             profile_toml?: string | null;
             runtime?: null | components["schemas"]["RuntimeConfigDto"];
+        };
+        /** @description Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`. */
+        BotSkillsDto: {
+            /** @description Explicitly assigned names when `mode == "selected"`. */
+            assigned: components["schemas"]["AssignedSkillDto"][];
+            /** @description Shared + bundled catalog entries with `assigned` state. */
+            available: components["schemas"]["AvailableSkillDto"][];
+            /** @description Current assignment mode (`all` or `selected`). */
+            mode: components["schemas"]["SkillAssignmentModeDto"];
+            /** @description Skills learned by this bot (`bots/<id>/skills/`), read-only. */
+            own: components["schemas"]["OwnSkillDto"][];
+            /**
+             * Format: int64
+             * @description Version of the stored assignment (`0` when none). Send it back as
+             *     `expected_version` on `PUT` so a stale dialog gets `409` instead of
+             *     overwriting a newer assignment.
+             */
+            version: number;
         };
         /** @description Usage of one bot. */
         BotUsage: components["schemas"]["UsageTotals"] & {
@@ -1347,6 +1493,19 @@ export interface components {
             tools: boolean;
             /** @description Supports image input. */
             vision: boolean;
+        };
+        /** @description Catalog entry for a shared or bundled skill (metadata only, never the body). */
+        CatalogSkillDto: {
+            /** @description One-line description from frontmatter. */
+            description: string;
+            hub?: null | components["schemas"]["SkillHubInfoDto"];
+            /** @description Unique skill name. */
+            name: string;
+            requires?: null | components["schemas"]["SkillRequiresDto"];
+            /** @description Skill scope (`shared` or `bundled`). */
+            scope: components["schemas"]["SkillScope"];
+            /** @description Skill version string. */
+            version: string;
         };
         /** @description Effective decision of one permission category. */
         CategoryDecisionDto: {
@@ -1401,6 +1560,20 @@ export interface components {
              */
             id: string;
             /** @description Title. */
+            title: string;
+        };
+        /** @description One diagnostic result. */
+        Check: {
+            /** @description What was found. */
+            detail: string;
+            /** @description How to fix it by hand (for warn / fail). */
+            hint?: string | null;
+            /** @description Stable id (`data_dir`, `providers`, ...). */
+            id: string;
+            repair?: null | components["schemas"]["Repair"];
+            /** @description Result class. */
+            status: components["schemas"]["Status"];
+            /** @description Short human name (`data dir`, `providers`, ...), as `bot doctor` prints it. */
             title: string;
         };
         /**
@@ -1578,6 +1751,13 @@ export interface components {
             runnable: boolean;
             /** @description CLI version (first line, trimmed, max 80 chars, or null). */
             version?: string | null;
+        };
+        /** @description `GET /v1/doctor` response. */
+        DoctorReport: {
+            /** @description Results, in display order. */
+            checks: components["schemas"]["Check"][];
+            /** @description `false` when any check failed. */
+            ok: boolean;
         };
         /** @description A bot's permission picture (`GET /v1/bots/{id}`). */
         EffectivePolicyDto: {
@@ -2380,6 +2560,13 @@ export interface components {
         Modifier: "alt" | "ctrl" | "meta" | "shift";
         /** @enum {string} */
         Outcome: "completed";
+        /** @description A skill learned by the bot itself (per-bot scope, read-only here). */
+        OwnSkillDto: {
+            /** @description Skill name. */
+            name: string;
+            /** @description Skill version string. */
+            version: string;
+        };
         /** @description A one-time pairing code (`POST /v1/channels/telegram/pair-code`). */
         PairCodeDto: {
             /** @description The 6-digit code the user sends as `/pair <code>`. */
@@ -2451,6 +2638,19 @@ export interface components {
             /** @description Id of the loop's default provider. */
             default_provider?: string | null;
         };
+        /** @description Body of `PUT /v1/bots/{id}/skills`. */
+        PutBotSkillsInput: {
+            /**
+             * Format: int64
+             * @description Version the client loaded (`BotSkillsDto::version`). When set and not
+             *     current the write is refused with `409`; omit for an unconditional write.
+             */
+            expected_version?: number | null;
+            /** @description Assignment mode (`all` or `selected`). */
+            mode: components["schemas"]["SkillAssignmentModeDto"];
+            /** @description Skill names to assign when `mode == "selected"` (max 200). */
+            names?: string[];
+        };
         /** @enum {string} */
         Reason: "browser_idle" | "remote_node_live_view" | "unsupported" | "unavailable" | "expired" | "revoked" | "disconnected" | "stale" | "geometry_changed" | "refresh_pending" | "frame_budget_exceeded" | "drain_timeout" | "audit_failed" | "reset_failed" | "partial_injection" | "rate_limited" | "restart" | "persistence_failed" | "local_override";
         RecordHeader: (components["schemas"]["FrameMetadata"] & {
@@ -2517,6 +2717,19 @@ export interface components {
              *     (`workflow`, `tool_hint` or `skill_hint`).
              */
             route: Record<string, never>;
+        };
+        /**
+         * @description An allow-listed, one-click repair.  Deliberately closed: nothing here runs
+         *     a shell command, and regenerating the API token is not offered.
+         * @enum {string}
+         */
+        Repair: "create_data_dir" | "reload_providers" | "restart_browser";
+        /** @description `POST /v1/doctor/repair/{id}` response. */
+        RepairResult: {
+            /** @description What it did. */
+            detail: string;
+            /** @description The repair that ran. */
+            repair: components["schemas"]["Repair"];
         };
         /** @description `DELETE /v1/bots/{id}/grants`. */
         RevokeGrant: {
@@ -2766,6 +2979,53 @@ export interface components {
             /** @description The secret value.  Write-only: no route returns it. */
             value: string;
         };
+        /**
+         * @description Per-bot skill assignment mode.
+         * @enum {string}
+         */
+        SkillAssignmentModeDto: "all" | "selected";
+        /** @description Hub lockfile metadata for a shared skill installed via `SkillHub`. */
+        SkillHubInfoDto: {
+            /** @description True when the on-disk tree matches the lockfile hash. */
+            locked: boolean;
+            /** @description Provenance tag (e.g. `git:https://...`, `local:...`). */
+            source: string;
+        };
+        /** @description A non-fatal skill load problem surfaced by `SkillIndex::issues`. */
+        SkillIssueDto: {
+            /** @description Diagnostic message. */
+            message: string;
+            /** @description Path (or `bundled:<name>`). */
+            path: string;
+            /** @description Layer where the problem occurred. */
+            scope: components["schemas"]["SkillIssueScope"];
+        };
+        /**
+         * @description Scope where a skill load issue occurred.
+         * @enum {string}
+         */
+        SkillIssueScope: "bundled" | "shared" | "bot";
+        /** @description Auto-suggestion triggers declared in a skill's `when:` frontmatter. */
+        SkillRequiresDto: {
+            /** @description Application names. */
+            apps: string[];
+            /** @description Domains (e.g. `github.com`). */
+            domains: string[];
+            /** @description Task text keywords. */
+            keywords: string[];
+        };
+        /**
+         * @description Scope of a catalog skill (`shared` or `bundled`).
+         * @enum {string}
+         */
+        SkillScope: "shared" | "bundled";
+        /** @description Response of `GET /v1/skills`. */
+        SkillsCatalogDto: {
+            /** @description Non-fatal problems found while loading skills. */
+            issues: components["schemas"]["SkillIssueDto"][];
+            /** @description Shared and bundled catalog skills. */
+            skills: components["schemas"]["CatalogSkillDto"][];
+        };
         SourceRect: {
             /** Format: int32 */
             height: number;
@@ -2795,6 +3055,11 @@ export interface components {
              */
             sse_subscribers: number;
         };
+        /**
+         * @description Result class of one check.
+         * @enum {string}
+         */
+        Status: "ok" | "warn" | "fail" | "skipped";
         TakeoverAccepted: {
             /** Format: int64 */
             control_epoch: number;
@@ -3294,6 +3559,117 @@ export interface operations {
             };
         };
     };
+    get_bot_skills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotSkillsDto"];
+                };
+            };
+            /** @description unknown bot */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description skills are not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_bot_skills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutBotSkillsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotSkillsDto"];
+                };
+            };
+            /** @description peer role not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description unknown bot */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the assignment changed since `expected_version` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description invalid skill name or too many skills */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description skills are not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_channels: {
         parameters: {
             query?: never;
@@ -3696,6 +4072,162 @@ export interface operations {
             };
             /** @description unknown, answered or timed-out request */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_doctor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description a diagnostics run is already in progress */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair id: create_data_dir, reload_providers or restart_browser */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairResult"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local user */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not an allow-listed repair */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description this daemon cannot run that repair */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the repair ran and failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the audit record could not be written; nothing ran */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Markdown report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description safe redaction unavailable or the report did not finish in time */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5159,6 +5691,34 @@ export interface operations {
                 };
             };
             /** @description no secret store */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_skills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsCatalogDto"];
+                };
+            };
+            /** @description skills are not available */
             503: {
                 headers: {
                     [name: string]: unknown;

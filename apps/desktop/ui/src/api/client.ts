@@ -12,6 +12,7 @@ import type {
   CreateSessionInput,
   Decision,
   DetectedProviderDto,
+  DoctorReport,
   EffectiveProfile,
   ErrorBody,
   Grant,
@@ -35,6 +36,8 @@ import type {
   ProvidersDto,
   ReleaseRequest,
   RememberResponse,
+  RepairId,
+  RepairResult,
   Run,
   Schedule,
   ScheduleInput,
@@ -52,7 +55,10 @@ import type {
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
-  WebSearchTestReport
+  WebSearchTestReport,
+  BotSkills,
+  PutBotSkillsInput,
+  SkillsCatalog
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -95,6 +101,25 @@ export class ApiClient {
     path: string,
     opts: { body?: unknown; query?: Query; auth?: boolean } = {}
   ): Promise<T> {
+    const res = await this.send(method, path, opts);
+    if (res.status === 204) {
+      return undefined as T;
+    }
+    return (await res.json()) as T;
+  }
+
+  /** Like `request`, for routes that answer with text (Markdown). */
+  protected async requestText(method: string, path: string): Promise<string> {
+    const res = await this.send(method, path);
+    return res.text();
+  }
+
+  /** Perform the request; throws `ApiError` unless the status is 2xx. */
+  private async send(
+    method: string,
+    path: string,
+    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+  ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== null && v !== undefined) {
@@ -134,10 +159,7 @@ export class ApiClient {
       }
       throw new ApiError(res.status, code, message);
     }
-    if (res.status === 204) {
-      return undefined as T;
-    }
-    return (await res.json()) as T;
+    return res;
   }
 
   health(): Promise<Health> {
@@ -165,6 +187,17 @@ export class ApiClient {
   revokeGrant(botId: string, target: GrantTarget): Promise<void> {
     return this.request("DELETE", `/bots/${botId}/grants`, {
       body: { target }
+    });
+  }
+  listSkills(): Promise<SkillsCatalog> {
+    return this.request("GET", "/skills");
+  }
+  getBotSkills(botId: string): Promise<BotSkills> {
+    return this.request("GET", `/bots/${encodeURIComponent(botId)}/skills`);
+  }
+  putBotSkills(botId: string, body: PutBotSkillsInput): Promise<BotSkills> {
+    return this.request("PUT", `/bots/${encodeURIComponent(botId)}/skills`, {
+      body
     });
   }
 
@@ -477,6 +510,21 @@ export class ApiClient {
     active: string[];
   }> {
     return this.request("POST", "/providers/reload");
+  }
+
+  // ---- Diagnostics -----------------------------------------------------
+
+  /** Read-only checks (`GET /v1/doctor`, at most ~10 s). */
+  doctor(): Promise<DoctorReport> {
+    return this.request("GET", "/doctor");
+  }
+  /** Run one allow-listed repair; only ever called from a user click. */
+  doctorRepair(id: RepairId): Promise<RepairResult> {
+    return this.request("POST", `/doctor/repair/${encodeURIComponent(id)}`);
+  }
+  /** Redacted Markdown support report. */
+  doctorReport(): Promise<string> {
+    return this.requestText("GET", "/doctor/report");
   }
 
   getWebSearch(): Promise<WebSearchConfig> {

@@ -53,7 +53,7 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for ApiJson<T> {
     }
 }
 
-fn id(s: &str) -> Result<Uuid, ApiError> {
+pub(crate) fn id(s: &str) -> Result<Uuid, ApiError> {
     s.parse().map_err(|_| ApiError::bad_request("malformed id"))
 }
 
@@ -1261,7 +1261,7 @@ fn persist_cli_enable(
     })
 }
 
-async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, ApiError> {
+pub(crate) async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, ApiError> {
     let st = s.clone();
     let built =
         tokio::task::spawn_blocking(move || (st.provider_host().expect("checked above").reload)())

@@ -1248,6 +1248,7 @@ dependencies = [
  "builtin-tools",
  "channel-telegram",
  "clap",
+ "cli-provider",
  "computer-target",
  "connector-email",
  "daemon-api",
@@ -1767,12 +1768,14 @@ dependencies = [
  "agent-core",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "browser-cdp",
  "builtin-tools",
  "chrono",
  "chrono-tz",
  "cli-provider",
  "desktop-api",
+ "fs4",
  "futures",
  "getrandom 0.3.4",
  "http-body-util",
@@ -1792,6 +1795,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "skills",
  "storage",
  "task-runtime",
  "tempfile",
@@ -2076,8 +2080,14 @@ name = "desktop-api"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "jpeg-encoder",
+ "live-view",
+ "parking_lot",
  "serde",
+ "tempfile",
  "thiserror 2.0.21",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2089,7 +2099,11 @@ dependencies = [
  "desktop-api",
  "futures",
  "jpeg-encoder",
+ "live-view",
+ "parking_lot",
  "png 0.18.1",
+ "rustix",
+ "tempfile",
  "tokio",
  "x11rb",
 ]
@@ -2106,7 +2120,11 @@ dependencies = [
  "desktop-api",
  "futures",
  "jpeg-encoder",
+ "live-view",
+ "parking_lot",
  "png 0.18.1",
+ "tempfile",
+ "tokio",
  "windows 0.62.2",
 ]
 
@@ -10333,7 +10351,6 @@ dependencies = [
  "script-runtime",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "storage",
  "tempfile",
  "thiserror 2.0.21",
