@@ -31,7 +31,7 @@ pub mod store;
 
 pub use desktop::{DesktopRpcHandler, NodeInfo, RemoteDesktop};
 pub use error::{PeerError, Result};
-pub use identity::{key_from_string, key_to_string};
+pub use identity::{key_from_string, key_to_string, load_or_create_secret_key};
 pub use invite::{INVITE_TTL, Invite, MAX_INVITE_TTL, PairTicket};
 pub use net::{
     HeartbeatConfig, LinkState, PeerConfig, PeerEvent, PeerNetwork, ProtocolHandler, RelayConfig,
