@@ -31,4 +31,4 @@ pub use open::{
     secrets_file_path,
 };
 pub use redact::{REDACTED, Redactor, secret_variants};
-pub use secret::{SecretRef, SecretStore, SecretValue, resolve, validate_name};
+pub use secret::{SecretRef, SecretStore, SecretValue, is_host_credential, resolve, validate_name};

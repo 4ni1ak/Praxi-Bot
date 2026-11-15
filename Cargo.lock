@@ -1270,6 +1270,7 @@ dependencies = [
  "qrcode",
  "remote-api",
  "reqwest 0.12.28",
+ "rmcp",
  "secret-store",
  "serde",
  "serde_json",

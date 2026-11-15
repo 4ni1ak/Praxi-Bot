@@ -157,6 +157,12 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
     ) -> Decision {
+        // Scoped admission allows only two active runs per credential. Until
+        // child admission shares that counter, external agents cannot fan out.
+        if ctx.initiator == InitiatorKind::ExternalAgent && name == crate::subagent::SPAWN_SUBAGENT
+        {
+            return Decision::Deny;
+        }
         let mut raw_command = raw_command_for(name, input);
         if raw_command.is_empty() {
             input
@@ -180,9 +186,9 @@ impl Shared {
             None,
             &req,
         );
-        // A tool that delegates future authority is confirmed every time:
-        // an allow becomes a plain ask, and no grant waives it (a deny stays).
-        if self.always_ask(name) {
+        // External agents and tools that delegate future authority require
+        // confirmation every time, before grants or read shortcuts. Deny stays.
+        if self.always_ask(name) || ctx.initiator == InitiatorKind::ExternalAgent {
             if d == Decision::Allow {
                 d = Decision::ask();
             }
@@ -530,10 +536,15 @@ impl Shared {
                     .into(),
             ));
         }
-        let once_only = details.is_some() || self.always_ask(name);
+        let once_only = details.is_some()
+            || self.always_ask(name)
+            || ctx.initiator == InitiatorKind::ExternalAgent;
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
-        let prefix = computer_approval(ctx, name, category, &mut details);
+        let mut prefix = computer_approval(ctx, name, category, &mut details);
+        if ctx.initiator == InitiatorKind::ExternalAgent {
+            prefix.push_str("[External agent: approve once only] ");
+        }
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
         let parked_at = policy_revision(self);
@@ -797,7 +808,9 @@ impl ExecPermit {
             .storage
             .decide_approval(self.approval_id, "approved");
         // Approving an always-ask tool confirms this one call only.
-        let scope = if self.sh.always_ask(&self.name) {
+        let scope = if self.sh.always_ask(&self.name)
+            || self.ctx.initiator == InitiatorKind::ExternalAgent
+        {
             ApprovalScope::Once
         } else {
             self.scope

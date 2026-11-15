@@ -687,6 +687,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp-server/call": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch a scoped task/computer operation through the ordinary agent loop. */
+        post: operations["call_tool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp-server/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a bot-bound token in the secret store (local owner only). */
+        post: operations["create_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp-server/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a token and cancel its outstanding tasks (local owner only). */
+        delete: operations["revoke_token"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp-server/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List only explicitly enabled tools within the scoped token. */
+        get: operations["list_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp/catalog": {
         parameters: {
             query?: never;
@@ -1784,6 +1852,16 @@ export interface components {
             /** @description Title (default `New chat`). */
             title?: string | null;
         };
+        /**
+         * @description Owner request: create a credential in the secret store. Only its id is
+         *     returned; `bot mcp serve` reads that one scoped credential by id.
+         */
+        CreateMcpToken: {
+            bots: string[];
+            scopes: components["schemas"]["McpScope"][];
+            /** Format: int64 */
+            ttl_seconds?: number;
+        };
         CreateSession: {
             /** Format: uuid */
             client_id: string;
@@ -2066,6 +2144,14 @@ export interface components {
             code: string;
             /** @description Human-readable message. */
             message: string;
+        };
+        /** @description MCP tool metadata. All returned text is untrusted data. */
+        ExportedMcpTool: {
+            description: string;
+            input_schema: unknown;
+            name: string;
+            read_only: boolean;
+            untrusted_output: boolean;
         };
         /** @description One collapsed file change recorded during a run. */
         FileChangeDto: {
@@ -2351,6 +2437,13 @@ export interface components {
              */
             gseq: number;
         };
+        /** @description One MCP operation. `bot` is bound by the stdio server's --bot setting. */
+        McpCallInput: {
+            arguments?: unknown;
+            /** Format: uuid */
+            bot: string;
+            name: string;
+        };
         /** @description An entry of the curated MCP catalog (`GET /v1/mcp/catalog`). */
         McpCatalogEntryDto: {
             /** @description Permission category of its tools. */
@@ -2405,6 +2498,11 @@ export interface components {
             /** @description Secret name (store it with `POST /v1/secrets/{name}`). */
             name: string;
         };
+        /**
+         * @description Independent MCP capabilities. Neither permits owner management endpoints.
+         * @enum {string}
+         */
+        McpScope: "mcp:tasks" | "mcp:computer";
         /**
          * @description Data of the `mcp_server_changed` SSE event of the daemon-wide stream: a
          *     server was added, changed, removed, or its status moved.  A notification
@@ -2589,6 +2687,15 @@ export interface components {
          * @enum {string}
          */
         McpStatus: "connected" | "connecting" | "disconnected" | "error" | "quarantined";
+        /** @description Nonsecret grant, returned to the owner after storing a credential. */
+        McpTokenGrant: {
+            bots: string[];
+            /** Format: int64 */
+            expires_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            scopes: components["schemas"]["McpScope"][];
+        };
         /** @description A tool of an MCP server (`GET /v1/mcp/servers/{name}/tools`). */
         McpToolDto: {
             /** @description Description given by the server. */
@@ -5036,6 +5143,158 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    call_tool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpCallInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMcpToken"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpTokenGrant"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_tools: {
+        parameters: {
+            query: {
+                bot: string;
+                computer?: boolean;
+                tasks?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportedMcpTool"][];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

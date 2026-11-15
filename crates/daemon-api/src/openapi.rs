@@ -10,7 +10,7 @@ use utoipa::{Modify, OpenApi};
 
 use crate::{
     changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
-    mcp_routes, routes, skills, sse, web, web_routes,
+    mcp_routes, mcp_server, routes, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -116,6 +116,8 @@ impl Modify for Security {
         mcp_routes::list_mcp_tools,
         mcp_routes::mcp_catalog,
         mcp_routes::set_secret,
+        mcp_server::create_token, mcp_server::revoke_token,
+        mcp_server::list_tools, mcp_server::call_tool,
         email_routes::list_email_accounts,
         email_routes::create_email_account,
         email_routes::update_email_account,
@@ -143,6 +145,8 @@ impl Modify for Security {
         mcp::McpTransportKind, mcp::McpStatus, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
         mcp::McpCatalogInstallDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
+        mcp_server::McpScope, mcp_server::McpTokenGrant, mcp_server::CreateMcpToken,
+        mcp_server::McpCallInput, mcp_server::ExportedMcpTool,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,
@@ -167,7 +171,7 @@ impl Modify for Security {
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
         (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"),
-        (name = "skills"), (name = "doctor")
+        (name = "skills"), (name = "doctor"), (name = "mcp-server")
     )
 )]
 pub struct ApiDoc;

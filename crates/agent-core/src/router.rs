@@ -497,7 +497,10 @@ impl TurnExecutor {
     /// Decide how a fresh top-level turn starts and emit `route_decided`.
     /// `None` for subagents and bots with the router off.
     pub(crate) async fn route_first(&self, ctx: &RunCtx, text: &str) -> Option<Decision> {
-        if ctx.sub.is_some() || ctx.parent_run_id.is_some() {
+        if ctx.sub.is_some()
+            || ctx.parent_run_id.is_some()
+            || ctx.initiator == protocol::InitiatorKind::ExternalAgent
+        {
             return None;
         }
         let bl = self.sh.ladder_for(ctx.bot_id, &ctx.profile)?;

@@ -462,6 +462,37 @@ impl AgentLoop {
         self.start_turn(chat_id, user_message, &kind_for(initiator), None, None)
     }
 
+    /// Start an external MCP task in a fresh, isolated chat. The credential id
+    /// is public attribution, never the bearer. Every tool requires one-time
+    /// owner approval, including reads and inherited child calls.
+    ///
+    /// # Errors
+    /// Existing chat history, unavailable bot, invalid task, or storage error.
+    pub fn run_external(
+        &self,
+        chat_id: ChatId,
+        credential_id: Uuid,
+        work: ScheduleWork,
+    ) -> Result<RunId> {
+        let text = match &work {
+            ScheduleWork::Prompt(text) => text.clone(),
+            ScheduleWork::Tool { .. } => "External agent requested a computer tool call.".into(),
+            ScheduleWork::Workflow { .. } => {
+                return Err(LoopError::Profile(
+                    "external workflow directives are not supported".into(),
+                ));
+            }
+        };
+        let directive = (!matches!(work, ScheduleWork::Prompt(_))).then_some(work);
+        self.start_turn(
+            chat_id,
+            &text,
+            &format!("turn:external_agent:{credential_id}"),
+            directive,
+            None,
+        )
+    }
+
     /// Start a run on behalf of schedule `schedule_id` (initiator
     /// [`InitiatorKind::Schedule`]) and return its run id; the run goes on in
     /// the background.  `work` says what it does: a normal prompt turn, a saved
@@ -531,6 +562,19 @@ impl AgentLoop {
             {
                 return Err(LoopError::Busy(chat_id));
             }
+            // Check under the same lock as turn creation: a fast concurrent
+            // human/external turn must not race the history isolation boundary.
+            let messages = self.sh.storage.list_messages(chat_id)?;
+            if initiator_of(kind) == InitiatorKind::ExternalAgent && !messages.is_empty() {
+                return Err(LoopError::Profile(
+                    "external tasks require a fresh chat".into(),
+                ));
+            }
+            if messages.iter().any(|m| m.role == "external_agent") {
+                return Err(LoopError::Profile(
+                    "external task chats cannot be reused; start a new chat".into(),
+                ));
+            }
             let run_id = self
                 .rt
                 .create_run(chat.user_id, chat.bot_id, Some(chat_id), kind)?;
@@ -570,6 +614,17 @@ impl AgentLoop {
         });
         {
             let active = self.sh.active.lock();
+            if self
+                .sh
+                .storage
+                .list_messages(chat_id)?
+                .iter()
+                .any(|m| m.role == "external_agent")
+            {
+                return Err(LoopError::Profile(
+                    "external task chats cannot accept follow-up messages; start a new chat".into(),
+                ));
+            }
             if let Some(&run_id) = active.get(&chat_id) {
                 if let Some(content) = steering {
                     let ctx = self.sh.runs.lock().get(&run_id).cloned();
@@ -1321,7 +1376,17 @@ impl AgentLoop {
             user_id,
             chat_id,
             run_id: Some(run_id),
-            role: "user".to_owned(),
+            role: if self
+                .sh
+                .storage
+                .get_run(run_id)?
+                .is_some_and(|run| initiator_of(&run.kind) == InitiatorKind::ExternalAgent)
+            {
+                "external_agent"
+            } else {
+                "user"
+            }
+            .to_owned(),
             content: content.clone(),
             created_at_ms: now_ms(),
         })?;

@@ -49,7 +49,7 @@ impl Drop for SecretValue {
 impl ZeroizeOnDrop for SecretValue {}
 
 /// A reference to a secret by name. Safe to persist and to show to the agent.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SecretRef(String);
 
@@ -61,6 +61,9 @@ impl SecretRef {
     pub fn new(name: impl Into<String>) -> Result<Self, SecretError> {
         let name = name.into();
         validate_name(&name)?;
+        if is_host_credential(&name) {
+            return Err(SecretError::InvalidName("reserved host credential".into()));
+        }
         Ok(Self(name))
     }
 
@@ -69,6 +72,19 @@ impl SecretRef {
     pub fn name(&self) -> &str {
         &self.0
     }
+}
+
+impl<'de> Deserialize<'de> for SecretRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Host credentials cannot be selected as provider/connector secrets or
+/// exported in a portable state bundle. The host accesses them by exact name.
+#[must_use]
+pub fn is_host_credential(name: &str) -> bool {
+    name.starts_with("mcp-server/")
 }
 
 impl fmt::Display for SecretRef {
@@ -131,4 +147,19 @@ pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, Se
     store
         .get(r.name())?
         .ok_or_else(|| SecretError::NotFound(r.name().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_credentials_cannot_become_provider_or_connector_references() {
+        for name in ["mcp-server/token/id", "mcp-server/meta/id"] {
+            assert!(SecretRef::new(name).is_err());
+            assert!(serde_json::from_value::<SecretRef>(serde_json::json!(name)).is_err());
+        }
+        let ordinary: SecretRef = serde_json::from_str("\"provider/key\"").unwrap();
+        assert_eq!(ordinary.name(), "provider/key");
+    }
 }

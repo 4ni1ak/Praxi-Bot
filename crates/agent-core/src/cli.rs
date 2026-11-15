@@ -162,6 +162,13 @@ impl TurnExecutor {
         specs: &[ToolSpec],
         cancel: &CancellationToken,
     ) -> Result<ModelOut, ExecError> {
+        // Central boundary covers primary models, fallbacks and child roles.
+        // Native CLI tools cannot honor the per-call external-agent gate.
+        if self.sh.ctx(run)?.initiator == protocol::InitiatorKind::ExternalAgent {
+            return Err(xe(
+                "native CLI sessions are not available to external agents",
+            ));
+        }
         let cfg = ProviderConfig::load(&config_path(self.sh.storage.data_dir())).map_err(xe)?;
         let id = req.model.provider().unwrap_or(&req.model.0);
         let settings = cfg

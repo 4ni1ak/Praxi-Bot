@@ -45,12 +45,13 @@ futures-util.workspace = true
 protocol.workspace = true
 provider-catalog = { path = "../../crates/provider-catalog", version = "0.1.0" }
 reqwest.workspace = true
+rmcp = { version = "3.9", default-features = false, features = ["server", "transport-io"] }
 secret-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 skills = { path = "../../crates/skills", version = "0.1.0" }
 storage.workspace = true
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["signal", "io-std"] }
 tool-registry = { path = "../../crates/tool-registry", version = "0.1.0" }
 toml.workspace = true
 url.workspace = true
@@ -66,6 +67,7 @@ memory-store = { path = "../../crates/memory-store", version = "0.1.0" }
 tokio = { workspace = true, features = ["test-util"] }
 desktop-linux = { path = "../../crates/desktop-linux", version = "0.1.0" }
 wiremock.workspace = true
+rmcp = { version = "3.9", default-features = false, features = ["client", "server", "transport-io"] }
 daemon-api = { path = "../../crates/daemon-api", version = "0.1.0", features = ["fake-provider"] }
 tempfile.workspace = true
 

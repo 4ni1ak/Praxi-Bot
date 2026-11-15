@@ -37,6 +37,7 @@ Three ideas run through the whole product:
 | Replay a recorded sequence of steps without a model | [Workflows](workflows.md) |
 | Teach a bot how to handle a tricky web page or app | [Skills](skills.md) |
 | Add external tool servers | [MCP servers](mcp-servers.md) (Planned in the daemon) |
+| Let another MCP agent use a selected Praxi bot | [Praxi as an MCP server](mcp-server.md) |
 | Pick a provider, use the Gemini free tier | [Providers and models](providers-and-models.md) |
 | Talk to your bots from your phone | [Telegram](telegram.md) |
 | Read, search, draft or send e-mails | [Email integration](email.md) |

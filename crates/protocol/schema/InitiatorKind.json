@@ -37,6 +37,13 @@
       "enum": [
         "schedule"
       ]
+    },
+    {
+      "description": "A separately scoped external MCP agent. Never inherits human authority.",
+      "type": "string",
+      "enum": [
+        "external_agent"
+      ]
     }
   ]
 }

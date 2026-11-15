@@ -12,6 +12,7 @@ mod email_host;
 mod host;
 mod host_runtime;
 mod mcp_host;
+mod mcp_serve;
 mod peer;
 mod presets;
 mod prompt;
@@ -75,6 +76,16 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 enum Command {
+    /// Expose a scoped Praxi MCP server over stdio.
+    Mcp {
+        #[command(subcommand)]
+        action: mcp_serve::McpCmd,
+    },
+    /// Create or revoke scoped MCP credentials on the local daemon.
+    Token {
+        #[command(subcommand)]
+        action: mcp_serve::TokenCmd,
+    },
     /// Manage the active host and paired devices.
     Host {
         #[command(subcommand)]
@@ -550,6 +561,16 @@ fn run() -> Result<()> {
 
     // Daemon commands (no secret store needed, except `serve` with real providers).
     match command {
+        Command::Mcp {
+            action: mcp_serve::McpCmd::Serve(args),
+        } => return mcp_serve::run(&cli, args, &data_dir),
+        Command::Token { action } => {
+            let client = make_client(&cli, &data_dir)?;
+            let result =
+                current_thread_runtime()?.block_on(mcp_serve::token_command(&client, action))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
         Command::Serve { .. } => return run_serve(&cli, command, &data_dir),
         Command::Doctor(c) => return run_doctor(&cli, c, &data_dir),
         Command::SelfUpdate(args) => return update::run(args),
@@ -613,7 +634,9 @@ fn run() -> Result<()> {
             }
             SecretsCmd::Delete { name } => commands::secrets_delete(store, name),
         },
-        Command::Host { .. }
+        Command::Mcp { .. }
+        | Command::Token { .. }
+        | Command::Host { .. }
         | Command::SelfUpdate(_)
         | Command::Doctor(_)
         | Command::Serve { .. }

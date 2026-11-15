@@ -180,6 +180,11 @@ pub(crate) async fn set_secret(
     Path(name): Path<String>,
     ApiJson(input): ApiJson<SetSecret>,
 ) -> Result<StatusCode, ApiError> {
+    if secret_store::is_host_credential(&name) {
+        return Err(ApiError::forbidden(
+            "host credentials require their dedicated owner route",
+        ));
+    }
     let store = s
         .secret_store()
         .ok_or_else(|| ApiError::unavailable("this daemon has no secret store"))?;

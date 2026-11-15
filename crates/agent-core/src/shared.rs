@@ -865,6 +865,7 @@ pub(crate) fn kind_for(i: InitiatorKind) -> String {
         InitiatorKind::Channel => format!("{KIND_PREFIX}:channel"),
         InitiatorKind::Subagent => format!("{KIND_PREFIX}:subagent"),
         InitiatorKind::Schedule => format!("{KIND_PREFIX}:schedule"),
+        InitiatorKind::ExternalAgent => format!("{KIND_PREFIX}:external_agent"),
     }
 }
 
@@ -887,6 +888,9 @@ pub(crate) fn initiator_of(kind: &str) -> InitiatorKind {
         Some("channel") => InitiatorKind::Channel,
         Some("subagent") => InitiatorKind::Subagent,
         Some(s) if s == "schedule" || s.starts_with("schedule:") => InitiatorKind::Schedule,
+        Some(s) if s == "external_agent" || s.starts_with("external_agent:") => {
+            InitiatorKind::ExternalAgent
+        }
         _ => InitiatorKind::Human,
     }
 }

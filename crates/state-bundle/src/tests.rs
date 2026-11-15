@@ -1152,6 +1152,65 @@ async fn all_does_not_carry_mailbox_passwords_unless_named() {
 }
 
 #[tokio::test]
+async fn mcp_host_credentials_never_export_even_by_name_and_cannot_import() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    let store = MemoryStore::new();
+    store.set("provider/key", "ordinary").unwrap();
+    store
+        .set("mcp-server/token/id", "scoped-secret-that-must-not-travel")
+        .unwrap();
+    store.set("mcp-server/meta/id", "grant").unwrap();
+    let mut bytes = Vec::new();
+    let manifest = export(
+        dir.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::All,
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    assert_eq!(manifest.secret_names, ["provider/key"]);
+    let secret = b"scoped-secret-that-must-not-travel";
+    assert!(!bytes.windows(secret.len()).any(|w| w == secret));
+    for name in ["mcp-server/token/id", "mcp-server/meta/id"] {
+        let error = export(
+            dir.path(),
+            &store,
+            ExportOptions {
+                secrets: SecretSelection::Names(vec![name.into()]),
+                ..Default::default()
+            },
+            &mut Vec::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("host credentials cannot be exported")
+        );
+    }
+    let forged = replace_payload(
+        &bytes,
+        "secrets.json",
+        serde_json::to_vec(&serde_json::json!({"mcp-server/token/id":"forged"})).unwrap(),
+    );
+    let forged = alter_manifest(&forged, |m| {
+        m.secret_names = vec!["mcp-server/token/id".into()];
+    });
+    let error = rejected(&forged, ImportOptions::default()).await;
+    assert!(
+        error
+            .to_string()
+            .contains("host credentials cannot be imported")
+    );
+}
+
+#[tokio::test]
 async fn all_none_and_missing_secret_selection() {
     let dir = tempfile::tempdir().unwrap();
     database(dir.path(), false);
