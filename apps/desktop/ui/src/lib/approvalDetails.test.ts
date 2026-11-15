@@ -32,6 +32,11 @@ test("a long program path is kept whole and a path that would change is not offe
   });
   assert.ok(hidden);
   assert.equal(hidden.offered, false);
+  const huge = controlGrantDetails({
+    control_grant: { offered: true, program: "a.exe", image_path: `C:\\${"d".repeat(1100)}\\a.exe`, window_title: "" }
+  });
+  assert.ok(huge);
+  assert.equal(huge.offered, false);
   const empty = controlGrantDetails({ control_grant: { offered: true, program: "a.exe", image_path: "" } });
   assert.ok(empty);
   assert.equal(empty.offered, false);

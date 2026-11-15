@@ -1085,13 +1085,9 @@ impl DesktopTool {
                     _ => refusal = Some(desktop_api::Refusal::Chord.code().to_owned()),
                 }
                 match input.get("index") {
-                    Some(idx) if !idx.is_null() => {
-                        if secure_ref(idx) {
-                            refusal.get_or_insert_with(|| {
-                                desktop_api::Refusal::PasswordField.code().to_owned()
-                            });
-                        }
-                    }
+                    // A key press that first clicks an element is a click, and a
+                    // task-wide permission never covers a click: it asks.
+                    Some(idx) if !idx.is_null() => return None,
                     // No element: the keys go to whatever has the focus.
                     _ => focus_matters = true,
                 }
@@ -1737,10 +1733,13 @@ pub(crate) mod fake {
         ) -> Result<ActionResult, DesktopError> {
             // The same decision a real backend takes right before it sends.
             let now = self.input.lock().clone().ok_or_else(|| {
-                DesktopError::GuardRefused(desktop_api::Refusal::NoIdentity.code().into())
+                DesktopError::GuardRefused(format!(
+                    "not sent: {}",
+                    desktop_api::Refusal::NoIdentity.code()
+                ))
             })?;
             desktop_api::guard::check_guard(&guard, &now)
-                .map_err(|r| DesktopError::GuardRefused(r.code().into()))?;
+                .map_err(|r| DesktopError::GuardRefused(format!("not sent: {}", r.code())))?;
             self.guarded.lock().push(action.clone());
             self.act(action).await
         }
@@ -2118,10 +2117,6 @@ mod tests {
                 "desktop_set_value",
                 json!({"index": 3, "gen": 1, "value": "x"}),
             ),
-            (
-                "desktop_key",
-                json!({"keys": "enter", "index": 3, "gen": 1}),
-            ),
         ] {
             let target = get(&t, tool).control_target(&ctx, &input).await.unwrap();
             assert_eq!(target.refusal.as_deref(), Some("password_field"), "{tool}");
@@ -2145,12 +2140,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(focus.refusal.as_deref(), Some("password_field"));
-        // With an element index the click moves the focus first.
-        let by_index = get(&t2, "desktop_key")
-            .control_target(&ctx, &json!({"keys": "enter", "index": 1, "gen": 1}))
-            .await
-            .unwrap();
-        assert!(by_index.eligible(), "{by_index:?}");
+        // With an element index the key press first clicks: a click is never
+        // covered by a task-wide permission, so there is no target at all.
+        assert!(
+            get(&t2, "desktop_key")
+                .control_target(&ctx, &json!({"keys": "enter", "index": 1, "gen": 1}))
+                .await
+                .is_none()
+        );
     }
 
     fn guard_for(target: &desktop_api::InputTarget) -> tool_registry::ControlIdentity {

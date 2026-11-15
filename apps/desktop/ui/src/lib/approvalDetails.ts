@@ -189,7 +189,8 @@ export function controlGrantDetails(details: unknown): ControlGrantDetails | nul
   // path that hiding or cutting would change cannot be approved from this card.
   const rawPath = typeof c.image_path === "string" ? c.image_path : "";
   const wholePath = [...rawPath].filter((ch) => !isHidden(ch)).join("");
-  const pathShownWhole = rawPath.trim() !== "" && wholePath === rawPath;
+  // 1024 matches the daemon's limit, so a surface never offers what the daemon would not.
+  const pathShownWhole = rawPath.trim() !== "" && [...rawPath].length <= 1024 && wholePath === rawPath;
   const title = plain(c.window_title, 1000);
   return {
     offered: c.offered === true && pathShownWhole,
