@@ -239,6 +239,7 @@ pub fn build_agent_with_redactor(
     build_agent_with_live_views(storage, providers, data_dir, desktop, redactor, None)
 }
 
+#[cfg(test)]
 pub fn build_agent_with_live_views(
     storage: &Arc<Storage>,
     providers: Providers,
@@ -246,6 +247,26 @@ pub fn build_agent_with_live_views(
     desktop: Option<Arc<dyn DesktopBackend>>,
     redactor: SharedRedactor,
     view_registry: Option<Arc<live_view::TargetRegistry>>,
+) -> AgentLoop {
+    build_agent_inner(
+        storage,
+        providers,
+        data_dir,
+        desktop,
+        redactor,
+        view_registry,
+        false,
+    )
+}
+
+fn build_agent_inner(
+    storage: &Arc<Storage>,
+    providers: Providers,
+    data_dir: &Path,
+    desktop: Option<Arc<dyn DesktopBackend>>,
+    redactor: SharedRedactor,
+    view_registry: Option<Arc<live_view::TargetRegistry>>,
+    dynamic_desktop: bool,
 ) -> AgentLoop {
     // Placeholder: `with_builtin_tools` replaces it with the loop's own gate.
     let gate = ResolverGate::new(
@@ -256,6 +277,7 @@ pub fn build_agent_with_live_views(
     );
     let mut tools = BuiltinConfig::new(data_dir.to_path_buf(), Arc::new(gate));
     tools.desktop.clone_from(&desktop);
+    tools.dynamic_desktop = dynamic_desktop;
     tools.view_registry = view_registry;
     let host_limits = std::fs::read_to_string(data_dir.join("host.toml")).unwrap_or_default();
     let (max_computer_runs, idle) = computer_limits(
@@ -873,13 +895,19 @@ pub fn serve(
     });
     let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
     let views = Arc::new(live_view::TargetRegistry::default());
-    let agent = build_agent_with_live_views(
+    let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
+    let effective_peer_enabled =
+        peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
+    let dynamic_desktop = effective_peer_enabled;
+    let local_desktop = desktop.clone();
+    let agent = build_agent_inner(
         &storage,
         providers,
         data_dir,
         desktop,
         redactor.clone(),
         Some(Arc::clone(&views)),
+        dynamic_desktop,
     );
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
@@ -895,7 +923,7 @@ pub fn serve(
     if let Ok(extra) = std::env::var(ALLOWED_ORIGINS_ENV) {
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
-    let state = AppState::with_view_registry(agent, storage, cfg, views)?;
+    let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
     register_schedule_tools(data_dir, &state);
     state.set_doctor_host(Arc::new(ServeDoctorHost {
         desktop: desktop_caps,
@@ -925,17 +953,47 @@ pub fn serve(
         };
         let peer = crate::peer::start_server(
             data_dir,
-            ownership.mode == daemon_api::host::HostMode::Host,
-            *peer_enabled || *host_mode,
+            host_is_host,
+            effective_peer_enabled,
             state.clone(),
         )
         .await?;
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
         }
+        let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
+        let computer = Arc::new(crate::computer::CliComputerProvider::new(
+            host_is_host,
+            local_desktop,
+            peer.clone(),
+            local_id.clone(),
+        ));
+        agent.set_computer_provider(Arc::clone(&computer) as Arc<dyn agent_core::ComputerProvider>);
+        if crate::computer::is_machine_fingerprint(&local_id) {
+            // Without a running peer stack the paired list is unknown, not empty.
+            let paired_computers: Option<Vec<String>> = peer.as_ref().map(|net| {
+                net.devices()
+                    .into_iter()
+                    .filter(crate::computer::is_remote_desktop_candidate)
+                    .map(|device| device.id)
+                    .collect()
+            });
+            agent.reconcile_computer_identity(&local_id, paired_computers.as_deref())?;
+        } else {
+            eprintln!(
+                "warning: local computer identity unavailable this boot; skipping computer grant reconcile (nothing was changed or persisted)"
+            );
+        }
+        agent.reconcile_waiting_for_pc_runs()?;
         // A revoked pairing loses screen privileges, live sessions and takeover
         // within a couple of seconds, wherever the revoke happened.
         if let Some(net) = peer.clone() {
+            crate::computer::spawn_peer_monitor(
+                net.clone(),
+                Arc::clone(&computer),
+                agent.clone(),
+                state.downgrade(),
+            );
             let weak = state.downgrade();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(2));
@@ -1058,12 +1116,30 @@ pub fn serve(
     })
 }
 
+fn peer_enabled_for_startup(
+    data_dir: &Path,
+    host_is_host: bool,
+    peer_enabled: bool,
+    host_mode: bool,
+) -> Result<bool> {
+    crate::peer::is_enabled(data_dir, host_is_host, peer_enabled || host_mode)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::email_host::register_email;
     use provider_catalog::ProviderConfig;
     use secret_store::MemoryStore;
+
+    #[test]
+    fn host_flag_enables_dynamic_desktop_even_when_peer_config_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "[peer]\nenabled = false\n").unwrap();
+        assert!(peer_enabled_for_startup(dir.path(), true, false, true).unwrap());
+        assert!(!peer_enabled_for_startup(dir.path(), true, false, false).unwrap());
+        assert!(peer_enabled_for_startup(dir.path(), false, true, false).unwrap());
+    }
 
     const PRICED: &str = r#"
 id = "t"

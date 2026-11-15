@@ -33,9 +33,14 @@ mod subagent_tests;
 mod tests;
 
 pub use agent::AgentLoop;
+pub use computer_target::{
+    ComputerLabel, ComputerNode, ComputerProvider, ComputerTarget, Resolution, RuntimeConfig,
+    WAIT_FOR_PC_REASON, resolve as resolve_computer_target,
+};
 pub use config::{
-    DEFAULT_DIRECT_TOOL_LIMIT, DEFAULT_SCHEDULE_APPROVAL_TIMEOUT, Guards, JournalSlot, LoopConfig,
-    MemoryConfig, ModelPrice, RedactorRefreshFn, SharedRedactor, secret_variants,
+    DEFAULT_DIRECT_TOOL_LIMIT, DEFAULT_SCHEDULE_APPROVAL_TIMEOUT, DEFAULT_WAIT_FOR_PC_TIMEOUT,
+    Guards, JournalSlot, LoopConfig, MemoryConfig, ModelPrice, RedactorRefreshFn, SharedRedactor,
+    secret_variants,
 };
 pub use control::{ControlGate, ControlRequest};
 pub use permission_engine::Decision as PolicyDecision;
@@ -53,3 +58,5 @@ pub use subagent::MAX_DEPTH as MAX_SUBAGENT_DEPTH;
 pub(crate) const AUDIT_GRANT_ALWAYS: &str = "grant.always";
 /// Audit-log action recording the removal of such a rule.
 pub(crate) const AUDIT_GRANT_REVOKED: &str = "grant.revoked";
+/// Audit-log action recording that a legacy or orphaned computer grant is inert.
+pub(crate) const AUDIT_GRANT_INERT: &str = "grant.inert";

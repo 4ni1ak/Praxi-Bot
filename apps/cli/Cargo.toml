@@ -30,6 +30,7 @@ agent-router = { path = "../../crates/agent-router", version = "0.1.0" }
 channel-telegram = { path = "../../crates/channel-telegram", version = "0.1.0" }
 connector-email = { path = "../../crates/connector-email", version = "0.1.0" }
 builtin-tools = { path = "../../crates/builtin-tools", version = "0.1.0" }
+computer-target = { path = "../../crates/computer-target", version = "0.1.0" }
 browser-cdp = { path = "../../crates/browser-cdp", version = "0.1.0" }
 mcp-bridge = { path = "../../crates/mcp-bridge", version = "0.1.0" }
 fs4 = "1"
@@ -61,6 +62,7 @@ workflow-replay = { path = "../../crates/workflow-replay", version = "0.1.0" }
 desktop-windows = { path = "../../crates/desktop-windows", version = "0.1.0" }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 desktop-linux = { path = "../../crates/desktop-linux", version = "0.1.0" }
 wiremock.workspace = true
 daemon-api = { path = "../../crates/daemon-api", version = "0.1.0", features = ["fake-provider"] }

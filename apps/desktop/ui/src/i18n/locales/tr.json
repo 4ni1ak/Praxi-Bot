@@ -128,6 +128,8 @@
       "viaGrant": "“Her zaman izin ver” kuralı sayesinde izinli",
       "grantCategory": "Her {{name}} aracına her zaman izin ver",
       "grantTool": "{{name}} için her zaman izin ver",
+      "inertGrant": "Etkin değil: bu kural bir bilgisayara bağlı değil ve artık uygulanmıyor.",
+      "scopedAllow": "Şu bilgisayarlarda izinli: {{scopes}}",
       "revoke": "Geri al",
       "workspace": {
         "title": "Çalışma alanı varsayılanı",
