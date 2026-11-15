@@ -23,6 +23,7 @@ pub const INCLUDED_FILES: &[&str] = &[
     "schedules.db",
     "memory.db",
     "providers.toml",
+    "composio.toml",
     "mcp.toml",
     "host.toml",
     POLICY_FILE,

@@ -1068,6 +1068,7 @@ pub fn serve(
                 store,
                 redact,
                 audit,
+                { let handle = redactor.clone(); Arc::new(move |value| handle.register(value)) },
             ) {
                 Ok(host) => state.set_composio(host as Arc<dyn daemon_api::ComposioControl>),
                 Err(e) => eprintln!("warning: composio: {e}; app connections are off"),

@@ -2,6 +2,7 @@
 
 #![allow(clippy::assert_is_empty)]
 
+mod composio_approvals;
 mod planning_pause;
 
 use std::collections::VecDeque;

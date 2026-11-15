@@ -31,7 +31,8 @@ const kit = (slug: string): ComposioToolkit => ({
 
 test("only https links on composio.dev may be opened", () => {
   assert.equal(isComposioLink("https://connect.composio.dev/link/x"), true);
-  assert.equal(isComposioLink("https://composio.dev/"), true);
+  assert.equal(isComposioLink("https://platform.composio.dev/", true), true);
+  assert.equal(isComposioLink("https://platform.composio.dev/"), false);
   for (const bad of [
     "http://connect.composio.dev/x",
     "https://evilcomposio.dev/x",
@@ -40,6 +41,11 @@ test("only https links on composio.dev may be opened", () => {
     "https://connect.composio.dev:8443/x",
     "http://169.254.169.254/latest",
     "javascript:alert(1)",
+    "https://logos.composio.dev/consent",
+    "https://unexpected.composio.dev/consent",
+    "https://%63onnect.composio.dev/x",
+    "https://connect.composio.dev:443/x",
+    "https://xn--composo-9za.dev/x",
     "not a url",
     ""
   ]) {

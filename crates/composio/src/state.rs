@@ -1,5 +1,4 @@
-//! `composio.toml`: non-secret local state.  No connection ids, no tokens, no
-//! key: only our opaque user id and which apps the owner switched on.
+//! Protected non-secret local identity, app settings and account bindings.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -13,10 +12,14 @@ pub const FILE_NAME: &str = "composio.toml";
 
 /// Per-app local settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     /// The owner opted in (the Connect click) and tools may exist.
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// Account returned by this installation's connect flow (never model-chosen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Bots that may use the app; absent = every bot, `[]` = no bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bots: Option<Vec<String>>,
@@ -30,6 +33,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            account_id: None,
             bots: None,
         }
     }
@@ -37,6 +41,7 @@ impl Default for AppConfig {
 
 /// Contents of `composio.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StateFile {
     /// Opaque end-user id sent to Composio (no personal data).
     #[serde(default)]
@@ -62,7 +67,40 @@ impl StateFile {
         if s.user_id.is_empty() {
             s.user_id = format!("praxi-{}", uuid::Uuid::new_v4());
         }
+        s.validate()?;
         Ok(s)
+    }
+
+    /// Validate non-secret imported state before it can acquire authority.
+    ///
+    /// # Errors
+    /// Malformed identity, toolkit, account or bot identifiers.
+    pub fn validate(&self) -> Result<()> {
+        let valid_id = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 128
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        };
+        let valid = self
+            .user_id
+            .strip_prefix("praxi-")
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+            && self.apps.len() <= 1000
+            && self.apps.iter().all(|(slug, cfg)| {
+                crate::surface::toolkit_allowed(slug)
+                    && cfg.account_id.as_ref().is_none_or(|id| valid_id(id))
+                    && cfg.bots.as_ref().is_none_or(|bots| {
+                        bots.len() <= 1000 && bots.iter().all(|b| uuid::Uuid::parse_str(b).is_ok())
+                    })
+            });
+        if valid {
+            Ok(())
+        } else {
+            Err(ComposioError::Invalid(
+                "invalid Composio installation state".into(),
+            ))
+        }
     }
 
     /// Write atomically (temp file + rename).
@@ -70,6 +108,7 @@ impl StateFile {
     /// # Errors
     /// I/O errors.
     pub fn save(&self, path: &Path) -> Result<()> {
+        self.validate()?;
         let text = toml::to_string_pretty(self)
             .map_err(|e| ComposioError::Internal(format!("{FILE_NAME}: {e}")))?;
         let tmp: PathBuf = path.with_extension("toml.tmp");

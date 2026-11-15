@@ -198,6 +198,9 @@ impl ProviderSettings {
 /// All configured providers plus the explicit global default, if any.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProviderConfig {
+    /// Entries disabled during legacy secret-reference quarantine, for the repair UI.
+    #[serde(skip)]
+    pub quarantined: BTreeMap<String, String>,
     /// Explicit global default provider id; `None` means "first added".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_provider: Option<String>,
@@ -329,7 +332,35 @@ impl ProviderConfig {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {
             Ok(s) => {
-                let cfg: Self = toml::from_str(&s)?;
+                // Quarantine legacy references before SecretRef deserialization.
+                // Keep the source file for repair; never turn a forbidden key into
+                // a keyless enabled provider. New writes still reject SecretRef.
+                let mut raw: toml::Value = toml::from_str(&s)?;
+                let mut quarantined = BTreeMap::new();
+                if let Some(entries) = raw.get_mut("provider").and_then(toml::Value::as_array_mut) {
+                    for entry in entries {
+                        if entry
+                            .get("key")
+                            .and_then(toml::Value::as_str)
+                            .is_some_and(secret_store::is_reserved_name)
+                        {
+                            let id = entry
+                                .get("id")
+                                .and_then(toml::Value::as_str)
+                                .unwrap_or("unknown");
+                            quarantined.insert(id.to_owned(), "Reserved secret reference: remove the key in providers.toml and reconnect this provider".to_owned());
+                            eprintln!(
+                                "provider {id:?} disabled: reserved secret reference; remove its key in providers.toml and reconnect the provider"
+                            );
+                            if let Some(table) = entry.as_table_mut() {
+                                table.remove("key");
+                                table.insert("enabled".into(), toml::Value::Boolean(false));
+                            }
+                        }
+                    }
+                }
+                let mut cfg: Self = raw.try_into()?;
+                cfg.quarantined = quarantined;
                 cfg.validate_cli()?;
                 Ok(cfg)
             }
@@ -1220,5 +1251,36 @@ added_at_ms = 10
         let toml_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(lock_mode, 0o600);
         assert_eq!(toml_mode, 0o600);
+    }
+}
+
+#[cfg(test)]
+mod reserved_upgrade_tests {
+    use super::*;
+    #[test]
+    fn legacy_reserved_reference_is_disabled_without_preventing_startup() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join(CONFIG_FILE_NAME);
+        let text = r#"[[provider]]
+id = "legacy"
+key = "composio/legacy-provider-key"
+enabled = true
+added_at_ms = 1
+[[provider]]
+id = "valid"
+key = "provider.valid.api_key"
+added_at_ms = 2
+"#;
+        std::fs::write(&path, text).unwrap();
+        let cfg = ProviderConfig::load(&path).unwrap();
+        assert!(!cfg.providers[0].enabled);
+        assert!(cfg.quarantined["legacy"].contains("Reserved secret reference"));
+        assert!(cfg.providers[0].key.is_none());
+        assert!(cfg.providers[1].enabled);
+        assert_eq!(
+            cfg.providers[1].key.as_ref().unwrap().name(),
+            "provider.valid.api_key"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
     }
 }

@@ -11,7 +11,7 @@
 //! Security properties: the origin is fixed (`https://backend.composio.dev`);
 //! every URL is built from it, no URL from a response is ever requested; no
 //! redirect is followed; the key sits in a default header marked sensitive;
-//! errors are redacted and truncated; responses are capped at 1 MiB.
+//! upstream error bodies are replaced by fixed status messages; responses are capped at 1 MiB.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,6 +52,8 @@ pub struct Account {
 pub struct Link {
     /// Validated https URL on Composio's domain.
     pub redirect_url: String,
+    /// Account created by this connect flow; daemon-local, never in the DTO.
+    pub(crate) account_id: String,
     /// ISO timestamp.
     pub expires_at: String,
 }
@@ -85,6 +87,10 @@ pub struct ToolkitPage {
 pub struct RemoteTool {
     /// Composio tool slug (`GITHUB_CREATE_AN_ISSUE`).
     pub slug: String,
+    /// Parent toolkit as returned by discovery.
+    pub toolkit: String,
+    /// Concrete action version.
+    pub version: String,
     /// Description (untrusted, capped).
     pub description: String,
     /// Sanitized JSON schema of the inputs.
@@ -111,14 +117,17 @@ pub fn is_composio_https_url(url: &str) -> bool {
     let Ok(u) = Url::parse(url) else {
         return false;
     };
-    u.scheme() == "https"
+    !url.chars().any(|c| c.is_control() || c == '\\')
+        && url
+            .strip_prefix("https://")
+            .and_then(|s| s.split(['/', '?', '#']).next())
+            .is_some_and(|h| matches!(h, "connect.composio.dev" | "backend.composio.dev"))
+        && u.scheme() == "https"
         && u.username().is_empty()
         && u.password().is_none()
         && u.port().is_none()
-        && u.host_str().is_some_and(|h| {
-            let h = h.to_ascii_lowercase();
-            h == "composio.dev" || h.ends_with(".composio.dev")
-        })
+        && u.host_str()
+            .is_some_and(|h| matches!(h, "connect.composio.dev" | "backend.composio.dev"))
 }
 
 impl ComposioClient {
@@ -235,17 +244,10 @@ impl ComposioClient {
             StatusCode::TOO_MANY_REQUESTS => Err(ComposioError::RateLimited {
                 retry_after_secs: retry_after,
             }),
-            s => {
-                let msg = json
-                    .pointer("/error/message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("request failed");
-                Err(ComposioError::Upstream(format!(
-                    "{} ({})",
-                    self.clean(msg),
-                    s.as_u16()
-                )))
-            }
+            s => Err(ComposioError::Upstream(format!(
+                "Composio request failed ({})",
+                s.as_u16()
+            ))),
         }
     }
 
@@ -317,7 +319,23 @@ impl ComposioClient {
                 "Composio returned a connect link outside its own domain; it was discarded".into(),
             ));
         }
+        let account_id = v
+            .get("connected_account_id")
+            .and_then(Value::as_str)
+            .filter(|id| {
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            })
+            .ok_or_else(|| {
+                ComposioError::Upstream(
+                    "no valid account binding in connect response; reconnect required".into(),
+                )
+            })?;
         Ok(Link {
+            account_id: account_id.to_owned(),
             redirect_url: url.to_owned(),
             expires_at: v
                 .get("expires_at")
@@ -349,21 +367,48 @@ impl ComposioClient {
             .request(Method::GET, self.url(&["connected_accounts"]))
             .query(&q);
         let v = self.send(req).await?;
-        Ok(v.get("items")
+        if v.get("next_cursor")
+            .is_some_and(|c| !c.is_null() && c != "")
+        {
+            return Err(ComposioError::Upstream(
+                "account list is incomplete; account selection refused".into(),
+            ));
+        }
+        let items = v
+            .get("items")
             .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|i| {
-                        Some(Account {
-                            id: i.get("id")?.as_str()?.to_owned(),
-                            toolkit: i.pointer("/toolkit/slug")?.as_str()?.to_owned(),
-                            status: i.get("status")?.as_str()?.to_owned(),
-                        })
+            .ok_or_else(|| ComposioError::Upstream("invalid account list".into()))?;
+        items
+            .iter()
+            .map(|i| {
+                let parse = || {
+                    Some(Account {
+                        id: i.get("id")?.as_str()?.to_owned(),
+                        toolkit: i.pointer("/toolkit/slug")?.as_str()?.to_owned(),
+                        status: i.get("status")?.as_str()?.to_owned(),
                     })
-                    .collect()
+                };
+                let account = parse()
+                    .ok_or_else(|| ComposioError::Upstream("invalid account metadata".into()))?;
+                if account.id.is_empty()
+                    || !matches!(
+                        account.status.as_str(),
+                        "ACTIVE"
+                            | "INITIALIZING"
+                            | "INITIATED"
+                            | "EXPIRED"
+                            | "INACTIVE"
+                            | "FAILED"
+                            | "REVOKED"
+                    )
+                {
+                    return Err(ComposioError::Upstream(
+                        "unsupported account metadata".into(),
+                    ));
+                }
+                Ok(account)
             })
-            .unwrap_or_default())
+            .collect()
     }
 
     /// One page of the toolkit catalog, most used first.
@@ -477,6 +522,7 @@ impl ComposioClient {
         tool_slug: &str,
         user_id: &str,
         version: &str,
+        account_id: &str,
         arguments: &Value,
     ) -> Result<Value> {
         if tool_slug.is_empty()
@@ -489,14 +535,12 @@ impl ComposioClient {
         let req = self
             .http
             .request(Method::POST, self.url(&["tools", "execute", tool_slug]))
-            .json(&execute_body(user_id, version, arguments));
+            .json(&execute_body(user_id, version, account_id, arguments));
         let v = self.send(req).await?;
         if v.get("successful").and_then(Value::as_bool) == Some(false) {
-            let msg = v
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("the action failed");
-            return Err(ComposioError::Upstream(self.clean(msg)));
+            return Err(ComposioError::Upstream(
+                "Composio action failed (200)".into(),
+            ));
         }
         Ok(v.get("data").cloned().unwrap_or(Value::Null))
     }
@@ -504,7 +548,11 @@ impl ComposioClient {
 
 fn parse_toolkit(i: &Value) -> Option<Toolkit> {
     let slug = i.get("slug")?.as_str()?.to_owned();
-    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if !crate::surface::toolkit_allowed(&slug)
+        || ["kind", "type"]
+            .iter()
+            .any(|key| i.get(key).is_some_and(|v| v != "toolkit"))
+    {
         return None;
     }
     let categories = i
@@ -540,28 +588,50 @@ fn parse_tool(i: &Value) -> Option<RemoteTool> {
     if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
+    let toolkit = i.pointer("/toolkit/slug")?.as_str()?;
+    if !crate::surface::action_allowed(toolkit, &slug)
+        || ["kind", "type"]
+            .iter()
+            .any(|key| i.get(key).is_some_and(|v| v != "action"))
+    {
+        return None;
+    }
+    let version = i.get("version")?.as_str()?;
+    if version.len() != 11
+        || !version.as_bytes().iter().enumerate().all(|(n, b)| {
+            if n == 8 {
+                *b == b'_'
+            } else {
+                b.is_ascii_digit()
+            }
+        })
+    {
+        return None;
+    }
+    let schema = crate::schema::sanitize(i.get("input_parameters")?);
+    if !schema.is_object() {
+        return None;
+    }
     Some(RemoteTool {
         slug,
+        toolkit: toolkit.to_owned(),
+        version: version.to_owned(),
         description: crate::schema::clean_text(
             i.get("description")
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
             300,
         ),
-        schema: crate::schema::sanitize(i.get("input_parameters").unwrap_or(&Value::Null)),
+        schema,
     })
 }
 
 /// Body of `POST /tools/execute/{slug}`.
 ///
-/// UNVERIFIED: the docs list `connected_account_id` but do not say whether
-/// `user_id` alone resolves the right account when a user has several.  v1
-/// allows one account per app and sends only `user_id`; the live spike must
-/// confirm, and this is the one place to add `connected_account_id`.
-/// UNVERIFIED: the version pin format (docs show `00000000_00`; `latest` is
-/// the documented default on v3.1).
-fn execute_body(user_id: &str, version: &str, arguments: &Value) -> Value {
-    json!({"user_id": user_id, "version": version, "arguments": arguments})
+/// Explicit account and concrete version fields verified against the local
+/// TypeScript SDK `Tools.ts::executeComposioTool`. Live behavior still needs a spike.
+fn execute_body(user_id: &str, version: &str, account_id: &str, arguments: &Value) -> Value {
+    json!({"user_id": user_id, "connected_account_id": account_id, "version": version, "arguments": arguments})
 }
 
 #[cfg(test)]
@@ -571,7 +641,7 @@ mod tests {
     #[test]
     fn only_composio_https_hosts_are_accepted() {
         assert!(is_composio_https_url("https://connect.composio.dev/link/x"));
-        assert!(is_composio_https_url("https://composio.dev/a"));
+        assert!(!is_composio_https_url("https://composio.dev/a"));
         for bad in [
             "http://connect.composio.dev/x",
             "http://169.254.169.254/latest",
@@ -579,6 +649,11 @@ mod tests {
             "https://composio.dev.evil.com/x",
             "https://user:pw@connect.composio.dev/x",
             "https://connect.composio.dev:8443/x",
+            "https://logos.composio.dev/consent",
+            "https://unexpected.composio.dev/consent",
+            "https://%63onnect.composio.dev/x",
+            "https://connect.composio.dev:443/x",
+            "https://xn--composo-9za.dev/x",
             "javascript:alert(1)",
             "",
         ] {

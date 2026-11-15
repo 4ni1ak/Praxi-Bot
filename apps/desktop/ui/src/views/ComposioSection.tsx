@@ -143,7 +143,7 @@ function AppCell({
             {app.enabled ? t("apps.composio.disable") : t("apps.composio.enable")}
           </Button>
         ) : null}
-        {app.state === "expired" || app.state === "pending" ? (
+        {app.state !== "active" ? (
           <Button size="sm" variant="secondary" disabled={busy} onClick={onReconnect}>
             {t("apps.reconnect")}
           </Button>
@@ -223,7 +223,7 @@ function KeySetup({ keyUrl, onSaved }: { keyUrl: string; onSaved: () => Promise<
         type="button"
         className={styles.link}
         data-testid="composio-get-key"
-        onClick={() => void openComposioLink(keyUrl)}
+        onClick={() => { void openComposioLink(keyUrl, true).then((ok) => { if (!ok) setError(t("apps.composio.openFailed")); }); }}
       >
         <ExternalLink aria-hidden="true" /> {t("apps.composio.getKey")}
       </button>
@@ -271,6 +271,7 @@ export function ComposioSection({ active, query }: { active: boolean; query: str
   const c = useComposio(active, query);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmKey, setConfirmKey] = useState(false);
+  const [pendingLink, setPendingLink] = useState<string | null>(null);
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
@@ -289,10 +290,12 @@ export function ComposioSection({ active, query }: { active: boolean; query: str
         return;
       }
       const link = await client.composioConnect(slug);
-      if (!openComposioLink(link.redirect_url)) {
+      setPendingLink(link.redirect_url);
+      if (!(await openComposioLink(link.redirect_url))) {
         toast.show(t("apps.composio.openFailed"), "danger");
         return;
       }
+      setPendingLink(null);
       c.setApps((prev) =>
         upsertApp(prev, {
           slug,
@@ -330,6 +333,12 @@ export function ComposioSection({ active, query }: { active: boolean; query: str
 
   return (
     <>
+      {pendingLink ? <Button size="sm" variant="secondary" onClick={() => {
+          void openComposioLink(pendingLink).then((ok) => {
+            if (ok) { setPendingLink(null); void c.reloadApps(); }
+            else toast.show(t("apps.composio.openFailed"), "danger");
+          });
+        }}>{t("apps.composio.retryOpen")}</Button> : null}
       {c.apps.length > 0 ? (
         <section className={styles.section} aria-labelledby="composio-connected-h">
           <h3 className={styles.sectionLabel} id="composio-connected-h">

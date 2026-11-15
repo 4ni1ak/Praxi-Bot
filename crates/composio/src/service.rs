@@ -72,6 +72,8 @@ pub struct ActionInfo {
     pub tool_slug: String,
     /// Short name inside the toolkit.
     pub name: String,
+    /// Concrete version discovered with this schema.
+    pub version: String,
     /// Description (untrusted, capped).
     pub description: String,
     /// Sanitized input schema.
@@ -90,10 +92,19 @@ pub struct ServiceConfig {
     pub registry: ToolRegistry,
     /// The daemon's live redactor.
     pub redact: Redact,
+    /// Register a candidate with the production redactor before any request.
+    pub register_secret: Arc<dyn Fn(&str) + Send + Sync>,
     /// Audit sink.
     pub audit: Arc<dyn Audit>,
     /// Tests only: a fake server on loopback.
     pub loopback_base: Option<String>,
+}
+
+struct Prepared {
+    at: Instant,
+    token: String,
+    account: String,
+    action: ActionInfo,
 }
 
 type Discovered = (Instant, Arc<Vec<ActionInfo>>);
@@ -103,6 +114,7 @@ pub(crate) struct Inner {
     registry: ToolRegistry,
     redact: Redact,
     audit: Arc<dyn Audit>,
+    register_secret: Arc<dyn Fn(&str) + Send + Sync>,
     loopback_base: Option<String>,
     path: PathBuf,
     pub(crate) curated: Curated,
@@ -114,6 +126,7 @@ pub(crate) struct Inner {
     registered: Mutex<HashMap<String, Vec<String>>>,
     catalog: Mutex<HashMap<String, (Instant, ToolkitPage)>>,
     auth_configs: Mutex<HashMap<String, String>>,
+    prepared: Mutex<HashMap<String, Prepared>>,
 }
 
 /// Cheap to clone; shared by the routes and the tools.
@@ -144,6 +157,7 @@ impl ComposioService {
             registry: cfg.registry,
             redact: cfg.redact,
             audit: cfg.audit,
+            register_secret: cfg.register_secret,
             loopback_base: cfg.loopback_base,
             path,
             curated: Curated::builtin(),
@@ -155,6 +169,7 @@ impl ComposioService {
             registered: Mutex::new(HashMap::new()),
             catalog: Mutex::new(HashMap::new()),
             auth_configs: Mutex::new(HashMap::new()),
+            prepared: Mutex::new(HashMap::new()),
         }));
         for t in [
             Arc::new(FindActionTool::new(svc.clone())) as Arc<dyn Tool>,
@@ -236,6 +251,7 @@ impl ComposioService {
                 "the API key must be 1 to 512 characters without spaces".into(),
             ));
         }
+        (self.0.register_secret)(key);
         let client = Arc::new(self.build_client(key)?);
         match client.validate_key().await {
             Ok(()) => {}
@@ -252,6 +268,7 @@ impl ComposioService {
             .key_present
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.save_state(|_| {})?;
+        self.refresh_all().await;
         Ok(())
     }
 
@@ -386,6 +403,11 @@ impl ComposioService {
             .await?
             .list_accounts(&self.user_id(), Some(slug))
             .await?;
+        if let Err(e) = self.check_accounts(slug, &accounts) {
+            self.0.statuses.lock().remove(slug);
+            self.unregister_app(slug);
+            return Err(e);
+        }
         let new = Self::derive(&accounts);
         let old = self.0.statuses.lock().insert(slug.to_owned(), new);
         if old != Some(new) {
@@ -405,10 +427,16 @@ impl ComposioService {
     /// # Errors
     /// Invalid slug, not configured, Composio errors.
     pub async fn connect(&self, slug: &str) -> Result<Link> {
-        if !valid_slug(slug) {
+        if !valid_slug(slug) || !crate::surface::toolkit_allowed(slug) {
             return Err(ComposioError::Invalid("invalid app slug".into()));
         }
         let client = self.client().await?;
+        let catalog = client.list_toolkits(Some(slug), None, None, 100).await?;
+        if !catalog.items.iter().any(|toolkit| toolkit.slug == slug) {
+            return Err(ComposioError::Invalid(
+                "unknown or unsupported app toolkit; connection refused".into(),
+            ));
+        }
         let cached = self.0.auth_configs.lock().get(slug).cloned();
         let auth_config = if let Some(id) = cached {
             id
@@ -422,7 +450,9 @@ impl ComposioService {
         };
         let link = client.create_link(&auth_config, &self.user_id()).await?;
         self.save_state(|s| {
-            s.apps.entry(slug.to_owned()).or_default().enabled = true;
+            let app = s.apps.entry(slug.to_owned()).or_default();
+            app.enabled = true;
+            app.account_id = Some(link.account_id.clone());
         })?;
         self.0
             .statuses
@@ -471,7 +501,9 @@ impl ComposioService {
         }
         let remote = async {
             let client = self.client().await?;
-            for a in client.list_accounts(&self.user_id(), Some(slug)).await? {
+            let accounts = client.list_accounts(&self.user_id(), Some(slug)).await?;
+            self.check_accounts(slug, &accounts)?;
+            for a in accounts {
                 client.delete_account(&a.id).await?;
             }
             Ok::<(), ComposioError>(())
@@ -490,6 +522,11 @@ impl ComposioService {
     // --- discovery and tool registration --------------------------------
 
     pub(crate) async fn discovered(&self, slug: &str) -> Result<Arc<Vec<ActionInfo>>> {
+        if !self.is_usable(slug) || !crate::surface::toolkit_allowed(slug) {
+            return Err(ComposioError::Invalid(
+                "app is not connected and enabled".into(),
+            ));
+        }
         if let Some((at, v)) = self.0.discovered.lock().get(slug)
             && at.elapsed() < DISCOVERY_TTL
         {
@@ -499,16 +536,8 @@ impl ComposioService {
         let mut seen = std::collections::BTreeSet::new();
         let actions: Vec<ActionInfo> = remote
             .into_iter()
-            .filter_map(|t| {
-                let name = short_name(slug, &t.slug);
-                seen.insert(name.clone()).then(|| ActionInfo {
-                    class: display_class(&self.0.curated, &t.slug),
-                    name,
-                    description: t.description,
-                    schema: t.schema,
-                    tool_slug: t.slug,
-                })
-            })
+            .filter_map(|t| action_from_remote(&self.0.curated, slug, t))
+            .filter(|a| seen.insert(a.name.clone()))
             .collect();
         let v = Arc::new(actions);
         self.0
@@ -581,7 +610,8 @@ impl ComposioService {
         st.apps
             .iter()
             .filter(|(slug, cfg)| {
-                cfg.enabled
+                crate::surface::toolkit_allowed(slug)
+                    && cfg.enabled
                     && self.0.statuses.lock().get(slug.as_str()) == Some(&ConnState::Active)
                     && bot_listed(cfg.bots.as_deref(), bot)
             })
@@ -591,6 +621,7 @@ impl ComposioService {
 
     pub(crate) fn app_visible_to(&self, slug: &str, bot: Option<&str>) -> bool {
         self.configured()
+            && crate::surface::toolkit_allowed(slug)
             && self.0.state.lock().apps.get(slug).is_some_and(|c| {
                 c.enabled
                     && self.0.statuses.lock().get(slug) == Some(&ConnState::Active)
@@ -679,6 +710,27 @@ impl ComposioService {
         bot: Option<&str>,
         args: &Value,
     ) -> Result<Value> {
+        let prepared = self
+            .0
+            .prepared
+            .lock()
+            .remove(&approval_key(run_id, bot, app, &action.name, args))
+            .ok_or_else(|| {
+                ComposioError::Invalid("a fresh reviewable approval is required".into())
+            })?;
+        self.refresh(app).await?;
+        self.0.discovered.lock().remove(app);
+        let current = self.action(app, &action.name, bot).await?;
+        let account = self.bound_account(app)?;
+        if prepared.at.elapsed() > Duration::from_secs(600)
+            || prepared.action != current
+            || *action != current
+            || prepared.account != account
+        {
+            return Err(ComposioError::Invalid(
+                "account, version or schema changed; request approval again".into(),
+            ));
+        }
         let hash = format!("{:x}", Sha256::digest(args.to_string().as_bytes()));
         let row = |status: &str, bytes: usize| {
             json!({"app": app, "action": action.name, "class": action.class, "bot": bot,
@@ -690,11 +742,17 @@ impl ComposioService {
             .map_err(|_| {
                 ComposioError::Internal("audit log unavailable; the call was not sent".into())
             })?;
-        let version = "latest";
+
         let out = async {
             self.client()
                 .await?
-                .execute(&action.tool_slug, &self.user_id(), version, args)
+                .execute(
+                    &action.tool_slug,
+                    &self.user_id(),
+                    &action.version,
+                    &account,
+                    args,
+                )
                 .await
         }
         .await;
@@ -706,6 +764,77 @@ impl ComposioService {
             self.audit("composio.key_rejected", json!({}));
         }
         out
+    }
+
+    fn check_accounts(&self, slug: &str, accounts: &[Account]) -> Result<()> {
+        let bound = self.bound_account(slug)?;
+        if accounts.len() > 1 || accounts.iter().any(|a| a.toolkit != slug || a.id != bound) {
+            return Err(ComposioError::Invalid("ambiguous or foreign account; disconnect other accounts and reconnect the chosen account through this installation".into()));
+        }
+        Ok(())
+    }
+
+    fn bound_account(&self, app: &str) -> Result<String> {
+        self.0
+            .state
+            .lock()
+            .apps
+            .get(app)
+            .and_then(|c| c.account_id.clone())
+            .ok_or_else(|| {
+                ComposioError::Invalid("no installation account binding; reconnect this app".into())
+            })
+    }
+
+    pub(crate) async fn prepare(
+        &self,
+        app: &str,
+        action: &str,
+        ctx: &tool_registry::ToolContext,
+        args: &Value,
+    ) -> Result<(ActionInfo, String)> {
+        if !self.app_visible_to(app, ctx.bot_id.as_deref()) {
+            return Err(ComposioError::NotFound("app is not connected and enabled for this bot".into()));
+        }
+        self.refresh(app).await?;
+        let a = self.action(app, action, ctx.bot_id.as_deref()).await?;
+        crate::schema::validate(&a.schema, args).map_err(ComposioError::Invalid)?;
+        let token = uuid::Uuid::new_v4().to_string();
+        let mut pending = self.0.prepared.lock();
+        pending.retain(|_, p| p.at.elapsed() < Duration::from_secs(600));
+        if pending.len() >= 128 {
+            return Err(ComposioError::Invalid(
+                "too many pending app approvals".into(),
+            ));
+        }
+        pending.insert(
+            approval_key(&ctx.run_id, ctx.bot_id.as_deref(), app, action, args),
+            Prepared {
+                at: Instant::now(),
+                token: token.clone(),
+                account: self.bound_account(app)?,
+                action: a.clone(),
+            },
+        );
+        Ok((a, token))
+    }
+
+    pub(crate) fn close(
+        &self,
+        app: &str,
+        action: &str,
+        ctx: &tool_registry::ToolContext,
+        args: &Value,
+        token: Option<&str>,
+    ) {
+        let key = approval_key(&ctx.run_id, ctx.bot_id.as_deref(), app, action, args);
+        let mut pending = self.0.prepared.lock();
+        if pending
+            .get(&key)
+            .is_some_and(|p| Some(p.token.as_str()) == token)
+        {
+            pending.remove(&key);
+        }
     }
 
     /// Names of the directly registered tools of `app` (tests, status).
@@ -751,9 +880,46 @@ fn tracing_warn(msg: &str) {
     eprintln!("warning: composio audit: {msg}");
 }
 
+fn action_from_remote(
+    curated: &Curated,
+    slug: &str,
+    t: crate::client::RemoteTool,
+) -> Option<ActionInfo> {
+    if t.toolkit != slug || !crate::surface::action_allowed(slug, &t.slug) {
+        return None;
+    }
+    Some(ActionInfo {
+        class: display_class(curated, &t.slug),
+        name: short_name(slug, &t.slug),
+        description: t.description,
+        schema: t.schema,
+        tool_slug: t.slug,
+        version: t.version,
+    })
+}
+
+fn approval_key(run: &str, bot: Option<&str>, app: &str, action: &str, args: &Value) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(json!([run, bot, app, action, args]).to_string().as_bytes())
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parent_toolkit_is_checked_even_when_the_action_prefix_matches() {
+        let remote = crate::client::RemoteTool {
+            slug: "GITHUB_READ".into(),
+            toolkit: "gmail".into(),
+            version: "20260901_00".into(),
+            description: String::new(),
+            schema: json!({"type":"object"}),
+        };
+        assert!(action_from_remote(&Curated::builtin(), "github", remote).is_none());
+    }
 
     #[test]
     fn bot_rules_match_the_mcp_ones() {

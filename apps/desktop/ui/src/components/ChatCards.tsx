@@ -15,6 +15,7 @@ import {
   type ToolItem
 } from "../state/timeline";
 import {
+  appActionDetails,
   formatFiring,
   scheduleDetails,
   type ScheduleApprovalDetails
@@ -98,7 +99,7 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
           {open ? "▾" : "▸"}
         </span>
         <span className={styles.toolName}>
-          {subagent ? `${t("chat.tool.subagent")} · ` : ""}
+          {subagent ? `${t("chat.tool.subagent")} �· ` : ""}
           {tool.name}
         </span>
         <span className={styles.inputSummary}>
@@ -195,7 +196,7 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
         <div className={styles.scheduleWas} data-testid="approval-schedule-previous">
           <span className={styles.bodyLabel}>{t("chat.approval.schedule.was")}</span>
           <span>
-            {d.previous.name} · {d.previous.schedule}
+            {d.previous.name} �· {d.previous.schedule}
             {d.previous.timezone ? ` (${d.previous.timezone})` : ""}
           </span>
           <pre className={styles.code}>{d.previous.prompt}</pre>
@@ -218,7 +219,7 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
           <Clock size={14} aria-hidden="true" />
           <span>
             {t("chat.approval.schedule.next")}{" "}
-            {d.nextRuns.map((r) => formatFiring(r, i18n.language)).join(" · ")}
+            {d.nextRuns.map((r) => formatFiring(r, i18n.language)).join(" �· ")}
           </span>
         </div>
       ) : null}
@@ -254,6 +255,8 @@ export function ApprovalCard({
   const outbound = isOutboundSend(tool.name);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const app = appActionDetails(tool.details);
+  const unrenderable = tool.details != null && !schedule && !app;
 
   const decide = async (
     decision: "approve" | "deny",
@@ -295,7 +298,17 @@ export function ApprovalCard({
             </span>
           ) : null}
         </div>
-        {schedule ? (
+        {app ? (
+          <div data-testid="approval-app-action">
+            <p className={styles.approvalSummary}>{app.app} · {app.action}</p>
+            <p className={styles.bodyLabel}>{app.class} · {app.version}</p>
+            <details open={app.count <= 1000}>
+              <summary>{t("chat.approval.app.arguments", { count: app.count })}</summary>
+              <pre className={styles.code} tabIndex={0}>{app.argumentsText}</pre>
+            </details>
+            <p className={styles.bodyLabel}>{t("chat.approval.app.footer")}</p>
+          </div>
+        ) : schedule ? (
           <>
             <p className={styles.approvalSummary}>
               {t(`chat.approval.schedule.title.${schedule.action}`)}
@@ -320,7 +333,7 @@ export function ApprovalCard({
           <Button
             size="sm"
             variant="primary"
-            disabled={disabled}
+            disabled={disabled || unrenderable}
             onClick={() => void decide("approve", "once")}
           >
             {isSendTool(tool.name)

@@ -173,6 +173,7 @@ async fn child(case: &str) {
         command: "fixture".into(),
     });
     ProviderConfig {
+        quarantined: std::collections::BTreeMap::default(),
         providers: vec![settings],
         default_provider: None,
     }

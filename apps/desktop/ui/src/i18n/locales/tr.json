@@ -349,6 +349,10 @@
           "read_only": "salt okunur"
         },
         "note": "Bu onay yalnızca bu değişikliği kapsar; her seferinde sorulur."
+      },
+      "app": {
+        "arguments": "Tüm bağımsız değişkenleri göster ({{count}} karakter)",
+        "footer": "Composio üzerinden. Yalnızca bu eylemi yukarıdaki tüm bağımsız değişkenlerle onaylayın."
       }
     },
     "question": {
@@ -1184,7 +1188,8 @@
       "removeKey": "Anahtarı kaldır",
       "removeKeyConfirm": "Anahtarı kaldır",
       "openFailed": "Giriş bağlantısı Composio bağlantısı olmadığı için açılmadı.",
-      "disconnectedLocal": "{{name}} burada kaldırıldı. Composio panelinden de kaldır."
+      "disconnectedLocal": "{{name}} burada kaldırıldı. Composio panelinden de kaldır.",
+      "retryOpen": "Oturum açma sayfasını yeniden aç"
     }
   },
   "help": {

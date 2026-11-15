@@ -20,9 +20,20 @@ use crate::composio::{
 
 const KEY: &str = "ck_test_SECRETKEY_0123456789";
 
+type MutationCheck = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Default)]
 struct Fake {
     calls: AtomicUsize,
+    mutation_check: Option<MutationCheck>,
+}
+
+impl Fake {
+    fn before(&self, action: &str) {
+        if let Some(check) = &self.mutation_check {
+            check(action);
+        }
+    }
 }
 
 fn app(slug: &str) -> ComposioAppDto {
@@ -46,6 +57,7 @@ impl ComposioControl for Fake {
         }
     }
     async fn set_key(&self, key: &str) -> Result<(), ComposioControlError> {
+        self.before("composio.key_set");
         if key == "bad" {
             return Err(ComposioControlError::Invalid(
                 "Composio rejected this API key".into(),
@@ -55,6 +67,7 @@ impl ComposioControl for Fake {
         Ok(())
     }
     async fn remove_key(&self) -> Result<(), ComposioControlError> {
+        self.before("composio.key_removed");
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -78,6 +91,7 @@ impl ComposioControl for Fake {
         Ok(app(slug))
     }
     async fn connect(&self, _: &str) -> Result<ComposioConnectDto, ComposioControlError> {
+        self.before("composio.connect_started");
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(ComposioConnectDto {
             redirect_url: "https://connect.composio.dev/link/x".into(),
@@ -89,10 +103,12 @@ impl ComposioControl for Fake {
         slug: &str,
         _: bool,
     ) -> Result<ComposioAppDto, ComposioControlError> {
+        self.before("composio.app_enabled");
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(app(slug))
     }
     async fn disconnect(&self, _: &str) -> Result<ComposioDisconnectDto, ComposioControlError> {
+        self.before("composio.disconnected");
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(ComposioDisconnectDto {
             remote_removed: true,
@@ -137,7 +153,16 @@ async fn every_route_needs_the_token_and_works_for_the_local_owner() {
 #[tokio::test]
 async fn mutations_write_an_audit_row_first_and_never_the_key() {
     let t = setup();
-    t.state.set_composio(Arc::new(Fake::default()));
+    let state = t.state.clone();
+    t.state.set_composio(Arc::new(Fake {
+        mutation_check: Some(Arc::new(move |action| {
+            let rows = state.storage().list_audit(state.user_id()).unwrap();
+            let row = rows.last().expect("audit must exist at mutation entry");
+            assert_eq!(row.action, action, "audit must precede this mutation");
+            assert_eq!(row.actor, format!("local-ui:{}", state.user_id()));
+        })),
+        ..Fake::default()
+    }));
     for (m, p, body) in routes() {
         let _ = call(&t, m, p, body).await;
     }
@@ -281,4 +306,35 @@ async fn the_reserved_key_name_cannot_be_written_through_the_secrets_route() {
     )
     .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn failed_audit_prevents_every_mutation_dispatch() {
+    let t = setup();
+    let fake = Arc::new(Fake::default());
+    t.state.set_composio(fake.clone());
+    let db = rusqlite::Connection::open(t._dir.path().join("bot.db")).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_composio_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END;").unwrap();
+    for (method, path, body) in routes().into_iter().filter(|(m, _, _)| *m != Method::GET) {
+        let r = call(&t, method, path, body).await;
+        assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn legacy_provider_quarantine_is_visible_in_the_repair_api() {
+    let t = setup();
+    std::fs::write(t._dir.path().join("providers.toml"), "[[provider]]\nid='legacy'\nkey='composio/legacy-provider-key'\nadded_at_ms=1\n[[provider]]\nid='valid'\nadded_at_ms=2\n").unwrap();
+    let response = call(&t, Method::GET, "/v1/providers", None).await;
+    assert_eq!(response.status, StatusCode::OK);
+    let data = response.json();
+    assert_eq!(data["configured"][0]["enabled"], false);
+    assert!(
+        data["configured"][0]["models_error"]
+            .as_str()
+            .unwrap()
+            .contains("Reserved secret reference")
+    );
+    assert_eq!(data["configured"][1]["enabled"], true);
 }

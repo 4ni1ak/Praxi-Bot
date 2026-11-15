@@ -349,6 +349,10 @@
           "read_only": "read-only"
         },
         "note": "This approval covers only this change; it is asked every time."
+      },
+      "app": {
+        "arguments": "Show all arguments ({{count}} characters)",
+        "footer": "Via Composio. Approve only this action with all arguments shown above."
       }
     },
     "question": {
@@ -1184,7 +1188,8 @@
       "removeKey": "Remove key",
       "removeKeyConfirm": "Remove the key",
       "openFailed": "The sign-in link was not opened because it is not a Composio link.",
-      "disconnectedLocal": "{{name}} was removed here. Remove it in the Composio dashboard too."
+      "disconnectedLocal": "{{name}} was removed here. Remove it in the Composio dashboard too.",
+      "retryOpen": "Retry opening sign-in"
     }
   },
   "help": {

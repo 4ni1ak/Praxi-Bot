@@ -1,8 +1,8 @@
 //! The tools the model sees: direct tools per connected and enabled app
 //! (`app:<slug>/<action>`, capped), `apps_find_action` and `apps_run_action`.
 //! Composio's own meta tools, remote bash, workbench and connect-link tools are
-//! never exposed.  Every call asks (see [`Tool::always_ask`] for who may also
-//! get a standing grant), and results are labelled untrusted.
+//! never exposed. Every executing call asks, without standing grants, and
+//! results are labelled untrusted.
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -44,6 +44,7 @@ fn card(svc: &ComposioService, app: &str, a: &ActionInfo, args: &Value) -> Value
         "action": a.name,
         "action_slug": a.tool_slug,
         "class": a.class,
+        "version": a.version,
         "via": "Composio",
         "arguments": args,
     })
@@ -87,7 +88,6 @@ pub(crate) struct ActionTool {
     svc: ComposioService,
     app: String,
     action: String,
-    ask_always: bool,
     spec: ToolSpec,
 }
 
@@ -101,7 +101,6 @@ impl ActionTool {
         );
         let spec = spec(name, desc, a.schema.clone(), Effect::Destructive);
         Self {
-            ask_always: a.class != "read",
             svc,
             app: app.to_owned(),
             action: a.name.clone(),
@@ -125,7 +124,7 @@ impl Tool for ActionTool {
     }
 
     fn always_ask(&self) -> bool {
-        self.ask_always
+        true
     }
 
     async fn approval_details(
@@ -133,13 +132,18 @@ impl Tool for ActionTool {
         ctx: &ToolContext,
         input: &Value,
     ) -> Result<Option<Value>, ToolError> {
-        let a = self
+        let (a, token) = self
             .svc
-            .action(&self.app, &self.action, ctx.bot_id.as_deref())
+            .prepare(&self.app, &self.action, ctx, input)
             .await
             .map_err(|e| to_tool_error(&e))?;
-        validate(&a.schema, input).map_err(ToolError::InvalidInput)?;
-        Ok(Some(card(&self.svc, &self.app, &a, input)))
+        let mut details = card(&self.svc, &self.app, &a, input);
+        details["approval_ref"] = json!(token);
+        Ok(Some(details))
+    }
+
+    fn approval_closed(&self, ctx: &ToolContext, input: &Value, token: Option<&str>) {
+        self.svc.close(&self.app, &self.action, ctx, input, token);
     }
 
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
@@ -204,13 +208,20 @@ impl Tool for RunActionTool {
         input: &Value,
     ) -> Result<Option<Value>, ToolError> {
         let (app, action, args) = Self::parts(input)?;
-        let a = self
+        let (a, token) = self
             .svc
-            .action(&app, &action, ctx.bot_id.as_deref())
+            .prepare(&app, &action, ctx, &args)
             .await
             .map_err(|e| to_tool_error(&e))?;
-        validate(&a.schema, &args).map_err(ToolError::InvalidInput)?;
-        Ok(Some(card(&self.svc, &app, &a, &args)))
+        let mut details = card(&self.svc, &app, &a, &args);
+        details["approval_ref"] = json!(token);
+        Ok(Some(details))
+    }
+
+    fn approval_closed(&self, ctx: &ToolContext, input: &Value, token: Option<&str>) {
+        if let Ok((app, action, args)) = Self::parts(input) {
+            self.svc.close(&app, &action, ctx, &args, token);
+        }
     }
 
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {

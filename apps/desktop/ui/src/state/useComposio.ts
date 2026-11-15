@@ -119,7 +119,7 @@ export function useComposio(active: boolean, query: string) {
         void client
           .composioApp(slug)
           .then((a) => setApps((prev) => upsertApp(prev, a)))
-          .catch(() => undefined);
+          .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
       }
     }, POLL_MS);
     return () => clearInterval(id);

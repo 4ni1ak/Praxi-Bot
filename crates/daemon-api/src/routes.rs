@@ -1131,7 +1131,7 @@ pub(crate) async fn list_providers(
             custom: p.custom.is_some(),
             active: active.contains(&p.id),
             models,
-            models_error,
+            models_error: cfg.quarantined.get(&p.id).cloned().or(models_error),
         })
         .collect();
     let mut catalog: Vec<CatalogProviderDto> = s

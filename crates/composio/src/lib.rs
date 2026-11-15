@@ -14,6 +14,7 @@ mod keys;
 mod schema;
 mod service;
 mod state;
+mod surface;
 mod tool;
 
 pub use client::{

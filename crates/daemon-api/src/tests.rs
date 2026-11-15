@@ -2587,6 +2587,7 @@ async fn providers_lists_secret_free_cli_records_without_probing() {
         command: "missing-c062-fixture".into(),
     });
     let cfg = provider_catalog::ProviderConfig {
+        quarantined: std::collections::BTreeMap::default(),
         providers: vec![p],
         default_provider: None,
     };
@@ -3056,6 +3057,7 @@ async fn providers_cli_enable_preserves_existing_default_model_and_model_caps() 
         },
     );
     provider_catalog::ProviderConfig {
+        quarantined: std::collections::BTreeMap::default(),
         providers: vec![existing],
         default_provider: None,
     }

@@ -223,6 +223,15 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
 
 pub(crate) fn prepare(staging: &Path, manifest: &Manifest, opts: &ImportOptions) -> Result<()> {
     const DATABASES: &[&str] = &["bot.db", "schedules.db", "memory.db"];
+    let composio = staging.join("composio.toml");
+    if composio.exists() {
+        let text = fs::read_to_string(composio)?;
+        let state: composio::StateFile =
+            toml::from_str(&text).map_err(|_| invalid("invalid composio.toml"))?;
+        state
+            .validate()
+            .map_err(|_| invalid("invalid Composio installation state"))?;
+    }
     if let Some(schemas) = &manifest.db_schemas {
         for db in schemas.keys() {
             if !DATABASES.contains(&db.as_str()) || !staging.join(db).is_file() {

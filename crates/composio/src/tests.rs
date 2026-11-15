@@ -12,13 +12,16 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::{ComposioError, ComposioService, ConnState, KEY_SECRET, ServiceConfig};
 
-const KEY: &str = "ck_test_SECRETKEY_0123456789";
+const KEY: &str = "ak_candidate_SECRETKEY_0123456789";
 
 #[derive(Default)]
-struct Rows(Mutex<Vec<(String, Value)>>);
+struct Rows(Mutex<Vec<(String, Value)>>, std::sync::atomic::AtomicBool);
 
 impl crate::Audit for Rows {
     fn record(&self, action: &str, detail: Value) -> Result<(), String> {
+        if self.1.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("injected audit failure".into());
+        }
         self.0.lock().push((action.to_owned(), detail));
         Ok(())
     }
@@ -31,6 +34,7 @@ struct Harness {
     rows: Arc<Rows>,
     dir: tempfile::TempDir,
     server: MockServer,
+    redactor: agent_core::SharedRedactor,
 }
 
 async fn harness() -> Harness {
@@ -39,11 +43,16 @@ async fn harness() -> Harness {
     let store = Arc::new(MemoryStore::new());
     let registry = ToolRegistry::new();
     let rows = Arc::new(Rows::default());
+    let redactor = agent_core::SharedRedactor::default();
+    assert_eq!(redactor.redact(KEY), KEY, "fixture must not be pre-masked");
+    let mask = redactor.clone();
+    let register = redactor.clone();
     let svc = ComposioService::new(ServiceConfig {
         data_dir: dir.path().to_path_buf(),
         keys: Arc::new(crate::LocalKeySource::new(store.clone())),
         registry: registry.clone(),
-        redact: Arc::new(|s| s.replace(KEY, "[REDACTED]")),
+        redact: Arc::new(move |s| mask.redact(s)),
+        register_secret: Arc::new(move |value| register.register(value)),
         audit: rows.clone(),
         loopback_base: Some(server.uri()),
     })
@@ -55,10 +64,21 @@ async fn harness() -> Harness {
         rows,
         dir,
         server,
+        redactor,
     }
 }
 
 async fn ok_key(h: &Harness) {
+    for slug in ["github", "slack"] {
+        Mock::given(path("/toolkits"))
+            .and(query_param("search", slug))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"items":[{"slug":slug,"name":slug}]})),
+            )
+            .mount(&h.server)
+            .await;
+    }
     Mock::given(method("GET"))
         .and(path("/auth_configs"))
         .and(header("x-api-key", KEY))
@@ -83,10 +103,11 @@ async fn mount_accounts(h: &Harness, status: &str) {
     for i in 0..30 {
         items.push(
             json!({"slug": format!("GITHUB_DO_THING_{i}"), "description": format!("thing {i}"),
+            "toolkit":{"slug":"github"}, "version":"20260901_00",
             "input_parameters": {"type": "object", "properties": {"x": {"type": "string"}}}}),
         );
     }
-    items.push(json!({"slug": "GITHUB_LIST_REPOSITORY_ISSUES", "description": "list issues",
+    items.push(json!({"slug": "GITHUB_LIST_REPOSITORY_ISSUES", "description": "list issues", "toolkit":{"slug":"github"}, "version":"20260901_00",
         "input_parameters": {"type": "object", "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}},
         "required": ["owner", "repo"]}}));
     Mock::given(method("GET"))
@@ -202,8 +223,8 @@ async fn connect_pending_active_and_expired_drive_the_tools() {
     let t = h.registry.get("app:github/list_repository_issues").unwrap();
     assert!(t.visible_to(Some("bot-1")));
     assert!(
-        !t.always_ask(),
-        "a known read-only action may take a standing grant"
+        t.always_ask(),
+        "the read table is display and ordering only"
     );
     assert!(
         h.registry
@@ -227,7 +248,7 @@ async fn connect_pending_active_and_expired_drive_the_tools() {
     assert!(actions.contains(&"composio.connected".to_owned()));
     assert!(actions.contains(&"composio.expired".to_owned()));
     let surface = leak_surface(&h);
-    for secret in [KEY, "lt_secret_link_token", "ca_secret_conn_1"] {
+    for secret in [KEY, "lt_secret_link_token"] {
         assert!(!surface.contains(secret), "{secret} leaked");
     }
 }
@@ -249,6 +270,7 @@ async fn a_connect_link_outside_composios_domain_is_discarded() {
         "http://connect.composio.dev/x",
     ] {
         h.server.reset().await;
+        ok_key(&h).await;
         Mock::given(method("GET"))
             .and(path("/auth_configs"))
             .and(query_param("toolkit_slug", "slack"))
@@ -295,6 +317,9 @@ async fn execute_sends_only_host_chosen_identity_and_validated_arguments() {
             Err(ToolError::InvalidInput(_))
         ));
     }
+    t.approval_details(&ctx(), &json!({"owner":"o", "repo":"r"}))
+        .await
+        .unwrap();
     let out = t
         .call(&ctx(), json!({"owner": "o", "repo": "r"}))
         .await
@@ -307,6 +332,8 @@ async fn execute_sends_only_host_chosen_identity_and_validated_arguments() {
         .find(|r| r.url.path().starts_with("/tools/execute"))
         .unwrap();
     let body: Value = serde_json::from_slice(&call.body).unwrap();
+    assert_eq!(body["connected_account_id"], "ca_secret_conn_1");
+    assert_eq!(body["version"], "20260901_00");
     assert_eq!(body["arguments"], json!({"owner": "o", "repo": "r"}));
     assert!(body["user_id"].as_str().unwrap().starts_with("praxi-"));
     let rows = h.rows.0.lock();
@@ -375,6 +402,12 @@ async fn find_and_run_reach_actions_without_a_direct_tool() {
             .is_err(),
         "unconnected app"
     );
+    run.approval_details(
+        &ctx(),
+        &json!({"app":"github","action":"do_thing_29","arguments":{"x":"v"}}),
+    )
+    .await
+    .unwrap();
     let ok = run
         .call(
             &ctx(),
@@ -393,21 +426,24 @@ async fn rate_limit_oversize_and_redirects_are_handled() {
     connected(&h).await;
     let t = h.registry.get("app:github/list_repository_issues").unwrap();
     let args = json!({"owner": "o", "repo": "r"});
-    h.server.reset().await;
-    ok_key(&h).await;
+
     Mock::given(method("POST"))
         .and(path("/tools/execute/GITHUB_LIST_REPOSITORY_ISSUES"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "7"))
+        .with_priority(2)
         .mount(&h.server)
         .await;
+    t.approval_details(&ctx(), &args).await.unwrap();
     let err = t.call(&ctx(), args.clone()).await.unwrap_err().to_string();
     assert!(err.contains("retry after 7"), "{err}");
-    h.server.reset().await;
+
     Mock::given(method("POST"))
         .and(path("/tools/execute/GITHUB_LIST_REPOSITORY_ISSUES"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'a'; 2 * 1024 * 1024]))
+        .with_priority(1)
         .mount(&h.server)
         .await;
+    t.approval_details(&ctx(), &args).await.unwrap();
     assert!(
         t.call(&ctx(), args.clone())
             .await
@@ -416,7 +452,8 @@ async fn rate_limit_oversize_and_redirects_are_handled() {
             .contains("allowed size")
     );
     // A redirect is not followed: the target never gets a request (or the key).
-    h.server.reset().await;
+
+    mount_accounts(&h, "ACTIVE").await;
     let target = format!("{}/stolen", h.server.uri());
     Mock::given(method("POST"))
         .and(path("/tools/execute/GITHUB_LIST_REPOSITORY_ISSUES"))
@@ -428,6 +465,7 @@ async fn rate_limit_oversize_and_redirects_are_handled() {
         .expect(0)
         .mount(&h.server)
         .await;
+    t.approval_details(&ctx(), &args).await.unwrap();
     assert!(t.call(&ctx(), args).await.is_err());
 }
 
@@ -482,4 +520,264 @@ async fn the_catalog_is_paged_searchable_and_cached() {
         assert_eq!(p.items[0].categories, ["social", "media"]);
         assert_eq!(p.next_cursor.as_deref(), Some("c2"));
     }
+}
+
+#[tokio::test]
+async fn candidate_is_registered_before_validation_and_upstream_bodies_are_never_relayed() {
+    for status in [400, 500] {
+        let h = harness().await;
+        let redactor = h.redactor.clone();
+        Mock::given(path("/auth_configs"))
+            .respond_with(move |_: &wiremock::Request| {
+                assert!(
+                    !redactor.redact(KEY).contains(KEY),
+                    "candidate was not registered before HTTP"
+                );
+                ResponseTemplate::new(status).set_body_json(
+                    json!({"error":{"message":format!("{KEY} private upstream diagnostics")}}),
+                )
+            })
+            .mount(&h.server)
+            .await;
+        let err = h.svc.set_key(KEY).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("({status})")));
+        assert!(!err.contains(KEY) && !err.contains("private upstream diagnostics"));
+        assert!(h.store.get(KEY_SECRET).unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn controls_foreign_parents_and_unknown_kinds_never_reach_discovery_or_execution() {
+    let h = harness().await;
+    connected(&h).await;
+    for app in [
+        "composio",
+        "composio_search",
+        "codeinterpreter",
+        "remote_bash",
+        "tool_router",
+        "workbench",
+        "auth_config",
+    ] {
+        let before = h.server.received_requests().await.unwrap().len();
+        assert!(h.svc.connect(app).await.is_err(), "{app}");
+        assert_eq!(
+            h.server.received_requests().await.unwrap().len(),
+            before,
+            "forbidden toolkit reached upstream: {app}"
+        );
+        assert!(h.registry.get("apps_run_action").unwrap().approval_details(&ctx(), &json!({"app":app,"action":"execute_tool"})).await.is_err());
+        assert_eq!(h.server.received_requests().await.unwrap().len(),before);
+
+        assert!(h.svc.find(app, "", None).await.is_err());
+        assert!(
+            h.registry
+                .get("apps_run_action")
+                .unwrap()
+                .call(&ctx(), json!({"app":app,"action":"execute_tool"}))
+                .await
+                .is_err()
+        );
+    }
+    let tools = json!({"items":[
+        {"slug":"GITHUB_SAFE","toolkit":{"slug":"github"},"version":"20260901_00","input_parameters":{"type":"object","properties":{}}},
+        {"slug":"GMAIL_FOREIGN","toolkit":{"slug":"gmail"},"version":"20260901_00","input_parameters":{"type":"object"}},
+        {"slug":"GITHUB_MYSTERY","kind":"mystery","toolkit":{"slug":"github"},"version":"20260901_00","input_parameters":{"type":"object"}},
+        {"slug":"GITHUB_REMOTE_BASH","toolkit":{"slug":"github"},"version":"20260901_00","input_parameters":{"type":"object"}},
+        {"slug":"COMPOSIO_EXECUTE_TOOL","toolkit":{"slug":"composio"},"version":"20260901_00","input_parameters":{"type":"object"}}
+    ]});
+    Mock::given(path("/tools"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(tools))
+        .with_priority(1)
+        .mount(&h.server)
+        .await;
+    // Execution must refetch discovery; it must not use a mismatched cached action.
+    let t = h.registry.get("app:github/do_thing_0").unwrap();
+    let args = json!({"x":"v"});
+    t.approval_details(&ctx(), &args).await.unwrap();
+    assert!(t.call(&ctx(), args).await.is_err());
+    let found = h.svc.find("github", "", None).await.unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.tool_slug, "GITHUB_SAFE");
+    for action in [
+        "foreign",
+        "gmail_foreign",
+        "mystery",
+        "remote_bash",
+        "execute_tool",
+    ] {
+        assert!(h.svc.action("github", action, None).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn changed_account_version_or_schema_requires_a_new_approval() {
+    for change in ["multiple", "foreign", "wrong_toolkit", "version", "schema"] {
+        let h = harness().await;
+        connected(&h).await;
+        let t = h.registry.get("app:github/do_thing_0").unwrap();
+        let args = json!({"x":"v"});
+        t.approval_details(&ctx(), &args).await.unwrap();
+        if matches!(change, "multiple" | "foreign" | "wrong_toolkit") {
+            let mut a = accounts("ACTIVE");
+            if change == "multiple" {
+                let second = a["items"][0].clone();
+                a["items"].as_array_mut().unwrap().push(second);
+            }
+            if change == "foreign" {
+                a["items"][0]["id"] = json!("ca_from_another_flow");
+            }
+            if change == "wrong_toolkit" {
+                a["items"][0]["toolkit"]["slug"] = json!("gmail");
+            }
+            Mock::given(path("/connected_accounts"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(a))
+                .with_priority(1)
+                .mount(&h.server)
+                .await;
+        } else {
+            let mut schema = json!({"type":"object", "properties":{"x":{"type":"string"}}});
+            if change == "schema" {
+                schema["properties"]["x"]["maxLength"] = json!(1);
+            }
+            let version = if change == "version" {
+                "20260902_00"
+            } else {
+                "20260901_00"
+            };
+            Mock::given(path("/tools")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"items":[{"slug":"GITHUB_DO_THING_0","description":"thing 0", "toolkit":{"slug":"github"},"version":version,"input_parameters":schema}]}))).with_priority(1).mount(&h.server).await;
+        }
+        Mock::given(method("POST"))
+            .and(path("/tools/execute/GITHUB_DO_THING_0"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&h.server)
+            .await;
+        assert!(t.call(&ctx(), args).await.is_err(), "{change}");
+        if matches!(change, "multiple" | "foreign" | "wrong_toolkit") {
+            assert!(h.svc.app_status("github").await.is_err());
+            assert_eq!(h.svc.registered_tools("github"), Vec::<String>::new());
+            assert!(!h.svc.disconnect("github").await.unwrap());
+            assert!(
+                !h.server
+                    .received_requests()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|r| r.method.as_str() == "DELETE")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn execution_audit_precedes_http_and_audit_failure_sends_nothing() {
+    let h = harness().await;
+    connected(&h).await;
+    let t = h.registry.get("app:github/do_thing_0").unwrap();
+    let args = json!({"x":"v"});
+    let rows = h.rows.clone();
+    Mock::given(path("/tools/execute/GITHUB_DO_THING_0"))
+        .respond_with(move |_: &wiremock::Request| {
+            assert!(rows.0.lock().iter().any(|(a, d)| a == "composio.call"
+                && d["status"] == "started"
+                && d["run"] == "run-1"
+                && d["bot"] == "bot-1"));
+            ResponseTemplate::new(200).set_body_json(json!({"successful":true,"data":{}}))
+        })
+        .expect(1)
+        .mount(&h.server)
+        .await;
+    assert!(
+        t.call(&ctx(), args.clone()).await.is_err(),
+        "no approval prepared"
+    );
+    t.approval_details(&ctx(), &args).await.unwrap();
+    h.rows.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        t.call(&ctx(), args.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("audit")
+    );
+    t.approval_details(&ctx(), &args).await.unwrap();
+    h.rows.1.store(false, std::sync::atomic::Ordering::SeqCst);
+    t.call(&ctx(), args).await.unwrap();
+}
+
+#[tokio::test]
+async fn successful_http_action_errors_also_use_fixed_messages() {
+    let h = harness().await;
+    connected(&h).await;
+    Mock::given(path("/tools/execute/GITHUB_DO_THING_0"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"successful":false,"error":"PRIVATE UPSTREAM DIAGNOSTICS"})),
+        )
+        .mount(&h.server)
+        .await;
+    let tool = h.registry.get("app:github/do_thing_0").unwrap();
+    let args = json!({"x":"value"});
+    tool.approval_details(&ctx(), &args).await.unwrap();
+    let error = tool.call(&ctx(), args).await.unwrap_err().to_string();
+    assert!(error.contains("Composio action failed (200)"));
+    assert!(!error.contains("PRIVATE UPSTREAM DIAGNOSTICS"));
+}
+
+#[tokio::test]
+async fn unknown_toolkit_kind_cannot_start_a_connect_flow() {
+    let h = harness().await;
+    ok_key(&h).await;
+    h.svc.set_key(KEY).await.unwrap();
+    Mock::given(path("/toolkits"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({"items":[{"slug":"github","kind":"unknown_control_surface"}]}),
+            ),
+        )
+        .with_priority(1)
+        .mount(&h.server)
+        .await;
+    assert!(
+        h.svc
+            .connect("github")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported")
+    );
+    assert!(
+        !h.server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.method.as_str() == "POST")
+    );
+    assert_eq!(h.svc.apps(), Vec::new());
+}
+
+#[tokio::test]
+async fn reentering_a_key_recovers_saved_account_binding_without_new_consent() {
+    let h = harness().await;
+    connected(&h).await;
+    let identity = crate::StateFile::load(h.svc.state_path()).unwrap();
+    h.svc.remove_key().await.unwrap();
+    mount_accounts(&h, "ACTIVE").await;
+    h.svc.set_key(KEY).await.unwrap();
+    assert_eq!(
+        crate::StateFile::load(h.svc.state_path()).unwrap(),
+        identity
+    );
+    assert_ne!(h.svc.registered_tools("github"), Vec::<String>::new());
+    assert_eq!(h.svc.apps()[0].state, ConnState::Active);
+    assert!(
+        !h.server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.method.as_str() == "POST")
+    );
 }

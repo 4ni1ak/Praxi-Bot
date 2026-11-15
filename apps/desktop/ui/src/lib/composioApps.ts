@@ -5,20 +5,21 @@ import type { ComposioApp, ComposioToolkit } from "../api/types";
  * credentials or a custom port.  Connect links and the key page are opened in
  * the system browser only when this holds.
  */
-export function isComposioLink(href: string): boolean {
+export function isComposioLink(href: string, dashboard = false): boolean {
   let url: URL;
   try {
     url = new URL(href);
   } catch {
     return false;
   }
-  const host = url.hostname.toLowerCase();
+  const host = href.match(/^https:\/\/([^/?#]+)/)?.[1];
   return (
     url.protocol === "https:" &&
     url.username === "" &&
     url.password === "" &&
     url.port === "" &&
-    (host === "composio.dev" || host.endsWith(".composio.dev"))
+    !/[\p{Cc}\\]/u.test(href) &&
+    (dashboard ? host === "platform.composio.dev" : host === "connect.composio.dev" || host === "backend.composio.dev")
   );
 }
 

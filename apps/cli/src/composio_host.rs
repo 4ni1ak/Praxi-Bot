@@ -50,12 +50,14 @@ impl ComposioHost {
         secrets: Arc<dyn SecretStore>,
         redact: Redact,
         audit: Arc<dyn Audit>,
+        register_secret: Arc<dyn Fn(&str) + Send + Sync>,
     ) -> Result<Arc<Self>, String> {
         let svc = ComposioService::new(ServiceConfig {
             data_dir: data_dir.to_path_buf(),
             keys: Arc::new(LocalKeySource::new(secrets)),
             registry,
             redact,
+            register_secret,
             audit,
             loopback_base: None,
         })

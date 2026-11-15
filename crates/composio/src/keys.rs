@@ -20,8 +20,8 @@ pub const KEY_SECRET: &str = "composio/api-key";
 ///
 /// UNVERIFIED: the docs describe the menu path (Settings, Project Settings or
 /// Platform > project > Settings > API Keys) but give no stable deep link; this
-/// is the dashboard root on Composio's domain, so it passes the same https +
-/// domain check as connect links.  The live spike should replace it with the
+/// is the dashboard root, checked against its separate exact-host allowlist.
+/// The live spike should replace it with the
 /// exact page.
 pub const KEY_SETUP_URL: &str = "https://platform.composio.dev/";
 
