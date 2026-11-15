@@ -40,6 +40,12 @@ fn safe(msg: impl std::fmt::Display) -> String {
     text.trim().to_owned()
 }
 
+#[derive(serde::Deserialize)]
+struct PairingFile {
+    #[serde(default)]
+    devices: Vec<Device>,
+}
+
 impl CliHostLinks {
     pub fn new(data: PathBuf, shared: Option<PeerNetwork>) -> Self {
         Self {
@@ -76,14 +82,9 @@ impl CliHostLinks {
         if let Some(net) = self.started.try_lock().ok().and_then(|s| s.clone()) {
             return net.devices();
         }
-        #[derive(serde::Deserialize)]
-        struct File {
-            #[serde(default)]
-            devices: Vec<Device>,
-        }
         std::fs::read_to_string(self.data.join("peer").join("devices.json"))
             .ok()
-            .and_then(|text| serde_json::from_str::<File>(&text).ok())
+            .and_then(|text| serde_json::from_str::<PairingFile>(&text).ok())
             .map(|f| f.devices)
             .unwrap_or_default()
     }

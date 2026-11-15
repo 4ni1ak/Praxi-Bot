@@ -179,6 +179,34 @@ fn is_bot_skills_path(path: &str) -> bool {
         .is_some_and(|id| !id.is_empty() && !id.contains('/'))
 }
 
+fn audit_chat_start(
+    state: &AppState,
+    peer: &PeerIdentity,
+    req: &Request,
+    check_path: &str,
+) -> Result<(), storage::StorageError> {
+    let name = req
+        .extensions()
+        .get::<PeerName>()
+        .map_or(peer.key.as_str(), |n| n.0.as_str());
+    let role = if peer.role == PeerRole::Phone {
+        "phone"
+    } else {
+        "desktop"
+    };
+    state
+        .storage()
+        .append_audit(
+            state.user_id(),
+            None,
+            &format!("{role}:{name}"),
+            "peer.chat_requested",
+            &serde_json::json!({"peer_key":peer.key,"path":check_path}),
+        )
+        .map(|_| ())
+}
+
+#[allow(clippy::too_many_lines)] // one ordered chain of guard checks; order is the contract
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(peer) = req.extensions().get::<PeerIdentity>().cloned() else {
         return ApiError::forbidden("paired peer identity required").into_response();
@@ -284,26 +312,11 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         }
         audit_actor = Some(actor);
     }
-    if starts_chat_work(req.method(), &check_path) {
-        let name = req
-            .extensions()
-            .get::<PeerName>()
-            .map_or(peer.key.as_str(), |n| n.0.as_str());
-        let role = if peer.role == PeerRole::Phone {
-            "phone"
-        } else {
-            "desktop"
-        };
+    if starts_chat_work(req.method(), &check_path)
+        && let Err(error) = audit_chat_start(&state, &peer, &req, &check_path)
+    {
         // Fail closed: remote work is not started without its attribution row.
-        if let Err(error) = state.storage().append_audit(
-            state.user_id(),
-            None,
-            &format!("{role}:{name}"),
-            "peer.chat_requested",
-            &serde_json::json!({"peer_key":peer.key,"path":check_path}),
-        ) {
-            return ApiError::internal(error).into_response();
-        }
+        return ApiError::internal(error).into_response();
     }
     let response = next.run(req).await;
     if let Some(actor) = audit_actor

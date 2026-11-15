@@ -482,14 +482,18 @@ async fn host_link_routes_work_for_the_local_user_and_keep_secrets_out_of_the_au
     }
     let r = call(&t, Method::DELETE, "/v1/hosts/abc123/connect", None).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
-    let audit: String = t
+    let audit = t
         .state
         .storage()
         .list_audit(t.state.user_id())
         .unwrap()
         .iter()
-        .map(|a| format!("{} {} {}\n", a.actor, a.action, a.detail))
-        .collect();
+        .map(|a| format!("{} {} {}", a.actor, a.action, a.detail))
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
     assert!(audit.contains("host_link.pair") && audit.contains("host_link.connect"));
     assert!(
         !audit.contains("SECRET-TICKET"),
