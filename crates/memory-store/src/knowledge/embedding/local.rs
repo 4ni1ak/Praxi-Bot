@@ -104,9 +104,10 @@ fn read_artifact(artifact: &PinnedEmbeddingArtifact, limit: u64) -> Result<Vec<u
 #[cfg(any(test, feature = "local-embeddings"))]
 struct VerifiedRuntime {
     path: PathBuf,
-    _file: Option<std::fs::File>,
+    #[allow(dead_code)] // held only to keep the mapping/lock alive
+    file: Option<std::fs::File>,
     #[cfg(windows)]
-    _directory: Option<tempfile::TempDir>,
+    directory: Option<tempfile::TempDir>,
 }
 
 #[cfg(all(windows, any(test, feature = "local-embeddings")))]
@@ -114,13 +115,16 @@ impl Drop for VerifiedRuntime {
     fn drop(&mut self) {
         // Windows cannot delete a readonly or share-locked DLL snapshot.
         // Release the lock only after this runtime owner is being destroyed.
-        drop(self._file.take());
+        drop(self.file.take());
         if let Ok(metadata) = std::fs::metadata(&self.path) {
             let mut permissions = metadata.permissions();
+            // The lint concerns Unix world-writable bits; on Windows this only
+            // clears the read-only attribute so the snapshot can be deleted.
+            #[allow(clippy::permissions_set_readonly_false)]
             permissions.set_readonly(false);
             let _ = std::fs::set_permissions(&self.path, permissions);
         }
-        if let Some(directory) = self._directory.take() {
+        if let Some(directory) = self.directory.take() {
             let _ = directory.close();
         }
     }
@@ -133,6 +137,8 @@ impl VerifiedRuntime {
         return Err(invalid(
             "verified native loading is supported only on Linux and Windows",
         ));
+        #[cfg(windows)]
+        use std::io::Read as _;
         #[cfg(any(target_os = "linux", windows))]
         use std::io::Write;
         #[cfg(any(target_os = "linux", windows))]
@@ -156,7 +162,7 @@ impl VerifiedRuntime {
             let path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
             Ok(Self {
                 path,
-                _file: Some(file),
+                file: Some(file),
             })
         }
         #[cfg(windows)]
@@ -187,7 +193,6 @@ impl VerifiedRuntime {
                 options.share_mode(1); // FILE_SHARE_READ, no FILE_SHARE_WRITE/DELETE.
             }
             let mut file = options.open(&path)?;
-            use std::io::Read;
             let mut frozen = Vec::new();
             file.read_to_end(&mut frozen)?;
             if frozen != bytes {
@@ -195,8 +200,8 @@ impl VerifiedRuntime {
             }
             Ok(Self {
                 path,
-                _file: Some(file),
-                _directory: Some(directory),
+                file: Some(file),
+                directory: Some(directory),
             })
         }
     }
