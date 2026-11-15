@@ -401,6 +401,8 @@
       "undoUndo": "Undo this undo",
       "changedByRun": "Changed by another run ({{run}})",
       "changedOutsideRun": "Changed outside this run",
+      "computerScope": "Run computer: {{computer}}. These file checkpoints are on the connected daemon’s disk.",
+      "computerUnknown": "Not recorded",
       "couldNotVerify": "Could not verify the current file state",
       "restorePartial": "Restore failed; review the rollback warning and safety checkpoint below."
     },

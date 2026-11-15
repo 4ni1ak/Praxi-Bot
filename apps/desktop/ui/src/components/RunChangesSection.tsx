@@ -298,7 +298,7 @@ export function RunChangesSection({
             ) : null}
           </div>
 
-          {[...new Set([...safetyCheckpointIds, ...safetyIds])].map((id) => (
+          {[...new Set([...safetyCheckpointIds, ...(data?.safety_checkpoint_ids ?? []), ...safetyIds])].map((id) => (
             <p key={id} className={styles.metaText} data-testid="safety-checkpoint">
               {t("chat.changes.safetyCheckpoint", { id })}
               <Button size="sm" variant="secondary" onClick={() => void openRestoreModal(id, null)} data-testid="undo-undo-button">
@@ -306,6 +306,9 @@ export function RunChangesSection({
               </Button>
             </p>
           ))}
+          {data ? <p className={styles.metaText}>{t("chat.changes.computerScope", {
+            computer: data.computer.computer_node_name ?? data.computer.computer_node ?? data.computer.computer_target ?? t("chat.changes.computerUnknown")
+          })}</p> : null}
           {restoreWarning ? <p role="alert">{restoreWarning}</p> : null}
           <div className={styles.disclaimer} role="note">
             <Info className={styles.disclaimerIcon} aria-hidden="true" />

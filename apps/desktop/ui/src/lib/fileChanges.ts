@@ -165,7 +165,7 @@ export function evaluateRestoreGate(
 }
 
 /** Keep unknown verification distinct from a proven post-run edit. */
-export function verificationLabel(entry: { verification: "matched" | "changed" | "unknown"; changed_by_run: string | null }): string | null {
+export function verificationLabel(entry: { verification: "matched" | "changed" | "unknown"; changed_by_run?: string | null }): string | null {
   if (entry.verification === "matched") return null;
   if (entry.verification === "unknown") return "chat.changes.couldNotVerify";
   return entry.changed_by_run ? "chat.changes.changedByRun" : "chat.changes.changedOutsideRun";

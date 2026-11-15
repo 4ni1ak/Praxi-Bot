@@ -39,6 +39,7 @@ test("parseUnifiedDiff tracks hunk headers, line numbers, and keeps text inert",
 
 test("evaluateRestoreGate blocks confirm when modified_since is non-empty until checked", () => {
   const cleanPreview: RestorePreview = {
+    computer: { computer_target: null, computer_node: null, computer_node_name: null, checkpoint_location: "daemon_local" },
     run_id: "r1",
     checkpoint_id: "cp-1",
     entries: [
@@ -105,6 +106,7 @@ test("languageForPath and displayPath normalize extensions and verbatim prefixes
 
 test("unverified files require explicit consent with truthful wording in both locales", async () => {
   const preview: RestorePreview = {
+    computer: { computer_target: null, computer_node: null, computer_node_name: null, checkpoint_location: "daemon_local" },
     run_id: "r", checkpoint_id: "cp", covered: [], not_covered: [],
     modified_since: [], could_not_verify: ["/large"],
     entries: [{ path: "/large", accessible: true, action: "restore", current_matches_after: false,

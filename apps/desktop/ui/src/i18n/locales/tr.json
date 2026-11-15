@@ -401,6 +401,8 @@
       "undoUndo": "Bu geri almayı geri al",
       "changedByRun": "Başka bir çalışma değiştirdi ({{run}})",
       "changedOutsideRun": "Bu çalıştırma dışında değiştirildi",
+      "computerScope": "Çalıştırma bilgisayarı: {{computer}}. Bu dosya kontrol noktaları bağlı daemon’un diskindedir.",
+      "computerUnknown": "Kaydedilmemiş",
       "couldNotVerify": "Dosyanın mevcut durumu doğrulanamadı",
       "restorePartial": "Geri alma başarısız; aşağıdaki geri dönüş uyarısını ve güvenlik denetim noktasını inceleyin."
     },

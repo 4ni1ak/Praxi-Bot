@@ -161,9 +161,41 @@ impl From<FileChange> for FileChangeDto {
     }
 }
 
+/// Run computer binding and the actual location of its file checkpoints.
+/// Computer targeting routes desktop/browser actions only. Built-in file tools
+/// always execute in this daemon, even when the run uses a remote desktop node.
+/// Any future remote file-tool dispatch must add checkpoint origin validation
+/// and refuse local restore of remote-origin entries before enabling that path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CheckpointComputerDto {
+    pub computer_target: Option<String>,
+    pub computer_node: Option<String>,
+    pub computer_node_name: Option<String>,
+    pub checkpoint_location: CheckpointLocationDto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointLocationDto {
+    DaemonLocal,
+}
+
+impl From<&storage::Run> for CheckpointComputerDto {
+    fn from(run: &storage::Run) -> Self {
+        Self {
+            computer_target: run.computer_target.clone(),
+            computer_node: run.computer_node.clone(),
+            computer_node_name: run.computer_node_name.clone(),
+            checkpoint_location: CheckpointLocationDto::DaemonLocal,
+        }
+    }
+}
+
 /// Response for `GET /v1/runs/{id}/changes`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RunChangesDto {
+    pub computer: CheckpointComputerDto,
+    pub safety_checkpoint_ids: Vec<String>,
     pub run_id: Uuid,
     pub changes: Vec<FileChangeDto>,
     pub next_offset: Option<usize>,
@@ -219,6 +251,7 @@ impl From<RestorePreviewEntry> for RestorePreviewEntryDto {
 /// Response for `GET /v1/runs/{id}/changes/{cp}/preview`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RestorePreviewDto {
+    pub computer: CheckpointComputerDto,
     pub run_id: Uuid,
     pub checkpoint_id: String,
     pub entries: Vec<RestorePreviewEntryDto>,
@@ -238,6 +271,7 @@ pub struct RestoreRequestDto {
 /// Response for `POST /v1/runs/{id}/changes/{cp}/restore`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RestoreResponseDto {
+    pub computer: CheckpointComputerDto,
     pub partial: bool,
     pub error: Option<String>,
     pub run_id: Uuid,
@@ -438,7 +472,7 @@ pub(crate) async fn get_run_changes(
     let state = s.clone();
     let review_run = run.clone();
     let (roots, grants) = s.agent().checkpoint_access();
-    let changes = tokio::task::spawn_blocking(move || {
+    let (changes, safety_checkpoint_ids) = tokio::task::spawn_blocking(move || {
         builtin_tools::with_checkpoint_access(&data_dir, &roots, &grants, || {
             let store = CheckpointStore::new(&data_dir);
             let changes = store.changes_page(&run_str, query.offset, limit)?;
@@ -447,11 +481,17 @@ pub(crate) async fn get_run_changes(
                 &review_run,
                 &changes
                     .iter()
-                    .filter(|c| c.accessible && !c.current_matches_after)
+                    .filter(|c| c.accessible && c.verification == Verification::Changed)
                     .map(|c| c.path.as_str())
                     .collect(),
             );
-            Ok::<_, io::Error>(
+            let safety_checkpoint_ids = store
+                .list(&run_str)?
+                .into_iter()
+                .filter(|cp| cp.op.starts_with("pre-restore:"))
+                .map(|cp| cp.id)
+                .collect();
+            Ok::<_, io::Error>((
                 changes
                     .into_iter()
                     .map(|c| {
@@ -467,7 +507,8 @@ pub(crate) async fn get_run_changes(
                         dto
                     })
                     .collect::<Vec<_>>(),
-            )
+                safety_checkpoint_ids,
+            ))
         })
     })
     .await
@@ -476,6 +517,8 @@ pub(crate) async fn get_run_changes(
 
     let (covered, not_covered) = scope_lists();
     Ok(Json(RunChangesDto {
+        computer: (&run).into(),
+        safety_checkpoint_ids,
         run_id: run.id.0,
         next_offset: (changes.len() == limit).then_some(query.offset.saturating_add(limit)),
         changes,
@@ -558,6 +601,7 @@ pub(crate) async fn preview_restore(
         .collect();
     let (covered, not_covered) = scope_lists();
     Ok(Json(RestorePreviewDto {
+        computer: (&run).into(),
         run_id: run.id.0,
         checkpoint_id: cp,
         entries,
@@ -641,18 +685,19 @@ pub(crate) async fn restore_changes(
         })).map_err(|e| ApiError::conflict(e.to_string()))??;
         // This blocking task owns mutation AND finalization. Dropping the HTTP
         // future must never discard the durable audit, recovery ids or event.
-        Ok(Json(finalize_restore(&state, run_id, cp_arg, actor, force, report)))
+        Ok(Json(finalize_restore(&state, &run, cp_arg, actor, force, report)))
     }).await.map_err(ApiError::internal)?
 }
 
 fn finalize_restore(
     s: &AppState,
-    run_id: RunId,
+    run: &storage::Run,
     cp: String,
     actor: crate::live_view::Actor,
     force: bool,
     report: builtin_tools::RestoreReport,
 ) -> RestoreResponseDto {
+    let run_id = run.id;
     let builtin_tools::RestoreReport {
         restored,
         safety_checkpoint_ids: safety_ids,
@@ -700,6 +745,7 @@ fn finalize_restore(
     }
     let (covered, not_covered) = scope_lists();
     RestoreResponseDto {
+        computer: run.into(),
         partial,
         error,
         run_id: run_id.0,
@@ -914,6 +960,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_checkpoints_are_always_local_to_daemon_even_for_remote_desktop_runs() {
+        let h = setup_harness();
+        h.state
+            .storage()
+            .bind_run_computer(
+                h.run_id,
+                "pc",
+                Some("fixture-remote-node"),
+                Some("Office PC"),
+            )
+            .unwrap();
+        install_access(&h, vec![h.work.path().to_path_buf()], Vec::new());
+        let path = h.work.path().join("local-to-daemon.txt");
+        // Exercise the actual registered file tool, not a hand-made manifest.
+        // The run's remote computer binding must never redirect fs_* tools.
+        h.state
+            .agent()
+            .tool_registry()
+            .get("fs_write")
+            .unwrap()
+            .call(
+                &tool_registry::ToolContext {
+                    run_id: h.run_id.to_string(),
+                    ..Default::default()
+                },
+                json!({"path": path, "content":"daemon-local bytes"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "daemon-local bytes");
+        let store = CheckpointStore::new(h.dir.path());
+        assert_eq!(store.list(&h.run_id.to_string()).unwrap().len(), 1);
+        let base = format!("/v1/runs/{}/changes", h.run_id);
+        for url in [&base, &format!("{base}/all/preview")] {
+            let (status, body) = call(&h.app, Method::GET, url, None, true).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["computer"]["computer_node"], "fixture-remote-node");
+            assert_eq!(body["computer"]["computer_node_name"], "Office PC");
+            assert_eq!(body["computer"]["computer_target"], "pc");
+            assert_eq!(body["computer"]["checkpoint_location"], "daemon_local");
+        }
+        let (status, body) = call(
+            &h.app,
+            Method::POST,
+            &format!("{base}/all/restore"),
+            None,
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["computer"]["checkpoint_location"], "daemon_local");
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
     async fn large_unchanged_restore_needs_no_force_unknown_needs_truthful_consent() {
         let h = setup_harness();
         let (path, cp) = edit(&h, h.run_id, "large.txt");
@@ -992,6 +1093,22 @@ mod tests {
         let safety = completed.detail["safety_checkpoint_ids"][0]
             .as_str()
             .unwrap();
+        let (status, listed) = call(
+            &h.app,
+            Method::GET,
+            &format!("/v1/runs/{}/changes", h.run_id),
+            None,
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            listed["safety_checkpoint_ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|id| id == safety)
+        );
         let checkpoints = CheckpointStore::new(h.dir.path())
             .list(&h.run_id.0.to_string())
             .unwrap();

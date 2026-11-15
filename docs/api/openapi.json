@@ -4675,6 +4675,42 @@
           }
         }
       },
+      "CheckpointComputerDto": {
+        "type": "object",
+        "description": "Run computer binding and the actual location of its file checkpoints.\nComputer targeting routes desktop/browser actions only. Built-in file tools\nalways execute in this daemon, even when the run uses a remote desktop node.\nAny future remote file-tool dispatch must add checkpoint origin validation\nand refuse local restore of remote-origin entries before enabling that path.",
+        "required": [
+          "checkpoint_location"
+        ],
+        "properties": {
+          "checkpoint_location": {
+            "$ref": "#/components/schemas/CheckpointLocationDto"
+          },
+          "computer_node": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "computer_node_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "computer_target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CheckpointLocationDto": {
+        "type": "string",
+        "enum": [
+          "daemon_local"
+        ]
+      },
       "CliAuthState": {
         "type": "string",
         "description": "Authentication status reported by a CLI provider (`GET /v1/providers/detected`).",
@@ -5628,6 +5664,7 @@
           "existed",
           "kind",
           "current_matches_after",
+          "verification",
           "is_dir",
           "is_link"
         ],
@@ -5707,6 +5744,9 @@
                 "$ref": "#/components/schemas/UnifiedDiffDto"
               }
             ]
+          },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationDto"
           },
           "via_link_of": {
             "type": [
@@ -7840,16 +7880,27 @@
         "type": "object",
         "description": "Response for `GET /v1/runs/{id}/changes/{cp}/preview`.",
         "required": [
+          "computer",
           "run_id",
           "checkpoint_id",
           "entries",
           "modified_since",
+          "could_not_verify",
           "covered",
           "not_covered"
         ],
         "properties": {
           "checkpoint_id": {
             "type": "string"
+          },
+          "computer": {
+            "$ref": "#/components/schemas/CheckpointComputerDto"
+          },
+          "could_not_verify": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "covered": {
             "type": "array",
@@ -7888,6 +7939,7 @@
           "accessible",
           "path",
           "current_matches_after",
+          "verification",
           "action"
         ],
         "properties": {
@@ -7910,6 +7962,9 @@
           "path": {
             "type": "string"
           },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationDto"
+          },
           "via_link_of": {
             "type": [
               "string",
@@ -7931,6 +7986,7 @@
         "type": "object",
         "description": "Response for `POST /v1/runs/{id}/changes/{cp}/restore`.",
         "required": [
+          "computer",
           "partial",
           "run_id",
           "checkpoint_id",
@@ -7943,6 +7999,9 @@
         "properties": {
           "checkpoint_id": {
             "type": "string"
+          },
+          "computer": {
+            "$ref": "#/components/schemas/CheckpointComputerDto"
           },
           "covered": {
             "type": "array",
@@ -8006,6 +8065,8 @@
         "type": "object",
         "description": "Response for `GET /v1/runs/{id}/changes`.",
         "required": [
+          "computer",
+          "safety_checkpoint_ids",
           "run_id",
           "changes",
           "covered",
@@ -8017,6 +8078,9 @@
             "items": {
               "$ref": "#/components/schemas/FileChangeDto"
             }
+          },
+          "computer": {
+            "$ref": "#/components/schemas/CheckpointComputerDto"
           },
           "covered": {
             "type": "array",
@@ -8040,6 +8104,12 @@
           "run_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "safety_checkpoint_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -8880,6 +8950,15 @@
             "minimum": 0
           }
         }
+      },
+      "VerificationDto": {
+        "type": "string",
+        "description": "Whether bounded hashing verified the recorded after-state.",
+        "enum": [
+          "matched",
+          "changed",
+          "unknown"
+        ]
       },
       "ViewState": {
         "type": "string",

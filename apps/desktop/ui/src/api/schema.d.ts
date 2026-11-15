@@ -1540,6 +1540,21 @@ export interface components {
             title: string;
         };
         /**
+         * @description Run computer binding and the actual location of its file checkpoints.
+         *     Computer targeting routes desktop/browser actions only. Built-in file tools
+         *     always execute in this daemon, even when the run uses a remote desktop node.
+         *     Any future remote file-tool dispatch must add checkpoint origin validation
+         *     and refuse local restore of remote-origin entries before enabling that path.
+         */
+        CheckpointComputerDto: {
+            checkpoint_location: components["schemas"]["CheckpointLocationDto"];
+            computer_node?: string | null;
+            computer_node_name?: string | null;
+            computer_target?: string | null;
+        };
+        /** @enum {string} */
+        CheckpointLocationDto: "daemon_local";
+        /**
          * @description Authentication status reported by a CLI provider (`GET /v1/providers/detected`).
          * @enum {string}
          */
@@ -1956,6 +1971,7 @@ export interface components {
             op: string;
             path: string;
             text?: null | components["schemas"]["UnifiedDiffDto"];
+            verification: components["schemas"]["VerificationDto"];
             via_link_of?: string | null;
         };
         FrameMetadata: {
@@ -2696,6 +2712,8 @@ export interface components {
         /** @description Response for `GET /v1/runs/{id}/changes/{cp}/preview`. */
         RestorePreviewDto: {
             checkpoint_id: string;
+            computer: components["schemas"]["CheckpointComputerDto"];
+            could_not_verify: string[];
             covered: string[];
             entries: components["schemas"]["RestorePreviewEntryDto"][];
             modified_since: string[];
@@ -2711,6 +2729,7 @@ export interface components {
             changed_by_run?: string | null;
             current_matches_after: boolean;
             path: string;
+            verification: components["schemas"]["VerificationDto"];
             via_link_of?: string | null;
         };
         /** @description Body for `POST /v1/runs/{id}/changes/{cp}/restore`. */
@@ -2720,6 +2739,7 @@ export interface components {
         /** @description Response for `POST /v1/runs/{id}/changes/{cp}/restore`. */
         RestoreResponseDto: {
             checkpoint_id: string;
+            computer: components["schemas"]["CheckpointComputerDto"];
             covered: string[];
             error?: string | null;
             not_covered: string[];
@@ -2738,11 +2758,13 @@ export interface components {
         /** @description Response for `GET /v1/runs/{id}/changes`. */
         RunChangesDto: {
             changes: components["schemas"]["FileChangeDto"][];
+            computer: components["schemas"]["CheckpointComputerDto"];
             covered: string[];
             next_offset?: number | null;
             not_covered: string[];
             /** Format: uuid */
             run_id: string;
+            safety_checkpoint_ids: string[];
         };
         /** @description A run. */
         RunDto: {
@@ -3119,6 +3141,11 @@ export interface components {
              */
             prompt_tokens: number;
         };
+        /**
+         * @description Whether bounded hashing verified the recorded after-state.
+         * @enum {string}
+         */
+        VerificationDto: "matched" | "changed" | "unknown";
         /** @enum {string} */
         ViewState: "watch" | "acquiring" | "active" | "paused" | "unavailable" | "closed";
         /**

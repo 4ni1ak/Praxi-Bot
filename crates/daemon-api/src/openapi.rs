@@ -146,7 +146,7 @@ impl Modify for Security {
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
-        changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
+        changes::CheckpointComputerDto, changes::CheckpointLocationDto, changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
         changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,
         changes::RestorePreviewDto, changes::RestoreRequestDto, changes::RestoreResponseDto,
         doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
