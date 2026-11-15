@@ -157,6 +157,55 @@ change. The bot can list and restore checkpoints (`checkpoint_list`,
 the restore itself can be undone. Shell commands and desktop actions are not
 covered by checkpoints.
 
+Restoring a whole run (or a connected set of files) from the run's change
+review works in two phases. First the daemon writes an audit row
+(`checkpoint.restore_started`) and takes a safety checkpoint of the files as
+they are now. Only after that checkpoint is complete does it stage each file
+next to its target and swap the staged copies in with renames. If a step fails,
+the daemon tries to roll the swapped files back; that rollback is best effort
+and can itself fail, in which case the result reports it and the files may be
+in a mixed state. A graceful stop of the daemon waits for a running restore to
+finish. After a restore that completes cleanly, the files count as reviewed; if
+one of them is edited afterwards it shows up as "changed since" and asking to
+restore it again needs confirmation. A path whose restoration was skipped (for
+example a link that could not be recreated) is not marked as reviewed. After a
+restore that failed part way, nothing is marked as reviewed, so the next
+attempt shows "could not verify" and asks you to confirm.
+
+If the daemon process is killed hard (power loss, crash, `kill -9`) in the middle
+of a restore, no completion is recorded. What is left depends on the moment:
+
+- Killed while the safety checkpoint was still being copied: an audit row
+  `checkpoint.restore_started`, no usable safety checkpoint and no swapped
+  files. Run the undo again.
+- Killed after the swaps began: the audit row, a complete safety checkpoint
+  (operation label `pre-restore:...`, recovery id `cp-...`, listed in
+  `GET /v1/runs/{id}/changes` as `safety_checkpoint_ids`) holding the files as
+  they were just before the restore, possibly a mix of restored and not yet
+  restored files, and temporary files next to the targets named
+  `<filename>.praxi-restore-<uuid>`, `<filename>.praxi-restore-old-<uuid>` or
+  `<filename>.praxi-restore-aborted-<uuid>`.
+
+To recover in the second case, restore that safety checkpoint (from the run's
+change review, or `checkpoint_restore` with its `cp-...` id). Its preview can
+show "could not verify", and you then have to confirm the overwrite. Delete the
+leftover temporary files if any remain, then run the undo again. Nothing is
+repaired automatically on startup. The checkpoint manifest is synced to disk, but
+the copied file contents are not individually synced before the swaps, so a
+power loss can still lose a safety copy; a plain process kill cannot.
+
+Paths of other runs that are still active are compared before a restore, by
+path text only: the daemon touches no file or folder to do it, so it can never
+follow a link or reach a network share while checking. The comparison ignores
+case on Windows and macOS, collapses `.` and `..`, and treats a folder and
+everything inside it as overlapping. The refusal names the blocking run and the
+two overlapping paths. What it does NOT detect: a symlink, junction, Windows
+8.3 short name or mapped drive that points at the same file under a different
+spelling, hard links and bind mounts. The daemon's own file tools are still
+serialised by an exclusive lock, but shell commands and desktop actions of
+another running bot are outside this check, so avoid undoing files that another
+running bot is working on.
+
 ## Limits per turn
 
 To stop runaway runs, each turn is capped by default at 40 model steps, 2
