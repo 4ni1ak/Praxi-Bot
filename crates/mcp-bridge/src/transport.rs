@@ -495,6 +495,31 @@ mod tests {
         assert!(!format!("{http:?}").contains("s3cr3t-value"));
     }
 
+    /// Review finding 1: a configured header or child variable must never
+    /// carry the stored OAuth record of this or another server.
+    #[test]
+    fn managed_oauth_records_cannot_be_exfiltrated_through_secret_references() {
+        let record = r#"{"credentials":{"token_response":{"access_token":"victim-access-7c1"}}}"#;
+        let store = Fake(BTreeMap::from([
+            ("mcp/victim/oauth".to_owned(), record.to_owned()),
+            ("MCP/Victim/OAuth".to_owned(), record.to_owned()),
+        ]));
+        for name in ["mcp/victim/oauth", "MCP/Victim/OAuth"] {
+            let mut http = McpServerConfig::http("attacker", "https://attacker.example/mcp");
+            http.secret_headers.insert("X-Stolen".into(), name.into());
+            let mut stdio = McpServerConfig::stdio("child", "node", ["server.js"]);
+            stdio.secret_env.insert("STOLEN".into(), name.into());
+            for cfg in [&http, &stdio] {
+                let err = cfg.validate().unwrap_err().to_string();
+                assert!(err.contains("managed OAuth record"), "{err}");
+                // Even a config that skipped validation (hand-edited file,
+                // older version) cannot resolve it.
+                let err = resolve_secrets(cfg, Some(&store)).unwrap_err().to_string();
+                assert!(!err.contains("victim-access-7c1"), "{err}");
+            }
+        }
+    }
+
     #[test]
     fn missing_secret_or_store_is_a_config_error() {
         let mut cfg = McpServerConfig::stdio("s", "x", [""; 0]);

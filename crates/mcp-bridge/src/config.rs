@@ -211,22 +211,7 @@ impl McpServerConfig {
                 self.id
             ));
         }
-        for (kind, map) in [
-            ("secret_headers", &self.secret_headers),
-            ("secret_env", &self.secret_env),
-        ] {
-            for (key, name) in map {
-                if key.is_empty() {
-                    return bad(format!("server `{}`: empty key in `{kind}`", self.id));
-                }
-                SecretRef::new(name.as_str()).map_err(|_| {
-                    McpError::Config(format!(
-                        "server `{}`: `{kind}.{key}` has an invalid secret name",
-                        self.id
-                    ))
-                })?;
-            }
-        }
+        self.check_secret_refs()?;
         match &self.transport {
             McpTransport::Stdio { .. } if !self.secret_headers.is_empty() => {
                 return bad(format!(
@@ -271,6 +256,37 @@ impl McpServerConfig {
             McpTransport::Http { .. } => {}
         }
         self.tool_filter().map(|_| ())
+    }
+
+    /// Secret references: non-empty keys, valid names, never a managed OAuth
+    /// record (review finding 1).
+    fn check_secret_refs(&self) -> Result<()> {
+        for (kind, map) in [
+            ("secret_headers", &self.secret_headers),
+            ("secret_env", &self.secret_env),
+        ] {
+            for (key, name) in map {
+                if key.is_empty() {
+                    return Err(McpError::Config(format!(
+                        "server `{}`: empty key in `{kind}`",
+                        self.id
+                    )));
+                }
+                if secret_store::is_managed_oauth_name(name) {
+                    return Err(McpError::Config(format!(
+                        "server `{}`: `{kind}.{key}` names a managed OAuth record; OAuth tokens are never referenced from configuration",
+                        self.id
+                    )));
+                }
+                SecretRef::new(name.as_str()).map_err(|_| {
+                    McpError::Config(format!(
+                        "server `{}`: `{kind}.{key}` has an invalid secret name",
+                        self.id
+                    ))
+                })?;
+            }
+        }
+        Ok(())
     }
 
     /// Compile `tool_allow` / `tool_exclude`.
