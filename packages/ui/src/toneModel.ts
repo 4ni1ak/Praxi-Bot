@@ -16,7 +16,6 @@ import {
   GLASS_SATURATE,
   SOFT_SIGMA_PX,
   saturateHex,
-  saturateRgb,
   WORST_TONE,
   type BackdropTone,
   type ToneExtremes
@@ -210,14 +209,23 @@ export function evaluateTone(src: ToneSource, env: ToneEnv): BackdropTone {
   let minL = 2;
   let maxI = 0;
   let minI = 0;
-  const altBest = ALT_ALPHAS.map(() => -Infinity);
-  const altIdx = ALT_ALPHAS.map(() => 0);
+  // Three alternative opacities, unrolled: composite tables per channel, best score and pixel each.
+  const [a0r, a0g, a0b] = alts[0];
+  const [a1r, a1g, a1b] = alts[1];
+  const [a2r, a2g, a2b] = alts[2];
+  const [pR, pG, pB] = plain;
+  let best0 = -Infinity;
+  let best1 = -Infinity;
+  let best2 = -Infinity;
+  let idx0 = 0;
+  let idx1 = 0;
+  let idx2 = 0;
   const d = src.data;
   for (let i = 0; i < n * 4; i += 4) {
     const r = d[i];
     const g = d[i + 1];
     const b = d[i + 2];
-    const l = 0.2126 * plain[0][r] + 0.7152 * plain[1][g] + 0.0722 * plain[2][b];
+    const l = 0.2126 * pR[r] + 0.7152 * pG[g] + 0.0722 * pB[b];
     if (l > maxL) {
       maxL = l;
       maxI = i;
@@ -226,18 +234,26 @@ export function evaluateTone(src: ToneSource, env: ToneEnv): BackdropTone {
       minL = l;
       minI = i;
     }
-    for (let k = 0; k < alts.length; k++) {
-      const v = sign * (0.2126 * alts[k][0][r] + 0.7152 * alts[k][1][g] + 0.0722 * alts[k][2][b]);
-      if (v > altBest[k]) {
-        altBest[k] = v;
-        altIdx[k] = i;
-      }
+    const v0 = sign * (0.2126 * a0r[r] + 0.7152 * a0g[g] + 0.0722 * a0b[b]);
+    if (v0 > best0) {
+      best0 = v0;
+      idx0 = i;
+    }
+    const v1 = sign * (0.2126 * a1r[r] + 0.7152 * a1g[g] + 0.0722 * a1b[b]);
+    if (v1 > best1) {
+      best1 = v1;
+      idx1 = i;
+    }
+    const v2 = sign * (0.2126 * a2r[r] + 0.7152 * a2g[g] + 0.0722 * a2b[b]);
+    if (v2 > best2) {
+      best2 = v2;
+      idx2 = i;
     }
   }
   const dimmed = (i: number) => hex(rest * d[i] + dim * bgc[0], rest * d[i + 1] + dim * bgc[1], rest * d[i + 2] + dim * bgc[2]);
   const peak = withAlts(
     { light: dimmed(maxI), dark: dimmed(minI) },
-    altIdx.map(dimmed),
+    [idx0, idx1, idx2].map(dimmed),
     lightTheme
   );
 
@@ -247,16 +263,43 @@ export function evaluateTone(src: ToneSource, env: ToneEnv): BackdropTone {
   let sMin = 2;
   let sMaxC: [number, number, number] = [255, 255, 255];
   let sMinC: [number, number, number] = [0, 0, 0];
-  const sAltBest = ALT_ALPHAS.map(() => -Infinity);
-  const sAltC = ALT_ALPHAS.map((): [number, number, number] => [0, 0, 0]);
+  // `saturate()` inlined (same matrix as `saturateRgb`); no allocation, no clamping in the hot loop beyond the matrix's own.
+  const m00 = 0.213 + 0.787 * sat;
+  const m01 = 0.715 - 0.715 * sat;
+  const m02 = 0.072 - 0.072 * sat;
+  const m10 = 0.213 - 0.213 * sat;
+  const m11 = 0.715 + 0.285 * sat;
+  const m22 = 0.072 + 0.928 * sat;
+  const pr = planes[0];
+  const pg = planes[1];
+  const pb = planes[2];
+  const k0 = dim * bgc[0];
+  const k1 = dim * bgc[1];
+  const k2 = dim * bgc[2];
+  const [t0, t1, t2] = tint;
+  const [al0, al1, al2] = ALT_ALPHAS;
+  const tb0 = [al0 * t0, al0 * t1, al0 * t2];
+  const tb1 = [al1 * t0, al1 * t1, al1 * t2];
+  const tb2 = [al2 * t0, al2 * t1, al2 * t2];
+  let sb0 = -Infinity;
+  let sb1 = -Infinity;
+  let sb2 = -Infinity;
+  let sc0: [number, number, number] = [0, 0, 0];
+  let sc1: [number, number, number] = [0, 0, 0];
+  let sc2: [number, number, number] = [0, 0, 0];
+  const L = LIN;
+  const at = (v: number) => L[(v * 8 + 0.5) | 0];
   for (let i = 0; i < n; i++) {
-    const [r, g, b] = saturateRgb(
-      rest * planes[0][i] + dim * bgc[0],
-      rest * planes[1][i] + dim * bgc[1],
-      rest * planes[2][i] + dim * bgc[2],
-      sat
-    );
-    const l = lum(r, g, b);
+    const r0 = rest * pr[i] + k0;
+    const g0 = rest * pg[i] + k1;
+    const b0 = rest * pb[i] + k2;
+    let r = m00 * r0 + m01 * g0 + m02 * b0;
+    let g = m10 * r0 + m11 * g0 + m02 * b0;
+    let b = m10 * r0 + m01 * g0 + m22 * b0;
+    r = r < 0 ? 0 : r > 255 ? 255 : r;
+    g = g < 0 ? 0 : g > 255 ? 255 : g;
+    b = b < 0 ? 0 : b > 255 ? 255 : b;
+    const l = 0.2126 * at(r) + 0.7152 * at(g) + 0.0722 * at(b);
     if (l > sMax) {
       sMax = l;
       sMaxC = [r, g, b];
@@ -265,16 +308,23 @@ export function evaluateTone(src: ToneSource, env: ToneEnv): BackdropTone {
       sMin = l;
       sMinC = [r, g, b];
     }
-    for (let k = 0; k < ALT_ALPHAS.length; k++) {
-      const a = ALT_ALPHAS[k];
-      const v = sign * lum((1 - a) * r + a * tint[0], (1 - a) * g + a * tint[1], (1 - a) * b + a * tint[2]);
-      if (v > sAltBest[k]) {
-        sAltBest[k] = v;
-        sAltC[k] = [r, g, b];
-      }
+    const v0 = sign * (0.2126 * at((1 - al0) * r + tb0[0]) + 0.7152 * at((1 - al0) * g + tb0[1]) + 0.0722 * at((1 - al0) * b + tb0[2]));
+    if (v0 > sb0) {
+      sb0 = v0;
+      sc0 = [r, g, b];
+    }
+    const v1 = sign * (0.2126 * at((1 - al1) * r + tb1[0]) + 0.7152 * at((1 - al1) * g + tb1[1]) + 0.0722 * at((1 - al1) * b + tb1[2]));
+    if (v1 > sb1) {
+      sb1 = v1;
+      sc1 = [r, g, b];
+    }
+    const v2 = sign * (0.2126 * at((1 - al2) * r + tb2[0]) + 0.7152 * at((1 - al2) * g + tb2[1]) + 0.0722 * at((1 - al2) * b + tb2[2]));
+    if (v2 > sb2) {
+      sb2 = v2;
+      sc2 = [r, g, b];
     }
   }
-  const soft = withAlts({ light: hex(...sMaxC), dark: hex(...sMinC) }, sAltC.map((c) => hex(...c)), lightTheme);
+  const soft = withAlts({ light: hex(...sMaxC), dark: hex(...sMinC) }, [sc0, sc1, sc2].map((c) => hex(...c)), lightTheme);
 
   const detail = src.detail
     ? {
