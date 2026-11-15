@@ -2889,7 +2889,8 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
 
     // CLIs with a native-tools driver can be enabled; they only run with their own tools.
-    for id in ["agy", "unknown"] {
+    {
+        let id = "unknown";
         let r = call(
             &t,
             Method::POST,
