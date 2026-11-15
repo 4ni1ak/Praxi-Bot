@@ -213,6 +213,13 @@ pub(crate) mod tests {
     use super::*;
 
     #[test]
+    fn review_81_pdf_source_extraction_rejects_preview_truncation() {
+        let bytes = make_pdf(&[&["The complete source must never become an unreported short preview."]]);
+        let cfg = DocToolsConfig { max_preview_chars: 8, ..DocToolsConfig::default() };
+        assert!(crate::extract_bytes(&cfg, "pdf", "source.pdf", &bytes).is_err());
+    }
+
+    #[test]
     fn authorized_pdf_bytes_do_not_reopen_the_display_label() {
         let bytes = make_pdf(&[&["Original authorized PDF bytes"]]);
         let reply = crate::extract_bytes(

@@ -345,6 +345,18 @@ mod tests {
     use lopdf::{Stream, dictionary};
     use std::io::Write;
 
+    #[test]
+    fn review_81_parser_panic_does_not_poison_future_pdf_loads() {
+        let panic = std::panic::catch_unwind(|| {
+            let _load = LOAD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _budget = BUDGET.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            panic!("simulated dependency panic while accounting PDF objects");
+        });
+        assert!(panic.is_err());
+        let bytes = crate::pdf::tests::make_pdf(&[&["Healthy document after parser failure"]]);
+        assert_eq!(load(&bytes).unwrap().get_pages().len(), 1);
+    }
+
     fn compressed_objects(streams: u32, bytes_per_object: usize) -> Vec<u8> {
         let mut output = b"%PDF-1.5\n".to_vec();
         let mut offsets = vec![0];

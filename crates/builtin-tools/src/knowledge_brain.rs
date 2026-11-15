@@ -2,7 +2,8 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use async_trait::async_trait;
 use memory_store::knowledge::brain::{BrainWriteInput, PreparedBrainWrite};
@@ -195,6 +196,33 @@ mod tests {
     use memory_store::knowledge::{NewSource, SourceKind, SourceUpdate};
     use protocol::UserId;
 
+    #[tokio::test(start_paused = true)]
+    async fn review_81_pending_brain_approval_follows_the_live_guard_not_a_timer() {
+        let (dir, storage, ctx, _) = fixture();
+        let tool = tool(storage);
+        let input = json!({"filename":"slow-review.md","content":"A carefully reviewed architectural decision."});
+        tool.approval_details(&ctx, &input).await.unwrap().unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(601)).await;
+        tool.call(&ctx, input).await.unwrap();
+        assert!(dir.path().join("brain/slow-review.md").is_file());
+    }
+
+    #[tokio::test]
+    async fn review_81_pending_brain_limits_are_per_bot() {
+        let (_dir, storage, ctx, scope) = fixture();
+        let other_bot = BotId::new();
+        let other_run = RunId::new();
+        storage.insert_bot(&storage::Bot { id: other_bot, user_id: scope.user_id, name: "Other bot".into(), config: json!({}), created_at_ms: 1 }).unwrap();
+        storage.insert_run(&storage::Run { id: other_run, user_id: scope.user_id, bot_id: other_bot, chat_id: None, kind: "turn".into(), state: "running".into(), error: None, created_at_ms: 1, updated_at_ms: 1, parent_run_id: None, spec: None, computer_target: None, computer_node: None, computer_node_name: None, paused_at_ms: None, pause_reason: None }).unwrap();
+        let other = ToolContext { run_id: other_run.to_string(), bot_id: Some(other_bot.to_string()), ..ToolContext::default() };
+        let tool = tool(storage);
+        for n in 0..64 {
+            tool.approval_details(&ctx, &json!({"filename":format!("pending-{n}.md"),"content":"A pending decision."})).await.unwrap();
+        }
+        assert!(tool.approval_details(&ctx, &json!({"filename":"one-too-many.md","content":"A pending decision."})).await.is_err());
+        assert!(tool.approval_details(&other, &json!({"filename":"other-bot.md","content":"Independent review."})).await.is_ok());
+    }
+
     fn fixture() -> (tempfile::TempDir, Arc<Storage>, ToolContext, Scope) {
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(Storage::open(dir.path()).unwrap());
@@ -229,7 +257,7 @@ mod tests {
                 created_at_ms: 1,
                 updated_at_ms: 1,
                 parent_run_id: None,
-                spec: None,
+                spec: None, computer_target: None, computer_node: None, computer_node_name: None, paused_at_ms: None, pause_reason: None,
             })
             .unwrap();
         (

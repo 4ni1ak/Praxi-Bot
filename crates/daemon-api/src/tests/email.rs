@@ -22,6 +22,7 @@ pub(super) struct FakeEmail {
     passwords: Mutex<Vec<(String, String)>>,
     forgotten: Mutex<Vec<String>>,
     fail_forget: bool,
+    pub(super) fail_update: std::sync::atomic::AtomicBool,
     /// When set, `test_draft` waits for it (to hold test slots open).
     hold: Option<Arc<Semaphore>>,
     /// Runs at the start of `add` (a bot deleted "in between").
@@ -37,6 +38,7 @@ impl FakeEmail {
             passwords: Mutex::new(Vec::new()),
             forgotten: Mutex::new(Vec::new()),
             fail_forget: false,
+            fail_update: std::sync::atomic::AtomicBool::new(false),
             hold: None,
             before_add: Mutex::new(None),
             entered: std::sync::atomic::AtomicUsize::new(0),
@@ -92,6 +94,9 @@ impl EmailControl for FakeEmail {
         Ok(dto)
     }
     async fn update(&self, name: &str, patch: Value) -> Result<EmailAccountDto, EmailControlError> {
+        if self.fail_update.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(EmailControlError::Internal("simulated config write failure".into()));
+        }
         let mut all = self.accounts.lock();
         let slot = all
             .iter_mut()

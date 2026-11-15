@@ -26,6 +26,9 @@ use crate::{ApiError, AppState, error::ErrorBody, routes::ApiJson};
 
 static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
+#[cfg(test)]
+pub(crate) static SOURCE_WORKER_PROBE: parking_lot::Mutex<Option<(BotId, std::sync::mpsc::Sender<std::thread::ThreadId>)>> = parking_lot::Mutex::new(None);
+
 pub(crate) fn authority_lock(s: &AppState) -> Arc<tokio::sync::Mutex<()>> {
     crate::knowledge_runtime::authority_lock(s)
 }
@@ -435,6 +438,12 @@ fn email(s: &AppState, owner: Scope, locator: &EmailLocator) -> Result<DocumentI
 }
 
 fn authorize_source(s: &AppState, owner: Scope, source: &Source) -> Result<(), ApiError> {
+    #[cfg(test)]
+    if let Some((bot, sender)) = &*SOURCE_WORKER_PROBE.lock()
+        && *bot == owner.bot_id
+    {
+        let _ = sender.send(std::thread::current().id());
+    }
     match source.kind {
         SourceKind::File | SourceKind::Folder | SourceKind::SharedBrain => {
             let expected = s.data_dir().join("brain").display().to_string();

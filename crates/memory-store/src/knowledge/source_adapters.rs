@@ -382,6 +382,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn review_81_saved_urls_accept_long_ordinary_paths_but_reject_query_credentials() {
+        assert!(saved_web("https://example.com/blog/2024/understanding-rust-async-await-patterns", "A source snapshot.", false).is_ok());
+        for url in ["https://example.com/?client_secret=short-secret", "https://example.com/?access_token=short-token", "https://example.com/?password=short-password"] {
+            assert!(saved_web(url, "A source snapshot.", false).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn review_81_credential_and_browser_directories_cannot_be_selected() {
+        let root = tempfile::tempdir().unwrap();
+        for relative in [".kube", ".docker", ".config/gcloud", ".mozilla/firefox/profile", ".config/google-chrome/Default", "AppData/Local/Google/Chrome/User Data/Default", "AppData/Roaming/Mozilla/Firefox/Profiles/default"] {
+            let folder = root.path().join(relative);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("selected.txt"), "private credential evidence").unwrap();
+            assert!(SelectedSource::open(&folder, true).is_err(), "selected credential directory: {relative}");
+            assert!(SelectedSource::open(&folder.join("selected.txt"), false).is_err(), "selected file in credential directory: {relative}");
+        }
+    }
+
+    #[test]
+    fn review_81_protected_credential_files_are_pruned() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["application_default_credentials.json", "logins.json", "credentials.json", "secrets.json", "cookies.txt"] {
+            std::fs::write(root.path().join(name), r#"{"client_secret":"short"}"#).unwrap();
+            assert!(SelectedSource::open(&root.path().join(name), false).is_err(), "{name}");
+        }
+        std::fs::write(root.path().join("readme.md"), "safe selected notes").unwrap();
+        assert_eq!(SelectedSource::open(root.path(), true).unwrap().files(), &["readme.md"]);
+    }
+
+    #[test]
     fn selected_tree_is_bounded_and_extracts_structure() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
