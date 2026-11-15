@@ -33,7 +33,25 @@ use crate::doctor::MCP_FILE;
 /// How often the status poller looks for changes the API did not cause
 /// (a quarantine after failing calls, a crashed child ...).
 const POLL_EVERY: Duration = Duration::from_secs(2);
-type SignInTask = tokio::task::JoinHandle<Result<(), McpError>>;
+/// How a sign-in flow ended: `None` while it runs, then `Ok` or a message.
+type FlowOutcome = Option<Result<(), String>>;
+
+/// One user-started sign-in.  It stays in `McpHost::auth_flows` until its
+/// task has finished, through the token exchange and the reconnect, so every
+/// cancel, logout, update, removal or new start can abort and join it.
+struct SignInFlow {
+    task: tokio::task::JoinHandle<Result<(), McpError>>,
+    /// Where a pasted redirect goes (headless hosts); taken by the first paste.
+    paste: Option<tokio::sync::oneshot::Sender<String>>,
+    /// Set by the task when it ends; a waiting paste request watches it.
+    done: tokio::sync::watch::Receiver<FlowOutcome>,
+}
+
+impl SignInFlow {
+    fn running(&self) -> bool {
+        !self.task.is_finished()
+    }
+}
 
 const FILE_HEADER: &str = "\
 # MCP servers of this bot (managed by the app; you may edit it while the daemon is stopped).\n\
@@ -53,10 +71,7 @@ const FILE_HEADER: &str = "\
 pub struct McpHost {
     /// Held across start/cancel/logout and replacement, so an old callback
     /// cannot persist credentials after cancellation or removal returns.
-    auth_flows: tokio::sync::Mutex<HashMap<String, SignInTask>>,
-    /// Where a pasted redirect URL goes (headless hosts), one per pending
-    /// sign-in; taken by the first paste.
-    auth_paste: Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>,
+    auth_flows: tokio::sync::Mutex<HashMap<String, SignInFlow>>,
     manager: McpManager,
     registry: ToolRegistry,
     store: TomlFileStore,
@@ -153,7 +168,6 @@ impl McpHost {
             .collect();
         let host = Arc::new(Self {
             auth_flows: tokio::sync::Mutex::new(HashMap::new()),
-            auth_paste: Mutex::new(HashMap::new()),
             manager,
             registry,
             store,
@@ -189,9 +203,9 @@ impl McpHost {
     /// Disconnect every server (stdio children exit) and stop the poller.
     pub async fn shutdown(&self) {
         let mut flows = self.auth_flows.lock().await;
-        for (_, task) in flows.drain() {
-            task.abort();
-            let _ = task.await;
+        for (_, flow) in flows.drain() {
+            flow.task.abort();
+            let _ = flow.task.await;
         }
         drop(flows);
         if let Some(p) = self.poller.lock().take() {
@@ -403,12 +417,13 @@ fn map_err(e: McpError) -> McpControlError {
     }
 }
 
-async fn abort_sign_in(flows: &mut HashMap<String, SignInTask>, name: &str) {
-    // The paste sender of an aborted flow is dropped with the flow's receiver;
-    // a stale one is harmless (its receiver is gone) and replaced on start.
-    if let Some(task) = flows.remove(name) {
-        task.abort();
-        let _ = task.await;
+/// Abort `name`'s flow and wait until its task is gone: afterwards it can
+/// neither exchange a code nor reconnect (and the manager's credential guard
+/// refuses any save it might still have attempted).
+async fn abort_sign_in(flows: &mut HashMap<String, SignInFlow>, name: &str) {
+    if let Some(flow) = flows.remove(name) {
+        flow.task.abort();
+        let _ = flow.task.await;
     }
 }
 
@@ -753,7 +768,7 @@ impl McpControl for McpHost {
     async fn auth_start(&self, name: &str) -> Result<McpAuthStart, McpControlError> {
         let mut flows = self.auth_flows.lock().await;
         self.check_http(name)?;
-        if flows.get(name).is_some_and(|task| !task.is_finished()) {
+        if flows.get(name).is_some_and(SignInFlow::running) {
             return Err(McpControlError::Conflict(
                 "a sign-in is already in progress".into(),
             ));
@@ -770,15 +785,25 @@ impl McpControl for McpHost {
             expires_in: mcp_bridge::oauth::CALLBACK_TIMEOUT.as_secs(),
         };
         let (paste, pasted) = tokio::sync::oneshot::channel();
-        self.auth_paste.lock().insert(name.to_owned(), paste);
-        flows.insert(
-            name.to_owned(),
-            tokio::spawn(async move {
+        let (outcome, done) = tokio::sync::watch::channel(None);
+        let task = tokio::spawn(async move {
+            let result = async {
                 sign_in
                     .finish_or_pasted(mcp_bridge::oauth::CALLBACK_TIMEOUT, Some(pasted))
                     .await?;
                 handle.reenable().await.map(|_| ())
-            }),
+            }
+            .await;
+            outcome.send_replace(Some(result.as_ref().copied().map_err(ToString::to_string)));
+            result
+        });
+        flows.insert(
+            name.to_owned(),
+            SignInFlow {
+                task,
+                paste: Some(paste),
+                done,
+            },
         );
         Ok(response)
     }
@@ -788,30 +813,38 @@ impl McpControl for McpHost {
         name: &str,
         redirect_url: &str,
     ) -> Result<McpAuthState, McpControlError> {
-        let task = {
+        let mut done = {
             let mut flows = self.auth_flows.lock().await;
             self.check_http(name)?;
-            let paste = self.auth_paste.lock().remove(name);
-            let running = flows.get(name).is_some_and(|task| !task.is_finished());
-            let (Some(paste), true) = (paste, running) else {
+            let waiting = flows
+                .get_mut(name)
+                .filter(|flow| flow.running())
+                .and_then(|flow| flow.paste.take().map(|paste| (paste, flow.done.clone())));
+            let Some((paste, done)) = waiting else {
                 return Err(invalid("no sign-in is waiting for a redirect"));
             };
             if paste.send(redirect_url.to_owned()).is_err() {
                 return Err(invalid("no sign-in is waiting for a redirect"));
             }
-            flows.remove(name)
+            done
         };
-        if let Some(task) = task {
-            match tokio::time::timeout(Duration::from_secs(60), task).await {
-                Ok(Ok(Ok(()))) => {}
-                Ok(Ok(Err(e))) => {
-                    self.announce(name);
-                    return Err(invalid(format!("sign-in failed: {e}")));
-                }
-                Ok(Err(_)) | Err(_) => return Err(invalid("sign-in did not finish")),
-            }
-        }
+        // The flow stays tracked while this request waits: cancel, logout,
+        // update and removal abort and join it as usual, and dropping this
+        // request (or its timeout) leaves it to them.
+        let finished = tokio::time::timeout(mcp_bridge::oauth::CALLBACK_TIMEOUT, async {
+            done.wait_for(Option::is_some).await.map(|o| o.clone())
+        })
+        .await;
+        let outcome = match finished {
+            Ok(Ok(outcome)) => outcome,
+            // The flow was aborted (cancel, logout, removal) before it ended.
+            Ok(Err(_)) => return Err(invalid("the sign-in was cancelled")),
+            Err(_) => return Err(invalid("sign-in did not finish")),
+        };
         self.announce(name);
+        if let Some(Err(message)) = outcome {
+            return Err(invalid(format!("sign-in failed: {message}")));
+        }
         self.auth_status(name).await
     }
 
@@ -827,7 +860,7 @@ impl McpControl for McpHost {
     async fn auth_status(&self, name: &str) -> Result<McpAuthState, McpControlError> {
         self.check_http(name)?;
         let flows = self.auth_flows.lock().await;
-        if flows.get(name).is_some_and(|task| !task.is_finished()) {
+        if flows.get(name).is_some_and(SignInFlow::running) {
             return Ok(McpAuthState::SigningIn);
         }
         if self.snapshot(name).is_some_and(|s| s.auth_required) {
@@ -1071,8 +1104,8 @@ impl McpControl for McpHost {
 
 impl Drop for McpHost {
     fn drop(&mut self) {
-        for (_, task) in self.auth_flows.get_mut().drain() {
-            task.abort();
+        for (_, flow) in self.auth_flows.get_mut().drain() {
+            flow.task.abort();
         }
         if let Some(p) = self.poller.lock().take() {
             p.abort();
@@ -1209,6 +1242,15 @@ mod tests {
     }
 
     async fn fake_remote(access: &'static str, refresh: &'static str) -> wiremock::MockServer {
+        fake_remote_with_token_delay(access, refresh, Duration::ZERO).await
+    }
+
+    /// [`fake_remote`] whose token endpoint answers only after `delay`.
+    async fn fake_remote_with_token_delay(
+        access: &'static str,
+        refresh: &'static str,
+        delay: Duration,
+    ) -> wiremock::MockServer {
         use wiremock::matchers::{method, path, path_regex};
         use wiremock::{Mock, ResponseTemplate};
         let server = wiremock::MockServer::start().await;
@@ -1241,10 +1283,14 @@ mod tests {
         .await;
         Mock::given(method("POST"))
             .and(path("/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "access_token": access, "token_type": "Bearer",
-                "expires_in": 3600, "refresh_token": refresh,
-            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({
+                        "access_token": access, "token_type": "Bearer",
+                        "expires_in": 3600, "refresh_token": refresh,
+                    }))
+                    .set_delay(delay),
+            )
             .mount(&server)
             .await;
         server
@@ -1746,6 +1792,107 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         assert_eq!(host.list().len(), 0);
         host.shutdown().await;
+    }
+
+    /// Review finding 2: a pasted redirect's token exchange stays tracked.
+    /// While it waits on a slow token endpoint the server reads `signing_in`
+    /// and refuses a second start, and logout / cancel / removal stop it so
+    /// no credential is stored afterwards.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pasted_exchange_in_flight_is_cancelled_by_logout_cancel_and_removal() {
+        const ACCESS: &str = "slow-exchange-access-sentinel-90b1";
+        const REFRESH: &str = "slow-exchange-refresh-sentinel-3fd2";
+        const DELAY: Duration = Duration::from_millis(1500);
+        for action in ["logout", "cancel", "remove"] {
+            let remote = fake_remote_with_token_delay(ACCESS, REFRESH, DELAY).await;
+            let base = remote.uri();
+            let dir = tempfile::tempdir().unwrap();
+            let mut config = McpServerConfig::http("remote", format!("{base}/mcp"));
+            config.oauth = Some(mcp_bridge::OAuthConfig {
+                client_id: Some("praxi-race-test".into()),
+                allow_loopback_http: true,
+                ..mcp_bridge::OAuthConfig::default()
+            });
+            TomlFileStore::new(dir.path().join(MCP_FILE))
+                .save(&[config])
+                .unwrap();
+            let store = Arc::new(secret_store::MemoryStore::new());
+            let registry = ToolRegistry::new();
+            let host = McpHost::start_with_policy(
+                dir.path(),
+                registry.clone(),
+                Some(store.clone()),
+                None,
+                None,
+                fast_policy(),
+            );
+            wait_for(&host, "remote", McpStatus::AuthRequired).await;
+            let started = host.auth_start("remote").await.unwrap();
+            let params = query_pairs(&started.authorization_url);
+            let pasted = format!(
+                "{}?code=code-1&state={}&iss={base}",
+                params["redirect_uri"], params["state"]
+            );
+            let callback = tokio::spawn({
+                let host = Arc::clone(&host);
+                async move { host.auth_callback("remote", &pasted).await }
+            });
+            // Wait until the exchange is at the (slow) token endpoint.
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let at_token = remote
+                        .received_requests()
+                        .await
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|r| r.url.path() == "/token");
+                    if at_token {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            // Still tracked: status says so and a second flow is refused.
+            assert_eq!(
+                host.auth_status("remote").await.unwrap(),
+                McpAuthState::SigningIn,
+                "{action}"
+            );
+            assert!(
+                matches!(
+                    host.auth_start("remote").await,
+                    Err(McpControlError::Conflict(_))
+                ),
+                "{action}"
+            );
+            match action {
+                "logout" => {
+                    assert_eq!(
+                        host.auth_logout("remote").await.unwrap(),
+                        McpAuthState::SignedOut
+                    );
+                }
+                "cancel" => {
+                    assert_ne!(
+                        host.auth_cancel("remote").await.unwrap(),
+                        McpAuthState::SigningIn
+                    );
+                }
+                _ => host.remove("remote").await.unwrap(),
+            }
+            // The paste request learns that its flow was stopped.
+            assert!(callback.await.unwrap().is_err(), "{action}");
+            // Let the slow answer arrive: nothing may be stored from it.
+            tokio::time::sleep(DELAY + Duration::from_millis(300)).await;
+            assert!(
+                store.get("mcp/remote/oauth").unwrap().is_none(),
+                "{action}: credentials stored after the flow was stopped"
+            );
+            assert!(registry.get("mcp:remote/echo").is_none(), "{action}");
+            host.shutdown().await;
+        }
     }
 
     fn stdio(name: &str, enabled: bool) -> McpServerInput {
