@@ -315,9 +315,11 @@ pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotD
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_bot(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
-    let (name, config) = resolve_bot(input)?;
+    let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -394,6 +396,7 @@ pub(crate) async fn revoke_grant(
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
@@ -403,6 +406,11 @@ pub(crate) async fn update_bot(
     let mut bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("knowledge"),
+        &mut config,
+    )?;
     if preserve_runtime
         && config.get("runtime").is_none()
         && let Some(runtime) = bot.config.get("runtime")
