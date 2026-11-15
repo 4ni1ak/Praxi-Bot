@@ -44,6 +44,7 @@ pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;
 mod schedule_tools;
+pub mod skill_management;
 pub mod skills;
 mod sse;
 mod stop;
@@ -201,6 +202,8 @@ struct Inner {
     web: OnceLock<Arc<dyn WebControl>>,
     /// Skill catalog index (see [`AppState::set_skills`]).
     skills: OnceLock<::skills::SkillIndex>,
+    /// Serialises owner catalog mutations with per-bot assignment writes.
+    skill_mutations: parking_lot::Mutex<()>,
     /// Bounds concurrent web search probes (see `web_routes`).
     web_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
@@ -363,6 +366,7 @@ impl AppState {
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
             skills: OnceLock::new(),
+            skill_mutations: parking_lot::Mutex::new(()),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
             fill_secrets: OnceLock::new(),
@@ -991,7 +995,19 @@ fn api_routes() -> Router<AppState> {
             "/v1/bots/{id}/skills",
             get(skills::get_bot_skills).put(skills::put_bot_skills),
         )
-        .route("/v1/skills", get(skills::list_skills))
+        .route(
+            "/v1/skills",
+            get(skills::list_skills).post(skill_management::create),
+        )
+        .route(
+            "/v1/skills/import",
+            post(skill_management::import)
+                .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
+        .route(
+            "/v1/skills/{name}",
+            axum::routing::put(skill_management::update).delete(skill_management::delete),
+        )
         .route(
             "/v1/bots/{id}",
             get(r::get_bot)

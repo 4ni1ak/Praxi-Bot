@@ -11,7 +11,7 @@ use utoipa::{Modify, OpenApi};
 use crate::{
     changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
     fill_routes, host, host_links, knowledge, knowledge_settings, live_view, mcp, mcp_routes,
-    routes, skills, sse, web, web_routes,
+    routes, skill_management, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -71,6 +71,10 @@ impl Modify for Security {
         skills::list_skills,
         skills::get_bot_skills,
         skills::put_bot_skills,
+        skill_management::create,
+        skill_management::import,
+        skill_management::update,
+        skill_management::delete,
         routes::update_bot,
         routes::patch_bot,
         routes::delete_bot,
@@ -191,6 +195,10 @@ impl Modify for Security {
         changes::RestorePreviewDto, changes::RestoreRequestDto, changes::RestoreResponseDto,
         skills::SkillScope, skills::SkillIssueScope, skills::SkillRequiresDto, skills::SkillHubInfoDto,
         skills::CatalogSkillDto, skills::SkillIssueDto, skills::SkillsCatalogDto,
+        skills::SkillLocationsDto,
+        skill_management::SkillDocumentInput, skill_management::SkillImportInput,
+        skill_management::ManagedSkillDto, skill_management::DeleteSkillQuery,
+        skill_management::SkillUsingBotDto, skill_management::DeleteSkillResult,
         skills::SkillAssignmentModeDto, skills::AssignedSkillState, skills::AssignedSkillDto,
         skills::AvailableSkillDto, skills::OwnSkillDto, skills::BotSkillsDto, skills::PutBotSkillsInput,
         doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
