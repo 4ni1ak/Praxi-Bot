@@ -199,7 +199,9 @@ impl TurnExecutor {
             return Ok(Some(spec));
         }
         let Some(decision) = self.route_first(&ctx, &raw).await else {
-            return Ok(Some(user_step(&self.with_recall(&ctx, &raw))));
+            let mut spec = user_step(&self.with_recall(&ctx, &raw));
+            self.attach_plan(&ctx, &raw, &mut spec).await;
+            return Ok(Some(spec));
         };
         if let agent_router::ladder::Route::Command(c) = &decision.route
             && c.name == "stop"
@@ -207,10 +209,23 @@ impl TurnExecutor {
             // `/stop`: the run that carries it is cancelled before it starts.
             self.stop_run(run);
         }
-        Ok(Some(routed_user_step(
-            &self.with_recall(&ctx, &raw),
-            &decision,
-        )))
+        let mut spec = routed_user_step(&self.with_recall(&ctx, &raw), &decision);
+        if decision.route == agent_router::ladder::Route::Agent {
+            // The ladder found nothing cheaper: K4 runs, planned by the decider.
+            self.attach_plan(&ctx, &raw, &mut spec).await;
+        }
+        Ok(Some(spec))
+    }
+
+    /// Ask the decider how to run this K4 turn and store its plan (advice:
+    /// which tools are listed, which model answers first) in the first step.
+    /// No decider, or no answer, leaves the step untouched.
+    async fn attach_plan(&self, ctx: &RunCtx, raw: &str, spec: &mut StepSpec) {
+        if let Some(plan) = self.sh.plan_turn(ctx, raw).await
+            && !plan.is_noop()
+        {
+            spec.input["plan"] = serde_json::to_value(&plan).unwrap_or(Value::Null);
+        }
     }
 
     fn first_user_text(&self, ctx: &RunCtx, run: &Run) -> Result<String, ExecError> {
@@ -508,8 +523,32 @@ impl TurnExecutor {
             return serde_json::to_value(out).map_err(xe);
         }
 
-        let models: Vec<&String> = std::iter::once(&primary)
-            .chain(ctx.profile.models.fallback.iter())
+        let decider = self.sh.turn_decider();
+        let plan = crate::decider::stored_plan(&steps);
+        if let Some(td) = &decider
+            && guard_reason.is_none()
+            && plan
+                .as_ref()
+                .is_some_and(|p| p.tools != crate::decider::ToolPlan::All)
+        {
+            let bytes = |v: &[Value]| serde_json::to_string(v).map_or(0, |s| s.len());
+            let full = tool_defs(&self.sh.model_specs(&ctx.profile, ctx.bot_id, &[]));
+            td.savings.narrowed_call(bytes(&full), bytes(&req.tools));
+        }
+        // A trivial turn's first model call goes to the light model; the
+        // executor and its fallbacks stay behind it.
+        let light = plan.and_then(|p| p.light_model).filter(|m| {
+            guard_reason.is_none()
+                && *m != primary
+                && !steps
+                    .iter()
+                    .any(|s| s.name == STEP_MODEL && status_of(s) == Some(StepStatus::Succeeded))
+        });
+        let first_real = usize::from(light.is_some());
+        let models: Vec<String> = light
+            .into_iter()
+            .chain(std::iter::once(primary.clone()))
+            .chain(ctx.profile.models.fallback.iter().cloned())
             .collect();
         let mut last_err: Option<ProviderError> = None;
         let mut result: Option<ModelOut> = None;
@@ -523,12 +562,12 @@ impl TurnExecutor {
                     Event::ModelFallback(ModelFallback {
                         run_id: run.id,
                         from: models[i - 1].clone(),
-                        to: (*name).clone(),
+                        to: name.clone(),
                         reason: prev.to_string(),
                     }),
                 );
             }
-            req.model = ModelRef((*name).clone());
+            req.model = ModelRef(name.clone());
             let timeout = self.sh.cfg.guards.model_timeout;
             let attempt =
                 tokio::time::timeout(timeout, self.call_with_retries(&ctx, run, &req, &specs))
@@ -536,6 +575,11 @@ impl TurnExecutor {
                     .unwrap_or(Err(ProviderError::Timeout));
             match attempt {
                 Ok(out) => {
+                    if i < first_real
+                        && let Some(td) = &decider
+                    {
+                        td.savings.main_call_saved();
+                    }
                     result = Some(out);
                     break;
                 }
@@ -546,11 +590,11 @@ impl TurnExecutor {
                     // tried again. A generic `InvalidRequest` or an unmatched
                     // `Api` 400 still stops the chain on the primary.
                     if let ProviderError::Unsupported { capability } = &e {
-                        misses.push(((*name).clone(), capability.clone()));
+                        misses.push((name.clone(), capability.clone()));
                     } else {
                         other_failure = true;
                     }
-                    let hard = i == 0
+                    let hard = i == first_real
                         && !is_retryable(&e)
                         && !matches!(e, ProviderError::Unsupported { .. });
                     last_err = Some(e);

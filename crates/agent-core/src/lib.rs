@@ -28,6 +28,8 @@ mod shared;
 mod subagent;
 
 #[cfg(test)]
+mod decider_loop_tests;
+#[cfg(test)]
 mod decider_tests;
 #[cfg(test)]
 mod router_tests;
