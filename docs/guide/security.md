@@ -226,23 +226,53 @@ run even when the file was just written by the model or the text was pasted by
 the user. Narrowing that would reopen the match-count oracle, so a later egress
 asks. The cost is an edit that did not follow a private read.
 
-A shell, a script and a desktop launch start a program chosen by the model.
-After a run has read untrusted content (a page, a mailbox, a file from outside,
-an MCP result) each of them asks every time, once, with the full command on the
+A shell, a script, a desktop launch and desktop input (`desktop_type`,
+`desktop_key`, `desktop_set_value`, `desktop_drag`) start a program or drive the
+keyboard on your behalf. After a run has put untrusted content in front of the
+model, each of them asks every time, once, with the full command or input on the
 card. A standing grant, the read shortcut, a Full preset and
-`allow_egress_after_reads` do not cover that ask. A run that has only read your
-own private files is not held by this rule. The shell card shows the command;
-it does not parse redirections. An approved shell still runs with the user's
-rights.
+`allow_egress_after_reads` do not cover that ask.
+
+What counts as untrusted here is wider than web pages. Any file read, listing or
+search (`fs_read`, `fs_list`, `fs_search`), any git read (`git_status`,
+`git_diff`, `git_log`, `git_show`, `git_branch`), every document reader, and any
+web, mail, MCP, skill or workflow read counts, including a read of your own
+project, because a file can hold text you did not write. Listing skills counts
+when one of them was stored as untrusted, and listing saved workflows always
+counts. Only `fs_edit`, `git_commit`, `process_list` and a listing of trusted
+skills leave a run private-only, and a private-only run is not held by this
+rule.
+
+Consequences to expect:
+- The taint lasts for the later turns of the same chat for as long as the
+  messages that carry it stay in the context. A new chat starts clean.
+- After the first file read in a chat, every shell, script, launch or desktop
+  input asks, once each. A standing "always allow shell" has no effect then.
+- A scheduled run that reads something and then runs a command pauses for
+  approval on every firing.
+- A saved workflow replays as untrusted, so a workflow with a shell, launch or
+  desktop input step asks on every replay.
+
+The card shows the command or the input, not the files the command will run. A
+run that wrote `package.json`, a Makefile or a script earlier can have a card
+that reads `npm test` and executes what the run wrote. The shell card does not
+parse redirections. An approved shell still runs with the user's rights.
+`desktop_click` is not covered: whether a click sequence can open a file on each
+backend is not verified.
 
 This does not make file writes safe. Outside the daemon data directory, a run
 that read untrusted content can still create or change a file with `fs_write`,
 `fs_edit`, `fs_move`, a document writer or a git commit under whatever grant
 you gave, and a program that later trusts that file (an agent instruction file
-such as `AGENTS.md`, an editor or tool configuration file, a shell profile, a
-startup entry) will read it. A local MCP server that can write files is not
-classified as a writer either. Review changes to such files yourself. A
-separate consent design for file writes is tracked outside this change.
+such as `AGENTS.md` or `CLAUDE.md`, which a Claude or Codex CLI engine started
+in that directory may load as instructions in a later clean run; an editor or
+tool configuration file; a shell profile; a startup entry) will read it. Only
+the engines' own configuration homes are protected, not project directories. A
+local MCP server that can write files is not classified as a writer or an
+executor. Review changes to such files yourself. Chats stored before the message
+exposure migration start with no recorded exposure, so an old chat that already
+holds web or mail content begins clean after the upgrade. A separate consent
+design for file writes is tracked outside this change.
 
 File tools cannot modify anything under the daemon data directory, even with
 an exact file grant. Existing path resolution checks also apply to move
