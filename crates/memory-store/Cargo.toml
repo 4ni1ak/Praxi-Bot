@@ -16,7 +16,7 @@ default = []
 # native binaries at build time and the model files are fetched on first use.
 fastembed = ["dep:fastembed", "fastembed/hf-hub-native-tls", "fastembed/ort-download-binaries-native-tls"]
 # Explicit local artifacts only; no model or runtime download features.
-local-embeddings = ["dep:fastembed", "fastembed/ort-load-dynamic", "dep:ort", "dep:tokenizers"]
+local-embeddings = ["dep:fastembed", "fastembed?/ort-load-dynamic", "dep:ort", "dep:tokenizers"]
 
 [dependencies]
 cap-std = "4.0.3"

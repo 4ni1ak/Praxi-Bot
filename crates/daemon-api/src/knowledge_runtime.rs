@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 mod authority;
+pub(crate) use authority::authorized;
 mod local_host;
 pub use authority::{
     EmbeddingApprovalChallenge, EmbeddingGrantTarget, grant_confirm, grant_request,
@@ -77,7 +78,7 @@ fn lane(state: &AppState, bot: BotId) -> Arc<Lane> {
     Arc::clone(lanes.entry((path, bot)).or_insert_with(|| {
         Arc::new(Lane {
             gate: Arc::new(Mutex::new(())),
-            cancel: parking_lot::Mutex::new(CancellationToken::new()),
+            cancel: parking_lot::Mutex::new(state.shutdown_token().child_token()),
             active: AtomicUsize::new(0),
             changed: Notify::new(),
         })
@@ -141,7 +142,7 @@ pub(crate) fn invalidate_bot(state: &AppState, bot: BotId) {
     let lane = lane(state, bot);
     let mut cancel = lane.cancel.lock();
     cancel.cancel();
-    *cancel = CancellationToken::new();
+    *cancel = state.shutdown_token().child_token();
     drop(cancel);
     evict_bot(state, bot);
 }
@@ -150,7 +151,8 @@ fn evict_bot(state: &AppState, bot: BotId) {
         runtime.services.lock().retain(|entry| entry.bot != bot);
     }
 }
-pub(crate) fn forget_bot(state: &AppState, bot: BotId) {
+/// Drop the current cached/admitted embedding generation.
+pub fn forget_bot(state: &AppState, bot: BotId) {
     invalidate_bot(state, bot);
 }
 
@@ -213,8 +215,7 @@ fn settings(state: &AppState, bot: BotId) -> Result<EmbeddingConfig, ApiError> {
         .profile
         .fingerprint()
         .map_err(|_| ApiError::bad_request("invalid embedding profile"))?;
-    config.query_consent =
-        authority::authorized(state, bot, &EmbeddingGrantTarget::Queries, &fingerprint);
+    config.query_consent = authorized(state, bot, &EmbeddingGrantTarget::Queries, &fingerprint);
     Ok(config)
 }
 
@@ -249,7 +250,7 @@ impl HostAuthority {
             .profile
             .fingerprint()
             .is_ok_and(|current| current == profile)
-            && authority::authorized(&state, self.bot, target, profile).is_some()
+            && authorized(&state, self.bot, target, profile).is_some()
     }
 }
 
@@ -379,19 +380,30 @@ impl KnowledgeRuntime {
         if configured {
             let gate = authority_lock(&state, bot).lock_owned().await;
             if let Ok((service, activity)) = self.prepare(state.clone(), bot, gate).await {
-                // Passing the generation token lets scans finish their bounded
-                // cleanup before a deletion waiter observes zero active users.
-                let query_guard = || {
-                    run_id.is_none_or(|run_id| {
-                        let decision = state.agent().embedding_egress_decision(bot, run_id);
-                        decision != permission_engine::Decision::Deny
-                            && decision.unsupported_limits().is_none()
-                    })
-                };
-                if let Ok(response) = service
-                    .search_with_query_guard(&request, &activity.cancel, &query_guard)
-                    .await
-                {
+                // Cancellation stops dispatch/scan, but the detached bounded
+                // worker owns Activity until its SQLite/model users finish.
+                // A dropped HTTP/tool waiter must not let deletion race them.
+                let cancel = activity.cancel.child_token();
+                let _cancel_on_drop = cancel.clone().drop_guard();
+                let search_state = state.clone();
+                let search_request = request.clone();
+                let run_id = run_id.map(str::to_owned);
+                let result = tokio::spawn(async move {
+                    let _activity = activity;
+                    let query_guard = || {
+                        run_id.as_deref().is_none_or(|run_id| {
+                            let decision =
+                                search_state.agent().embedding_egress_decision(bot, run_id);
+                            decision != permission_engine::Decision::Deny
+                                && decision.unsupported_limits().is_none()
+                        })
+                    };
+                    service
+                        .search_with_query_guard(&search_request, &cancel, &query_guard)
+                        .await
+                })
+                .await;
+                if let Ok(Ok(response)) = result {
                     return Ok(response);
                 }
             }
@@ -473,10 +485,15 @@ async fn run_embedding_batch(
             .reset_source_retry(source)
             .map_err(|_| ApiError::unavailable("embedding retry state unavailable"))?;
     }
-    service
-        .embed_source_batch(source, &activity.cancel)
-        .await
-        .map_err(|_| ApiError::unavailable("embedding batch unavailable"))
+    let cancel = activity.cancel.child_token();
+    let _cancel_on_drop = cancel.clone().drop_guard();
+    tokio::spawn(async move {
+        let _activity = activity;
+        service.embed_source_batch(source, &cancel).await
+    })
+    .await
+    .map_err(|_| ApiError::unavailable("embedding worker unavailable"))?
+    .map_err(|_| ApiError::unavailable("embedding batch unavailable"))
 }
 
 fn provider(
@@ -602,7 +619,33 @@ pub fn reset_embedding_cooldown(state: &AppState, bot: BotId) -> Result<(), ApiE
     let config = configured_settings(state, bot)?;
     EmbeddingRuntime::open(state.data_dir())
         .and_then(|runtime| runtime.reset_cooldown(&config.account_group))
-        .map_err(|_| ApiError::unavailable("embedding cooldown unavailable"))
+        .map_err(|_| ApiError::unavailable("embedding cooldown unavailable"))?;
+    for bot in state.storage().list_bots(state.user_id())? {
+        let Ok(other) = configured_settings(state, bot.id) else {
+            continue;
+        };
+        if other.account_group != config.account_group {
+            continue;
+        }
+        let path = state
+            .data_dir()
+            .join("bots")
+            .join(bot.id.to_string())
+            .join("knowledge.db");
+        if !path.exists() {
+            continue;
+        }
+        KnowledgeStore::open(
+            state.data_dir(),
+            Scope {
+                user_id: state.user_id(),
+                bot_id: bot.id,
+            },
+        )
+        .and_then(|store| store.reset_embedding_cooldown(&other.profile.fingerprint()?))
+        .map_err(|_| ApiError::unavailable("embedding source cooldown unavailable"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

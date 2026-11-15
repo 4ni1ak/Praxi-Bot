@@ -401,8 +401,11 @@ pub(crate) async fn update_bot(
     Path(bid): Path<String>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let _knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
-    let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let bot_id = BotId(id(&bid)?);
+    let _knowledge_authority = crate::knowledge::authority_lock(&s, bot_id)
+        .lock_owned()
+        .await;
+    let mut bot = s.bot_of_user(bot_id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
     if preserve_runtime
@@ -422,6 +425,7 @@ pub(crate) async fn update_bot(
         object.remove("knowledge");
     }
     s.storage().update_bot(bot.id, &name, &config)?;
+    crate::knowledge_runtime::invalidate_bot(&s, bot.id);
     bot.name = name;
     bot.config = config;
     s.refresh_profile(&bot);
@@ -436,17 +440,35 @@ pub(crate) async fn delete_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let _knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
-    s.storage()
-        .delete_bot_with_cleanup(bot.id, || {
-            crate::knowledge::remove_bot_index(&s, &bot).map_err(storage::StorageError::Io)
-        })
-        .map_err(|_| {
-            ApiError::conflict(
-                "bot still has chats or runs, or its knowledge files could not be removed",
-            )
-        })?;
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
+    let authority = crate::knowledge::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
+    let state = s.clone();
+    let removed = bot.clone();
+    crate::knowledge::blocking_with_permit(permit, move || {
+        let _authority = authority;
+        state
+            .storage()
+            .delete_bot_with_cleanup(removed.id, || {
+                crate::knowledge_runtime::revoke_bot_grants(&state, removed.id).map_err(|_| {
+                    storage::StorageError::Io(std::io::Error::other(
+                        "knowledge authority could not be revoked",
+                    ))
+                })?;
+                crate::knowledge::remove_bot_index(&state, &removed)
+                    .map_err(storage::StorageError::Io)
+            })
+            .map_err(|_| {
+                ApiError::conflict(
+                    "bot still has chats or runs, or its knowledge files could not be removed",
+                )
+            })?;
+        Ok(())
+    })
+    .await?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.

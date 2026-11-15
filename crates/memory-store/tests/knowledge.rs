@@ -543,7 +543,7 @@ fn source_delete_removes_chunks_documents_and_fts_rows() {
             .unwrap();
         assert_eq!(count, 0, "orphaned {table}");
     }
-    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 2);
+    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 3);
 }
 
 #[test]

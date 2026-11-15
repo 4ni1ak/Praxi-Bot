@@ -9,13 +9,7 @@ use protocol::{BotId, UserId};
 use serde_json::json;
 use tool_registry::{ContentPart, ToolContext};
 
-#[tokio::test]
-async fn shipped_agent_searches_only_the_enabled_scoped_index_without_an_embedder() {
-    let dir = tempfile::tempdir().unwrap();
-    let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
-    let user = UserId::new();
-    let bot = BotId::new();
-    let other = BotId::new();
+fn insert_fixture(storage: &storage::Storage, user: UserId, bots: [BotId; 2]) {
     storage
         .insert_user(&storage::User {
             id: user,
@@ -23,7 +17,7 @@ async fn shipped_agent_searches_only_the_enabled_scoped_index_without_an_embedde
             created_at_ms: 1,
         })
         .unwrap();
-    for id in [bot, other] {
+    for id in bots {
         storage
             .insert_bot(&storage::Bot {
                 id,
@@ -34,6 +28,16 @@ async fn shipped_agent_searches_only_the_enabled_scoped_index_without_an_embedde
             })
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn shipped_agent_searches_only_the_enabled_scoped_index_without_an_embedder() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+    let user = UserId::new();
+    let bot = BotId::new();
+    let other = BotId::new();
+    insert_fixture(&storage, user, [bot, other]);
     let agent = crate::serve::build_agent(
         &storage,
         agent_core::Providers::unconfigured(),

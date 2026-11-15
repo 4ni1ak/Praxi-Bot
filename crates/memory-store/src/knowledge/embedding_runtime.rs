@@ -366,4 +366,89 @@ mod tests {
             Reservation::Granted
         );
     }
+
+    #[test]
+    fn legacy_poisoned_cooldown_is_persistently_capped_without_sliding() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = EmbeddingRuntime::open(dir.path()).unwrap();
+        let now = 1_800_000_000_000;
+        let deadline = now + MAX_COOLDOWN_MS;
+        runtime
+            .conn()
+            .execute(
+                "INSERT INTO embedding_cooldown(account_group,not_before_ms) VALUES(?1,?2)",
+                params!["account", i64::MAX],
+            )
+            .unwrap();
+        let budget = EmbeddingBudget::default();
+        assert_eq!(
+            runtime.reserve("account", &budget, 1, 1, now).unwrap(),
+            Reservation::Deferred(deadline)
+        );
+        let stored_deadline: i64 = runtime
+            .conn()
+            .query_row(
+                "SELECT not_before_ms FROM embedding_cooldown WHERE account_group='account'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_deadline, deadline);
+        drop(runtime);
+
+        let restarted = EmbeddingRuntime::open(dir.path()).unwrap();
+        assert_eq!(
+            restarted
+                .reserve("account", &budget, 1, 1, now + DAY_MS)
+                .unwrap(),
+            Reservation::Deferred(deadline),
+            "reopening or retrying must not move the cap another 48 hours"
+        );
+        assert_eq!(
+            restarted
+                .reserve("account", &budget, 1, 1, deadline)
+                .unwrap(),
+            Reservation::Granted
+        );
+    }
+
+    #[test]
+    fn cooldown_reset_preserves_quota_and_other_accounts() {
+        let runtime = EmbeddingRuntime::open_in_memory().unwrap();
+        let now = storage::now_ms();
+        let budget = EmbeddingBudget {
+            requests_per_day: 1,
+            ..EmbeddingBudget::default()
+        };
+        assert_eq!(
+            runtime.reserve("account", &budget, 1, 37, now).unwrap(),
+            Reservation::Granted
+        );
+        let deadline = now + 2 * DAY_MS;
+        runtime.defer("account", deadline).unwrap();
+        runtime.defer("other-account", deadline).unwrap();
+        runtime.reset_cooldown("account").unwrap();
+        assert_eq!(
+            runtime
+                .reserve("account", &budget, 1, 1, now + MINUTE_MS)
+                .unwrap(),
+            Reservation::Deferred(now + DAY_MS),
+            "owner recovery clears a provider cooldown, never the paid reservation"
+        );
+        assert_eq!(
+            runtime
+                .reserve("other-account", &budget, 1, 1, now + MINUTE_MS)
+                .unwrap(),
+            Reservation::Deferred(deadline)
+        );
+        let charge: (i64, i64) = runtime
+            .conn()
+            .query_row(
+                "SELECT SUM(request_units),SUM(token_units) FROM embedding_quota WHERE account_group='account'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(charge, (1, 37));
+    }
 }

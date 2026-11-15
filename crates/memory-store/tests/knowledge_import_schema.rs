@@ -121,7 +121,7 @@ fn version_one_index_migrates_to_the_canonical_embedding_schema() {
     )
     .unwrap();
     drop(conn);
-    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 2);
+    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 3);
     let reopened = KnowledgeStore::open(dir.path(), scope).unwrap();
     let sources = reopened.list_sources().unwrap();
     assert_eq!(sources.len(), 1);

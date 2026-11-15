@@ -43,7 +43,8 @@ impl Host {
                 redactor: Some(redactor),
                 ..LoopConfig::default()
             },
-        );
+        )
+        .with_subagents();
         let state = AppState::new(agent, storage, crate::DaemonConfig::new("test-token")).unwrap();
         state.set_secret_store(secrets.clone());
         let host = Self {
@@ -63,7 +64,7 @@ impl Host {
                 id: bot,
                 user_id: self.state.user_id(),
                 name: "Knowledge test".into(),
-                config: json!({}),
+                config: json!({"bot":{"id":"knowledge-test","name":"Knowledge test"},"models":{"executor":"fake/model"},"router":{"enabled":false}}),
                 created_at_ms: 1,
             })
             .unwrap();
@@ -102,16 +103,19 @@ impl Host {
     }
 
     fn save(&self, bot: BotId, config: Option<&EmbeddingConfig>) {
+        let mut row = self.state.bot_of_user(bot).unwrap();
+        row.config["knowledge"] = json!({"embedding":config});
         self.state
             .storage()
-            .update_bot(
-                bot,
-                "Knowledge test",
-                &json!({
-                    "knowledge": {"embedding":config}
-                }),
-            )
+            .update_bot(bot, "Knowledge test", &row.config)
             .unwrap();
+        self.state.refresh_profile(&row);
+        invalidate_bot(&self.state, bot);
+    }
+
+    fn approve_query(&self, bot: BotId) {
+        let challenge = grant_request(&self.state, bot, EmbeddingGrantTarget::Queries).unwrap();
+        grant_confirm(&self.state, bot, challenge.id).unwrap();
     }
 
     fn provider(&self, endpoint: &str, enabled: bool) {
@@ -162,40 +166,28 @@ impl Host {
         )
     }
 
-    fn grant(&self, bot: BotId, source: &Source, config: &EmbeddingConfig) -> Source {
-        self.store(bot)
-            .update_source(
-                source.id,
-                source.revision,
-                SourceUpdate {
-                    remote_embedding: Some(Some(consent(config))),
-                    ..SourceUpdate::default()
-                },
-            )
-            .unwrap()
+    fn grant(&self, bot: BotId, source: &Source, _config: &EmbeddingConfig) -> Source {
+        let challenge = grant_request(
+            &self.state,
+            bot,
+            EmbeddingGrantTarget::Documents {
+                source_id: source.id,
+            },
+        )
+        .unwrap();
+        grant_confirm(&self.state, bot, challenge.id).unwrap();
+        self.store(bot).source(source.id).unwrap().unwrap()
     }
 
     async fn search(&self, bot: BotId, query: &str) -> SearchResponse {
-        let tool = self
-            .state
-            .agent()
-            .tool_registry()
-            .get(builtin_tools::knowledge::KNOWLEDGE_SEARCH)
-            .unwrap();
-        let output = tool
-            .call(
-                &ToolContext {
-                    bot_id: Some(bot.to_string()),
-                    ..ToolContext::default()
-                },
-                json!({"query":query}),
-            )
+        self.state
+            .0
+            .knowledge_runtime
+            .get()
+            .unwrap()
+            .search(bot, SearchRequest::new(query))
             .await
-            .unwrap();
-        let ContentPart::Text { text } = &output.content[0] else {
-            panic!("JSON text result")
-        };
-        serde_json::from_str(text).unwrap()
+            .unwrap()
     }
 }
 
@@ -235,12 +227,16 @@ async fn ready(host: &Host, server: &MockServer) -> (EmbeddingConfig, Source) {
     host.save(host.bot, Some(&config));
     let source = host.source(host.bot, "Saffron snapshots restore a database.");
     let source = host.grant(host.bot, &source, &config);
+    host.approve_query(host.bot);
     let progress = embedding_batch(&host.state, host.bot, source.id, source.revision)
         .await
         .unwrap();
     assert_eq!(progress.embedded_chunks, 1);
     (config, source)
 }
+
+#[path = "admission_tests.rs"]
+mod admission_tests;
 
 #[tokio::test]
 async fn installed_runtime_works_without_any_provider_and_respects_bot_scope() {
@@ -260,9 +256,9 @@ async fn authority_serializes_one_directory_without_blocking_another_host() {
     let _serial = test_guard().await;
     let first = Host::new();
     let second = Host::new();
-    let gate = authority_lock(&first.state).lock_owned().await;
+    let gate = authority_lock(&first.state, first.bot).lock_owned().await;
     assert!(
-        authority_lock(&first.state.clone())
+        authority_lock(&first.state.clone(), first.bot)
             .try_lock_owned()
             .is_err()
     );
@@ -273,7 +269,11 @@ async fn authority_serializes_one_directory_without_blocking_another_host() {
         SearchMode::Hybrid
     );
     drop(gate);
-    assert!(authority_lock(&first.state).try_lock_owned().is_ok());
+    assert!(
+        authority_lock(&first.state, first.bot)
+            .try_lock_owned()
+            .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -306,6 +306,7 @@ async fn source_and_query_grants_are_independent_and_live_tool_uses_hybrid_cache
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
     config.query_consent = Some(consent(&config));
     host.save(host.bot, Some(&config));
+    host.approve_query(host.bot);
     let semantic = host.search(host.bot, "disaster recovery").await;
     assert_eq!(semantic.mode, SearchMode::Hybrid);
     assert_eq!(semantic.hits[0].source_id, source.id);
@@ -316,6 +317,7 @@ async fn source_and_query_grants_are_independent_and_live_tool_uses_hybrid_cache
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
     config.query_consent = None;
     host.save(host.bot, Some(&config));
+    revoke_grant(&host.state, host.bot, EmbeddingGrantTarget::Queries).unwrap();
     assert_eq!(
         host.search(host.bot, "disaster recovery").await.mode,
         SearchMode::Lexical
@@ -371,6 +373,7 @@ async fn newly_registered_secret_is_refreshed_before_document_and_query_egress()
     host.save(host.bot, Some(&config));
     let source = host.source(host.bot, "Saffron later-only-secret snapshot.");
     let source = host.grant(host.bot, &source, &config);
+    host.approve_query(host.bot);
     host.secrets.set("late-key", "later-only-secret").unwrap();
     embedding_batch(&host.state, host.bot, source.id, source.revision)
         .await
@@ -423,13 +426,26 @@ async fn bot_json_cannot_authorize_document_or_query_egress() {
     host.save(host.bot, Some(&config));
     let source = host.source(host.bot, "Saffron snapshots restore a database.");
     // Write the same shape an imported or generic bot/source JSON update can forge.
-    let source = host.store(host.bot).update_source(source.id, source.revision, SourceUpdate {
-        remote_embedding: Some(Some(consent(&config))), ..SourceUpdate::default()
-    }).unwrap();
-    let progress = embedding_batch(&host.state, host.bot, source.id, source.revision).await.unwrap();
+    let source = host
+        .store(host.bot)
+        .update_source(
+            source.id,
+            source.revision,
+            SourceUpdate {
+                remote_embedding: Some(Some(consent(&config))),
+                ..SourceUpdate::default()
+            },
+        )
+        .unwrap();
+    let progress = embedding_batch(&host.state, host.bot, source.id, source.revision)
+        .await
+        .unwrap();
     assert_eq!(progress.status, EmbeddingStatus::AwaitingConsent);
     host.search(host.bot, "saffron").await;
-    assert!(server.received_requests().await.unwrap().is_empty(), "JSON fields minted egress authority");
+    assert!(
+        server.received_requests().await.unwrap().is_empty(),
+        "JSON fields minted egress authority"
+    );
 }
 
 #[test]
@@ -443,7 +459,10 @@ fn bot_json_cannot_select_native_runtime_or_model_artifacts() {
             "special_tokens_map":artifact,"tokenizer_config":artifact
         }
     });
-    assert!(serde_json::from_value::<EmbeddingConfig>(payload).is_err(), "bot config accepted executable paths");
+    assert!(
+        serde_json::from_value::<EmbeddingConfig>(payload).is_err(),
+        "bot config accepted executable paths"
+    );
 }
 
 #[tokio::test]
@@ -478,7 +497,7 @@ async fn failed_jobs_require_explicit_retry_and_keep_consumed_account_quota() {
     let _serial = test_guard().await;
     let server = MockServer::start().await;
     Mock::given(path("/embeddings"))
-        .respond_with(ResponseTemplate::new(400))
+        .respond_with(ResponseTemplate::new(401))
         .mount(&server)
         .await;
     let host = Host::new();
