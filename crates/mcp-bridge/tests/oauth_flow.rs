@@ -759,10 +759,13 @@ async fn a_sign_in_is_sent_only_to_its_own_server_and_waiting_for_one_is_not_a_f
 }
 
 fn http_config(id: &str, url: String) -> McpServerConfig {
+    // The fake serves its own metadata: its base is the issuer.
+    let issuer = url.trim_end_matches("/mcp").to_owned();
     let mut config = McpServerConfig::http(id, url);
     config.oauth = Some(mcp_bridge::OAuthConfig {
         client_id: Some("praxi-test-client".into()),
         allow_loopback_http: true,
+        issuer: Some(issuer),
         ..mcp_bridge::OAuthConfig::default()
     });
     config
@@ -1036,4 +1039,73 @@ async fn discovery_registration_and_redirects_to_internal_hosts_are_refused_befo
         assert_eq!(store.list_names().unwrap(), Vec::<String>::new(), "{name}");
         server.abort();
     }
+}
+
+/// Review finding 5: a confidential client bound to issuer A is never shown
+/// to issuer B, even after the MCP server starts advertising B.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_confidential_client_is_never_presented_to_another_issuer() {
+    const CLIENT_SECRET: &str = "issuer-bound-secret-sentinel-4a7c";
+    let (base_a, seen_a, server_a) = fake_authorization_server(true).await;
+    let (base_b, seen_b, server_b) = fake_authorization_server(true).await;
+    {
+        let mut a = seen_a.lock();
+        a.client_secret = Some(CLIENT_SECRET.into());
+        a.expires_in = Some(45); // a refresh is due on the next connect
+        a.refresh_allowed = true;
+    }
+    let store = Arc::new(MemoryStore::default());
+    store.set("mcp/client-secret", CLIENT_SECRET).unwrap();
+    let manager =
+        McpManager::new(tool_registry::ToolRegistry::new()).with_secret_store(store.clone());
+    let mut config = http_config("bound", format!("{base_a}/mcp"));
+    config.oauth.as_mut().unwrap().client_secret_ref = Some("mcp/client-secret".into());
+    // Without an issuer the confidential client is not even accepted.
+    let mut unbound = config.clone();
+    unbound.oauth.as_mut().unwrap().issuer = None;
+    assert!(
+        unbound
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("issuer")
+    );
+    assert!(matches!(
+        manager.add_server(config).await,
+        Err(McpError::AuthRequired(_))
+    ));
+    finish_sign_in(
+        manager
+            .start_sign_in("bound", SignInOptions::default())
+            .await
+            .unwrap(),
+        &base_a,
+        &seen_a,
+    )
+    .await;
+    // The MCP server now names attacker B as its authorization server.
+    seen_a.lock().authorization_server = Some(base_b.clone());
+    let refreshed = manager.reenable("bound").await;
+    assert!(
+        matches!(refreshed, Err(McpError::AuthRequired(_))),
+        "{refreshed:?}"
+    );
+    let error = manager
+        .start_sign_in("bound", SignInOptions::default())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("issuer"), "{error}");
+    // B never saw a token request, so never the client id or secret.
+    assert_eq!(seen_b.lock().token_requests.len(), 0);
+    let b_paths = seen_b.lock().paths.clone();
+    assert!(
+        !b_paths.iter().any(|p| p == "/token" || p == "/register"),
+        "{b_paths:?}"
+    );
+    let snapshot = manager.snapshot("bound").unwrap();
+    assert_eq!(snapshot.consecutive_failures, 0);
+    manager.shutdown().await;
+    server_a.abort();
+    server_b.abort();
 }

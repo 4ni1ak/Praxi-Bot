@@ -2503,6 +2503,11 @@ export interface components {
             client_id?: string | null;
             client_metadata_url?: string | null;
             client_secret_ref?: string | null;
+            /**
+             * @description The authorization server a pre-registered client is bound to;
+             *     required with `client_id` / `client_secret_ref`.
+             */
+            issuer?: string | null;
         };
         /** @description A secret the user must provide to install a catalog entry. */
         McpRequiredSecretDto: {

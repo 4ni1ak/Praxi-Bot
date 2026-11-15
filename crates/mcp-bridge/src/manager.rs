@@ -209,6 +209,7 @@ impl Server {
                 .client_metadata_url
                 .clone_from(&config.client_metadata_url);
             options.allow_loopback_http = config.allow_loopback_http;
+            options.expected_issuer.clone_from(&config.issuer);
             options.client_secret = match &config.client_secret_ref {
                 Some(name) => {
                     let value = self

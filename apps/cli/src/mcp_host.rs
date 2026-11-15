@@ -285,6 +285,7 @@ impl McpHost {
                 client_secret_ref: c.client_secret_ref.clone(),
                 client_metadata_url: c.client_metadata_url.clone(),
                 allow_loopback_http: c.allow_loopback_http,
+                issuer: c.issuer.clone(),
             }),
             name: cfg.id.clone(),
             transport,
@@ -706,6 +707,7 @@ fn to_config(name: &str, input: McpServerInput) -> Result<McpServerConfig, McpCo
             client_secret_ref: c.client_secret_ref,
             client_metadata_url: c.client_metadata_url,
             allow_loopback_http: c.allow_loopback_http,
+            issuer: c.issuer,
         }),
         id: name.to_owned(),
         transport,
@@ -1355,6 +1357,7 @@ mod tests {
         config.oauth = Some(mcp_bridge::OAuthConfig {
             client_id: Some("praxi-host-test".into()),
             allow_loopback_http: true,
+            issuer: Some(base.clone()),
             ..mcp_bridge::OAuthConfig::default()
         });
         TomlFileStore::new(dir.path().join(MCP_FILE))
@@ -1518,6 +1521,7 @@ mod tests {
         config.oauth = Some(mcp_bridge::OAuthConfig {
             client_id: Some("praxi-daemon-test".into()),
             allow_loopback_http: true,
+            issuer: Some(base.clone()),
             ..mcp_bridge::OAuthConfig::default()
         });
         TomlFileStore::new(dir.path().join(MCP_FILE))
@@ -1679,6 +1683,7 @@ mod tests {
         config.oauth = Some(mcp_bridge::OAuthConfig {
             client_id: Some("praxi-paste-test".into()),
             allow_loopback_http: true,
+            issuer: Some(base.clone()),
             ..mcp_bridge::OAuthConfig::default()
         });
         TomlFileStore::new(dir.path().join(MCP_FILE))
@@ -1811,6 +1816,7 @@ mod tests {
             config.oauth = Some(mcp_bridge::OAuthConfig {
                 client_id: Some("praxi-race-test".into()),
                 allow_loopback_http: true,
+                issuer: Some(base.clone()),
                 ..mcp_bridge::OAuthConfig::default()
             });
             TomlFileStore::new(dir.path().join(MCP_FILE))

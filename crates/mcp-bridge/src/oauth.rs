@@ -338,12 +338,43 @@ pub struct SignInOptions {
     /// Orders this flow's credential writes against sign-out (set by the
     /// manager; `None` in standalone use).
     pub guard: Option<CredentialGuard>,
+    /// The issuer a pre-registered client (and its secret) is bound to.
+    /// Required when `client_secret` is set; compared whenever present.
+    pub expected_issuer: Option<String>,
     /// DNS used by the OAuth policy client; `None` = the system resolver.
     /// Tests inject a static table so no real lookup happens.
     pub resolver: Option<Arc<dyn EndpointResolver>>,
 }
 
+/// `https://a.example/` and `https://a.example` name the same issuer.
+fn same_issuer(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/') == b.trim_end_matches('/')
+}
+
 impl SignInOptions {
+    /// Refuse to present a pre-registered client to any issuer other than
+    /// the one it is bound to (review finding 5).  Runs before the client is
+    /// configured, so a mismatched server never receives its id or secret.
+    fn check_issuer(&self, server: &str, advertised: Option<&str>) -> Result<()> {
+        if self.client_id.is_none() && self.client_secret.is_none() {
+            return Ok(());
+        }
+        let Some(expected) = &self.expected_issuer else {
+            if self.client_secret.is_some() {
+                return Err(McpError::Config(format!(
+                    "server `{server}`: a confidential OAuth client needs a configured issuer"
+                )));
+            }
+            return Ok(());
+        };
+        match advertised {
+            Some(actual) if same_issuer(actual, expected) => Ok(()),
+            _ => Err(McpError::Config(format!(
+                "server `{server}`: authorization server refused: it is not the issuer `{expected}` the configured client is registered with"
+            ))),
+        }
+    }
+
     /// The policy client every OAuth request of this flow goes through.
     fn http_client(&self) -> Arc<crate::oauth_net::PolicyHttpClient> {
         Arc::new(match &self.resolver {
@@ -439,6 +470,9 @@ impl SignIn {
                 .get("client_id_metadata_document_supported")
                 .and_then(serde_json::Value::as_bool)
                 == Some(true);
+        if !use_metadata_document {
+            options.check_issuer(server, resolution.metadata.issuer.as_deref())?;
+        }
         manager.set_metadata(resolution.metadata);
 
         let listener = CallbackListener::bind(server).await?;
@@ -523,6 +557,27 @@ impl SignIn {
     }
 }
 
+/// Whether at most 60 seconds of the stored access token remain.
+fn refresh_due(stored: &StoredCredentials) -> bool {
+    let expiry = stored
+        .token_response
+        .as_ref()
+        .and_then(oauth2::TokenResponse::expires_in);
+    match (expiry, stored.token_received_at) {
+        (Some(expiry), Some(received)) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            received
+                .saturating_add(expiry.as_secs())
+                .saturating_sub(now)
+                <= 60
+        }
+        _ => false,
+    }
+}
+
 /// The access token to connect `server` (at `url`) with, refreshed first when
 /// at most 60 seconds remain. `Ok(None)` when no sign-in was ever stored for this
 /// server and URL: nothing is contacted then.
@@ -556,25 +611,7 @@ pub async fn stored_bearer(
     else {
         return Ok(None);
     };
-    let refresh_due = {
-        let expiry = stored
-            .token_response
-            .as_ref()
-            .and_then(oauth2::TokenResponse::expires_in);
-        match (expiry, stored.token_received_at) {
-            (Some(expiry), Some(received)) => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                received
-                    .saturating_add(expiry.as_secs())
-                    .saturating_sub(now)
-                    <= 60
-            }
-            _ => false,
-        }
-    };
+    let refresh_due = refresh_due(&stored);
     // The policy client: no proxy, vetted addresses on every hop.
     let http = options.http_client();
     let mut manager = AuthorizationManager::new_with_oauth_http_client(url, http.clone())
@@ -588,6 +625,7 @@ pub async fn stored_bearer(
         .map_err(|e| auth_error(server, &e))?;
     check_metadata(server, &resolution.metadata, options.allow_loopback_http)?;
     check_endpoint_addresses(server, &http, &resolution.metadata).await?;
+    let advertised_issuer = resolution.metadata.issuer.clone();
     manager.set_metadata(resolution.metadata);
     match manager.initialize_from_store().await {
         Ok(true) => {}
@@ -596,6 +634,22 @@ pub async fn stored_bearer(
     }
     let stored_id = &stored.client_id;
     let metadata_client = options.client_metadata_url.as_ref() == Some(stored_id);
+    if !metadata_client {
+        // The secret goes to the token endpoint below: only to the bound issuer,
+        // and only with credentials that were issued by it.
+        if options
+            .check_issuer(server, advertised_issuer.as_deref())
+            .is_err()
+            || options.expected_issuer.as_ref().is_some_and(|expected| {
+                stored
+                    .issuer
+                    .as_deref()
+                    .is_some_and(|issued| !same_issuer(issued, expected))
+            })
+        {
+            return Err(McpError::AuthRequired(server.to_owned()));
+        }
+    }
     if !metadata_client && options.client_id.as_ref().is_some_and(|id| id != stored_id) {
         return Err(McpError::AuthRequired(server.to_owned()));
     }

@@ -61,6 +61,12 @@ pub struct OAuthConfig {
     /// Permit HTTP authorization endpoints on loopback for development.
     #[serde(default)]
     pub allow_loopback_http: bool,
+    /// The authorization server (issuer) the pre-registered client belongs
+    /// to.  Required with `client_id` / `client_secret_ref`: the client and
+    /// its secret are only ever presented to this issuer, whatever the MCP
+    /// server advertises later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
 }
 
 /// One configured MCP server.
@@ -191,6 +197,20 @@ impl McpServerConfig {
                 })?;
                 if oauth.client_id.is_none() {
                     return bad("an OAuth client secret reference requires a client id".into());
+                }
+            }
+            if oauth.client_id.is_some() || oauth.client_secret_ref.is_some() {
+                let Some(issuer) = &oauth.issuer else {
+                    return bad(
+                        "a pre-registered OAuth client needs `issuer`: the authorization server it was registered with"
+                            .into(),
+                    );
+                };
+                let loopback = issuer.starts_with("http://127.0.0.1")
+                    || issuer.starts_with("http://localhost")
+                    || issuer.starts_with("http://[::1]");
+                if !(issuer.starts_with("https://") || (oauth.allow_loopback_http && loopback)) {
+                    return bad("OAuth `issuer` must be an https URL".into());
                 }
             }
         }
@@ -636,6 +656,11 @@ mod tests {
         c.oauth.as_mut().unwrap().client_secret_ref = Some("mcp/client-secret".into());
         assert!(c.validate().is_err(), "secret needs a client id");
         c.oauth.as_mut().unwrap().client_id = Some("client".into());
+        // Review finding 5: a pre-registered client is bound to an issuer.
+        assert!(c.validate().unwrap_err().to_string().contains("issuer"));
+        c.oauth.as_mut().unwrap().issuer = Some("http://auth.example.com".into());
+        assert!(c.validate().is_err(), "issuer must be https");
+        c.oauth.as_mut().unwrap().issuer = Some("https://auth.example.com".into());
         assert!(c.validate().is_ok());
         c.oauth.as_mut().unwrap().client_secret_ref = Some("invalid secret name!".into());
         assert!(c.validate().is_err());

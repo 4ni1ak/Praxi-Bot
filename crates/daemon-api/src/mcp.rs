@@ -398,6 +398,10 @@ pub struct McpOAuthConfig {
     pub client_metadata_url: Option<String>,
     #[serde(default)]
     pub allow_loopback_http: bool,
+    /// The authorization server a pre-registered client is bound to;
+    /// required with `client_id` / `client_secret_ref`.
+    #[serde(default)]
+    pub issuer: Option<String>,
 }
 
 /// Authentication state, independent of transport errors.

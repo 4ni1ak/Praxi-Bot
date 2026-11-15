@@ -7455,6 +7455,13 @@
               "string",
               "null"
             ]
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The authorization server a pre-registered client is bound to;\nrequired with `client_id` / `client_secret_ref`."
           }
         },
         "additionalProperties": false
