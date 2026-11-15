@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { CircleCheck, LoaderCircle } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -9,6 +10,11 @@ import {
 } from "ui";
 import { i18n } from "../i18n";
 import { useApplyAppearance } from "../state/useApplyAppearance";
+import {
+  nextWidgetStop,
+  WIDGET_CONFIRMED_MS,
+  type WidgetStopState
+} from "../state/stopStatus";
 import {
   type AppSettings,
   DEFAULT_SETTINGS,
@@ -36,6 +42,28 @@ export function WidgetWindow() {
   const [controlState, setControlState] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
+  const [stopState, setStopState] = useState<WidgetStopState>({ kind: "none" });
+
+  // Native only knows whether a Stop is still unconfirmed (the main window acks it
+  // once every run it targeted is terminal). The ack emits no event: poll meanwhile.
+  useEffect(() => {
+    setStopState((prev) => nextWidgetStop(prev, controlState, performance.now()));
+  }, [controlState]);
+  useEffect(() => {
+    if (stopState.kind === "pending") {
+      const id = window.setInterval(() => {
+        void getControlState().then(setControlState);
+      }, 1500);
+      return () => window.clearInterval(id);
+    }
+    if (stopState.kind === "confirmed") {
+      const id = window.setTimeout(() => {
+        setStopState((prev) => nextWidgetStop(prev, controlState, performance.now()));
+      }, WIDGET_CONFIRMED_MS + 50);
+      return () => window.clearTimeout(id);
+    }
+    return undefined;
+  }, [stopState, controlState]);
 
   useEffect(() => {
     let mounted = true;
@@ -77,7 +105,10 @@ export function WidgetWindow() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (matchesHotkeyEvent(event, controlState.stopHotkey)) {
         event.preventDefault();
-        void stopBotRun().then(setControlState);
+        // One press = one Stop (never on key repeat).
+        if (!event.repeat) {
+          void stopBotRun().then(setControlState);
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -198,7 +229,24 @@ export function WidgetWindow() {
         </div>
 
         <div className={styles.stepContainer} role="status" aria-live="polite">
-          <p className={styles.stepText}>{stepDisplay}</p>
+          {stopState.kind === "none" ? (
+            <p className={styles.stepText}>{stepDisplay}</p>
+          ) : (
+            <p
+              className={styles.stopLine}
+              data-kind={stopState.kind}
+              title={t(stopState.kind === "pending" ? "widget.stopPending" : "widget.stopConfirmed")}
+            >
+              {stopState.kind === "pending" ? (
+                <LoaderCircle aria-hidden="true" className={styles.stopSpin} />
+              ) : (
+                <CircleCheck aria-hidden="true" />
+              )}
+              <span>
+                {t(stopState.kind === "pending" ? "widget.stopPending" : "widget.stopConfirmed")}
+              </span>
+            </p>
+          )}
           {isHumanDriving && controlState.refusedActionsCount > 0 ? (
             <span className={styles.refusedInfo}>
               {t("widget.refusedBadge", {
