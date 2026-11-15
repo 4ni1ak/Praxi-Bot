@@ -3548,11 +3548,7 @@ async fn stop_validates_its_body() {
         json!({"stop_id": new_id(), "run_ids": vec![new_id(); 1025], "scope": "listed"}),
     ] {
         let r = call(&t, Method::POST, "/v1/runs/stop", Some(body.clone())).await;
-        assert!(
-            r.status == StatusCode::BAD_REQUEST || r.status == StatusCode::UNPROCESSABLE_ENTITY,
-            "{body}: {:?}",
-            r.status
-        );
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}");
     }
     let anon = send(&t.app, Method::POST, "/v1/runs/stop", Some(json!({})), &[]).await;
     assert_eq!(anon.status, StatusCode::UNAUTHORIZED);
@@ -3568,14 +3564,24 @@ async fn stop_cancels_a_run_waiting_for_approval_through_the_normal_cancel_path(
         .to_owned();
     pending_call(&t).await;
     wait_state(&t, &run, "waiting_approval").await;
-    let r = stop(&t, &new_id(), &[], "all_existing").await;
-    assert_eq!(
-        outcome_of(&r.json(), &run).as_deref(),
-        Some("cancelled"),
+    let sid = new_id();
+    let r = stop(&t, &sid, &[], "all_existing").await;
+    // A live run only gets its cancel token fired: not terminal yet.
+    assert!(
+        matches!(
+            outcome_of(&r.json(), &run).as_deref(),
+            Some("cancel_requested" | "cancelled")
+        ),
         "{:?}",
         r.json()
     );
     wait_state(&t, &run, "cancelled").await;
+    // A repeat settles the outcome.
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&again.json(), &run).as_deref(),
+        Some("cancelled")
+    );
 }
 
 async fn peer_stop(t: &T, role: crate::PeerRole, body: Value) -> Resp {
@@ -3742,44 +3748,178 @@ async fn racing_requests_with_one_stop_id_fix_one_target_set() {
 #[tokio::test]
 async fn stop_audit_row_is_written_before_the_cancels() {
     let t = setup();
-    let (_, chat) = make_chat(&t).await;
-    let run = send_msg(&t, &chat, "call:danger_run {}", "queue").await["run_id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    pending_call(&t).await;
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "paused");
     let sid = new_id();
+    t.state.stop_seam().trace.lock().clear();
     let r = stop(&t, &sid, &[], "all_existing").await;
     assert_eq!(r.status, StatusCode::OK);
-    wait_state(&t, &run, "cancelled").await;
+    assert_eq!(r.json()["audited"], true);
+    // Order recorded by the seam: the audit write precedes every cancel.
+    assert_eq!(
+        *t.state.stop_seam().trace.lock(),
+        vec!["audit".to_owned(), format!("cancel:{run}")]
+    );
     let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
-    let stop_row = audit
-        .iter()
-        .find(|a| a.action == "runs.stop")
-        .expect("runs.stop audit row");
-    assert_eq!(stop_row.actor, "user");
-    assert_eq!(stop_row.detail["stop_id"], sid.as_str());
-    assert_eq!(stop_row.detail["scope"], "all_existing");
-    assert_eq!(stop_row.detail["count"], 1);
-    // Whatever the cancel itself wrote about this run comes after the stop row.
-    for a in audit
-        .iter()
-        .filter(|a| a.run_id.is_some_and(|id| id.0.to_string() == run) && a.action != "usage")
-    {
-        assert!(
-            a.id > stop_row.id,
-            "{} was audited before runs.stop",
-            a.action
-        );
-    }
+    let row = audit.iter().find(|a| a.action == "runs.stop").unwrap();
+    assert_eq!(row.actor, "user");
+    assert_eq!(row.detail["stop_id"], sid.as_str());
+    assert_eq!(row.detail["scope"], "all_existing");
+    assert_eq!(row.detail["count"], 1);
 }
 
 #[tokio::test]
-async fn the_stop_book_is_bounded() {
+async fn a_stop_that_targets_nothing_writes_no_audit_row() {
     let t = setup();
-    for _ in 0..(crate::stop::MAX_STOPS + 20) {
+    let r = stop(&t, &new_id(), &[], "listed").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["results"].as_array().unwrap().len(), 0);
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(!audit.iter().any(|a| a.action.starts_with("runs.stop")));
+}
+
+#[tokio::test]
+async fn a_failed_audit_write_refuses_a_peer_stop_and_records_nothing() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "paused");
+    let sid = new_id();
+    t.state.stop_seam().fail_audit.store(true, SeqCst);
+    let body = json!({"stop_id": sid, "run_ids": [run], "scope": "listed"});
+    let r = peer_stop(&t, crate::PeerRole::Phone, body.clone()).await;
+    assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(run_state(&t, &run), "paused", "nothing may be cancelled");
+    assert_eq!(t.state.stops().lock().len(), 0, "id must not be recorded");
+    // Storage healthy again: the same id is still a first receipt.
+    t.state.stop_seam().fail_audit.store(false, SeqCst);
+    let r = peer_stop(&t, crate::PeerRole::Phone, body).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["first_seen"], true);
+    assert_eq!(run_state(&t, &run), "cancelled");
+}
+
+#[tokio::test]
+async fn a_failed_audit_write_does_not_block_the_local_users_stop() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "paused");
+    t.state.stop_seam().fail_audit.store(true, SeqCst);
+    let r = stop(&t, &new_id(), &[], "all_existing").await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["audited"], false);
+    assert_eq!(outcome_of(&r.json(), &run).as_deref(), Some("cancelled"));
+    assert_eq!(run_state(&t, &run), "cancelled");
+}
+
+#[tokio::test]
+async fn stop_repeat_retries_failed_members_only() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let bad = put_run(&t, &bot, "paused");
+    let good = put_run(&t, &bot, "paused");
+    t.state
+        .stop_seam()
+        .fail_cancel
+        .lock()
+        .insert(protocol::RunId(bad.parse().unwrap()));
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(outcome_of(&first.json(), &bad).as_deref(), Some("failed"));
+    assert_eq!(
+        outcome_of(&first.json(), &good).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(run_state(&t, &bad), "paused");
+    // The cancel works again; only the failed member is attempted.
+    t.state.stop_seam().fail_cancel.lock().clear();
+    t.state.stop_seam().trace.lock().clear();
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(again.json()["first_seen"], false);
+    assert_eq!(
+        outcome_of(&again.json(), &bad).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(
+        outcome_of(&again.json(), &good).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(run_state(&t, &bad), "cancelled");
+    assert_eq!(
+        *t.state.stop_seam().trace.lock(),
+        vec!["audit".to_owned(), format!("cancel:{bad}")]
+    );
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|a| a.action == "runs.stop_retry")
+            .count(),
+        1
+    );
+    // A third repeat has nothing left to retry: no cancel, no audit row.
+    t.state.stop_seam().trace.lock().clear();
+    stop(&t, &sid, &[], "all_existing").await;
+    assert!(t.state.stop_seam().trace.lock().is_empty());
+}
+
+#[tokio::test]
+async fn a_peer_flood_cannot_evict_the_local_users_stop() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let r1 = put_run(&t, &bot, "paused");
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(outcome_of(&first.json(), &r1).as_deref(), Some("cancelled"));
+    for _ in 0..300 {
+        let r = peer_stop(
+            &t,
+            crate::PeerRole::Phone,
+            json!({"stop_id": new_id(), "run_ids": [], "scope": "listed"}),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    assert!(t.state.stops().lock().len_of("peer:peer-key") <= crate::stop::PEER_MAX_STOPS);
+    let late = put_run(&t, &bot, "queued");
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(again.json()["first_seen"], false);
+    assert_eq!(again.json()["expired"], false, "local set must survive");
+    assert_eq!(outcome_of(&again.json(), &r1).as_deref(), Some("cancelled"));
+    assert_eq!(outcome_of(&again.json(), &late), None);
+    assert_eq!(run_state(&t, &late), "queued");
+}
+
+#[tokio::test]
+async fn a_repeat_after_the_target_set_expired_never_sweeps_again() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    put_run(&t, &bot, "paused");
+    let sid = new_id();
+    stop(&t, &sid, &[], "all_existing").await;
+    let late = put_run(&t, &bot, "queued");
+    t.state.stops().lock().expire_all();
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(again.status, StatusCode::OK);
+    assert_eq!(again.json()["first_seen"], false);
+    assert_eq!(again.json()["expired"], true);
+    assert_eq!(again.json()["results"].as_array().unwrap().len(), 0);
+    assert_eq!(run_state(&t, &late), "queued", "late run must keep running");
+    // A new id is a new decision and does stop it.
+    let fresh = stop(&t, &new_id(), &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&fresh.json(), &late).as_deref(),
+        Some("cancelled")
+    );
+}
+
+#[tokio::test]
+async fn the_stop_book_is_bounded_per_actor() {
+    let t = setup();
+    for _ in 0..(crate::stop::LOCAL_MAX_STOPS + 20) {
         let r = stop(&t, &new_id(), &[], "listed").await;
         assert_eq!(r.status, StatusCode::OK);
     }
-    assert!(t.state.stops().lock().len() <= crate::stop::MAX_STOPS);
+    assert!(t.state.stops().lock().len() <= crate::stop::LOCAL_MAX_STOPS);
 }
