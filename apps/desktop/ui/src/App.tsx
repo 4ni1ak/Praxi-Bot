@@ -45,7 +45,13 @@ import { AccountMenu, type AccountAction } from "./components/AccountMenu";
 import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
-import { BOT_COLORS, botView } from "./lib/botProfile";
+import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
+import {
+  backFromChatOpensPanel,
+  botChats,
+  botDialogFromScreen,
+  botLanding
+} from "./lib/botLanding";
 import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { ToastProvider } from "./components/Toast";
@@ -62,8 +68,12 @@ import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
 import { DaemonProvider, useDaemon } from "./state/DaemonContext";
-import { BotFormView } from "./views/BotFormView";
-import { BotHomeView } from "./views/BotHomeView";
+import { AddSkillModal } from "./components/AddSkillModal";
+import { SkillsModal } from "./components/SkillsModal";
+import { useBotSkills } from "./state/useBotSkills";
+import { BotEditModal } from "./views/BotEditModal";
+import { BotEmptyView } from "./views/BotEmptyView";
+import { BotProfileModal } from "./views/BotProfileModal";
 import { ChatView } from "./views/ChatView";
 import { NeedsYouView } from "./views/NeedsYouView";
 import { OnboardingView } from "./views/OnboardingView";
@@ -103,8 +113,8 @@ import {
 type Route =
   | { kind: "home" }
   | { kind: "onboarding" }
+  /** A bot without any chat yet: the empty state (there is no bot page). */
   | { kind: "bot"; botId: string }
-  | { kind: "botForm"; botId?: string }
   | { kind: "chat"; chatId: string; botId: string }
   | { kind: "needs" }
   | { kind: "schedules" };
@@ -118,7 +128,9 @@ function AppShell() {
     bots,
     chats,
     needs,
+    client,
     refreshBots,
+    refreshChats,
     retry
   } = useDaemon();
   const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
@@ -134,6 +146,14 @@ function AppShell() {
   );
   const [appsOpen, setAppsOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
+  // The dialogs of a bot (card 244-C): edit and profile replace the old pages; "add skill" can
+  // sit on top of the skills dialog or the edit dialog.
+  const [botEditOpen, setBotEditOpen] = useState(false);
+  const [botProfileOpen, setBotProfileOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const [addSkillOpen, setAddSkillOpen] = useState(false);
+  const [newChatBusy, setNewChatBusy] = useState(false);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
   const [botSearch, setBotSearch] = useState<string | null>(null);
   const { servers: appServers } = useMcp(true);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -192,7 +212,11 @@ function AppShell() {
         // Review states of the other routes (mock mode only).
         const atlas = "11111111-1111-4111-8111-111111111111";
         if (screen === "onboarding") merged.onboardingCompleted = false;
-        if (screen === "botform") setRoute({ kind: "botForm", botId: atlas });
+        const botDialog = botDialogFromScreen(screen);
+        if (botDialog === "edit") setBotEditOpen(true);
+        if (botDialog === "profile") setBotProfileOpen(true);
+        if (botDialog === "skills") setSkillsOpen(true);
+        if (botDialog === "addSkill") setAddSkillOpen(true);
         if (screen === "newbot") setNewBotOpen(true);
         if (screen === "bot") setRoute({ kind: "bot", botId: atlas });
         if (screen === "schedules") setRoute({ kind: "schedules" });
@@ -359,11 +383,7 @@ function AppShell() {
   };
 
   const routeBotId =
-    route.kind === "bot" || route.kind === "chat"
-      ? route.botId
-      : route.kind === "botForm"
-        ? route.botId
-        : undefined;
+    route.kind === "bot" || route.kind === "chat" ? route.botId : undefined;
   const selectedBot = bots.find((bot) => bot.id === routeBotId) ?? bots[0];
   const { theme: activeTheme, accent: activeAccent } = useApplyAppearance(
     settings,
@@ -423,8 +443,27 @@ function AppShell() {
     setRoute({ kind: "chat", chatId, botId: chat?.bot_id ?? "" });
   };
   const openNeeds = () => setRoute({ kind: "needs" });
+  // Selecting a bot: its latest chat, or the empty state when it has none.
+  const goToBot = (botId: string) => setRoute(botLanding(botId, chats));
+  const startChat = async (botId: string) => {
+    if (!client || newChatBusy) {
+      return;
+    }
+    setNewChatBusy(true);
+    setNewChatError(null);
+    try {
+      const chat = await client.createChat(botId);
+      await refreshChats().catch(() => {});
+      setBotProfileOpen(false);
+      setRoute({ kind: "chat", chatId: chat.id, botId });
+    } catch (e) {
+      setNewChatError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNewChatBusy(false);
+    }
+  };
 
-  const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot" || (route.kind === "botForm" && Boolean(route.botId)));
+  const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot");
   const panelVisible = panelOpen && botInView;
   const float = isFloatShell(settings.uiStyle, backdropIsActive(settings.backdrop, settings.backgroundUrl));
   const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
@@ -435,7 +474,7 @@ function AppShell() {
   const searchButtonRef = useRef<HTMLButtonElement | null>(null);
   const closeSearch = useCallback(() => setBotSearch(null), []);
   // A dialog opened by a shortcut sits above the Search popover: close the popover instead of leaving it beneath.
-  const dialogOpen = settingsOpen !== null || appsOpen || newBotOpen || helpOpen;
+  const dialogOpen = settingsOpen !== null || appsOpen || newBotOpen || helpOpen || botEditOpen || botProfileOpen || skillsOpen || addSkillOpen;
   useEffect(() => {
     if (dialogOpen) setBotSearch(null);
   }, [dialogOpen]);
@@ -447,12 +486,13 @@ function AppShell() {
   const togglePanel = () => setPanelOpen((open) => !open);
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
-    ? chats
-        .filter((c) => c.bot_id === selectedBot.id)
-        .sort((a, b) => b.created_at_ms - a.created_at_ms)
-        .slice(0, 8)
-        .map((c) => ({ id: c.id, title: c.title ?? "", createdAtMs: c.created_at_ms }))
+    ? botChats(chats, selectedBot.id).map((c) => ({ id: c.id, title: c.title ?? "", createdAtMs: c.created_at_ms }))
     : [];
+  // One copy of the selected bot's skills for the panel and every bot dialog.
+  const botSkills = useBotSkills(botInView && selectedBot ? selectedBot.id : null, client);
+  useEffect(() => {
+    setNewChatError(null);
+  }, [routeBotId]);
 
   const isRunActive = controlState.mode !== "idle";
   const isHumanDriving = controlState.mode === "human_driving";
@@ -575,9 +615,17 @@ function AppShell() {
                 setPanelOpen(false);
                 chipRef.current?.focus();
               }}
+              preset={draftFromBot(selectedBot).preset}
+              needs={needs}
+              runs={runs}
+              skills={botSkills}
+              newChatBusy={newChatBusy}
               onOpenChat={openChat}
-              onOpenProfile={() => setRoute({ kind: "bot", botId: selectedBot.id })}
-              onOpenSettings={() => setRoute({ kind: "botForm", botId: selectedBot.id })}
+              onNewChat={() => void startChat(selectedBot.id)}
+              onOpenProfile={() => setBotProfileOpen(true)}
+              onOpenSettings={() => setBotEditOpen(true)}
+              onManageSkills={() => setSkillsOpen(true)}
+              onAddSkill={() => setAddSkillOpen(true)}
             />
           ) : null}
         </SidePanel>
@@ -617,7 +665,7 @@ function AppShell() {
               const live = runs.find(r => r.bot_id === bot.id && ["running", "pending", "waiting_approval"].includes(r.state));
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
               const avatarState = state === "thinking" || state === "working" || state === "waiting-approval" || state === "error" ? state : "idle";
-              return <SidebarItem key={bot.id} className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => latest ? openChat(latest.id) : setRoute({ kind: "bot", botId: bot.id })}>
+              return <SidebarItem key={bot.id} className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => goToBot(bot.id)}>
                 <BotAvatar bot={view} size="md" state={avatarState} decorative />
                 <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
               </SidebarItem>;
@@ -693,7 +741,7 @@ function AppShell() {
               if (chatId && botId) {
                 setRoute({ kind: "chat", chatId, botId });
               } else if (botId) {
-                setRoute({ kind: "bot", botId });
+                goToBot(botId);
               } else {
                 setRoute({ kind: "home" });
               }
@@ -785,33 +833,22 @@ function AppShell() {
           </div>
         ) : null}
         {route.kind === "bot" ? (
-          <BotHomeView
+          <BotEmptyView
             key={route.botId}
-            botId={route.botId}
-            onOpenChat={openChat}
-            onEdit={() => setRoute({ kind: "botForm", botId: route.botId })}
-            onDeleted={() => setRoute({ kind: "home" })}
-          />
-        ) : null}
-        {route.kind === "botForm" ? (
-          <BotFormView
-            key={route.botId ?? "new"}
-            botId={route.botId}
-            onDone={(botId) => setRoute({ kind: "bot", botId })}
-            onCancel={() =>
-              setRoute(
-                route.botId
-                  ? { kind: "bot", botId: route.botId }
-                  : { kind: "home" }
-              )
-            }
+            bot={panelBotView && selectedBot?.id === route.botId ? panelBotView : undefined}
+            busy={newChatBusy}
+            error={newChatError}
+            onNewChat={() => void startChat(route.botId)}
           />
         ) : null}
         {route.kind === "chat" ? (
           <ChatView
             key={route.chatId}
             chatId={route.chatId}
-            onBack={() => setRoute({ kind: "bot", botId: route.botId })}
+            onBack={() => {
+              // There is no bot page to go back to: the chat list lives in the right panel.
+              if (backFromChatOpensPanel(panelOpen)) setPanelOpen(true);
+            }}
             onSwitchChat={openChat}
             showAgentRoute={settings.showAgentRoute}
             sendWith={settings.sendWith}
@@ -825,7 +862,7 @@ function AppShell() {
       <PaletteHost
         currentBotId={routeBotId}
         onScreen={handlePaletteScreen}
-        onBot={(botId) => setRoute({ kind: "bot", botId })}
+        onBot={goToBot}
         onChat={(chatId, botId) => setRoute({ kind: "chat", chatId, botId })}
       />
       <SettingsModal
@@ -855,8 +892,47 @@ function AppShell() {
         onClose={() => setNewBotOpen(false)}
         onDone={(botId) => {
           setNewBotOpen(false);
-          setRoute({ kind: "bot", botId });
+          goToBot(botId);
         }}
+      />
+      <BotProfileModal
+        open={botProfileOpen && botInView}
+        bot={selectedBot}
+        skills={botSkills}
+        newChatBusy={newChatBusy}
+        onClose={() => setBotProfileOpen(false)}
+        onEdit={() => {
+          setBotProfileOpen(false);
+          setBotEditOpen(true);
+        }}
+        onNewChat={() => {
+          if (selectedBot) void startChat(selectedBot.id);
+        }}
+      />
+      <BotEditModal
+        open={botEditOpen && botInView}
+        bot={selectedBot}
+        skills={botSkills}
+        onClose={() => setBotEditOpen(false)}
+        onAddSkill={() => setAddSkillOpen(true)}
+        onDeleted={() => {
+          setBotEditOpen(false);
+          setRoute({ kind: "home" });
+        }}
+      />
+      <SkillsModal
+        open={skillsOpen && botInView}
+        botName={panelBotView?.name ?? ""}
+        skills={botSkills}
+        onClose={() => setSkillsOpen(false)}
+        onAddSkill={() => setAddSkillOpen(true)}
+      />
+      <AddSkillModal
+        open={addSkillOpen && botInView}
+        client={client}
+        botName={panelBotView?.name ?? ""}
+        skills={botSkills}
+        onClose={() => setAddSkillOpen(false)}
       />
       <HelpModal
         open={helpOpen}

@@ -3,14 +3,13 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { BotAvatar, Button } from "ui";
 import type { Bot } from "../api/types";
+import { BotAvatarUploadField, useBotFormDeps } from "../components/BotAdvancedFields";
 import {
-  BotAppsFields,
-  BotAvatarUploadField,
-  BotModelRolesFields,
-  BotPermissionsFields,
-  BotRuntimeFields,
-  useBotFormDeps
-} from "../components/BotAdvancedFields";
+  AdvancedFields,
+  AppFields,
+  ModelFields,
+  PermissionFields
+} from "../components/BotEditorFields";
 import { CharacterColorRow, CharacterShapeGrid } from "../components/CharacterPicker";
 import formStyles from "../components/Form.module.css";
 import { Modal } from "../components/Modal";
@@ -47,8 +46,6 @@ function NewBotDialogContent({
   const { client, bots, conn, refreshBots } = useDaemon();
   const {
     providersDto,
-    providerIds,
-    httpProviders,
     servers,
     setServers,
     allowed,
@@ -353,10 +350,8 @@ function NewBotDialogContent({
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.models")}</h3>
-              <BotModelRolesFields
+              <ModelFields
                 draft={effectiveDraft}
-                providerIds={providerIds}
-                httpProviders={httpProviders}
                 providersDto={providersDto}
                 executorMissing={executorMissing}
                 patch={(next) => {
@@ -370,12 +365,12 @@ function NewBotDialogContent({
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.permissions")}</h3>
-              <BotPermissionsFields draft={draft} patch={patch} />
+              <PermissionFields draft={draft} patch={patch} />
             </div>
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.apps.title")}</h3>
-              <BotAppsFields
+              <AppFields
                 servers={servers}
                 allowed={allowed}
                 onToggle={(name, checked) =>
@@ -384,10 +379,15 @@ function NewBotDialogContent({
               />
             </div>
 
-            <div>
-              <h3 className={styles.advancedHeading}>{t("botForm.runtime")}</h3>
-              <BotRuntimeFields draft={draft} patch={patch} />
-            </div>
+            <AdvancedFields
+              draft={effectiveDraft}
+              patch={(next) => {
+                if (next.executor) {
+                  setBrainMode("manual");
+                }
+                patch(next);
+              }}
+            />
           </div>
         ) : null}
 
