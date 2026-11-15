@@ -1001,7 +1001,16 @@
       "connecting": "Bağlanıyor",
       "disconnected": "Bağlı değil",
       "error": "Hata",
+      "auth_required": "Oturum açılması gerekiyor",
       "quarantined": "Karantinada"
+    },
+    "auth": {
+      "signIn": "Oturum aç",
+      "signOut": "Oturumu kapat",
+      "waiting": "Tarayıcıda oturum açılması bekleniyor…",
+      "signedInToast": "{{name}}: oturum açıldı",
+      "signedOutToast": "{{name}}: oturum kapatıldı",
+      "failedToast": "{{name}}: oturum açma tamamlanmadı"
     },
     "toolCount": "{{count}} araç",
     "toolCount_one": "{{count}} araç",

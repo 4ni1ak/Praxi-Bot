@@ -2,6 +2,7 @@ import type { ApiClient } from "../api/client.ts";
 import type {
   Bot,
   BotInput,
+  McpAuthState,
   McpCatalogEntry,
   McpServer,
   McpServerConfig,
@@ -515,4 +516,43 @@ export function applyServerEvent(
       ? { ...s, status: ev.status, error: ev.status === "error" ? s.error : null }
       : s
   );
+}
+
+/** The daemon routes of a user-started OAuth sign-in (never reachable by peers). */
+export type McpAuthApi = Pick<ApiClient, "startMcpAuth" | "mcpAuthStatus" | "cancelMcpAuth">;
+
+/**
+ * Sign in to an HTTP MCP server: ask the daemon for the authorization URL,
+ * open it in the system browser, then poll until the one-shot loopback
+ * callback finished (or `deadlineMs` / `signal` stops it, which cancels the
+ * daemon flow).  Resolves with the final state; only a user action may call it.
+ */
+export async function signInMcpServer(
+  api: McpAuthApi,
+  name: string,
+  open: (url: string) => boolean,
+  opts: {
+    pollMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    signal?: { aborted: boolean };
+  } = {}
+): Promise<McpAuthState> {
+  const pollMs = opts.pollMs ?? 1500;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const started = await api.startMcpAuth(name);
+  if (!open(started.authorization_url)) {
+    await api.cancelMcpAuth(name);
+    throw new Error("cannot open the sign-in page");
+  }
+  const deadline = Date.now() + started.expires_in * 1000;
+  for (;;) {
+    await sleep(pollMs);
+    if (opts.signal?.aborted || Date.now() > deadline) {
+      return api.cancelMcpAuth(name);
+    }
+    const state = await api.mcpAuthStatus(name);
+    if (state !== "signing_in") {
+      return state;
+    }
+  }
 }

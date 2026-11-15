@@ -1001,7 +1001,16 @@
       "connecting": "Connecting",
       "disconnected": "Disconnected",
       "error": "Error",
+      "auth_required": "Sign-in required",
       "quarantined": "Quarantined"
+    },
+    "auth": {
+      "signIn": "Sign in",
+      "signOut": "Sign out",
+      "waiting": "Waiting for the browser sign-in…",
+      "signedInToast": "{{name}}: signed in",
+      "signedOutToast": "{{name}}: signed out",
+      "failedToast": "{{name}}: sign-in did not finish"
     },
     "toolCount": "{{count}} tools",
     "toolCount_one": "{{count}} tool",
