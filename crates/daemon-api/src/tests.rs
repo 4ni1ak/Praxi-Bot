@@ -26,6 +26,7 @@ mod doctor;
 mod email;
 mod host;
 mod mcp;
+mod model_catalog;
 mod schedules;
 mod skills;
 mod web;

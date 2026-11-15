@@ -11,6 +11,7 @@ pub mod error;
 pub mod factory;
 pub mod gemini;
 mod limits;
+pub mod model_metadata;
 pub mod openai_compat;
 pub mod provider;
 pub mod selector;
@@ -29,6 +30,7 @@ pub use entry::{
 pub use error::ProviderError;
 pub use factory::build_chat_provider;
 pub use gemini::GeminiProvider;
+pub use model_metadata::{ModelKind, ModelMetadata, model_metadata};
 pub use openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
 pub use provider::{
     ChatChunk, ChatProvider, ChatRequest, FinishReason, Message, MessageRole, ModelRef, ToolCall,

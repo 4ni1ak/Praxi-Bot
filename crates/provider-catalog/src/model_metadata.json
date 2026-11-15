@@ -1,0 +1,373 @@
+{
+  "verified_at": "2026-11-15",
+  "providers": [
+    {
+      "id": "gemini",
+      "aliases": [
+        "gemini-openai-compat"
+      ],
+      "sources": [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "https://ai.google.dev/gemini-api/docs/deprecations"
+      ],
+      "models": [
+        {
+          "id": "gemini-4-carbon",
+          "display_name": "Gemini 4 Carbon",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        },
+        {
+          "id": "gemini-4-argon",
+          "display_name": "Gemini 4 Argon",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 2
+        },
+        {
+          "id": "gemini-4-hydrogen",
+          "display_name": "Gemini 4 Hydrogen",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 3
+        },
+        {
+          "id": "gemini-3.5-flash-lite",
+          "display_name": "Gemini 3.5 Flash-Lite",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 4
+        },
+        {
+          "id": "gemini-3.8-flash",
+          "display_name": "Gemini 3.8 Flash",
+          "kind": "chat"
+        },
+        {
+          "id": "gemini-3.1-flash-lite",
+          "display_name": "Gemini 3.1 Flash-Lite",
+          "kind": "chat"
+        },
+        {
+          "id": "gemini-3-flash-preview",
+          "display_name": "Gemini 3 Flash",
+          "kind": "chat",
+          "note": "preview"
+        },
+        {
+          "id": "gemini-3.1-pro-preview",
+          "display_name": "Gemini 3.1 Pro",
+          "kind": "chat",
+          "note": "preview"
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "display_name": "Gemini 2.5 Flash",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "legacy"
+        },
+        {
+          "id": "gemini-2.5-flash-lite",
+          "display_name": "Gemini 2.5 Flash-Lite",
+          "kind": "chat",
+          "note": "existing users only"
+        },
+        {
+          "id": "gemini-2.0-flash",
+          "display_name": "Gemini 2.0 Flash",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "retired"
+        },
+        {
+          "id": "gemini-2.0-flash-lite",
+          "display_name": "Gemini 2.0 Flash-Lite",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "retired"
+        },
+        {
+          "id": "gemini-3-pro-preview",
+          "display_name": "Gemini 3 Pro Preview",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "retired"
+        },
+        {
+          "id": "gemini-3.1-flash-lite-preview",
+          "display_name": "Gemini 3.1 Flash-Lite Preview",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "retired"
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "display_name": "Gemini 2.5 Pro",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "legacy"
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "aliases": [],
+      "sources": [
+        "https://developers.openai.com/api/docs/models"
+      ],
+      "models": [
+        {
+          "id": "gpt-6.1-sol",
+          "display_name": "GPT-6.1 Sol",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        },
+        {
+          "id": "gpt-6-luna",
+          "display_name": "GPT-6 Luna",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 2
+        },
+        {
+          "id": "gpt-6-astra",
+          "display_name": "GPT-6 Astra",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 3
+        },
+        {
+          "id": "gpt-6.1-terra",
+          "display_name": "GPT-6.1 Terra",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 4
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "aliases": [],
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview"
+      ],
+      "models": [
+        {
+          "id": "claude-sonnet-5-5",
+          "display_name": "Claude Sonnet 5.5",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        },
+        {
+          "id": "claude-opus-5-5",
+          "display_name": "Claude Opus 5.5",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 2
+        },
+        {
+          "id": "claude-haiku-5-5",
+          "display_name": "Claude Haiku 5.5",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 3
+        },
+        {
+          "id": "claude-fable-5-2",
+          "display_name": "Claude Fable 5.2",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 4
+        }
+      ]
+    },
+    {
+      "id": "openrouter",
+      "aliases": [],
+      "sources": [
+        "https://openrouter.ai/anthropic/claude-sonnet-5.5",
+        "https://openrouter.ai/openai/gpt-6-luna",
+        "https://openrouter.ai/google/gemini-3.8-flash"
+      ],
+      "models": [
+        {
+          "id": "anthropic/claude-sonnet-5.5",
+          "display_name": "Claude Sonnet 5.5",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        },
+        {
+          "id": "openai/gpt-6-luna",
+          "display_name": "GPT-6 Luna",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 2
+        },
+        {
+          "id": "google/gemini-3.8-flash",
+          "display_name": "Gemini 3.8 Flash",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 3
+        }
+      ]
+    },
+    {
+      "id": "xai",
+      "aliases": [],
+      "sources": [
+        "https://docs.x.ai/developers/models"
+      ],
+      "models": [
+        {
+          "id": "grok-4.7",
+          "display_name": "Grok 4.7",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "aliases": [],
+      "sources": [
+        "https://api-docs.deepseek.com/quick_start/pricing/"
+      ],
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "display_name": "DeepSeek V4.1 Flash",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 2
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "retired alias"
+        },
+        {
+          "id": "deepseek-v4-flash-vision-exp",
+          "display_name": "DeepSeek V4 Flash Vision",
+          "kind": "chat",
+          "deprecated": true,
+          "note": "retired alias"
+        }
+      ]
+    },
+    {
+      "id": "ollama",
+      "aliases": [],
+      "sources": [
+        "https://ollama.com/library/qwen3",
+        "https://ollama.com/library/llama3.3"
+      ],
+      "models": [
+        {
+          "id": "qwen3:8b",
+          "display_name": "Qwen 3 · 8B",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        },
+        {
+          "id": "qwen3:4b",
+          "display_name": "Qwen 3 · 4B",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 2
+        },
+        {
+          "id": "qwen3:30b",
+          "display_name": "Qwen 3 · 30B",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 3
+        },
+        {
+          "id": "llama3.3:70b",
+          "display_name": "Llama 3.3 · 70B",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 4
+        }
+      ]
+    },
+    {
+      "id": "lmstudio",
+      "aliases": [],
+      "sources": [
+        "https://lmstudio.ai/docs/developer/openai-compat/models"
+      ],
+      "models": []
+    },
+    {
+      "id": "cli:claude",
+      "aliases": [],
+      "sources": [
+        "https://code.claude.com/docs/en/model-config"
+      ],
+      "models": [
+        {
+          "id": "default",
+          "display_name": "Claude Code default",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        },
+        {
+          "id": "sonnet",
+          "display_name": "Claude Sonnet",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 2
+        },
+        {
+          "id": "opus",
+          "display_name": "Claude Opus",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 3
+        },
+        {
+          "id": "haiku",
+          "display_name": "Claude Haiku",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 4
+        }
+      ]
+    },
+    {
+      "id": "cli:codex",
+      "aliases": [],
+      "sources": [
+        "https://developers.openai.com/codex/models"
+      ],
+      "models": [
+        {
+          "id": "default",
+          "display_name": "Codex default",
+          "kind": "chat",
+          "recommended": true,
+          "recommended_rank": 1
+        }
+      ]
+    }
+  ]
+}

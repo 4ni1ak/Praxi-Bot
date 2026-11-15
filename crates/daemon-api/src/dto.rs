@@ -574,10 +574,45 @@ pub struct ConfiguredProviderDto {
     pub custom: bool,
     /// Loaded in the running loop (a restart or `reload` picks up changes).
     pub active: bool,
-    /// Model ids the provider reports (empty without a listing).
+    /// Model ids in the same order as `model_details`. By default only current
+    /// chat candidates are shown; `?chat_only=false` includes everything.
     pub models: Vec<String>,
+    /// Presentation metadata: recommended models first by rank, then the rest
+    /// by display name. Split on `recommended` for an "All models" expander.
+    /// No model is added just because it appears in the curated table.
+    #[serde(default)]
+    pub model_details: Vec<ModelMetadataDto>,
     /// Why the model list could not be fetched.
     pub models_error: Option<String>,
+}
+
+/// Presentation only: never changes execution capabilities or configured ids.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ModelMetadataDto {
+    pub id: String,
+    pub display_name: String,
+    /// `chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,
+    /// `video`, or `other`. Kind describes primary use, not input modalities.
+    pub kind: String,
+    pub recommended: bool,
+    pub recommended_rank: Option<u8>,
+    pub deprecated: bool,
+    /// A short annotation such as `preview` or a live `OpenRouter` `free` id.
+    pub note: Option<String>,
+}
+
+impl From<provider_catalog::ModelMetadata> for ModelMetadataDto {
+    fn from(model: provider_catalog::ModelMetadata) -> Self {
+        Self {
+            id: model.id,
+            display_name: model.display_name,
+            kind: model.kind.as_str().into(),
+            recommended: model.recommended,
+            recommended_rank: model.recommended_rank,
+            deprecated: model.deprecated,
+            note: model.note,
+        }
+    }
 }
 
 /// A catalog entry.
