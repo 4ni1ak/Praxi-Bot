@@ -698,6 +698,16 @@
         "done": "Ran {{name}}",
         "failed": "Didn't complete {{name}}"
       }
+    },
+    "timelineLabel": "Conversation",
+    "jumpToLatest": "Jump to latest",
+    "runBar": {
+      "label": "Run controls",
+      "waiting": "Waiting for your approval",
+      "paused": "Paused",
+      "human": "You are in control",
+      "elapsed": "Running for {{time}}",
+      "stoppingDetail": "Waiting for the run to end…"
     }
   },
   "botForm": {

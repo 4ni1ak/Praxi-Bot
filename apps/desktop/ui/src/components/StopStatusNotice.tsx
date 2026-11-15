@@ -20,7 +20,7 @@ import {
 } from "../state/stopStatus";
 import styles from "./StopStatusNotice.module.css";
 
-const ICONS: Record<StopKind, LucideIcon> = {
+export const STOP_ICONS: Record<StopKind, LucideIcon> = {
   stopping: LoaderCircle,
   unreachable: CloudOff,
   partial: OctagonAlert,
@@ -40,7 +40,7 @@ export function StopStatusNotice({ variant }: { variant: "main" | "panel" }) {
   if (!status) {
     return null;
   }
-  const Icon = ICONS[status.kind];
+  const Icon = STOP_ICONS[status.kind];
   const detail = stopDetail(status);
   const progress = status.total > 0 ? status.stopped / status.total : 0;
   return (
