@@ -705,6 +705,7 @@ pub struct SkillHints {
 }
 
 pub(crate) struct Shared {
+    pub usage: crate::usage::Ledger,
     pub storage: Arc<Storage>,
     pub tools: ToolRegistry,
     pub checkpoint_access: RwLock<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)>,

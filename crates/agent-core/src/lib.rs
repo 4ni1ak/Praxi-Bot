@@ -25,6 +25,7 @@ mod profile;
 mod router;
 mod shared;
 mod subagent;
+pub mod usage;
 
 #[cfg(test)]
 mod router_tests;
@@ -57,6 +58,7 @@ pub use shared::{
     schedule_id_of,
 };
 pub use subagent::MAX_DEPTH as MAX_SUBAGENT_DEPTH;
+pub use usage::CallPurpose;
 
 /// Audit-log action recording an "always allow" grant rule for a bot.
 pub(crate) const AUDIT_GRANT_ALWAYS: &str = "grant.always";

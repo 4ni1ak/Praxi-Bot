@@ -3827,7 +3827,7 @@
         "tags": [
           "usage"
         ],
-        "summary": "Token usage summed over the model steps of all runs.",
+        "summary": "Invocation usage, with legacy model-step fallback for pre-ledger runs.",
         "operationId": "usage",
         "parameters": [
           {
@@ -9598,6 +9598,16 @@
               "$ref": "#/components/schemas/BotUsage"
             },
             "description": "Per bot."
+          },
+          "by_purpose": {
+            "type": "object",
+            "description": "Per-purpose totals, including invocations that report no tokens.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UsageTotals"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "runs": {
             "type": "integer",

@@ -73,6 +73,7 @@ impl AgentLoop {
                     .is_some_and(|sh| sh.tool_visible_to_run(&ctx.run_id, spec))
             });
             Shared {
+                usage: crate::usage::Ledger::default(),
                 storage: Arc::clone(&storage),
                 surface: ToolSurface::with_visibility(
                     tools.clone(),
@@ -1384,7 +1385,9 @@ impl AgentLoop {
 
     // Boxed so the spawn / `conclude` / next-turn recursion has a nameable type.
     fn drive(self, run_id: RunId, start: Start) -> BoxFuture<'static, ()> {
+        let activity = crate::usage::Activity::new(&self.sh, run_id);
         Box::pin(async move {
+            let _activity = activity;
             let res = match start {
                 Start::Fresh => {
                     let run = self.sh.storage.get_run(run_id).ok().flatten();
@@ -1556,6 +1559,9 @@ impl AgentLoop {
     /// Persist the final answer, emit the closing events and start any queued turn.
     fn conclude(&self, run_id: RunId, res: &std::result::Result<RunState, RuntimeError>) {
         let run = self.sh.storage.get_run(run_id).ok().flatten();
+        if !matches!(res, Ok(RunState::Paused)) {
+            crate::usage::finish(&self.sh, run_id);
+        }
         crate::compaction::forget_turn(run_id);
         if !matches!(res, Ok(RunState::Paused)) {
             // A finished run's spill files are no longer reachable by the
@@ -1722,7 +1728,11 @@ impl AgentLoop {
         }
         if let Some(ex) = crate::memory::Exchange::of(&self.sh, run, final_text) {
             let sh = Arc::clone(&self.sh);
-            let handle = tokio::spawn(crate::memory::extract(sh, ex));
+            let activity = crate::usage::Activity::new(&sh, run.id);
+            let handle = tokio::spawn(async move {
+                let _activity = activity;
+                crate::memory::extract(sh, ex).await;
+            });
             let mut bg = self.sh.bg.lock();
             bg.retain(|h| !h.is_finished());
             bg.push(handle);

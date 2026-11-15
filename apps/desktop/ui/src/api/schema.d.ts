@@ -1193,7 +1193,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Token usage summed over the model steps of all runs. */
+        /** Invocation usage, with legacy model-step fallback for pre-ledger runs. */
         get: operations["usage"];
         put?: never;
         post?: never;
@@ -3364,6 +3364,10 @@ export interface components {
         UsageSummary: {
             /** @description Per bot. */
             by_bot: components["schemas"]["BotUsage"][];
+            /** @description Per-purpose totals, including invocations that report no tokens. */
+            by_purpose?: {
+                [key: string]: components["schemas"]["UsageTotals"];
+            };
             /**
              * Format: int64
              * @description Runs counted.

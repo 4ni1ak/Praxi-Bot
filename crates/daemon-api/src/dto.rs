@@ -424,6 +424,9 @@ pub struct UsageSummary {
     pub total: UsageTotals,
     /// Per bot.
     pub by_bot: Vec<BotUsage>,
+    /// Per-purpose totals, including invocations that report no tokens.
+    #[serde(default)]
+    pub by_purpose: std::collections::BTreeMap<String, UsageTotals>,
 }
 
 // ---------------------------------------------------------- control bridge

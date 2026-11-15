@@ -220,6 +220,25 @@ fn children(env: &Env, parent: RunId) -> Vec<storage::Run> {
 
 // ---------- tests ----------
 
+fn assert_child_usage(env: &Env, parent: RunId) {
+    let audit = env.storage.list_audit(env.user).unwrap();
+    let summary = audit
+        .iter()
+        .filter(|r| r.run_id == Some(parent) && r.action == "run.usage_summary")
+        .collect::<Vec<_>>();
+    assert_eq!(summary.len(), 1);
+    assert_eq!(summary[0].detail["executor"]["calls"], 2);
+    assert_eq!(summary[0].detail["subagent"]["calls"], 1);
+    assert_eq!(summary[0].detail["subagent"]["prompt_tokens"], 10);
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|r| r.action == "usage" && r.detail["purpose"] == "subagent")
+            .count(),
+        1
+    );
+}
+
 #[tokio::test]
 async fn a_child_run_works_end_to_end() {
     let env = setup();
@@ -247,6 +266,8 @@ async fn a_child_run_works_end_to_end() {
     let mut rx = lp.subscribe();
     let parent = lp.run_turn(env.chat, "go").unwrap();
     assert_eq!(lp.wait(parent).await.unwrap(), RunState::Succeeded);
+
+    assert_child_usage(&env, parent);
 
     // The parent got the child's final text as the tool result.
     let reqs = brain.requests();
