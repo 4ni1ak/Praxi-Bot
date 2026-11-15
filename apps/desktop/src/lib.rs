@@ -64,7 +64,7 @@ impl OverlayEventSink for TauriOverlaySink {
     }
 
     fn on_state_changed(&self, snapshot: &ControlSnapshot) {
-        sync_auxiliary_windows(&self.app, snapshot.mode);
+        sync_auxiliary_windows(&self.app, snapshot);
         let _ = self.app.emit(WIRE_EVENT_CONTROL_STATE, snapshot);
     }
 }
@@ -202,16 +202,51 @@ fn ensure_auxiliary_windows(app: &AppHandle) {
     }
 }
 
-fn sync_auxiliary_windows(app: &AppHandle, mode: ControlMode) {
+/// How long the widget keeps showing a confirmed Stop after the main window acked it.
+const WIDGET_CONFIRM_LINGER: Duration = Duration::from_millis(4200);
+
+/// The floating widget is visible while a run is in progress AND while a user Stop is not
+/// yet acknowledged (its status line says "Stopping…"), so a slow or unreachable daemon
+/// never hides the only native Stop indicator. The action overlays hide at once on Idle.
+fn widget_visible(mode: ControlMode, stop_seq: u64, stop_acked_seq: u64) -> bool {
+    mode != ControlMode::Idle || stop_seq > stop_acked_seq
+}
+
+/// After an ack the widget shows its confirmation for a moment, then hides if nothing else
+/// keeps it visible (`ack_stop` itself emits no event, so this is the only hide path).
+fn hide_widget_after_confirmation(app: &AppHandle, control: ControlHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(WIDGET_CONFIRM_LINGER).await;
+        let snap = control.snapshot();
+        if widget_visible(snap.mode, snap.stop_seq, snap.stop_acked_seq) {
+            return;
+        }
+        let app_main = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(widget) = app_main.get_webview_window("widget") {
+                let _ = widget.hide();
+            }
+        });
+    });
+}
+
+fn sync_auxiliary_windows(app: &AppHandle, snapshot: &ControlSnapshot) {
+    let mode = snapshot.mode;
+    let show_widget = widget_visible(mode, snapshot.stop_seq, snapshot.stop_acked_seq);
     let app_clone = app.clone();
     let _ = app.run_on_main_thread(move || {
         ensure_auxiliary_windows(&app_clone);
         let monitors = collect_monitors_geometry(&app_clone);
 
+        if let Some(widget) = app_clone.get_webview_window("widget") {
+            let _ = if show_widget {
+                widget.show()
+            } else {
+                widget.hide()
+            };
+        }
         if mode == ControlMode::Idle {
-            if let Some(widget) = app_clone.get_webview_window("widget") {
-                let _ = widget.hide();
-            }
             for mon in &monitors {
                 let label = format!("overlay-{}", mon.monitor_index);
                 if let Some(overlay) = app_clone.get_webview_window(&label) {
@@ -225,9 +260,6 @@ fn sync_auxiliary_windows(app: &AppHandle, mode: ControlMode) {
                     let _ = overlay.set_ignore_cursor_events(true);
                     let _ = overlay.show();
                 }
-            }
-            if let Some(widget) = app_clone.get_webview_window("widget") {
-                let _ = widget.show();
             }
         }
     });
@@ -546,11 +578,14 @@ fn finish_bot_run(
 #[allow(clippy::needless_pass_by_value)]
 fn ack_stop(
     window: Window,
+    app: AppHandle,
     control: State<'_, ControlHandle>,
     seq: u64,
 ) -> Result<ControlSnapshot, String> {
     require_window(&window, MAIN_ONLY)?;
-    Ok(control.ack_stop(seq))
+    let snapshot = control.ack_stop(seq);
+    hide_widget_after_confirmation(&app, control.inner().clone());
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1004,7 +1039,21 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_provider_id;
+    use super::{valid_provider_id, widget_visible};
+    use crate::control::ControlMode;
+
+    #[test]
+    fn widget_stays_visible_while_a_user_stop_is_unacknowledged() {
+        // A run in progress shows it, as before.
+        assert!(widget_visible(ControlMode::BotDriving, 0, 0));
+        assert!(widget_visible(ControlMode::HumanDriving, 0, 0));
+        // A Stop makes native Idle at once, but until the main window acks it
+        // (every targeted run terminal) the widget keeps showing "Stopping…".
+        assert!(widget_visible(ControlMode::Idle, 3, 2));
+        // Acked (or never stopped): Idle hides it.
+        assert!(!widget_visible(ControlMode::Idle, 3, 3));
+        assert!(!widget_visible(ControlMode::Idle, 0, 0));
+    }
 
     #[test]
     fn provider_ids_cannot_smuggle_flags() {
