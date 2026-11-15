@@ -560,15 +560,9 @@ pub(crate) async fn build_report(
         };
         let markdown = doctor::report_markdown(&info, &checks, &scrub);
         // Once more over the whole text (secrets, encodings, token shapes);
-        // user / host names were already masked in every value, and the fixed
-        // template must stay readable.
-        let text = doctor::redact_report(
-            &markdown,
-            &doctor::Scrub {
-                identities: vec![],
-                ..scrub
-            },
-        );
+        // every value was fully scrubbed already, and the Markdown table and
+        // fixed template must stay intact.
+        let text = doctor::redact_report_text(&markdown, &scrub);
         if redactor.contains_secret(&text) {
             return Err(ApiError::unavailable(
                 "the report still matched a known secret after redaction; it was withheld",

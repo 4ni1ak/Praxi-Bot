@@ -1559,6 +1559,23 @@ pub fn redact_report(text: &str, scrub: &Scrub<'_>) -> String {
     scrub.text(text)
 }
 
+/// The last pass over a whole [`report_markdown`] text whose values were
+/// already scrubbed: known secrets, e-mail addresses and token-like runs
+/// only.  The Markdown structure (table rows start with `|`, like the source
+/// excerpts [`strip_source_excerpts`] drops) and the fixed template stay.
+#[must_use]
+pub fn redact_report_text(markdown: &str, scrub: &Scrub<'_>) -> String {
+    let s = match scrub.secrets {
+        Some(r) => r(markdown),
+        None => markdown.to_owned(),
+    };
+    let s = mask_long_tokens(&mask_emails(&s));
+    match scrub.secrets {
+        Some(r) => r(&s),
+        None => s,
+    }
+}
+
 // ---------------------------------------------------------------- report
 
 /// Config files the report may name (names only, never contents).

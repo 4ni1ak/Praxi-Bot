@@ -491,15 +491,15 @@ async fn report_text(t: &T) -> String {
     String::from_utf8(r.body).unwrap()
 }
 
-/// The unredacted `config` check detail (what the local UI sees).
-async fn raw_config_detail(t: &T) -> String {
+/// The unredacted detail of check `id` (what the local UI sees).
+async fn raw_detail(t: &T, id: &str) -> String {
     let r = call(t, Method::GET, "/v1/doctor", None).await;
     let v = r.json();
     v["checks"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|c| c["id"] == "config")
+        .find(|c| c["id"] == id)
         .unwrap()["detail"]
         .as_str()
         .unwrap()
@@ -538,7 +538,7 @@ async fn report_masks_what_the_daemon_redactor_knows_in_every_encoded_form() {
     )
     .unwrap();
     // The unredacted result really carries every sentinel...
-    let raw = raw_config_detail(&t).await;
+    let raw = raw_detail(&t, "config").await;
     for planted in [
         url,
         b64.as_str(),
@@ -562,6 +562,29 @@ async fn report_masks_what_the_daemon_redactor_knows_in_every_encoded_form() {
         &super::TOKEN[..16],
         "owner@example.com",
     ] {
+        assert!(!text.contains(leaked), "{leaked} leaked:\n{text}");
+    }
+
+    // Values no pattern recognises (no key shape, no URL encoding, short):
+    // only the daemon's redactor can mask them.  Custom provider ids are
+    // quoted verbatim in the providers check.
+    std::fs::remove_file(t.state.data_dir().join("providers.toml")).unwrap();
+    let mut cfg = provider_catalog::ProviderConfig::default();
+    for id in [ENV_ONLY, PASSPHRASE, SPECIAL] {
+        cfg.upsert(provider_catalog::ProviderSettings::new(id, 1));
+    }
+    cfg.save(&provider_catalog::config_path(&t.state.data_dir()))
+        .unwrap();
+    let raw = raw_detail(&t, "providers").await;
+    for planted in [ENV_ONLY, PASSPHRASE, SPECIAL] {
+        assert!(
+            raw.contains(planted),
+            "{planted} not in the raw detail: {raw}"
+        );
+    }
+    let text = report_text(&t).await;
+    assert!(text.contains("not in the catalog"), "{text}");
+    for leaked in [ENV_ONLY, "vault passphrase", "tok/en", "sym&bols"] {
         assert!(!text.contains(leaked), "{leaked} leaked:\n{text}");
     }
 }
@@ -673,6 +696,10 @@ async fn report_is_markdown_and_carries_no_planted_secret_or_home_path() {
     );
     let text = String::from_utf8(r.body.clone()).unwrap();
     assert!(text.starts_with("# Praxi diagnostics report"), "{text}");
+    // The check table survives redaction, one row per check.
+    assert!(text.contains("| Status | Check | Detail |"), "{text}");
+    assert!(text.contains("| fail | config | "), "{text}");
+    assert!(text.contains("| ok | daemon | running"), "{text}");
     assert!(text.contains("providers.toml"), "{text}");
     for leaked in [
         PLANTED_KEY,
