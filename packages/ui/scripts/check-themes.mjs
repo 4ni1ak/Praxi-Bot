@@ -6,10 +6,8 @@ import {
   PALETTES, FAVORITE_THEMES, DEFAULT_CUSTOM_THEME, UI_STYLES, buildTokens, contrastRatio, deriveTheme,
   fallbackAccent, inkOn, mix, normalizeHex, paletteById
 } from '../src/themeModel.ts';
-import {
-  buildThemeTokens, effectiveUiStyle, planSurfaces, PANEL_BLUR_MAX, PANEL_BLUR_MIN, PANEL_TRANSPARENCY_MAX,
-  PANEL_TRANSPARENCY_MIN, TEXT_TARGET, WORST_TONE
-} from '../src/surfaceModel.ts';
+import { buildThemeTokens, effectiveUiStyle, TEXT_TARGET } from '../src/surfaceModel.ts';
+import { checkSurfaces, FIXTURES, MUTATIONS, selfTest as selfTestSurfaces } from './surfaceCheck.mjs';
 
 // Every shipped theme must be readable.  The derivation pulls faded text, status colours and
 // accent text toward the text colour until they pass, so the hard requirement is the one
@@ -65,58 +63,34 @@ for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_TH
   process.stdout.write(`${name}: ${d.light ? 'light' : 'dark'}; text contrast >= ${lowest.toFixed(2)}:1 (bg/surface/raised)\n`);
 }
 
-// Translucent surfaces (card 244-E): every layer text can sit on, at the slider extremes, over the
-// worst backdrop (pure white / black) and over mid-grey and coloured backdrops.  Primary text must
-// reach TEXT_TARGET on the shell layers and 4.5 elsewhere; muted / secondary / status / accent text
-// 4.5 everywhere; faint text and control borders 3.
-const flat = (c) => ({ peak: { light: c, dark: c }, soft: { light: c, dark: c } });
-const TONES = [['worst', WORST_TONE], ['grey', flat('#808080')], ['blue', flat('#4a7bd0')], ['orange', flat('#d9822b')],
-  ['busy', { peak: { light: '#f5f0e0', dark: '#0a1020' }, soft: { light: '#9ab0a8', dark: '#203038' }, detail: { light: '#f5f0e0', dark: '#203038' } }]];
-let surfaceCells = 0;
-for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_THEME }]) {
-  const d = deriveTheme(theme);
-  const accent = theme.accent ?? fallbackAccent(d);
-  for (const style of UI_STYLES) {
-    for (const transparentChat of [false, true]) {
-      for (const transparency of [PANEL_TRANSPARENCY_MIN, PANEL_TRANSPARENCY_MAX]) {
-        for (const blur of [PANEL_BLUR_MIN, PANEL_BLUR_MAX]) {
-          for (const [toneName, tone] of TONES) {
-            const opts = { transparency, blur, transparentChat, tone };
-            const plan = planSurfaces(d, style, true, opts);
-            const t = buildThemeTokens(theme, accent, style, true, opts);
-            const cell = `${theme.id}/${style}/${transparentChat ? 'clear' : 'pane'}/t${transparency}/b${blur}/${toneName}`;
-            for (const layer of plan.layers) {
-              surfaceCells++;
-              check(cell, `text/${layer.name}`, d.text, layer.color, layer.textMin);
-              for (const key of ['secondary', 'muted']) check(cell, `${key}/${layer.name}`, t[`--color-text-${key}`], layer.color, 4.5);
-              for (const key of ['success', 'warning', 'danger', 'accent-text']) check(cell, `${key}/${layer.name}`, t[`--color-${key}`], layer.color, 4.5);
-              check(cell, `faint/${layer.name}`, t['--color-text-faint'], layer.color, 3);
-              check(cell, `control border/${layer.name}`, t['--color-border-strong'], layer.color, 3);
-            }
-            // The re-derived colours must still hold on the theme's own solid surfaces.
-            for (const s of [d.bg, d.surface, d.raised]) {
-              check(cell, 'muted/solid', t['--color-text-muted'], s, 4.5);
-              check(cell, 'accent text/solid', t['--color-accent-text'], s, 4.5);
-            }
-            for (const key of ['--shell-fill', '--shell-filter', '--center-fill', '--center-scrim', '--float-fill', '--composer-fill']) {
-              assert.ok(t[key], `${cell}: ${key}`);
-            }
-            if (style === 'solid' && !transparentChat) {
-              assert.equal(plan.layers.length, 0, `${cell}: solid panels add no translucent layer`);
-            }
-            if (transparentChat) assert.equal(t['--center-fill'], 'transparent', `${cell}: clear chat area has no fill`);
-          }
-        }
-      }
-    }
-  }
+// Translucent surfaces (card 244-E): the EMITTED tokens (fills, filters, scrim, modal overlay) are
+// composited over fixture backdrops by an independent CSS emulator (scripts/surfaceCheck.mjs: its own
+// saturate() matrix, Gaussian blur with mirrored edges, source-over compositing, WCAG contrast), for
+// every theme x style x chat area x transparency/blur extreme x dim x backdrop.  Primary text must reach
+// 7:1 on panels / scrim / center pane and 4.5:1 on cards, bubbles, composer and floating surfaces;
+// muted / secondary / status / accent text 4.5:1; faint text and control borders 3:1.
+const surfaces = checkSurfaces();
+const byKind = new Map();
+for (const f of surfaces.failures) {
+  const m = /^(\S+?)\/(\S+?)\/(\w+)\/.*?: (.+?) on (.+?) [\d.]+ < /.exec(f);
+  const k = m ? `${m[2]}/${m[3]}: ${m[4]} on ${m[5]}` : f;
+  byKind.set(k, (byKind.get(k) ?? 0) + 1);
+}
+if (process.env.SURFACE_SUMMARY) for (const [k, n] of [...byKind].sort((a, b) => b[1] - a[1]).slice(0, 40)) process.stdout.write(`${n}	${k}
+`);
+for (const f of surfaces.failures.slice(0, 60)) failures.push(f);
+if (surfaces.failures.length > 60) failures.push(`... and ${surfaces.failures.length - 60} more surface violations`);
+const escaped = selfTestSurfaces();
+for (const name of escaped) failures.push(`surface check self-test: mutation not caught: ${name}`);
+for (const key of ['--shell-fill', '--shell-filter', '--center-fill', '--center-scrim', '--float-fill', '--composer-fill']) {
+  assert.ok(buildThemeTokens(paletteById('obsidian'), '#b6b8fa', 'glass', true)[key], `token ${key} is emitted`);
 }
 // Platform fallbacks: reduced transparency paints solid; no backdrop-filter turns glass into tinted.
 assert.equal(effectiveUiStyle('glass', { backdropFilter: true, reducedTransparency: true }), 'solid');
 assert.equal(effectiveUiStyle('line', { backdropFilter: true, reducedTransparency: true }), 'line');
 assert.equal(effectiveUiStyle('glass', { backdropFilter: false, reducedTransparency: false }), 'tinted');
 assert.equal(effectiveUiStyle('tinted', { backdropFilter: false, reducedTransparency: false }), 'tinted');
-process.stdout.write(`surfaces: ${surfaceCells} layer checks (styles x chat area x transparency/blur extremes x backdrops; text >= ${TEXT_TARGET}:1 on panels)
+process.stdout.write(`surfaces: ${surfaces.checks} composited checks on the emitted tokens (${FIXTURES.length} backdrops; text >= ${TEXT_TARGET}:1 on panels); self-test: ${MUTATIONS.length} corruptions all caught
 `);
 
 // tokens.css must carry exactly the derived default theme (no stale generated CSS).
