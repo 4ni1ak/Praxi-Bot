@@ -4,12 +4,16 @@ import { test } from "node:test";
 import type { RunEntry, RunPhase, StopRecord } from "./runLedger.ts";
 import {
   describeStop,
+  isNewerNativeSnapshot,
   nextWidgetStop,
+  reduceWidget,
   STOPPED_VISIBLE_MS,
   type StopStatus,
   stopDetail,
   stopTitleKey,
-  WIDGET_CONFIRMED_MS
+  WIDGET_CONFIRMED_MS,
+  WIDGET_STOP_INITIAL,
+  type WidgetView
 } from "./stopStatus.ts";
 
 function record(over: Partial<StopRecord> = {}): StopRecord {
@@ -33,6 +37,7 @@ function record(over: Partial<StopRecord> = {}): StopRecord {
     lastError: null,
     supersedes: null,
     successor: null,
+    watchFromObs: null,
     session: "s",
     settledMono: null,
     ...over
@@ -40,7 +45,7 @@ function record(over: Partial<StopRecord> = {}): StopRecord {
 }
 
 function run(id: string, phase: RunPhase, error: string | null = null): RunEntry {
-  return { id, botId: "b", phase, stopId: "s1", quarantined: false, processing: true, error };
+  return { id, botId: "b", phase, stopId: "s1", quarantinedBy: null, seenObs: 0, processing: true, error };
 }
 
 const at = (records: StopRecord[], runs: RunEntry[], connected = true, now = 100) =>
@@ -51,7 +56,7 @@ test("state table: every daemon outcome maps to an honest status", () => {
   const two = ["a", "b"];
   const rows: [string, StopRecord[], RunEntry[], boolean, Partial<StopStatus> | null][] = [
     ["no client yet", [record({ members: two })], [run("a", "held"), run("b", "held")], false,
-      { kind: "unreachable", tone: "warning", localHalted: true, dismissible: false }],
+      { kind: "unreachable", tone: "warning", localHalted: true, dismissible: false, pendingSweep: true }],
     ["transport error", [record({ members: two, lastError: "network", phase: "retrying" })], [run("a", "held"), run("b", "held")], true,
       { kind: "unreachable" }],
     ["sent, no answer yet", [record({ members: two })], [run("a", "held"), run("b", "held")], true,
@@ -108,7 +113,7 @@ test("every title and detail key the status can produce exists in en and tr", ()
     const get = (k: string) => k.split(".").reduce<unknown>((o, p) => (o as Record<string, unknown> | undefined)?.[p], obj);
     return typeof get(key) === "string" || typeof get(`${key}_${count === 1 ? "one" : "other"}`) === "string";
   };
-  const kinds = ["stopping", "unreachable", "partial", "expired", "unconfirmable", "stopped"] as const;
+  const kinds = ["stopping", "unreachable", "partial", "expired", "unconfirmed", "unconfirmable", "stopped"] as const;
   for (const locale of ["en", "tr"]) {
     const dict = read(locale);
     for (const kind of kinds) {
@@ -116,7 +121,8 @@ test("every title and detail key the status can produce exists in en and tr", ()
         for (const held of [0, 2]) {
           const status: StopStatus = {
             stopId: "x", kind, tone: "progress", total, stopped: 0, stopping: held, failed: 0,
-            localHalted: true, audited: true, dismissible: false, error: null
+            quarantined: 1, pendingSweep: held > 0, localHalted: true, audited: true,
+            dismissible: total === 3, error: null
           };
           assert.ok(has(dict, stopTitleKey(status), total), `${locale}: ${stopTitleKey(status)}`);
           const d = stopDetail(status);
@@ -124,21 +130,52 @@ test("every title and detail key the status can produce exists in en and tr", ()
         }
       }
     }
-    for (const key of ["stopStatus.notAudited", "stopStatus.dismiss", "stopStatus.progressLabel", "widget.stopPending", "widget.stopConfirmed"]) {
+    for (const key of ["stopStatus.notAudited", "stopStatus.dismiss", "stopStatus.progressLabel", "stopStatus.stopAllNow", "stopStatus.letContinue", "widget.stopPending", "widget.stopConfirmed", "widget.stopUnknown"]) {
       assert.ok(has(dict, key, 0), `${locale}: ${key}`);
     }
   }
 });
 
-test("widget: pending while stopSeq > stopAckedSeq, confirmed briefly once acked", () => {
-  let s = nextWidgetStop({ kind: "none" }, { stopSeq: 0, stopAckedSeq: 0 }, 0);
+test("widget: pending while stopSeq > stopAckedSeq, confirmed briefly only once acked", () => {
+  let s = nextWidgetStop(WIDGET_STOP_INITIAL, { stopSeq: 0, stopAckedSeq: 0 }, 0);
   assert.equal(s.kind, "none");
   s = nextWidgetStop(s, { stopSeq: 1, stopAckedSeq: 0 }, 10);
-  assert.deepEqual(s, { kind: "pending", seq: 1 });
+  assert.equal(s.kind, "pending");
+  assert.equal(s.pendingSeq, 1);
   s = nextWidgetStop(s, { stopSeq: 1, stopAckedSeq: 1 }, 20);
-  assert.deepEqual(s, { kind: "confirmed", seq: 1, since: 20 });
-  assert.equal(nextWidgetStop(s, { stopSeq: 1, stopAckedSeq: 1 }, 20 + WIDGET_CONFIRMED_MS).kind, "confirmed");
-  assert.equal(nextWidgetStop(s, { stopSeq: 1, stopAckedSeq: 1 }, 21 + WIDGET_CONFIRMED_MS).kind, "none");
-  // an older native build (no ack cursor) never shows a pending Stop
-  assert.equal(nextWidgetStop({ kind: "none" }, { stopSeq: 3 }, 0).kind, "none");
+  assert.equal(s.kind, "confirmed");
+  assert.equal(nextWidgetStop(s, null, 20 + WIDGET_CONFIRMED_MS).kind, "confirmed");
+  assert.equal(nextWidgetStop(s, null, 21 + WIDGET_CONFIRMED_MS).kind, "none");
+});
+
+test("widget: a stale pre-Stop snapshot or a failed read never confirms (r-94 #7)", () => {
+  const pending = nextWidgetStop(WIDGET_STOP_INITIAL, { stopSeq: 1, stopAckedSeq: 0 }, 0);
+  // an older snapshot delivered late (stopSeq 0, ack 0)
+  const stale = nextWidgetStop(pending, { stopSeq: 0, stopAckedSeq: 0 }, 5);
+  assert.equal(stale.kind, "pending");
+  assert.equal(stale.pendingSeq, 1);
+  // getControlState() failed: the fallback snapshot has no counters
+  const failed = nextWidgetStop(pending, {}, 6);
+  assert.equal(failed.kind, "pending");
+  assert.equal(failed.unknown, true, "shown as 'could not confirm'");
+  assert.equal(nextWidgetStop(pending, null, 7).kind, "pending");
+  // a fresh read clears "unknown"; only an ack covering seq 1 confirms
+  const fresh = nextWidgetStop(failed, { stopSeq: 1, stopAckedSeq: 0 }, 8);
+  assert.equal(fresh.unknown, false);
+  assert.equal(nextWidgetStop(fresh, { stopSeq: 2, stopAckedSeq: 1 }, 9).kind, "pending", "ack 1 does not cover seq 2");
+  // once confirmed, a late pre-ack snapshot does not bring "pending" back
+  const confirmed = nextWidgetStop(fresh, { stopSeq: 1, stopAckedSeq: 1 }, 10);
+  assert.equal(confirmed.kind, "confirmed");
+  assert.equal(nextWidgetStop(confirmed, { stopSeq: 1, stopAckedSeq: 0 }, 11).kind, "confirmed");
+});
+
+test("widget: modes are applied only from newer revisions; a failed read never becomes Idle", () => {
+  type Snap = { mode: string; stateRev?: number; stopSeq?: number; stopAckedSeq?: number };
+  let v: WidgetView<Snap> = { stop: WIDGET_STOP_INITIAL, lastRev: -1, control: { mode: "idle" } };
+  v = reduceWidget(v, { mode: "human_driving", stateRev: 5, stopSeq: 0, stopAckedSeq: 0 }, 0);
+  v = reduceWidget(v, { mode: "bot_driving", stateRev: 4, stopSeq: 0, stopAckedSeq: 0 }, 1); // late
+  assert.equal(v.control.mode, "human_driving");
+  v = reduceWidget(v, null, 2);
+  assert.equal(v.control.mode, "human_driving");
+  assert.equal(isNewerNativeSnapshot(5, { stateRev: 6 }), false, "no counters: a failed read");
 });

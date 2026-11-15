@@ -206,7 +206,8 @@
     "hotkeyHint": "Uygulamada durdur: {{hotkey}}",
     "dragHandleAria": "Yüzen kontrol penceresini sürükle",
     "stopPending": "Durduruluyor — tüm çalışmalar doğrulanıyor…",
-    "stopConfirmed": "Durduruldu — tüm çalışmalar doğrulandı"
+    "stopConfirmed": "Durduruldu — tüm çalışmalar doğrulandı",
+    "stopUnknown": "Durduruluyor — uygulamayla henüz doğrulanamadı"
   },
   "dev": {
     "sectionTitle": "Geliştirici",
@@ -1859,23 +1860,31 @@
       "partial": "Bazı çalışmalar durdurulamadı",
       "expired": "Durdurma süresi doldu",
       "unconfirmable": "Önceki durdurma doğrulanamadı",
-      "stopped": "Durduruldu"
+      "stopped": "Durduruldu",
+      "unconfirmed": "Durdurma doğrulanamadı",
+      "released": "Çalışmaların devam etmesine izin verildi"
     },
     "detail": {
       "stoppingCount_one": "{{count}} çalışmadan {{stopped}} tanesi durdu; kalanların bitmesi bekleniyor.",
       "stoppingCount_other": "{{count}} çalışmadan {{stopped}} tanesi durdu; kalanların bitmesi bekleniyor.",
       "stoppingNone": "Daemon'dan çalışan tüm botları durdurması isteniyor…",
-      "unreachable": "Bot ve devralma girdisi burada durduruldu, ancak daemon çalışmaları henüz doğrulamadı. Yeniden deneniyor…",
       "partial": "{{count}} çalışmadan {{stopped}} tanesi durdu. Kalanlar bekletiliyor ve işlem yapamıyor; yeniden deneniyor…",
       "expiredRetry": "Daemon bu durdurmanın kaydını artık tutmuyordu. Yalnızca hâlâ bekletilen {{held}} çalışma yeniden deneniyor; sonradan başlayan hiçbir şeye dokunulmuyor.",
       "expiredNone": "Daemon bu durdurmanın kaydını artık tutmuyordu; bekletilen çalışmaların hiçbiri devam etmiyor.",
       "unconfirmable": "Uygulama yeniden başlamadan önceki bir durdurma daemon'a ulaşmadı. Botlar hâlâ çalışıyorsa yeniden Durdur'a basın.",
       "stoppedCount_one": "{{count}} çalışma durduruldu.",
       "stoppedCount_other": "{{count}} çalışmanın tümü durduruldu.",
-      "stoppedNone": "Çalışan bot yoktu."
+      "stoppedNone": "Çalışan bot yoktu.",
+      "unreachableSweep": "Bot ve devralma girdisi burada durduruldu. Daemon'a henüz ulaşılamıyor; ulaşıldığında bu durdurma o anda açık olan TÜM çalışmaları durduracak, arada başka bir cihazdan veya bir zamanlamadan başlatılanlar dahil.",
+      "unreachableListed_one": "Bot ve devralma girdisi burada durduruldu. Daemon henüz doğrulamadı; ulaşıldığında yalnızca Durdur'a bastığınızda bilinen {{count}} çalışmayı durduracak. Yeniden deneniyor…",
+      "unreachableListed_other": "Bot ve devralma girdisi burada durduruldu. Daemon henüz doğrulamadı; ulaşıldığında yalnızca Durdur'a bastığınızda bilinen {{count}} çalışmayı durduracak. Yeniden deneniyor…",
+      "unconfirmed": "Daemon bu durdurmanın neyi durdurduğunu bildirmeden kaydını kaybetti. Hedeflenmiş olabilecek {{quarantined}} çalışma duraklatıldı ve siz karar verene kadar işlem yapamaz.",
+      "released": "Duraklatılan çalışmaların devam etmesine izin verdiniz. Hiçbir şey iptal edilmedi."
     },
     "notAudited": "Denetim günlüğüne kaydedilmedi",
     "progressLabel": "Durdurulan çalışmalar",
-    "dismiss": "Kapat"
+    "dismiss": "Kapat",
+    "stopAllNow": "Hepsini şimdi durdur",
+    "letContinue": "Devam etsinler"
   }
 }

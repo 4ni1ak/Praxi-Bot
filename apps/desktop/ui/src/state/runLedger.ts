@@ -13,12 +13,20 @@ import type {
  *
  * - A Stop is ONE user decision with ONE `stop_id`. The same id is the daemon
  *   `stop_id` and the native `stop_bot_run` token, and every retry reuses it.
+ *   Different decisions always get different ids.
  * - The daemon decides which runs a Stop targets (`POST /v1/runs/stop` fixes the
- *   target set at first receipt). No clock is ever compared with the daemon's.
+ *   target set T at first receipt). Once the app knows T, every retry is `listed`
+ *   with exactly T, so a restarted daemon can never re-sweep. No clock is ever
+ *   compared with the daemon's.
  * - A run a Stop holds never acts again (`mayAct` is false) until it is terminal.
- *   A failed cancel is retried, never re-tracked.
- * - Native tells the ledger a Stop happened (`stopSeq`); a normal finish never
- *   raises it. `ack_stop` is sent only once every run a Stop targeted is terminal.
+ *   A failed cancel is retried, never re-tracked. Every Stop also bumps a
+ *   synchronous `stopEpoch` the bridge re-checks right before each local effect.
+ * - Native tells the ledger a Stop happened (`stopSeq`). A sequence is attributed
+ *   to a decision only by its token (event or command reply); untokened ones are
+ *   presses of their own. `ack_stop` is sent only once every run a Stop targeted is
+ *   POSITIVELY known to be terminal; unknown is never "stopped".
+ * - Run lists are ordered by an observation counter: a list never reconciles a run
+ *   the ledger learned about after the list was issued.
  * - Daemon clients come and go (`attachClient` / `detachClient`); Stop records
  *   outlive them and are sent again to the next client.
  */
@@ -29,13 +37,17 @@ export const STOP_SWEEP_WINDOW_MS = 2000;
 export const STOP_COALESCE_MS = 250;
 /** One attempt of `POST /v1/runs/stop` is abandoned (and retried) after this. */
 export const STOP_ATTEMPT_TIMEOUT_MS = 3000;
+/** How long a `stop_bot_run` invoke may stay unanswered before its sequence is classified anyway. */
+export const STOP_ECHO_WAIT_MS = 2000;
 /** Retry delays; the last one repeats for as long as a targeted run is not terminal. */
 export const STOP_RETRY_MS: readonly number[] = [500, 1000, 2000, 5000];
 /** Request ids remembered so a replayed `control_requested` is never answered twice. */
 const HANDLED_REQUESTS_MAX = 512;
 /** Stop records kept after they settled (for dedupe across a webview reload). */
 const SETTLED_RECORDS_MAX = 16;
-export const STOP_STORAGE_KEY = "praxi.stopLedger.v1";
+/** Terminal observations remembered for list ordering. */
+const FINISHED_MAX = 4096;
+export const STOP_STORAGE_KEY = "praxi.stopLedger.v2";
 
 /** Run states that are not terminal (daemon `RunState` minus `is_terminal`). */
 export const OPEN_RUN_STATES: ReadonlySet<string> = new Set([
@@ -58,7 +70,7 @@ export function isOpenRunState(state: string | null | undefined): boolean {
 export type StopOrigin = "native" | "hotkey" | "banner" | "viewer" | "chat";
 
 /**
- * - `tracked`: live, may act;
+ * - `tracked`: live, may act (unless quarantined);
  * - `held`: a Stop targets it and no daemon answer has confirmed anything yet;
  * - `cancel_requested`: the daemon fired its cancel token, effects may still run;
  * - `failed`: the daemon could not cancel it (retried; still never acts);
@@ -72,8 +84,14 @@ export interface RunEntry {
   phase: RunPhase;
   /** Latest Stop that holds this run. */
   stopId: string | null;
-  /** Observed while a sweeping Stop had no answer yet: may not act until it has one. */
-  quarantined: boolean;
+  /**
+   * The Stop whose target set this run may belong to but which the app could not
+   * confirm (a sweep not answered yet, or one the daemon forgot). It cannot act
+   * until that Stop answers or the user decides.
+   */
+  quarantinedBy: string | null;
+  /** Observation counter value when the ledger first learned about the run. */
+  seenObs: number;
   /** Daemon `processing` state (queued/running/waiting_approval), when known. */
   processing: boolean;
   error: string | null;
@@ -84,7 +102,12 @@ export interface RunEntry {
  * - `in_flight`: an attempt is outstanding;
  * - `retrying`: waiting for the next attempt (transport error, `failed` or still-live members);
  * - `settled`: every run it targeted is terminal;
- * - `expired`: the daemon no longer knows this id; a successor (new id, `listed`) carries on;
+ * - `expired`: the daemon forgot this id after it had told the app T; a successor
+ *   (new id, `listed`, only the runs still held) carries on;
+ * - `unconfirmed`: the daemon forgot this id before the app ever learned T. Runs that
+ *   may be in T stay quarantined until a list proves them terminal or the user decides;
+ *   it is never acknowledged on its own;
+ * - `released`: the user let the quarantined runs of an unconfirmed Stop continue;
  * - `unconfirmable`: restored from a previous app run before the daemon ever answered and
  *   it knew no runs: the app cannot tell what it targeted, so it asks the user to press Stop again.
  */
@@ -94,6 +117,8 @@ export type StopPhase =
   | "retrying"
   | "settled"
   | "expired"
+  | "unconfirmed"
+  | "released"
   | "unconfirmable";
 
 export interface StopRecord {
@@ -103,9 +128,9 @@ export interface StopRecord {
   readonly kind: "all" | "single";
   /** Native stop sequences this decision accounts for (acked once it settles). */
   nativeSeqs: number[];
-  /** `stop_bot_run(token = id)` was invoked and its `stopSeq` has not been accounted yet. */
+  /** `stop_bot_run(token = id)` was invoked and its sequence has not been attributed yet. */
   awaitingEcho: boolean;
-  /** K: runs the ledger held as live when the Stop was decided (plus later explicit adds). */
+  /** Runs the request names: K at decision, then exactly T once the daemon told us. */
   known: string[];
   /** Every run this Stop must see terminal: K, then T from the daemon. */
   members: string[];
@@ -113,7 +138,7 @@ export interface StopRecord {
   decidedMono: number;
   scope: StopScope;
   phase: StopPhase;
-  /** The daemon answered at least once (its target set is fixed). */
+  /** The daemon answered at least once (its target set is fixed and known to the app). */
   reached: boolean;
   firstSeen: boolean | null;
   /** `false` when the daemon could not write the audit row of an attempt. */
@@ -123,6 +148,8 @@ export interface StopRecord {
   lastError: string | null;
   supersedes: string | null;
   successor: string | null;
+  /** Unconfirmed only: new runs are quarantined until a list issued after this obs applies. */
+  watchFromObs: number | null;
   /** Session that created it (native sequences only mean something within one). */
   session: string;
   /** Mono time it settled, for a short "stopped" confirmation. */
@@ -172,10 +199,21 @@ export interface ClientHandle {
   readonly epoch: number;
   readonly transport: StopTransport;
   live: boolean;
-  /** A run list issued by THIS client has been applied and no gap happened since. */
+  /** A run list issued by THIS client after its last gap has been applied. */
   synced: boolean;
-  /** Runs seen starting / finishing while this client's list request was in flight. */
-  listing: { started: Set<string>; finished: Set<string> } | null;
+  /** Event-stream gaps seen on this client (a list issued before one cannot sync it). */
+  gaps: number;
+  listsIssued: number;
+  listsApplied: number;
+}
+
+/** One `GET /v1/runs` request: applied only if it is the newest one applied so far. */
+export interface ListTicket {
+  readonly handle: ClientHandle;
+  readonly seq: number;
+  /** Observation counter when the request was issued. */
+  readonly issuedObs: number;
+  readonly gaps: number;
 }
 
 export interface ListedRun {
@@ -185,7 +223,7 @@ export interface ListedRun {
 }
 
 interface Persisted {
-  v: 1;
+  v: 2;
   session: string;
   records: StopRecord[];
   runs: RunEntry[];
@@ -213,6 +251,9 @@ export function isStopHeld(phase: RunPhase): boolean {
   return STOP_HELD.has(phase);
 }
 
+/** Phases in which a record no longer blocks `ack_stop`. */
+const ACKABLE: ReadonlySet<StopPhase> = new Set(["settled", "expired", "released", "unconfirmable"]);
+
 export class RunLedger {
   private readonly deps: LedgerDeps;
   private readonly runs = new Map<string, RunEntry>();
@@ -223,10 +264,16 @@ export class RunLedger {
   private readonly handledSet = new Set<string>();
   private readonly stopListeners = new Set<(rec: StopRecord) => void>();
   private readonly listeners = new Set<Listener>();
+  /** Run id -> observation value when the ledger last saw it terminal. */
+  private readonly finishedAt = new Map<string, number>();
   private current: ClientHandle | null = null;
   private epochs = 0;
-  /** Highest native `stopSeq` processed; `null` until the first native snapshot. */
+  private obs = 0;
+  private epoch = 0;
+  /** Highest native `stopSeq` seen; `null` until the first native snapshot that has one. */
   private stopCursor: number | null = null;
+  /** Native sequences above the ack base not yet attributed to a decision. */
+  private unresolved: number[] = [];
   private ackedSeq = 0;
   private lastRev = -1;
   private version = 0;
@@ -251,12 +298,20 @@ export class RunLedger {
     };
   }
 
-  /** Called once for every NEW Stop record of kind `all` (override / UI hooks). */
+  /** Called once for every NEW Stop decision of kind `all` (override / input-halt hooks). */
   onStop(listener: (rec: StopRecord) => void): () => void {
     this.stopListeners.add(listener);
     return () => {
       this.stopListeners.delete(listener);
     };
+  }
+
+  /**
+   * Raised synchronously by every new Stop decision. An action that captured an
+   * older value must not perform any further local effect.
+   */
+  stopEpoch(): number {
+    return this.epoch;
   }
 
   run(id: string): Readonly<RunEntry> | undefined {
@@ -287,7 +342,7 @@ export class RunLedger {
   /** Runs that are live and allowed to act. */
   liveRunIds(): string[] {
     return [...this.runs.values()]
-      .filter((r) => r.phase === "tracked")
+      .filter((r) => r.phase === "tracked" && r.quarantinedBy === null)
       .map((r) => r.id);
   }
 
@@ -297,7 +352,7 @@ export class RunLedger {
     return (
       r !== undefined &&
       r.phase === "tracked" &&
-      !r.quarantined &&
+      r.quarantinedBy === null &&
       !this.hasUnansweredSweep()
     );
   }
@@ -334,7 +389,9 @@ export class RunLedger {
       transport,
       live: true,
       synced: false,
-      listing: null
+      gaps: 0,
+      listsIssued: 0,
+      listsApplied: 0
     };
     this.current = handle;
     for (const rec of this.records.values()) {
@@ -356,68 +413,80 @@ export class RunLedger {
 
   /** The client's event stream had a gap or reconnected: wait for the next list. */
   markUnsynced(handle: ClientHandle): void {
-    if (handle === this.current && handle.synced) {
+    if (handle !== this.current) {
+      return;
+    }
+    handle.gaps += 1;
+    if (handle.synced) {
       handle.synced = false;
       this.changed();
     }
   }
 
-  /** Call right before issuing `GET /v1/runs` on `handle`. */
-  beginList(handle: ClientHandle): void {
-    if (handle !== this.current) {
-      return;
+  /** Call right before issuing `GET /v1/runs` on `handle`; pass the ticket to `applyList`. */
+  beginList(handle: ClientHandle): ListTicket | null {
+    if (handle !== this.current || !handle.live) {
+      return null;
     }
-    handle.listing = { started: new Set(), finished: new Set() };
+    handle.listsIssued += 1;
+    return { handle, seq: handle.listsIssued, issuedObs: this.obs, gaps: handle.gaps };
   }
 
   /**
-   * Apply `GET /v1/runs` issued by `handle`. Restores which runs are live (never
-   * un-holding a stopped one) and confirms stop-held runs the daemon shows terminal.
-   * A list from a client that is no longer current may only move runs toward terminal.
+   * Apply `GET /v1/runs`. Terminal rows always apply (terminal is final). Open rows and
+   * absences apply only from the newest list of the current client, and never to a
+   * run the ledger learned about (or saw finish) after this list was issued.
    */
-  applyList(handle: ClientHandle, list: readonly ListedRun[]): void {
-    const isCurrent = handle === this.current && handle.live;
-    const listing = handle.listing;
-    const listed = new Map(list.map((r) => [r.id, r]));
+  applyList(ticket: ListTicket, list: readonly ListedRun[]): void {
+    const handle = ticket.handle;
     for (const row of list) {
-      const entry = this.runs.get(row.id);
       if (!isOpenRunState(row.state)) {
+        const entry = this.runs.get(row.id);
         if (entry) {
           this.markTerminal(entry);
         }
-        continue;
-      }
-      if (!isCurrent) {
-        continue;
-      }
-      if (listing?.finished.has(row.id)) {
-        continue; // finished while the list was in flight
-      }
-      if (entry) {
-        entry.botId = row.bot_id ?? entry.botId;
-        entry.processing = PROCESSING_RUN_STATES.has(row.state);
-      } else {
-        this.runs.set(row.id, {
-          id: row.id,
-          botId: row.bot_id ?? null,
-          phase: "tracked",
-          stopId: null,
-          quarantined: this.hasUnansweredSweep(),
-          processing: PROCESSING_RUN_STATES.has(row.state),
-          error: null
-        });
       }
     }
-    if (isCurrent) {
-      for (const entry of [...this.runs.values()]) {
-        if (listed.has(entry.id) || listing?.started.has(entry.id)) {
-          continue;
-        }
-        // The daemon lists every run of the user: absent means gone.
-        this.markTerminal(entry);
+    const fresh =
+      handle === this.current && handle.live && ticket.seq > handle.listsApplied;
+    if (!fresh) {
+      this.settleAll();
+      this.changed();
+      return;
+    }
+    const listed = new Set<string>();
+    for (const row of list) {
+      if (!isOpenRunState(row.state)) {
+        continue;
       }
-      handle.listing = null;
-      handle.synced = true;
+      listed.add(row.id);
+      if ((this.finishedAt.get(row.id) ?? -1) > ticket.issuedObs) {
+        continue; // seen terminal after this list was issued
+      }
+      const entry = this.runs.get(row.id);
+      if (entry) {
+        entry.botId = row.bot_id ?? entry.botId;
+        if (entry.phase === "tracked") {
+          entry.processing = PROCESSING_RUN_STATES.has(row.state);
+        }
+      } else {
+        this.addRun(row.id, row.bot_id ?? null, PROCESSING_RUN_STATES.has(row.state));
+      }
+    }
+    for (const entry of [...this.runs.values()]) {
+      if (listed.has(entry.id) || entry.seenObs > ticket.issuedObs) {
+        continue;
+      }
+      // The daemon lists every run of the user: absent from a list issued after we
+      // first saw the run means it is gone.
+      this.markTerminal(entry);
+    }
+    handle.listsApplied = ticket.seq;
+    handle.synced = ticket.gaps === handle.gaps;
+    for (const rec of this.records.values()) {
+      if (rec.watchFromObs !== null && ticket.issuedObs >= rec.watchFromObs) {
+        rec.watchFromObs = null; // every run open now is known (and quarantined)
+      }
     }
     this.settleAll();
     this.changed();
@@ -425,8 +494,6 @@ export class RunLedger {
 
   /** `run_started` (fresh) or a `control_requested` for a run: it is alive. */
   observeRun(runId: string, botId: string | null, processing = true): void {
-    const handle = this.current;
-    handle?.listing?.started.add(runId);
     const entry = this.runs.get(runId);
     if (entry) {
       if (botId) {
@@ -438,27 +505,20 @@ export class RunLedger {
       this.changed();
       return;
     }
-    this.runs.set(runId, {
-      id: runId,
-      botId,
-      phase: "tracked",
-      stopId: null,
-      quarantined: this.hasUnansweredSweep(),
-      processing,
-      error: null
-    });
+    this.addRun(runId, botId, processing);
     this.changed();
   }
 
   /** `run_finished` (any, including replayed history): the run is terminal. */
   observeRunFinished(runId: string): void {
-    this.current?.listing?.finished.add(runId);
     const entry = this.runs.get(runId);
     if (entry) {
       this.markTerminal(entry);
-      this.settleAll();
-      this.changed();
+    } else {
+      this.noteFinished(runId);
     }
+    this.settleAll();
+    this.changed();
   }
 
   // ── Stop ───────────────────────────────────────────────────────────────────
@@ -469,22 +529,36 @@ export class RunLedger {
    */
   stopAll(origin: Exclude<StopOrigin, "native" | "chat">): StopRecord {
     const now = this.deps.clock.now();
-    const joined = this.coalesceTarget(now, "native");
+    const joined = this.coalesceTarget(now);
     if (joined) {
-      // The same key press already reached native (global listener) first.
+      // The same key press already made this decision (e.g. the global listener).
+      this.epoch += 1;
       this.changed();
       return joined;
     }
-    const rec = this.createRecord(origin, "all", now);
+    const rec = this.createRecord(origin, now);
     rec.awaitingEcho = true;
     // Local input halts first; the daemon request does not wait for it.
+    const echoTimer = this.deps.clock.set(() => {
+      if (rec.awaitingEcho) {
+        rec.awaitingEcho = false;
+        this.classify();
+      }
+    }, STOP_ECHO_WAIT_MS);
     this.deps.native.stopRun(rec.id).then(
       (snap) => {
+        this.deps.clock.clear(echoTimer);
+        // The reply pairs this decision's own sequence with its token.
         this.onNativeSnapshot(snap);
-        rec.awaitingEcho = false;
+        if (rec.awaitingEcho) {
+          rec.awaitingEcho = false;
+          this.classify();
+        }
       },
       () => {
+        this.deps.clock.clear(echoTimer);
         rec.awaitingEcho = false;
+        this.classify();
       }
     );
     this.dispatch(rec);
@@ -496,19 +570,9 @@ export class RunLedger {
     const now = this.deps.clock.now();
     const rec = this.blankRecord("chat", "single", now);
     rec.scope = "listed";
-    const entry = this.runs.get(runId);
-    if (entry && entry.phase !== "stopped") {
+    const entry = this.runs.get(runId) ?? this.addRun(runId, null, false);
+    if (entry.phase !== "stopped") {
       this.hold(entry, rec);
-    } else if (!entry) {
-      this.runs.set(runId, {
-        id: runId,
-        botId: null,
-        phase: "held",
-        stopId: rec.id,
-        quarantined: false,
-        processing: false,
-        error: null
-      });
     }
     rec.known = [runId];
     rec.members = [runId];
@@ -518,57 +582,91 @@ export class RunLedger {
   }
 
   /**
+   * The user lets the runs an unconfirmed Stop quarantined continue (they were
+   * never shown to be in its target set). Nothing is cancelled.
+   */
+  releaseUnconfirmed(stopId: string): void {
+    const rec = this.records.get(stopId);
+    if (!rec || rec.phase !== "unconfirmed") {
+      return;
+    }
+    rec.phase = "released";
+    rec.watchFromObs = null;
+    rec.settledMono = this.deps.clock.now();
+    for (const entry of this.runs.values()) {
+      if (entry.quarantinedBy === rec.id) {
+        entry.quarantinedBy = null;
+      }
+    }
+    this.tryAck();
+    this.changed();
+  }
+
+  /**
    * Every native control snapshot (event, command reply, initial read) goes here.
-   * Returns `true` when its mode is newer than the last one applied (`stateRev`).
+   * Returns `true` only for a real snapshot whose revision is newer than any seen
+   * (a failed read has no revision and is never "fresh").
    */
   onNativeSnapshot(snap: NativeStopSnapshot): boolean {
     if (snap.stopSeq === undefined) {
-      // A failed read (or a native build without stop sequences): it says nothing about Stops.
-      return this.freshRev(snap);
+      // A failed read: it says nothing about Stops or modes.
+      return false;
     }
     const s = snap.stopSeq;
+    if (this.stopCursor === null) {
+      const base = Math.min(snap.stopAckedSeq ?? s, s);
+      this.ackedSeq = Math.max(this.ackedSeq, base);
+      this.stopCursor = base;
+      // Records restored from this webview session already own their sequences.
+      const claimed = new Set<number>();
+      for (const rec of this.records.values()) {
+        for (const q of rec.nativeSeqs) {
+          claimed.add(q);
+        }
+      }
+      for (let q = base + 1; q <= s; q += 1) {
+        if (!claimed.has(q)) {
+          this.unresolved.push(q);
+        }
+      }
+      this.stopCursor = s;
+    } else if (s > this.stopCursor) {
+      for (let q = this.stopCursor + 1; q <= s; q += 1) {
+        this.unresolved.push(q);
+      }
+      this.stopCursor = s;
+    }
     if (snap.stopAckedSeq !== undefined && snap.stopAckedSeq > this.ackedSeq) {
       this.ackedSeq = snap.stopAckedSeq;
     }
-    if (this.stopCursor === null) {
-      this.adoptInitial(snap);
-    } else if (s > this.stopCursor) {
-      const seqs: number[] = [];
-      for (let q = this.stopCursor + 1; q <= s; q += 1) {
-        seqs.push(q);
-      }
-      this.stopCursor = s;
+    // The snapshot names who produced its own sequence: exact, never inferred.
+    const at = this.unresolved.indexOf(s);
+    if (at >= 0) {
+      this.unresolved.splice(at, 1);
       const token = snap.lastStopToken ?? null;
-      const tokened = token ? this.records.get(token) : undefined;
-      if (tokened && tokened.awaitingEcho) {
-        tokened.awaitingEcho = false;
-        tokened.nativeSeqs.push(s);
-        seqs.pop();
-      }
-      // Our own invokes whose echo has not been seen account for the lowest seqs.
-      for (const rec of this.records.values()) {
-        if (!seqs.length) {
-          break;
+      const owner = token ? this.records.get(token) : undefined;
+      if (owner) {
+        owner.awaitingEcho = false;
+        if (!owner.nativeSeqs.includes(s)) {
+          owner.nativeSeqs.push(s);
         }
-        if (rec.awaitingEcho) {
-          rec.awaitingEcho = false;
-          rec.nativeSeqs.push(seqs.shift() as number);
-        }
+      } else {
+        this.nativePress([s]);
       }
-      if (seqs.length) {
-        this.nativePress(seqs);
-      }
-      this.changed();
     }
+    this.classify();
     const fresh = this.freshRev(snap);
     this.tryAck();
+    this.changed();
     return fresh;
   }
+
+  // ── internals ──────────────────────────────────────────────────────────────
 
   /** Native modes are applied only from a snapshot newer than the last applied one. */
   private freshRev(snap: NativeStopSnapshot): boolean {
     if (snap.stateRev === undefined) {
-      return true;
+      return false;
     }
     if (snap.stateRev > this.lastRev) {
       this.lastRev = snap.stateRev;
@@ -577,58 +675,50 @@ export class RunLedger {
     return false;
   }
 
-  // ── internals ──────────────────────────────────────────────────────────────
-
-  private adoptInitial(snap: NativeStopSnapshot): void {
-    const s = snap.stopSeq ?? 0;
-    // Older native builds report no ack cursor: treat everything as handled.
-    const base = snap.stopAckedSeq ?? s;
-    this.ackedSeq = Math.max(this.ackedSeq, base);
-    this.stopCursor = s;
-    if (s <= base) {
+  /**
+   * Sequences whose own snapshot was never seen: they can only be one of our own
+   * outstanding invokes (whose reply will say so) or a press of their own. While an
+   * invoke is outstanding they wait; then every remaining one is an untokened press.
+   */
+  private classify(): void {
+    if (!this.unresolved.length) {
       return;
     }
-    const claimed = new Set<number>();
     for (const rec of this.records.values()) {
-      for (const q of rec.nativeSeqs) {
-        claimed.add(q);
+      if (rec.awaitingEcho) {
+        return;
       }
     }
-    const unclaimed: number[] = [];
-    for (let q = base + 1; q <= s; q += 1) {
-      if (!claimed.has(q)) {
-        unclaimed.push(q);
-      }
-    }
-    // A press nobody handled yet (e.g. while this webview was loading).
-    if (unclaimed.length) {
-      this.nativePress(unclaimed);
-    }
-    this.changed();
+    this.nativePress(this.unresolved.splice(0));
   }
 
   private nativePress(seqs: number[]): void {
+    if (!seqs.length) {
+      return;
+    }
     const now = this.deps.clock.now();
     // The in-window hotkey and the global listener on the same press, or key bounce.
-    const joined = this.coalesceTarget(now, "any");
+    const joined = this.coalesceTarget(now);
     if (joined) {
-      joined.nativeSeqs.push(...seqs);
+      for (const q of seqs) {
+        if (!joined.nativeSeqs.includes(q)) {
+          joined.nativeSeqs.push(q);
+        }
+      }
+      this.epoch += 1;
       this.tryAck();
       return;
     }
-    const rec = this.createRecord("native", "all", now);
+    const rec = this.createRecord("native", now);
     rec.nativeSeqs.push(...seqs);
     this.dispatch(rec);
   }
 
-  /** A Stop decided within the coalesce window and not answered yet (same key press). */
-  private coalesceTarget(now: number, want: "any" | "native"): StopRecord | null {
+  /** A Stop decided within the coalesce window (same key press), whatever its daemon state. */
+  private coalesceTarget(now: number): StopRecord | null {
     let best: StopRecord | null = null;
     for (const rec of this.records.values()) {
-      if (rec.kind !== "all" || rec.reached || !this.isOpenRecord(rec)) {
-        continue;
-      }
-      if (want === "native" && rec.origin !== "native") {
+      if (rec.kind !== "all" || rec.supersedes !== null) {
         continue;
       }
       if (now - rec.decidedMono <= STOP_COALESCE_MS) {
@@ -636,6 +726,37 @@ export class RunLedger {
       }
     }
     return best;
+  }
+
+  private addRun(id: string, botId: string | null, processing: boolean): RunEntry {
+    this.obs += 1;
+    const entry: RunEntry = {
+      id,
+      botId,
+      phase: "tracked",
+      stopId: null,
+      quarantinedBy: this.quarantineOwner(),
+      seenObs: this.obs,
+      processing,
+      error: null
+    };
+    this.runs.set(id, entry);
+    return entry;
+  }
+
+  /** The Stop a newly seen run might belong to without the app being able to tell. */
+  private quarantineOwner(): string | null {
+    for (const rec of this.records.values()) {
+      if (rec.scope === "all_existing" && !rec.reached && this.isOpenRecord(rec)) {
+        return rec.id;
+      }
+    }
+    for (const rec of this.records.values()) {
+      if (rec.phase === "unconfirmed" && rec.watchFromObs !== null) {
+        return rec.id;
+      }
+    }
+    return null;
   }
 
   private blankRecord(origin: StopOrigin, kind: "all" | "single", now: number): StopRecord {
@@ -659,13 +780,15 @@ export class RunLedger {
       lastError: null,
       supersedes: null,
       successor: null,
+      watchFromObs: null,
       session: this.deps.session,
       settledMono: null
     };
   }
 
-  private createRecord(origin: StopOrigin, kind: "all", now: number): StopRecord {
-    const rec = this.blankRecord(origin, kind, now);
+  private createRecord(origin: StopOrigin, now: number): StopRecord {
+    this.epoch += 1;
+    const rec = this.blankRecord(origin, "all", now);
     for (const entry of this.runs.values()) {
       if (entry.phase !== "stopped") {
         this.hold(entry, rec);
@@ -699,7 +822,6 @@ export class RunLedger {
         l(rec);
       }
     }
-    this.persist();
     this.changed();
   }
 
@@ -802,8 +924,8 @@ export class RunLedger {
   }
 
   private applyReply(rec: StopRecord, resp: StopRunsResponse): void {
-    if (rec.phase === "expired" || rec.phase === "settled") {
-      // A late duplicate: it may still confirm terminal runs.
+    if (!this.isOpenRecord(rec)) {
+      // A late duplicate: it may still confirm terminal runs, nothing else.
       for (const r of resp.results ?? []) {
         if (outcomePhase(r.outcome, r.state) === "stopped") {
           const entry = this.runs.get(r.run_id);
@@ -828,67 +950,76 @@ export class RunLedger {
     if (rec.firstSeen === null) {
       rec.firstSeen = resp.first_seen;
     }
+    const inT = new Set<string>();
     for (const r of resp.results) {
+      inT.add(r.run_id);
       const phase = outcomePhase(r.outcome, r.state);
       if (!rec.members.includes(r.run_id)) {
         rec.members.push(r.run_id);
       }
-      let entry = this.runs.get(r.run_id);
-      if (!entry) {
-        entry = {
-          id: r.run_id,
-          botId: null,
-          phase,
-          stopId: rec.id,
-          quarantined: false,
-          processing: false,
-          error: null
-        };
-        this.runs.set(r.run_id, entry);
-      }
+      const entry = this.runs.get(r.run_id) ?? this.addRun(r.run_id, null, false);
       if (entry.phase === "stopped") {
         continue; // terminal is final
       }
-      entry.stopId = entry.stopId ?? rec.id;
-      if (entry.phase === "tracked") {
+      if (phase === "stopped") {
+        entry.stopId = entry.stopId ?? rec.id;
+        this.markTerminal(entry);
+        continue;
+      }
+      if (entry.phase === "tracked" || entry.stopId === null) {
         entry.stopId = rec.id;
       }
       entry.phase = phase;
-      entry.quarantined = false;
+      entry.quarantinedBy = null;
       entry.error = phase === "failed" ? (r.error ?? null) : null;
     }
-    if (!this.hasUnansweredSweep()) {
-      for (const entry of this.runs.values()) {
-        entry.quarantined = false; // not in any target set: free to act again
+    // T is known now: every later attempt names exactly T (a restarted daemon that
+    // forgot this id must not sweep again).
+    rec.scope = "listed";
+    rec.known = [...rec.members];
+    // Runs this Stop quarantined but the daemon did not target are free.
+    for (const entry of this.runs.values()) {
+      if (entry.quarantinedBy === rec.id && !inT.has(entry.id)) {
+        entry.quarantinedBy = this.quarantineOwner();
       }
     }
     this.settleAll();
     if (this.isOpenRecord(rec)) {
       this.scheduleRetry(rec);
     }
-    this.persist();
     this.changed();
   }
 
   /**
    * The daemon forgot this id. Never re-sweep: a successor with a NEW id carries
-   * only the runs the app still holds, as `listed`.
+   * only the runs the app still holds, as `listed`. When the app never learned T,
+   * nothing about the unknown targets is certified: the record becomes `unconfirmed`.
    */
   private expire(rec: StopRecord): void {
-    rec.phase = "expired";
-    rec.settledMono = this.deps.clock.now();
+    const now = this.deps.clock.now();
+    rec.settledMono = now;
     const held = rec.members.filter((id) => {
       const entry = this.runs.get(id);
       return entry !== undefined && entry.phase !== "stopped";
     });
+    if (rec.reached) {
+      rec.phase = "expired";
+    } else {
+      rec.phase = "unconfirmed";
+      // Runs it quarantined stay quarantined; runs first seen before the next list
+      // (which could have existed when the daemon fixed T) are quarantined too.
+      rec.watchFromObs = this.obs;
+    }
     if (held.length) {
-      const next = this.blankRecord(rec.origin, rec.kind, this.deps.clock.now());
+      const next = this.blankRecord(rec.origin, rec.kind, now);
       next.scope = "listed";
       next.known = [...held];
       next.members = [...held];
       next.supersedes = rec.id;
-      next.nativeSeqs = rec.nativeSeqs;
-      rec.nativeSeqs = [];
+      if (rec.reached) {
+        next.nativeSeqs = rec.nativeSeqs;
+        rec.nativeSeqs = [];
+      }
       rec.successor = next.id;
       for (const id of held) {
         const entry = this.runs.get(id);
@@ -899,24 +1030,48 @@ export class RunLedger {
       this.records.set(next.id, next);
       this.send(next);
     }
+    this.settleAll();
     this.tryAck();
-    this.persist();
     this.changed();
   }
 
+  private noteFinished(runId: string): void {
+    this.obs += 1;
+    this.finishedAt.set(runId, this.obs);
+    if (this.finishedAt.size > FINISHED_MAX) {
+      const oldest = this.finishedAt.keys().next().value;
+      if (oldest !== undefined) {
+        this.finishedAt.delete(oldest);
+      }
+    }
+  }
+
   private markTerminal(entry: RunEntry): void {
+    this.noteFinished(entry.id);
     if (entry.phase === "tracked" && entry.stopId === null) {
       this.runs.delete(entry.id);
       return;
     }
     entry.phase = "stopped";
-    entry.quarantined = false;
+    entry.quarantinedBy = null;
     entry.error = null;
   }
 
   private settleAll(): void {
     let any = false;
     for (const rec of this.records.values()) {
+      if (rec.phase === "unconfirmed") {
+        // Every candidate of the unknown T is known (watch over) and terminal.
+        const successorOpen =
+          rec.successor !== null && this.records.get(rec.successor)?.phase !== "settled";
+        const quarantined = [...this.runs.values()].some((e) => e.quarantinedBy === rec.id);
+        if (rec.watchFromObs === null && !quarantined && !successorOpen) {
+          rec.phase = "settled";
+          rec.settledMono = this.deps.clock.now();
+          any = true;
+        }
+        continue;
+      }
       if (!this.isOpenRecord(rec) || !rec.reached) {
         continue;
       }
@@ -938,7 +1093,6 @@ export class RunLedger {
     if (any) {
       this.prune();
       this.tryAck();
-      this.persist();
     }
   }
 
@@ -946,7 +1100,7 @@ export class RunLedger {
   private prune(): void {
     const referenced = new Set<string>();
     for (const rec of this.records.values()) {
-      if (this.isOpenRecord(rec)) {
+      if (this.isOpenRecord(rec) || rec.phase === "unconfirmed") {
         for (const id of rec.members) {
           referenced.add(id);
         }
@@ -957,7 +1111,7 @@ export class RunLedger {
         this.runs.delete(entry.id);
       }
     }
-    const done = [...this.records.values()].filter((r) => !this.isOpenRecord(r));
+    const done = [...this.records.values()].filter((r) => ACKABLE.has(r.phase));
     const excess = done.length - SETTLED_RECORDS_MAX;
     for (let i = 0; i < excess; i += 1) {
       const rec = done[i];
@@ -968,17 +1122,20 @@ export class RunLedger {
   }
 
   /**
-   * Acknowledge the highest native sequence below every unresolved Stop. A Stop is
-   * unresolved until every run it targeted is terminal (expired ones pass their
-   * sequences to the successor).
+   * Acknowledge the highest native sequence below every unresolved Stop and below
+   * every sequence not yet attributed. A Stop is unresolved until every run it
+   * targeted is positively terminal (expired ones pass their sequences on).
    */
   private tryAck(): void {
     if (this.stopCursor === null) {
       return;
     }
     let target = this.stopCursor;
+    for (const q of this.unresolved) {
+      target = Math.min(target, q - 1);
+    }
     for (const rec of this.records.values()) {
-      if (rec.phase === "settled" || rec.phase === "expired") {
+      if (ACKABLE.has(rec.phase)) {
         continue;
       }
       for (const q of rec.nativeSeqs) {
@@ -997,10 +1154,10 @@ export class RunLedger {
       return;
     }
     const data: Persisted = {
-      v: 1,
+      v: 2,
       session: this.deps.session,
       records: [...this.records.values()],
-      runs: [...this.runs.values()].filter((r) => r.stopId !== null)
+      runs: [...this.runs.values()].filter((r) => r.stopId !== null || r.quarantinedBy !== null)
     };
     try {
       const json = JSON.stringify(data);
@@ -1030,17 +1187,18 @@ export class RunLedger {
     } catch {
       data = null;
     }
-    if (!data || data.v !== 1 || !Array.isArray(data.records)) {
+    if (!data || data.v !== 2 || !Array.isArray(data.records)) {
       return;
     }
     const sameSession = data.session === this.deps.session;
     for (const entry of data.runs ?? []) {
-      this.runs.set(entry.id, { ...entry, quarantined: false });
+      this.runs.set(entry.id, { ...entry, seenObs: 0 });
     }
     for (const saved of data.records) {
       const rec: StopRecord = {
         ...saved,
         awaitingEcho: false,
+        watchFromObs: saved.watchFromObs === null ? null : 0,
         // mono clocks restart with the page
         decidedMono: Number.NEGATIVE_INFINITY,
         settledMono: saved.settledMono === null ? null : Number.NEGATIVE_INFINITY

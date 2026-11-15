@@ -26,8 +26,7 @@ async function world(opts: { attach?: boolean; runs?: [string, "running" | "paus
   ledger.onNativeSnapshot(native.snapshot());
   let handle = opts.attach === false ? null : ledger.attachClient(daemon.transport());
   if (handle) {
-    ledger.beginList(handle);
-    ledger.applyList(handle, daemon.list());
+    ledger.applyList(ledger.beginList(handle)!, daemon.list());
   }
   /** Deliver queued native events to the ledger (the host's subscription). */
   const pumpNative = () => {
@@ -181,20 +180,76 @@ test("expired: shown as expired, retried ONLY with a new id, scope listed and th
   assert.equal(w.status()?.kind, "stopped");
 });
 
-test("expired with nothing held: no request at all, the user is told", async () => {
-  const w = await world({ runs: [["r1", "paused"]] });
+test("expired after the app learned T, nothing held: no request at all, the user is told", async () => {
+  const w = await world({ runs: [["r1", "running"]] });
   w.ledger.stopAll("banner");
-  w.daemon.processAndLose(0); // the daemon cancelled r1, the reply was lost
+  w.daemon.deliver(0); // T = {r1}, cancel_requested
   await flush();
+  w.daemon.end("r1");
   w.ledger.observeRunFinished("r1");
-  w.daemon.forgetBook();
-  w.clock.advance(500);
-  w.daemon.deliver(1);
   await flush();
-  assert.equal(w.daemon.requests.length, 2, "nothing to retry");
+  assert.equal(w.status()?.kind, "stopped");
+});
+
+test("expiry before the app ever learned T is never certified: unconfirmed, quarantine kept, no ack (r-94 #6)", async () => {
+  const w = await world({ attach: false });
+  const rec = w.ledger.stopAll("banner"); // no runs known, unsynced: all_existing
+  w.pumpNative();
+  w.daemon.start("R", "running");
+  const h = w.attach();
+  w.ledger.applyList(w.ledger.beginList(h)!, w.daemon.list()); // R seen while unanswered
+  assert.equal(w.ledger.run("R")?.quarantinedBy, rec.id);
+  w.daemon.processOnly(0); // the daemon fixes T = {R} and fires R's token ...
+  w.daemon.requests[0]!.settled = true; // ... but the reply is lost
+  w.daemon.requests[0]!.reject(new Error("reset"));
+  await flush();
+  w.daemon.forgetBook(); // TTL: the id is remembered, its set is not
+  w.clock.advance(500);
+  w.daemon.deliver(1); // expired
+  await flush();
+  assert.equal(w.daemon.runs.get("R"), "running", "R is still live at the daemon");
+  assert.equal(w.ledger.stop(rec.id)?.phase, "unconfirmed");
+  assert.deepEqual(w.native.acks, [], "unknown targets are never acknowledged");
+  assert.equal(w.ledger.mayAct("R"), false, "R stays quarantined");
   const s = w.status();
-  assert.equal(s?.kind, "expired");
-  assert.equal(s?.dismissible, true);
+  assert.equal(s?.kind, "unconfirmed");
+  assert.equal(s?.quarantined, 1);
+  assert.equal(w.daemon.requests.length, 2, "no automatic broader sweep");
+  // a run first seen before the next list is quarantined too
+  w.daemon.start("seen-late", "running");
+  w.ledger.observeRun("seen-late", "b1");
+  assert.equal(w.ledger.mayAct("seen-late"), false);
+  // the user decides to let them continue: nothing is cancelled, acting resumes
+  w.ledger.releaseUnconfirmed(rec.id);
+  assert.equal(w.ledger.mayAct("R"), true);
+  assert.equal(w.daemon.requests.length, 2);
+  assert.deepEqual(w.native.acks, [1], "a user decision resolves it");
+});
+
+test("unconfirmed resolves to stopped only when a later list proves every candidate terminal", async () => {
+  const w = await world({ attach: false });
+  const rec = w.ledger.stopAll("banner");
+  w.pumpNative();
+  w.daemon.start("R", "running");
+  const h = w.attach();
+  w.ledger.applyList(w.ledger.beginList(h)!, w.daemon.list());
+  w.daemon.fail(0);
+  await flush();
+  w.daemon.forgetBook();
+  w.daemon.requests.length = 0;
+  w.clock.advance(500);
+  // the retry: the daemon remembers the id but not its set
+  w.daemon.forgetBook();
+  (w.daemon as unknown as { forgotten: Set<string> }).forgotten.add(rec.id);
+  w.daemon.deliver(0);
+  await flush();
+  assert.equal(w.ledger.stop(rec.id)?.phase, "unconfirmed");
+  w.daemon.end("R");
+  w.ledger.observeRunFinished("R");
+  assert.equal(w.ledger.stop(rec.id)?.phase, "unconfirmed", "no list since the expiry yet");
+  w.ledger.applyList(w.ledger.beginList(h)!, w.daemon.list());
+  assert.equal(w.ledger.stop(rec.id)?.phase, "settled");
+  assert.deepEqual(w.native.acks, [1]);
 });
 
 test("audited:false is surfaced on the status", async () => {
@@ -248,8 +303,7 @@ test("Stop with the daemon unreachable halts native locally and says daemon runs
   assert.equal(w.daemon.requests.length, 1);
   assert.equal(w.daemon.requests[0]?.body.scope, "all_existing");
   // restore: r1 is seen while the Stop is unanswered: quarantined
-  w.ledger.beginList(handle);
-  w.ledger.applyList(handle, w.daemon.list());
+  w.ledger.applyList(w.ledger.beginList(handle)!, w.daemon.list());
   assert.equal(w.ledger.mayAct("r1"), false);
   w.daemon.deliver(0);
   await flush();
@@ -267,8 +321,7 @@ test("reconnect: held runs stay held through a client swap, the same id goes to 
   const next = w.attach();
   assert.equal(w.daemon.requests[0]?.body.stop_id, rec.id, "flushed first on the new client");
   // the restore list arrives before the Stop's answer: the runs stay held
-  w.ledger.beginList(next);
-  w.ledger.applyList(next, w.daemon.list());
+  w.ledger.applyList(w.ledger.beginList(next)!, w.daemon.list());
   assert.equal(w.ledger.run("r1")?.phase, "held");
   assert.equal(w.ledger.run("r2")?.phase, "held");
   assert.equal(w.ledger.mayAct("r1"), false);
@@ -282,13 +335,14 @@ test("a list from a replaced client can only confirm terminal runs, never add li
   const w = await world();
   const old = w.handle;
   assert.ok(old);
-  w.ledger.beginList(old);
+  const oldTicket = w.ledger.beginList(old);
+  assert.ok(oldTicket);
   const next = w.attach();
-  w.ledger.applyList(old, [{ id: "ghost", state: "running" }]);
+  w.ledger.applyList(oldTicket, [{ id: "ghost", state: "running" }]);
   assert.equal(w.ledger.run("ghost"), undefined);
   assert.equal(next.synced, false, "the old list does not sync the new client");
   w.ledger.observeRun("r1", "b1");
-  w.ledger.applyList(old, [{ id: "r1", state: "succeeded" }]);
+  w.ledger.applyList(oldTicket, [{ id: "r1", state: "succeeded" }]);
   assert.equal(w.ledger.run("r1"), undefined, "terminal is still applied");
 });
 
@@ -298,9 +352,10 @@ test("restore after reconnect: the daemon's open runs are live, a finished-durin
   w.daemon.start("b", "paused");
   w.daemon.start("done", "succeeded");
   const handle = w.attach();
-  w.ledger.beginList(handle);
+  const ticket = w.ledger.beginList(handle);
+  assert.ok(ticket);
   w.ledger.observeRunFinished("b"); // run_finished arrived while the list was in flight
-  w.ledger.applyList(handle, w.daemon.list());
+  w.ledger.applyList(ticket, w.daemon.list());
   assert.deepEqual(w.ledger.liveRunIds(), ["a"]);
   assert.equal(w.ledger.run("a")?.processing, true);
   assert.equal(handle.synced, true);
@@ -443,8 +498,7 @@ test("webview reload: an unacknowledged Stop is restored, not duplicated, and ke
   const first = makeLedger({ clock, native, storage, session: "s" });
   first.ledger.onNativeSnapshot(native.snapshot());
   const h = first.ledger.attachClient(daemon.transport());
-  first.ledger.beginList(h);
-  first.ledger.applyList(h, daemon.list());
+  first.ledger.applyList(first.ledger.beginList(h)!, daemon.list());
   const rec = first.ledger.stopAll("banner");
   first.ledger.onNativeSnapshot(native.events.at(-1) ?? {});
   daemon.deliver(0);
@@ -458,8 +512,7 @@ test("webview reload: an unacknowledged Stop is restored, not duplicated, and ke
   assert.equal(second.ledger.mayAct("r1"), false);
   const h2 = second.ledger.attachClient(daemon.transport());
   assert.equal(daemon.requests.at(-1)?.body.stop_id, rec.id, "same id after the reload");
-  second.ledger.beginList(h2);
-  second.ledger.applyList(h2, daemon.list());
+  second.ledger.applyList(second.ledger.beginList(h2)!, daemon.list());
   assert.equal(second.ledger.run("r1")?.phase, "cancel_requested", "never back to tracked");
   daemon.end("r1");
   second.ledger.observeRunFinished("r1");
@@ -472,8 +525,7 @@ test("app restart: a Stop that never reached the daemon is narrowed to the runs 
   const storage = new MemoryStorage();
   const before = makeLedger({ storage, session: "old" });
   const h = before.ledger.attachClient({ stopRuns: () => new Promise(() => {}) });
-  before.ledger.beginList(h);
-  before.ledger.applyList(h, [{ id: "r1", state: "running" }]);
+  before.ledger.applyList(before.ledger.beginList(h)!, [{ id: "r1", state: "running" }]);
   before.ledger.detachClient(h);
   before.ledger.stopAll("banner");
 
@@ -514,4 +566,119 @@ test("control_requested ids are answered once across bridges (replay after recon
   const { ledger } = makeLedger();
   assert.equal(ledger.claimRequest("req-1"), true);
   assert.equal(ledger.claimRequest("req-1"), false);
+});
+
+test("an older restore list never reconciles a run seen after it was issued (r-94 #3)", async () => {
+  const w = await world({ attach: false });
+  const h = w.attach();
+  const a = w.ledger.beginList(h)!; // list A: captures an empty daemon
+  const listA = w.daemon.list();
+  w.daemon.start("late", "running");
+  const b = w.ledger.beginList(h)!; // list B sees the run
+  w.ledger.applyList(b, w.daemon.list());
+  w.ledger.stopAll("hotkey");
+  w.pumpNative();
+  w.daemon.deliver(0); // cancel_requested
+  await flush();
+  assert.equal(w.ledger.run("late")?.phase, "cancel_requested");
+  w.ledger.applyList(a, listA); // A finally arrives, empty
+  assert.equal(w.ledger.run("late")?.phase, "cancel_requested", "not marked terminal by A");
+  assert.notEqual(w.status()?.kind, "stopped");
+  assert.deepEqual(w.native.acks, []);
+  // even a NEWER list issued before the run was first seen cannot drop it
+  const c = w.ledger.beginList(h)!;
+  w.ledger.observeRun("later", "b1");
+  w.ledger.applyList(c, w.daemon.list().filter((r) => r.id !== "later"));
+  assert.equal(w.ledger.run("later")?.phase, "tracked");
+});
+
+test("native: a Stop made before the first snapshot is bound by its token, never duplicated (r-94 #4a)", async () => {
+  const daemon = new FakeDaemon();
+  const { ledger, native, clock } = makeLedger();
+  const h = ledger.attachClient(daemon.transport());
+  ledger.applyList(ledger.beginList(h)!, []);
+  native.deferCommands = true; // the native command runs later
+  const s = ledger.stopAll("banner"); // before any native snapshot was routed
+  daemon.deliver(0);
+  await flush();
+  daemon.start("after", "running");
+  ledger.observeRun("after", "b1");
+  clock.advance(1000); // well outside the coalesce window
+  native.runCommands();
+  // the first snapshot routed carries S's token (its event / reply)
+  for (const snap of native.events.splice(0)) {
+    ledger.onNativeSnapshot(snap);
+  }
+  await flush();
+  assert.equal(ledger.stopRecords().length, 1, "no second decision");
+  assert.deepEqual(ledger.stop(s.id)?.nativeSeqs, [1]);
+  assert.equal(daemon.requests.length, 1, "nothing re-sent");
+  assert.equal(ledger.mayAct("after"), true);
+});
+
+test("native: an independent untokened Stop is a new decision even while our own invoke is pending (r-94 #4b)", async () => {
+  const w = await world({ runs: [["r1", "paused"]] });
+  w.native.deferCommands = true; // S's stop_bot_run has not executed yet
+  const s = w.ledger.stopAll("banner");
+  w.daemon.deliver(0);
+  await flush();
+  w.daemon.start("later", "running");
+  w.ledger.observeRun("later", "b1");
+  w.clock.advance(1000); // an independent press, outside the coalesce window
+  w.native.userStop(null); // global hotkey: seq 1, no token
+  w.pumpNative();
+  w.native.runCommands(); // S executes now: seq 2, token S
+  w.pumpNative();
+  await flush();
+  const roots = w.ledger.stopRecords().filter((r) => r.kind === "all");
+  assert.equal(roots.length, 2, "two decisions, two ids");
+  assert.deepEqual(w.ledger.stop(s.id)?.nativeSeqs, [2]);
+  const other = roots.find((r) => r.id !== s.id);
+  assert.deepEqual(other?.nativeSeqs, [1]);
+  assert.equal(w.ledger.mayAct("later"), false, "the second Stop holds the later run");
+  assert.ok(w.daemon.requests.some((r) => r.body.stop_id === other?.id));
+});
+
+test("native: the in-window hotkey and the global listener on one press stay one decision after the reply (r-94 #4c)", async () => {
+  const w = await world({ runs: [["r1", "paused"]] });
+  const s = w.ledger.stopAll("hotkey");
+  w.daemon.deliver(0); // the daemon answers before the global listener's event arrives
+  await flush();
+  w.clock.advance(100);
+  w.native.userStop(null);
+  w.pumpNative();
+  assert.equal(w.ledger.stopRecords().length, 1);
+  assert.equal(w.ledger.stop(s.id)?.nativeSeqs.length, 2);
+});
+
+test("after the daemon told the app T, a restarted daemon never re-sweeps: retries are listed T (r-94 #5)", async () => {
+  const w = await world({ runs: [["r1", "running"]] });
+  const s = w.ledger.stopAll("banner");
+  w.daemon.deliver(0); // T = {r1}, cancel_requested
+  await flush();
+  w.daemon.restart(); // fresh process: no book, no tombstones
+  w.daemon.start("phone-run", "running");
+  const h = w.attach(); // the client reconnects and flushes the open Stop first
+  const retry = w.daemon.requests.at(-1);
+  assert.equal(retry?.body.stop_id, s.id, "same decision, same id");
+  assert.equal(retry?.body.scope, "listed");
+  assert.deepEqual(retry?.body.run_ids, ["r1"]);
+  w.daemon.deliver();
+  await flush();
+  assert.equal(w.daemon.runs.get("phone-run"), "running", "the later run was not cancelled");
+  w.ledger.applyList(w.ledger.beginList(h)!, w.daemon.list());
+  assert.equal(w.ledger.mayAct("phone-run"), true);
+});
+
+test("a list older than one already applied adds nothing: a run that ended in between never becomes a ghost (r-94 #3)", async () => {
+  const w = await world({ attach: false });
+  w.daemon.start("ghost", "running");
+  const h = w.attach();
+  const older = w.ledger.beginList(h)!;
+  const olderRows = w.daemon.list(); // still shows "ghost" open
+  w.daemon.runs.delete("ghost"); // it ended; no event reached us
+  const newer = w.ledger.beginList(h)!;
+  w.ledger.applyList(newer, w.daemon.list());
+  w.ledger.applyList(older, olderRows); // arrives last
+  assert.equal(w.ledger.run("ghost"), undefined, "a dead run must not be tracked (or driven)");
 });

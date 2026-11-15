@@ -5,12 +5,14 @@ import {
   FileWarning,
   LoaderCircle,
   OctagonAlert,
+  ShieldQuestion,
   TimerOff,
   X,
   type LucideIcon
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useStopStatus } from "../state/appStop";
+import { Button } from "ui";
+import { appLedger, requestStop, useStopStatus } from "../state/appStop";
 import {
   type StopKind,
   stopDetail,
@@ -23,6 +25,7 @@ const ICONS: Record<StopKind, LucideIcon> = {
   unreachable: CloudOff,
   partial: OctagonAlert,
   expired: TimerOff,
+  unconfirmed: ShieldQuestion,
   unconfirmable: CircleHelp,
   stopped: CircleCheck
 };
@@ -81,6 +84,28 @@ export function StopStatusNotice({ variant }: { variant: "main" | "panel" }) {
               className={styles.meterFill}
               style={{ inlineSize: `${Math.round(progress * 100)}%` }}
             />
+          </span>
+        ) : null}
+        {status.kind === "unconfirmed" && !status.dismissible ? (
+          <span className={styles.actions}>
+            <Button
+              variant="danger"
+              size="sm"
+              data-testid="stop-status-stop-all"
+              onClick={() => {
+                requestStop("banner");
+              }}
+            >
+              {t("stopStatus.stopAllNow")}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid="stop-status-release"
+              onClick={() => appLedger().releaseUnconfirmed(status.stopId)}
+            >
+              {t("stopStatus.letContinue")}
+            </Button>
           </span>
         ) : null}
         {status.dismissible ? (

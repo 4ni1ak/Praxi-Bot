@@ -75,7 +75,13 @@ export class FakeNative {
   readonly events: NativeStopSnapshot[] = [];
   /** Hold `stop_bot_run` replies until released (events are still emitted). */
   holdReplies = false;
+  /**
+   * Queue `stop_bot_run` invocations instead of executing them at once (the command
+   * runs on the native side later; `runCommands()` executes them in order).
+   */
+  deferCommands = false;
   private readonly held: (() => void)[] = [];
+  private readonly commands: (() => void)[] = [];
 
   snapshot(): NativeStopSnapshot & { mode: string; runGeneration: number } {
     return {
@@ -112,6 +118,25 @@ export class FakeNative {
     return this.snapshot();
   }
 
+  /** `start_bot_run`: native drives a new run (new generation). */
+  start(): NativeStopSnapshot & { mode: string; runGeneration: number } {
+    this.mode = "bot_driving";
+    this.runGeneration += 1;
+    this.stateRev += 1;
+    const snap = this.snapshot();
+    this.events.push(snap);
+    return snap;
+  }
+
+  /** `take_the_wheel` (human input). */
+  takeWheel(): NativeStopSnapshot {
+    this.mode = "human_driving";
+    this.stateRev += 1;
+    const snap = this.snapshot();
+    this.events.push(snap);
+    return snap;
+  }
+
   /** Any other emitting change (step text, hotkey apply, refused action). */
   touch(): NativeStopSnapshot {
     this.stateRev += 1;
@@ -122,19 +147,35 @@ export class FakeNative {
 
   port() {
     return {
-      stopRun: (token: string): Promise<NativeStopSnapshot> => {
-        const snap = this.userStop(token);
-        if (!this.holdReplies) {
-          return Promise.resolve(snap);
-        }
-        return new Promise((resolve) => this.held.push(() => resolve(this.snapshot())));
-      },
+      stopRun: (token: string): Promise<NativeStopSnapshot> =>
+        new Promise((resolve) => {
+          const execute = () => {
+            const snap = this.userStop(token);
+            if (this.holdReplies) {
+              this.held.push(() => resolve(snap));
+            } else {
+              resolve(snap);
+            }
+          };
+          if (this.deferCommands) {
+            this.commands.push(execute);
+          } else {
+            execute();
+          }
+        }),
       ackStop: async (seq: number) => {
         this.acks.push(seq);
         this.stopAckedSeq = Math.max(this.stopAckedSeq, Math.min(seq, this.stopSeq));
         return this.snapshot();
       }
     };
+  }
+
+  /** Execute queued `stop_bot_run` commands natively (events emitted, replies per `holdReplies`). */
+  runCommands(): void {
+    for (const c of this.commands.splice(0)) {
+      c();
+    }
   }
 
   releaseReplies(): void {
@@ -147,6 +188,7 @@ export class FakeNative {
 type DaemonRun = "queued" | "running" | "waiting_approval" | "paused" | "cancelled" | "succeeded";
 
 interface Pending {
+  captured?: StopRunsResponse;
   body: StopRunsInput;
   signal: AbortSignal;
   resolve: (r: StopRunsResponse) => void;
@@ -180,7 +222,17 @@ export class FakeDaemon {
     this.tokenFired.delete(id);
   }
 
-  /** Daemon restart or TTL: the book forgets every target set but remembers the ids. */
+  /**
+   * A genuine daemon restart: a fresh process, nothing about earlier Stops is known
+   * (neither target sets nor seen ids), so a repeat is a first receipt again.
+   */
+  restart(): void {
+    this.book.clear();
+    this.forgotten.clear();
+    this.tokenFired.clear();
+  }
+
+  /** TTL / eviction within ONE daemon lifetime: target sets gone, ids remembered (`expired`). */
   forgetBook(): void {
     for (const id of this.book.keys()) {
       this.forgotten.add(id);
@@ -219,6 +271,27 @@ export class FakeDaemon {
     p.settled = true;
     p.resolve(resp);
     return resp;
+  }
+
+  /**
+   * Process request `i` NOW (fixing T if first receipt) but hold the reply; deliver it
+   * later with `release(i)`. Processing and reply delivery are separate steps.
+   */
+  processOnly(i = this.requests.length - 1): void {
+    const p = this.requests[i];
+    if (!p || p.settled || p.captured) {
+      throw new Error(`request ${i} is not open`);
+    }
+    p.captured = this.process(p.body);
+  }
+
+  release(i: number): void {
+    const p = this.requests[i];
+    if (!p || p.settled || !p.captured) {
+      throw new Error(`request ${i} has no captured reply`);
+    }
+    p.settled = true;
+    p.resolve(p.captured);
   }
 
   /** Process request `i` NOW but lose the reply (the client sees a transport error). */
