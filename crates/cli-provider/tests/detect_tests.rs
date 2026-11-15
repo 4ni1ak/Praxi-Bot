@@ -438,7 +438,7 @@ async fn test_caching_and_refresh() {
 }
 
 #[tokio::test]
-async fn only_installed_claude_and_codex_are_runnable() {
+async fn only_installed_claude_is_runnable() {
     let temp = fixture_dir();
     for name in ["claude", "codex", "cursor-agent", "opencode", "gemini"] {
         install_fake(temp.path(), name);
@@ -631,4 +631,21 @@ fn cli_engines_catalog_marks_only_claude_runnable() {
     assert!(cli_provider::enable_refusal_message("chatgpt-plan").contains("unified_exec"));
     assert!(cli_provider::engine_spec("unknown").is_none());
     assert_ne!(cli_provider::enable_refusal_message("unknown"), "");
+}
+
+#[test]
+fn explicit_and_linked_working_directory_executables_are_refused() {
+    let cwd = std::env::current_dir().unwrap();
+    let env = PathEnv::for_test(cwd.clone());
+    assert!(resolve_spawn(&cwd.join("Cargo.toml"), &env).is_err());
+    assert!(resolve_spawn(Path::new("Cargo.toml"), &env).is_err());
+    #[cfg(unix)]
+    {
+        // A safe PATH wrapper must not redirect into the working directory.
+        let dir = fixture_dir();
+        std::os::unix::fs::symlink(cwd.join("Cargo.toml"), dir.path().join("payload.exe")).unwrap();
+        let shim = dir.path().join("claude.cmd");
+        std::fs::write(&shim, "\"%~dp0payload.exe\" %*\r\n").unwrap();
+        assert!(resolve_spawn(&shim, &PathEnv::for_test(dir.path().into())).is_err());
+    }
 }

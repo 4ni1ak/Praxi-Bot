@@ -75,7 +75,10 @@ pub async fn run_install(
                 .or_else(|| env.env_vars.get("SystemRoot"))
                 .ok_or("powershell_missing")?;
             let program = Path::new(root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
-            if !crate::search::trusted_candidate(&program) {
+            if !program.is_absolute()
+                || !program.is_file()
+                || !crate::search::trusted_candidate(&program)
+            {
                 return Err("powershell_missing");
             }
             ResolvedCommand {
@@ -224,7 +227,7 @@ mod tests {
         let mut output = String::new();
         emit_lines(&mut pending, b"se", false, &mut |s| output.push_str(&s));
         emit_lines(&mut pending, b"cret=value\n", false, &mut |s| {
-            output.push_str(&s)
+            output.push_str(&s);
         });
         assert_eq!(output, "[installer output redacted]\n");
     }

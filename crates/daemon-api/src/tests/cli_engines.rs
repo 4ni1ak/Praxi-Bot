@@ -82,6 +82,15 @@ async fn install_requires_single_use_approval_and_audits_before_execution() {
         "/v1/providers/cli/install/{}/decision",
         preview["approval_id"].as_str().unwrap()
     );
+    for extra in [
+        json!({"decision":"approve", "command":"whoami"}),
+        json!({"decision":"approve", "scope":"always"}),
+    ] {
+        assert_eq!(
+            call(&t, Method::POST, &path, Some(extra)).await.status,
+            StatusCode::BAD_REQUEST
+        );
+    }
     let decision = call(&t, Method::POST, &path, Some(json!({"decision":"approve"}))).await;
     assert_eq!(decision.status, StatusCode::OK);
     assert!(String::from_utf8_lossy(&decision.body).contains("npm_missing"));
@@ -131,7 +140,7 @@ async fn denied_and_expired_install_approvals_never_start() {
             &t,
             Method::POST,
             &format!("/v1/providers/cli/install/{id}/decision"),
-            Some(json!({"decision":"deny"})),
+            Some(json!({"decision": if expire { "approve" } else { "deny" }})),
         )
         .await;
         assert_eq!(
@@ -168,6 +177,9 @@ async fn every_peer_role_is_denied_cli_mutations_including_path_variants() {
             "/v1/providers//cli/install",
             "/v1/providers/cli%2finstall",
             "/v1/providers/cli/install/00000000-0000-0000-0000-000000000000/decision",
+            "/v1/providers/cli/install/00000000-0000-0000-0000-000000000000/decision/",
+            "/v1/providers//cli/install/00000000-0000-0000-0000-000000000000/decision",
+            "/v1/providers/cli%2Finstall/00000000-0000-0000-0000-000000000000%2Fdecision",
             "/v1/providers/cli/enable",
             "/v1/providers/cli%2Fenable/",
         ] {
@@ -199,6 +211,67 @@ async fn every_peer_role_is_denied_cli_mutations_including_path_variants() {
             .unwrap()
             .len(),
         0
+    );
+}
+
+#[test]
+fn handler_owner_guard_cannot_be_granted_by_a_peer_role() {
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        let peer = crate::PeerIdentity {
+            key: "peer".into(),
+            role,
+        };
+        assert!(crate::cli_engines::local_owner(&crate::live_view::Actor::peer(&peer)).is_err());
+    }
+}
+
+#[tokio::test]
+async fn audit_write_failure_refuses_install_before_scheduling_any_process() {
+    let t = setup();
+    let preview = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/install",
+        Some(json!({"id":"opencode"})),
+    )
+    .await
+    .json();
+    let db = rusqlite::Connection::open(t.state.data_dir().join("bot.db")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER refuse_cli_start BEFORE INSERT ON audit_log
+        WHEN NEW.action = 'provider.cli_install.started'
+        BEGIN SELECT RAISE(ABORT, 'fixture audit unavailable'); END;",
+    )
+    .unwrap();
+    let path = format!(
+        "/v1/providers/cli/install/{}/decision",
+        preview["approval_id"].as_str().unwrap()
+    );
+    assert_eq!(
+        call(&t, Method::POST, &path, Some(json!({"decision":"approve"})))
+            .await
+            .status,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let actions: Vec<_> = t
+        .state
+        .storage()
+        .list_audit(t.state.user_id())
+        .unwrap()
+        .into_iter()
+        .map(|row| row.action)
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            "provider.cli_install.requested",
+            "provider.cli_install.decision"
+        ]
     );
 }
 

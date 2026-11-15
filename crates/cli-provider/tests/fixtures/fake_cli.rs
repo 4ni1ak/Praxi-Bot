@@ -32,7 +32,7 @@ fn probe_tree(args: &[String]) -> bool {
     let Ok(mode) = std::env::var("PROBE_TREE_MODE") else {
         return false;
     };
-    if args != ["--version"] {
+    if args != ["--version"] && args.first().is_none_or(|arg| arg != "install") {
         return false;
     }
     let ready = std::env::var("PROBE_TREE_READY").unwrap();
@@ -99,6 +99,9 @@ fn main() {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|a| a == "install") {
+        if probe_tree(&args) {
+            return;
+        }
         if let Ok(dir) = std::env::var("FAKE_INSTALL_LOG") {
             let dir = std::path::Path::new(&dir);
             std::fs::write(

@@ -198,6 +198,8 @@ export function DetectedAccountsBlock() {
                     </span>
                     {engine?.path ? <span className={styles.cliPath}>{engine.path}</span> : null}
                     {engine?.limitation === "native_tools_not_confined" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.nativeToolsOpen")}</span> : null}
+                    {engine?.limitation === "detection_only" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.detectionOnly")}</span> : null}
+                    {row.runnable ? <span className={styles.sub}>{t("settingsModal.ai.detected.runnableEngine")}</span> : null}
                     {install ? <>
                       <code className={styles.cliCommand}>{install.command}</code>
                       <span className={styles.sub}>{t(install.verified ? "settingsModal.ai.detected.commandVerified" : "settingsModal.ai.detected.commandUnverified")}</span>

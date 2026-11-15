@@ -278,6 +278,18 @@ fn is_batch_file(path: &Path) -> bool {
 /// Returns [`ShimError::Refused`] if the candidate is a Windows `.cmd` or `.bat` shim
 /// that cannot be safely unwrapped without executing `cmd.exe`.
 pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand, ShimError> {
+    if !candidate.is_absolute() || !crate::search::trusted_candidate(candidate) {
+        return Err(ShimError::Refused);
+    }
+    let mut resolved = resolve_spawn_inner(candidate, env)?;
+    if !resolved.program.is_absolute() || !crate::search::trusted_candidate(&resolved.program) {
+        return Err(ShimError::Refused);
+    }
+    resolved.program = std::fs::canonicalize(resolved.program).map_err(|_| ShimError::Refused)?;
+    Ok(resolved)
+}
+
+fn resolve_spawn_inner(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand, ShimError> {
     if !is_batch_file(candidate) {
         return Ok(ResolvedCommand {
             program: candidate.to_path_buf(),
@@ -298,7 +310,7 @@ pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand,
         let dir = candidate.parent().unwrap_or_else(|| Path::new("."));
         if let Some(target) = parse_npm_shim_target(&text) {
             let script_path = dir.join(&target);
-            if script_path.is_file() {
+            if script_path.is_file() && crate::search::trusted_candidate(&script_path) {
                 let node = find_node_executable(dir, env);
                 if let Some(node) = node {
                     return Ok(ResolvedCommand {
@@ -576,7 +588,8 @@ fn native_exe_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
     }
     let root = std::fs::canonicalize(package_dir).ok()?;
     let file = std::fs::canonicalize(&joined).ok()?;
-    (file.starts_with(&root) && file != root).then_some(file)
+    (file.starts_with(&root) && file != root && crate::search::trusted_candidate(&file))
+        .then_some(file)
 }
 
 fn find_node_executable(near: &Path, env: &PathEnv) -> Option<PathBuf> {

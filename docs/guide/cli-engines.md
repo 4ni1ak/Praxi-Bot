@@ -5,13 +5,15 @@ re-runs bounded version and authentication probes. Detection also warms at
 daemon startup. Terminal PATH entries are supplemented with user-local, npm,
 Node version-manager and native Windows installation directories. Relative
 PATH entries, the working directory and links back into it are refused.
+Resolved shim programs and scripts are checked again against that boundary.
+An unrelated `agent` on PATH cannot hide Cursor's vendor-directory alias.
 
 | Engine | Commands (Windows uses PATHEXT) | Auth evidence | Install command, all OS unless specified | Brain |
 | --- | --- | --- | --- | --- |
 | Claude Code | `claude` | `auth status --json` | `npm install -g @anthropic-ai/claude-code` (verified local reference) | Yes, minimum 2.1.257 plus runtime capability checks |
 | Codex | `codex` | `login status` | `npm install -g @openai/codex` (verified local reference) | Blocked: `unified_exec` cannot be disabled |
 | Gemini CLI | `gemini` | Credential-file metadata only; contents never opened | `npm install -g @google/gemini-cli` (**unverified**, copy only) | Detection only; minimum unverified |
-| OpenCode | `opencode` | Credential-file metadata only; contents never opened | `npm install -g opencode-ai` (verified local reference) | Blocked: native-tool confinement unverified |
+| OpenCode | `opencode` | Credential-file metadata only; contents never opened | `npm install -g opencode-ai` (verified local reference) | Detect/install only: inspected CLI has no switch to disable native tools |
 | Cursor | `cursor-agent`; `agent` only inside a `cursor-agent` directory | `status --format json`, then `status` | Windows: `irm 'https://cursor.com/install?win32=true' \| iex`; Unix: `curl https://cursor.com/install -fsS \| bash` (verified local reference) | Detection only; minimum unverified |
 | ChatGPT plan | Same Codex executable | Unknown; no Praxi PKCE flow | Use the Codex row | Detection only |
 
