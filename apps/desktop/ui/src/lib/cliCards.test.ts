@@ -38,7 +38,7 @@ test("paths lose the verbatim prefix and versions read as numbers", () => {
 
 test("an engine the daemon switched on by itself triggers one provider reload", async () => {
   const engines = await new MockApiClient().cliEngines();
-  const on = engines.map((e) => (e.detected.id === "claude" ? { ...e, enabled: true } : e));
+  const on = engines.map((e) => ({ ...e, enabled: e.detected.id === "claude" }));
   assert.equal(needsProviderReload(on, new Set()), true);
   assert.equal(needsProviderReload(on, new Set(["cli:claude"])), false);
 });
