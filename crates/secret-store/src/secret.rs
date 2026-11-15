@@ -89,7 +89,7 @@ pub fn is_fill_name(name: &str) -> bool {
         .is_some_and(|p| p.eq_ignore_ascii_case(FILL_PREFIX))
 }
 
-/// Configuration (providers, MCP, OpenAPI, e-mail, channels) can never name a
+/// Configuration (providers, MCP, `OpenAPI`, e-mail, channels) can never name a
 /// fill secret: only the fill tools, through [`crate::FillSecrets`], read them.
 ///
 /// # Errors

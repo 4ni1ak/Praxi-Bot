@@ -195,7 +195,10 @@ fn sinks_text(r: &Rig) -> String {
             s.push_str(&m.content);
         }
     }
-    s.push_str(&serde_json::to_string(&r.env.storage.list_audit(r.env.user).unwrap()).unwrap());
+    s.push_str(&format!(
+        "{:?}",
+        r.env.storage.list_audit(r.env.user).unwrap()
+    ));
     for run in r.env.storage.list_runs(r.env.user).unwrap() {
         for st in r.env.storage.list_steps(run.id).unwrap() {
             s.push_str(&st.input.to_string());

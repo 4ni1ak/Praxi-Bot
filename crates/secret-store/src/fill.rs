@@ -7,7 +7,7 @@
 //! would be typed against this secret's allow-list.
 //!
 //! * The value lives in the ordinary [`SecretStore`] under `fill/<name>`. No
-//!   configuration (providers, MCP, OpenAPI, e-mail, channels) can reference a
+//!   configuration (providers, MCP, `OpenAPI`, e-mail, channels) can reference a
 //!   `fill/` name ([`crate::refuse_fill_namespace`]), and the fill tools can
 //!   only ever build `fill/<name>` keys, so `composio/...`, `mcp/...` or a
 //!   provider key can never be read through the `secret` parameter.

@@ -101,7 +101,10 @@ fn audit_actions(t: &T) -> Vec<String> {
 }
 
 fn audit_dump(t: &T) -> String {
-    serde_json::to_string(&t.state.storage().list_audit(t.state.user_id()).unwrap()).unwrap()
+    format!(
+        "{:?}",
+        t.state.storage().list_audit(t.state.user_id()).unwrap()
+    )
 }
 
 async fn create(r: &Rig, name: &str, origins: &[&str]) -> super::Resp {
