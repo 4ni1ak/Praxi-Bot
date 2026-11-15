@@ -114,3 +114,66 @@ export function computerScopePlan(
 ): { localBridge: true; hostSession: boolean } {
   return { localBridge: true, hostSession: activeComputerId !== localId };
 }
+
+/** How long a good connection may look bad before the banner says so (health ticks every 3 s). */
+export const HOST_STATE_HOLD_MS = 10_000;
+/** How long "connecting" may last before it becomes "offline" with a retry. */
+export const HOST_CONNECT_GIVEUP_MS = 25_000;
+
+export interface HostStateMemory {
+  shown: HostUiState;
+  /** When `shown` was first shown. */
+  since: number;
+  /** A worse raw state seen since this time, not yet shown. */
+  worseSince: number | null;
+}
+
+const WORSE = new Set(["connecting", "offline"]);
+const GOOD = new Set(["connected", "no_model_key"]);
+
+function sameState(a: HostUiState, b: HostUiState): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * One stable state per connection (card 257-A). The raw state is recomputed on every poll and
+ * flips whenever one health read is missed; the banner only follows it when that lasts:
+ * connected stays connected for `HOST_STATE_HOLD_MS` of bad polls (then it is "offline", never
+ * "connecting" again), connecting becomes offline after `HOST_CONNECT_GIVEUP_MS`, and any
+ * improvement or hard state (not paired, version) shows at once.
+ */
+export function settleHostState(
+  mem: HostStateMemory | null,
+  raw: HostUiState,
+  now: number
+): HostStateMemory {
+  if (!mem) {
+    return { shown: raw, since: now, worseSince: null };
+  }
+  const { shown } = mem;
+  if (sameState(shown, raw)) {
+    return { ...mem, worseSince: null };
+  }
+  if (GOOD.has(shown.kind) && WORSE.has(raw.kind)) {
+    const worseSince = mem.worseSince ?? now;
+    if (now - worseSince >= HOST_STATE_HOLD_MS) {
+      return { shown: { kind: "offline" }, since: now, worseSince: null };
+    }
+    return { ...mem, worseSince };
+  }
+  if (shown.kind === "connecting" && raw.kind === "connecting") {
+    return mem;
+  }
+  if (shown.kind === "offline" && raw.kind === "connecting") {
+    // Stay "offline" while a retry is under way; no flip back to "connecting".
+    return { ...mem, worseSince: null };
+  }
+  return { shown: raw, since: now, worseSince: null };
+}
+
+/** The shown state, turning a connect that never completes into "offline". */
+export function giveUpConnecting(mem: HostStateMemory, now: number): HostUiState {
+  return mem.shown.kind === "connecting" && now - mem.since >= HOST_CONNECT_GIVEUP_MS
+    ? { kind: "offline" }
+    : mem.shown;
+}

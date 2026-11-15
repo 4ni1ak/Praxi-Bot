@@ -1,3 +1,4 @@
+import { MOCK_HOST_ID, mockHostScenario } from "./mockHostScenario.ts";
 import { applyPatchOps, type PatchOp } from "../lib/botPatch.ts";
 import { ApiClient, ApiError } from "./client.ts";
 import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
@@ -715,16 +716,20 @@ export class MockApiClient extends ApiClient {
     }
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
-        return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+        return ok({ status: mockHostScenario() === "empty" ? "setup_required" : "ok", uptime_secs: 3600, version: "0.1.0-mock", api_version: "1" });
       case "GET /hosts":
-        return ok({ local_version: "0.1.0-mock", local_api_version: "1", hosts: [] });
+        return ok({
+          local_version: "0.1.0-mock",
+          local_api_version: "1",
+          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" ? "offline" : "connected", detail: null }] : []
+        });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":
         if (seg[1] && seg[2] === "skills") {
           return ok(this.getBotSkillsState(seg[1]));
         }
-        return ok(structuredClone(this.bots));
+        return ok(mockHostScenario() === "empty" ? [] : structuredClone(this.bots));
       case "GET /chats":
         if (seg[2] === "messages") {
           if (this.messages.has(seg[1])) return ok(this.messages.get(seg[1]));

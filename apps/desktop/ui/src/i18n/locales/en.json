@@ -2472,6 +2472,48 @@
     "pairing": "Pairing…",
     "failed": "Pairing failed. Check that the host is on and the ticket is new."
   },
+  "hostMode": {
+    "state": {
+      "connected": "Connected",
+      "connecting": "Connecting…",
+      "offline": "Not answering. Retrying on its own.",
+      "notPaired": "No longer accepts this computer. Pair again.", "mismatch": "Runs a different version than this app. Update both to the same version."
+    },
+    "missing": {
+      "model": "No model connected on this server yet.",
+      "bots": "No bots on this server yet."
+    },
+    "have": {
+      "model": "A model is connected.",
+      "bots": "Bots are ready on this server."
+    },
+    "viewScreen": "View screen",
+    "managedOnServer": "Keys, permissions, tools and pairing are managed on {{name}} itself. Here you can create and edit bots, chat and watch its screen.",
+    "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
+    "model": {
+      "action": "Connect a model on {{name}}",
+      "title": "Connect a model on this server",
+      "onServer": "For now, keys are added on the server itself, not from this app. Open a terminal on {{name}} and run:",
+      "fromApp": "Add the key for {{name}} here.",
+      "copy": "Copy command",
+      "afterwards": "This app picks it up on its own a few seconds later."
+    },
+    "refusal": {
+      "policy": "The execution policy is set on {{name}} itself, not from this app.",
+      "secrets": "Keys and secrets are added on {{name}} itself, not from this app.",
+      "tools": "Tool servers and skills are managed on {{name}} itself.",
+      "credentials": "Email and search accounts are connected on {{name}} itself.",
+      "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
+      "lifecycle": "Pairing and host updates are done on {{name}} itself.",
+      "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
+      "knowledge": "Knowledge settings are managed on {{name}} itself.",
+      "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
+      "overlay": "Only the person at {{name}} can answer that prompt.",
+      "ownerOnly": "This can only be done on {{name}} itself.",
+      "role": "{{name}} does not allow this computer to do that.",
+      "generic": "{{name}} did not allow that. It can only be done on {{name}} itself."
+    }
+  },
   "hostState": {
     "connecting": "Connecting to {{name}}…",
     "offline": "{{name}} is not answering. Its bots keep running; this app reconnects on its own.",

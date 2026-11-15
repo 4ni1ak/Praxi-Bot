@@ -87,7 +87,9 @@ import { useBotReorder } from "./components/useBotReorder";
 import { setBotOrderSnapshot } from "./store/botOrderStore";
 import { computerScopePlan } from "./lib/hostState";
 import { ComputerPicker } from "./components/ComputerPicker";
+import { HostEmptyState } from "./components/HostEmptyState";
 import { HostStateBanner } from "./components/HostStateBanner";
+import { friendlyApiError, onboardingAllowed } from "./lib/hostMode";
 import {
   DaemonProvider,
   HostSession,
@@ -152,7 +154,8 @@ function AppShell() {
     refreshBots,
     refreshChats,
     retry,
-    activeComputerId
+    activeComputerId,
+    activeHostName
   } = useDaemon();
   const { setThumbnailDemand, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
@@ -172,6 +175,13 @@ function AppShell() {
       setRoute({ kind: "home" });
     }
   }, [activeComputerId]);
+  // The first-run wizard is written for this computer's own daemon: never while a host is selected.
+  const onboardingBlocked = !onboardingAllowed(activeComputerId);
+  useEffect(() => {
+    if (onboardingBlocked && route.kind === "onboarding") {
+      setRoute({ kind: "home" });
+    }
+  }, [onboardingBlocked, route.kind]);
   const [controlState, setControlStateRaw] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
@@ -444,6 +454,9 @@ function AppShell() {
   };
 
   const handleOpenOnboarding = (restartFromFirstStep: boolean) => {
+    if (onboardingBlocked) {
+      return;
+    }
     if (restartFromFirstStep) {
       updateSettings({
         onboardingStep: 1,
@@ -531,9 +544,14 @@ function AppShell() {
       setBotProfileOpen(false);
       go({ kind: "chat", chatId: result.chatId, botId });
     } else {
-      setNewChatError(result.message);
+      const detail = friendlyApiError(
+        result.message,
+        t,
+        onboardingBlocked ? { name: activeHostName ?? t("computerPicker.host") } : null
+      );
+      setNewChatError(detail);
       if (newChatFailureNeedsToast(route.kind)) {
-        toast.show(t("bots.newChatFailed", { detail: result.message }), "danger");
+        toast.show(t("bots.newChatFailed", { detail }), "danger");
       }
     }
     setNewChatBusy(false);
@@ -770,7 +788,7 @@ function AppShell() {
         {runBanner}
         {panelVisible || route.kind === "chat" ? null : <StopStatusNotice variant="main" />}
         <PausedControlBanner />
-        {route.kind === "onboarding" ? (
+        {route.kind === "onboarding" && !onboardingBlocked ? (
           <OnboardingView
             settings={settings}
             onUpdateSettings={updateSettings}
@@ -799,7 +817,10 @@ function AppShell() {
             }}
           />
         ) : null}
-        {route.kind === "home" ? (
+        {route.kind === "home" && onboardingBlocked && phase === "ready" && bots.length === 0 ? (
+          <HostEmptyState onNewBot={() => setNewBotOpen(true)} />
+        ) : null}
+        {route.kind === "home" && !(onboardingBlocked && phase === "ready" && bots.length === 0) ? (
           <div className={styles.centerPane}>
             <Card padding="lg" className={styles.emptyStateCard}>
               {phase === "error" ? (
