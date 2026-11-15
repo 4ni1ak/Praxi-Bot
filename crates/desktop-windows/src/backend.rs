@@ -4,8 +4,8 @@ use std::sync::{Arc, mpsc};
 
 use async_trait::async_trait;
 use desktop_api::{
-    Action, ActionResult, Capabilities, DesktopBackend, DesktopError, Image, LiveViewOptions,
-    Quality, Region, Snapshot, WindowInfo,
+    ActGuard, Action, ActionResult, Capabilities, DesktopBackend, DesktopError, Image, InputTarget,
+    LiveViewOptions, Quality, Refusal, Region, Snapshot, WindowInfo,
     live_view::DesktopViewTarget,
     snapshot::{AppSpec, Pid},
 };
@@ -117,6 +117,24 @@ impl DesktopBackend for WindowsBackend {
         let res = self.run(move |w| w.act(&action)).await;
         self.notify_live_view();
         res
+    }
+
+    async fn input_target(&self) -> Result<Option<InputTarget>, DesktopError> {
+        self.run(|w| Ok(w.input_target())).await
+    }
+
+    async fn act_guarded(
+        &self,
+        action: Action,
+        guard: ActGuard,
+    ) -> Result<ActionResult, DesktopError> {
+        let res = self.run(move |w| w.act_with(&action, Some(&guard))).await;
+        self.notify_live_view();
+        res
+    }
+
+    fn key_chord_refusal(&self, keys: &[String]) -> Option<Refusal> {
+        crate::pure::chord_opens_launcher_or_switches(keys).then_some(Refusal::Chord)
     }
 
     async fn screenshot(&self, region: Region, quality: Quality) -> Result<Image, DesktopError> {

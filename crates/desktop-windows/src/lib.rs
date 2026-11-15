@@ -13,6 +13,8 @@ mod backend;
 #[cfg(windows)]
 mod capture;
 #[cfg(windows)]
+mod identity;
+#[cfg(windows)]
 mod input;
 #[cfg(windows)]
 mod uia;

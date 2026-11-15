@@ -28,11 +28,51 @@ fn send(inputs: &[INPUT]) -> Result<(), DesktopError> {
     if sent as usize == inputs.len() {
         Ok(())
     } else {
+        // A blocked send can stop midway. Do not leave a chord's keys held down.
+        release_stuck_keys(&inputs[..(sent as usize).min(inputs.len())]);
         Err(DesktopError::Accessibility(format!(
             "SendInput injected {sent} of {} events (blocked by UIPI or another desktop?)",
             inputs.len()
         )))
     }
+}
+
+/// Key-ups, in reverse order, for every virtual key that `done` pressed and
+/// did not release. Unicode text events carry no held state.
+fn stuck_key_ups(done: &[INPUT]) -> Vec<INPUT> {
+    let mut held: Vec<(u16, bool)> = Vec::new();
+    for e in done {
+        if e.r#type != INPUT_KEYBOARD {
+            continue;
+        }
+        // SAFETY: `r#type` says this is the keyboard variant of the union.
+        let ki = unsafe { e.Anonymous.ki };
+        if ki.wVk.0 == 0 || ki.dwFlags.contains(KEYEVENTF_UNICODE) {
+            continue;
+        }
+        if ki.dwFlags.contains(KEYEVENTF_KEYUP) {
+            if let Some(pos) = held.iter().rposition(|(vk, _)| *vk == ki.wVk.0) {
+                held.remove(pos);
+            }
+        } else {
+            held.push((ki.wVk.0, ki.dwFlags.contains(KEYEVENTF_EXTENDEDKEY)));
+        }
+    }
+    held.iter()
+        .rev()
+        .map(|(vk, _)| vk_event(*vk, true))
+        .collect()
+}
+
+fn release_stuck_keys(done: &[INPUT]) {
+    let ups = stuck_key_ups(done);
+    if ups.is_empty() {
+        return;
+    }
+    // SAFETY: a valid slice of initialised INPUT structs; best effort, the
+    // result is ignored because there is nothing further to do on failure.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let _ = unsafe { SendInput(&ups, std::mem::size_of::<INPUT>() as i32) };
 }
 
 fn kbd(vk: u16, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
@@ -129,6 +169,36 @@ pub fn type_text(text: &str) -> Result<(), DesktopError> {
     send(&events)
 }
 
+/// Type text in short chunks, running `check` immediately before each
+/// `SendInput`. A window that takes the focus mid-text then receives at most
+/// one chunk. Surrogate pairs are never split.
+pub fn type_text_checked(
+    text: &str,
+    check: &mut dyn FnMut() -> Result<(), DesktopError>,
+) -> Result<(), DesktopError> {
+    const CHUNK_UNITS: usize = 24;
+    let units: Vec<u16> = text.encode_utf16().collect();
+    if units.is_empty() {
+        return check();
+    }
+    let mut i = 0;
+    while i < units.len() {
+        let mut end = (i + CHUNK_UNITS).min(units.len());
+        if end < units.len() && (0xD800..0xDC00).contains(&units[end - 1]) {
+            end += 1;
+        }
+        let mut events = Vec::with_capacity((end - i) * 2);
+        for unit in &units[i..end] {
+            events.push(kbd(0, *unit, KEYEVENTF_UNICODE));
+            events.push(kbd(0, *unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+        }
+        check()?;
+        send(&events)?;
+        i = end;
+    }
+    Ok(())
+}
+
 fn vk_event(vk: u16, up: bool) -> INPUT {
     let mut flags = if up {
         KEYEVENTF_KEYUP
@@ -173,4 +243,56 @@ pub fn key_chord(keys: &[String]) -> Result<(), DesktopError> {
         }
     }
     send(&events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_send_releases_the_keys_it_already_pressed() {
+        // ctrl down, shift down, then the send stopped before the key-ups.
+        let done = [
+            vk_event(0x11, false),
+            vk_event(0x10, false),
+            kbd(0, u16::from(b'x'), KEYEVENTF_UNICODE),
+        ];
+        let ups = stuck_key_ups(&done);
+        let vks: Vec<(u16, bool)> = ups
+            .iter()
+            .map(|e| {
+                // SAFETY: built by `vk_event`, the keyboard variant.
+                let ki = unsafe { e.Anonymous.ki };
+                (ki.wVk.0, ki.dwFlags.contains(KEYEVENTF_KEYUP))
+            })
+            .collect();
+        assert_eq!(
+            vks,
+            vec![(0x10, true), (0x11, true)],
+            "reverse order, key-ups"
+        );
+    }
+
+    #[test]
+    fn nothing_is_released_when_every_press_was_released() {
+        let done = [
+            vk_event(0x11, false),
+            vk_event(0x41, false),
+            vk_event(0x41, true),
+            vk_event(0x11, true),
+        ];
+        assert!(stuck_key_ups(&done).is_empty());
+    }
+
+    #[test]
+    fn text_is_checked_before_every_chunk_and_stops_at_the_first_refusal() {
+        // No SendInput is reached when the very first check refuses.
+        let mut calls = 0;
+        let r = type_text_checked(&"a".repeat(100), &mut || {
+            calls += 1;
+            Err(DesktopError::GuardRefused("moved".into()))
+        });
+        assert!(matches!(r, Err(DesktopError::GuardRefused(_))));
+        assert_eq!(calls, 1);
+    }
 }

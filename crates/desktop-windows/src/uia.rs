@@ -3,8 +3,9 @@
 #![allow(unsafe_code)]
 
 use desktop_api::{
-    DesktopError,
+    ActGuard, DesktopError, InputTarget, Refusal,
     action::{Action, ActionResult, ClickMethod, CoordinateSpace, Target},
+    guard,
     snapshot::{Fingerprint, Rect, Snapshot, TreeQuality, UiNode},
 };
 use windows::{
@@ -36,12 +37,35 @@ use windows::{
 };
 
 use crate::{
-    input,
+    identity, input,
     pure::{self, MAX_NODES, RawNode},
     winlist,
 };
 
 type Res<T> = Result<T, DesktopError>;
+
+/// The error for a guard that stopped an action; nothing was sent.
+fn refused(r: Refusal) -> DesktopError {
+    let why = match r {
+        Refusal::NoIdentity => "the window's program could not be identified",
+        Refusal::Elevated => "the window runs elevated or its elevation could not be read",
+        Refusal::Terminal => "the window is a terminal or shell",
+        Refusal::CommandApp => "the window belongs to an app with a built-in command line",
+        Refusal::Browser => "the window is a browser",
+        Refusal::PasswordManager => "the window belongs to a password manager",
+        Refusal::SystemSurface => "the window is a system launcher or credential surface",
+        Refusal::UwpFrame => {
+            "the window is a packaged-app frame that cannot be bound to one program"
+        }
+        Refusal::Dialog => "the window is a dialog (file dialog, Run, message box)",
+        Refusal::PasswordField => "the focused element is a password field",
+        Refusal::Chord => "this key combination opens a launcher or switches windows",
+        Refusal::ForegroundChanged => {
+            "the window that would receive the input is not the program that was approved"
+        }
+    };
+    DesktopError::GuardRefused(format!("{r}: {why}; ask again"))
+}
 
 /// How long UIA waits to reach a target process (the system default).
 const CONNECTION_TIMEOUT_MS: u32 = 2_000;
@@ -316,7 +340,11 @@ impl Worker {
         Ok((false, None))
     }
 
-    fn set_value(el: &IUIAutomationElement, value: &str) -> Res<Option<bool>> {
+    fn set_value(
+        el: &IUIAutomationElement,
+        value: &str,
+        mut check: Option<&mut dyn FnMut() -> Res<()>>,
+    ) -> Res<Option<bool>> {
         // SAFETY: pattern queries and calls on a live element.
         unsafe {
             if let Ok(p) = el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
@@ -329,8 +357,14 @@ impl Worker {
             // Fallback: focus, select all, type.
             el.SetFocus().map_err(acc("SetFocus"))?;
         }
+        if let Some(check) = check.as_mut() {
+            check()?;
+        }
         input::key_chord(&["ctrl".to_string(), "a".to_string()])?;
-        input::type_text(value)?;
+        match check {
+            Some(check) => input::type_text_checked(value, check)?,
+            None => input::type_text(value)?,
+        }
         // SAFETY: optional read-back if ValuePattern is exposed.
         let actual = unsafe {
             el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
@@ -506,14 +540,95 @@ impl Worker {
     }
 
     pub fn act(&mut self, action: &Action) -> Res<ActionResult> {
+        self.act_with(action, None)
+    }
+
+    // ── run-scoped control grant: the check right before input is sent ───────
+
+    /// Facts about the window `hwnd` (default: the foreground window), with a
+    /// live read of whether the focused element is a password field.
+    fn target_now(&self, hwnd: Option<HWND>) -> Res<InputTarget> {
+        let h = hwnd
+            .or_else(winlist::foreground_hwnd)
+            .ok_or_else(|| refused(Refusal::NoIdentity))?;
+        let mut t = identity::window_target(h).ok_or_else(|| refused(Refusal::NoIdentity))?;
+        t.password_focus = self.focus_is_password();
+        Ok(t)
+    }
+
+    /// Live, uncached: the element that has the keyboard focus right now is a
+    /// password field. A failed query counts as a password field (refuse).
+    fn focus_is_password(&self) -> bool {
+        // SAFETY: COM calls on the STA thread's IUIAutomation instance.
+        unsafe {
+            self.uia
+                .GetFocusedElement()
+                .and_then(|el| el.CurrentIsPassword())
+                .map_or(true, windows::core::BOOL::as_bool)
+        }
+    }
+
+    /// The window that would receive keyboard input is the granted program.
+    fn check_foreground(&self, g: &ActGuard) -> Res<()> {
+        guard::check_guard(g, &self.target_now(None)?).map_err(refused)
+    }
+
+    /// The top-level window at a screen point is the granted program (mouse
+    /// input lands there, whatever has the focus).
+    fn check_point(g: &ActGuard, (x, y): (f64, f64)) -> Res<()> {
+        let hwnd = identity::root_window_at(x, y).ok_or_else(|| refused(Refusal::NoIdentity))?;
+        let t = identity::window_target(hwnd).ok_or_else(|| refused(Refusal::NoIdentity))?;
+        guard::check_guard(g, &t).map_err(refused)
+    }
+
+    /// The window of the last snapshot is the granted program (for actions
+    /// that act inside that window without a `SendInput`).
+    fn check_snapshot_window(&self, g: &ActGuard) -> Res<()> {
+        let h = self.hwnd.ok_or_else(|| refused(Refusal::NoIdentity))?;
+        let t = identity::window_target(h).ok_or_else(|| refused(Refusal::NoIdentity))?;
+        guard::check_guard(g, &t).map_err(refused)
+    }
+
+    /// The window and program keyboard input would reach now. Mirrors
+    /// [`Self::focus_target`]: another program's foreground is replaced by the
+    /// last snapshot's window, the same program's own dialog keeps it.
+    pub fn input_target(&self) -> Option<InputTarget> {
+        let fg = winlist::foreground_hwnd();
+        let (hwnd, is_fg) = match (fg, self.hwnd) {
+            (Some(f), Some(s)) if f == s || winlist::window_pid(f) == winlist::window_pid(s) => {
+                (f, true)
+            }
+            (_, Some(s)) => (s, false),
+            (Some(f), None) => (f, true),
+            (None, None) => return None,
+        };
+        let mut t = identity::window_target(hwnd)?;
+        t.password_focus = is_fg && self.focus_is_password();
+        Some(t)
+    }
+
+    #[allow(clippy::too_many_lines)] // one arm per action kind
+    pub fn act_with(&mut self, action: &Action, guard: Option<&ActGuard>) -> Res<ActionResult> {
         let mut verified = None;
         match action {
             Action::Click { target, method } => {
+                if let Some(g) = guard {
+                    if *method == ClickMethod::Global {
+                        let p = self.point(target)?;
+                        Self::check_point(g, p)?;
+                    } else {
+                        self.check_snapshot_window(g)?;
+                    }
+                }
                 verified = self.click(target, *method)?;
             }
             Action::TypeText { text } => {
                 self.focus_target();
-                if let Err(e) = input::type_text(text) {
+                if let Some(g) = guard {
+                    // No UIA fallback here: it would write into whatever has
+                    // the focus without the per-chunk check.
+                    input::type_text_checked(text, &mut || self.check_foreground(g))?;
+                } else if let Err(e) = input::type_text(text) {
                     self.uia_type_fallback(text).map_err(|_| e)?;
                 }
             }
@@ -521,7 +636,20 @@ impl Worker {
                 Target::ByIndex { index, generation } => {
                     let r = self.resolve(*index, *generation)?;
                     let el = r.element.clone();
-                    verified = Self::set_value(&el, value)?;
+                    if let Some(g) = guard {
+                        self.check_snapshot_window(g)?;
+                        // SAFETY: cached property read on a retained live element.
+                        if unsafe { el.CachedIsPassword() }
+                            .map_or(true, windows::core::BOOL::as_bool)
+                        {
+                            return Err(refused(Refusal::PasswordField));
+                        }
+                        let this = &*self;
+                        verified =
+                            Self::set_value(&el, value, Some(&mut || this.check_foreground(g)))?;
+                    } else {
+                        verified = Self::set_value(&el, value, None)?;
+                    }
                     self.last_focused = Some(el);
                 }
                 Target::ByCoordinate { .. } => {
@@ -536,6 +664,9 @@ impl Worker {
                 delta_y,
             } => match target {
                 Target::ByIndex { index, generation } => {
+                    if let Some(g) = guard {
+                        self.check_snapshot_window(g)?;
+                    }
                     let r = self.resolve(*index, *generation)?;
                     Self::scroll(&r.element, *delta_x, *delta_y)?;
                 }
@@ -547,7 +678,13 @@ impl Worker {
             },
             Action::KeyPress { keys } => {
                 self.focus_target();
-                if let Err(e) = input::key_chord(keys) {
+                if let Some(g) = guard {
+                    if pure::chord_opens_launcher_or_switches(keys) {
+                        return Err(refused(Refusal::Chord));
+                    }
+                    self.check_foreground(g)?;
+                    input::key_chord(keys)?;
+                } else if let Err(e) = input::key_chord(keys) {
                     self.uia_key_fallback(keys).map_err(|_| e)?;
                 }
             }
@@ -559,6 +696,10 @@ impl Worker {
                 }
                 let a = self.point(from)?;
                 let b = self.point(to)?;
+                if let Some(g) = guard {
+                    Self::check_point(g, a)?;
+                    Self::check_point(g, b)?;
+                }
                 input::drag(a, b)?;
             }
         }

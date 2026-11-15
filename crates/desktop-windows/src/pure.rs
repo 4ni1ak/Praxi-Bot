@@ -255,6 +255,31 @@ pub fn parse_key(name: &str) -> Option<Key> {
     }
 }
 
+/// Whether a chord opens a launcher or switches windows, judged on the keys
+/// as this backend parses them (so `cmd`, `meta` and `super` count as Win).
+/// A key this parser does not know also counts: fail closed.
+#[must_use]
+pub fn chord_opens_launcher_or_switches(keys: &[String]) -> bool {
+    let mut vks = Vec::with_capacity(keys.len());
+    for k in keys {
+        match parse_key(k) {
+            Some(Key::Vk(v)) => vks.push(v),
+            Some(Key::Char(_)) => {}
+            None => return true,
+        }
+    }
+    let has = |v: u16| vks.contains(&v);
+    let (ctrl, shift, alt) = (has(0x11), has(0x10), has(0x12));
+    // 0x5B/0x5C: left/right Windows key. 0x1B: Esc. 0x09: Tab. 0x2E: Delete.
+    has(0x5B)
+        || has(0x5C)
+        || (ctrl && has(0x1B))
+        || (ctrl && shift && has(0x1B))
+        || (alt && has(0x09))
+        || (alt && has(0x1B))
+        || (ctrl && alt && has(0x2E))
+}
+
 /// Whether a virtual key needs `KEYEVENTF_EXTENDEDKEY`.
 #[must_use]
 pub fn is_extended(vk: u16) -> bool {
@@ -272,6 +297,36 @@ pub fn denormalize(x: f64, y: f64, rect: &Rect) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
+    fn chord(k: &[&str]) -> bool {
+        chord_opens_launcher_or_switches(&k.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn every_spelling_of_the_windows_key_is_a_launcher_chord() {
+        for k in ["win", "windows", "cmd", "meta", "super", "WIN", " Super "] {
+            assert!(chord(&[k, "r"]), "{k}");
+            assert!(chord(&[k]), "{k}");
+        }
+    }
+
+    #[test]
+    fn window_switching_and_start_menu_chords_are_refused() {
+        assert!(chord(&["ctrl", "esc"]));
+        assert!(chord(&["ctrl", "shift", "esc"]));
+        assert!(chord(&["alt", "tab"]));
+        assert!(chord(&["alt", "escape"]));
+        assert!(chord(&["ctrl", "alt", "delete"]));
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused_and_ordinary_chords_pass() {
+        assert!(chord(&["ctrl", "nosuchkey"]));
+        assert!(!chord(&["ctrl", "a"]));
+        assert!(!chord(&["enter"]));
+        assert!(!chord(&["ctrl", "shift", "s"]));
+        assert!(!chord(&["alt", "f4"]));
+    }
+
     use super::*;
 
     fn raw(role: &'static str, name: &str) -> RawNode {
