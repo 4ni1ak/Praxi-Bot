@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod doctor;
 mod email;
 mod host;
 mod mcp;
@@ -2959,6 +2960,79 @@ async fn peer_router_denies_provider_cli_enable_and_reload_for_all_peers() {
     )
     .await;
     assert_eq!(local.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn peer_router_denies_every_doctor_route_to_every_peer_role() {
+    let t = setup();
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let h = hits.clone();
+    let data_dir = t.state.data_dir();
+    t.state.set_provider_host(crate::ProviderHost {
+        catalog: provider_catalog::Catalog::default(),
+        reload: Box::new(move || {
+            h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            agent_core::build_providers(
+                &data_dir,
+                &provider_catalog::Catalog::default(),
+                &secret_store::MemoryStore::new(),
+                &mut |_| {},
+            )
+        }),
+    });
+    let mut routes: Vec<(Method, String)> = vec![
+        (Method::GET, "/v1/doctor".into()),
+        (Method::GET, "/v1/doctor/".into()),
+        (Method::GET, "//v1//doctor".into()),
+        (Method::GET, "/v1/doctor/report".into()),
+        (Method::GET, "/v1/doctor%2Freport".into()),
+    ];
+    for r in crate::doctor::Repair::ALL {
+        let id = r.id();
+        routes.push((Method::POST, format!("/v1/doctor/repair/{id}")));
+        routes.push((Method::POST, format!("/v1/doctor/repair/{id}/")));
+        routes.push((Method::POST, format!("/v1/doctor//repair/{id}")));
+        routes.push((Method::POST, format!("/v1/doctor%2Frepair%2F{id}")));
+    }
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in &routes {
+            let mut req = Request::builder()
+                .method(method.clone())
+                .uri(path.as_str())
+                .body(Body::empty())
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role,
+            });
+            let resp = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "role={role:?} {method} {path} should be 403"
+            );
+        }
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(
+        !audit.iter().any(|a| a.action.starts_with("doctor.")),
+        "no repair may be requested by a peer"
+    );
+    // The local user still reaches the routes on the loopback router.
+    let local = call(&t, Method::GET, "/v1/doctor", None).await;
+    assert_eq!(local.status, StatusCode::OK);
+    let local = call(&t, Method::POST, "/v1/doctor/repair/reload_providers", None).await;
+    assert_eq!(local.status, StatusCode::OK, "{:?}", local.json());
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

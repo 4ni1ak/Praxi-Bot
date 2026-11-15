@@ -73,6 +73,11 @@ export type ProvidersDto = S["ProvidersDto"];
 export type ConfiguredProviderDto = S["ConfiguredProviderDto"];
 export type CatalogProviderDto = S["CatalogProviderDto"];
 export type DetectedProviderDto = S["DetectedProviderDto"];
+export type DoctorCheck = S["Check"];
+export type DoctorStatus = S["Status"];
+export type RepairId = S["Repair"];
+export type DoctorReport = S["DoctorReport"];
+export type RepairResult = S["RepairResult"];
 export type CliAuthState = S["CliAuthState"];
 export type EnableCliProviderInput = S["EnableCliProviderInput"];
 

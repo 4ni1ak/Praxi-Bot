@@ -144,6 +144,37 @@ fn production_redactor(sources: &RedactorSources) -> SharedRedactor {
     handle
 }
 
+/// The production redactor's secret list, read once, for a report written
+/// outside the daemon (`bot doctor --report`): every value in `store`, the
+/// API token in `data_dir` (as stored, even if malformed), the vault
+/// passphrase and credential environment variables, each with its encoded
+/// variants.  Unlike [`production_redactor`] it fails closed: a store that
+/// cannot be read is an error, never a smaller secret list.
+///
+/// # Errors
+/// The secret store cannot be listed or read.
+pub fn report_redactor(
+    data_dir: &Path,
+    store: &dyn SecretStore,
+) -> std::result::Result<SharedRedactor, secret_store::SecretError> {
+    let sources = RedactorSources {
+        store: None,
+        api_token: std::fs::read_to_string(daemon_api::token_path(data_dir))
+            .map(|t| t.trim().to_owned())
+            .unwrap_or_default(),
+        passphrase: env_passphrase(),
+        catalog_vars: catalog_env_vars(data_dir),
+    };
+    let extras: Vec<String> = sources
+        .extras()
+        .into_iter()
+        .filter(|v| !v.is_empty())
+        .collect();
+    let handle = SharedRedactor::default();
+    handle.refresh_from_store(Some(store), &extras)?;
+    Ok(handle)
+}
+
 /// A secret store that masks every value written through it from the moment
 /// it is stored (the daemon's write-only secrets route, MCP, channels), not
 /// only after the next refresh.
@@ -785,6 +816,25 @@ pub async fn run_daemon(
     .await
 }
 
+/// What `GET /v1/doctor` learns from `bot serve`: the desktop backend's
+/// capabilities and the production secret redactor (for the support report).
+/// Browsers are launched per run by the browser tools, so there is no shared
+/// session to restart (the repair stays unavailable).
+struct ServeDoctorHost {
+    desktop: Option<desktop_api::Capabilities>,
+    redactor: SharedRedactor,
+}
+
+impl daemon_api::DoctorHost for ServeDoctorHost {
+    fn desktop(&self) -> Option<desktop_api::Capabilities> {
+        self.desktop.clone()
+    }
+
+    fn redactor(&self) -> Option<SharedRedactor> {
+        Some(self.redactor.clone())
+    }
+}
+
 /// Run the daemon until a stop request (see [`shutdown_signal`]); running tool
 /// steps get `grace` to finish, everything else live is paused for the next start.
 ///
@@ -843,6 +893,7 @@ pub fn serve(
             redactor: redactor.clone(),
         }) as Arc<dyn SecretStore>
     });
+    let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
     let views = Arc::new(live_view::TargetRegistry::default());
     let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
     let effective_peer_enabled =
@@ -874,6 +925,10 @@ pub fn serve(
     }
     let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
     register_schedule_tools(data_dir, &state);
+    state.set_doctor_host(Arc::new(ServeDoctorHost {
+        desktop: desktop_caps,
+        redactor: redactor.clone(),
+    }));
     if let Some(host) = host {
         state.set_provider_host(host);
     }
