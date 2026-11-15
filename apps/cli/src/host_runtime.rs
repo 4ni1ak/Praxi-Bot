@@ -7,6 +7,8 @@ use live_view::UnavailableCode;
 /// Why the desktop backend did not start: a fixed public [`UnavailableCode`]
 /// plus the raw message, which is for the LOCAL daemon log only (it can name
 /// paths, user names, display sockets or environment values).
+// `bot-node` shares this file and only reads `detail`.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct BackendFailure {
     pub code: UnavailableCode,
@@ -23,6 +25,7 @@ impl BackendFailure {
 }
 
 /// `BOT_DESKTOP=off|0|false`.
+#[allow(dead_code)]
 #[must_use]
 pub fn desktop_switched_off() -> bool {
     desktop_off(std::env::var("BOT_DESKTOP").ok().as_deref())

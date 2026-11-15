@@ -141,7 +141,8 @@ impl DesktopRegistrar {
         self.probe(true);
     }
 
-    /// Number of probes started so far (diagnostics and tests).
+    /// Number of probes started so far (tests).
+    #[cfg(test)]
     #[must_use]
     pub fn attempts(&self) -> u64 {
         self.state.lock().attempt
