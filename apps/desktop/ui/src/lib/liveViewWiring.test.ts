@@ -57,8 +57,23 @@ test("every global Stop call site is one ledger Stop; the takeover override is d
   assert.match(app, /if \(!event\.repeat\) \{\s*requestStop\("hotkey"\);/, "one press, never on key repeat");
   assert.match(app, /requestStop\("banner"\)/);
   assert.match(viewer, /requestStop\("viewer"\)/);
-  // The override itself is behaviour-tested through overrideOptionsFor (stopHost.test.ts).
-  assert.match(host, /ledger\.onStop\(\(rec\) => \{\s*void overrideRef\.current\(overrideOptionsFor\(rec\)\);/);
+  // Behaviour of everything below is tested end to end in stopRuntime.test.ts; these
+  // guards only pin that the React host forwards to that runtime and nothing else.
+  assert.match(host, /runtime\.setOverride\(\(opts\) => void overrideStop\(opts\)\)/);
+  assert.match(host, /onControlStateChanged: \(snap: ControlSnapshot\) => \{\s*runtime\.onNativeSnapshot\(snap\);/);
+  assert.match(host, /onDaemonEvent\(\(env\) => runtime\.onDaemonEvent\(env\)\)/);
+  assert.match(host, /window\.setInterval\(\(\) => runtime\.tick\(\), HEARTBEAT_MS\)/);
+  assert.match(host, /runtime\.attach\(client, bridge\)/);
+  assert.match(host, /confirmDriving: \(\) => runtime\.confirmDriving\(\)/);
+  assert.match(host, /runtime\.scopeChanged\(\);\s*\}, \[targets, runtime\]\);/);
+  assert.doesNotMatch(host, /ledger\.(stopAll|applyList|attachClient|onNativeSnapshot)\(/, "no host logic outside the runtime");
+  const chat = read("../views/ChatView.tsx");
+  assert.match(chat, /cancelRun\(activeRunId\)/);
+  assert.doesNotMatch(chat, /client\.cancelRun\(/);
+  const widget = read("../overlay/WidgetWindow.tsx");
+  assert.doesNotMatch(widget, /setControlState/, "every widget snapshot goes through reduceWidget");
+  assert.match(widget, /reduceWidget\(prev, failed \? null : snap, performance\.now\(\)\)/);
+  assert.match(app, /isNewerNativeSnapshot\(prev\.stateRev \?\? -1, snap\)/);
 });
 
 test("the viewer layer sits below dialogs and toasts so approvals stay answerable", () => {

@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { ackStop, stopBotRun } from "../overlay/events.ts";
+import { ackStop, getControlState, stopBotRun } from "../overlay/events.ts";
 import {
   type LedgerStorage,
   RunLedger,
@@ -8,6 +8,7 @@ import {
   type StopRecord
 } from "./runLedger.ts";
 import { describeStop, type StopStatus } from "./stopStatus.ts";
+import { StopRuntime } from "./stopRuntime.ts";
 
 /**
  * The main window's one Stop ledger (app lifetime, not per daemon client). Every
@@ -65,9 +66,28 @@ export function appLedger(): RunLedger {
   return instance;
 }
 
+let runtime: StopRuntime | null = null;
+
+/** The main window's host logic (ControlBridgeHost forwards to it). */
+export function appRuntime(): StopRuntime {
+  if (!runtime) {
+    runtime = new StopRuntime({
+      ledger: appLedger(),
+      readNative: () => getControlState(),
+      now: () => performance.now()
+    });
+  }
+  return runtime;
+}
+
 /** One user Stop from a main-window entry point (hotkey, run banner, live viewer). */
 export function requestStop(origin: Exclude<StopOrigin, "native" | "chat">): StopRecord {
-  return appLedger().stopAll(origin);
+  return appRuntime().requestStop(origin);
+}
+
+/** The chat's Stop / subagent cancel: one run, its own decision. */
+export function cancelRun(runId: string): StopRecord {
+  return appRuntime().cancelOne(runId);
 }
 
 /** Re-render on every ledger change. */

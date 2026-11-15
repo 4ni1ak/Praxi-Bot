@@ -5,7 +5,6 @@ import {
   beginAction,
   type ControlSnapshot,
   finishBotRun,
-  getControlState,
   isTauriRuntime,
   overlayClick,
   startBotRun,
@@ -13,7 +12,7 @@ import {
 } from "../overlay/events";
 import type { ComputerTarget } from "../lib/settingsPrefs";
 import { DEFAULT_SETTINGS, loadSettings } from "../store/settingsStore";
-import { appLedger } from "./appStop";
+import { appRuntime } from "./appStop";
 import { useDaemon } from "./DaemonContext";
 import {
   ControlBridge,
@@ -21,26 +20,18 @@ import {
   resolveTargetScope
 } from "./controlBridge";
 import { useLiveView } from "./LiveViewContext";
-import {
-  overrideOptionsFor,
-  restoreRuns,
-  routeNativeSnapshot,
-  stopTransport
-} from "./stopHost";
 
 /**
  * Connects the daemon to the on-screen overlay (task 017b) and live-view panel
- * overlay (task 173), and owns the Stop ledger's connections (card 237):
- *
- * - the native subscription lives for the window's lifetime (Stops pressed while
- *   no daemon client exists are still recorded and sent to the next client);
- * - each daemon client is attached to the ledger (pending Stops go first), its
- *   runs are restored, and its bridge is revoked synchronously when it goes away.
+ * overlay (task 173). All decisions live in `StopRuntime` (stopRuntime.ts, tested
+ * with fakes at the native / daemon boundary); this component only forwards React
+ * effects, subscriptions and timers to it and builds the bridge's native deps.
  */
 export function ControlBridgeHost() {
   const { t } = useTranslation();
   const { client, bots, onDaemonEvent, eventsConnected } = useDaemon();
   const {
+    targets,
     selectedTarget,
     showPanelAction,
     registerBridge,
@@ -50,63 +41,52 @@ export function ControlBridgeHost() {
     currentTargets
   } = useLiveView();
 
-  const ledger = appLedger();
+  const runtime = appRuntime();
+  const ledger = runtime.ledger;
   const botsRef = useRef(bots);
   botsRef.current = bots;
   const selectedRef = useRef(selectedTarget);
   selectedRef.current = selectedTarget;
   const stepRef = useRef(t("control.starting"));
   stepRef.current = t("control.starting");
-  const overrideRef = useRef(overrideStop);
-  overrideRef.current = overrideStop;
-  const bridgeRef = useRef<ControlBridge | null>(null);
-  const nativeRef = useRef<ControlSnapshot | null>(null);
-  const resyncRef = useRef<(() => void) | null>(null);
+
+  // The takeover half of every Stop goes to LiveViewContext (input halt + owed override).
+  useEffect(() => {
+    runtime.setOverride((opts) => void overrideStop(opts));
+  }, [runtime, overrideStop]);
 
   // Native Stops, for the window's lifetime: subscribe first, then read.
   useEffect(() => {
     if (!isTauriRuntime()) {
       return undefined;
     }
-    const route = (snap: ControlSnapshot) => {
-      nativeRef.current = snap;
-      routeNativeSnapshot(ledger, bridgeRef.current, snap);
-    };
-    const off = subscribeOverlayEvents({ onControlStateChanged: route });
-    void getControlState().then(route);
+    const off = subscribeOverlayEvents({
+      onControlStateChanged: (snap: ControlSnapshot) => {
+        runtime.onNativeSnapshot(snap);
+      }
+    });
+    void runtime.readNative();
     return off;
-  }, [ledger]);
-
-  // A Stop pauses a held screen takeover too (same decision, every entry point).
-  useEffect(
-    () =>
-      ledger.onStop((rec) => {
-        void overrideRef.current(overrideOptionsFor(rec));
-      }),
-    [ledger]
-  );
+  }, [runtime]);
 
   // The event stream reconnected: wait for (and fetch) a fresh run list.
   useEffect(() => {
-    if (eventsConnected) {
-      resyncRef.current?.();
-    } else {
-      const handle = ledger.client();
-      if (handle) {
-        ledger.markUnsynced(handle);
-      }
-    }
-  }, [eventsConnected, ledger]);
+    runtime.eventsConnected(eventsConnected);
+  }, [eventsConnected, runtime]);
+
+  // This client's targets loaded: restored local runs waiting for their scope may drive.
+  useEffect(() => {
+    runtime.scopeChanged();
+  }, [targets, runtime]);
 
   useEffect(() => {
     if (!client) {
       registerBridge(null);
       return undefined;
     }
-    // Pending Stops are sent to this client before anything else runs on it.
-    const handle = ledger.attachClient(stopTransport(client));
     let bridge: ControlBridge | null = null;
-    let offEvents = () => {};
+    let offSettings = () => {};
+    let liveForSettings = true;
 
     if (isTauriRuntime()) {
       let computerTarget: ComputerTarget = DEFAULT_SETTINGS.computerTarget;
@@ -114,24 +94,30 @@ export function ControlBridgeHost() {
       const loadComputerTarget = () => {
         void loadSettings()
           .then((s) => {
-            if (handle.live) {
+            if (liveForSettings) {
               computerTarget = s.computerTarget;
               settingsLoaded = true;
+              runtime.scopeChanged();
             }
           })
           .catch(() => {});
       };
       loadComputerTarget();
-      const offSettings = subscribeOverlayEvents({ onSettingsUpdated: loadComputerTarget });
-      const created = new ControlBridge({
+      offSettings = subscribeOverlayEvents({ onSettingsUpdated: loadComputerTarget });
+      bridge = new ControlBridge({
         client,
         native: {
           beginAction: (rect, label, action) => beginAction(rect, label, action),
-          startRun: async (bot, step) => (await startBotRun(bot, step)).runGeneration,
-          finishRun: async (generation) => {
-            routeNativeSnapshot(ledger, bridgeRef.current, await finishBotRun(generation));
+          startRun: async (bot, step) => {
+            const snap = await startBotRun(bot, step);
+            runtime.onNativeSnapshot(snap);
+            return snap.runGeneration;
           },
-          click: overlayClick
+          finishRun: async (generation) => {
+            runtime.onNativeSnapshot(await finishBotRun(generation));
+          },
+          click: overlayClick,
+          confirmDriving: () => runtime.confirmDriving()
         },
         ledger,
         // Unknown until THIS client's targets and the settings loaded: never guessed.
@@ -172,66 +158,26 @@ export function ControlBridgeHost() {
         },
         now: () => Date.now()
       });
-      bridge = created;
-      bridgeRef.current = created;
       registerBridge(bridge);
-      offEvents = onDaemonEvent((env) => void created.handleEvent(env));
-      const known = nativeRef.current;
-      if (known) {
-        void created.onNativeState(known.mode, known.runGeneration);
-      } else {
-        void created.heartbeat();
-      }
-      const previousOff = offEvents;
-      offEvents = () => {
-        previousOff();
-        offSettings();
-      };
     } else {
       registerBridge(null);
-      // Without the desktop shell the ledger still follows runs for Stop.
-      offEvents = onDaemonEvent((env) => {
-        if (env.event.type === "run_started") {
-          ledger.observeRun(env.event.run_id, env.event.bot_id);
-        } else if (env.event.type === "run_finished") {
-          ledger.observeRunFinished(env.event.run_id);
-        }
-      });
     }
 
-    const resync = () => {
-      if (handle.live) {
-        void restoreRuns(ledger, handle, client, bridge);
-      }
-    };
-    resyncRef.current = resync;
-    resync();
-    const beat = window.setInterval(() => {
-      if (bridge) {
-        void bridge.heartbeat();
-        // events are notifications only and never replayed: re-read the snapshot
-        void bridge.refreshControlState();
-      }
-      if (!handle.synced) {
-        resync();
-      }
-    }, HEARTBEAT_MS);
+    // Pending Stops are sent to this client before anything else runs on it.
+    const detach = runtime.attach(client, bridge);
+    const offEvents = onDaemonEvent((env) => runtime.onDaemonEvent(env));
+    const beat = window.setInterval(() => runtime.tick(), HEARTBEAT_MS);
 
     return () => {
       // Revoke first, synchronously: nothing of this client acts after cleanup.
-      bridge?.revoke();
-      ledger.detachClient(handle);
-      if (bridgeRef.current === bridge) {
-        bridgeRef.current = null;
-      }
-      if (resyncRef.current === resync) {
-        resyncRef.current = null;
-      }
+      liveForSettings = false;
+      detach();
       registerBridge(null);
       offEvents();
+      offSettings();
       window.clearInterval(beat);
     };
-  }, [client, ledger, onDaemonEvent, registerBridge, showPanelAction, ingestControlSnapshot, issueSnapshotTicket, currentTargets]);
+  }, [client, runtime, ledger, onDaemonEvent, registerBridge, showPanelAction, ingestControlSnapshot, issueSnapshotTicket, currentTargets]);
 
   return null;
 }
