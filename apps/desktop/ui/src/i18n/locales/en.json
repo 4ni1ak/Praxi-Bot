@@ -293,7 +293,8 @@
       "queueHint": "Deliver after the current turn finishes",
       "steerHint": "Deliver now and redirect the current turn"
     },
-    "placeholder": "Message the bot…",
+    "placeholder": "Message…  / commands · @ bots",
+    "addCommand": "Add a command or bot",
     "placeholderBusy": "The bot is working — queue or steer…",
     "send": "Send",
     "subagent": {
@@ -475,7 +476,6 @@
       "noMatch": "No match"
     },
     "conversationLabel": "Today",
-    "composerHint": "Enter to send · / for commands · @ to mention a bot",
     "openBot": "Open {{name}}",
     "emptyTitle": "What shall we work on?",
     "emptyGreeting": "Hi, I'm {{name}}",
@@ -692,6 +692,26 @@
         "running": "Asking you",
         "done": "Asked you",
         "failed": "Couldn't ask you"
+      },
+      "mcp_search": {
+        "running": "Searching {{app}}",
+        "done": "Searched {{app}}",
+        "failed": "Couldn't search {{app}}"
+      },
+      "mcp_read": {
+        "running": "Reading from {{app}}",
+        "done": "Read from {{app}}",
+        "failed": "Couldn't read from {{app}}"
+      },
+      "mcp_draft": {
+        "running": "Drafting in {{app}}",
+        "done": "Drafted in {{app}}",
+        "failed": "Couldn't draft in {{app}}"
+      },
+      "mcp_send": {
+        "running": "Sending with {{app}}",
+        "done": "Sent with {{app}}",
+        "failed": "Couldn't send with {{app}}"
       },
       "mcp": {
         "running": "Using {{app}} ({{action}})",
@@ -1284,7 +1304,7 @@
       },
       "detected": {
         "title": "Found on this computer",
-        "description": "We find installed AI tools ourselves. The ones you turn on show up in the model list, no key needed.",
+        "description": "We detect installed CLIs on this computer. Only Claude Code runs as a confined bot engine. Codex is blocked; Cursor, OpenCode and Gemini are detect/install only.",
         "termsNotice": "Your vendor plan terms apply; verify automated CLI use is permitted before enabling.",
         "refresh": "Rescan",
         "retry": "Retry",
@@ -1302,7 +1322,34 @@
         "signIn": "Sign in",
         "signInIn": "Run in a terminal:",
         "install": "Install",
-        "toggle": "Use {{name}}"
+        "toggle": "Use {{name}}",
+        "installedVersion": "Installed · {{version}}",
+        "outdated": "Outdated",
+        "codexBlocked": "Codex is blocked as a bot engine: its read-only sandbox does not disable all native tools.",
+        "nativeToolsOpen": "OpenCode: detect and install only. Its CLI has no switch to disable native tools, so it cannot run as a bot engine.",
+        "runnableEngine": "Available as a confined bot engine after sign-in and compatibility checks.",
+        "detectionOnly": "Detect and install only; cannot run as a bot engine in this version.",
+        "commandVerified": "Command verified in local reference; installation has not been tested.",
+        "commandUnverified": "Unverified command — review the vendor docs, then copy and run yourself.",
+        "copyCommand": "Copy command",
+        "howSignIn": "How to sign in",
+        "docs": "Docs",
+        "copied": "Command copied",
+        "installApproval": "Runs as your current user, without elevation. This downloads and executes vendor software. Approve once to continue. Sign in separately in your terminal.",
+        "installSummary": "Install or update {{engine}}",
+        "dismissExpired": "Dismiss expired approval",
+        "installRunning": "Installing… leaving this section does not revoke an accepted approval.",
+        "installOutput": "Installer output (untrusted)",
+        "installDone": "Installer finished. Detection refreshed; sign-in may still be required.",
+        "installErrors": {
+          "npm_missing": "Install Node.js with npm, then retry, or copy the command to your terminal.",
+          "node_missing": "Node.js could not be found. Copy the command and run it in your terminal.",
+          "npm_shim_refused": "This npm launcher cannot run safely here. Copy the command and run it in your terminal.",
+          "powershell_missing": "PowerShell could not be found. Copy the command and run it in your terminal.",
+          "timeout": "Installation exceeded ten minutes and was stopped. Check the output before retrying.",
+          "output_limit": "Installer output exceeded the limit and installation was stopped. Use your terminal to continue.",
+          "install_failed": "Installation did not finish successfully. Check the output or run the command in your terminal."
+        }
       },
       "advanced": "Advanced provider settings"
     },
@@ -1819,7 +1866,9 @@
     "chats": "Chats",
     "noChats": "No chats yet.",
     "untitled": "New chat",
-    "computer": "Computer"
+    "computer": "Computer",
+    "runsOnHost": "Runs on {{name}} (host)",
+    "runsOnLocal": "Runs on this computer"
   },
   "knowledge": {
     "title": "Knowledge and shared brain",
@@ -1931,6 +1980,18 @@
     "targetsLabel": "Target screen",
     "checkingTargets": "Checking for screens…",
     "queryFailed": "Could not load the screen list. It is retried automatically.",
+    "loadingPreview": "Loading the first frame…",
+    "noScreen": {
+      "desktop_off": "desktop control is switched off",
+      "unsupported_platform": "this platform has no screen capture",
+      "wayland": "Wayland sessions are not supported, use an X11 session",
+      "no_display": "no display is available",
+      "screen_unavailable": "the screen cannot be opened right now (locked session or missing permission)",
+      "start_failed": "screen capture could not start",
+      "starting": "checking the screen…",
+      "timed_out": "the screen did not answer, retrying",
+      "unknown": "the screen is not available"
+    },
     "noTargets": "No screen targets reported yet.",
     "hostLabel": "Host: {{host}}",
     "viewOnly": "View only",
@@ -1984,6 +2045,8 @@
       "active": "You have the wheel",
       "paused": "Paused · Waiting for you",
       "unavailable": "Idle · Not active",
+      "ready": "This computer · ready",
+      "noScreenReason": "No screen: {{detail}}",
       "empty": "No active screen"
     },
     "reasons": {
@@ -2066,5 +2129,44 @@
     "dismiss": "Dismiss",
     "stopAllNow": "Stop all now",
     "letContinue": "Let them continue"
+  },
+  "computerPicker": {
+    "label": "Computer: {{name}}",
+    "menu": "Computer",
+    "host": "Host",
+    "localHint": "Runs here, on this PC",
+    "link": {
+      "idle": "Paired, not connected",
+      "connecting": "Connecting…",
+      "connected": "Connected",
+      "offline": "Not answering",
+      "unreachable": "No longer paired"
+    },
+    "add": "Add a host…",
+    "stopHost": "Stop all runs on the host",
+    "stopHostHint": "Stops what is running there now",
+    "stopNone": "Nothing is running on the host.",
+    "stopFailed": "Could not reach the host to stop its runs.",
+    "stopped": "Stopped {{count}} run(s) on the host."
+  },
+  "pairHost": {
+    "title": "Add a host",
+    "lead": "Pair this computer with your always-on host to watch its screen and chat with the bots that run there.",
+    "step1": "On the host, run:",
+    "step3": "Paste the ticket it prints below. It works once and expires in a few minutes.",
+    "ticket": "Pairing ticket",
+    "hint": "The ticket is used once and is not saved.",
+    "pair": "Pair",
+    "pairing": "Pairing…",
+    "failed": "Pairing failed. Check that the host is on and the ticket is new."
+  },
+  "hostState": {
+    "connecting": "Connecting to {{name}}…",
+    "offline": "{{name}} is not answering. Its bots keep running; this app reconnects on its own.",
+    "notPaired": "{{name}} no longer accepts this computer. Pair again with a new ticket.",
+    "versionBlocking": "This app ({{local}}) and {{name}} ({{host}}) are on different versions. Update them to the same version before using the host.",
+    "versionWarning": "This app is {{local}} and {{name}} is {{host}}: a small difference, everything should work.",
+    "noModelKey": "{{name}} has no model key yet. You can watch its screen and manage its bots, but chats cannot be answered until a key is added on the host.",
+    "useThisComputer": "Use this computer"
   }
 }

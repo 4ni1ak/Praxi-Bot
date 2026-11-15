@@ -1,7 +1,7 @@
 import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
 import { isMockMode } from "./api/mockMode";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -66,9 +66,17 @@ import { usePanelReserve } from "./state/usePanelReserve";
 import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
-import { DaemonProvider, useDaemon } from "./state/DaemonContext";
 import { useBotReorder } from "./components/useBotReorder";
 import { setBotOrderSnapshot } from "./store/botOrderStore";
+import { computerScopePlan } from "./lib/hostState";
+import { ComputerPicker } from "./components/ComputerPicker";
+import { HostStateBanner } from "./components/HostStateBanner";
+import {
+  DaemonProvider,
+  HostSession,
+  LOCAL_COMPUTER,
+  useDaemon
+} from "./state/DaemonContext";
 import { BotFormView } from "./views/BotFormView";
 import { BotHomeView } from "./views/BotHomeView";
 import { ChatView } from "./views/ChatView";
@@ -131,11 +139,20 @@ function AppShell() {
     chats,
     needs,
     refreshBots,
-    retry
+    retry,
+    activeComputerId
   } = useDaemon();
   const { setThumbnailDemand, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
+  // Chats, bots and runs belong to one computer: switching computers starts at home.
+  const lastComputer = useRef(activeComputerId);
+  useEffect(() => {
+    if (lastComputer.current !== activeComputerId) {
+      lastComputer.current = activeComputerId;
+      setRoute({ kind: "home" });
+    }
+  }, [activeComputerId]);
   const [controlState, setControlStateRaw] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
@@ -634,7 +651,7 @@ function AppShell() {
     >
       <div className={styles.mainColumn}>
         <div className={styles.titleBar} data-tauri-drag-region>
-          <span />
+          <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
           {botInView && panelBotView ? (
             <button
               ref={chipRef}
@@ -652,7 +669,7 @@ function AppShell() {
             </button>
           ) : <span />}
           <div className={styles.windowActions} data-tauri-drag-region>
-            <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
+            <ComputerPicker />
             <button className={styles.iconButton} title={t("account.settings")} aria-label={t("account.settings")} onClick={() => setSettingsOpen("general")}><Settings2 /></button>
             {isTauriRuntime() && !settings.windowFrame ? <>
               <button className={styles.iconButton} title={t("window.minimize")} aria-label={t("window.minimize")} onClick={() => void getCurrentWindow().minimize()}><Minus /></button>
@@ -661,7 +678,8 @@ function AppShell() {
             </> : null}
           </div>
         </div>
-        <HealthIndicator />
+        {activeComputerId === LOCAL_COMPUTER ? <HealthIndicator /> : null}
+        <HostStateBanner />
         <ShellBridgeHost
           settings={settings}
           onOpenChat={openChat}
@@ -874,14 +892,36 @@ function AppShell() {
   );
 }
 
+/**
+ * The local daemon's safety machinery (heartbeat, native Stop and tray, local event
+ * stream, approval overlays) stays connected to THIS computer whichever computer the
+ * views show. Selecting a host only swaps the daemon the chat and panel views talk
+ * to (a second session and live view, rebuilt per host).
+ */
+export function ComputerScope({ children }: { children: ReactNode }) {
+  const { activeComputerId } = useDaemon();
+  const plan = computerScopePlan(activeComputerId, LOCAL_COMPUTER);
+  return (
+    <LiveViewProvider>
+      {plan.localBridge ? <ControlBridgeHost /> : null}
+      {!plan.hostSession ? (
+        children
+      ) : (
+        <HostSession key={activeComputerId}>
+          <LiveViewProvider>{children}</LiveViewProvider>
+        </HostSession>
+      )}
+    </LiveViewProvider>
+  );
+}
+
 export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
-        <LiveViewProvider>
-          <ControlBridgeHost />
+        <ComputerScope>
           <AppShell />
-        </LiveViewProvider>
+        </ComputerScope>
       </DaemonProvider>
     </ToastProvider>
   );

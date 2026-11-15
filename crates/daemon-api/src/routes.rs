@@ -320,6 +320,12 @@ pub(crate) async fn create_bot(
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, mut config) = resolve_bot(input)?;
     crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
+    crate::peer::protect_execution_config(
+        peer.as_ref().map(|peer| &peer.0),
+        s.leader().config().mode == crate::host::HostMode::Host,
+        None,
+        &mut config,
+    )?;
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -416,6 +422,12 @@ pub(crate) async fn update_bot(
         bot.config.get("knowledge"),
         &mut config,
     )?;
+    crate::peer::protect_execution_config(
+        peer.as_ref().map(|peer| &peer.0),
+        s.leader().config().mode == crate::host::HostMode::Host,
+        Some(&bot.config),
+        &mut config,
+    )?;
     if preserve_runtime
         && config.get("runtime").is_none()
         && let Some(runtime) = bot.config.get("runtime")
@@ -484,6 +496,9 @@ pub(crate) async fn delete_bot(
         Ok(())
     })
     .await?;
+    // The bot's browser slot, driver and screen target go with it; nothing
+    // selectable or resident stays behind for a bot that no longer exists.
+    s.live_view().registry.retire_bot(bot.id.0);
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.
@@ -1184,6 +1199,14 @@ pub(crate) async fn list_providers(
         .iter()
         .zip(models)
         .map(|(p, (models, models_error))| {
+            let models = if p.cli.is_some() {
+                cli_provider::engine_spec(p.id.strip_prefix("cli:").unwrap_or(""))
+                    .map_or_else(Vec::new, |spec| {
+                        spec.models.iter().map(|m| (*m).to_owned()).collect()
+                    })
+            } else {
+                models
+            };
             let model_details = crate::provider_models::for_picker(
                 s.agent(),
                 p,
@@ -1258,14 +1281,18 @@ pub(crate) struct DetectProvidersQuery {
     pub refresh: Option<String>,
 }
 
-/// Detect installed, signed-in coding CLIs.
+/// Detect installed, signed-in coding CLIs. Local owner only: the rows carry
+/// the signed-in account label (an email or organisation) and install state.
 #[utoipa::path(get, path = "/v1/providers/detected", tag = "providers", security(("bearer" = [])),
     params(DetectProvidersQuery),
-    responses((status = 200, body = Vec<DetectedProviderDto>)))]
+    responses((status = 200, body = Vec<DetectedProviderDto>),
+              (status = 403, body = ErrorBody, description = "caller is not the local owner")))]
 pub(crate) async fn detect_providers(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     Query(query): Query<DetectProvidersQuery>,
 ) -> Result<Json<Vec<DetectedProviderDto>>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let refresh = query
         .refresh
         .as_deref()
@@ -1356,8 +1383,10 @@ pub(crate) async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, Api
               (status = 400, body = ErrorBody, description = "engine is not runnable or unknown")))]
 pub(crate) async fn enable_cli_provider(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     ApiJson(body): ApiJson<EnableCliProviderInput>,
 ) -> Result<Json<ConfiguredProviderDto>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let Some(spec) = cli_provider::engine_spec(&body.id).filter(|spec| spec.runnable) else {
         return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
             &body.id,

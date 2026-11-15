@@ -10,6 +10,7 @@ mod doctor;
 mod email_cmd;
 mod email_host;
 mod host;
+mod host_links;
 mod host_runtime;
 mod mcp_host;
 mod mcp_paste;
@@ -19,6 +20,7 @@ mod prompt;
 mod remote;
 mod serve;
 mod update;
+mod view_targets;
 mod web_host;
 mod wizard;
 
