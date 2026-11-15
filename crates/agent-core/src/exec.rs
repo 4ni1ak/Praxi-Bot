@@ -214,14 +214,25 @@ impl TurnExecutor {
     }
 
     fn first_user_text(&self, ctx: &RunCtx, run: &Run) -> Result<String, ExecError> {
-        self.sh
-            .storage
-            .list_messages(ctx.chat_id)
-            .map_err(xe)?
-            .into_iter()
+        let messages = self.sh.storage.list_messages(ctx.chat_id).map_err(xe)?;
+        if let Some(own) = messages
+            .iter()
             .find(|m| m.run_id == Some(run.id) && m.role == "user")
-            .map(|m| m.content)
-            .ok_or_else(|| xe("turn has no user message"))
+        {
+            return Ok(own.content.clone());
+        }
+        // A later bot of a multi-mention message (`@A @B`) answers the same
+        // user message: the run has no row of its own, so use the latest one.
+        let chat = self.sh.storage.get_chat(ctx.chat_id).map_err(xe)?;
+        if chat.is_some_and(|c| c.bot_id != run.bot_id) {
+            return messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone())
+                .ok_or_else(|| xe("turn has no user message"));
+        }
+        Err(xe("turn has no user message"))
     }
 
     fn plan_next(&self, run: &Run, history: &[RunStep]) -> Result<Option<StepSpec>, ExecError> {

@@ -3262,6 +3262,12 @@ export interface components {
         MessageDto: {
             /**
              * Format: uuid
+             * @description Bot that ran `run_id` (the author of an assistant message). It differs
+             *     from the chat's bot when another bot answered an `@mention`.
+             */
+            bot_id?: string | null;
+            /**
+             * Format: uuid
              * @description Chat it belongs to.
              */
             chat_id: string;

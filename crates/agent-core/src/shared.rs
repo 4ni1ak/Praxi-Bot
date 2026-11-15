@@ -735,6 +735,9 @@ pub(crate) struct Shared {
     pub grants: Mutex<Grants>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
     pub queued: Mutex<HashMap<ChatId, VecDeque<String>>>,
+    /// Bots still to answer one user message that mentioned several bots
+    /// (`@A @B`), with that message's text. Only the user's own text fills it.
+    pub mention_chain: Mutex<HashMap<ChatId, VecDeque<(BotId, String)>>>,
     pub tasks: Mutex<HashMap<RunId, JoinHandle<()>>>,
     /// Background work (memory extraction).
     pub bg: Mutex<Vec<JoinHandle<()>>>,

@@ -8089,3 +8089,86 @@ computer = \"browser\"
     assert_ne!(row.computer_node.as_deref(), Some("local"));
     assert_eq!(row.computer_node, None);
 }
+
+// ---------- @mention answers in the same chat ----------
+
+#[tokio::test]
+async fn a_mention_runs_one_turn_as_that_bot_in_this_chat() {
+    let env = setup();
+    let guest = BotId::new();
+    env.storage
+        .insert_bot(&Bot {
+            id: guest,
+            user_id: env.user,
+            name: "Atlas".into(),
+            config: json!({}),
+            created_at_ms: now_ms(),
+        })
+        .unwrap();
+    let read = Arc::new(tool("t.read", Effect::Read, "data"));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "t.read", json!({}))]),
+        text("from atlas"),
+        calls(&[("c2", "t.read", json!({}))]),
+        // Model text with a mention must not call anyone.
+        text("from owner @Atlas"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[&read],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    // The mentioned bot has its own, stricter policy.
+    lp.add_profile(
+        guest,
+        profile(
+            "[permissions]
+preset = \"read-only\"
+",
+        ),
+    );
+
+    let first = match lp
+        .send_user_message(env.chat, "@Atlas check this", MessageMode::Queue)
+        .unwrap()
+    {
+        Delivery::NewTurn(r) => r,
+        other => panic!("{other:?}"),
+    };
+    lp.wait(first).await.unwrap();
+    let run = env.storage.get_run(first).unwrap().unwrap();
+    assert_eq!(run.bot_id, guest, "the mentioned bot runs the turn");
+    assert_eq!(run.chat_id, Some(env.chat));
+    assert_eq!(
+        read.count.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the guest's own policy denies the read the chat bot may do"
+    );
+    let msgs = env.storage.list_messages(env.chat).unwrap();
+    let answer = msgs.iter().find(|m| m.role == "assistant").unwrap();
+    assert_eq!(answer.content, "from atlas");
+    assert_eq!(
+        answer.run_id,
+        Some(first),
+        "the reply is tied to the guest's run"
+    );
+    assert_eq!(
+        env.storage.get_chat(env.chat).unwrap().unwrap().bot_id,
+        env.bot,
+        "the chat stays the owner's"
+    );
+
+    // The next plain message goes to the chat's bot again.
+    let second = lp.run_turn(env.chat, "and now?").unwrap();
+    lp.wait(second).await.unwrap();
+    assert_eq!(
+        env.storage.get_run(second).unwrap().unwrap().bot_id,
+        env.bot
+    );
+    assert_eq!(read.count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // `@Atlas` inside the owner bot's own answer started nothing.
+    assert_eq!(env.storage.list_runs(env.user).unwrap().len(), 2);
+}

@@ -10111,6 +10111,14 @@
           "created_at_ms"
         ],
         "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Bot that ran `run_id` (the author of an assistant message). It differs\nfrom the chat's bot when another bot answered an `@mention`."
+          },
           "chat_id": {
             "type": "string",
             "format": "uuid",
