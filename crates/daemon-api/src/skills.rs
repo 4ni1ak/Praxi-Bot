@@ -152,6 +152,20 @@ pub struct SkillsCatalogDto {
     pub skills: Vec<CatalogSkillDto>,
     /// Non-fatal problems found while loading skills.
     pub issues: Vec<SkillIssueDto>,
+    /// Host-local paths, omitted for paired peers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locations: Option<SkillLocationsDto>,
+}
+
+/// Stable storage locations for the owner's skill-management UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SkillLocationsDto {
+    /// Shared owner-managed skill folder.
+    pub shared: String,
+    /// Per-bot skill folder template; these routes do not mutate it.
+    pub bot_template: String,
+    /// Bundled skills are embedded in the application.
+    pub bundled: String,
 }
 
 /// Per-bot skill assignment mode.
@@ -333,6 +347,16 @@ fn build_catalog(
             .map(|s| catalog_entry(s, &hub_skills_dir, &hub_map))
             .collect(),
         issues: issues.iter().map(issue_dto).collect(),
+        locations: Some(SkillLocationsDto {
+            shared: data_dir.join("skills").to_string_lossy().into_owned(),
+            bot_template: data_dir
+                .join("bots")
+                .join("{bot_id}")
+                .join("skills")
+                .to_string_lossy()
+                .into_owned(),
+            bundled: "embedded".into(),
+        }),
     })
 }
 
@@ -437,12 +461,46 @@ fn build_bot_skills(
               (status = 503, body = ErrorBody, description = "skills are not available")))]
 pub(crate) async fn list_skills(
     State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
 ) -> Result<Json<SkillsCatalogDto>, ApiError> {
     let index = s.skills_index()?;
     let data_dir = s.data_dir();
-    let dto = tokio::task::spawn_blocking(move || build_catalog(&index, &data_dir))
+    let mut dto = tokio::task::spawn_blocking(move || build_catalog(&index, &data_dir))
         .await
         .map_err(ApiError::internal)??;
+    if peer.is_some() {
+        dto.locations = None;
+    }
+    s.agent().refresh_external_redactor();
+    let redact = |text: &mut String| {
+        *text = s.agent().redact_external_text(std::mem::take(text));
+    };
+    if let Some(locations) = &mut dto.locations {
+        redact(&mut locations.shared);
+        redact(&mut locations.bot_template);
+    }
+    for skill in &mut dto.skills {
+        redact(&mut skill.name);
+        redact(&mut skill.description);
+        redact(&mut skill.version);
+        if let Some(hub) = &mut skill.hub {
+            redact(&mut hub.source);
+        }
+        if let Some(when) = &mut skill.requires {
+            for text in when
+                .domains
+                .iter_mut()
+                .chain(&mut when.apps)
+                .chain(&mut when.keywords)
+            {
+                redact(text);
+            }
+        }
+    }
+    for issue in &mut dto.issues {
+        redact(&mut issue.path);
+        redact(&mut issue.message);
+    }
     Ok(Json(dto))
 }
 
@@ -519,7 +577,9 @@ pub(crate) async fn put_bot_skills(
     let mode = input.mode;
     let expected_version = input.expected_version;
     let storage_for_write = Arc::clone(&storage);
+    let assignment_state = s.clone();
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+        let _guard = assignment_state.0.skill_mutations.lock();
         let (storage_mode, mode_str, write_names): (SkillAssignmentMode, &str, Vec<String>) =
             match mode {
                 SkillAssignmentModeDto::All => (SkillAssignmentMode::All, "all", Vec::new()),

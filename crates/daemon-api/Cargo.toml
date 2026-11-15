@@ -15,6 +15,7 @@ fake-provider = []
 workspace = true
 
 [dependencies]
+base64.workspace = true
 peer-network = { path = "../peer-network", version = "0.1.0" }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 browser-cdp = { path = "../browser-cdp", version = "0.1.0" }

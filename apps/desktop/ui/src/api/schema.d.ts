@@ -1179,8 +1179,44 @@ export interface paths {
         /** Catalog of shared and bundled skills (metadata only, never bodies). */
         get: operations["list_skills"];
         put?: never;
-        post?: never;
+        /** Create a trusted shared skill authored by the local owner. */
+        post: operations["create"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import a complete bounded skill tree; no imported code is executed. */
+        post: operations["import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Atomically update SKILL.md and retain auxiliary files. */
+        put: operations["update"];
+        post?: never;
+        /** Refuse assigned skills unless force is explicit; report their bot IDs/names. */
+        delete: operations["delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1820,6 +1856,18 @@ export interface components {
             /** @description The decision taken. */
             decision: components["schemas"]["Decision"];
         };
+        /** @description Explicit opt-in for deleting an assigned skill. */
+        DeleteSkillQuery: {
+            force?: boolean;
+        };
+        /**
+         * @description Deletion result or assignment conflict. Force keeps explicit assignments as
+         *     missing, so a reinstall restores the owner's selected set.
+         */
+        DeleteSkillResult: {
+            deleted: boolean;
+            used_by: components["schemas"]["SkillUsingBotDto"][];
+        };
         /**
          * @description How a sent message was delivered.
          * @enum {string}
@@ -2350,6 +2398,14 @@ export interface components {
              * @description Highest daemon-wide event `gseq` (`0` = none yet).
              */
             gseq: number;
+        };
+        /** @description Metadata only; the response never includes instruction bodies or files. */
+        ManagedSkillDto: {
+            description: string;
+            name: string;
+            /** @description Always `shared` for owner-managed skills. */
+            scope: string;
+            version: string;
         };
         /** @description An entry of the curated MCP catalog (`GET /v1/mcp/catalog`). */
         McpCatalogEntryDto: {
@@ -3150,12 +3206,40 @@ export interface components {
          * @enum {string}
          */
         SkillAssignmentModeDto: "all" | "selected";
+        /** @description A complete SKILL.md or the three fields used to author one. */
+        SkillDocumentInput: {
+            /** @description Optional optimistic version check when updating. */
+            expected_version?: string | null;
+            /** @description Name/description frontmatter and Markdown instructions. */
+            skill_md: string;
+        } | {
+            /** @description One-line description, at most 200 characters. */
+            description: string;
+            /** @description Optional optimistic version check when updating. */
+            expected_version?: string | null;
+            /** @description Markdown instructions. */
+            instructions: string;
+            /** @description Safe lowercase skill name. */
+            name: string;
+        };
         /** @description Hub lockfile metadata for a shared skill installed via `SkillHub`. */
         SkillHubInfoDto: {
             /** @description True when the on-disk tree matches the lockfile hash. */
             locked: boolean;
             /** @description Provenance tag (e.g. `git:https://...`, `local:...`). */
             source: string;
+        };
+        /** @description Import one folder or a ZIP with SKILL.md at its root. No URL fetching. */
+        SkillImportInput: {
+            /** @enum {string} */
+            kind: "folder";
+            /** @description Absolute folder path. Links, special and executable files are refused. */
+            path: string;
+        } | {
+            /** @description Standard Base64 of a ZIP, compressed and expanded limit 8 MiB. */
+            base64: string;
+            /** @enum {string} */
+            kind: "zip";
         };
         /** @description A non-fatal skill load problem surfaced by `SkillIndex::issues`. */
         SkillIssueDto: {
@@ -3171,6 +3255,15 @@ export interface components {
          * @enum {string}
          */
         SkillIssueScope: "bundled" | "shared" | "bot";
+        /** @description Stable storage locations for the owner's skill-management UI. */
+        SkillLocationsDto: {
+            /** @description Per-bot skill folder template; these routes do not mutate it. */
+            bot_template: string;
+            /** @description Bundled skills are embedded in the application. */
+            bundled: string;
+            /** @description Shared owner-managed skill folder. */
+            shared: string;
+        };
         /** @description Auto-suggestion triggers declared in a skill's `when:` frontmatter. */
         SkillRequiresDto: {
             /** @description Application names. */
@@ -3185,10 +3278,16 @@ export interface components {
          * @enum {string}
          */
         SkillScope: "shared" | "bundled";
+        /** @description Bots currently assigned to a skill, also returned on an assignment conflict. */
+        SkillUsingBotDto: {
+            id: string;
+            name: string;
+        };
         /** @description Response of `GET /v1/skills`. */
         SkillsCatalogDto: {
             /** @description Non-fatal problems found while loading skills. */
             issues: components["schemas"]["SkillIssueDto"][];
+            locations?: null | components["schemas"]["SkillLocationsDto"];
             /** @description Shared and bundled catalog skills. */
             skills: components["schemas"]["CatalogSkillDto"][];
         };
@@ -6127,6 +6226,220 @@ export interface operations {
             };
             /** @description skills are not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillDocumentInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    import: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillDocumentInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteSkillResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteSkillResult"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

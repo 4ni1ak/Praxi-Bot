@@ -1,5 +1,7 @@
 //! Tests for `/v1/skills`, `/v1/bots/{id}/skills`, and peer role guards.
 
+mod management;
+
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;

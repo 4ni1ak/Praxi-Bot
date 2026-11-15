@@ -325,9 +325,17 @@ pub(crate) async fn create_bot(
         config,
         created_at_ms: now_ms(),
     };
-    s.storage().insert_bot(&bot)?;
-    s.refresh_profile(&bot);
-    Ok((StatusCode::CREATED, Json(bot_dto(bot))))
+    // New bots implicitly select all shared skills. Serialize that assignment
+    // with owner deletion's in-use check, just like explicit assignment PUT.
+    let dto = tokio::task::spawn_blocking(move || {
+        let _skill_guard = s.0.skill_mutations.lock();
+        s.storage().insert_bot(&bot)?;
+        s.refresh_profile(&bot);
+        Ok::<_, ApiError>(bot_dto(bot))
+    })
+    .await
+    .map_err(|_| ApiError::internal("bot worker failed"))??;
+    Ok((StatusCode::CREATED, Json(dto)))
 }
 
 /// Get one bot, including its `effective_policy` (stored policy merged with
