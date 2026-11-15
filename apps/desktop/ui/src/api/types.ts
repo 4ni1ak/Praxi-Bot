@@ -2,6 +2,17 @@ import type { components } from "./schema";
 
 /** Types generated from `docs/api/openapi.json` (`pnpm --filter desktop-ui gen:api`). */
 type S = components["schemas"];
+export type KnowledgeSource = S["KnowledgeSourceDto"];
+export type KnowledgeSourceInput = S["KnowledgeSourceInput"];
+export type KnowledgeSourceKind = S["KnowledgeSourceKind"];
+export type KnowledgeSourceChange = S["KnowledgeSourceChange"];
+export type KnowledgeMutation = S["KnowledgeMutation"];
+export type KnowledgeSettings = S["KnowledgeSettingsDto"];
+export type KnowledgeSettingsInput = S["KnowledgeSettingsInput"];
+export type KnowledgeEmailCapture = S["KnowledgeEmailCapture"];
+export type KnowledgeEmbeddingProgress = S["KnowledgeEmbeddingProgress"];
+export type KnowledgeEmbeddingApproval = S["EmbeddingApprovalChallenge"];
+export type KnowledgeEmbeddingGrantTarget = S["EmbeddingGrantTarget"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];
