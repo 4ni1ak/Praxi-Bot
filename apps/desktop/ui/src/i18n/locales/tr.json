@@ -1339,7 +1339,19 @@
       "high": "Yüksek",
       "max": "Maks"
     },
-    "otherId": "\"{{id}}\" modelini {{provider}} ile kullan"
+    "otherId": "\"{{id}}\" modelini {{provider}} ile kullan",
+    "recommended": "Önerilen",
+    "all": "Tüm modeller ({{count}})",
+    "engines": "Kodlama CLI'ları",
+    "cliDefault": "Varsayılan (CLI karar verir)",
+    "install": "{{name}} kur",
+    "connect": "{{name}} bağla",
+    "engineError": "Bu CLI bağlanamadı.",
+    "hint": {
+      "fast": "hızlı",
+      "balanced": "dengeli",
+      "strongest": "zor işler için en iyisi"
+    }
   },
   "settingsModal": {
     "title": "Ayarlar",

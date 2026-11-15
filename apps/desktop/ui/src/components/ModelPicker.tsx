@@ -1,14 +1,24 @@
-import { Check, ChevronDown, Search, Sparkles } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, Download, Plug, Search, Sparkles } from "lucide-react";
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { isMockMode } from "../api/mockMode";
-import { filterModelGroups, type ModelGroup } from "../lib/modelPicker";
+import {
+  filterModelGroups,
+  isCliDefault,
+  modelHint,
+  recommendedOptions,
+  type ModelGroup,
+  type ModelOption
+} from "../lib/modelPicker";
 import { productBrandKey, providerBrand } from "../lib/modelBrand";
+import { modelDisplayName } from "../lib/modelName";
 import { matchesQuery } from "../lib/searchText";
 import { THINKING_LEVELS, useThinkingLevel } from "../lib/thinkingLevel";
+import { useCliEngineRows } from "../state/useCliEngineRows";
 import { BrandMark } from "./BrandMark";
 import styles from "./ModelPicker.module.css";
 import { Popover, type PopoverPlacement } from "./Popover";
+import { useToast } from "./Toast";
 
 export interface ModelPickerAutoOption {
   label: string;
@@ -17,9 +27,69 @@ export interface ModelPickerAutoOption {
   onPick: () => void;
 }
 
+/** "Connect" / "Install" rows for coding CLIs; mounted only where CLI models can be chosen. */
+function EngineSection({
+  query,
+  testId,
+  onInstall,
+  onConnected
+}: {
+  query: string;
+  testId: string;
+  onInstall: () => void;
+  onConnected: () => void;
+}) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const cli = useCliEngineRows(true);
+  const typed = query.trim();
+  const rows = cli.rows.filter((r) => !typed || matchesQuery(query, r.name, r.id));
+  if (rows.length === 0) {
+    return null;
+  }
+  const run = async (row: (typeof rows)[number]) => {
+    if (row.action === "install") {
+      onInstall();
+    }
+    try {
+      await cli.run(row);
+      if (row.action === "connect") {
+        // The provider list reloads for every subscriber; show the new engine's models now.
+        onConnected();
+      }
+    } catch (e) {
+      toast.show(e instanceof Error && e.message ? e.message : t("modelPicker.engineError"), "danger");
+    }
+  };
+  return (
+    <div role="group" aria-label={t("modelPicker.engines")} className={styles.group}>
+      <div className={styles.groupLabel} aria-hidden="true">
+        <span>{t("modelPicker.engines")}</span>
+      </div>
+      {rows.map((r) => (
+        <button
+          key={`engine-${r.id}`}
+          type="button"
+          data-picker-row
+          className={styles.option}
+          data-testid={`${testId}-${r.action}-${r.id}`}
+          onClick={() => void run(r)}
+        >
+          {r.action === "install" ? <Download aria-hidden="true" /> : <Plug aria-hidden="true" />}
+          <span className={styles.optionText}>
+            {t(r.action === "install" ? "modelPicker.install" : "modelPicker.connect", { name: r.name })}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
- * Model popover, grouped by provider: the company logo heads each group, the product logo
- * sits on every row, and (when `thinking`) a thinking-level segment closes the list.
+ * Model popover used by the composer, the bot editor and settings.  Closed state of the list:
+ * an optional "automatic" row, up to four recommended models by their real names, a collapsed
+ * "All models" list (grouped by provider or CLI engine, searchable, raw id only as small
+ * secondary text) and, last, rows that connect or install coding CLIs.
  * `value` and the picked option use the `provider/model` form.
  */
 export function ModelPicker({
@@ -33,7 +103,7 @@ export function ModelPicker({
   thinking = false,
   placement = "bottom-end",
   testId = "model-picker",
-  labelFor
+  engines = false
 }: {
   groups: ModelGroup[];
   value: string;
@@ -46,14 +116,19 @@ export function ModelPicker({
   thinking?: boolean;
   placement?: PopoverPlacement;
   testId?: string;
-  /** Text shown for a model instead of its raw id (e.g. a human model name). */
-  labelFor?: (provider: string, model: string) => string;
+  /** Offer "Connect"/"Install" rows for coding CLIs (off where CLI models cannot be chosen). */
+  engines?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(
     () => reviewOpen && isMockMode() && new URLSearchParams(window.location.search).get("screen") === "models"
   );
-  const [query, setQuery] = useState("");
+  const [allOpen, setAllOpen] = useState(
+    () => isMockMode() && new URLSearchParams(window.location.search).get("all") === "1"
+  );
+  const [query, setQuery] = useState(
+    () => (isMockMode() ? new URLSearchParams(window.location.search).get("modelq") ?? "" : "")
+  );
   const [level, setLevel] = useThinkingLevel();
   const trigger = useRef<HTMLButtonElement | null>(null);
   const shown = useMemo(
@@ -68,13 +143,19 @@ export function ModelPicker({
 
   // "Other model id": a CLI accepts models its short list does not show.
   const typed = query.trim();
-  const otherIds = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(typed)
+  const otherIds = shown.length === 0 && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(typed)
     ? groups.filter((g) => g.provider.startsWith("cli:") && !g.models.some((m) => m.model === typed))
     : [];
+
+  const searching = typed !== "";
+  const recommended = useMemo(() => (searching ? [] : recommendedOptions(groups)), [groups, searching]);
+  const showAll = searching || allOpen;
+  const total = groups.reduce((n, g) => n + g.models.length, 0);
 
   const close = useCallback(() => {
     setOpen(false);
     setQuery("");
+    setAllOpen(false);
   }, []);
 
   const pick = (ref: string) => {
@@ -96,10 +177,56 @@ export function ModelPicker({
     autoOption && (!query.trim() || matchesQuery(query, autoOption.label, autoOption.sub))
   );
 
+  const label = (m: ModelOption) =>
+    isCliDefault(m) ? t("modelPicker.cliDefault") : m.displayName;
+
   const [valueProvider = "", ...rest] = value.split("/");
   const valueModel = rest.join("/");
-  const valueLabel = groups.find((g) => g.provider === valueProvider)
-    ?.models.find((m) => m.ref === value)?.displayName ?? valueModel;
+  const current = groups.find((g) => g.provider === valueProvider)?.models.find((m) => m.ref === value);
+  const valueLabel = current ? label(current) : valueModel ? modelDisplayName(valueModel) : "";
+
+  // Arrow keys walk the rows (search box -> rows -> back up to the search box).
+  const moveFocus = (e: KeyboardEvent<HTMLElement>) => {
+    const dir = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (!dir) return;
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="option"], [data-picker-row]')];
+    const next = items[items.indexOf(document.activeElement as HTMLElement) + dir];
+    if (next) {
+      e.preventDefault();
+      next.focus();
+    } else if (dir < 0) {
+      e.preventDefault();
+      e.currentTarget.closest("[role=dialog]")?.querySelector<HTMLInputElement>("input")?.focus();
+    }
+  };
+
+  const optionRow = (m: ModelOption, opts: { hint?: boolean; sub?: boolean }) => {
+    const active = !autoOption?.selected && m.ref === value;
+    const primary = label(m);
+    const raw = opts.sub && !isCliDefault(m) && primary !== m.model ? m.model : null;
+    return (
+      <button
+        key={`${opts.hint ? "rec" : "all"}-${m.ref}`}
+        type="button"
+        role="option"
+        aria-selected={active}
+        className={[styles.option, active ? styles.optionActive : ""].filter(Boolean).join(" ")}
+        onClick={() => pick(m.ref)}
+      >
+        <BrandMark name={productBrandKey(m.provider, m.model)} size={16} />
+        <span className={styles.optionText} title={m.model}>
+          {primary}
+          {raw ? <span className={styles.rawId}>{raw}</span> : null}
+        </span>
+        {opts.hint ? (
+          <span className={styles.optionSub}>
+            {m.provider.startsWith("cli:") ? providerBrand(m.provider).label : t(`modelPicker.hint.${modelHint(m.model)}`)}
+          </span>
+        ) : null}
+        {active ? <Check aria-hidden="true" /> : null}
+      </button>
+    );
+  };
 
   return (
     <div className={styles.root}>
@@ -122,7 +249,7 @@ export function ModelPicker({
         <span className={styles.triggerText}>
           {autoOption?.selected
             ? autoOption.label
-            : (valueModel && labelFor ? labelFor(valueProvider, valueModel) : valueLabel) ||
+            : valueLabel ||
               placeholder ||
               t("modelPicker.none")}
         </span>
@@ -147,7 +274,13 @@ export function ModelPicker({
             autoFocus
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                e.currentTarget
+                  .closest("[role=dialog]")
+                  ?.querySelector<HTMLElement>('[role="option"], [data-picker-row]')
+                  ?.focus();
+              } else if (e.key === "Enter") {
                 const first = shown[0]?.models[0];
                 if (first && query.trim()) {
                   e.preventDefault();
@@ -163,8 +296,8 @@ export function ModelPicker({
             }}
           />
         </label>
-        <div className={styles.scroll} role="listbox" aria-label={t("modelPicker.title")}>
-          {shown.length === 0 && !showAuto && otherIds.length === 0 ? (
+        <div className={styles.scroll} role="listbox" aria-label={t("modelPicker.title")} onKeyDown={moveFocus}>
+          {shown.length === 0 && !showAuto && otherIds.length === 0 && !engines ? (
             <p className={styles.empty}>{t("modelPicker.empty")}</p>
           ) : (
             <>
@@ -173,19 +306,12 @@ export function ModelPicker({
                   type="button"
                   role="option"
                   aria-selected={autoOption.selected}
-                  className={[
-                    styles.option,
-                    autoOption.selected ? styles.optionActive : ""
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
+                  className={[styles.option, autoOption.selected ? styles.optionActive : ""].filter(Boolean).join(" ")}
                   onClick={pickAuto}
                 >
                   <Sparkles aria-hidden="true" />
                   <span className={styles.optionText}>{autoOption.label}</span>
-                  {autoOption.sub ? (
-                    <span className={styles.optionSub}>{autoOption.sub}</span>
-                  ) : null}
+                  {autoOption.sub ? <span className={styles.optionSub}>{autoOption.sub}</span> : null}
                   {autoOption.selected ? <Check aria-hidden="true" /> : null}
                 </button>
               ) : null}
@@ -199,41 +325,54 @@ export function ModelPicker({
                   onClick={() => pick(`${g.provider}/${typed}`)}
                 >
                   <span className={styles.optionText}>
-                    {t("modelPicker.otherId", { id: typed, provider: g.provider.slice(4) })}
+                    {t("modelPicker.otherId", { id: typed, provider: providerBrand(g.provider).label })}
                   </span>
                 </button>
               ))}
-              {shown.map((g) => {
-                const brand = providerBrand(g.provider);
-                return (
-                  <div key={g.provider} className={styles.group} role="group" aria-label={`${brand.label}${brand.note ? ` ${brand.note}` : ""}`}>
-                    <div className={styles.groupLabel} aria-hidden="true">
-                      <BrandMark name={brand.company} size={14} />
-                      <span>{brand.label}</span>
-                      {brand.note ? <span className={styles.groupNote}>{brand.note}</span> : null}
-                    </div>
-                    {g.models.map((m) => {
-                      const active = !autoOption?.selected && m.ref === value;
-                      return (
-                        <button
-                          key={m.ref}
-                          type="button"
-                          role="option"
-                          aria-selected={active}
-                          className={[styles.option, active ? styles.optionActive : ""].filter(Boolean).join(" ")}
-                          onClick={() => pick(m.ref)}
-                        >
-                          <BrandMark name={productBrandKey(m.provider, m.model)} size={16} />
-                          <span className={styles.optionText} title={labelFor ? m.model : undefined}>
-                            {labelFor ? labelFor(m.provider, m.model) : m.displayName}
-                          </span>
-                          {active ? <Check aria-hidden="true" /> : null}
-                        </button>
-                      );
-                    })}
+              {recommended.length > 0 ? (
+                <div className={styles.group} role="group" aria-label={t("modelPicker.recommended")}>
+                  <div className={styles.groupLabel} aria-hidden="true">
+                    <span>{t("modelPicker.recommended")}</span>
                   </div>
-                );
-              })}
+                  {recommended.map((m) => optionRow(m, { hint: true }))}
+                </div>
+              ) : null}
+              {!searching && shown.length > 0 ? (
+                <button
+                  type="button"
+                  data-picker-row
+                  className={styles.allToggle}
+                  aria-expanded={allOpen}
+                  data-testid={`${testId}-all`}
+                  onClick={() => setAllOpen((v) => !v)}
+                >
+                  <span>{t("modelPicker.all", { count: total })}</span>
+                  <ChevronDown aria-hidden="true" className={allOpen ? styles.chevOpen : undefined} />
+                </button>
+              ) : null}
+              {showAll
+                ? shown.map((g) => {
+                    const brand = providerBrand(g.provider);
+                    return (
+                      <div
+                        key={g.provider}
+                        className={styles.group}
+                        role="group"
+                        aria-label={`${brand.label}${brand.note ? ` ${brand.note}` : ""}`}
+                      >
+                        <div className={styles.groupLabel} aria-hidden="true">
+                          <BrandMark name={brand.company} size={14} />
+                          <span>{brand.label}</span>
+                          {brand.note ? <span className={styles.groupNote}>{brand.note}</span> : null}
+                        </div>
+                        {g.models.map((m) => optionRow(m, { sub: true }))}
+                      </div>
+                    );
+                  })
+                : null}
+              {engines ? (
+                <EngineSection query={query} testId={testId} onInstall={close} onConnected={() => setAllOpen(true)} />
+              ) : null}
             </>
           )}
         </div>

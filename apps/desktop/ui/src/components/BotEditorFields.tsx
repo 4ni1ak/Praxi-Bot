@@ -36,7 +36,7 @@ import {
 } from "../lib/botProfile";
 import { brandIcon } from "../lib/brandIcons";
 import { modelGroups } from "../lib/modelPicker";
-import { modelDisplayName, modelLine } from "../lib/modelName";
+import { modelLine } from "../lib/modelName";
 import { BotAvatarUploadField } from "./BotAdvancedFields";
 import styles from "./BotEditorFields.module.css";
 import { BrandMark } from "./BrandMark";
@@ -57,7 +57,6 @@ const PRESET_ICONS: Record<PresetChoice, typeof Eye> = {
   custom: SlidersHorizontal
 };
 
-const displayName = (_provider: string, model: string) => modelDisplayName(model);
 
 /** Identity: the face, the name and how the bot behaves. */
 export function IdentityFields({
@@ -191,7 +190,7 @@ export function ModelFields({
       <ModelPicker
         groups={groups}
         value={ref}
-        labelFor={displayName}
+       
         reviewOpen={false}
         testId={`bot-edit-${role}`}
         autoOption={{
@@ -221,7 +220,7 @@ export function ModelFields({
           <ModelPicker
             groups={executorGroups}
             value={executorRef}
-            labelFor={displayName}
+            engines
             reviewOpen={false}
             placeholder={t("botEdit.pickModel")}
             testId="bot-edit-executor"
@@ -260,7 +259,7 @@ export function ModelFields({
           <ModelPicker
             groups={fallbackGroups}
             value=""
-            labelFor={displayName}
+           
             reviewOpen={false}
             placement="bottom-start"
             placeholder={t("botEdit.addFallback")}

@@ -189,7 +189,12 @@ const PROVIDERS: ProvidersDto = {
       enabled: true,
       has_key: true,
       is_default: true,
-      models: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
+      models: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"],
+      model_details: [
+        mockModel("claude-sonnet-5-5", "Claude Sonnet 5.5", 1),
+        mockModel("claude-opus-5-5", "Claude Opus 5.5", 2),
+        mockModel("claude-haiku-5-5", "Claude Haiku 5.5", 3)
+      ]
     },
     {
       id: "gemini",
@@ -199,7 +204,31 @@ const PROVIDERS: ProvidersDto = {
       enabled: true,
       has_key: true,
       is_default: false,
-      models: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-pro-preview"]
+      models: ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-pro-preview", "antigravity-preview-05-2026", "deep-research-pro-preview"],
+      model_details: [
+        mockModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", 1),
+        mockModel("gemini-2.5-flash", "Gemini 2.5 Flash", null),
+        mockModel("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", null),
+        mockModel("gemini-3.1-pro-preview", "Gemini 3.1 Pro (preview)", null),
+        mockModel("antigravity-preview-05-2026", "Antigravity Preview 05 2026", null),
+        mockModel("deep-research-pro-preview", "Deep Research Pro Preview", null)
+      ]
+    },
+    {
+      id: "cli:claude",
+      active: true,
+      custom: false,
+      default_model: null,
+      enabled: true,
+      has_key: false,
+      is_default: false,
+      models: ["default", "sonnet", "opus", "haiku"],
+      model_details: [
+        mockModel("default", "Claude Code default", 1),
+        mockModel("sonnet", "Claude Sonnet", 2),
+        mockModel("opus", "Claude Opus", 3),
+        mockModel("haiku", "Claude Haiku", 4)
+      ]
     },
     {
       id: "ollama",
@@ -213,6 +242,10 @@ const PROVIDERS: ProvidersDto = {
     }
   ]
 };
+
+function mockModel(id: string, display_name: string, rank: number | null) {
+  return { id, display_name, kind: "chat", recommended: rank !== null, recommended_rank: rank, deprecated: false, note: null };
+}
 
 const DETECTED_PROVIDERS: DetectedProviderDto[] = [
   {
@@ -713,7 +746,8 @@ export class MockApiClient extends ApiClient {
             detected, executable_names: [detected.id], version_args: ["--version"], auth_args: [],
             path: null, minimum_version: null, outdated: false,
             login: detected.id === "opencode" ? "opencode auth login" : detected.id,
-            docs_url: "", install: null,
+            docs_url: "",
+            install: detected.installed ? null : { command: "npm install -g opencode-ai", program: "npm", args: ["install", "-g", "opencode-ai"], verified: true, executable: true },
             limitation: detected.id === "opencode" ? "native_tools_not_confined" : null
           })));
         }
