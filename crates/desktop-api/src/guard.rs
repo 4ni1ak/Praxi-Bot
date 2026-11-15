@@ -379,6 +379,15 @@ mod tests {
     }
 
     #[test]
+    fn another_pid_with_the_same_path_and_start_time_is_another_program() {
+        let t = target("C:\\Windows\\notepad.exe", "Notepad");
+        let g = ActGuard {
+            expect: ident("C:\\Windows\\notepad.exe", 11, 99),
+        };
+        assert_eq!(check_guard(&g, &t), Err(Refusal::ForegroundChanged));
+    }
+
+    #[test]
     fn an_unknown_identity_never_matches() {
         let mut t = target("C:\\Windows\\notepad.exe", "Notepad");
         t.identity.start_time = 0;
