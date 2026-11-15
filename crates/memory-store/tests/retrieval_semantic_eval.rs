@@ -215,7 +215,7 @@ async fn held_out_semantic_queries_require_vectors_and_measure_token_savings() {
         mean_tokens * 2 < stuffed_tokens,
         "retrieval must save at least half the fixture context"
     );
-    assert!(
+    assert_eq!(
         service
             .search(
                 &SearchRequest::new("unrelated orbital mechanics"),
@@ -224,19 +224,21 @@ async fn held_out_semantic_queries_require_vectors_and_measure_token_savings() {
             .await
             .unwrap()
             .hits
-            .is_empty()
+            .len(),
+        0
     );
     // A separately built negative control proves lexical/fusion cannot mask a
     // disconnected vector channel with this fixture.
     let (_, broken, _) = fixture(true).await;
     for (query, _) in CASES {
-        assert!(
+        assert_eq!(
             broken
                 .search(&SearchRequest::new(query), &CancellationToken::new())
                 .await
                 .unwrap()
                 .hits
-                .is_empty()
+                .len(),
+            0
         );
     }
 }

@@ -396,10 +396,11 @@ pub(crate) async fn update_bot(
     Path(bid): Path<String>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
     let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
         .lock_owned()
         .await;
+    let mut bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
     if preserve_runtime
@@ -410,6 +411,11 @@ pub(crate) async fn update_bot(
             .as_object_mut()
             .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
             .insert("runtime".into(), runtime.clone());
+    }
+    if bot.config.pointer("/knowledge/embedding") != config.pointer("/knowledge/embedding") {
+        // Raw profile edits cannot revive a grant after disable/restore. Revoke
+        // first: if persisting the new profile fails, authority stays closed.
+        crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
     }
     s.storage().update_bot(bot.id, &name, &config)?;
     crate::knowledge_runtime::invalidate_bot(&s, bot.id);

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 fn host_registry(host: &Host) -> std::path::PathBuf {
     let artifact =
-        json!({"path":host._dir.path().join("operator-only-file"),"sha256":"c".repeat(64)});
+        json!({"path":host.state.data_dir().join("operator-only-file"),"sha256":"c".repeat(64)});
     let file = host.state.data_dir().join("knowledge-host.json");
     std::fs::write(
         &file,
@@ -116,6 +116,55 @@ async fn direct_tool(host: &Host, run: String, query: &str) -> SearchResponse {
     serde_json::from_str(text).unwrap()
 }
 
+async fn owner_update_bot(host: &Host, config: Value) {
+    use tower::ServiceExt;
+    let response = crate::router(host.state.clone())
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri(format!("/v1/bots/{}", host.bot))
+                .header("host", "127.0.0.1:47821")
+                .header("authorization", "Bearer test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({"config":config}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn generic_owner_disable_restore_cannot_reanimate_embedding_grants() {
+    let _serial = test_guard().await;
+    let server = server().await;
+    let host = Host::new();
+    let (config, _) = ready(&host, &server).await;
+    let original = host.state.bot_of_user(host.bot).unwrap().config;
+    let mut disabled = original.clone();
+    disabled["knowledge"]["embedding"] = Value::Null;
+    owner_update_bot(&host, disabled).await;
+    owner_update_bot(&host, original).await;
+    assert!(
+        authorized(
+            &host.state,
+            host.bot,
+            &EmbeddingGrantTarget::Queries,
+            &config.profile.fingerprint().unwrap()
+        )
+        .is_none()
+    );
+    server.reset().await;
+    mount_vectors(&server).await;
+    assert_eq!(
+        host.search(host.bot, "restored settings recovery")
+            .await
+            .mode,
+        SearchMode::Lexical
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 0);
+}
+
 #[tokio::test]
 async fn actual_run_initiator_and_subagent_policy_block_query_http() {
     let _serial = test_guard().await;
@@ -218,11 +267,11 @@ async fn owner_challenges_are_policy_checked_single_use_and_revision_bound() {
         source_id: source.id,
     };
     host.state.agent().set_global_policy(Policy::read_only());
-    assert!(grant_request(&host.state, host.bot, target.clone()).is_err());
+    assert!(grant_request(&host.state, host.bot, target).is_err());
     host.state
         .agent()
         .set_global_policy(Policy::approve_destructive());
-    let stale = grant_request(&host.state, host.bot, target.clone()).unwrap();
+    let stale = grant_request(&host.state, host.bot, target).unwrap();
     assert_eq!(stale.policy_decision, "ask");
     host.store(host.bot)
         .update_source(
@@ -235,7 +284,7 @@ async fn owner_challenges_are_policy_checked_single_use_and_revision_bound() {
         )
         .unwrap();
     assert!(grant_confirm(&host.state, host.bot, stale.id).is_err());
-    let challenge = grant_request(&host.state, host.bot, target.clone()).unwrap();
+    let challenge = grant_request(&host.state, host.bot, target).unwrap();
     host.state.agent().set_policy_locked(true);
     assert!(grant_confirm(&host.state, host.bot, challenge.id).is_err());
     host.state.agent().set_policy_locked(false);

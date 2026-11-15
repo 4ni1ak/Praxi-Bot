@@ -116,7 +116,9 @@ fn version_one_index_migrates_to_the_canonical_embedding_schema() {
          DROP TABLE knowledge_embeddings;
          DROP TABLE embedding_cache;
          DROP TABLE embedding_jobs;
+         DROP TABLE embedding_chunk_failures;
          DROP INDEX chunks_identity_source;
+         DELETE FROM knowledge_meta WHERE key='embedding_authority_epoch';
          PRAGMA user_version=1;",
     )
     .unwrap();

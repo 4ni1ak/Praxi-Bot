@@ -51,6 +51,9 @@ jobs:
 
       - name: Check explicit-artifact local embeddings
         if: success() || failure()
+        env:
+          ORT_SKIP_DOWNLOAD: "1"
+          ORT_OFFLINE: "1"
         run: cargo clippy -p memory-store -p provider-catalog -p daemon-api -p cli --all-targets --features local-embeddings -- -D warnings
 
       - name: Prefetch dependencies for offline local embedding tests
