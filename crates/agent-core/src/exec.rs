@@ -133,6 +133,39 @@ fn call_key(name: &str, args: &str) -> (String, Value) {
     (name.to_owned(), v)
 }
 
+/// Whether a call in the stored history is the same call as `new` (for the
+/// repeat guard). A stored call whose typed secret was masked (see
+/// [`Shared::scrub_call_arguments`]) matches a new call that differs only in
+/// the secret and in the masked view's extra labels.
+pub(crate) fn same_call(stored: &(String, Value), new: &(String, Value)) -> bool {
+    stored.0 == new.0 && value_matches(&stored.1, &new.1)
+}
+
+fn has_mask(v: &Value) -> bool {
+    match v {
+        Value::String(s) => tool_registry::is_masked_secret(s),
+        Value::Array(a) => a.iter().any(has_mask),
+        Value::Object(o) => o.values().any(has_mask),
+        _ => false,
+    }
+}
+
+fn value_matches(stored: &Value, new: &Value) -> bool {
+    if !has_mask(stored) {
+        return stored == new;
+    }
+    match (stored, new) {
+        (Value::String(s), Value::String(_)) if tool_registry::is_masked_secret(s) => true,
+        (Value::Object(a), Value::Object(b)) => b
+            .iter()
+            .all(|(k, v)| a.get(k).is_some_and(|x| value_matches(x, v))),
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| value_matches(x, y))
+        }
+        _ => stored == new,
+    }
+}
+
 fn user_step(text: &str) -> StepSpec {
     StepSpec {
         name: STEP_USER.to_owned(),
@@ -417,7 +450,7 @@ impl TurnExecutor {
         let mut calls = Vec::with_capacity(take);
         for c in &remaining[..take] {
             let key = call_key(&c.name, &c.arguments);
-            let streak = 1 + seq.iter().rev().take_while(|k| **k == key).count();
+            let streak = 1 + seq.iter().rev().take_while(|k| same_call(k, &key)).count();
             let repeat = u32::try_from(streak).unwrap_or(u32::MAX);
             if repeat >= g.repeat_stop {
                 return Err(format!(
@@ -804,6 +837,7 @@ impl TurnExecutor {
 
         let mut slots = Vec::with_capacity(calls.len());
         let mut uuids = Vec::with_capacity(calls.len());
+        let mut masked_args: Vec<Option<String>> = Vec::with_capacity(calls.len());
         for call in &calls {
             let call_uuid = ToolCallId::new();
             uuids.push(call_uuid);
@@ -813,13 +847,25 @@ impl TurnExecutor {
                 serde_json::from_str(&call.arguments)
                     .map_err(|e| format!("invalid JSON arguments: {e}"))
             };
+            // What the stream, the journal and the renderers show of the call:
+            // a secret typed into a field is masked there and in the stored
+            // record (see below), never in what the tool receives.
+            let shown = match &parsed {
+                Ok(v) => {
+                    self.sh
+                        .display_call_input(&ctx, &call.name, v, &hints)
+                        .await
+                }
+                Err(_) => None,
+            };
+            masked_args.push(shown.as_ref().map(Value::to_string));
             self.sh.emit(
                 &ctx,
                 Event::ToolCallRequested(ToolCallRequested {
                     run_id: run.id,
                     call_id: call_uuid,
                     tool_name: call.name.clone(),
-                    input: parsed.clone().unwrap_or(Value::Null),
+                    input: shown.unwrap_or_else(|| parsed.clone().unwrap_or(Value::Null)),
                 }),
             );
             let err = |m: String| Slot::Done {
@@ -991,6 +1037,15 @@ impl TurnExecutor {
             }
         }))
         .await;
+
+        // The calls have run: the stored record of each keeps the masked view,
+        // so no later history, replay or export carries the typed secret.
+        for (call, masked) in calls.iter().zip(&masked_args) {
+            if let Some(masked) = masked {
+                self.sh
+                    .scrub_call_arguments(run.id, &call.id, &call.arguments, masked);
+            }
+        }
 
         let g = &self.sh.cfg.guards;
         let mut results = Vec::with_capacity(calls.len());

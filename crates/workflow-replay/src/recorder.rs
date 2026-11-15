@@ -558,12 +558,40 @@ impl Lifter {
     /// A template for `value`: `{param}` when it appears in the user message,
     /// otherwise the escaped literal.
     fn lift(&mut self, hint: &str, value: &str) -> String {
+        // A typed secret is stored masked in the run's history: the workflow
+        // asks for it at replay time (a parameter with no default) and never
+        // records it, and the placeholder is never typed.
+        if tool_registry::is_masked_secret(value) {
+            let name = self.fresh_name(hint);
+            self.params.push(Param {
+                name: name.clone(),
+                ty: ParamType::String,
+                default: None,
+                description: format!(
+                    "A secret ({hint}); it is not recorded, give it when replaying"
+                ),
+            });
+            return format!("{{{name}}}");
+        }
         if value.chars().count() < MIN_LIFT_CHARS || !self.message.contains(value) {
             return escape_literal(value);
         }
         if let Some(n) = self.by_value.get(value) {
             return format!("{{{n}}}");
         }
+        let name = self.fresh_name(hint);
+        self.params.push(Param {
+            name: name.clone(),
+            ty: ParamType::String,
+            default: Some(value.to_owned()),
+            description: format!("Recorded from the request ({hint})"),
+        });
+        self.by_value.insert(value.to_owned(), name.clone());
+        format!("{{{name}}}")
+    }
+
+    /// A parameter name from `hint` that no recorded parameter uses yet.
+    fn fresh_name(&self, hint: &str) -> String {
         let base: String = hint
             .chars()
             .map(|c| {
@@ -585,14 +613,7 @@ impl Lifter {
             name = format!("{base}_{n}");
             n += 1;
         }
-        self.params.push(Param {
-            name: name.clone(),
-            ty: ParamType::String,
-            default: Some(value.to_owned()),
-            description: format!("Recorded from the request ({hint})"),
-        });
-        self.by_value.insert(value.to_owned(), name.clone());
-        format!("{{{name}}}")
+        name
     }
 
     fn lift_value(&mut self, hint: &str, v: &Value) -> Value {
@@ -977,6 +998,46 @@ mod tests {
             panic!()
         };
         assert_eq!(n.url, "https://shop.test/cart");
+    }
+
+    #[test]
+    fn a_masked_secret_becomes_a_required_parameter_and_is_never_recorded() {
+        let page = "# Login (https://login.test/)
+  [e1] textbox \"Password\"
+";
+        let masked = tool_registry::masked_secret("fake-fixture-secret", "password field");
+        let steps = vec![
+            user_step("log me in"),
+            tool_step(
+                1,
+                json!([call(
+                    "o",
+                    "browser_open",
+                    &json!({"url": "https://login.test/"})
+                )]),
+                json!([res("o", "browser_open", page, false)]),
+            ),
+            tool_step(
+                2,
+                json!([call(
+                    "f",
+                    "browser_fill",
+                    &json!({"ref": "e1", "field": "textbox", "text": masked})
+                )]),
+                json!([res("f", "browser_fill", "filled", false)]),
+            ),
+        ];
+        let wf = Recorder::new()
+            .from_steps(&steps, &RecordOptions::default())
+            .unwrap()
+            .workflow;
+        let Step::BrowserAction(f) = &wf.steps[1] else {
+            panic!()
+        };
+        assert_eq!(f.value.as_deref(), Some("{text}"));
+        let p = wf.params.iter().find(|p| p.name == "text").unwrap();
+        assert_eq!(p.default, None, "required: asked for at replay time");
+        assert!(!format!("{wf:?}").contains(tool_registry::SECRET_MASK));
     }
 
     #[test]

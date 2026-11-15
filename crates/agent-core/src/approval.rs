@@ -248,6 +248,47 @@ impl Shared {
         }
     }
 
+    /// The input of tool `name` as every place other than the tool itself may
+    /// show it (see [`tool_registry::Tool::display_input`]): `None` when the
+    /// raw input may be shown.
+    pub(crate) async fn display_tool_input(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        input: &Value,
+    ) -> Option<Value> {
+        let tool = self.tools.get(name)?;
+        let tctx = tool_registry::ToolContext {
+            run_id: ctx.run_id.to_string(),
+            bot_id: Some(ctx.bot_id.to_string()),
+            ..tool_registry::ToolContext::default()
+        };
+        tool.display_input(&tctx, input).await
+    }
+
+    /// [`Self::display_tool_input`] for a call as the model wrote it: a
+    /// `use_tool` wrapper is resolved to its target and the replacement is put
+    /// back under `input`. `None` when the raw call may be shown.
+    pub(crate) async fn display_call_input(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        input: &Value,
+        hints: &[String],
+    ) -> Option<Value> {
+        let resolved = self.resolve_call(&ctx.profile, ctx.bot_id, name, input, hints)?;
+        let shown = self
+            .display_tool_input(ctx, &resolved.name, &resolved.input)
+            .await?;
+        if name == agent_router::USE_TOOL {
+            let mut wrapper = input.clone();
+            wrapper["input"] = shown;
+            Some(wrapper)
+        } else {
+            Some(shown)
+        }
+    }
+
     /// What the tool wants the approval card to show for this call, plus the
     /// bot's permission picture (it applies to every future firing).
     ///
@@ -534,6 +575,10 @@ impl Shared {
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
         let prefix = computer_approval(ctx, name, category, &mut details);
+        // The card, the summary and the event show what the tool says may be
+        // shown (a typed secret masked); `input` stays raw for the tool.
+        let shown = self.display_tool_input(ctx, name, input).await;
+        let args = shown.as_ref().map_or(args, Value::to_string);
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
         let parked_at = policy_revision(self);
@@ -544,7 +589,7 @@ impl Shared {
                 run_id: ctx.run_id,
                 call_id,
                 tool_name: name.to_owned(),
-                input: input.clone(),
+                input: shown.unwrap_or_else(|| input.clone()),
                 summary,
                 details,
             }),

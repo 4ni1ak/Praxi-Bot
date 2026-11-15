@@ -3,6 +3,7 @@
 #![allow(clippy::assert_is_empty)]
 
 mod planning_pause;
+mod secret_fill;
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
