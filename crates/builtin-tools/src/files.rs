@@ -906,6 +906,9 @@ fn under_native_cli_authority(path: &Path) -> bool {
         .iter()
         .map(|s| canonical_name(s))
         .collect();
+    if let Some(hit) = cached_native(&parts) {
+        return hit;
+    }
     native_cli_authority_roots()
         .iter()
         .any(|root| under_authority_parts(&parts, root).is_some())
@@ -943,11 +946,131 @@ fn under_data_sensitive(path: &Path, data_dir: &Path) -> bool {
 
 fn under_daemon_data(path: &Path, data_dir: &Path) -> Option<Vec<String>> {
     let path = widen_for_compare(path);
-    let p: Vec<_> = norm_parts(&path)
+    let parts: Vec<_> = norm_parts(&path)
         .iter()
         .map(|s| canonical_name(s))
         .collect();
-    under_authority_parts(&p, data_dir)
+    match cached_data_relative(&parts, data_dir) {
+        DataHit::Inside(relative) => Some(relative),
+        DataHit::Outside => None,
+        DataHit::Miss => under_authority_parts(&parts, data_dir),
+    }
+}
+
+/// Protected roots for one top-level file operation. Directory walks compare
+/// component lists; they do not re-read the environment or re-canonicalize
+/// the data directory for every entry.
+struct RootParts {
+    configured: Vec<String>,
+    referent: Option<Vec<String>>,
+    widened: Vec<String>,
+}
+
+struct Authority {
+    data_dir: PathBuf,
+    data: RootParts,
+    native: Vec<RootParts>,
+}
+
+fn component_parts(path: &Path) -> Vec<String> {
+    norm_parts(path).iter().map(|s| canonical_name(s)).collect()
+}
+
+fn root_parts(root: &Path) -> RootParts {
+    RootParts {
+        configured: component_parts(root),
+        referent: authority_referent(root).map(|path| component_parts(&path)),
+        widened: component_parts(&canonical_data_dir(root)),
+    }
+}
+
+fn relative_to(path: &[String], root: &RootParts) -> Option<Vec<String>> {
+    let relative = |dir: &[String]| {
+        (path.len() >= dir.len() && path[..dir.len()] == *dir).then(|| path[dir.len()..].to_vec())
+    };
+    if let Some(relative) = relative(&root.configured) {
+        return Some(relative);
+    }
+    if let Some(referent) = &root.referent {
+        if let Some(relative) = relative(referent) {
+            return Some(relative);
+        }
+        if root.configured == *referent {
+            return None;
+        }
+    }
+    relative(&root.widened)
+}
+
+thread_local! {
+    static AUTHORITY: RefCell<Option<Authority>> = const { RefCell::new(None) };
+}
+
+struct AuthorityGuard {
+    armed: bool,
+}
+
+impl Drop for AuthorityGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            AUTHORITY.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+}
+
+fn enter_authority(data_dir: &Path) -> AuthorityGuard {
+    AUTHORITY.with(|slot| {
+        let mut guard = slot.borrow_mut();
+        if guard
+            .as_ref()
+            .is_some_and(|auth| same_path(&auth.data_dir, data_dir))
+        {
+            return AuthorityGuard { armed: false };
+        }
+        *guard = Some(Authority {
+            data_dir: data_dir.to_path_buf(),
+            data: root_parts(data_dir),
+            native: native_cli_authority_roots()
+                .into_iter()
+                .map(|root| root_parts(&root))
+                .collect(),
+        });
+        AuthorityGuard { armed: true }
+    })
+}
+
+enum DataHit {
+    Miss,
+    Outside,
+    Inside(Vec<String>),
+}
+
+fn cached_data_relative(parts: &[String], data_dir: &Path) -> DataHit {
+    AUTHORITY.with(|slot| {
+        let guard = slot.borrow();
+        let Some(auth) = guard.as_ref() else {
+            return DataHit::Miss;
+        };
+        if !same_path(&auth.data_dir, data_dir) {
+            return DataHit::Miss;
+        }
+        match relative_to(parts, &auth.data) {
+            Some(relative) => DataHit::Inside(relative),
+            None => DataHit::Outside,
+        }
+    })
+}
+
+fn cached_native(parts: &[String]) -> Option<bool> {
+    AUTHORITY.with(|slot| {
+        let guard = slot.borrow();
+        let auth = guard.as_ref()?;
+        Some(
+            auth.native
+                .iter()
+                .any(|root| relative_to(parts, root).is_some()),
+        )
+    })
 }
 
 fn under_authority_parts(p: &[String], data_dir: &Path) -> Option<Vec<String>> {
@@ -1441,6 +1564,7 @@ fn with_checkpoint_gate<T>(sh: &Shared, f: impl FnOnce() -> T) -> T {
         });
     });
     let _clear = ClearGate;
+    let _auth = enter_authority(&sh.data_dir);
     f()
 }
 
@@ -1841,6 +1965,7 @@ pub(crate) fn remove_tree_skip_protected(
     data_dir: &Path,
     grants: &[PathBuf],
 ) -> io::Result<()> {
+    let _auth = enter_authority(data_dir);
     if entry_is_protected(path, data_dir, grants)? {
         return Ok(());
     }
@@ -1915,6 +2040,7 @@ pub(crate) fn remove_checkpoint_target(path: &Path) -> io::Result<()> {
 }
 
 fn has_protected_descendant(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> io::Result<bool> {
+    let _auth = enter_authority(data_dir);
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -2045,6 +2171,7 @@ impl<'a, F: Fn(&Path, &Path) -> io::Result<()>> MoveTransaction<'a, F> {
     }
 
     fn move_path(&mut self, from: &Path, to: &Path) -> io::Result<()> {
+        let _auth = enter_authority(&self.sh.data_dir);
         if entry_is_protected(from, &self.sh.data_dir, &self.sh.grants)? {
             return Ok(());
         }
