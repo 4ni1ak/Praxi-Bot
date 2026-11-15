@@ -670,12 +670,11 @@ pub(crate) async fn restore_changes(
                 "checkpoint.restore_started", &serde_json::json!({"checkpoint_id": cp_arg, "force": force}))
                 .map_err(ApiError::internal)?;
             store.restore_selection_using(&run_str, &cp_arg, |index| {
+                let _ = index;
                 #[cfg(test)]
-                if index == 0 {
-                    if let Some(pause) = state.0.restore_pause.lock().take() {
-                        let _ = pause.entered.send(());
-                        pause.release.recv().map_err(io::Error::other)?;
-                    }
+                if index == 0 && let Some(pause) = state.0.restore_pause.lock().take() {
+                    let _ = pause.entered.send(());
+                    pause.release.recv().map_err(io::Error::other)?;
                 }
                 #[cfg(test)]
                 if *state.0.restore_fail_at.lock() == Some(index) { return Err(io::Error::other("injected checkpoint failure")); }
@@ -685,7 +684,7 @@ pub(crate) async fn restore_changes(
         })).map_err(|e| ApiError::conflict(e.to_string()))??;
         // This blocking task owns mutation AND finalization. Dropping the HTTP
         // future must never discard the durable audit, recovery ids or event.
-        Ok(Json(finalize_restore(&state, &run, cp_arg, actor, force, report)))
+        Ok(Json(finalize_restore(&state, &run, cp_arg, &actor, force, report)))
     }).await.map_err(ApiError::internal)?
 }
 
@@ -693,7 +692,7 @@ fn finalize_restore(
     s: &AppState,
     run: &storage::Run,
     cp: String,
-    actor: crate::live_view::Actor,
+    actor: &crate::live_view::Actor,
     force: bool,
     report: builtin_tools::RestoreReport,
 ) -> RestoreResponseDto {
