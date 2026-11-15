@@ -5,6 +5,7 @@
 mod planning_pause;
 
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1036,7 +1037,11 @@ async fn large_output_is_spilled_with_preview_and_path() {
             .trim_end_matches(']'),
     );
     assert!(path.starts_with(env.dir.path().join("spill")));
-    assert_eq!(std::fs::read_to_string(path).unwrap().len(), big.len());
+    // The file is the run's own and goes away when the run has ended.
+    assert!(
+        !path.exists(),
+        "spill files are removed at the end of the run"
+    );
 }
 
 #[tokio::test]
@@ -5553,6 +5558,7 @@ struct BoundMachine {
     inner: MockComputerProvider,
     id: &'static str,
     unreachable: bool,
+    unbound: bool,
 }
 
 impl computer_target::ComputerProvider for BoundMachine {
@@ -5586,6 +5592,9 @@ impl computer_target::ComputerProvider for BoundMachine {
     fn paired_pc_unreachable(&self) -> bool {
         self.unreachable
     }
+    fn local_identity_bound(&self) -> bool {
+        !self.unbound
+    }
 }
 
 fn machine_provider(
@@ -5608,6 +5617,7 @@ fn machine_provider(
         },
         id,
         unreachable,
+        unbound: false,
     })
 }
 
@@ -7137,4 +7147,138 @@ async fn legacy_paused_run_never_adopts_this_daemons_computer() {
         );
     }
     assert_eq!(fake.n_requests(), 0);
+}
+
+/// End to end: a 10-step browser turn through the real loop. The model sees
+/// the superseded snapshots shortened (and the shortened prefix stays
+/// byte-identical between calls of the same stride), the stored step outputs
+/// stay complete, and the system prompt never changes.
+#[tokio::test]
+async fn multi_step_browser_turn_compacts_what_the_model_sees_not_what_is_stored() {
+    let env = setup();
+    let mut page = String::from("# Shop (https://shop.test/)\n");
+    for n in 0..250 {
+        let _ = writeln!(page, "[e{n}] link \"item {n}\"");
+    }
+    let mut snap = tool("browser_snapshot", Effect::Read, &page);
+    snap.spec.category = PermissionCategory::Browser;
+    let snap = Arc::new(snap);
+    let mut replies: Vec<Reply> = (0..10)
+        .map(|i| calls(&[(&format!("c{i}"), "browser_snapshot", json!({"n": i}))]))
+        .collect();
+    replies.push(text("done"));
+    let fake = Fake::new(replies);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&snap)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "look at the shop").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(fake.n_requests(), 11);
+
+    let last = tool_messages(&fake.request(10));
+    assert_eq!(last.len(), 10);
+    let shortened = last
+        .iter()
+        .filter(|m| m.contains("[older observation shortened:"))
+        .count();
+    // Horizon 8: observations 0..8 are looked at, the newest two of them stay.
+    assert_eq!(shortened, 6, "{last:?}");
+    for item in &last[6..] {
+        assert_eq!(*item, page);
+    }
+
+    // Same stride (n = 7 and n = 8 both have horizon 6): byte-identical prefix.
+    let (a, b) = (fake.request(7), fake.request(8));
+    for (x, y) in a.messages.iter().zip(&b.messages) {
+        assert_eq!(
+            serde_json::to_string(x).unwrap(),
+            serde_json::to_string(y).unwrap()
+        );
+    }
+    // System prompt: identical on every call of the turn.
+    let sys0 = fake.request(0).messages[0].content.clone();
+    for i in 1..11 {
+        assert_eq!(fake.request(i).messages[0].content, sys0, "call {i}");
+    }
+    // Storage keeps the complete outputs.
+    let stored = env.storage.list_steps(run).unwrap();
+    let full = stored
+        .iter()
+        .filter(|s| s.name == "tools")
+        .filter(|s| {
+            s.output
+                .as_ref()
+                .is_some_and(|o| o.to_string().contains("item 249"))
+        })
+        .count();
+    assert_eq!(full, 10);
+}
+
+/// The identity key was unreadable at boot (`unbound-machine`): resuming a
+/// stored host/browser run must leave it paused and untouched so a later boot
+/// with a readable key can still resume it. It must not be failed with
+/// "local computer identity changed".
+#[tokio::test]
+async fn resume_during_unbound_identity_boot_keeps_host_and_browser_runs_paused() {
+    let env = setup();
+    let fake = Fake::new(vec![text("resumed")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let unbound = Arc::new(BoundMachine {
+        inner: MockComputerProvider {
+            local: parking_lot::RwLock::new(None),
+            pc: parking_lot::RwLock::new(None),
+            is_host: true,
+            browser_available: true,
+            has_display: false,
+        },
+        id: "unbound-machine",
+        unreachable: false,
+        unbound: true,
+    });
+    lp.set_computer_provider(unbound);
+    let audits_before = env.storage.list_audit(env.user).unwrap().len();
+    let mut runs = Vec::new();
+    for kind in ["host", "browser"] {
+        let run = lp
+            .rt
+            .create_run(env.user, env.bot, Some(env.chat), "turn")
+            .unwrap();
+        env.storage
+            .bind_run_computer(run, kind, Some(MACHINE_A), Some("Local computer"))
+            .unwrap();
+        lp.rt.pause_queued(run, None).unwrap();
+        let before = env.storage.get_run(run).unwrap().unwrap();
+        lp.resume(run).unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Paused);
+        let after = env.storage.get_run(run).unwrap().unwrap();
+        assert_eq!(after.state, "paused", "{kind}");
+        assert!(after.error.is_none(), "{kind}: {:?}", after.error);
+        assert_eq!(after.computer_target, before.computer_target);
+        assert_eq!(after.computer_node.as_deref(), Some(MACHINE_A));
+        runs.push(run);
+    }
+    assert_eq!(fake.n_requests(), 0);
+    assert_eq!(
+        env.storage.list_audit(env.user).unwrap().len(),
+        audits_before
+    );
+
+    // A later boot with a readable key and the same identity resumes them.
+    lp.set_computer_provider(machine_provider(MACHINE_A, None, None, false));
+    for run in runs {
+        let state = env.storage.get_run(run).unwrap().unwrap().state;
+        assert_eq!(state, "paused");
+    }
 }

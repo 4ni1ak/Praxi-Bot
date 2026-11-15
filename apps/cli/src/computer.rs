@@ -250,6 +250,10 @@ impl ComputerProvider for CliComputerProvider {
         }
     }
 
+    fn local_identity_bound(&self) -> bool {
+        is_machine_fingerprint(&self.local_id)
+    }
+
     fn paired_pc_unreachable(&self) -> bool {
         let Some(net) = &self.net else {
             return false;

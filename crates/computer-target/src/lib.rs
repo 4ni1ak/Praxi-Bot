@@ -203,6 +203,15 @@ pub trait ComputerProvider: Send + Sync {
         }
     }
 
+    /// Whether [`ComputerProvider::local_node`] is a verified, stable identity.
+    ///
+    /// A daemon that could not read its identity key at boot reports `false`:
+    /// stored host/browser runs cannot be matched against it, so they must stay
+    /// paused for a later boot instead of being failed.
+    fn local_identity_bound(&self) -> bool {
+        true
+    }
+
     /// Connected paired PC desktop backend (from the host daemon).
     fn pc(&self) -> Option<Arc<dyn DesktopBackend>>;
 

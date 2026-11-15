@@ -45,6 +45,13 @@ pub struct Guards {
     pub spill_threshold_bytes: usize,
     /// Bytes of a spilled output kept inline as a preview.
     pub spill_preview_bytes: usize,
+    /// Per observation scope (page, window, listing) this many of the newest
+    /// tool results are re-sent in full on later model calls of a turn; older
+    /// ones become a one-line marker. `0` turns the compaction off.
+    pub keep_observations: usize,
+    /// When the messages of a model call exceed this many bytes, the oldest
+    /// tool results are cut to a short preview. `0` turns the budget off.
+    pub turn_context_soft_bytes: usize,
 }
 
 impl Default for Guards {
@@ -58,6 +65,8 @@ impl Default for Guards {
             max_tokens_per_turn: 2_000_000,
             spill_threshold_bytes: 16 * 1024,
             spill_preview_bytes: 2 * 1024,
+            keep_observations: 2,
+            turn_context_soft_bytes: 96 * 1024,
         }
     }
 }

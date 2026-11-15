@@ -27,10 +27,10 @@ use crate::exec::TurnExecutor;
 use crate::history::{status_of, step_output};
 use crate::profile::BotProfile;
 use crate::shared::{
-    ApprovalScope, COMPUTER_PREPARE_TIMEOUT_NOTICE, CategoryDecision, Delivery, EffectivePolicy,
-    Grant, GrantTarget, Grants, LoopError, MessageMode, ModelOut, Pending, Providers, STEP_MODEL,
-    STEP_TOOLS, ScheduleWork, Shared, StreamItem, Verdict, initiator_of, kind_for,
-    kind_for_schedule,
+    ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
+    CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
+    MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork, Shared,
+    StreamItem, Verdict, initiator_of, kind_for, kind_for_schedule,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -1381,6 +1381,11 @@ impl AgentLoop {
         if run.parent_run_id.is_none()
             && let Ok(profile) = self.sh.profile_for(run.bot_id)
         {
+            let provider = self.sh.computer_provider.read().clone();
+            if crate::shared::Shared::computer_identity_unbound(&run, provider.as_deref()) {
+                self.emit_computer_notice(run_id, COMPUTER_IDENTITY_UNBOUND_NOTICE);
+                return Ok(RunState::Paused);
+            }
             let prepare_timed_out = self.sh.prepare_run_computer(&profile, &run).await;
             let rc = self.sh.resolve_computer_for_run(&profile, Some(&run));
             if let Some(reason) = rc.unavailable_reason.clone() {
@@ -1447,6 +1452,14 @@ impl AgentLoop {
     /// Persist the final answer, emit the closing events and start any queued turn.
     fn conclude(&self, run_id: RunId, res: &std::result::Result<RunState, RuntimeError>) {
         let run = self.sh.storage.get_run(run_id).ok().flatten();
+        crate::compaction::forget_turn(run_id);
+        if !matches!(res, Ok(RunState::Paused)) {
+            // A finished run's spill files are no longer reachable by the
+            // model; crashed runs are swept by age.
+            let data_dir = self.sh.storage.data_dir();
+            crate::compaction::remove_run_spill(data_dir, run_id);
+            crate::compaction::sweep_spill(data_dir, crate::compaction::SPILL_RETENTION);
+        }
         if let Some(parent) = run.as_ref().and_then(|r| r.parent_run_id) {
             self.conclude_child(run_id, parent, res);
             return;

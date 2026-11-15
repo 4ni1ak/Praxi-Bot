@@ -821,6 +821,10 @@ pub(crate) fn xe(e: impl std::fmt::Display) -> ExecError {
 /// the background monitor, which has a longer budget.
 pub(crate) const COMPUTER_PREPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Run event emitted when a stored host/browser run is resumed during a boot
+/// whose local computer identity could not be read.
+pub(crate) const COMPUTER_IDENTITY_UNBOUND_NOTICE: &str = "this computer's identity could not be verified at startup; the run stays paused and can be resumed after the next restart";
+
 /// Run event emitted when [`COMPUTER_PREPARE_TIMEOUT`] fires.
 pub(crate) const COMPUTER_PREPARE_TIMEOUT_NOTICE: &str =
     "computer prepare timed out; using the cached desktop list without dialing";
@@ -1073,6 +1077,18 @@ impl Shared {
             );
         }
         None
+    }
+
+    /// A stored host/browser run that cannot be compared with this boot's local
+    /// identity because the identity key was unreadable. The run stays paused
+    /// (retryable on a later boot); it is neither failed nor rebound.
+    pub(crate) fn computer_identity_unbound(
+        run: &Run,
+        provider: Option<&dyn ComputerProvider>,
+    ) -> bool {
+        Self::persisted_computer_error(run, None).is_none()
+            && matches!(run.computer_target.as_deref(), Some("host" | "browser"))
+            && provider.is_some_and(|p| !p.local_identity_bound())
     }
 
     fn unavailable_computer(reason: &str) -> RunComputer {

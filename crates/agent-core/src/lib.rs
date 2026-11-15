@@ -13,6 +13,7 @@
 mod agent;
 mod approval;
 mod cli;
+mod compaction;
 mod config;
 mod control;
 pub mod control_note;
