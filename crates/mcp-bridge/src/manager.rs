@@ -182,6 +182,9 @@ pub(crate) struct Server {
     refresh_required: AtomicBool,
     /// Orders OAuth credential writes against sign-out and removal.
     credentials: crate::oauth::CredentialGuard,
+    /// When the bearer of the live session expires (Unix seconds): the
+    /// session is replaced before then (review finding 13).
+    bearer_expires_at: Mutex<Option<u64>>,
 }
 
 impl Server {
@@ -333,7 +336,12 @@ impl Server {
         let mut slot = self.session.lock().await;
         self.check_usable()?;
         if let Some(s) = slot.as_ref() {
-            if Self::is_alive(s) {
+            // A live session keeps the bearer it was opened with: once that
+            // enters the refresh window, reconnect (which refreshes) instead.
+            let bearer_due = self.bearer_expires_at.lock().is_some_and(|at| {
+                at.saturating_sub(crate::oauth::now_secs()) <= crate::oauth::REFRESH_WINDOW_SECS
+            });
+            if Self::is_alive(s) && !bearer_due {
                 return Ok(Arc::clone(s));
             }
             if let Some(old) = slot.take() {
@@ -368,8 +376,11 @@ impl Server {
             ))
             .await
             {
-                Ok(Some(token)) => secrets = secrets.with_bearer(&token),
-                Ok(None) => {}
+                Ok(Some(bearer)) => {
+                    *self.bearer_expires_at.lock() = bearer.expires_at;
+                    secrets = secrets.with_bearer(&bearer.token);
+                }
+                Ok(None) => *self.bearer_expires_at.lock() = None,
                 Err(e) => {
                     self.note_connect_error(&e);
                     return Err(e);
@@ -1028,6 +1039,7 @@ impl McpManager {
             watching: AtomicBool::new(false),
             refresh_required: AtomicBool::new(false),
             credentials: crate::oauth::CredentialGuard::default(),
+            bearer_expires_at: Mutex::new(None),
             config,
         });
         {

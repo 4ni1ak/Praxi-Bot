@@ -626,6 +626,44 @@ impl SignIn {
     }
 }
 
+/// An access token to connect with, and when (Unix seconds) it expires.
+pub struct Bearer {
+    /// The access token.
+    pub token: String,
+    /// Expiry, when the authorization server said.
+    pub expires_at: Option<u64>,
+}
+
+impl std::fmt::Debug for Bearer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bearer")
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Unix seconds now.
+#[must_use]
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// When the stored access token expires (Unix seconds), if known.
+fn expires_at(stored: &StoredCredentials) -> Option<u64> {
+    let expiry = stored
+        .token_response
+        .as_ref()
+        .and_then(oauth2::TokenResponse::expires_in)?;
+    Some(stored.token_received_at?.saturating_add(expiry.as_secs()))
+}
+
+/// The refresh window: a token with at most this many seconds left is
+/// refreshed before it is used.
+pub const REFRESH_WINDOW_SECS: u64 = 60;
+
 /// Whether at most 60 seconds of the stored access token remain.
 fn refresh_due(stored: &StoredCredentials) -> bool {
     let expiry = stored
@@ -662,7 +700,7 @@ pub async fn stored_bearer(
     registrar: Option<&SecretRegistrar>,
     force_refresh: bool,
     options: &SignInOptions,
-) -> Result<Option<String>> {
+) -> Result<Option<Bearer>> {
     stored_bearer_quietly(server, url, store, registrar, force_refresh, options)
         .with_subscriber(quiet())
         .await
@@ -675,7 +713,7 @@ async fn stored_bearer_quietly(
     registrar: Option<&SecretRegistrar>,
     force_refresh: bool,
     options: &SignInOptions,
-) -> Result<Option<String>> {
+) -> Result<Option<Bearer>> {
     let probe = SecretCredentialStore::new(Arc::clone(store), server, url, registrar.cloned())?
         .guarded(options.guard.as_ref());
     let revoked = {
@@ -757,7 +795,15 @@ async fn stored_bearer_quietly(
             if let Some(registrar) = registrar {
                 registrar(&token);
             }
-            Ok(Some(token))
+            // The expiry of what is stored now (refreshed or not).
+            let expires_at = SecretCredentialStore::new(Arc::clone(store), server, url, None)?
+                .load()
+                .await
+                .ok()
+                .flatten()
+                .as_ref()
+                .and_then(expires_at);
+            Ok(Some(Bearer { token, expires_at }))
         }
         // Signed out while refreshing: the refreshed token was not stored and
         // is not used.

@@ -730,3 +730,55 @@ async fn a_confidential_client_is_never_presented_to_another_issuer() {
     server_a.abort();
     server_b.abort();
 }
+
+/// Review finding 13: a session that stays up past the refresh window gets
+/// a refreshed bearer before its next call, not after a rejected one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_session_refreshes_before_its_bearer_enters_the_window() {
+    let (base, seen, server) = fake_authorization_server(true).await;
+    {
+        let mut s = seen.lock();
+        s.expires_in = Some(64); // outside the 60 s window at connect (4 s margin)
+        s.refresh_allowed = true;
+        s.mcp_bearer = Some(ACCESS.into());
+    }
+    let registry = tool_registry::ToolRegistry::new();
+    let manager =
+        McpManager::new(registry.clone()).with_secret_store(Arc::new(MemoryStore::default()));
+    assert!(matches!(
+        manager
+            .add_server(http_config("live", format!("{base}/mcp")))
+            .await,
+        Err(McpError::AuthRequired(_))
+    ));
+    finish_sign_in(
+        manager.start_sign_in("live", options()).await.unwrap(),
+        &base,
+        &seen,
+    )
+    .await;
+    assert_eq!(manager.reenable("live").await.unwrap(), 1);
+    assert_eq!(seen.lock().token_requests.len(), 1, "no refresh at connect");
+    // Time passes: the token is now inside the window; the server will only
+    // accept the refreshed one from here on.
+    tokio::time::sleep(Duration::from_millis(4500)).await;
+    seen.lock().mcp_bearer = Some(REFRESHED.into());
+    seen.lock().tool_calls.clear();
+    let echo = registry.get("mcp:live/echo").unwrap();
+    echo.call(
+        &tool_registry::ToolContext::default(),
+        serde_json::json!({"text": "after"}),
+    )
+    .await
+    .unwrap();
+    let requests = seen.lock().token_requests.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["grant_type"], "refresh_token");
+    // The only tool call carried the refreshed bearer: no rejected attempt.
+    assert_eq!(
+        seen.lock().tool_calls,
+        vec![Some(format!("Bearer {REFRESHED}"))]
+    );
+    manager.shutdown().await;
+    server.abort();
+}
