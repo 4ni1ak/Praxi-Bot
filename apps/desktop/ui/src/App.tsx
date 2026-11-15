@@ -627,7 +627,7 @@ function AppShell() {
     >
       <div className={styles.mainColumn}>
         <div className={styles.titleBar} data-tauri-drag-region>
-          <span />
+          <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
           {botInView && panelBotView ? (
             <button
               ref={chipRef}
