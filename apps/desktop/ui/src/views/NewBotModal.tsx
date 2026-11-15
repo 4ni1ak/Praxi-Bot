@@ -30,9 +30,11 @@ import {
   presetToAutonomy,
   resolveAutoExecutorRef
 } from "../lib/botProfile";
+import { invalidCustomRoles } from "../lib/botEditor";
 import { botHasAccess, changedApps, saveBotAndApps } from "../lib/mcpApps";
 import { modelGroups } from "../lib/modelPicker";
 import { useDaemon } from "../state/DaemonContext";
+import { useCustomText } from "../state/useCustomText";
 import styles from "./NewBotModal.module.css";
 
 function NewBotDialogContent({
@@ -52,7 +54,7 @@ function NewBotDialogContent({
     setAllowed,
     initialApps,
     setInitialApps
-  } = useBotFormDeps(client, undefined, Boolean(conn?.fake_provider), true);
+  } = useBotFormDeps(client, undefined, true);
 
   const [createdBot, setCreatedBot] = useState<Bot | null>(null);
   const [templateId, setTemplateId] = useState<BotTemplateId | null>("blank");
@@ -66,7 +68,11 @@ function NewBotDialogContent({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const patch = (p: Partial<BotDraft>) => setDraft((d) => ({ ...d, ...p }));
+  const { customText, setCustom, forgetFor } = useCustomText(setDraft);
+  const patch = (p: Partial<BotDraft>) => {
+    setDraft((d) => ({ ...d, ...p }));
+    forgetFor(p);
+  };
 
   const autoExecutor = useMemo(
     () => resolveAutoExecutorRef(providersDto, Boolean(conn?.fake_provider)),
@@ -100,9 +106,11 @@ function NewBotDialogContent({
   const activeAutonomy = presetToAutonomy(draft.preset);
   const nameMissing = draft.name.trim() === "";
   const executorMissing = effectiveExecutor.model.trim() === "";
+  // An unusable hand-typed id blocks creating the bot, as it blocks saving an edit.
+  const customInvalid = invalidCustomRoles(customText).length > 0;
 
   const save = async () => {
-    if (!client || nameMissing || executorMissing || saving) {
+    if (!client || nameMissing || executorMissing || customInvalid || saving) {
       return;
     }
     setSaving(true);
@@ -381,12 +389,14 @@ function NewBotDialogContent({
 
             <AdvancedFields
               draft={effectiveDraft}
-              patch={(next) => {
-                if (next.executor) {
-                  setBrainMode("manual");
-                }
-                patch(next);
+              customText={customText}
+              onCustomText={(role, text) => {
+                if (role === "executor") setBrainMode("manual");
+                setCustom(role, text);
               }}
+              computerTarget="local"
+              browserTarget="local"
+              chatCount={0}
             />
           </div>
         ) : null}
@@ -405,7 +415,7 @@ function NewBotDialogContent({
         <Button
           type="submit"
           variant="primary"
-          disabled={saving || nameMissing || executorMissing}
+          disabled={saving || nameMissing || executorMissing || customInvalid}
           data-testid="new-bot-submit"
         >
           {t("newBot.create")}

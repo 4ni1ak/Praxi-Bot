@@ -56,31 +56,14 @@ function sameRef(a: ModelRef, b: ModelRef): boolean {
   return formatModelRef(a) === formatModelRef(b);
 }
 
-/** Field-by-field comparison of two drafts (trailing spaces in the name do not count). */
-export function draftsEqual(a: BotDraft, b: BotDraft): boolean {
-  return (
-    a.name.trim() === b.name.trim() &&
-    a.persona === b.persona &&
-    a.shape === b.shape &&
-    a.color.toLowerCase() === b.color.toLowerCase() &&
-    (a.avatar ?? null) === (b.avatar ?? null) &&
-    sameRef(a.executor, b.executor) &&
-    sameRef(a.planner, b.planner) &&
-    sameRef(a.classifier, b.classifier) &&
-    fallbackList(a.fallback).join(",") === fallbackList(b.fallback).join(",") &&
-    a.preset === b.preset &&
-    PERMISSION_CATEGORIES.every((c) => a.categories[c] === b.categories[c]) &&
-    a.computer === b.computer &&
-    a.browser === b.browser
-  );
-}
-
 export interface EditorSnapshot {
   draft: BotDraft;
   initialDraft: BotDraft;
   apps: Record<string, boolean>;
   initialApps: Record<string, boolean>;
   skillsDirty: boolean;
+  /** Hand-typed model ids that are not valid yet (kept as typed, see `invalidCustomRoles`). */
+  customText?: CustomText;
 }
 
 function appsChanged(a: Record<string, boolean>, b: Record<string, boolean>): boolean {
@@ -117,24 +100,24 @@ export function dirtySections(s: EditorSnapshot): BotEditorSection[] {
   }
   if (s.skillsDirty) out.push("skills");
   if (appsChanged(s.apps, s.initialApps)) out.push("apps");
-  if (d.computer !== i.computer || d.browser !== i.browser) out.push("advanced");
+  if (invalidCustomRoles(s.customText ?? {}).length > 0) out.push("advanced");
   return out;
 }
 
-export function isEditorDirty(s: EditorSnapshot): boolean {
-  return dirtySections(s).length > 0;
-}
-
-export type EditorProblem = "nameMissing" | "executorMissing";
+export type EditorProblem = "nameMissing" | "executorMissing" | "customInvalid";
 
 /** What blocks Save, and the section that fixes it. */
 export function editorProblems(
-  draft: BotDraft
+  draft: BotDraft,
+  customText: CustomText = {}
 ): Array<{ problem: EditorProblem; section: BotEditorSection }> {
   const out: Array<{ problem: EditorProblem; section: BotEditorSection }> = [];
   if (draft.name.trim() === "") out.push({ problem: "nameMissing", section: "identity" });
   if (draft.executor.model.trim() === "") {
     out.push({ problem: "executorMissing", section: "models" });
+  }
+  if (invalidCustomRoles(customText).length > 0) {
+    out.push({ problem: "customInvalid", section: "advanced" });
   }
   return out;
 }
@@ -213,4 +196,53 @@ export function permissionTone(preset: PresetChoice): PermissionTone {
     case "read-and-draft":
       return "guarded";
   }
+}
+
+/** Roles with a hand-typed model id (Advanced). */
+export type CustomRole = "executor" | "planner" | "classifier";
+
+/** The text of a custom id field while it differs from the draft's model (kept as typed). */
+export type CustomText = Partial<Record<CustomRole, string>>;
+
+/**
+ * Typed ids that are not usable: they block Save and count as unsaved data.  An empty field is
+ * not "invalid" here (an optional role may be cleared; an empty main model is `executorMissing`).
+ */
+export function invalidCustomRoles(text: CustomText): CustomRole[] {
+  return (Object.keys(text) as CustomRole[]).filter((role) => {
+    const raw = text[role];
+    return raw !== undefined && raw.trim() !== "" && customRef(raw) === null;
+  });
+}
+
+/**
+ * One keystroke in a custom id field: the draft value to store (`null` = keep the draft as it is
+ * while the text is invalid) and the text to keep (`undefined` = the draft's own text is shown).
+ */
+export function applyCustomText(
+  text: string
+): { ref: ModelRef | null; keep: string | undefined } {
+  const ref = text.trim() === "" ? { provider: "", model: "" } : customRef(text);
+  const canonical = ref ? formatModelRef(ref) : undefined;
+  return { ref, keep: ref && text === canonical ? undefined : text };
+}
+
+// --- fallback entry ----------------------------------------------------------
+
+export type FallbackIssue = CustomRefIssue;
+
+/**
+ * Check a typed fallback list (`provider/model`, comma separated, any id - not only the catalog's).
+ * Returns the refs to add, or the first issue.
+ */
+export function parseFallbackInput(
+  text: string
+): { refs: string[] } | { issue: CustomRefIssue } {
+  const parts = text.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return { issue: "empty" };
+  for (const part of parts) {
+    const issue = customRefIssue(part);
+    if (issue) return { issue };
+  }
+  return { refs: parts };
 }

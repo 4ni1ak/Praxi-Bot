@@ -8,11 +8,9 @@ import {
   customRef,
   customRefIssue,
   dirtySections,
-  draftsEqual,
   editorProblems,
   editorSection,
   fallbackList,
-  isEditorDirty,
   permissionTone,
   removeFallback,
   stepSection
@@ -39,12 +37,12 @@ const snap = (draft: BotDraft, over: Partial<Parameters<typeof dirtySections>[0]
 });
 
 test("an untouched draft is clean", () => {
-  assert.equal(draftsEqual(base(), base()), true);
-  assert.equal(isEditorDirty(snap(base())), false);
+  const dirty = (d: BotDraft) => dirtySections(snap(d)).length > 0;
+  assert.equal(dirty(base()), false);
   // Cosmetic differences do not count as edits.
-  assert.equal(isEditorDirty(snap({ ...base(), name: "Atlas  " })), false);
-  assert.equal(isEditorDirty(snap({ ...base(), color: base().color.toUpperCase() })), false);
-  assert.equal(isEditorDirty(snap({ ...base(), fallback: " " })), false);
+  assert.equal(dirty({ ...base(), name: "Atlas  " }), false);
+  assert.equal(dirty({ ...base(), color: base().color.toUpperCase() }), false);
+  assert.equal(dirty({ ...base(), fallback: " " }), false);
 });
 
 test("each kind of edit marks its own section", () => {
@@ -61,7 +59,7 @@ test("each kind of edit marks its own section", () => {
   assert.deepEqual(dirtySections(snap(base(), { apps: { github: false } })), ["apps"]);
   // An app that appeared unticked is not a change.
   assert.deepEqual(dirtySections(snap(base(), { apps: { github: true, slack: false } })), []);
-  assert.equal(draftsEqual(base(), { ...base(), avatar: "data:image/png;base64,AA" }), false);
+  assert.deepEqual(dirtySections(snap({ ...base(), avatar: "data:image/png;base64,AA" })), ["identity"]);
 });
 
 test("save is blocked by a missing name or executor, pointing at the right section", () => {

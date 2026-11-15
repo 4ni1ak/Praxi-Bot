@@ -70,6 +70,9 @@ import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
 import { DaemonProvider, useDaemon } from "./state/DaemonContext";
 import { AddSkillModal } from "./components/AddSkillModal";
+import { useToast } from "./components/Toast";
+import { createChatFor, newChatFailureNeedsToast } from "./lib/newChat";
+import { LeaveGuardProvider, useLeaveRegistry } from "./state/LeaveGuard";
 import { SkillsModal } from "./components/SkillsModal";
 import { useBotSkills } from "./state/useBotSkills";
 import { BotEditModal } from "./views/BotEditModal";
@@ -137,6 +140,13 @@ function AppShell() {
   const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
+  // Every route change goes through this gate: a bot dialog with unsaved data asks first, and one
+  // that is saving blocks it (PR #95, finding 4).  Do not call `setRoute` directly elsewhere.
+  const leave = useLeaveRegistry();
+  const go = (next: Route) => {
+    leave.attempt(() => setRoute(next));
+  };
+  const toast = useToast();
   const [controlState, setControlState] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
@@ -385,7 +395,7 @@ function AppShell() {
         onboardingSkipped: false
       });
     }
-    setRoute({ kind: "onboarding" });
+    go({ kind: "onboarding" });
   };
 
   const routeBotId =
@@ -416,7 +426,7 @@ function AppShell() {
     } else if (action === "computer") {
       setSettingsOpen("computer");
     } else if (action === "schedules") {
-      setRoute({ kind: "schedules" });
+      go({ kind: "schedules" });
     } else if (action === "apps") {
       setAppsOpen(true);
     } else {
@@ -440,36 +450,50 @@ function AppShell() {
     if (screen === "settings" || screen === "usage") {
       setSettingsOpen(screen === "usage" ? "usage" : "general");
     } else {
-      setRoute({ kind: screen });
+      go({ kind: screen });
     }
   };
 
   const openChat = (chatId: string) => {
     const chat = chats.find((c) => c.id === chatId);
-    setRoute({ kind: "chat", chatId, botId: chat?.bot_id ?? "" });
+    go({ kind: "chat", chatId, botId: chat?.bot_id ?? "" });
   };
-  const openNeeds = () => setRoute({ kind: "needs" });
+  const openNeeds = () => go({ kind: "needs" });
   // Selecting a bot: its latest chat, or the empty state when it has none.
-  const goToBot = (botId: string) => setRoute(botLanding(botId, chats));
+  const goToBot = (botId: string) => go(botLanding(botId, chats));
   const startChat = async (botId: string) => {
     if (!client || newChatBusy) {
       return;
     }
     setNewChatBusy(true);
     setNewChatError(null);
-    try {
-      const chat = await client.createChat(botId);
-      await refreshChats().catch(() => {});
+    const result = await createChatFor(client, botId, refreshChats);
+    if (result.ok) {
       setBotProfileOpen(false);
-      setRoute({ kind: "chat", chatId: chat.id, botId });
-    } catch (e) {
-      setNewChatError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setNewChatBusy(false);
+      go({ kind: "chat", chatId: result.chatId, botId });
+    } else {
+      setNewChatError(result.message);
+      if (newChatFailureNeedsToast(route.kind)) {
+        toast.show(t("bots.newChatFailed", { detail: result.message }), "danger");
+      }
     }
+    setNewChatBusy(false);
   };
 
   const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot");
+  // The bot dialogs belong to one bot: another bot, or leaving the bot views, closes them.
+  const dialogBotId = botInView ? selectedBot?.id : undefined;
+  const lastDialogBot = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    // (A first selection - mock review links open a dialog together with the route - keeps them.)
+    if (lastDialogBot.current !== undefined) {
+      setBotEditOpen(false);
+      setBotProfileOpen(false);
+      setSkillsOpen(false);
+      setAddSkillOpen(false);
+    }
+    lastDialogBot.current = dialogBotId;
+  }, [dialogBotId]);
   const panelVisible = panelOpen && botInView;
   const float = isFloatShell(settings.uiStyle, backdropIsActive(settings.backdrop, settings.backgroundUrl));
   const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
@@ -489,7 +513,12 @@ function AppShell() {
   useEffect(() => {
     setThumbnailDemand(panelVisible, selectedBot?.id ?? null);
   }, [panelVisible, selectedBot?.id, setThumbnailDemand]);
-  const togglePanel = () => setPanelOpen((open) => !open);
+  const closePanel = () =>
+    leave.attempt(() => {
+      setPanelOpen(false);
+      chipRef.current?.focus();
+    });
+  const togglePanel = () => (panelOpen ? closePanel() : setPanelOpen(true));
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
     ? botChats(chats, selectedBot.id).map((c) => ({ id: c.id, title: c.title ?? "", createdAtMs: c.created_at_ms }))
@@ -597,8 +626,7 @@ function AppShell() {
           onKeyDown={(e) => {
             if (e.key === "Escape" && panelVisible) {
               e.stopPropagation();
-              setPanelOpen(false);
-              chipRef.current?.focus();
+              closePanel();
             }
           }}
         >
@@ -617,10 +645,7 @@ function AppShell() {
               model={panelBotView.executor}
               chats={panelChats}
               activeChatId={route.kind === "chat" ? route.chatId : undefined}
-              onClose={() => {
-                setPanelOpen(false);
-                chipRef.current?.focus();
-              }}
+              onClose={closePanel}
               preset={draftFromBot(selectedBot).preset}
               needs={needs}
               runs={runs}
@@ -663,7 +688,7 @@ function AppShell() {
             ) : null}
           </SidebarHeader>
           <SidebarSection>
-            {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={() => setRoute({ kind: "needs" })}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
+            {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
             {bots.filter(bot => bot.name.toLowerCase().includes((botSearch ?? "").toLowerCase())).map((bot) => {
               const view = botView(bot);
               const latest = chats.filter(c => c.bot_id === bot.id).sort((a,b) => b.created_at_ms - a.created_at_ms)[0];
@@ -735,7 +760,7 @@ function AppShell() {
                 onboardingSkipped: true,
                 onboardingStep: currentStep
               });
-              setRoute({ kind: "home" });
+              go({ kind: "home" });
             }}
             onComplete={({ botId, chatId }) => {
               updateSettings({
@@ -745,11 +770,11 @@ function AppShell() {
                 ...(botId ? { onboardingBotId: botId } : {})
               });
               if (chatId && botId) {
-                setRoute({ kind: "chat", chatId, botId });
+                go({ kind: "chat", chatId, botId });
               } else if (botId) {
                 goToBot(botId);
               } else {
-                setRoute({ kind: "home" });
+                go({ kind: "home" });
               }
             }}
           />
@@ -869,7 +894,7 @@ function AppShell() {
         currentBotId={routeBotId}
         onScreen={handlePaletteScreen}
         onBot={goToBot}
-        onChat={(chatId, botId) => setRoute({ kind: "chat", chatId, botId })}
+        onChat={(chatId, botId) => go({ kind: "chat", chatId, botId })}
       />
       <SettingsModal
         open={settingsOpen !== null}
@@ -962,8 +987,10 @@ export function App() {
     <ToastProvider>
       <DaemonProvider>
         <LiveViewProvider>
-          <ControlBridgeHost />
-          <AppShell />
+          <LeaveGuardProvider>
+            <ControlBridgeHost />
+            <AppShell />
+          </LeaveGuardProvider>
         </LiveViewProvider>
       </DaemonProvider>
     </ToastProvider>

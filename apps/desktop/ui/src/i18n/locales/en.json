@@ -233,9 +233,6 @@
     "notFound": "This bot no longer exists.",
     "noModel": "No model",
     "newChat": "New chat",
-    "confirmDelete": "Click again to delete",
-    "chats": "Chats",
-    "noChats": "No chats yet. Start one with “New chat”.",
     "skills": {
       "heading": "Skills",
       "loading": "Loading skills…",
@@ -243,7 +240,6 @@
       "summarySelected": "{{count}} of {{total}} shared skills",
       "summaryLearned": "(+{{count}} learned)",
       "summaryMissing": "{{count}} assigned skill unavailable on disk",
-      "chooseButton": "Choose skills…",
       "modalTitle": "Skills",
       "modeLabel": "Shared skills access",
       "modeAll": "All shared skills",
@@ -273,7 +269,8 @@
     "chatState": {
       "needs": "Needs you",
       "running": "Running"
-    }
+    },
+    "newChatFailed": "Could not start a chat: {{detail}}"
   },
   "chat": {
     "notFound": "This chat does not exist.",
@@ -709,10 +706,7 @@
       "notApplied": "{{names}}: not applied, the app changed in the meantime (for example it is now open to all bots). The list shows its current state.",
       "partialFail": "The bot was saved, but app access could not be updated for: {{names}}. Try Save again."
     },
-    "createTitle": "New bot",
     "editTitle": "Edit bot",
-    "create": "Create bot",
-    "identity": "Identity",
     "name": "Name",
     "nameRequired": "A name is required.",
     "avatar": "Avatar",
@@ -727,19 +721,13 @@
     "persona": "Persona",
     "personaPlaceholder": "How should this bot behave? (system instruction)",
     "models": "Models",
-    "modelsHint": "Pick a provider and type the model name for each role. Only the executor is required.",
     "role": {
       "executor": "Executor",
       "planner": "Planner",
       "classifier": "Classifier",
       "fallback": "Fallback models"
     },
-    "provider": "provider",
-    "model": "model",
-    "defaultProvider": "Default provider",
-    "modelPlaceholder": "model name",
     "executorRequired": "The executor model is required.",
-    "fallbackPlaceholder": "provider/model, provider/model",
     "permissions": "Permissions",
     "preset": {
       "read-only": {
@@ -784,7 +772,6 @@
     "computer": "Computer",
     "browser": "Browser",
     "local": "Local (this machine)",
-    "remoteSoon": "Remote (coming soon)",
     "runtimeHint": "Only this machine is supported for now."
   },
   "usage": {
@@ -1744,7 +1731,6 @@
   "botPanel": {
     "toggle": "Bot panel",
     "close": "Close panel",
-    "settings": "Bot settings",
     "profile": "Bot profile",
     "chats": "Chats",
     "noChats": "No chats yet.",
@@ -1912,16 +1898,17 @@
     },
     "dangerTitle": "Danger zone",
     "deleteTitle": "Delete this bot",
-    "deleteHint": "Removes the bot and its chats. This cannot be undone.",
+    "deleteHint": "Removes the bot, its access to apps and its e-mail accounts. Only possible while it has no chats or runs. This cannot be undone.",
     "delete": "Delete bot",
     "deleteConfirmTitle": "Delete {{name}}?",
-    "deleteConfirmBody": "The bot and all of its chats will be removed. This cannot be undone.",
+    "deleteConfirmBody": "The bot, its access to apps and its e-mail accounts will be removed. This cannot be undone. A bot that still has chats or runs cannot be deleted: in that case nothing is removed and you will see why.",
     "deleted": "{{name}} was deleted.",
     "unsaved": "Unsaved changes",
     "needsAttention": "Needs attention",
     "problem": {
       "nameMissing": "Give the bot a name to save.",
-      "executorMissing": "Choose a main model to save."
+      "executorMissing": "Choose a main model to save.",
+      "customInvalid": "A custom model id is not valid yet (Advanced)."
     },
     "saving": "Saving…",
     "saved": "{{name}} was saved.",
@@ -1929,7 +1916,30 @@
     "discardTitle": "Discard your changes?",
     "discardBody": "You have unsaved changes. If you close now, they are lost.",
     "discard": "Discard",
-    "keepEditing": "Keep editing"
+    "keepEditing": "Keep editing",
+    "conflict": {
+      "title": "This bot was changed elsewhere",
+      "body": "While you were editing, {{parts}} changed in the saved bot. Nothing was saved. Reload shows the saved version (your profile edits are dropped); overwrite writes only the fields you changed on top of it.",
+      "reload": "Reload saved version",
+      "overwrite": "Overwrite with my changes",
+      "part": {
+        "identity": "name or look",
+        "models": "models",
+        "permissions": "permissions",
+        "runtime": "where it runs",
+        "other": "other settings"
+      }
+    },
+    "fallbackCustom": "Other model id",
+    "fallbackCustomHint": "Any model id as provider/model, even one that is not listed. Separate several with commas.",
+    "target": {
+      "auto": "Automatic",
+      "pc": "This computer",
+      "host": "Host",
+      "browser": "Browser",
+      "off": "Off"
+    },
+    "deleteBlocked": "This bot still has chats ({{count}}), so it cannot be deleted. Only a bot without chats or runs can be removed."
   },
   "addSkill": {
     "open": "Add skill",
@@ -1950,7 +1960,9 @@
       "badLine": "This line is not in the form key: value — {{detail}}",
       "unknownKey": "Unknown key “{{detail}}”. Only name, description, version and when are allowed.",
       "badWhen": "The “when” block is not valid near “{{detail}}”. Use domains, apps or keywords with a [a, b] list.",
-      "unreadable": "The file could not be read as text."
+      "unreadable": "The file could not be read as text.",
+      "duplicateKey": "The key “{{detail}}” appears twice.",
+      "emptyVersion": "`version` is present but empty."
     },
     "name": "Name",
     "nameHint": "Lowercase letters, digits, - _ and . — this is also the folder name.",
@@ -1986,7 +1998,7 @@
     "done": "Done",
     "discardBody": "The skill you wrote is not saved anywhere yet. If you close now, it is lost.",
     "boundaryTitle": "One manual step for now",
-    "boundaryBody": "The app cannot save a skill into the skills folder by itself yet. Your skill is ready and checked: place the file once, then press Check.",
+    "boundaryBody": "The app cannot save a skill into the skills folder by itself yet. Your skill passed a preliminary check in the app; whether it loads is decided by the daemon. Place the file once, then press Check.",
     "stepCopy": "Copy the skill file",
     "copyFile": "Copy file contents",
     "copied": "Copied",
@@ -2005,6 +2017,12 @@
     "rejected": "The skill was found but could not be loaded",
     "notFound": "Not found yet",
     "notFoundBody": "Make sure the file is named SKILL.md and sits in the folder shown above, then check again.",
-    "checkFailed": "Could not check"
+    "checkFailed": "Could not check",
+    "namePlaceholder": "invoice-check",
+    "domainsPlaceholder": "github.com, gitlab.com",
+    "appsPlaceholder": "Excel, SystemSettings",
+    "different": "A different skill has this name",
+    "differentBody": "The catalog lists “{{name}}” (version {{version}}, {{scope}}), but it is not the file you prepared. Change the name or version, or replace the old file, then check again.",
+    "discardInstallBody": "The skill file has not been found in the skills folder yet. If you close now, what you wrote is lost."
   }
 }

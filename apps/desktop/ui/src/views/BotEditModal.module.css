@@ -139,3 +139,10 @@
     transition: none;
   }
 }
+
+.noticeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}

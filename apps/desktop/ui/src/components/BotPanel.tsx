@@ -12,7 +12,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { BotAvatar, type BotAvatarState, type BotIdentity } from "ui";
 import { type PermissionTone, permissionTone } from "../lib/botEditor";
-import { chatActivity } from "../lib/botLanding";
+import { chatActivity, chatDateLabel } from "../lib/botLanding";
 import type { PresetChoice } from "../lib/botProfile";
 import { modelLine } from "../lib/modelName";
 import type { BotSkillsState } from "../state/useBotSkills";
@@ -111,7 +111,7 @@ export function BotPanel({
   onManageSkills: () => void;
   onAddSkill: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   return (
     <div className={styles.root} id="bot-panel" data-testid="bot-panel">
       <button
@@ -187,7 +187,12 @@ export function BotPanel({
                     onClick={() => onOpenChat(c.id)}
                   >
                     <MessageSquare aria-hidden="true" />
-                    <span className={styles.chatTitle}>{c.title || t("botPanel.untitled")}</span>
+                    <span className={styles.chatText}>
+                      <span className={styles.chatTitle}>{c.title || t("botPanel.untitled")}</span>
+                      <span className={styles.chatDate} data-testid="bot-panel-chat-date">
+                        {chatDateLabel(c.createdAtMs, i18n.language)}
+                      </span>
+                    </span>
                     {activity ? (
                       <span className={styles.chatState} data-state={activity}>
                         {t(`bots.chatState.${activity}`)}

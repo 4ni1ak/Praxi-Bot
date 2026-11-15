@@ -1,12 +1,10 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { ApiClient } from "../api/client";
 import type { McpServer, ProvidersDto } from "../api/types";
 import { avatarFromFile, AvatarFileError } from "../lib/avatar";
 import { botHasAccess } from "../lib/mcpApps";
-import { FAKE_PROVIDER_ID } from "../lib/providers";
-import { nonCliProviderIds, providersView } from "../lib/providerView";
 import formStyles from "./Form.module.css";
 import styles from "./BotAdvancedFields.module.css";
 
@@ -14,7 +12,6 @@ import styles from "./BotAdvancedFields.module.css";
 export function useBotFormDeps(
   client: ApiClient | null,
   existingId: string | undefined,
-  fakeProvider: boolean,
   active: boolean
 ) {
   const [servers, setServers] = useState<McpServer[] | null>(null);
@@ -57,23 +54,8 @@ export function useBotFormDeps(
     };
   }, [client, existingId, active]);
 
-  const providerList = useMemo(() => providersView(providersDto), [providersDto]);
-  const providerIds = useMemo(() => {
-    const ids = new Set<string>(providerList.selectable);
-    if (fakeProvider) {
-      ids.add(FAKE_PROVIDER_ID);
-    }
-    return [...ids];
-  }, [providerList.selectable, fakeProvider]);
-  const httpProviders = useMemo(
-    () => nonCliProviderIds(providerIds, providersDto),
-    [providerIds, providersDto]
-  );
-
   return {
     providersDto,
-    providerIds,
-    httpProviders,
     servers,
     setServers,
     allowed,

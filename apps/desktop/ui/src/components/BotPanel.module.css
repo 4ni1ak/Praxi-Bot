@@ -239,10 +239,23 @@
   height: var(--size-icon);
 }
 
-.chatTitle {
+.chatText {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-width: var(--space-0);
+}
+
+.chatTitle {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chatDate {
+  overflow: hidden;
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

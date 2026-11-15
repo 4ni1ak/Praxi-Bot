@@ -44,17 +44,39 @@ import {
   editorProblems,
   stepSection
 } from "../lib/botEditor";
-import { type BotDraft, configFromDraft, draftFromBot } from "../lib/botProfile";
+import { botChats } from "../lib/botLanding";
+import { type BotDraft, draftFromBot, runtimeTargetLabel } from "../lib/botProfile";
+import { type ProfilePart, saveEditor } from "../lib/botSave";
 import {
   MAX_ASSIGNED_SKILLS,
   buildPutSkillsPayload,
   exceedsSkillLimit,
   isBotSkillsDirty
 } from "../lib/botSkills";
-import { botHasAccess, changedApps, saveBotAndApps } from "../lib/mcpApps";
+import { botHasAccess, changedApps } from "../lib/mcpApps";
 import { useDaemon } from "../state/DaemonContext";
+import { useLeaveGuard } from "../state/LeaveGuard";
 import { type BotSkillsState, useSkillsDraft } from "../state/useBotSkills";
+import { useCustomText } from "../state/useCustomText";
 import styles from "./BotEditModal.module.css";
+
+/** The section list turns into a horizontal strip at this width (see the stylesheet). */
+const STRIP_QUERY = "(width <= 52em)";
+
+function useHorizontalTabs(): boolean {
+  const [strip, setStrip] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.(STRIP_QUERY).matches === true
+  );
+  useEffect(() => {
+    const mq = window.matchMedia?.(STRIP_QUERY);
+    if (!mq) return undefined;
+    const on = () => setStrip(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return strip;
+}
 
 const SECTION_ICONS: Record<BotEditorSection, typeof UserRound> = {
   identity: UserRound,
@@ -128,14 +150,20 @@ function BotEditDialog({
   const { t } = useTranslation();
   const toast = useToast();
   const uid = useId();
-  const { client, bots, conn, refreshBots } = useDaemon();
+  const { client, bots, chats, refreshBots } = useDaemon();
   const { providersDto, servers, setServers, allowed, setAllowed, initialApps, setInitialApps } =
-    useBotFormDeps(client, bot.id, Boolean(conn?.fake_provider), true);
+    useBotFormDeps(client, bot.id, true);
 
   // The draft the dialog opened with: later refreshes of the bot list must not make an
   // untouched form look edited (or silently replace what the user typed).
   const [savedDraft, setSavedDraft] = useState<BotDraft>(() => draftFromBot(bot));
   const [draft, setDraft] = useState<BotDraft>(savedDraft);
+  // The stored bot the dialog was opened on: the conflict check compares the daemon's copy with it.
+  const [baseline, setBaseline] = useState<Bot>(bot);
+  // Hand-typed model ids as typed (Advanced); kept here so they survive a section change.
+  const { customText, setCustom, forgetFor, reset: resetCustom } = useCustomText(setDraft);
+  const [conflict, setConflict] = useState<{ parts: ProfilePart[]; fresh: Bot } | null>(null);
+  const pendingLeave = useRef<(() => void) | null>(null);
   const [section, setSection] = useState<BotEditorSection>(initialSection ?? "identity");
   const [skillsDraft, setSkillsDraft] = useSkillsDraft(skills.data);
   const [saving, setSaving] = useState(false);
@@ -147,7 +175,10 @@ function BotEditDialog({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<Partial<Record<BotEditorSection, HTMLButtonElement | null>>>({});
 
-  const patch = (p: Partial<BotDraft>) => setDraft((d) => ({ ...d, ...p }));
+  const patch = (p: Partial<BotDraft>) => {
+    setDraft((d) => ({ ...d, ...p }));
+    forgetFor(p);
+  };
 
   const skillsDirty = Boolean(
     skills.data && skillsDraft && isBotSkillsDirty(skillsDraft, skills.data)
@@ -157,20 +188,33 @@ function BotEditDialog({
     initialDraft: savedDraft,
     apps: allowed,
     initialApps,
-    skillsDirty
+    skillsDirty,
+    customText
   });
   const dirty = dirtyIn.length > 0;
-  const problems = editorProblems(draft);
+  const profileDirty = dirtyIn.some((s) => s === "identity" || s === "models" || s === "permissions");
+  const problems = editorProblems(draft, customText);
   const nameMissing = problems.some((p) => p.problem === "nameMissing");
   const executorMissing = problems.some((p) => p.problem === "executorMissing");
 
   const requestClose = () => {
     const action = closeAction(dirty, saving || deleting);
     if (action === "close") onClose();
-    else if (action === "confirm") setConfirmClose(true);
+    else if (action === "confirm") {
+      pendingLeave.current = null;
+      setConfirmClose(true);
+    }
   };
   useEffect(() => {
     closeGuard.current = requestClose;
+  });
+  // Route changes (another bot, a chat, the palette, the panel) ask the same question.
+  useLeaveGuard({
+    state: () => ({ dirty, busy: saving || deleting }),
+    confirm: (proceed) => {
+      pendingLeave.current = proceed;
+      setConfirmClose(true);
+    }
   });
 
   const goTo = (next: BotEditorSection) => {
@@ -186,7 +230,7 @@ function BotEditDialog({
     tabRefs.current[next]?.focus();
   };
 
-  const save = async () => {
+  const save = async (overwrite = false) => {
     if (!client || saving) return;
     const first = problems[0];
     if (first) {
@@ -206,18 +250,36 @@ function BotEditDialog({
     setSaving(true);
     setError(null);
     try {
-      const config = configFromDraft(draft, bot);
-      const input = { name: draft.name.trim(), config };
-      const { bot: saved, failed, notApplied } = await saveBotAndApps(
-        client,
-        bot,
-        input,
+      const result = await saveEditor(client, {
+        baseline,
+        draft,
+        openedDraft: savedDraft,
+        profileDirty,
         initialApps,
         allowed,
-        bots.map((b) => b.id)
-      );
-      setSavedDraft(draft);
-      await refreshBots().catch(() => {});
+        allBotIds: bots.map((b) => b.id),
+        overwrite,
+        saveSkills: skillsPayload
+          ? async () => {
+              const r = await skills.save(skillsPayload);
+              return r.ok ? { ok: true } : { ok: false, failure: r.failure, message: r.message };
+            }
+          : null
+      });
+      if (result.kind === "conflict") {
+        setConflict({ parts: result.changed, fresh: result.fresh });
+        return;
+      }
+      setConflict(null);
+      const { bot: saved, failed, notApplied } = result;
+      if (result.profileWritten) {
+        const next = draftFromBot(saved);
+        setBaseline(saved);
+        setSavedDraft(next);
+        setDraft(next);
+        resetCustom();
+        await refreshBots().catch(() => {});
+      }
 
       const messages: string[] = [];
       if (failed.length > 0 || notApplied.length > 0) {
@@ -254,17 +316,15 @@ function BotEditDialog({
         setInitialApps(allowed);
       }
 
-      if (skillsPayload) {
-        const result = await skills.save(skillsPayload);
-        if (!result.ok) {
-          messages.push(
-            result.failure === "conflict"
-              ? t("bots.skills.conflict")
-              : result.failure === "invalid"
-                ? t("bots.skills.invalid", { detail: result.message })
-                : t("botEdit.skillsFailed", { detail: result.message })
-          );
-        }
+      const sk = result.skills;
+      if (sk && !sk.ok) {
+        messages.push(
+          sk.failure === "conflict"
+            ? t("bots.skills.conflict")
+            : sk.failure === "invalid"
+              ? t("bots.skills.invalid", { detail: sk.message })
+              : t("botEdit.skillsFailed", { detail: sk.message })
+        );
       }
 
       if (messages.length > 0) {
@@ -278,6 +338,17 @@ function BotEditDialog({
     } finally {
       setSaving(false);
     }
+  };
+
+  /** Drop the profile edits and show what is stored now; skills and app edits stay. */
+  const reloadProfile = () => {
+    if (!conflict) return;
+    const next = draftFromBot(conflict.fresh);
+    setBaseline(conflict.fresh);
+    setSavedDraft(next);
+    setDraft(next);
+    resetCustom();
+    setConflict(null);
   };
 
   const remove = async () => {
@@ -295,6 +366,8 @@ function BotEditDialog({
     }
   };
 
+  const horizontalTabs = useHorizontalTabs();
+  const chatCount = botChats(chats, bot.id).length;
   const panelId = `${uid}-panel`;
   const tabId = (s: BotEditorSection) => `${uid}-tab-${s}`;
 
@@ -318,8 +391,9 @@ function BotEditDialog({
         <div
           className={styles.tabs}
           role="tablist"
-          aria-orientation="vertical"
+          aria-orientation={horizontalTabs ? "horizontal" : "vertical"}
           aria-label={t("botEdit.sections")}
+          inert={saving || deleting}
           onKeyDown={onTabKey}
         >
           {BOT_EDITOR_SECTIONS.map((s) => {
@@ -378,6 +452,7 @@ function BotEditDialog({
         <div
           ref={bodyRef}
           className={dialogStyles.body}
+          inert={saving || deleting}
           role="tabpanel"
           id={panelId}
           aria-labelledby={tabId(section)}
@@ -416,12 +491,39 @@ function BotEditDialog({
           {section === "advanced" ? (
             <AdvancedFields
               draft={draft}
-              patch={patch}
+              customText={customText}
+              onCustomText={setCustom}
+              computerTarget={runtimeTargetLabel(baseline.config, "computer")}
+              browserTarget={runtimeTargetLabel(baseline.config, "browser")}
+              chatCount={chatCount}
               onDelete={() => {
                 setDeleteError(null);
                 setConfirmDelete(true);
               }}
             />
+          ) : null}
+          {conflict ? (
+            <Callout tone="warning" title={t("botEdit.conflict.title")} role="alert">
+              <p>
+                {t("botEdit.conflict.body", {
+                  parts: conflict.parts.map((p) => t(`botEdit.conflict.part.${p}`)).join(", ")
+                })}
+              </p>
+              <div className={styles.noticeActions}>
+                <Button size="sm" variant="secondary" data-testid="bot-edit-reload" onClick={reloadProfile}>
+                  {t("botEdit.conflict.reload")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  data-testid="bot-edit-overwrite"
+                  disabled={saving}
+                  onClick={() => void save(true)}
+                >
+                  {t("botEdit.conflict.overwrite")}
+                </Button>
+              </div>
+            </Callout>
           ) : null}
           {error ? (
             <Callout tone="danger" role="alert">
@@ -463,10 +565,16 @@ function BotEditDialog({
         confirmLabel={t("botEdit.discard")}
         cancelLabel={t("botEdit.keepEditing")}
         tone="danger"
-        onCancel={() => setConfirmClose(false)}
+        onCancel={() => {
+          pendingLeave.current = null;
+          setConfirmClose(false);
+        }}
         onConfirm={() => {
+          const proceed = pendingLeave.current;
+          pendingLeave.current = null;
           setConfirmClose(false);
           onClose();
+          proceed?.();
         }}
       />
       <ConfirmDialog

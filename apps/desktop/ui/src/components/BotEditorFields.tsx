@@ -8,7 +8,7 @@ import {
   X,
   Zap
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, Button } from "ui";
 import {
@@ -19,14 +19,16 @@ import {
 } from "../api/types";
 import {
   addFallback,
+  type CustomRole,
+  type CustomText,
   customRefIssue,
   fallbackList,
+  parseFallbackInput,
   removeFallback
 } from "../lib/botEditor";
 import {
   type BotDraft,
   formatModelRef,
-  type ModelRef,
   parseModelRef,
   PRESET_CHOICES,
   type PresetChoice
@@ -260,6 +262,7 @@ export function ModelFields({
             onPick={(next) => patch({ fallback: addFallback(draft.fallback, next) })}
           />
         </div>
+        <CustomFallbackEntry onAdd={(refs) => patch({ fallback: refs.reduce(addFallback, draft.fallback) })} />
       </section>
     </>
   );
@@ -374,27 +377,86 @@ export function AppFields({
   );
 }
 
+/**
+ * Any model id as free text - a fallback that is not in the catalog, a default-provider id, a
+ * provider that is not configured here.  Several refs may be added at once, comma separated.
+ */
+function CustomFallbackEntry({ onAdd }: { onAdd: (refs: string[]) => void }) {
+  const { t } = useTranslation();
+  const uid = useId();
+  const [text, setText] = useState("");
+  const [issue, setIssue] = useState<string | null>(null);
+  const add = () => {
+    const parsed = parseFallbackInput(text);
+    if ("issue" in parsed) {
+      setIssue(parsed.issue);
+      return;
+    }
+    onAdd(parsed.refs);
+    setText("");
+    setIssue(null);
+  };
+  return (
+    <Field
+      label={t("botEdit.fallbackCustom")}
+      htmlFor={uid}
+      hint={t("botEdit.fallbackCustomHint")}
+      error={issue ? t(`botEdit.customIssue.${issue}`) : undefined}
+    >
+      <div className={styles.customAdd}>
+        <input
+          id={uid}
+          className={`${dialogStyles.input} ${dialogStyles.mono}`}
+          value={text}
+          placeholder={t("botEdit.customPlaceholder")}
+          spellCheck={false}
+          autoCapitalize="off"
+          data-testid="bot-edit-fallback-custom"
+          aria-invalid={issue ? true : undefined}
+          onChange={(e) => {
+            setText(e.target.value);
+            setIssue(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <Button
+          variant="secondary"
+          disabled={text.trim() === ""}
+          data-testid="bot-edit-fallback-custom-add"
+          onClick={add}
+        >
+          {t("botEdit.addFallback")}
+        </Button>
+      </div>
+    </Field>
+  );
+}
+
+/** A hand-typed `provider/model` id; the text is owned by the dialog so it survives a section change. */
 function CustomIdField({
   label,
   value,
+  text,
   required,
   onChange
 }: {
   label: string;
-  value: ModelRef;
+  value: BotDraft["executor"];
+  /** The text as typed while it differs from `value` (an unusable id); else `undefined`. */
+  text: string | undefined;
   required: boolean;
-  onChange: (ref: ModelRef) => void;
+  onChange: (text: string) => void;
 }) {
   const { t } = useTranslation();
   const uid = useId();
-  const stored = formatModelRef(value);
-  const [text, setText] = useState(stored);
-  // A model picked elsewhere (the pickers above) replaces what is typed here.
-  useEffect(() => {
-    setText((cur) => (formatModelRef(parseModelRef(cur.trim())) === stored ? cur : stored));
-  }, [stored]);
-  const empty = text.trim() === "";
-  const issue = empty && !required ? null : customRefIssue(text);
+  const shown = text ?? formatModelRef(value);
+  const empty = shown.trim() === "";
+  const issue = empty && !required ? null : customRefIssue(shown);
   return (
     <Field
       label={label}
@@ -404,34 +466,43 @@ function CustomIdField({
       <input
         id={uid}
         className={`${dialogStyles.input} ${dialogStyles.mono}`}
-        value={text}
+        value={shown}
         placeholder={t("botEdit.customPlaceholder")}
         spellCheck={false}
         autoCapitalize="off"
         aria-invalid={issue ? true : undefined}
-        onChange={(e) => {
-          const next = e.target.value;
-          setText(next);
-          if (next.trim() === "") {
-            // Clearing an optional role is a valid edit; a cleared main model blocks Save.
-            onChange({ provider: "", model: "" });
-          } else if (!customRefIssue(next)) {
-            onChange(parseModelRef(next.trim()));
-          }
-        }}
+        onChange={(e) => onChange(e.target.value)}
       />
     </Field>
   );
 }
 
+const KNOWN_TARGETS = new Set(["auto", "pc", "host", "browser", "off"]);
+
+/** A stored computer/browser target in words (`node:<id>` and unknown values as stored). */
+function targetText(t: (key: string) => string, target: string): string {
+  if (target === "local") return t("botForm.local");
+  return KNOWN_TARGETS.has(target) ? t(`botEdit.target.${target}`) : target;
+}
+
 /** Advanced: the custom model id escape hatch, where the bot runs, and deleting it. */
 export function AdvancedFields({
   draft,
-  patch,
+  customText,
+  onCustomText,
+  computerTarget,
+  browserTarget,
+  chatCount,
   onDelete
 }: {
   draft: BotDraft;
-  patch: Patch;
+  customText: CustomText;
+  onCustomText: (role: CustomRole, text: string) => void;
+  /** Where the bot runs, as stored (read-only here: this form never changes it). */
+  computerTarget: string;
+  browserTarget: string;
+  /** Chats of the bot: the daemon deletes only a bot without chats or runs. */
+  chatCount: number;
   /** Absent for a bot that does not exist yet. */
   onDelete?: () => void;
 }) {
@@ -446,21 +517,24 @@ export function AdvancedFields({
         <CustomIdField
           label={t("botEdit.mainModel")}
           value={draft.executor}
+          text={customText.executor}
           required
-          onChange={(executor) => patch({ executor })}
+          onChange={(text) => onCustomText("executor", text)}
         />
         <div className={styles.pair}>
           <CustomIdField
             label={t("botForm.role.planner")}
             value={draft.planner}
+            text={customText.planner}
             required={false}
-            onChange={(planner) => patch({ planner })}
+            onChange={(text) => onCustomText("planner", text)}
           />
           <CustomIdField
             label={t("botForm.role.classifier")}
             value={draft.classifier}
+            text={customText.classifier}
             required={false}
-            onChange={(classifier) => patch({ classifier })}
+            onChange={(text) => onCustomText("classifier", text)}
           />
         </div>
       </section>
@@ -472,15 +546,15 @@ export function AdvancedFields({
         </div>
         <SettingGroup>
           <SettingRow title={t("botForm.computer")}>
-            <span className={dialogStyles.chip}>
+            <span className={dialogStyles.chip} data-testid="bot-edit-computer">
               <MonitorSmartphone aria-hidden="true" />
-              <span>{t("botForm.local")}</span>
+              <span>{targetText(t, computerTarget)}</span>
             </span>
           </SettingRow>
           <SettingRow title={t("botForm.browser")}>
-            <span className={dialogStyles.chip}>
+            <span className={dialogStyles.chip} data-testid="bot-edit-browser">
               <MonitorSmartphone aria-hidden="true" />
-              <span>{t("botForm.local")}</span>
+              <span>{targetText(t, browserTarget)}</span>
             </span>
           </SettingRow>
         </SettingGroup>
@@ -494,9 +568,18 @@ export function AdvancedFields({
           <div className={styles.danger}>
             <div className={styles.dangerText}>
               <p className={styles.dangerTitle}>{t("botEdit.deleteTitle")}</p>
-              <p className={dialogStyles.hint}>{t("botEdit.deleteHint")}</p>
+              <p className={dialogStyles.hint}>
+                {chatCount > 0
+                  ? t("botEdit.deleteBlocked", { count: chatCount })
+                  : t("botEdit.deleteHint")}
+              </p>
             </div>
-            <Button variant="secondary" data-testid="bot-edit-delete" onClick={onDelete}>
+            <Button
+              variant="secondary"
+              disabled={chatCount > 0}
+              data-testid="bot-edit-delete"
+              onClick={onDelete}
+            >
               <Trash2 aria-hidden="true" />
               {t("botEdit.delete")}
             </Button>

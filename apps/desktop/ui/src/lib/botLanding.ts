@@ -23,6 +23,20 @@ export function botChats<C extends LandingChat>(chats: readonly C[], botId: stri
     .sort((a, b) => b.created_at_ms - a.created_at_ms);
 }
 
+/**
+ * The creation time shown under a chat in the panel list: chats with the same title are told
+ * apart by it (the old bot page showed it too).  Empty for a missing / invalid timestamp.
+ */
+export function chatDateLabel(createdAtMs: number, locale: string): string {
+  const d = new Date(createdAtMs);
+  if (!Number.isFinite(createdAtMs) || Number.isNaN(d.getTime())) return "";
+  try {
+    return d.toLocaleString(locale);
+  } catch {
+    return d.toLocaleString();
+  }
+}
+
 /** The route a bot opens on. */
 export function botLanding(botId: string, chats: readonly LandingChat[]): BotLanding {
   const latest = botChats(chats, botId)[0];

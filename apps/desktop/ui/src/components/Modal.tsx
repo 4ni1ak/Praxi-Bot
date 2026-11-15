@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { isTabStop, trapTarget } from "../lib/focusTrap";
 import { appInert } from "../lib/inertStack";
 import { layerStack as modalStack } from "../lib/modalStack";
 import styles from "./Modal.module.css";
 
 const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([disabled])';
 
 /** Only the topmost open layer (dialog or popover) reacts to Esc / Tab. */
 
@@ -53,23 +54,18 @@ export function Modal({
         return;
       }
       if (e.key === "Tab" && node) {
-        // Hidden controls (a `display: none` file input) cannot take focus and would break the trap.
-        const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-          (el) => el.getClientRects().length > 0
+        // Only real Tab stops: not hidden controls (a `display: none` file input) and not
+        // roving-tabindex members that are currently out of the order (inactive tabs).
+        const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) =>
+          isTabStop({ tabIndex: el.tabIndex, rects: el.getClientRects().length })
         );
-        if (items.length === 0) {
+        const active = document.activeElement as HTMLElement | null;
+        const target = trapTarget(items, active, node, e.shiftKey);
+        if (target === "none") {
           e.preventDefault();
-          return;
-        }
-        const first = items[0];
-        const last = items[items.length - 1];
-        const active = document.activeElement;
-        if (e.shiftKey && (active === first || active === node)) {
+        } else if (target) {
           e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && active === last) {
-          e.preventDefault();
-          first.focus();
+          target.focus();
         }
       }
     };
