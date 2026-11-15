@@ -381,6 +381,68 @@ mod hardening {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn stdio_never_reads_or_exports_oauth_credentials_for_its_server_id() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct ObservedStore {
+            inner: MemoryStore,
+            reads: AtomicUsize,
+        }
+        impl SecretStore for ObservedStore {
+            fn get(
+                &self,
+                name: &str,
+            ) -> Result<Option<secret_store::SecretValue>, secret_store::SecretError> {
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                self.inner.get(name)
+            }
+            fn set(&self, name: &str, value: &str) -> Result<(), secret_store::SecretError> {
+                self.inner.set(name, value)
+            }
+            fn delete(&self, name: &str) -> Result<bool, secret_store::SecretError> {
+                self.inner.delete(name)
+            }
+            fn list_names(&self) -> Result<Vec<String>, secret_store::SecretError> {
+                self.inner.list_names()
+            }
+        }
+        let store = Arc::new(ObservedStore {
+            inner: MemoryStore::new(),
+            reads: AtomicUsize::new(0),
+        });
+        store.set("mcp/stdio-oauth/oauth", &json!({"access_token": "stdio-access-sentinel-7f3a", "refresh_token": "stdio-refresh-sentinel-91bc"}).to_string()).unwrap();
+        store
+            .set(
+                "mcp/stdio-oauth/client-secret",
+                "stdio-client-sentinel-98fd",
+            )
+            .unwrap();
+        let registry = ToolRegistry::new();
+        let manager = McpManager::with_policy(registry.clone(), fast_policy(1))
+            .with_secret_store(store.clone());
+        let mut cfg = config("stdio-oauth");
+        let McpTransport::Stdio { env, .. } = &mut cfg.transport else {
+            unreachable!()
+        };
+        env.insert("DECLARED_MARKER".into(), "non-secret".into());
+        manager.add_server(cfg).await.unwrap();
+        let keys = call(&registry, "mcp:stdio-oauth/env_keys", json!({}))
+            .await
+            .unwrap();
+        assert!(keys.split(',').any(|key| key == "DECLARED_MARKER"));
+        assert!(
+            keys.split(',')
+                .all(|key| key == "DECLARED_MARKER" || OS_ESSENTIAL_ENV.contains(&key)),
+            "{keys}"
+        );
+        assert_eq!(
+            store.reads.load(Ordering::SeqCst),
+            0,
+            "stdio must not even load OAuth values"
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn secret_env_is_resolved_at_connect_and_not_leaked() {
         const VALUE: &str = "hunter2-very-secret";
         let capture = Capture::default();
