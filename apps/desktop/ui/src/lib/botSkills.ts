@@ -228,17 +228,46 @@ export function skillPreview(
   return { names: all.slice(0, limit), more: Math.max(0, all.length - limit) };
 }
 
+function baseNames(dto: BotSkills, draftMode: SkillAssignmentMode): Set<string> {
+  if (dto.mode === "selected") return new Set(dto.assigned.map((x) => x.name));
+  // "All shared skills": a draft switched to "selected" starts from every available skill.
+  return draftMode === "selected" ? new Set(dto.available.map((x) => x.name)) : new Set();
+}
+
 /**
- * Keep an open editor's draft in step with the server: a first load or a new assignment version
- * (someone saved, a skill was assigned from the add flow) replaces the picks, anything else
- * keeps what the user is editing.  The search text always survives.
+ * Keep an open editor's draft in step with the server.  A first load, or a new assignment version
+ * while nothing is edited, replaces the picks.  With unsaved picks (`previous` is what they were
+ * edited against), they are laid over the new assignment instead of being thrown away: what the
+ * user added stays added, what they removed stays removed, and whatever changed on the server
+ * (a skill assigned from the add flow, someone else's save) is kept.  The search text survives.
  */
 export function syncSkillsDraft(
   current: BotSkillsDraft | null,
-  dto: BotSkills
+  dto: BotSkills,
+  previous: BotSkills | null = null
 ): BotSkillsDraft {
   if (current && current.version === dto.version) {
     return current;
   }
-  return { ...createBotSkillsDraft(dto), query: current?.query ?? "" };
+  const fresh = { ...createBotSkillsDraft(dto), query: current?.query ?? "" };
+  if (!current || !previous || !isBotSkillsDirty(current, previous)) {
+    return fresh;
+  }
+  const before = baseNames(previous, current.mode);
+  const added = [...current.selected].filter((n) => !before.has(n));
+  const removed = [...before].filter((n) => !current.selected.has(n));
+  const selected = baseNames(dto, current.mode);
+  for (const n of added) selected.add(n);
+  for (const n of removed) selected.delete(n);
+  const missing = [
+    ...new Set([...current.missing, ...fresh.missing])
+  ].filter((n) => selected.has(n));
+  return {
+    version: dto.version,
+    mode: current.mode,
+    selected,
+    missing,
+    initializedSelected: current.initializedSelected || fresh.initializedSelected,
+    query: current.query
+  };
 }

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { ApiClient } from "../api/client";
 import { closeAction } from "../lib/botEditor";
+import { skillDraftDirty } from "../lib/skillDraft";
 import { payloadWithSkill } from "../lib/botSkills";
 import {
   buildSkillMd,
@@ -15,12 +16,14 @@ import {
   SKILL_DESCRIPTION_MAX,
   SKILL_MAX_BYTES,
   SKILL_NAME_MAX,
+  type CatalogSkill,
   type SkillCheck,
   type SkillDraft,
   skillInstallPath,
   suggestSkillName,
   validateSkillDraft
 } from "../lib/skillDraft";
+import { useLeaveGuard } from "../state/LeaveGuard";
 import type { BotSkillsState } from "../state/useBotSkills";
 import {
   Callout,
@@ -122,7 +125,7 @@ function AddSkillDialog({
     initialStep === "install"
       ? {
           ...emptySkillDraft(),
-          name: "invoice-check",
+          name: t("addSkill.namePlaceholder"),
           description: t("addSkill.descriptionPlaceholder"),
           body: t("addSkill.bodyPlaceholder")
         }
@@ -135,7 +138,11 @@ function AddSkillDialog({
   const [confirmClose, setConfirmClose] = useState(false);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
-  const [check, setCheck] = useState<{ state: SkillCheck | "failed"; message?: string } | null>(null);
+  const [check, setCheck] = useState<{
+    state: SkillCheck | "failed";
+    message?: string;
+    existing?: CatalogSkill;
+  } | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [assigned, setAssigned] = useState(false);
   const [copied, copy] = useCopied();
@@ -153,15 +160,28 @@ function AddSkillDialog({
   const versionIssue = issueFor(issues, "version");
   const suggestion = nameIssue && nameIssue !== "nameTaken" ? suggestSkillName(draft.name) : "";
   const skillName = draft.name.trim();
-  const dirty = step === "compose" && touched;
+  // Unsaved until the daemon's catalog lists this very file: moving on to the install step stores
+  // nothing, so leaving it still asks.
+  const dirty = skillDraftDirty({ touched, installed: check?.state === "installed" });
+  const pendingLeave = useRef<(() => void) | null>(null);
 
   const requestClose = () => {
     const action = closeAction(dirty, checking || assigning);
     if (action === "close") onClose();
-    else if (action === "confirm") setConfirmClose(true);
+    else if (action === "confirm") {
+      pendingLeave.current = null;
+      setConfirmClose(true);
+    }
   };
   useEffect(() => {
     closeGuard.current = requestClose;
+  });
+  useLeaveGuard({
+    state: () => ({ dirty, busy: checking || assigning }),
+    confirm: (proceed) => {
+      pendingLeave.current = proceed;
+      setConfirmClose(true);
+    }
   });
 
   // The real data directory, for the path the user needs (`GET /v1/doctor`, best effort).
@@ -210,7 +230,7 @@ function AddSkillDialog({
     setChecking(true);
     try {
       const catalog = await client.listSkills();
-      const result = checkSkillInstalled(skillName, catalog);
+      const result = checkSkillInstalled(draft, catalog);
       setCheck(result);
       if (result.state === "installed") {
         // The bot's own view (and "all shared skills" bots) picks it up from the same scan.
@@ -318,7 +338,7 @@ function AddSkillDialog({
                 id={`${uid}-name`}
                 className={`${dialogStyles.input} ${dialogStyles.mono}`}
                 value={draft.name}
-                placeholder="invoice-check"
+                placeholder={t("addSkill.namePlaceholder")}
                 spellCheck={false}
                 autoCapitalize="off"
                 data-autofocus
@@ -398,7 +418,7 @@ function AddSkillDialog({
                   id={`${uid}-domains`}
                   className={dialogStyles.input}
                   value={draft.domains}
-                  placeholder="github.com, gitlab.com"
+                  placeholder={t("addSkill.domainsPlaceholder")}
                   spellCheck={false}
                   onChange={(e) => patch({ domains: e.target.value })}
                 />
@@ -408,7 +428,7 @@ function AddSkillDialog({
                   id={`${uid}-apps`}
                   className={dialogStyles.input}
                   value={draft.apps}
-                  placeholder="Excel, SystemSettings"
+                  placeholder={t("addSkill.appsPlaceholder")}
                   spellCheck={false}
                   onChange={(e) => patch({ apps: e.target.value })}
                 />
@@ -506,6 +526,14 @@ function AddSkillDialog({
                   <Callout tone="danger" title={t("addSkill.rejected")} role="alert">
                     {check.message}
                   </Callout>
+                ) : check?.state === "different" ? (
+                  <Callout tone="warning" title={t("addSkill.different")} role="alert">
+                    {t("addSkill.differentBody", {
+                      name: skillName,
+                      version: check.existing?.version ?? "?",
+                      scope: check.existing?.scope ?? "shared"
+                    })}
+                  </Callout>
                 ) : check?.state === "notFound" ? (
                   <Callout tone="warning" title={t("addSkill.notFound")} role="status">
                     {t("addSkill.notFoundBody")}
@@ -544,7 +572,7 @@ function AddSkillDialog({
             <Button variant="ghost" disabled={checking || assigning} onClick={() => setStep("compose")}>
               {t("common.back")}
             </Button>
-            <Button variant="primary" disabled={checking || assigning} onClick={onClose}>
+            <Button variant="primary" disabled={checking || assigning} onClick={requestClose}>
               {t("addSkill.done")}
             </Button>
           </>
@@ -554,14 +582,20 @@ function AddSkillDialog({
       <ConfirmDialog
         open={confirmClose}
         title={t("botEdit.discardTitle")}
-        body={t("addSkill.discardBody")}
+        body={step === "install" ? t("addSkill.discardInstallBody") : t("addSkill.discardBody")}
         confirmLabel={t("botEdit.discard")}
         cancelLabel={t("botEdit.keepEditing")}
         tone="danger"
-        onCancel={() => setConfirmClose(false)}
+        onCancel={() => {
+          pendingLeave.current = null;
+          setConfirmClose(false);
+        }}
         onConfirm={() => {
+          const proceed = pendingLeave.current;
+          pendingLeave.current = null;
           setConfirmClose(false);
           onClose();
+          proceed?.();
         }}
       />
     </div>

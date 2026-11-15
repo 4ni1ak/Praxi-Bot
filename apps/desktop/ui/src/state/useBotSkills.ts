@@ -100,9 +100,12 @@ export function useSkillsDraft(
   const [draft, setDraft] = useState<BotSkillsDraft | null>(() =>
     data ? syncSkillsDraft(null, data) : null
   );
+  const seen = useRef<BotSkills | null>(data);
   useEffect(() => {
+    const previous = seen.current;
+    seen.current = data;
     if (data) {
-      setDraft((cur) => syncSkillsDraft(cur, data));
+      setDraft((cur) => syncSkillsDraft(cur, data, previous));
     }
   }, [data]);
   return [draft, setDraft];

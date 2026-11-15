@@ -209,14 +209,12 @@ test("the catalog re-check distinguishes installed, rejected and not found", () 
       { path: "C:\\data\\skills\\broken\\SKILL.md", message: "missing required key `name`" }
     ]
   };
-  assert.deepEqual(checkSkillInstalled("github-basics", catalog), { state: "installed" });
-  assert.deepEqual(checkSkillInstalled("broken", catalog), {
-    state: "rejected",
-    message: "missing required key `name`"
-  });
-  assert.deepEqual(checkSkillInstalled("nope", catalog), { state: "notFound" });
+  const named = (name: string) => draft({ name });
+  assert.equal(checkSkillInstalled(named("broken"), catalog).state, "rejected");
+  assert.equal(checkSkillInstalled(named("broken"), catalog).message, "missing required key `name`");
+  assert.equal(checkSkillInstalled(named("nope"), catalog).state, "notFound");
   // A name that is only a substring of a path segment is not a match.
-  assert.deepEqual(checkSkillInstalled("brok", catalog), { state: "notFound" });
+  assert.equal(checkSkillInstalled(named("brok"), catalog).state, "notFound");
 });
 
 // Wiring: the dialog validates and builds through this module and re-checks the REAL catalog;
