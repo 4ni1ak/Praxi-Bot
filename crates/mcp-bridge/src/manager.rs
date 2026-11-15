@@ -922,7 +922,39 @@ impl McpManager {
             .delete(&crate::oauth::credential_name(id))
             .map_err(|_| McpError::Store("cannot delete OAuth credentials".to_owned()))?;
         server.drop_session().await;
+        let mut state = server.state.lock();
+        state.generation = state.generation.wrapping_add(1);
+        state.auth_required = false;
+        state.last_error = None;
+        if state.status == ServerStatus::Connected {
+            state.status = ServerStatus::Disconnected;
+        }
+        for tool in state.tools.drain(..) {
+            server.registry.unregister(&tool);
+        }
         Ok(existed)
+    }
+
+    /// Whether a resource-bound authorization is stored, without network I/O.
+    /// # Errors
+    /// Unknown server, non-HTTP transport, or a secret-store failure.
+    pub async fn has_stored_authorization(&self, id: &str) -> Result<bool> {
+        use rmcp::transport::auth::CredentialStore as _;
+        let server = self.get(id)?;
+        let McpTransport::Http { url, .. } = &server.config.transport else {
+            return Err(McpError::Config(
+                "OAuth applies only to HTTP servers".into(),
+            ));
+        };
+        let Some(store) = self.secrets.clone() else {
+            return Ok(false);
+        };
+        let credentials =
+            crate::oauth::SecretCredentialStore::new(store, id, url, self.registrar.clone())?
+                .load()
+                .await
+                .map_err(|_| McpError::Store("cannot read OAuth state".into()))?;
+        Ok(credentials.is_some_and(|c| c.token_response.is_some()))
     }
 
     fn get(&self, id: &str) -> Result<Arc<Server>> {
