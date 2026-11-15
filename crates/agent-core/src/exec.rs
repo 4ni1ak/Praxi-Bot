@@ -697,8 +697,12 @@ impl TurnExecutor {
             let listed = index
                 .for_bot(Some(&bot))
                 .map_or_else(|_| index.list(), |view| view.list());
+            // Same trust filter as the system prompt and the router: a skill
+            // saved after untrusted or private content was read is data. Its
+            // name must not reach a loop-authored hint.
             let names: Vec<String> = listed
                 .into_iter()
+                .filter(|s| !s.untrusted)
                 .filter(|s| s.matches(&skill_ctx) || suggested.contains(&s.name))
                 .map(|s| s.name)
                 .collect();
