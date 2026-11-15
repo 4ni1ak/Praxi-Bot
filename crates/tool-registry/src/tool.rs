@@ -649,6 +649,7 @@ impl Tool for B {
         assert_eq!(missing_hooks_in_source(src), vec!["A"]);
     }
 
+    #[allow(clippy::too_many_lines)] // one long table of cases / hooks, flat on purpose
     #[test]
     fn bypass_vectors_are_caught() {
         // 1. Box<dyn Tool>, Vec<Arc<dyn Tool>>, dyn Tool + Send + Sync, tuple struct,
@@ -764,6 +765,7 @@ impl Tool for W {
         assert_eq!(missing_hooks_in_source(forgets_per_call), vec!["W"]);
     }
 
+    #[allow(clippy::too_many_lines)] // one long table of cases / hooks, flat on purpose
     #[tokio::test]
     async fn tool_wrapper_trait_forwards_all_approval_hooks() {
         use crate::{Effect, ToolError, ToolSpec};
