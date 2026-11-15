@@ -910,3 +910,54 @@ async fn skill_publish_does_not_auto_assign_to_selected_bot() {
     // Botless catalog sees `new-skill`.
     assert!(index.for_bot(None).unwrap().get("new-skill").is_some());
 }
+
+#[test]
+fn root_with_assignments_fails_closed_on_direct_reads_and_unsafe_bot_paths() {
+    let tmp = TempDir::new().unwrap();
+    let shared = tmp.path().join("skills");
+    put(&shared, "secret-shared", "shared body");
+    put(&tmp.path().join("bots/b/skills"), "b-own", "B own");
+
+    let src = MapAssignments::new();
+    src.set_selected("a", &[]);
+    let index = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path())).with_assignments(src);
+    assert!(index.has_assignments());
+
+    // Direct unfiltered calls on the root index fail closed (empty).
+    assert!(index.list().is_empty());
+    assert!(index.get("secret-shared").is_none());
+    assert!(
+        index
+            .prompt_block_suggesting(&SkillContext::default(), &["secret-shared".to_owned()])
+            .is_empty()
+    );
+
+    // Invalid bot id returns Err on prompt_block_for_bot and for_bot.
+    assert!(
+        index
+            .prompt_block_for_bot(Some("../escape"), &SkillContext::default(), &[])
+            .is_err()
+    );
+    assert!(
+        index
+            .prompt_block_for_bot(Some("con"), &SkillContext::default(), &[])
+            .is_err()
+    );
+
+    // Symlink / junction at bots/a/skills returns Err (reparse point).
+    fs::create_dir_all(tmp.path().join("bots/a")).unwrap();
+    if link_dir(
+        &tmp.path().join("bots/b/skills"),
+        &tmp.path().join("bots/a/skills"),
+    ) {
+        assert!(
+            index
+                .prompt_block_for_bot(Some("a"), &SkillContext::default(), &[])
+                .is_err()
+        );
+    }
+
+    // Catalog via for_bot(None) still lists shared and bundled skills.
+    let (catalog, _) = index.catalog().unwrap();
+    assert!(catalog.iter().any(|s| s.name == "secret-shared"));
+}

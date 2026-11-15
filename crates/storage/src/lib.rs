@@ -13,7 +13,7 @@ pub mod migrate;
 pub mod paths;
 pub mod records;
 
-pub use db::{Storage, now_ms};
+pub use db::{SkillAssignmentLookup, Storage, is_valid_skill_name, now_ms};
 pub use error::{Result, StorageError};
 pub use event_log::{EventLogWriter, event_log_path, read_event_log};
 pub use journal::{EventJournal, FsJournalSink, JournalRecord, JournalSink};

@@ -618,7 +618,7 @@ impl TurnExecutor {
         // back to the shared view, the same scope a bot-less caller gets.
         let block = index
             .prompt_block_for_bot(Some(&ctx.bot_id.to_string()), &skill_ctx, suggested)
-            .unwrap_or_else(|_| index.prompt_block_suggesting(&skill_ctx, suggested));
+            .unwrap_or_default();
         (!block.is_empty()).then_some(block)
     }
 

@@ -88,6 +88,7 @@ mod tests {
                 "approvals",
                 "audit_log",
                 "bot_skill_assignment",
+                "bot_skill_assignment_state",
                 "bots",
                 "chats",
                 "event_index",

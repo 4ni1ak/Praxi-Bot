@@ -312,8 +312,10 @@ impl Shared {
                 out.push(c);
             }
         }
-        if let Some(index) = self.skills.get() {
-            for s in index.list() {
+        if let Some(index) = self.skills.get()
+            && let Ok(view) = index.for_bot(Some(&bot.to_string()))
+        {
+            for s in view.list() {
                 let version = format!("{}:{:016x}", s.version, fnv(s.body.as_bytes()));
                 out.push(
                     Candidate::new(CandidateKind::Skill, &s.name, &s.description)
@@ -696,6 +698,7 @@ impl TurnExecutor {
         };
         let mut opts = w.opts.clone();
         opts.run_id = run.id.to_string();
+        opts.bot_id = Some(run.bot_id.to_string());
         let gate = LoopGate {
             sh: Arc::downgrade(&self.sh),
         };

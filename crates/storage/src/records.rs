@@ -211,4 +211,6 @@ pub struct BotSkillAssignment {
     pub names: Vec<String>,
     /// Last update timestamp.
     pub updated_at_ms: i64,
+    /// Monotonic version of this row (`0` when no row exists).
+    pub version: u64,
 }

@@ -99,13 +99,14 @@ impl Storage {
             APPROVAL_SELECT,
             "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log",
             "SELECT gseq, run_id, seq FROM event_index",
-            "SELECT bot_id, mode, names_json, updated_at_ms FROM bot_skill_assignment",
+            "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment",
+            "SELECT id, generation FROM bot_skill_assignment_state",
         ] {
             conn.prepare(select)?;
         }
         {
             let mut st = conn.prepare(
-                "SELECT bot_id, mode, names_json, updated_at_ms FROM bot_skill_assignment",
+                "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment",
             )?;
             let mut rows = st.query([])?;
             while let Some(row) = rows.next()? {
@@ -295,11 +296,62 @@ impl Storage {
         Ok(self
             .conn()
             .query_row(
-                "SELECT bot_id, mode, names_json, updated_at_ms FROM bot_skill_assignment WHERE bot_id = ?1",
+                "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment WHERE bot_id = ?1",
                 [bot_id.to_string()],
                 skill_assignment_row,
             )
             .optional()?)
+    }
+
+    /// Inspect a bot's skill assignment row without failing on malformed row
+    /// contents, so management surfaces can report and repair corrupt rows
+    /// while runtime callers continue to fail closed.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn inspect_bot_skill_assignment(&self, bot_id: BotId) -> Result<SkillAssignmentLookup> {
+        let conn = self.conn();
+        let bid = bot_id.to_string();
+        let res = conn
+            .query_row(
+                "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment WHERE bot_id = ?1",
+                [&bid],
+                skill_assignment_row,
+            )
+            .optional();
+        match res {
+            Ok(row) => Ok(SkillAssignmentLookup::Ok(row)),
+            Err(rusqlite::Error::FromSqlConversionFailure(_, _, err)) => {
+                let raw_ver: Option<i64> = conn
+                    .query_row(
+                        "SELECT version FROM bot_skill_assignment WHERE bot_id = ?1",
+                        [&bid],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                let version = raw_ver.and_then(|v| u64::try_from(v).ok()).unwrap_or(0);
+                Ok(SkillAssignmentLookup::Corrupt {
+                    version,
+                    reason: err.to_string(),
+                })
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Current DB-backed generation counter incremented on every insert, update,
+    /// or delete on `bot_skill_assignment`.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_skill_assignment_generation(&self) -> Result<u64> {
+        let gen_val: i64 = self.conn().query_row(
+            "SELECT generation FROM bot_skill_assignment_state WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(gen_val).unwrap_or(0))
     }
 
     /// Set a bot's skill assignment. `SkillAssignmentMode::All` deletes any
@@ -316,7 +368,7 @@ impl Storage {
     ) -> Result<BotSkillAssignment> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let row = write_skill_assignment_tx(&tx, bot_id, mode, names)?;
+        let row = write_skill_assignment_tx(&tx, bot_id, mode, names, None)?;
         tx.commit()?;
         Ok(row)
     }
@@ -337,8 +389,30 @@ impl Storage {
         actor: &str,
         detail: &Value,
     ) -> Result<BotSkillAssignment> {
+        self.set_bot_skill_assignment_audited_versioned(
+            user_id, bot_id, mode, names, actor, detail, None,
+        )
+    }
+
+    /// Version-checked variant of [`Self::set_bot_skill_assignment_audited`].
+    ///
+    /// # Errors
+    /// Fails with [`StorageError::Conflict`] if `expected_version` is `Some`
+    /// and does not match the stored row's version (`0` when no row exists).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_bot_skill_assignment_audited_versioned(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        mode: SkillAssignmentMode,
+        names: &[String],
+        actor: &str,
+        detail: &Value,
+        expected_version: Option<u64>,
+    ) -> Result<BotSkillAssignment> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let row = write_skill_assignment_tx(&tx, bot_id, mode, names, expected_version)?;
         tx.execute(
             "INSERT INTO audit_log (user_id, run_id, actor, action, detail_json, ts_ms) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
             params![
@@ -349,7 +423,6 @@ impl Storage {
                 now_ms()
             ],
         )?;
-        let row = write_skill_assignment_tx(&tx, bot_id, mode, names)?;
         tx.commit()?;
         Ok(row)
     }
@@ -889,10 +962,28 @@ fn user_row(r: &Row<'_>) -> rusqlite::Result<User> {
     })
 }
 
+/// Outcome of inspecting a bot's skill assignment row for UI/management repair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillAssignmentLookup {
+    /// Well-formed row, or `None` when the bot uses the default (`All`).
+    Ok(Option<BotSkillAssignment>),
+    /// Row exists in `bot_skill_assignment` but its mode or `names_json` is
+    /// malformed; runtime enforcement fails closed while management surfaces can
+    /// overwrite it.
+    Corrupt {
+        /// Stored row version (or `0` if unreadable).
+        version: u64,
+        /// Validation/parse error.
+        reason: String,
+    },
+}
+
 const MAX_SKILL_ASSIGNMENTS: usize = 200;
 const MAX_SKILL_NAME_LEN: usize = 64;
 
-fn is_valid_skill_name(name: &str) -> bool {
+/// Validate a skill name using the same grammar as `skills::validate_name`.
+#[must_use]
+pub fn is_valid_skill_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_SKILL_NAME_LEN
         && name
@@ -924,8 +1015,26 @@ fn write_skill_assignment_tx(
     bot_id: BotId,
     mode: SkillAssignmentMode,
     names: &[String],
+    expected_version: Option<u64>,
 ) -> Result<BotSkillAssignment> {
     let bid = bot_id.to_string();
+    if let Some(expected) = expected_version {
+        let current_raw: Option<i64> = tx
+            .query_row(
+                "SELECT version FROM bot_skill_assignment WHERE bot_id = ?1",
+                [&bid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let current = current_raw
+            .and_then(|v| u64::try_from(v).ok())
+            .unwrap_or(0);
+        if current != expected {
+            return Err(StorageError::Conflict(format!(
+                "bot skill assignment changed (expected version {expected}, current {current})"
+            )));
+        }
+    }
     let ts = now_ms();
     let clean = normalize_skill_names(names)
         .map_err(|msg| std::io::Error::new(std::io::ErrorKind::InvalidInput, msg))?;
@@ -937,22 +1046,30 @@ fn write_skill_assignment_tx(
                 mode,
                 names: Vec::new(),
                 updated_at_ms: ts,
+                version: 0,
             })
         }
         SkillAssignmentMode::Selected => {
             let json = serde_json::to_string(&clean)?;
+            let cur_gen: i64 = tx.query_row(
+                "SELECT generation FROM bot_skill_assignment_state WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )?;
+            let next_ver = cur_gen.saturating_add(1);
             tx.execute(
-                "INSERT INTO bot_skill_assignment (bot_id, mode, names_json, updated_at_ms) \
-                 VALUES (?1, 'selected', ?2, ?3) \
+                "INSERT INTO bot_skill_assignment (bot_id, mode, names_json, updated_at_ms, version) \
+                 VALUES (?1, 'selected', ?2, ?3, ?4) \
                  ON CONFLICT(bot_id) DO UPDATE SET \
-                 mode = excluded.mode, names_json = excluded.names_json, updated_at_ms = excluded.updated_at_ms",
-                params![bid, json, ts],
+                 mode = excluded.mode, names_json = excluded.names_json, updated_at_ms = excluded.updated_at_ms, version = excluded.version",
+                params![bid, json, ts, next_ver],
             )?;
             Ok(BotSkillAssignment {
                 bot_id,
                 mode,
                 names: clean,
                 updated_at_ms: ts,
+                version: u64::try_from(next_ver).unwrap_or(1),
             })
         }
     }
@@ -978,11 +1095,13 @@ fn skill_assignment_row(r: &Row<'_>) -> rusqlite::Result<BotSkillAssignment> {
     let parsed: Vec<String> = serde_json::from_str(&names_raw).map_err(|e| conv_err(2, e))?;
     let names = normalize_skill_names(&parsed)
         .map_err(|msg| conv_err(2, std::io::Error::new(std::io::ErrorKind::InvalidData, msg)))?;
+    let ver: i64 = r.get(4)?;
     Ok(BotSkillAssignment {
         bot_id,
         mode,
         names,
         updated_at_ms: r.get(3)?,
+        version: u64::try_from(ver).unwrap_or(0),
     })
 }
 
@@ -1554,5 +1673,101 @@ mod tests {
         assert!(st.delete_bot(spare.id).unwrap());
         assert_eq!(st.get_bot_skill_assignment(spare.id).unwrap(), None);
         assert!(!st.delete_bot_skill_assignment(spare.id).unwrap());
+    }
+
+    #[test]
+    fn bot_skill_assignment_generation_tracks_db_writes_and_version_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "b".into(),
+            config: json!({}),
+            created_at_ms: 2,
+        };
+        st.insert_user(&user).unwrap();
+        st.insert_bot(&bot).unwrap();
+
+        let g0 = st.bot_skill_assignment_generation().unwrap();
+        assert_eq!(g0, 1);
+
+        // First write from expected_version = 0 (no row) succeeds and bumps DB generation.
+        let r1 = st
+            .set_bot_skill_assignment_audited_versioned(
+                user.id,
+                bot.id,
+                SkillAssignmentMode::Selected,
+                &["alpha".into()],
+                "user",
+                &json!({}),
+                Some(0),
+            )
+            .unwrap();
+        let g1 = st.bot_skill_assignment_generation().unwrap();
+        assert_eq!(r1.version, g1);
+        assert!(g1 > g0);
+
+        // Stale expected_version (0 instead of r1.version) returns Conflict without modifying row.
+        let err = st
+            .set_bot_skill_assignment_audited_versioned(
+                user.id,
+                bot.id,
+                SkillAssignmentMode::Selected,
+                &["beta".into()],
+                "user",
+                &json!({}),
+                Some(0),
+            )
+            .unwrap_err();
+        assert!(matches!(err, StorageError::Conflict(_)), "{err:?}");
+        assert_eq!(
+            st.get_bot_skill_assignment(bot.id).unwrap().unwrap().names,
+            vec!["alpha"]
+        );
+
+        // External SQLite writer on the same DB file bumps generation via trigger.
+        let external = Storage::open(dir.path()).unwrap();
+        external
+            .set_bot_skill_assignment(bot.id, SkillAssignmentMode::Selected, &["gamma".into()])
+            .unwrap();
+        let g2 = st.bot_skill_assignment_generation().unwrap();
+        assert!(g2 > g1);
+
+        // Corrupt row: get_bot_skill_assignment fails, inspect_bot_skill_assignment reports Corrupt
+        // with raw version so management UI can overwrite and repair it.
+        st.conn()
+            .execute(
+                "UPDATE bot_skill_assignment SET names_json = 'not-json' WHERE bot_id = ?1",
+                [bot.id.to_string()],
+            )
+            .unwrap();
+        assert!(st.get_bot_skill_assignment(bot.id).is_err());
+        let inspected = st.inspect_bot_skill_assignment(bot.id).unwrap();
+        match inspected {
+            SkillAssignmentLookup::Corrupt { version, .. } => {
+                assert_eq!(version, g2);
+                let repaired = st
+                    .set_bot_skill_assignment_audited_versioned(
+                        user.id,
+                        bot.id,
+                        SkillAssignmentMode::All,
+                        &[],
+                        "user",
+                        &json!({"repaired": true}),
+                        Some(version),
+                    )
+                    .unwrap();
+                assert_eq!(repaired.version, 0);
+            }
+            other => panic!("expected Corrupt, got {other:?}"),
+        }
+        assert_eq!(st.get_bot_skill_assignment(bot.id).unwrap(), None);
+        assert!(st.bot_skill_assignment_generation().unwrap() > g2);
     }
 }

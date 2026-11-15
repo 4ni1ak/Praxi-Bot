@@ -182,6 +182,10 @@ struct Shared {
     generation: AtomicU64,
     /// Optional per-bot assignment source.
     assignments: Option<Arc<dyn AssignmentSource>>,
+    /// True on a root index returned by [`SkillIndex::with_assignments`];
+    /// prevents unfiltered `list`/`get`/`prompt_block_suggesting` calls from
+    /// leaking shared/bundled skills without resolving via `for_bot`.
+    requires_for_bot: bool,
     /// Bot id bound to this view (only set for per-bot views).
     bound_bot_id: Option<String>,
     /// Bot ids whose assignment error/panic has already been logged once.
@@ -375,7 +379,8 @@ impl SkillIndex {
 
     /// Attach a per-bot [`AssignmentSource`] to this index. Views returned by
     /// [`Self::for_bot`] filter shared and bundled skills according to the
-    /// bot's assignment before caching.
+    /// bot's assignment before caching. Direct unfiltered reads (`list`, `get`,
+    /// `prompt_block_suggesting`) on this root index fail closed (empty).
     #[must_use]
     pub fn with_assignments(self, src: Arc<dyn AssignmentSource>) -> Self {
         let index = Self {
@@ -385,6 +390,7 @@ impl SkillIndex {
                 state: RwLock::default(),
                 generation: AtomicU64::new(0),
                 assignments: Some(src),
+                requires_for_bot: true,
                 bound_bot_id: self.inner.bound_bot_id.clone(),
                 assignment_errors_logged: Mutex::default(),
                 views: Mutex::default(),
@@ -393,6 +399,12 @@ impl SkillIndex {
         };
         index.reload();
         index
+    }
+
+    /// True when a per-bot [`AssignmentSource`] is attached to this index.
+    #[must_use]
+    pub fn has_assignments(&self) -> bool {
+        self.inner.assignments.is_some()
     }
 
     /// Load the shared and bundled skill catalog (never any bot's learned
@@ -422,6 +434,7 @@ impl SkillIndex {
                 state: RwLock::default(),
                 generation: AtomicU64::new(0),
                 assignments,
+                requires_for_bot: false,
                 bound_bot_id,
                 assignment_errors_logged: Mutex::default(),
                 views: Mutex::default(),
@@ -633,14 +646,26 @@ impl SkillIndex {
     }
 
     /// All skills, sorted by name.
+    ///
+    /// Returns empty on a root index that has an [`AssignmentSource`] attached
+    /// without going through [`Self::for_bot`].
     #[must_use]
     pub fn list(&self) -> Vec<Skill> {
+        if self.inner.requires_for_bot {
+            return Vec::new();
+        }
         self.inner.state.read().skills.values().cloned().collect()
     }
 
     /// One skill by name.
+    ///
+    /// Returns `None` on a root index that has an [`AssignmentSource`] attached
+    /// without going through [`Self::for_bot`].
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Skill> {
+        if self.inner.requires_for_bot {
+            return None;
+        }
         self.inner.state.read().skills.get(name).cloned()
     }
 
