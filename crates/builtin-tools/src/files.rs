@@ -937,7 +937,10 @@ const CREDENTIAL_NAMES: &[&str] = &[
     ".cursor",
     ".cursor-agent",
     "cursor",
+    ".opencode",
     "opencode",
+    "opencode.json",
+    "opencode.jsonc",
     "cursor-agent",
     "oauth_creds.json",
 ];
@@ -952,18 +955,24 @@ fn name_is_credential(name: &str) -> bool {
 
 fn cli_home_override(path: &Path) -> bool {
     let path = norm_parts(&widen_for_compare(path));
-    ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GEMINI_CLI_HOME"]
-        .iter()
-        .any(|key| {
-            let Some(dir) = std::env::var_os(key)
-                .map(PathBuf::from)
-                .filter(|p| p.is_absolute())
-            else {
-                return false;
-            };
-            let dir = norm_parts(&widen_for_compare(&dir));
-            path.starts_with(&dir)
-        })
+    [
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "GEMINI_CLI_HOME",
+        "OPENCODE_CONFIG_DIR",
+        "OPENCODE_CONFIG",
+    ]
+    .iter()
+    .any(|key| {
+        let Some(dir) = std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        else {
+            return false;
+        };
+        let dir = norm_parts(&widen_for_compare(&dir));
+        path.starts_with(&dir)
+    })
 }
 
 fn is_protected(path: &Path, data_dir: &Path) -> bool {
@@ -3084,6 +3093,9 @@ mod tests {
             ".cursor-agent/auth.json",
             "AppData/Roaming/Cursor/User/settings.json",
             ".config/opencode/opencode.json",
+            ".opencode/plugins/local.ts",
+            "project/opencode.json",
+            "project/opencode.jsonc",
             ".local/share/opencode/auth.json",
             "AppData/Local/opencode/auth.json",
             ".CODEX. /auth.json",
@@ -3091,6 +3103,50 @@ mod tests {
             assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
         }
         assert!(!is_protected(&dir.path().join("report.txt"), dir.path()));
+    }
+
+    #[test]
+    fn cli_custom_config_paths_are_protected() {
+        const FIXTURE: &str = "PRAXI_C250_CONFIG_PATH_FIXTURE";
+        const OVERRIDES: &[&str] = &[
+            "CODEX_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "GEMINI_CLI_HOME",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG",
+        ];
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for key in OVERRIDES {
+                let private = root.join(key);
+                assert!(is_protected(&private, &root), "{key}");
+                assert!(is_protected(&private.join("settings.json"), &root), "{key}");
+                assert!(
+                    !is_protected(&root.join(format!("{key}-other")), &root),
+                    "{key}"
+                );
+            }
+            return;
+        }
+        // Isolate overrides in a child harness; parallel tests never inherit
+        // mutations of this process's environment or real user config homes.
+        let root = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args([
+            "--exact",
+            "files::tests::cli_custom_config_paths_are_protected",
+        ]);
+        child.env(FIXTURE, root.path());
+        for key in OVERRIDES {
+            child.env(key, root.path().join(key));
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -4264,7 +4320,10 @@ mod tests {
             ".codex",
             ".gemini",
             ".cursor",
+            ".opencode",
             "opencode",
+            "opencode.json",
+            "opencode.jsonc",
             "cursor-agent",
             "oauth_creds.json",
         ] {

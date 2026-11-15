@@ -65,7 +65,9 @@ Claude continues to run with `--tools ""`, strict MCP configuration, isolated
 settings and runtime tool checks. Codex's existing read-only sandbox does not
 disable every native tool and remains blocked. CLI configuration directories
 (including hooks and MCP settings), credential files and home overrides are
-protected by file tools. Child environments use an explicit allowlist of OS
+protected by file tools, including `.opencode`, `opencode.json`/`opencode.jsonc`,
+`OPENCODE_CONFIG_DIR` and the file named by `OPENCODE_CONFIG`.
+Child environments use an explicit allowlist of OS
 essentials and CLI home paths. Praxi secrets, provider keys, proxy credentials
 and code-injection variables such as `NODE_OPTIONS` are not inherited.
 
