@@ -473,10 +473,7 @@ impl TurnExecutor {
         let (skills, suggested_skills) =
             self.skills_block(run.id, &ctx, &steps, &hints.skills, &specs);
         // Discovery mode: say where the tools are (stable block, before the skills index).
-        let skills = match (
-            self.sh.discovery_block(&ctx.profile, ctx.bot_id, &specs),
-            skills,
-        ) {
+        let skills = match (self.sh.discovery_block(&ctx, &specs), skills) {
             (Some(d), Some(s)) => Some(format!(
                 "{d}
 

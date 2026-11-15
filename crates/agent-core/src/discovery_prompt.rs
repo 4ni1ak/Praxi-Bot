@@ -40,12 +40,12 @@ const MAX_SERVERS: usize = 8;
 /// Longest server id kept (longer ids are cut).
 const MAX_SERVER_ID: usize = 32;
 
-/// A configured server id reduced to `[A-Za-z0-9_-]`, bounded; `None` when
+/// A configured server id reduced to `[A-Za-z0-9._-]`, bounded; `None` when
 /// nothing usable remains.
 fn clean_server_id(raw: &str) -> Option<String> {
     let id: String = raw
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
         .take(MAX_SERVER_ID)
         .collect();
     (!id.is_empty()).then_some(id)
@@ -81,7 +81,7 @@ pub(crate) fn block<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<Stri
         return None;
     }
     let mut out = String::from(
-        "Tool access: your tools are not listed one by one; you reach them through find_tool \
+        "Tool access: additional tools are available through find_tool \
 (search by a short keyword), get_tool_details and use_tool.",
     );
     if !labels.is_empty() {
@@ -100,8 +100,7 @@ pub(crate) fn block<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<Stri
         let _ = write!(out, "\nConnected apps (by id): {}.", shown.join(", "));
     }
     out.push_str(
-        "\nBefore you say you cannot do something or that you lack browser, file, web, computer \
-or app access, call find_tool first.",
+        "\nBefore you say you cannot do something or lack a capability, call find_tool first.",
     );
     Some(out)
 }
@@ -142,6 +141,16 @@ mod tests {
         .unwrap();
         assert_eq!(a, b);
         assert!(a.contains("Connected apps (by id): a, b."));
+    }
+
+    #[test]
+    fn dotted_server_ids_remain_distinct_and_the_closing_line_is_capability_neutral() {
+        let b = block(["mcp:my.app/x", "mcp:myapp/x", "fs_read"]).unwrap();
+        assert!(b.contains("Connected apps (by id): my.app, myapp."));
+        assert!(b.ends_with(
+            "Before you say you cannot do something or lack a capability, call find_tool first."
+        ));
+        assert!(!b.contains("browser") && !b.contains("computer"));
     }
 
     #[test]

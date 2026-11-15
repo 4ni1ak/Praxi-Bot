@@ -2753,6 +2753,234 @@ exclude = [\"email_send\"]
 }
 
 #[tokio::test]
+async fn discovery_prompt_policy_matches_execution_for_each_initiator_and_keeps_ask() {
+    use protocol::InitiatorKind;
+    for (permissions, initiator, shell_visible, files_visible) in [
+        (
+            "[permissions]\npreset = \"read-only\"",
+            InitiatorKind::Human,
+            false,
+            false,
+        ),
+        (
+            "[permissions.categories]\nshell = { level = { level = \"deny\" } }",
+            InitiatorKind::Human,
+            false,
+            true,
+        ),
+        (
+            "[permissions.categories]\nshell = { level = { level = \"ask\" } }",
+            InitiatorKind::Human,
+            true,
+            true,
+        ),
+        (
+            "[permissions.categories]\nshell = { level = { level = \"deny\" }, by_initiator = { human = { level = \"ask\" }, routine = { level = \"deny\" } } }",
+            InitiatorKind::Human,
+            true,
+            true,
+        ),
+        (
+            "[permissions.categories]\nshell = { level = { level = \"deny\" }, by_initiator = { human = { level = \"ask\" }, routine = { level = \"deny\" } } }",
+            InitiatorKind::Routine,
+            false,
+            true,
+        ),
+        (
+            "[permissions.categories]\nshell = { level = { level = \"deny\" }, by_initiator = { human = { level = \"ask\" } } }",
+            InitiatorKind::Schedule,
+            true,
+            true,
+        ),
+    ] {
+        let env = setup();
+        let mut shell = tool("shell_exec", Effect::Write, "ok");
+        shell.spec.category = PermissionCategory::Shell;
+        let shell = Arc::new(shell);
+        let files = Arc::new(tool("fs_read", Effect::Read, "ok"));
+        let mut meta = tool("skill_read", Effect::Read, "ok");
+        meta.spec.category = PermissionCategory::Meta;
+        let meta = Arc::new(meta);
+        let fake = Fake::new(vec![text("done")]);
+        let mut config = cfg(Policy::full());
+        config.discovery_threshold = 0;
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[&shell, &files, &meta],
+            profile(permissions),
+            config,
+        );
+        let run = lp.run_turn_as(env.chat, "go", initiator).unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+        let prompt = system_text(&fake.request(0));
+        assert!(
+            prompt.contains("; skills.") || prompt.contains("run: skills."),
+            "Meta must stay available: {prompt}"
+        );
+        assert_eq!(
+            prompt.contains("shell commands"),
+            shell_visible,
+            "{permissions}: {prompt}"
+        );
+        assert_eq!(
+            prompt.contains("files (read"),
+            files_visible,
+            "{permissions}: {prompt}"
+        );
+        let stored = env.storage.get_run(run).unwrap().unwrap();
+        let ctx = lp.sh.ctx(&stored).unwrap();
+        assert_eq!(
+            lp.sh.decide(
+                &ctx,
+                "shell_exec",
+                Effect::Write,
+                PermissionCategory::Shell,
+                &json!({})
+            ) != permission_engine::Decision::Deny,
+            shell_visible
+        );
+    }
+}
+
+#[tokio::test]
+async fn discovery_prompt_composes_with_skills_and_is_byte_stable_across_turns_and_hints() {
+    let env = setup();
+    let skill = env.dir.path().join("skills").join("review-fixture");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: review-fixture\ndescription: Review fixture skill\n---\nSteps\n",
+    )
+    .unwrap();
+    let browser = Arc::new(tool("browser_open", Effect::Read, "ok"));
+    let files = Arc::new(tool("fs_read", Effect::Read, "ok"));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "find_tool", json!({"query": "browser"}))]),
+        text("done"),
+        text("done again"),
+    ]);
+    let mut config = cfg(Policy::full());
+    config.discovery_threshold = 1;
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[&browser, &files],
+        profile(""),
+        config,
+    )
+    .with_skills(skills::SkillIndex::load_roots(
+        skills::SkillRoots::from_data_dir(env.dir.path()),
+    ));
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let first = system_text(&fake.request(0));
+    let discovery = first.find("Tool access:").expect("discovery missing");
+    let skills = first.find("review-fixture").expect("skills index missing");
+    assert!(discovery < skills, "discovery must precede skills: {first}");
+    assert_eq!(first, system_text(&fake.request(1)));
+    let stored = env.storage.get_run(run).unwrap().unwrap();
+    let ctx = lp.sh.ctx(&stored).unwrap();
+    let full = lp.sh.model_specs(&ctx.profile, env.bot, &[]);
+    let hinted = lp
+        .sh
+        .model_specs(&ctx.profile, env.bot, &["browser_open".to_owned()]);
+    assert!(hinted.iter().any(|s| s.name == "browser_open"));
+    assert!(!hinted.iter().any(|s| s.name == "fs_read"));
+    let block = lp.sh.discovery_block(&ctx, &hinted).unwrap();
+    assert!(block.contains("files (read") && block.contains("browser (open"));
+    assert_eq!(Some(block), lp.sh.discovery_block(&ctx, &full));
+    let run = lp.run_turn(env.chat, "second turn").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(first, system_text(&fake.request(2)));
+}
+
+#[tokio::test]
+async fn discovery_prompt_hides_computer_families_and_mcp_servers_for_other_bots() {
+    for computer in [true, false] {
+        let env = setup();
+        let tools: Vec<Arc<TestTool>> = [
+            "browser_open",
+            "desktop_click",
+            "web_search",
+            "fs_read",
+            "mcp:allowed.app/read",
+            "mcp:other.app/read",
+        ]
+        .iter()
+        .map(|name| {
+            let mut t = tool(name, Effect::Read, "ok");
+            if name.starts_with("browser_") || name.starts_with("web_") {
+                t.spec.category = PermissionCategory::Browser;
+            }
+            if name.starts_with("desktop_") {
+                t.spec.category = PermissionCategory::Desktop;
+            }
+            if name.starts_with("mcp:other") {
+                t.bots = Some(vec![BotId::new().to_string()]);
+            }
+            if name.starts_with("mcp:allowed") {
+                t.bots = Some(vec![env.bot.to_string()]);
+            }
+            Arc::new(t)
+        })
+        .collect();
+        let fake = Fake::new(vec![text("done")]);
+        let mut config = cfg(Policy::full());
+        config.discovery_threshold = 0;
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &tools.iter().collect::<Vec<_>>(),
+            profile(if computer {
+                ""
+            } else {
+                "[runtime]\ncomputer = \"off\""
+            })
+            .with_computer_access(computer, computer),
+            config,
+        );
+        let run = lp.run_turn(env.chat, "go").unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+        let prompt = system_text(&fake.request(0));
+        assert!(
+            prompt.contains("files (read")
+                && prompt.contains("Connected apps (by id): allowed.app.")
+        );
+        assert!(!prompt.contains("other.app"));
+        for family in [
+            "browser (open",
+            "computer / desktop",
+            "web search and page fetch",
+        ] {
+            assert_eq!(prompt.contains(family), computer, "{prompt}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn discovery_prompt_is_absent_from_the_closing_guard_call() {
+    let env = setup();
+    let files = Arc::new(tool("fs_read", Effect::Read, "ok"));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "find_tool", json!({"query": "files"}))]),
+        text("summary"),
+    ]);
+    let mut config = cfg(Policy::full());
+    config.discovery_threshold = 0;
+    config.guards.max_steps = 1;
+    let lp = make_loop(&env.storage, env.bot, &fake, &[&files], profile(""), config);
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert!(system_text(&fake.request(0)).contains("Tool access:"));
+    assert!(fake.request(1).tools.is_empty());
+    assert!(!system_text(&fake.request(1)).contains("Tool access:"));
+}
+
+#[tokio::test]
 async fn direct_tool_mode_has_no_discovery_block() {
     let env = setup();
     let r = Arc::new(tool("browser_open", Effect::Read, "ok"));
