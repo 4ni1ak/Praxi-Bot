@@ -29,3 +29,20 @@ export function createSnapshotSequencer(): SnapshotSequencer {
     }
   };
 }
+
+/**
+ * Admit a snapshot into state. A ticketed one (a GET) is dropped when something
+ * newer was applied; an untagged one (an action response: native Pause override,
+ * emergency Stop, release, an aborted re-read) is the newest state and
+ * invalidates every older in-flight GET.
+ */
+export function admitSnapshot(
+  seq: SnapshotSequencer,
+  ticket: number | undefined
+): boolean {
+  if (ticket === undefined) {
+    seq.markFresh();
+    return true;
+  }
+  return seq.accept(ticket);
+}

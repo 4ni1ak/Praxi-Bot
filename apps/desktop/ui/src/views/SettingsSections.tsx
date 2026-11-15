@@ -371,7 +371,15 @@ function BotPermissions({ bot }: { bot: Bot }) {
               <li
                 key={cat}
                 className={[styles.chip, styles[`chip_${d.decision}`]].join(" ")}
-                title={d.via_grant ? t("settings.permissions.viaGrant") : undefined}
+                title={
+                  d.scopes && d.scopes.length > 0
+                    ? t("settings.permissions.scopedAllow", {
+                        scopes: d.scopes.join(", ")
+                      })
+                    : d.via_grant
+                      ? t("settings.permissions.viaGrant")
+                      : undefined
+                }
               >
                 <span>{t(`botForm.category.${cat}`, cat)}</span>
                 <span className={styles.chipLevel}>
@@ -386,7 +394,10 @@ function BotPermissions({ bot }: { bot: Bot }) {
           ) : (
             <ul className={styles.list}>
               {eff.grants.map((g) => (
-                <li key={grantLabel(g.target)} className={styles.listRow}>
+                <li
+                  key={`${grantLabel(g.target)}:${g.computer ?? ""}:${g.inert ? "inert" : "live"}`}
+                  className={styles.listRow}
+                >
                   <span className={styles.rowMain}>
                     <span className={styles.rowName}>
                       {g.target.kind === "category"
@@ -397,6 +408,14 @@ function BotPermissions({ bot }: { bot: Bot }) {
                             name: g.target.name
                           })}
                     </span>
+                    {g.computer ? (
+                      <span className={styles.rowMeta}>{g.computer}</span>
+                    ) : null}
+                    {g.inert ? (
+                      <span className={styles.rowMeta}>
+                        {t("settings.permissions.inertGrant")}
+                      </span>
+                    ) : null}
                   </span>
                   <span className={styles.rowMeta}>
                     {new Date(g.granted_at_ms).toLocaleString()}

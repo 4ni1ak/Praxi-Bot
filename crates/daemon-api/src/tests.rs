@@ -22,12 +22,14 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod doctor;
 mod email;
 mod host;
 mod knowledge;
 mod knowledge_brain;
 mod mcp;
 mod schedules;
+mod skills;
 mod web;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1926,6 +1928,11 @@ async fn listing_runs_writes_nothing_to_disk() {
         updated_at_ms: now,
         parent_run_id: None,
         spec: None,
+        computer_target: None,
+        computer_node: None,
+        computer_node_name: None,
+        paused_at_ms: None,
+        pause_reason: None,
     })
     .unwrap();
     st.insert_message(&storage::Message {
@@ -2959,6 +2966,79 @@ async fn peer_router_denies_provider_cli_enable_and_reload_for_all_peers() {
 }
 
 #[tokio::test]
+async fn peer_router_denies_every_doctor_route_to_every_peer_role() {
+    let t = setup();
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let h = hits.clone();
+    let data_dir = t.state.data_dir();
+    t.state.set_provider_host(crate::ProviderHost {
+        catalog: provider_catalog::Catalog::default(),
+        reload: Box::new(move || {
+            h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            agent_core::build_providers(
+                &data_dir,
+                &provider_catalog::Catalog::default(),
+                &secret_store::MemoryStore::new(),
+                &mut |_| {},
+            )
+        }),
+    });
+    let mut routes: Vec<(Method, String)> = vec![
+        (Method::GET, "/v1/doctor".into()),
+        (Method::GET, "/v1/doctor/".into()),
+        (Method::GET, "//v1//doctor".into()),
+        (Method::GET, "/v1/doctor/report".into()),
+        (Method::GET, "/v1/doctor%2Freport".into()),
+    ];
+    for r in crate::doctor::Repair::ALL {
+        let id = r.id();
+        routes.push((Method::POST, format!("/v1/doctor/repair/{id}")));
+        routes.push((Method::POST, format!("/v1/doctor/repair/{id}/")));
+        routes.push((Method::POST, format!("/v1/doctor//repair/{id}")));
+        routes.push((Method::POST, format!("/v1/doctor%2Frepair%2F{id}")));
+    }
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in &routes {
+            let mut req = Request::builder()
+                .method(method.clone())
+                .uri(path.as_str())
+                .body(Body::empty())
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role,
+            });
+            let resp = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "role={role:?} {method} {path} should be 403"
+            );
+        }
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(
+        !audit.iter().any(|a| a.action.starts_with("doctor.")),
+        "no repair may be requested by a peer"
+    );
+    // The local user still reaches the routes on the loopback router.
+    let local = call(&t, Method::GET, "/v1/doctor", None).await;
+    assert_eq!(local.status, StatusCode::OK);
+    let local = call(&t, Method::POST, "/v1/doctor/repair/reload_providers", None).await;
+    assert_eq!(local.status, StatusCode::OK, "{:?}", local.json());
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn providers_cli_enable_preserves_existing_default_model_and_model_caps() {
     let t = setup();
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
@@ -3015,4 +3095,946 @@ async fn health_includes_host_capabilities_without_starting_a_browser() {
     assert!(value["host"]["total_ram_mb"].as_u64().unwrap() > 0);
     let dto: crate::dto::Health = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(dto).unwrap(), value);
+}
+
+#[tokio::test]
+async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
+    let t = setup();
+
+    // Default bot without [runtime] exposes runtime.computer = "auto".
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": PROFILE })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    assert_eq!(r.json()["runtime"]["computer"], "auto");
+    let bot_id = r.json()["id"].as_str().unwrap().to_owned();
+    let bot_path = format!("/v1/bots/{bot_id}");
+
+    let r = call(&t, Method::GET, &bot_path, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["runtime"]["computer"], "auto");
+
+    // Round-trip all canonical values plus legacy "local" -> "pc" alias via PUT.
+    for (input, expected) in [
+        ("pc", "pc"),
+        ("host", "host"),
+        ("browser", "browser"),
+        ("off", "off"),
+        ("local", "pc"),
+        ("auto", "auto"),
+    ] {
+        let r = call(
+            &t,
+            Method::PUT,
+            &bot_path,
+            Some(json!({
+                "config": {
+                    "bot": {"id": "tester", "name": "Tester"},
+                    "models": {"executor": "fake/echo"}
+                },
+                "runtime": {"computer": input}
+            })),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{input}: {:?}", r.json());
+        assert_eq!(r.json()["runtime"]["computer"], expected);
+
+        let get_r = call(&t, Method::GET, &bot_path, None).await;
+        assert_eq!(get_r.status, StatusCode::OK);
+        assert_eq!(get_r.json()["runtime"]["computer"], expected);
+    }
+
+    // Invalid [runtime] computer returns 422 bad_profile on POST and PUT.
+    let bad_post = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"quantum\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(bad_post.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(bad_post.json()["error"]["code"], "bad_profile");
+
+    let bad_put = call(
+        &t,
+        Method::PUT,
+        &bot_path,
+        Some(json!({
+            "config": {
+                "bot": {"id": "tester", "name": "Tester"},
+                "models": {"executor": "fake/echo"}
+            },
+            "runtime": {"computer": "quantum"}
+        })),
+    )
+    .await;
+    assert_eq!(bad_put.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(bad_put.json()["error"]["code"], "bad_profile");
+}
+
+struct StubProvider;
+
+impl agent_core::ComputerProvider for StubProvider {
+    fn local_node(&self) -> agent_core::ComputerNode {
+        agent_core::ComputerNode {
+            id: "c".repeat(64),
+            name: "Local computer".into(),
+        }
+    }
+
+    fn local(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        None
+    }
+
+    fn pc(&self) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        None
+    }
+
+    fn is_host(&self) -> bool {
+        true
+    }
+
+    fn browser_available(&self) -> bool {
+        true
+    }
+
+    fn has_display(&self) -> bool {
+        false
+    }
+
+    fn node(&self, _id: &str) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
+        None
+    }
+}
+
+#[tokio::test]
+async fn runs_expose_computer_target_and_waiting_for_pc_pause_reason() {
+    let t = setup();
+    t.agent.set_computer_provider(Arc::new(StubProvider));
+
+    // Bot 1: "browser" completes normally and records computer_target = "browser".
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"browser\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let bot_browser = r.json()["id"].as_str().unwrap().to_owned();
+    let chat_browser = call(
+        &t,
+        Method::POST,
+        "/v1/chats",
+        Some(json!({ "bot_id": bot_browser })),
+    )
+    .await
+    .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let run_browser = send_msg(&t, &chat_browser, "hello", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_state(&t, &run_browser, "succeeded").await;
+
+    // Bot 2: "pc" with offline PC pauses with pause_reason = "waiting_for_pc".
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"node:workstation-1\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let bot_pc = r.json()["id"].as_str().unwrap().to_owned();
+    let chat_pc = call(
+        &t,
+        Method::POST,
+        "/v1/chats",
+        Some(json!({ "bot_id": bot_pc })),
+    )
+    .await
+    .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let run_pc = send_msg(&t, &chat_pc, "wait for pc", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_state(&t, &run_pc, "paused").await;
+
+    let get_br = call(&t, Method::GET, &format!("/v1/runs/{run_browser}"), None).await;
+    assert_eq!(get_br.status, StatusCode::OK);
+    assert_eq!(get_br.json()["computer_target"], "browser");
+    assert!(get_br.json()["pause_reason"].is_null());
+
+    let get_pc = call(&t, Method::GET, &format!("/v1/runs/{run_pc}"), None).await;
+    assert_eq!(get_pc.status, StatusCode::OK);
+    assert_eq!(get_pc.json()["state"], "paused");
+    assert_eq!(get_pc.json()["computer_target"], "pc");
+    assert_eq!(get_pc.json()["pause_reason"], "waiting_for_pc");
+    assert_eq!(get_pc.json()["computer_node"], "workstation-1");
+    assert_eq!(get_pc.json()["computer_node_name"], "workstation-1");
+    assert!(get_pc.json()["paused_at_ms"].as_i64().is_some());
+
+    // GET /v1/runs list also surfaces computer_target and pause_reason.
+    let list_r = call(&t, Method::GET, "/v1/runs", None).await;
+    assert_eq!(list_r.status, StatusCode::OK);
+    let runs = list_r.json();
+    let arr = runs.as_array().unwrap();
+    let listed_pc = arr
+        .iter()
+        .find(|item| item["id"] == run_pc)
+        .expect("paused run in /v1/runs");
+    assert_eq!(listed_pc["computer_target"], "pc");
+    assert_eq!(listed_pc["pause_reason"], "waiting_for_pc");
+
+    // Cancelling the paused run clears pause_reason while keeping computer_target.
+    let cancel_r = call(&t, Method::POST, &format!("/v1/runs/{run_pc}/cancel"), None).await;
+    assert_eq!(cancel_r.status, StatusCode::OK);
+    wait_state(&t, &run_pc, "cancelled").await;
+    let get_pc_after = call(&t, Method::GET, &format!("/v1/runs/{run_pc}"), None).await;
+    assert_eq!(get_pc_after.json()["state"], "cancelled");
+    assert_eq!(get_pc_after.json()["computer_target"], "pc");
+    assert!(get_pc_after.json()["pause_reason"].is_null());
+}
+
+#[tokio::test]
+async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_override() {
+    let t = setup();
+    let created = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"pc\"\n")
+        })),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let path = format!("/v1/bots/{}", created.json()["id"].as_str().unwrap());
+    let updated = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": PROFILE})),
+    )
+    .await;
+    assert_eq!(updated.status, StatusCode::OK);
+    assert_eq!(updated.json()["runtime"]["computer"], "pc");
+    let conflict = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"host\"\n"),
+            "runtime": {"computer": "pc"}
+        })),
+    )
+    .await;
+    assert_eq!(conflict.status, StatusCode::BAD_REQUEST);
+    let current = call(&t, Method::GET, &path, None).await;
+    assert_eq!(current.json()["runtime"]["computer"], "pc");
+}
+
+// ------------------------------------------------------ POST /v1/runs/stop
+
+/// A run row in `state` for the test user (no task drives it).
+fn put_run(t: &T, bot: &str, state: &str) -> String {
+    put_run_as(t, bot, state, t.state.user_id(), uuid::Uuid::now_v7())
+}
+
+fn put_run_as(t: &T, bot: &str, state: &str, user_id: protocol::UserId, id: uuid::Uuid) -> String {
+    let id = protocol::RunId(id);
+    t.state
+        .storage()
+        .insert_run(&storage::Run {
+            id,
+            user_id,
+            bot_id: protocol::BotId(bot.parse().unwrap()),
+            chat_id: None,
+            kind: "turn".to_owned(),
+            state: state.to_owned(),
+            error: None,
+            created_at_ms: 1_000,
+            updated_at_ms: 1_000,
+            parent_run_id: None,
+            spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
+        })
+        .unwrap();
+    id.0.to_string()
+}
+
+fn run_state(t: &T, run: &str) -> String {
+    t.state
+        .storage()
+        .get_run(protocol::RunId(run.parse().unwrap()))
+        .unwrap()
+        .unwrap()
+        .state
+}
+
+async fn stop(t: &T, stop_id: &str, runs: &[&str], scope: &str) -> Resp {
+    call(
+        t,
+        Method::POST,
+        "/v1/runs/stop",
+        Some(json!({"stop_id": stop_id, "run_ids": runs, "scope": scope})),
+    )
+    .await
+}
+
+fn outcome_of(body: &Value, run: &str) -> Option<String> {
+    body["results"]
+        .as_array()?
+        .iter()
+        .find(|r| r["run_id"] == run)
+        .map(|r| r["outcome"].as_str().unwrap().to_owned())
+}
+
+fn new_id() -> String {
+    uuid::Uuid::now_v7().to_string()
+}
+
+#[tokio::test]
+async fn stop_all_existing_cancels_only_runs_present_at_first_receipt() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let r1 = put_run(&t, &bot, "paused");
+    let r2 = put_run(&t, &bot, "queued");
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(first.status, StatusCode::OK, "{:?}", first.json());
+    assert_eq!(first.json()["first_seen"], true);
+    assert_eq!(outcome_of(&first.json(), &r1).as_deref(), Some("cancelled"));
+    assert_eq!(outcome_of(&first.json(), &r2).as_deref(), Some("cancelled"));
+    assert_eq!(run_state(&t, &r1), "cancelled");
+
+    // A run created after the first receipt, then the same stop_id again.
+    let late = put_run(&t, &bot, "queued");
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(again.json()["first_seen"], false);
+    assert_eq!(outcome_of(&again.json(), &late), None, "late run targeted");
+    assert_eq!(run_state(&t, &late), "queued", "late run must keep running");
+    // Same target set, same outcomes.
+    assert_eq!(first.json()["results"], again.json()["results"]);
+    // A repeat that asks for more (other ids, other scope) never widens it.
+    let wider = stop(&t, &sid, &[&late], "listed").await;
+    assert_eq!(outcome_of(&wider.json(), &late), None);
+    assert_eq!(run_state(&t, &late), "queued");
+}
+
+#[tokio::test]
+async fn a_second_stop_id_gets_its_own_set_and_takes_the_late_run() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let r1 = put_run(&t, &bot, "queued");
+    stop(&t, &new_id(), &[], "all_existing").await;
+    let late = put_run(&t, &bot, "queued");
+    let second = stop(&t, &new_id(), &[], "all_existing").await;
+    assert_eq!(second.json()["first_seen"], true);
+    assert_eq!(
+        outcome_of(&second.json(), &late).as_deref(),
+        Some("cancelled")
+    );
+    // r1 was already cancelled by the first stop: not open, not swept again.
+    assert_eq!(outcome_of(&second.json(), &r1), None);
+}
+
+#[tokio::test]
+async fn stop_listed_ignores_unlisted_runs() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let mine = put_run(&t, &bot, "paused");
+    let other = put_run(&t, &bot, "paused");
+    let r = stop(&t, &new_id(), &[&mine], "listed").await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["results"].as_array().unwrap().len(), 1);
+    assert_eq!(outcome_of(&r.json(), &mine).as_deref(), Some("cancelled"));
+    assert_eq!(run_state(&t, &mine), "cancelled");
+    assert_eq!(run_state(&t, &other), "paused");
+    // all_existing also reports listed ids that are not open (no error).
+    let all = stop(&t, &new_id(), &[&mine], "all_existing").await;
+    assert_eq!(
+        outcome_of(&all.json(), &mine).as_deref(),
+        Some("already_terminal")
+    );
+    assert_eq!(
+        outcome_of(&all.json(), &other).as_deref(),
+        Some("cancelled")
+    );
+}
+
+#[tokio::test]
+async fn stop_reports_terminal_and_unknown_ids_without_error() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let done = put_run(&t, &bot, "succeeded");
+    let ghost = new_id();
+    let foreign = protocol::UserId::new();
+    t.state
+        .storage()
+        .insert_user(&storage::User {
+            id: foreign,
+            name: "other".into(),
+            created_at_ms: 1,
+        })
+        .unwrap();
+    let theirs = put_run_as(&t, &bot, "paused", foreign, uuid::Uuid::now_v7());
+    let r = stop(&t, &new_id(), &[&done, &ghost, &theirs, &done], "listed").await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(
+        r.json()["results"].as_array().unwrap().len(),
+        3,
+        "deduplicated"
+    );
+    assert_eq!(
+        outcome_of(&r.json(), &done).as_deref(),
+        Some("already_terminal")
+    );
+    assert_eq!(outcome_of(&r.json(), &ghost).as_deref(), Some("not_found"));
+    // Another user's run is "not found" and untouched, also for the sweep.
+    assert_eq!(outcome_of(&r.json(), &theirs).as_deref(), Some("not_found"));
+    let all = stop(&t, &new_id(), &[], "all_existing").await;
+    assert_eq!(outcome_of(&all.json(), &theirs), None);
+    assert_eq!(run_state(&t, &theirs), "paused");
+    assert_eq!(run_state(&t, &done), "succeeded");
+}
+
+#[tokio::test]
+async fn an_unknown_id_that_becomes_a_run_later_is_never_cancelled_by_that_stop() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let id = uuid::Uuid::now_v7();
+    let sid = new_id();
+    let r = stop(&t, &sid, &[&id.to_string()], "listed").await;
+    assert_eq!(
+        outcome_of(&r.json(), &id.to_string()).as_deref(),
+        Some("not_found")
+    );
+    put_run_as(&t, &bot, "queued", t.state.user_id(), id);
+    let again = stop(&t, &sid, &[&id.to_string()], "listed").await;
+    assert_eq!(
+        outcome_of(&again.json(), &id.to_string()).as_deref(),
+        Some("not_found")
+    );
+    assert_eq!(run_state(&t, &id.to_string()), "queued");
+}
+
+#[tokio::test]
+async fn stop_validates_its_body() {
+    let t = setup();
+    for body in [
+        json!({"stop_id": "nope", "run_ids": [], "scope": "listed"}),
+        json!({"stop_id": new_id(), "run_ids": ["nope"], "scope": "listed"}),
+        json!({"stop_id": new_id(), "run_ids": [], "scope": "everything"}),
+        json!({"run_ids": [], "scope": "listed"}),
+        json!({"stop_id": new_id(), "run_ids": vec![new_id(); 1025], "scope": "listed"}),
+    ] {
+        let r = call(&t, Method::POST, "/v1/runs/stop", Some(body.clone())).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let anon = send(&t.app, Method::POST, "/v1/runs/stop", Some(json!({})), &[]).await;
+    assert_eq!(anon.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn stop_cancels_a_run_waiting_for_approval_through_the_normal_cancel_path() {
+    let t = setup();
+    let (_, chat) = make_chat(&t).await;
+    let run = send_msg(&t, &chat, "call:danger_run {}", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    pending_call(&t).await;
+    wait_state(&t, &run, "waiting_approval").await;
+    let sid = new_id();
+    let r = stop(&t, &sid, &[], "all_existing").await;
+    // A live run only gets its cancel token fired: not terminal yet.
+    assert!(
+        matches!(
+            outcome_of(&r.json(), &run).as_deref(),
+            Some("cancel_requested" | "cancelled")
+        ),
+        "{:?}",
+        r.json()
+    );
+    wait_state(&t, &run, "cancelled").await;
+    // A repeat settles the outcome.
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&again.json(), &run).as_deref(),
+        Some("cancelled")
+    );
+}
+
+fn hold_live(t: &T, run: &str) {
+    t.state
+        .stop_seam()
+        .hold_live
+        .lock()
+        .insert(protocol::RunId(run.parse().unwrap()));
+}
+
+fn release_live(t: &T, run: &str) {
+    t.state
+        .stop_seam()
+        .hold_live
+        .lock()
+        .remove(&protocol::RunId(run.parse().unwrap()));
+}
+
+fn state_of_result(body: &Value, run: &str) -> Option<String> {
+    body["results"]
+        .as_array()?
+        .iter()
+        .find(|r| r["run_id"] == run)
+        .and_then(|r| r["state"].as_str().map(str::to_owned))
+}
+
+#[tokio::test]
+async fn a_live_run_is_cancel_requested_until_it_ends_and_a_repeat_settles_it() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "running");
+    hold_live(&t, &run); // the cancel token fires, the run keeps winding down
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&first.json(), &run).as_deref(),
+        Some("cancel_requested"),
+        "{:?}",
+        first.json()
+    );
+    assert_eq!(
+        state_of_result(&first.json(), &run).as_deref(),
+        Some("running")
+    );
+    // Still live: a repeat must not claim it stopped.
+    let mid = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&mid.json(), &run).as_deref(),
+        Some("cancel_requested")
+    );
+    // The run ends (cancelled by its own loop): the repeat settles it.
+    t.state
+        .storage()
+        .update_run_state(protocol::RunId(run.parse().unwrap()), "cancelled", None)
+        .unwrap();
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&again.json(), &run).as_deref(),
+        Some("cancelled")
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_requested_run_that_ends_paused_is_cancelled_by_the_repeat() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "running");
+    hold_live(&t, &run);
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&first.json(), &run).as_deref(),
+        Some("cancel_requested")
+    );
+    // A pause request won the race: the run ends paused, not cancelled.
+    t.state
+        .storage()
+        .update_run_state(protocol::RunId(run.parse().unwrap()), "paused", None)
+        .unwrap();
+    release_live(&t, &run); // the repeat's cancel now takes effect on the paused run
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&again.json(), &run).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(run_state(&t, &run), "cancelled");
+}
+
+#[tokio::test]
+async fn the_open_run_state_query_matches_the_run_state_enum() {
+    // The SQL in `list_open_run_states` is a literal; a new non-terminal
+    // `RunState` that it misses would drop out of every `all_existing` sweep.
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let mut want = Vec::new();
+    for st in task_runtime::RunState::ALL {
+        let id = put_run(&t, &bot, st.as_str());
+        if !st.is_terminal() {
+            want.push((id, st.as_str().to_owned()));
+        }
+    }
+    let mut got: Vec<(String, String)> = t
+        .state
+        .storage()
+        .list_open_run_states(t.state.user_id())
+        .unwrap()
+        .into_iter()
+        .map(|(id, st)| (id.0.to_string(), st))
+        .collect();
+    got.sort();
+    want.sort();
+    assert!(want.len() > 1, "the enum has open states");
+    assert_eq!(got, want);
+}
+
+async fn peer_stop(t: &T, role: crate::PeerRole, body: Value) -> Resp {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/runs/stop")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    req.extensions_mut().insert(crate::PeerIdentity {
+        key: "peer-key".into(),
+        role,
+    });
+    let resp = crate::peer_router(t.state.clone())
+        .oneshot(req)
+        .await
+        .unwrap();
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
+    Resp {
+        status,
+        headers,
+        body,
+    }
+}
+
+#[tokio::test]
+async fn peer_router_lets_only_phone_and_desktop_stop_listed_runs_and_nobody_sweep() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    for role in [
+        crate::PeerRole::Phone,
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        let run = put_run(&t, &bot, "paused");
+        let other = put_run(&t, &bot, "paused");
+        // Sweeping everything is the local user's, for every role.
+        let all = peer_stop(
+            &t,
+            role,
+            json!({"stop_id": new_id(), "run_ids": [run], "scope": "all_existing"}),
+        )
+        .await;
+        assert_eq!(
+            all.status,
+            StatusCode::FORBIDDEN,
+            "role={role:?} all_existing"
+        );
+        assert_eq!(run_state(&t, &run), "paused", "role={role:?} swept");
+        assert_eq!(run_state(&t, &other), "paused", "role={role:?} swept");
+        // Listed: where the per-run cancel route is open to the role.
+        let listed = peer_stop(
+            &t,
+            role,
+            json!({"stop_id": new_id(), "run_ids": [run], "scope": "listed"}),
+        )
+        .await;
+        match role {
+            crate::PeerRole::Phone | crate::PeerRole::Desktop => {
+                assert_eq!(
+                    listed.status,
+                    StatusCode::OK,
+                    "role={role:?} {:?}",
+                    listed.json()
+                );
+                assert_eq!(run_state(&t, &run), "cancelled", "role={role:?}");
+            }
+            _ => {
+                assert_eq!(listed.status, StatusCode::FORBIDDEN, "role={role:?} listed");
+                assert_eq!(run_state(&t, &run), "paused", "role={role:?}");
+            }
+        }
+        assert_eq!(
+            run_state(&t, &other),
+            "paused",
+            "role={role:?} unlisted run"
+        );
+    }
+    // Peer stops are attributed in the audit log; local keeps both scopes.
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(audit.iter().any(|a| a.action == "peer.decision_requested"));
+    let local = stop(&t, &new_id(), &[], "all_existing").await;
+    assert_eq!(local.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_peer_cannot_replay_or_read_the_local_users_stop_id() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "paused");
+    let sid = new_id();
+    let local = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&local.json(), &run).as_deref(),
+        Some("cancelled")
+    );
+    let peer = peer_stop(
+        &t,
+        crate::PeerRole::Phone,
+        json!({"stop_id": sid, "run_ids": [], "scope": "listed"}),
+    )
+    .await;
+    assert_eq!(peer.status, StatusCode::OK);
+    assert_eq!(
+        peer.json()["first_seen"],
+        true,
+        "its own stop, not the local one"
+    );
+    assert_eq!(peer.json()["results"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn racing_requests_with_one_stop_id_fix_one_target_set() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let runs: Vec<String> = (0..8).map(|_| put_run(&t, &bot, "paused")).collect();
+    let body = json!({"stop_id": new_id(), "run_ids": [], "scope": "all_existing"});
+    let (k, v) = auth();
+    let hdr = [(k, v.as_str())];
+    let (a, b) = tokio::join!(
+        send(
+            &t.app,
+            Method::POST,
+            "/v1/runs/stop",
+            Some(body.clone()),
+            &hdr
+        ),
+        send(
+            &t.app,
+            Method::POST,
+            "/v1/runs/stop",
+            Some(body.clone()),
+            &hdr
+        ),
+    );
+    assert_eq!((a.status, b.status), (StatusCode::OK, StatusCode::OK));
+    let firsts = [
+        a.json()["first_seen"] == true,
+        b.json()["first_seen"] == true,
+    ];
+    assert_eq!(
+        firsts.iter().filter(|f| **f).count(),
+        1,
+        "exactly one first receipt"
+    );
+    assert_eq!(a.json()["results"], b.json()["results"]);
+    for r in &runs {
+        assert_eq!(outcome_of(&a.json(), r).as_deref(), Some("cancelled"));
+        assert_eq!(run_state(&t, r), "cancelled");
+    }
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert_eq!(audit.iter().filter(|a| a.action == "runs.stop").count(), 1);
+}
+
+#[tokio::test]
+async fn stop_audit_row_is_written_before_the_cancels() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "paused");
+    let sid = new_id();
+    t.state.stop_seam().trace.lock().clear();
+    let r = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["audited"], true);
+    // Order recorded by the seam: the audit write precedes every cancel.
+    assert_eq!(
+        *t.state.stop_seam().trace.lock(),
+        vec!["audit".to_owned(), format!("cancel:{run}")]
+    );
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    let row = audit.iter().find(|a| a.action == "runs.stop").unwrap();
+    assert_eq!(row.actor, "user");
+    assert_eq!(row.detail["stop_id"], sid.as_str());
+    assert_eq!(row.detail["scope"], "all_existing");
+    assert_eq!(row.detail["count"], 1);
+}
+
+#[tokio::test]
+async fn a_stop_that_targets_nothing_writes_no_audit_row() {
+    let t = setup();
+    let r = stop(&t, &new_id(), &[], "listed").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["results"].as_array().unwrap().len(), 0);
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(!audit.iter().any(|a| a.action.starts_with("runs.stop")));
+}
+
+#[tokio::test]
+async fn a_failed_audit_write_refuses_a_peer_stop_and_records_nothing() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "paused");
+    let sid = new_id();
+    t.state.stop_seam().fail_audit.store(true, SeqCst);
+    let body = json!({"stop_id": sid, "run_ids": [run], "scope": "listed"});
+    let r = peer_stop(&t, crate::PeerRole::Phone, body.clone()).await;
+    assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(run_state(&t, &run), "paused", "nothing may be cancelled");
+    assert_eq!(t.state.stops().lock().len(), 0, "id must not be recorded");
+    // Storage healthy again: the same id is still a first receipt.
+    t.state.stop_seam().fail_audit.store(false, SeqCst);
+    let r = peer_stop(&t, crate::PeerRole::Phone, body).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["first_seen"], true);
+    assert_eq!(run_state(&t, &run), "cancelled");
+}
+
+#[tokio::test]
+async fn a_failed_audit_write_does_not_block_the_local_users_stop() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "paused");
+    t.state.stop_seam().fail_audit.store(true, SeqCst);
+    let r = stop(&t, &new_id(), &[], "all_existing").await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["audited"], false);
+    assert_eq!(outcome_of(&r.json(), &run).as_deref(), Some("cancelled"));
+    assert_eq!(run_state(&t, &run), "cancelled");
+}
+
+#[tokio::test]
+async fn stop_repeat_retries_failed_members_only() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let bad = put_run(&t, &bot, "paused");
+    let good = put_run(&t, &bot, "paused");
+    t.state
+        .stop_seam()
+        .fail_cancel
+        .lock()
+        .insert(protocol::RunId(bad.parse().unwrap()));
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(outcome_of(&first.json(), &bad).as_deref(), Some("failed"));
+    assert_eq!(
+        outcome_of(&first.json(), &good).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(run_state(&t, &bad), "paused");
+    // The cancel works again; only the failed member is attempted.
+    t.state.stop_seam().fail_cancel.lock().clear();
+    t.state.stop_seam().trace.lock().clear();
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(again.json()["first_seen"], false);
+    assert_eq!(
+        outcome_of(&again.json(), &bad).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(
+        outcome_of(&again.json(), &good).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(run_state(&t, &bad), "cancelled");
+    assert_eq!(
+        *t.state.stop_seam().trace.lock(),
+        vec!["audit".to_owned(), format!("cancel:{bad}")]
+    );
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|a| a.action == "runs.stop_retry")
+            .count(),
+        1
+    );
+    // A third repeat has nothing left to retry: no cancel, no audit row.
+    t.state.stop_seam().trace.lock().clear();
+    stop(&t, &sid, &[], "all_existing").await;
+    assert!(t.state.stop_seam().trace.lock().is_empty());
+}
+
+#[tokio::test]
+async fn a_peer_flood_cannot_evict_the_local_users_stop() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let r1 = put_run(&t, &bot, "paused");
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(outcome_of(&first.json(), &r1).as_deref(), Some("cancelled"));
+    for _ in 0..300 {
+        let r = peer_stop(
+            &t,
+            crate::PeerRole::Phone,
+            json!({"stop_id": new_id(), "run_ids": [], "scope": "listed"}),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    assert!(t.state.stops().lock().len_of("peer:peer-key") <= crate::stop::PEER_MAX_STOPS);
+    let late = put_run(&t, &bot, "queued");
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(again.json()["first_seen"], false);
+    assert_eq!(again.json()["expired"], false, "local set must survive");
+    assert_eq!(outcome_of(&again.json(), &r1).as_deref(), Some("cancelled"));
+    assert_eq!(outcome_of(&again.json(), &late), None);
+    assert_eq!(run_state(&t, &late), "queued");
+}
+
+#[tokio::test]
+async fn a_repeat_after_the_target_set_expired_never_sweeps_again() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    put_run(&t, &bot, "paused");
+    let sid = new_id();
+    stop(&t, &sid, &[], "all_existing").await;
+    let late = put_run(&t, &bot, "queued");
+    t.state.stops().lock().expire_all();
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(again.status, StatusCode::OK);
+    assert_eq!(again.json()["first_seen"], false);
+    assert_eq!(again.json()["expired"], true);
+    assert_eq!(again.json()["results"].as_array().unwrap().len(), 0);
+    assert_eq!(run_state(&t, &late), "queued", "late run must keep running");
+    // A new id is a new decision and does stop it.
+    let fresh = stop(&t, &new_id(), &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&fresh.json(), &late).as_deref(),
+        Some("cancelled")
+    );
+}
+
+#[tokio::test]
+async fn the_stop_book_is_bounded_per_actor() {
+    let t = setup();
+    for _ in 0..(crate::stop::LOCAL_MAX_STOPS + 20) {
+        let r = stop(&t, &new_id(), &[], "listed").await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    assert!(t.state.stops().lock().len() <= crate::stop::LOCAL_MAX_STOPS);
 }

@@ -725,11 +725,21 @@ async fn skill_hint_lists_the_skill_first() {
         .as_str()
         .unwrap()
         .to_owned();
-    let first_skill_line = sys.lines().find(|l| l.starts_with("- ")).unwrap();
-    assert!(
-        first_skill_line.starts_with("- [suggested] github-basics"),
-        "{first_skill_line}"
-    );
+    // The index in the system prompt is name-ordered and never carries the
+    // per-turn suggestion; that goes into the latest user message as a hint.
+    assert!(sys.contains("- github-basics:"), "{sys}");
+    assert!(!sys.contains("- [suggested]"), "{sys}");
+    let req = &script.requests_for("fake/m")[0];
+    let user = req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == provider_catalog::MessageRole::User)
+        .unwrap();
+    let user = user.content.as_str().unwrap();
+    assert!(user.starts_with("frobnicate the gizmo"), "{user}");
+    assert!(user.contains("[loop hint, not written by the user: Suggested skills"));
+    assert!(user.contains("github-basics"));
 }
 
 // ---------- budget, switches, embedder ----------
@@ -1024,4 +1034,196 @@ async fn replay_started_through_the_agent_is_refused_during_human_takeover() {
         (seen[0].run_id, seen[0].action.as_str()),
         (run, "browser_open")
     );
+}
+
+struct SelectedSkillAssignment {
+    bot: String,
+    allowed: &'static str,
+}
+
+impl skills::AssignmentSource for SelectedSkillAssignment {
+    fn assignment(&self, bot_id: &str) -> Result<Option<skills::Assignment>, String> {
+        if bot_id == self.bot {
+            Ok(Some(skills::Assignment {
+                mode: skills::AssignmentMode::Selected,
+                names: std::iter::once(self.allowed.to_owned()).collect(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    fn generation(&self) -> u64 {
+        1
+    }
+}
+
+fn write_router_skill(dir: &std::path::Path, name: &str, desc: &str, body: &str) {
+    let root = dir.join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {desc}\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn router_candidates_excludes_unassigned_skills_for_selected_bot() {
+    let env = setup();
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "assigned-skill",
+        "Assigned skill description",
+        "ASSIGNED_BODY",
+    );
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "unassigned-skill",
+        "Secret hidden description",
+        "UNASSIGNED_BODY",
+    );
+    write_router_skill(
+        &env.dir
+            .path()
+            .join("bots")
+            .join(env.bot.to_string())
+            .join("skills"),
+        "bot-learned",
+        "Bot own learned skill",
+        "OWN_BODY",
+    );
+
+    let index = SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedSkillAssignment {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+
+    let script = Script::new(vec![
+        (
+            "fake/c",
+            vec![Rep::Text(
+                r#"{"route":"skill","name":"assigned-skill","confidence":0.8}"#,
+            )],
+        ),
+        ("fake/m", vec![Rep::Text("ok")]),
+    ]);
+    let lp = make(&env, &script, &[], CLASSIFIER).with_skills(index);
+
+    let cands = lp.sh.router_candidates(&profile(CLASSIFIER), env.bot);
+    let skill_names: Vec<&str> = cands
+        .iter()
+        .filter(|c| c.kind == agent_router::CandidateKind::Skill)
+        .map(|c| c.name.as_str())
+        .collect();
+    assert!(skill_names.contains(&"assigned-skill"), "{skill_names:?}");
+    assert!(skill_names.contains(&"bot-learned"), "{skill_names:?}");
+    assert!(
+        !skill_names.contains(&"unassigned-skill"),
+        "{skill_names:?}"
+    );
+    assert!(
+        !skill_names.contains(&"custom-dropdowns"),
+        "{skill_names:?}"
+    );
+
+    let (_, state) = turn(&lp, env.chat, "frobnicate the gizmo").await;
+    assert_eq!(state, RunState::Succeeded);
+    let classifier_req = &script.requests_for("fake/c")[0];
+    let classifier_payload = serde_json::to_string(&classifier_req.messages).unwrap();
+    assert!(
+        classifier_payload.contains("assigned-skill"),
+        "{classifier_payload}"
+    );
+    assert!(
+        classifier_payload.contains("bot-learned"),
+        "{classifier_payload}"
+    );
+    assert!(
+        !classifier_payload.contains("unassigned-skill"),
+        "{classifier_payload}"
+    );
+    assert!(
+        !classifier_payload.contains("Secret hidden description"),
+        "{classifier_payload}"
+    );
+    assert!(
+        !classifier_payload.contains("skill custom-dropdowns"),
+        "{classifier_payload}"
+    );
+}
+
+#[tokio::test]
+async fn workflow_replay_enforces_selected_bot_skill_assignment() {
+    let env = setup();
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "assigned-skill",
+        "Assigned skill description",
+        "ASSIGNED_SECRET_BODY",
+    );
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "unassigned-skill",
+        "Hidden skill description",
+        "UNASSIGNED_SECRET_BODY",
+    );
+
+    let index = SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedSkillAssignment {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+
+    let store = WorkflowStore::new(env.dir.path());
+    let mut denied_wf = Workflow::new("read_unassigned");
+    denied_wf.description = "read an unassigned skill".into();
+    denied_wf.steps = vec![Step::Tool(ToolStep {
+        tool: "skill_read".into(),
+        input: json!({ "name": "unassigned-skill" }),
+    })];
+    store.save(&denied_wf).unwrap();
+
+    let mut allowed_wf = Workflow::new("read_assigned");
+    allowed_wf.description = "read an assigned skill".into();
+    allowed_wf.steps = vec![Step::Tool(ToolStep {
+        tool: "skill_read".into(),
+        input: json!({ "name": "assigned-skill" }),
+    })];
+    store.save(&allowed_wf).unwrap();
+
+    let script = Script::new(vec![("fake/m", vec![Rep::Text("fallback")])]);
+    let lp = make(&env, &script, &[], "")
+        .with_skills(index)
+        .with_workflows(
+            store,
+            Handles {
+                desktop: None,
+                browser: None,
+                tools: ToolRegistry::new(),
+            },
+        );
+
+    let (denied_run, denied_state) = turn(&lp, env.chat, "/workflow read_unassigned").await;
+    assert_eq!(denied_state, RunState::Succeeded);
+    let denied_steps = env.storage.list_steps(denied_run).unwrap();
+    let wf_step = denied_steps
+        .iter()
+        .find(|s| s.name == "workflow")
+        .expect("workflow step");
+    let wf_out = wf_step.output.as_ref().unwrap();
+    assert_eq!(wf_out["completed"], false, "{wf_out}");
+    let summary = wf_out["summary"].as_str().unwrap_or("");
+    assert!(!summary.contains("UNASSIGNED_SECRET_BODY"), "{wf_out}");
+
+    let (allowed_run, allowed_state) = turn(&lp, env.chat, "/workflow read_assigned").await;
+    assert_eq!(allowed_state, RunState::Succeeded);
+    let allowed_steps = env.storage.list_steps(allowed_run).unwrap();
+    let ok_step = allowed_steps
+        .iter()
+        .find(|s| s.name == "workflow")
+        .expect("workflow step");
+    let ok_out = ok_step.output.as_ref().unwrap();
+    assert_eq!(ok_out["completed"], true, "{ok_out}");
+    assert_eq!(ok_out["steps_replayed"], 1, "{ok_out}");
 }

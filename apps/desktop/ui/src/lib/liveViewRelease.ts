@@ -132,6 +132,18 @@ export async function runClearPause(
       try {
         return { kind: "cleared", dto: await deps.releaseLatch() };
       } catch (releaseErr) {
+        // A refusal can be the race signal (a peer just took control): re-read
+        // and fall back to `recover` (which interrupts whoever holds control)
+        // only if there is still no takeover and the latch is still paused.
+        let again: ControlStateDto;
+        try {
+          again = await deps.getControlState();
+        } catch {
+          return { kind: "failed", ...describeError(releaseErr, "recover_failed") };
+        }
+        if ((again.takeover ?? null) !== null || again.latched !== "paused") {
+          return { kind: "aborted", fresh: again };
+        }
         try {
           return { kind: "cleared", dto: await deps.recover() };
         } catch {

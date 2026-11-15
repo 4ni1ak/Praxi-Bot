@@ -58,7 +58,7 @@ import {
   runClearPause,
   runRelease
 } from "../lib/liveViewRelease.ts";
-import { createSnapshotSequencer } from "../lib/snapshotOrder.ts";
+import { admitSnapshot, createSnapshotSequencer } from "../lib/snapshotOrder.ts";
 import { runReconnectLoop } from "../lib/liveViewReconnect.ts";
 import {
   consumeLiveViewStream,
@@ -246,7 +246,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   // ref the global Stop consults, so a takeover this UI never adopted is seen.
   const ingestControlSnapshot = useCallback(
     (dto: ControlStateDto, ticket?: number) => {
-      if (ticket !== undefined && !sequencer.accept(ticket)) {
+      if (!admitSnapshot(sequencer, ticket)) {
         return; // an older request resolved after a newer state was applied
       }
       const changed =

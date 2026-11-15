@@ -454,6 +454,26 @@ function reduce(
           }
         ]
       }));
+
+    case "checkpoint_restored":
+      return withRun(state, e.run_id, ts, (r) => ({
+        ...r,
+        items: [
+          ...r.items,
+          {
+            kind: "notice",
+            key: `notice-${seq}`,
+            ts,
+            tone: e.partial ? "danger" : "info",
+            i18nKey: e.partial ? "chat.notice.checkpointRestorePartial" : "chat.notice.checkpointRestored",
+            values: {
+              count: String(e.restored.length),
+              checkpointId: e.checkpoint_id,
+              safetyId: e.safety_checkpoint_id
+            }
+          }
+        ]
+      }));
     case "route_decided":
       return withRun(state, e.run_id, ts, (r) => ({
         ...r,

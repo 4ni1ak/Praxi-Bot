@@ -13,7 +13,10 @@
 //! browser `EventSource` clients (Host / Origin still apply).
 
 pub mod auth;
+pub mod changes;
 pub mod control;
+pub mod doctor;
+mod doctor_routes;
 pub mod dto;
 pub mod email;
 mod email_routes;
@@ -34,7 +37,9 @@ pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;
 mod schedule_tools;
+pub mod skills;
 mod sse;
+mod stop;
 pub mod web;
 mod web_routes;
 
@@ -64,12 +69,14 @@ const EMAIL_TESTS_AT_ONCE: usize = 2;
 
 pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
 pub use control::{ControlConfig, ControlHub};
+pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
 pub use email::{EmailControl, EmailControlError};
 pub use error::ApiError;
 pub use mcp::{McpControl, McpControlError};
 pub use openapi::openapi_json;
 pub use policy::{PolicyLoadError, load_policy, validate_policy};
 pub use schedule_tools::{ScheduleLimits, load_schedule_limits};
+pub use skills::SkillAssignments;
 pub use web::{WebControl, WebControlError};
 
 /// Default TCP port of `bot serve`.
@@ -181,6 +188,8 @@ struct Inner {
     email_tests: Arc<tokio::sync::Semaphore>,
     /// Web search settings management (see [`AppState::set_web`]).
     web: OnceLock<Arc<dyn WebControl>>,
+    /// Skill catalog index (see [`AppState::set_skills`]).
+    skills: OnceLock<::skills::SkillIndex>,
     /// Bounds concurrent web search probes (see `web_routes`).
     web_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
@@ -189,6 +198,15 @@ struct Inner {
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
     policy_lock: parking_lot::Mutex<()>,
+    /// Target sets of `POST /v1/runs/stop` (see `stop`).
+    stops: parking_lot::Mutex<stop::StopBook>,
+    #[cfg(test)]
+    stop_seam: stop::Seam,
+    restore_locks: parking_lot::Mutex<std::collections::HashSet<RunId>>,
+    #[cfg(test)]
+    restore_fail_at: parking_lot::Mutex<Option<usize>>,
+    #[cfg(test)]
+    restore_pause: parking_lot::Mutex<Option<changes::TestRestorePause>>,
     /// Serialises `providers.toml` read-modify-write operations (`POST /v1/providers/cli/enable`).
     providers_lock: parking_lot::Mutex<()>,
     /// Why `policy.json` could not be loaded (locked deny-all mode), if so.
@@ -198,6 +216,14 @@ struct Inner {
     /// The running scheduler (see [`AppState::start_scheduler`]).
     scheduler: parking_lot::Mutex<Option<Scheduler>>,
     leader: OnceLock<host::LeaderControl>,
+    /// Embedder additions to `/v1/doctor` (see [`AppState::set_doctor_host`]).
+    doctor_host: OnceLock<Arc<dyn DoctorHost>>,
+    /// One diagnostics run at a time (`/v1/doctor*`).
+    doctor_runs: Arc<tokio::sync::Semaphore>,
+    /// Runs inside the `/v1/doctor` CLI detection future before detecting
+    /// (tests: simulate synchronous file-system I/O that blocks).
+    #[cfg(test)]
+    pub(crate) doctor_detect_hook: parking_lot::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     scheduler_clock: parking_lot::Mutex<Option<Arc<dyn scheduler::Clock>>>,
     /// Shutdown steps in the order they ran (tests only).
@@ -318,15 +344,28 @@ impl AppState {
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
+            skills: OnceLock::new(),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
+            stops: parking_lot::Mutex::new(stop::StopBook::default()),
+            #[cfg(test)]
+            stop_seam: stop::Seam::default(),
+            restore_locks: parking_lot::Mutex::new(std::collections::HashSet::new()),
+            #[cfg(test)]
+            restore_fail_at: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            restore_pause: parking_lot::Mutex::new(None),
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
+            doctor_host: OnceLock::new(),
+            doctor_runs: Arc::new(tokio::sync::Semaphore::new(1)),
+            #[cfg(test)]
+            doctor_detect_hook: parking_lot::Mutex::new(None),
             #[cfg(test)]
             scheduler_clock: parking_lot::Mutex::new(None),
             #[cfg(test)]
@@ -365,10 +404,64 @@ impl AppState {
         let _ = self.0.web.set(web);
     }
 
+    /// Enable `/v1/skills` and `/v1/bots/{id}/skills` over `index` (call once,
+    /// before [`serve`]; a second call is ignored).
+    ///
+    /// # Errors
+    /// `index` has no per-bot assignment source attached
+    /// ([`::skills::SkillIndex::with_assignments`]): such an index would show
+    /// every bot every shared and bundled skill, so it is refused instead of
+    /// being served. Callers must fail startup on this.
+    pub fn set_skills(&self, index: ::skills::SkillIndex) -> Result<(), &'static str> {
+        if !index.has_assignments() {
+            return Err("skill index has no per-bot assignment source attached");
+        }
+        let _ = self.0.skills.set(index);
+        Ok(())
+    }
+
+    pub(crate) fn skills_index(&self) -> Result<::skills::SkillIndex, ApiError> {
+        self.0
+            .skills
+            .get()
+            .cloned()
+            .ok_or_else(|| ApiError::unavailable("skills are not available in this daemon"))
+    }
+
     /// Enable `POST /v1/secrets/{name}` (write-only) over `store` (call once;
     /// a second call is ignored).
     pub fn set_secret_store(&self, store: Arc<dyn secret_store::SecretStore>) {
         let _ = self.0.secrets.set(store);
+    }
+
+    /// Add desktop / browser facts and repairs to `/v1/doctor` (call once;
+    /// a second call is ignored).
+    pub fn set_doctor_host(&self, host: Arc<dyn DoctorHost>) {
+        let _ = self.0.doctor_host.set(host);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_doctor_detect_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+        *self.0.doctor_detect_hook.lock() = Some(hook);
+    }
+
+    pub(crate) fn doctor_host(&self) -> Option<Arc<dyn DoctorHost>> {
+        self.0.doctor_host.get().cloned()
+    }
+
+    /// The diagnostics slot, or `429` while another run is in progress.
+    pub(crate) fn doctor_permit(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, error::ApiError> {
+        Arc::clone(&self.0.doctor_runs)
+            .try_acquire_owned()
+            .map_err(|_| {
+                error::ApiError::new(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    "too_many_requests",
+                    "diagnostics are already running; try again in a moment",
+                )
+            })
     }
 
     pub(crate) fn mcp(&self) -> Option<Arc<dyn McpControl>> {
@@ -650,6 +743,13 @@ impl AppState {
     pub(crate) fn set_policy_load_error(&self, e: Option<String>) {
         *self.0.policy_load_error.lock() = e;
     }
+    #[cfg(test)]
+    pub(crate) fn stop_seam(&self) -> &stop::Seam {
+        &self.0.stop_seam
+    }
+    pub(crate) fn stops(&self) -> &parking_lot::Mutex<stop::StopBook> {
+        &self.0.stops
+    }
     pub(crate) fn policy_lock(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.0.policy_lock.lock()
     }
@@ -792,6 +892,11 @@ fn api_routes() -> Router<AppState> {
             get(r::list_grants).delete(r::revoke_grant),
         )
         .route(
+            "/v1/bots/{id}/skills",
+            get(skills::get_bot_skills).put(skills::put_bot_skills),
+        )
+        .route("/v1/skills", get(skills::list_skills))
+        .route(
             "/v1/bots/{id}",
             get(r::get_bot).put(r::update_bot).delete(r::delete_bot),
         )
@@ -804,10 +909,23 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/approvals/{call_id}", post(r::decide_approval))
         .route("/v1/questions/{call_id}", post(r::answer_question))
         .route("/v1/runs", get(r::list_runs))
+        .route(
+            "/v1/runs/stop",
+            post(stop::stop_runs).layer(axum::extract::DefaultBodyLimit::max(stop::MAX_BODY_BYTES)),
+        )
         .route("/v1/runs/{id}", get(r::get_run))
         .route("/v1/runs/{id}/cancel", post(r::cancel_run))
         .route("/v1/runs/{id}/resume", post(r::resume_run))
         .route("/v1/runs/{id}/remember", post(r::remember_run))
+        .route("/v1/runs/{id}/changes", get(changes::get_run_changes))
+        .route(
+            "/v1/runs/{id}/changes/{cp}/preview",
+            get(changes::preview_restore),
+        )
+        .route(
+            "/v1/runs/{id}/changes/{cp}/restore",
+            post(changes::restore_changes),
+        )
         .route("/v1/usage", get(r::usage))
         .route(
             "/v1/control/state",
@@ -822,6 +940,9 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
         .route("/v1/providers/reload", post(r::reload_providers))
+        .route("/v1/doctor", get(doctor_routes::get_doctor))
+        .route("/v1/doctor/report", get(doctor_routes::report))
+        .route("/v1/doctor/repair/{id}", post(doctor_routes::repair))
         .route(
             "/v1/schedules",
             get(r::list_schedules).post(r::create_schedule),

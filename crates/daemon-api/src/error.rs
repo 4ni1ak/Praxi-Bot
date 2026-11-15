@@ -110,6 +110,7 @@ impl From<storage::StorageError> for ApiError {
     fn from(e: storage::StorageError) -> Self {
         match e {
             storage::StorageError::NotFound(w) => Self::not_found(w),
+            storage::StorageError::Conflict(w) => Self::conflict(w),
             other => Self::internal(other),
         }
     }

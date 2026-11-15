@@ -45,6 +45,13 @@ pub struct Guards {
     pub spill_threshold_bytes: usize,
     /// Bytes of a spilled output kept inline as a preview.
     pub spill_preview_bytes: usize,
+    /// Per observation scope (page, window, listing) this many of the newest
+    /// tool results are re-sent in full on later model calls of a turn; older
+    /// ones become a one-line marker. `0` turns the compaction off.
+    pub keep_observations: usize,
+    /// When the messages of a model call exceed this many bytes, the oldest
+    /// tool results are cut to a short preview. `0` turns the budget off.
+    pub turn_context_soft_bytes: usize,
 }
 
 impl Default for Guards {
@@ -58,6 +65,8 @@ impl Default for Guards {
             max_tokens_per_turn: 2_000_000,
             spill_threshold_bytes: 16 * 1024,
             spill_preview_bytes: 2 * 1024,
+            keep_observations: 2,
+            turn_context_soft_bytes: 96 * 1024,
         }
     }
 }
@@ -290,6 +299,9 @@ impl JournalSlot {
     }
 }
 
+/// Default max time a run waits for an offline PC node before failing (24 hours).
+pub const DEFAULT_WAIT_FOR_PC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Configuration of an [`AgentLoop`](crate::AgentLoop).
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
@@ -328,6 +340,9 @@ pub struct LoopConfig {
     /// How long a schedule-started run waits for an approval (or a question
     /// answer) before it pauses (default [`DEFAULT_SCHEDULE_APPROVAL_TIMEOUT`]).
     pub schedule_approval_timeout: Duration,
+    /// How long a run configured with `runtime.computer = "pc"` waits for a
+    /// paired PC node before failing (default [`DEFAULT_WAIT_FOR_PC_TIMEOUT`]).
+    pub wait_for_pc_timeout: Duration,
     /// Where events are journaled.  Empty by default: the loop then creates a
     /// background writer over its own storage on first use.
     pub journal: JournalSlot,
@@ -356,6 +371,7 @@ impl Default for LoopConfig {
             memory: None,
             knowledge_decider: None,
             schedule_approval_timeout: DEFAULT_SCHEDULE_APPROVAL_TIMEOUT,
+            wait_for_pc_timeout: DEFAULT_WAIT_FOR_PC_TIMEOUT,
             journal: JournalSlot::default(),
         }
     }

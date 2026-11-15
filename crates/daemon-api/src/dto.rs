@@ -53,7 +53,14 @@ impl HostInfo {
     }
 }
 
-/// A bot.
+/// Bot `[runtime]` settings (ADR-0027 §7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeConfigDto {
+    /// Configured computer target (`auto`, `pc`, `host`, `browser`, `off`, or `node:<id>`).
+    pub computer: String,
+}
+
+/// Public bot representation.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct BotDto {
     /// Bot id.
@@ -68,6 +75,9 @@ pub struct BotDto {
     /// persisted "always allow" grants.  Only present in `GET /v1/bots/{id}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_policy: Option<EffectivePolicyDto>,
+    /// Parsed `[runtime]` computer target settings (`auto` when omitted in profile).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeConfigDto>,
 }
 
 /// A bot's permission picture (`GET /v1/bots/{id}`).
@@ -90,6 +100,10 @@ pub struct CategoryDecisionDto {
     pub decision: String,
     /// `true` when `allow` holds only because of a category grant.
     pub via_grant: bool,
+    /// Computers where a category grant allows this category. The decision
+    /// stays `ask` for every computer not listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
 }
 
 /// What an "always allow" grant covers.
@@ -112,10 +126,17 @@ pub enum GrantTargetDto {
 /// A persisted "always allow" rule of a bot.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GrantDto {
+    /// Computer scope of this grant, when it controls a desktop/browser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer: Option<String>,
     /// What it covers.
     pub target: GrantTargetDto,
     /// When it was granted.
     pub granted_at_ms: i64,
+    /// Legacy desktop/browser rule with no computer. It does not authorize
+    /// anything; it is listed so the user can see that it stopped applying.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inert: bool,
 }
 
 /// `DELETE /v1/bots/{id}/grants`.
@@ -152,6 +173,10 @@ pub struct BotInput {
     /// Profile as TOML text (the contents of a bot profile file).
     #[serde(default)]
     pub profile_toml: Option<String>,
+    /// Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`
+    /// when both are supplied. Omission on update preserves the stored target.
+    #[serde(default)]
+    pub runtime: Option<RuntimeConfigDto>,
 }
 
 /// A chat thread.
@@ -346,6 +371,21 @@ pub struct RunDto {
     /// The schedule that started this run (`null` for runs the user started).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_id: Option<Uuid>,
+    /// Resolved computer target label fixed at run start (`pc`, `host`, `browser`, `off`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_target: Option<String>,
+    /// Stable key of the PC used by this run (`local` for the daemon desktop).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer_node: Option<String>,
+    /// Display name captured at target binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer_node_name: Option<String>,
+    /// Start of the current pause in Unix milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_at_ms: Option<i64>,
+    /// Reason the run is currently `paused` (e.g. `waiting_for_pc`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_reason: Option<String>,
 }
 
 /// Token totals.
@@ -853,4 +893,99 @@ pub struct ReleaseResult {
     pub takeover_id: Uuid,
     pub request_id: Uuid,
     pub state: String,
+}
+
+/// Which runs a Stop targets (`POST /v1/runs/stop`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopScope {
+    /// Every non-terminal run of the user that exists when the daemon first
+    /// receives the `stop_id`, plus the listed ids. Local user only.
+    AllExisting,
+    /// Exactly the listed ids that exist and are cancellable.
+    Listed,
+}
+
+/// Body of `POST /v1/runs/stop`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StopRunsInput {
+    /// One user decision to stop, minted by the caller. The daemon fixes the
+    /// target set the first time it sees this id; a repeat never changes it.
+    pub stop_id: Uuid,
+    /// Runs the caller knew about (at most 1024). Only the first receipt reads them.
+    #[serde(default)]
+    pub run_ids: Vec<Uuid>,
+    /// Which runs the Stop targets besides `run_ids`.
+    pub scope: StopScope,
+}
+
+/// What happened to one run of a Stop's target set.
+///
+/// `cancelled` is the only outcome that means the run has stopped. For a live
+/// run the daemon can only fire the run's cancel token: `cancel_requested`
+/// says it did so, and the run's effects (a tool call, a shell child, a
+/// browser or desktop action) have ceased only once its `state` is terminal or
+/// `run_finished` arrives. A human takeover is not touched by this route
+/// (`/v1/control/override` handles it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopOutcome {
+    /// The run is cancelled (terminal) because of this Stop.
+    Cancelled,
+    /// The cancel was issued but the run is not terminal yet. A repeat of the
+    /// same `stop_id` re-issues it and updates this outcome once the run ended.
+    CancelRequested,
+    /// The run was already finished when the Stop reached the daemon (or ended
+    /// by itself before the cancel took effect).
+    AlreadyTerminal,
+    /// The id is not a run of this user. Never cancelled later, even if a run
+    /// with that id appears.
+    NotFound,
+    /// The cancel failed; a repeat of the same `stop_id` retries it.
+    Failed,
+}
+
+/// One member of a Stop's target set.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunResult {
+    /// Run id.
+    pub run_id: Uuid,
+    /// Cancel outcome.
+    pub outcome: StopOutcome,
+    /// Current run state, if the run exists.
+    pub state: Option<String>,
+    /// Why the cancel failed.
+    pub error: Option<String>,
+}
+
+/// Response of `POST /v1/runs/stop`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunsResponse {
+    /// Echo of the request's `stop_id`.
+    pub stop_id: Uuid,
+    /// `true` when this call fixed the target set, `false` for a repeat.
+    pub first_seen: bool,
+    /// `true` when this `stop_id` was seen before but its target set is no
+    /// longer kept (expired or evicted): nothing was cancelled and `results`
+    /// is empty. The original target set is unknown, so the daemon will not
+    /// guess it. To retry, send a NEW `stop_id` with `scope: listed` and the
+    /// run ids the client still holds as stop-held. `all_existing` with a new
+    /// `stop_id` sweeps every run open now, including runs started after the
+    /// original Stop: use it only for a new user decision. The client should
+    /// tell the user that the Stop expired.
+    #[serde(default)]
+    pub expired: bool,
+    /// `false` when the audit row of this call could not be written. Only the
+    /// local user's Stop proceeds without it (peers fail with 500).
+    #[serde(default = "audited_default")]
+    pub audited: bool,
+    /// Every member of the target set. A run that is not listed was not
+    /// targeted (it was created after the first receipt). A repeat retries
+    /// `failed` members and re-issues the cancel of `cancel_requested` ones;
+    /// terminal and unknown members are never touched again.
+    pub results: Vec<StopRunResult>,
+}
+
+fn audited_default() -> bool {
+    true
 }
