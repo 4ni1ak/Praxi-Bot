@@ -1514,6 +1514,33 @@ pub fn with_checkpoint_access<T>(
     f()
 }
 
+/// Name `path` for an alias comparison without ever following a link to a
+/// non-local place. Every component is stated with `symlink_metadata`, drive
+/// letters and link text are classified BEFORE a link is followed, and the
+/// final link is resolved. UNC, device, mapped-network-drive, junction and
+/// `WebDAV` paths are errors, as is anything that cannot be verified. Callers
+/// must treat an error as "may overlap", never as "disjoint". The roots and
+/// grants of the current gate do not apply: this only names a location.
+///
+/// # Errors
+/// A non-local or unverifiable path (`PermissionDenied`) or an I/O failure.
+pub fn resolve_local_identity(path: &Path) -> io::Result<PathBuf> {
+    let raw = path.to_string_lossy();
+    reject_syntax(&raw).map_err(tool_to_io)?;
+    let lexical = lexical_absolute(&raw).map_err(tool_to_io)?;
+    let lexical = confine_drive(&lexical).map_err(tool_to_io)?;
+    let drives = DriveCache::new();
+    let ctx = ResolveCtx {
+        follow: Follow::Write,
+        roots: &[],
+        drives: &drives,
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = resolve_local(&lexical, &ctx).map_err(tool_to_io)?;
+    final_identity(&resolved).map_err(tool_to_io)
+}
+
 fn tool_to_io(err: ToolError) -> io::Error {
     match err {
         ToolError::PermissionDenied(m) => io::Error::new(io::ErrorKind::PermissionDenied, m),
@@ -2916,6 +2943,23 @@ mod tests {
             }
             Err(err) => panic!("could not create local symlink fixture: {err}"),
         }
+    }
+
+    #[test]
+    fn identity_resolver_refuses_a_link_to_a_non_local_target_without_following_it() {
+        let work = tempfile::tempdir().unwrap();
+        let link = work.path().join("remote");
+        // Link text only: nothing is opened at creation time.
+        if !link_for_checkpoint_test(Path::new(r"\praxi-no-such-host\share\dir"), &link, true) {
+            return;
+        }
+        let err = resolve_local_identity(&link.join("child.txt")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        let err = resolve_local_identity(&link).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        assert!(resolve_local_identity(Path::new(r"\praxi-no-such-host\share\x")).is_err());
+        // A plain local path (existing or not) still resolves.
+        assert!(resolve_local_identity(&work.path().join("missing").join("x")).is_ok());
     }
 
     #[test]
