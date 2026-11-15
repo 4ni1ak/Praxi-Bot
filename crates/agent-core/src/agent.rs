@@ -73,6 +73,7 @@ impl AgentLoop {
                     .is_some_and(|sh| sh.tool_visible_to_run(&ctx.run_id, spec))
             });
             Shared {
+                usage: crate::usage::Ledger::default(),
                 storage: Arc::clone(&storage),
                 surface: ToolSurface::with_visibility(
                     tools.clone(),
@@ -830,6 +831,7 @@ impl AgentLoop {
                 let reason = "Cannot resume: stored computer identity is unknown or no longer belongs to this daemon or a paired desktop (identity changed or state imported); start a new run";
                 self.cancel_wait_pc_timer(run.id);
                 self.rt.fail_paused(run.id, reason)?;
+                crate::usage::finish(&self.sh, run.id);
                 self.sh.storage.append_audit(
                     run.user_id,
                     Some(run.id),
@@ -937,6 +939,7 @@ impl AgentLoop {
         self.rt.cancel(run_id)?;
         // A cancelled parent takes its subagents with it.
         self.cancel_descendants(run_id);
+        crate::usage::finish(&self.sh, run_id);
         if idle_paused {
             if let Ok(Some(run)) = self.sh.storage.get_run(run_id)
                 && let Some(chat_id) = run.chat_id
@@ -1103,6 +1106,7 @@ impl AgentLoop {
         );
         let ctx = self.ctx_of(run_id);
         if self.rt.fail_paused(run_id, &message).is_ok() {
+            crate::usage::finish(&self.sh, run_id);
             self.sh.directives.lock().remove(&run_id);
             self.sh.run_computers.lock().remove(&run_id);
             if let Some(chat_id) = run.chat_id {
@@ -1462,7 +1466,9 @@ impl AgentLoop {
 
     // Boxed so the spawn / `conclude` / next-turn recursion has a nameable type.
     fn drive(self, run_id: RunId, start: Start) -> BoxFuture<'static, ()> {
+        let activity = crate::usage::Activity::new(&self.sh, run_id);
         Box::pin(async move {
+            let _activity = activity;
             let res = match start {
                 Start::Fresh => {
                     let run = self.sh.storage.get_run(run_id).ok().flatten();
@@ -1634,6 +1640,9 @@ impl AgentLoop {
     /// Persist the final answer, emit the closing events and start any queued turn.
     fn conclude(&self, run_id: RunId, res: &std::result::Result<RunState, RuntimeError>) {
         let run = self.sh.storage.get_run(run_id).ok().flatten();
+        if !matches!(res, Ok(RunState::Paused)) {
+            crate::usage::finish(&self.sh, run_id);
+        }
         crate::compaction::forget_turn(run_id);
         if !matches!(res, Ok(RunState::Paused)) {
             // A finished run's spill files are no longer reachable by the
@@ -1800,7 +1809,11 @@ impl AgentLoop {
         }
         if let Some(ex) = crate::memory::Exchange::of(&self.sh, run, final_text) {
             let sh = Arc::clone(&self.sh);
-            let handle = tokio::spawn(crate::memory::extract(sh, ex));
+            let activity = crate::usage::Activity::new(&sh, run.id);
+            let handle = tokio::spawn(async move {
+                let _activity = activity;
+                crate::memory::extract(sh, ex).await;
+            });
             let mut bg = self.sh.bg.lock();
             bg.retain(|h| !h.is_finished());
             bg.push(handle);

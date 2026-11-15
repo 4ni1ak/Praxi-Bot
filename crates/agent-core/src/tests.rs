@@ -5,6 +5,7 @@
 mod composio_approvals;
 mod fill_secret;
 mod planning_pause;
+mod usage;
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;

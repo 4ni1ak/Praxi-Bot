@@ -210,6 +210,10 @@ async fn child(case: &str) {
         registry,
         Providers::single(Arc::new(NoHttp)),
         LoopConfig {
+            model_retry: task_runtime::RetryPolicy {
+                max_attempts: 2,
+                ..LoopConfig::default().model_retry
+            },
             global_policy: if approval {
                 Policy::approve_destructive()
             } else if deny {
@@ -373,14 +377,35 @@ async fn child(case: &str) {
         assert!(event_text.contains("MessageDelta"));
         assert!(event_text.contains("ToolCallRequested"));
         assert!(event_text.contains("ToolCallCompleted"));
-        let usage = store
+        let usage: Vec<_> = store
             .list_audit(user)
             .unwrap()
             .into_iter()
-            .find(|a| a.action == "usage")
+            .filter(|a| a.action == "usage")
+            .collect();
+        let cli = usage
+            .iter()
+            .find(|a| {
+                a.detail["model"]
+                    .as_str()
+                    .is_some_and(|model| model.starts_with("cli:"))
+            })
             .unwrap();
-        assert_eq!(usage.detail["cost_source"], "subscription_estimate");
-        assert_eq!(usage.detail["prompt_tokens"], 12);
+        assert_eq!(cli.detail["cost_source"], "subscription_estimate");
+        assert_eq!(cli.detail["prompt_tokens"], 12);
+        assert_eq!(usage.len(), if fallback { 3 } else { 1 });
+        if fallback {
+            let http: Vec<_> = usage
+                .iter()
+                .filter(|a| a.detail["model"] == "unused-http/fail")
+                .collect();
+            assert_eq!(http.len(), 2);
+            for attempt in http {
+                assert_eq!(attempt.detail["calls"], 1);
+                assert!(attempt.detail["tokens"].is_null());
+                assert!(attempt.detail["cost_source"].is_null());
+            }
+        }
     }
     lp.shutdown(Duration::ZERO).await;
 }

@@ -555,9 +555,18 @@ impl TurnExecutor {
         req.max_tokens = self.sh.cfg.max_tokens;
         req.temperature = self.sh.cfg.temperature;
 
+        let purpose = if guard_reason.is_some() {
+            crate::CallPurpose::GuardClose
+        } else {
+            crate::CallPurpose::Executor
+        };
         if primary.starts_with("cli:") {
+            let mut call =
+                crate::usage::CallGuard::start(&self.sh, &ctx, &primary, purpose).map_err(xe)?;
             let out = self.exec_cli(run, &req, &specs, cancel).await?;
-            self.audit_usage(&ctx, &out);
+            if let Some(usage) = &out.usage {
+                call.usage(usage);
+            }
             return serde_json::to_value(out).map_err(xe);
         }
 
@@ -583,10 +592,12 @@ impl TurnExecutor {
             }
             req.model = ModelRef((*name).clone());
             let timeout = self.sh.cfg.guards.model_timeout;
-            let attempt =
-                tokio::time::timeout(timeout, self.call_with_retries(&ctx, run, &req, &specs))
-                    .await
-                    .unwrap_or(Err(ProviderError::Timeout));
+            let attempt = tokio::time::timeout(
+                timeout,
+                self.call_with_retries(&ctx, run, &req, &specs, purpose),
+            )
+            .await
+            .unwrap_or(Err(ProviderError::Timeout));
             match attempt {
                 Ok(out) => {
                     result = Some(out);
@@ -647,30 +658,7 @@ impl TurnExecutor {
             );
             out.guard_reason = Some(reason);
         }
-        self.audit_usage(&ctx, &out);
         serde_json::to_value(out).map_err(xe)
-    }
-
-    /// Records a `usage` audit entry (tokens and estimated cost) for a model
-    /// step that reported usage.
-    fn audit_usage(&self, ctx: &RunCtx, out: &ModelOut) {
-        if let Some(u) = &out.usage {
-            let cost = self
-                .sh
-                .price_for(&out.model)
-                .map(|p| p.cost(u.prompt_tokens, u.completion_tokens, u.cached_tokens));
-            let mut detail = json!({
-                "model": out.model,
-                "prompt_tokens": u.prompt_tokens,
-                "completion_tokens": u.completion_tokens,
-                "cached_tokens": u.cached_tokens,
-                "cost_usd": cost,
-            });
-            if out.model.starts_with("cli:") {
-                detail["cost_source"] = json!("subscription_estimate");
-            }
-            self.sh.audit(ctx, "bot", "usage", &detail);
-        }
     }
 
     /// The skills index block for the system prompt (name-ordered, so it does
@@ -762,6 +750,7 @@ impl TurnExecutor {
         run: &Run,
         req: &ChatRequest,
         specs: &[ToolSpec],
+        purpose: crate::CallPurpose,
     ) -> Result<ModelOut, ProviderError> {
         let policy = self.sh.cfg.model_retry;
         let attempts = policy.max_attempts.max(1);
@@ -770,7 +759,10 @@ impl TurnExecutor {
         let mut attempt = 1;
         let mut malformed_retried = false;
         loop {
-            match self.stream_once(ctx, run, req.clone(), specs).await {
+            match self
+                .stream_once(ctx, run, req.clone(), specs, purpose)
+                .await
+            {
                 Ok(out) => return Ok(out),
                 // A garbled tool call is retried once, not `attempts` times.
                 Err(e @ ProviderError::MalformedToolCall(_)) if malformed_retried => {
@@ -812,16 +804,25 @@ impl TurnExecutor {
         run: &Run,
         req: ChatRequest,
         specs: &[ToolSpec],
+        purpose: crate::CallPurpose,
     ) -> Result<ModelOut, ProviderError> {
         // A CLI selected by the HTTP fallback chain is also a whole session.
         if req.model.0.starts_with("cli:") {
-            return self
+            let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &req.model.0, purpose)
+                .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
+            let out = self
                 .exec_cli(run, &req, specs, &CancellationToken::new())
                 .await
-                .map_err(|e| ProviderError::InvalidRequest(e.0));
+                .map_err(|e| ProviderError::InvalidRequest(e.0))?;
+            if let Some(usage) = &out.usage {
+                call.usage(usage);
+            }
+            return Ok(out);
         }
         let model = req.model.clone();
         let provider = self.sh.providers.read().pick(&model)?;
+        let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &model.0, purpose)
+            .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
         let mut stream = provider.stream(req).await?;
         let mut out = ModelOut {
             model: model.0,
@@ -845,7 +846,10 @@ impl TurnExecutor {
                     }
                     out.tool_calls.push(tc);
                 }
-                ChatChunk::Usage(u) => out.usage = Some(u),
+                ChatChunk::Usage(u) => {
+                    call.usage(&u);
+                    out.usage = Some(u);
+                }
                 ChatChunk::Done { finish_reason } => {
                     out.finish = format!("{finish_reason:?}");
                     break;

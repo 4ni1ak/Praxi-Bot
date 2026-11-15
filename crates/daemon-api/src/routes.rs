@@ -1085,13 +1085,13 @@ fn add(t: &mut UsageTotals, u: &Usage, cost: Option<f64>) {
     if let Some(c) = cost {
         *t.cost_usd.get_or_insert(0.0) += c;
     }
-    t.prompt_tokens += u.prompt_tokens;
-    t.completion_tokens += u.completion_tokens;
-    t.cached_tokens += u.cached_tokens.unwrap_or(0);
-    t.model_calls += 1;
+    t.prompt_tokens = t.prompt_tokens.saturating_add(u.prompt_tokens);
+    t.completion_tokens = t.completion_tokens.saturating_add(u.completion_tokens);
+    t.cached_tokens = t.cached_tokens.saturating_add(u.cached_tokens.unwrap_or(0));
+    t.model_calls = t.model_calls.saturating_add(1);
 }
 
-/// Token usage summed over the model steps of all runs.
+/// Invocation usage, with legacy model-step fallback for pre-ledger runs.
 #[utoipa::path(get, path = "/v1/usage", tag = "usage", security(("bearer" = [])),
     params(UsageQuery),
     responses((status = 200, body = UsageSummary)))]
@@ -1103,12 +1103,46 @@ pub(crate) async fn usage(
     let mut total = UsageTotals::default();
     let mut by_bot: BTreeMap<Uuid, UsageTotals> = BTreeMap::new();
     let mut runs = 0u64;
+    let mut by_purpose: BTreeMap<String, UsageTotals> = BTreeMap::new();
+    let ledger = agent_core::usage::calls_from_audit(&st.list_audit(s.user_id())?);
     for run in st.list_runs(s.user_id())? {
         if q.since_ms.is_some_and(|t| run.created_at_ms < t) {
             continue;
         }
         runs += 1;
+        let mut recorded_steps = std::collections::HashSet::new();
+        if let Some(calls) = ledger.get(&run.id) {
+            for call in calls {
+                if matches!(
+                    call.purpose,
+                    agent_core::CallPurpose::Executor
+                        | agent_core::CallPurpose::GuardClose
+                        | agent_core::CallPurpose::Subagent
+                ) {
+                    recorded_steps.insert(call.step_n);
+                }
+                let usage = call.tokens.unwrap_or_default();
+                // Preserve the API's existing current-price semantics.
+                let cost = call.tokens.and_then(|u| {
+                    s.agent()
+                        .price_for(&call.model)
+                        .map(|p| p.cost(u.prompt_tokens, u.completion_tokens, u.cached_tokens))
+                });
+                add(&mut total, &usage, cost);
+                add(by_bot.entry(run.bot_id.0).or_default(), &usage, cost);
+                add(
+                    by_purpose
+                        .entry(call.purpose.as_str().to_owned())
+                        .or_default(),
+                    &usage,
+                    cost,
+                );
+            }
+        }
         for step in st.list_steps(run.id)? {
+            if recorded_steps.contains(&step.idx) {
+                continue;
+            }
             let Some(u) = (step.name == "model")
                 .then_some(step.output.as_ref())
                 .flatten()
@@ -1126,11 +1160,24 @@ pub(crate) async fn usage(
                 .map(|p| p.cost(u.prompt_tokens, u.completion_tokens, u.cached_tokens));
             add(&mut total, &u, cost);
             add(by_bot.entry(run.bot_id.0).or_default(), &u, cost);
+            let purpose = if run.parent_run_id.is_some() {
+                "subagent"
+            } else if step
+                .output
+                .as_ref()
+                .is_some_and(|o| o["stopped_by_guard"] == true)
+            {
+                "guard_close"
+            } else {
+                "executor"
+            };
+            add(by_purpose.entry(purpose.to_owned()).or_default(), &u, cost);
         }
     }
     Ok(Json(UsageSummary {
         runs,
         total,
+        by_purpose,
         by_bot: by_bot
             .into_iter()
             .map(|(bot_id, totals)| BotUsage { bot_id, totals })

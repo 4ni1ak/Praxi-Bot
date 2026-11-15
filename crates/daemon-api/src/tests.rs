@@ -4137,3 +4137,92 @@ async fn the_stop_book_is_bounded_per_actor() {
     }
     assert!(t.state.stops().lock().len() <= crate::stop::LOCAL_MAX_STOPS);
 }
+
+#[tokio::test]
+async fn usage_purpose_totals_are_additive_and_preserve_the_legacy_shape() {
+    let t = setup();
+    let (bot, chat) = make_chat(&t).await;
+    run_and_reply(&t, &chat, "hello").await;
+    let initial = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(initial["by_purpose"]["executor"], initial["total"]);
+    assert_eq!(
+        initial["total"],
+        json!({
+            "prompt_tokens": 10, "completion_tokens": 5, "cached_tokens": 0,
+            "model_calls": 1, "cost_usd": null
+        })
+    );
+    let mut legacy_view = initial.clone();
+    legacy_view.as_object_mut().unwrap().remove("by_purpose");
+    assert_eq!(
+        legacy_view,
+        json!({"runs": 1, "total": initial["total"],
+        "by_bot": [{"bot_id": bot, "prompt_tokens": 10, "completion_tokens": 5,
+            "cached_tokens": 0, "model_calls": 1, "cost_usd": null}]})
+    );
+
+    let st = t.state.storage();
+    let user = t.state.user_id();
+    let run = st.list_runs(user).unwrap()[0].id;
+    // A classifier invocation with no token report is still a real call.
+    let intent = json!({"ledger_version": 1, "call_id": uuid::Uuid::now_v7(),
+        "purpose": "router", "model": "fake/classifier", "step_n": 0,
+        "calls": 1, "tokens": null, "cost_usd": null});
+    st.append_audit(user, Some(run), "bot", "llm.call_started", &intent)
+        .unwrap();
+    st.append_audit(user, Some(run), "bot", "usage", &intent)
+        .unwrap();
+    let u = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(u["by_purpose"]["router"]["model_calls"], 1);
+    assert_eq!(u["total"]["model_calls"], 2);
+    for key in [
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_tokens",
+        "model_calls",
+    ] {
+        let sum: u64 = u["by_purpose"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|p| p[key].as_u64().unwrap())
+            .sum();
+        assert_eq!(u["total"][key], sum, "{key}");
+        assert_eq!(u["by_bot"][0][key], sum, "{key}");
+    }
+}
+
+#[tokio::test]
+async fn usage_legacy_steps_remain_counted_after_a_run_acquires_ledger_entries() {
+    let t = setup();
+    let (_, chat) = make_chat(&t).await;
+    run_and_reply(&t, &chat, "hello").await;
+    let st = t.state.storage();
+    let user = t.state.user_id();
+    let original = st.list_runs(user).unwrap()[0].clone();
+    let mut legacy = original.clone();
+    legacy.id = protocol::RunId::new();
+    st.insert_run(&legacy).unwrap();
+    for mut step in st.list_steps(original.id).unwrap() {
+        step.id = uuid::Uuid::now_v7();
+        step.run_id = legacy.id;
+        st.insert_step(&step).unwrap();
+    }
+    // Only the resumed call is ledger-aware; old successful steps still count.
+    st.append_audit(
+        user,
+        Some(legacy.id),
+        "bot",
+        "llm.call_started",
+        &json!({
+            "ledger_version": 1, "call_id": uuid::Uuid::now_v7(), "purpose": "executor",
+            "model": "fake/echo", "step_n": 9, "tokens": null
+        }),
+    )
+    .unwrap();
+    let u = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(u["runs"], 2);
+    assert_eq!(u["total"]["model_calls"], 3);
+    assert_eq!(u["total"]["prompt_tokens"], 20);
+    assert_eq!(u["by_purpose"]["executor"], u["total"]);
+}
