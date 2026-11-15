@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CircleCheck, LoaderCircle } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -11,9 +11,10 @@ import {
 import { i18n } from "../i18n";
 import { useApplyAppearance } from "../state/useApplyAppearance";
 import {
-  nextWidgetStop,
+  reduceWidget,
   WIDGET_CONFIRMED_MS,
-  type WidgetStopState
+  WIDGET_STOP_INITIAL,
+  type WidgetView
 } from "../state/stopStatus";
 import {
   type AppSettings,
@@ -39,31 +40,35 @@ import styles from "./WidgetWindow.module.css";
 export function WidgetWindow() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
-  const [controlState, setControlState] = useState<ControlSnapshot>(
-    INITIAL_CONTROL_SNAPSHOT
-  );
-  const [stopState, setStopState] = useState<WidgetStopState>({ kind: "none" });
+  // Every read, event and command reply goes through `reduceWidget`: modes only from
+  // newer revisions, Stop cursors only forward, a failed read is "could not confirm".
+  const [view, setView] = useState<WidgetView<ControlSnapshot>>({
+    stop: WIDGET_STOP_INITIAL,
+    lastRev: -1,
+    control: INITIAL_CONTROL_SNAPSHOT
+  });
+  const observe = useCallback((snap: ControlSnapshot | null) => {
+    const failed = snap === null || snap.stopSeq === undefined;
+    setView((prev) => reduceWidget(prev, failed ? null : snap, performance.now()));
+  }, []);
+  const controlState = view.control;
+  const stopState = view.stop;
 
   // Native only knows whether a Stop is still unconfirmed (the main window acks it
   // once every run it targeted is terminal). The ack emits no event: poll meanwhile.
   useEffect(() => {
-    setStopState((prev) => nextWidgetStop(prev, controlState, performance.now()));
-  }, [controlState]);
-  useEffect(() => {
     if (stopState.kind === "pending") {
       const id = window.setInterval(() => {
-        void getControlState().then(setControlState);
+        void getControlState().then(observe);
       }, 1500);
       return () => window.clearInterval(id);
     }
     if (stopState.kind === "confirmed") {
-      const id = window.setTimeout(() => {
-        setStopState((prev) => nextWidgetStop(prev, controlState, performance.now()));
-      }, WIDGET_CONFIRMED_MS + 50);
+      const id = window.setTimeout(() => observe(null), WIDGET_CONFIRMED_MS + 50);
       return () => window.clearTimeout(id);
     }
     return undefined;
-  }, [stopState, controlState]);
+  }, [stopState, observe]);
 
   useEffect(() => {
     let mounted = true;
@@ -77,20 +82,20 @@ export function WidgetWindow() {
 
     void getControlState().then((snap) => {
       if (!mounted) return;
-      setControlState(snap);
+      observe(snap);
     });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [observe]);
 
   useApplyAppearance(settings, undefined, true);
 
   useEffect(() => {
     return subscribeOverlayEvents({
       onControlStateChanged: (snapshot) => {
-        setControlState(snapshot);
+        observe(snapshot);
       },
       onSettingsUpdated: (updated) => {
         setSettings(updated);
@@ -99,7 +104,7 @@ export function WidgetWindow() {
         }
       }
     });
-  }, []);
+  }, [observe]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -107,7 +112,7 @@ export function WidgetWindow() {
         event.preventDefault();
         // One press = one Stop (never on key repeat).
         if (!event.repeat) {
-          void stopBotRun().then(setControlState);
+          void stopBotRun().then(observe);
         }
       }
     };
@@ -115,7 +120,7 @@ export function WidgetWindow() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [controlState.stopHotkey]);
+  }, [controlState.stopHotkey, observe]);
 
   const handleDragMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !isTauriRuntime()) {
@@ -127,17 +132,17 @@ export function WidgetWindow() {
   };
 
   const handleStop = () => {
-    void stopBotRun().then(setControlState);
+    void stopBotRun().then(observe);
   };
 
   const handlePauseToggle = () => {
     if (controlState.mode === "paused") {
       void resumeBotRun()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     } else if (controlState.mode === "bot_driving") {
       void pauseBotRun()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     }
   };
@@ -145,11 +150,11 @@ export function WidgetWindow() {
   const handleWheelToggle = () => {
     if (controlState.mode === "human_driving") {
       void giveBackControl()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     } else {
       void takeTheWheel()
-        .then(setControlState)
+        .then(observe)
         .catch(() => {});
     }
   };
@@ -187,6 +192,13 @@ export function WidgetWindow() {
   ]
     .filter(Boolean)
     .join(" ");
+
+  const widgetStopKey =
+    stopState.kind === "confirmed"
+      ? "widget.stopConfirmed"
+      : stopState.unknown
+        ? "widget.stopUnknown"
+        : "widget.stopPending";
 
   const stepDisplay = isHumanDriving
     ? t("widget.humanDrivingStep")
@@ -235,16 +247,14 @@ export function WidgetWindow() {
             <p
               className={styles.stopLine}
               data-kind={stopState.kind}
-              title={t(stopState.kind === "pending" ? "widget.stopPending" : "widget.stopConfirmed")}
+              title={t(widgetStopKey)}
             >
               {stopState.kind === "pending" ? (
                 <LoaderCircle aria-hidden="true" className={styles.stopSpin} />
               ) : (
                 <CircleCheck aria-hidden="true" />
               )}
-              <span>
-                {t(stopState.kind === "pending" ? "widget.stopPending" : "widget.stopConfirmed")}
-              </span>
+              <span>{t(widgetStopKey)}</span>
             </p>
           )}
           {isHumanDriving && controlState.refusedActionsCount > 0 ? (
