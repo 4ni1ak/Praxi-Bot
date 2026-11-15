@@ -269,6 +269,11 @@ impl McpAuxAdapter {
                 },
                 category: config.effective_category(),
                 platforms: vec![Platform::All],
+                // Same declaration as the server's own tools: the result is
+                // untrusted, private unless the server is public, and a URI
+                // or prompt argument is egress unless the server is local.
+                content: ContentClass::declared(true, !config.public_content, !config.local_only)
+                    .with_external_metadata(),
             },
             aux,
             server,
@@ -295,6 +300,7 @@ fn json_output<T: serde::Serialize>(value: &T) -> Result<ToolOutput, ToolError> 
     Ok(ToolOutput {
         content: vec![ContentPart::Json { data }],
         spill: None,
+        exposure: None,
     })
 }
 
@@ -366,6 +372,7 @@ impl Tool for McpAuxAdapter {
                 Ok(ToolOutput {
                     content,
                     spill: None,
+                    exposure: None,
                 })
             }
             Aux::PromptsList => {
