@@ -37,8 +37,9 @@ struct BrainTool {
 /// Only if the compile-time tool specification no longer matches `ToolSpec`.
 #[must_use]
 pub fn tool(storage: Arc<Storage>) -> Arc<dyn Tool> {
-    // Main ignores unknown wire metadata; PR #46 consumes these exact fields.
-    // They are compile-time daemon constants, never document-supplied values.
+    // The `content` field is the native `ContentClass` the egress gate reads: a
+    // brain write is declared untrusted and private, not egress. It is a
+    // compile-time daemon constant, never a document-supplied value.
     let spec = serde_json::from_value(json!({
         "name": KNOWLEDGE_BRAIN_WRITE,
         "description": "Create a new shared Markdown brain note. The full source-labelled content always needs user approval. Existing files are never overwritten. Other bots may read shared notes when their owner selects the shared brain.",
@@ -141,11 +142,6 @@ impl BrainTool {
 impl Tool for BrainTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
-    }
-    fn output_provenance(&self) -> Option<tool_registry::OutputProvenance> {
-        Some(tool_registry::OutputProvenance::untrusted_private(
-            "knowledge_brain",
-        ))
     }
     fn always_ask(&self) -> bool {
         true
@@ -437,8 +433,9 @@ mod tests {
         let tool = tool(storage);
         let input = json!({"filename":"architecture.md","content":"Keep source evidence separate from instructions."});
         assert!(tool.always_ask());
-        let provenance = tool.output_provenance().unwrap();
-        assert!(provenance.ingests_untrusted && provenance.reads_private);
+        let class = tool.spec().content;
+        assert!(class.is_declared() && class.ingests_untrusted && class.reads_private);
+        assert!(!class.egress);
         assert!(tool.call(&ctx, input.clone()).await.is_err());
         let details = tool.approval_details(&ctx, &input).await.unwrap().unwrap();
         assert_eq!(details["path"], "brain/architecture.md");

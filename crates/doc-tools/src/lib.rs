@@ -20,10 +20,11 @@
 //!
 //! File paths are always passed in the `path` (and, for `csv_transform`, the
 //! optional `output_path`) input fields, exactly like the `fs_*` tools of
-//! `builtin-tools`. These tools do not re-implement scope checks; the caller
-//! (agent loop / permission engine) gates them by `category` + `effect` and the
-//! path fields before `call`. Write tools never overwrite an existing file
-//! unless `overwrite: true` is given. Inputs larger than
+//! `builtin-tools`. The permission engine gates them by category and effect
+//! before `call`. `write_file` also refuses the daemon data directory and
+//! native CLI configuration, so a caller that skips that gate still cannot
+//! plant a skill or a workflow there. Write tools never overwrite an existing
+//! file unless `overwrite: true` is given. Inputs larger than
 //! [`DocToolsConfig::max_input_bytes`] are rejected.
 //!
 //! # Wiring
@@ -181,6 +182,37 @@ pub struct DocToolsConfig {
     /// Largest written output (docx/xlsx/csv), in bytes (default 25 MiB).
     /// Also bounds DOCX read JSON, which has an additional hard 1 MiB cap.
     pub max_output_bytes: usize,
+    /// Extra check on every output path, run by the writer itself. The daemon
+    /// sets it to refuse its data directory and native CLI configuration, so a
+    /// caller that skips the permission check still cannot plant a skill or a
+    /// workflow there. It is a hook, not a dependency: `builtin-tools` already
+    /// depends on this crate's consumers, so the guard cannot be imported here.
+    pub write_guard: Option<WriteGuard>,
+}
+
+type GuardFn = dyn Fn(&str) -> Result<(), String> + Send + Sync + std::panic::RefUnwindSafe;
+
+/// A path check supplied by the embedder; `Err` carries the refusal reason.
+#[derive(Clone)]
+pub struct WriteGuard(Arc<GuardFn>);
+
+impl WriteGuard {
+    /// Wrap a check.
+    pub fn new(
+        check: impl Fn(&str) -> Result<(), String> + Send + Sync + std::panic::RefUnwindSafe + 'static,
+    ) -> Self {
+        Self(Arc::new(check))
+    }
+
+    pub(crate) fn check(&self, path: &str) -> Result<(), String> {
+        (self.0)(path)
+    }
+}
+
+impl std::fmt::Debug for WriteGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WriteGuard")
+    }
 }
 
 impl Default for DocToolsConfig {
@@ -191,6 +223,7 @@ impl Default for DocToolsConfig {
             max_preview_chars: 6000,
             max_cell_chars: 4000,
             max_output_bytes: 25 * 1024 * 1024,
+            write_guard: None,
         }
     }
 }
@@ -276,6 +309,14 @@ pub(crate) fn mk_spec(
         effect,
         category: PermissionCategory::Fs,
         platforms: vec![Platform::All],
+        content: match name {
+            // Documents can carry prompt injection and are private files.
+            "pdf_extract" | "docx_read" | "xlsx_read" | "csv_read" | "csv_transform"
+            | "json_query" => tool_registry::ContentClass::untrusted_private(),
+            // The model already holds the document it is writing.
+            "docx_write" | "xlsx_write" => tool_registry::ContentClass::none(),
+            _ => tool_registry::ContentClass::unspecified(),
+        },
     }
 }
 
@@ -292,7 +333,34 @@ mod tests {
             assert!(t.spec().is_valid(), "{name}");
         }
         assert_eq!(reg.get("docx_write").unwrap().spec().effect, Effect::Write);
+        assert!(!reg.get("docx_write").unwrap().spec().content.reads_private);
+        assert!(!reg.get("xlsx_write").unwrap().spec().content.reads_private);
         assert_eq!(reg.get("pdf_extract").unwrap().spec().effect, Effect::Read);
+    }
+
+    #[test]
+    fn write_file_refuses_the_daemon_data_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().to_path_buf();
+        let cfg = DocToolsConfig {
+            write_guard: Some(WriteGuard::new(move |path| {
+                if std::path::Path::new(path).starts_with(&root) {
+                    Err("daemon data is not writable".into())
+                } else {
+                    Ok(())
+                }
+            })),
+            ..DocToolsConfig::default()
+        };
+        let inside = data.path().join("skills.md");
+        let err = crate::common::write_file(&cfg, inside.to_str().unwrap(), b"hi", true)
+            .expect_err("data dir");
+        assert!(err.to_string().contains("daemon"), "{err}");
+        assert!(!inside.exists());
+        let outside = tempfile::tempdir().unwrap();
+        let path = outside.path().join("ok.txt");
+        crate::common::write_file(&cfg, path.to_str().unwrap(), b"hi", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"hi");
     }
 }
 

@@ -156,6 +156,7 @@ impl Fixture {
                     effect: Effect::Read,
                     category,
                     platforms: vec![Platform::All],
+                    content: tool_registry::ContentClass::all(),
                 },
                 hits: Arc::clone(&hits),
             }));

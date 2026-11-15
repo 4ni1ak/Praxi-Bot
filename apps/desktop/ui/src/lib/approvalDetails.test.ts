@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatFiring, scheduleDetails } from "./approvalDetails.ts";
+import { computerDetails, egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
 
 const card = {
   kind: "schedule",
@@ -72,4 +72,73 @@ test("a firing keeps the wall-clock time of its own offset", () => {
   assert.match(formatFiring("2026-11-13T10:30:00+03:00", "en"), /10:30$/);
   assert.match(formatFiring("2026-11-13T09:00:00-05:00", "en"), /09:00$/);
   assert.equal(formatFiring("garbage"), "garbage");
+});
+
+test("an egress card keeps the full payload, including beside a schedule", () => {
+  const payload = "q".repeat(3000);
+  const d = egressDetails({
+    kind: "egress",
+    reason: "this run read file notes.txt and now wants to send data to configured-search-provider",
+    read: ["file notes.txt"],
+    host: "configured-search-provider",
+    payload,
+    payload_kind: "query",
+    payload_lines: 4,
+    payload_chars: 3000,
+    hidden_chars: 0
+  });
+  assert.ok(d);
+  assert.equal(d.payload, payload);
+  assert.equal(d.payloadKind, "query");
+  assert.equal(d.payloadLines, 4);
+  assert.equal(d.payloadChars, 3000);
+  assert.equal(d.hiddenChars, 0);
+  assert.deepEqual(d.read, ["file notes.txt"]);
+  const nested = egressDetails({
+    kind: "schedule",
+    action: "create",
+    egress: {
+      kind: "egress",
+      reason: "r",
+      read: [],
+      host: "example.com",
+      payload: "https://example.com/x",
+      payload_kind: "url"
+    }
+  });
+  assert.equal(nested?.host, "example.com");
+  assert.equal(nested?.payloadKind, "url");
+  assert.equal(egressDetails({ kind: "other" }), null);
+});
+
+test("large payload review preserves the full tail and requires the expanded view end", () => {
+  const payload = "x".repeat(9000) + "TAIL";
+  const parsed = egressDetails({kind: "egress", payload, payload_bytes: 9004, review_full_payload: true});
+  assert.equal(parsed?.payload, payload);
+  assert.equal(parsed?.payloadBytes, 9004);
+  assert.equal(parsed?.reviewFullPayload, true);
+  const atEnd = {scrollTop: 900, clientHeight: 100, scrollHeight: 1000};
+  assert.equal(payloadReviewComplete(false, atEnd), false);
+  assert.equal(payloadReviewComplete(true, {...atEnd, scrollTop: 0}), false);
+  assert.equal(payloadReviewComplete(true, atEnd), true);
+  assert.equal(payloadReviewComplete(true, {scrollTop: 0, clientHeight: 0, scrollHeight: 0}), false);
+});
+
+test("an egress card carries the immutable computer target as its own line", () => {
+  const id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const details = {
+    kind: "egress",
+    reason: "typing after a read",
+    host: "the desktop",
+    payload: "hello",
+    payload_kind: "body",
+    computer_target: { kind: "pc", node_id: id, node_name: "Work\u202e PC\nDAEMON SUMMARY: x" }
+  };
+  const c = computerDetails(details);
+  assert.ok(c);
+  assert.equal(c.kind, "pc");
+  assert.equal(c.nodeId, id);
+  assert.equal(c.name, "Work PC: x");
+  assert.ok(egressDetails(details));
+  assert.equal(computerDetails({ kind: "egress" }), null);
 });

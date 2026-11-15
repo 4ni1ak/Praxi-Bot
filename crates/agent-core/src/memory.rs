@@ -169,6 +169,11 @@ impl Exchange {
         }
         // Other bots' replies in the chat are untrusted data for this bot, so
         // what it concludes from them is not trusted knowledge either.
+        // Chat history can carry a previous turn's untrusted answer even when
+        // this turn called no tool. Trust follows that taint, not only the steps.
+        let tainted = sh
+            .ctx(run)
+            .is_ok_and(|ctx| ctx.taint.lock().exposure.is_tainted());
         let untrusted = initiator_of(&run.kind) != InitiatorKind::Human
             || crate::history::has_foreign_replies(&sh.storage, run)
             || sh.storage.list_steps(run.id).map_or(true, |steps| {
@@ -181,7 +186,8 @@ impl Exchange {
             || sh
                 .storage
                 .list_child_runs(run.id)
-                .map_or(true, |k| !k.is_empty());
+                .map_or(true, |k| !k.is_empty())
+            || tainted;
         Some(Self {
             ctx: sh.ctx(run).ok()?,
             user_id: run.user_id,

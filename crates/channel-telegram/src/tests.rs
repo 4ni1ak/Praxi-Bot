@@ -3229,6 +3229,51 @@ async fn schedule_approval_shows_everything_without_always_and_chunks_long_promp
 }
 
 #[tokio::test]
+async fn an_approval_too_large_for_telegram_is_not_offered() {
+    let marker = "PAYLOAD-MARKER-XYZ";
+    let payload = marker.repeat(40 * 3500);
+    let msgs = approval_messages(Some(json!({
+        "kind": "egress",
+        "reason": "send",
+        "host": "example.test",
+        "payload": payload,
+        "payload_kind": "body",
+    })))
+    .await;
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("desktop app"), "{text}");
+    assert!(msgs[0].get("reply_markup").is_none(), "{:?}", msgs[0]);
+    assert!(!text.contains(marker), "{text}");
+}
+
+#[tokio::test]
+async fn an_egress_card_shows_the_computer_target() {
+    let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let msgs = approval_messages(Some(json!({
+        "kind": "egress",
+        "reason": "typing after a read",
+        "host": "the desktop",
+        "payload": "hello",
+        "payload_kind": "body",
+        "computer_target": {"kind": "pc", "node_id": id, "node_name": "Work PC"},
+    })))
+    .await;
+    let all: String = msgs
+        .iter()
+        .map(|m| m["text"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        all.contains(&format!("COMPUTER: pc \"Work PC\" (id {id})")),
+        "{all}"
+    );
+    assert!(
+        msgs.last().unwrap().get("reply_markup").is_some(),
+        "{msgs:?}"
+    );
+}
+
+#[tokio::test]
 async fn unrenderable_details_leave_approval_to_the_desktop_app() {
     let msgs = approval_messages(Some(json!({"kind": "future-thing"}))).await;
     assert_eq!(msgs.len(), 1);

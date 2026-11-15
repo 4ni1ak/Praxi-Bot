@@ -76,6 +76,7 @@ impl Fixture {
                 effect: Effect::Write,
                 category: PermissionCategory::Browser,
                 platforms: vec![Platform::All],
+                content: tool_registry::ContentClass::all(),
             },
             hits: Arc::clone(&hits),
         }));

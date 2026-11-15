@@ -17,8 +17,8 @@ use script_runtime::{Limits, ScriptError, ScriptHost, ScriptRuntime};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tool_registry::{
-    ContentPart, Effect, PermissionCategory, Tool, ToolContext, ToolError, ToolOutput,
-    ToolRegistry, ToolSpec,
+    ContentClass, ContentPart, Effect, PermissionCategory, Tool, ToolContext, ToolError,
+    ToolOutput, ToolRegistry, ToolSpec,
 };
 
 use crate::util::{exec_err, parse, spec};
@@ -41,6 +41,9 @@ pub struct GateRequest {
     pub raw_command: String,
     /// The call's input.
     pub input: Value,
+    /// Classification of the tool being called. The loop records taint from
+    /// this after a successful authorization.
+    pub content: ContentClass,
 }
 
 /// Permission check for tool calls issued from scripts.
@@ -55,6 +58,18 @@ pub trait ToolGate: Send + Sync {
     /// # Errors
     /// A human-readable denial reason.
     async fn authorize(&self, req: &GateRequest) -> Result<(), String>;
+
+    /// Record content consumed by a composite tool before its inner calls run.
+    /// Only host code supplies this classification; model input cannot clear it.
+    fn note_exposure(&self, _run_id: &str, _content: ContentClass, _label: &str) {}
+
+    /// Whether `run_id` has already read untrusted or private content.
+    ///
+    /// Skill writes use this to store the skill as untrusted data. The default
+    /// is false: a gate that does not track taint does not mark skills.
+    fn content_tainted(&self, _run_id: &str) -> bool {
+        false
+    }
 }
 
 /// Non-interactive [`ToolGate`] backed by [`PermissionResolver`]: `Allow` passes,
@@ -213,18 +228,32 @@ impl ScriptHost for GateHost {
             effect: spec.effect,
             raw_command: raw_command_for(name, &input),
             input: input.clone(),
+            content: spec.content,
         };
         self.gate.authorize(&req).await?;
         let ctx = ToolContext {
             run_id: self.run_id.clone(),
             max_inline_bytes: self.max_inline_bytes,
             bot_id: self.bot_id.clone(),
+            content_tainted: self.gate.content_tainted(&self.run_id),
         };
         let out = if let Some(action) = &self.action {
             crate::control::scope_action(action.clone(), tool.call(&ctx, input)).await
         } else {
             tool.call(&ctx, input).await
         };
+        // The output's own exposure replaces the static class for the calls
+        // that follow, as it does between model turns (a listing that
+        // contains an untrusted skill, for example).
+        if let Ok(o) = &out
+            && let Some(exposure) = &o.exposure
+        {
+            self.gate.note_exposure(
+                &self.run_id,
+                ContentClass::declared(exposure.ingests_untrusted, exposure.reads_private, false),
+                &exposure.label,
+            );
+        }
         out.map(|o| output_to_json(&o)).map_err(|e| e.to_string())
     }
 }
@@ -358,10 +387,13 @@ mod tests {
     }
 
     fn echo(name: &str, cat: PermissionCategory, calls: Arc<Mutex<Vec<Value>>>) -> Arc<dyn Tool> {
-        Arc::new(Echo {
-            spec: spec(name, "d", json!({"type":"object"}), Effect::Read, cat),
-            calls,
-        })
+        let mut spec = spec(name, "d", json!({"type":"object"}), Effect::Read, cat);
+        // Test doubles are not built-ins. Declare them as touching nothing so
+        // the registry accepts them; the test is about the gate, not taint.
+        if !spec.content.is_declared() {
+            spec.content = tool_registry::ContentClass::none();
+        }
+        Arc::new(Echo { spec, calls })
     }
 
     /// Fake gate recording what it was asked and denying configured tools.
@@ -516,6 +548,7 @@ mod tests {
             effect: Effect::Write,
             raw_command: raw.into(),
             input: Value::Null,
+            content: ContentClass::none(),
         };
         assert!(
             gate.authorize(&req("fs_write", PermissionCategory::Fs, ""))

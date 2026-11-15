@@ -1275,6 +1275,62 @@ id = "unpriced"
         }
     }
 
+    struct FixtureTool(tool_registry::ToolSpec);
+
+    #[async_trait::async_trait]
+    impl tool_registry::Tool for FixtureTool {
+        fn spec(&self) -> &tool_registry::ToolSpec {
+            &self.0
+        }
+
+        async fn call(
+            &self,
+            _ctx: &tool_registry::ToolContext,
+            _input: serde_json::Value,
+        ) -> std::result::Result<tool_registry::ToolOutput, tool_registry::ToolError> {
+            Ok(tool_registry::ToolOutput::text("ok"))
+        }
+    }
+
+    fn register_runtime_egress_fixtures(registry: &tool_registry::ToolRegistry) {
+        let config = mcp_bridge::McpServerConfig::http("srv", "http://127.0.0.1:9/mcp");
+        let spec = mcp_bridge::registered_spec(
+            &config,
+            "echo",
+            "echo a prompt",
+            &serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "hidden_arg": {"type": "string"}
+                }
+            }),
+        );
+        assert!(registry.register(std::sync::Arc::new(FixtureTool(spec))));
+        let secrets: Arc<dyn secret_store::SecretStore> = Arc::new(MemoryStore::new());
+        let openapi = "\
+openapi: 3.0.0
+info: {title: t, version: '1'}
+servers: [{url: 'https://api.example.com'}]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+      responses: {'200': {description: ok}}
+";
+        let (_api, imported) = openapi_tools::import_tools(
+            openapi,
+            &openapi_tools::ImportOptions::default(),
+            &openapi_tools::OpenApiConfig::new(secrets),
+        )
+        .unwrap();
+        for tool in imported {
+            registry.register(tool);
+        }
+    }
+
     #[test]
     fn computer_limits_default_to_small_host_and_environment_overrides_host_file() {
         assert_eq!(
@@ -1506,6 +1562,83 @@ min_interval_secs = 0",
         let storage = Arc::new(Storage::open(dir.path()).unwrap());
         let agent = build_agent(&storage, p, dir.path(), None);
         assert_eq!(agent.price_for("t/m1").unwrap().output_per_mtok, 8.0);
+    }
+
+    #[test]
+    fn production_daemon_registry_egress_schemas_are_all_on_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(dir.path()).unwrap());
+        let providers = Providers::single(Arc::new(daemon_api::fake::FakeProvider));
+        let agent = build_agent(&storage, providers, dir.path(), None);
+        let registry = agent.tool_registry();
+        register_web(dir.path(), 0, &registry, None);
+        let state =
+            AppState::new(agent.clone(), storage, DaemonConfig::new("daemon-token")).unwrap();
+        register_schedule_tools(dir.path(), &state);
+        // Optional mail tools use the real daemon registration path, with a
+        // memory credential store and no connection to either example host.
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
+        secrets.set("email/work/password", "test-fixture").unwrap();
+        std::fs::write(
+            dir.path().join(EMAIL_FILE),
+            r#"
+[[accounts]]
+name = "work"
+address = "alice@example.com"
+password = "email/work/password"
+[accounts.imap]
+host = "imap.example.com"
+[accounts.smtp]
+host = "smtp.example.com"
+"#,
+        )
+        .unwrap();
+        assert_eq!(register_email(dir.path(), &registry, Some(&secrets)), 6);
+        let audited = agent.audit_egress_card_schemas().unwrap();
+        for name in [
+            "workflow_run",
+            "skill_publish",
+            "skill_write",
+            "schedule_create",
+            "shell_run",
+            "script_run",
+            "web_search",
+            "email_send",
+            "email_draft",
+        ] {
+            assert!(
+                audited.iter().any(|item| item == name),
+                "missing {name}: {audited:?}"
+            );
+        }
+        assert!(audited.len() > 8, "{audited:?}");
+        register_runtime_egress_fixtures(&registry);
+        let audited = agent.audit_egress_card_schemas().unwrap();
+        for name in ["mcp:srv/echo", "listPets"] {
+            assert!(
+                audited.iter().any(|item| item == name),
+                "missing {name}: {audited:?}"
+            );
+        }
+        // A local MCP server tool is not classified as an executor in this
+        // scope (deferred to card 238); the fixture records that choice.
+        for name in ["mcp:srv/echo", "listPets"] {
+            assert!(
+                !registry.get(name).unwrap().spec().content.executes,
+                "{name}"
+            );
+        }
+        // Every tool that starts a program is egress, so its card carries the
+        // command, and the executors registered here are exactly these.
+        let mut executors: Vec<String> = registry
+            .list()
+            .into_iter()
+            .filter(|spec| spec.content.executes)
+            .inspect(|spec| assert!(spec.content.egress, "{}", spec.name))
+            .map(|spec| spec.name)
+            .collect();
+        executors.sort();
+        assert_eq!(executors, ["script_run", "shell_run"]);
     }
 
     #[test]

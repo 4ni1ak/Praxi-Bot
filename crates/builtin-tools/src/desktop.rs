@@ -793,7 +793,7 @@ pub fn tools_dynamic_with_secrets(
             Op::ListApps,
             spec(
                 "desktop_list_apps",
-                "List visible windows (open apps, programs) with id, pid and title. Example: {}",
+                "List visible windows (open apps, programs) with id, pid and title; the foreground one is marked focused. Cheapest way to see what the user is doing or watching now: a browser window title holds the page or video name. Use it for \"what is on my screen / what am I watching\" before anything else. Example: {}",
                 json!({"type":"object","properties":{}}),
                 Effect::Read,
                 d,

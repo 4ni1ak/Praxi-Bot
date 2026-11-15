@@ -159,6 +159,10 @@ async fn c225_external_schedule_preserves_schedule_deny_and_child_inheritance() 
             &format!("turn:external_schedule:{}", TaskId::new()),
         )
         .unwrap();
+    let placement = lp
+        .sh
+        .resolve_computer_for_run(&lp.sh.profile_for(env.bot).unwrap(), None);
+    lp.sh.bind_computer(run, &placement).unwrap();
     let row = env.storage.get_run(run).unwrap().unwrap();
     let ctx = lp.sh.ctx(&row).unwrap();
     assert_eq!(

@@ -339,6 +339,18 @@ export function PermissionFields({ draft, patch }: { draft: BotDraft; patch: Pat
           </SettingGroup>
         </section>
       ) : null}
+      <SettingGroup>
+        <SettingRow
+          title={t("botForm.allowEgressAfterReads.title")}
+          description={t("botForm.allowEgressAfterReads.hint")}
+        >
+          <Switch
+            checked={draft.allowEgressAfterReads}
+            label={t("botForm.allowEgressAfterReads.title")}
+            onChange={(allowEgressAfterReads) => patch({ allowEgressAfterReads })}
+          />
+        </SettingRow>
+      </SettingGroup>
       <section className={dialogStyles.block}>
         <div className={dialogStyles.blockHead}>
           <h3 className={dialogStyles.blockTitle}>{t("botForm.files.label")}</h3>

@@ -1013,7 +1013,7 @@ fn tools_with_pool(
             Op::Open,
             spec(
                 "browser_open",
-                "Open a URL in the browser and return the page snapshot. Example: {\"url\":\"https://example.com\"}",
+                "Open a URL in the bot's own managed browser and return the page snapshot. This is not the user's browser; to see what the user has open, use desktop_list_apps. Example: {\"url\":\"https://example.com\"}",
                 json!({"type":"object","properties":{
                     "url":{"type":"string","description":"Full URL."},
                     "profile":{"type":"string","description":"Profile name, or 'isolated' for a disposable profile. Omit to use the configured per-bot default. Only honoured when the browser starts."},
@@ -1028,7 +1028,7 @@ fn tools_with_pool(
             Op::Snapshot,
             spec(
                 "browser_snapshot",
-                "Read the page as lines like [e12] button \"Sign in\". Use the refs in other browser tools. Example: {\"interactive_only\":true}",
+                "Read the managed browser's page as lines like [e12] button \"Sign in\". about:blank or no page here says nothing about the user's own browser or screen (use desktop_list_apps for that). Use the refs in other browser tools. Example: {\"interactive_only\":true}",
                 json!({"type":"object","properties":{
                     "interactive_only":{"type":"boolean","description":"Only list clickable/typable elements."}
                 }}),
@@ -1134,7 +1134,7 @@ fn tools_with_pool(
             Op::Tabs,
             spec(
                 "browser_tabs",
-                "List open tabs (current is marked *), or switch with switch_to. Example: {\"switch_to\":2}",
+                "List open tabs of the bot's managed browser (current is marked *), or switch with switch_to. Not the user's tabs: empty or about:blank here says nothing about their browser. Example: {\"switch_to\":2}",
                 json!({"type":"object","properties":{
                     "switch_to":{"type":"integer","minimum":1,"description":"Tab number from the list."}
                 }}),
@@ -1873,6 +1873,25 @@ impl BrowserTool {
 impl Tool for BrowserTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
+        if !matches!(self.op, Op::Open) {
+            return None;
+        }
+        let named = input
+            .get("profile")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty());
+        let line = match named {
+            Some("isolated") => "profile: isolated (temporary, not logged in)".to_owned(),
+            Some(name) => format!("profile: {name} (named profile, may be logged in)"),
+            None if self.shared.managed.is_some() => {
+                "profile: default (persistent per-bot profile, may be logged in)".to_owned()
+            }
+            None => "profile: isolated (temporary, not logged in)".to_owned(),
+        };
+        Some(line)
     }
 
     /// Typing an owner-stored secret is confirmed on every call, however

@@ -67,5 +67,5 @@ pub use manager::{Backoff, McpManager, McpPolicy, McpServerHandle, ServerSnapsho
 pub use roots::{
     FS_SERVER_PACKAGE, PathGuard, canonicalize_filesystem_args, filesystem_roots, root_problem,
 };
-pub use tool::qualified_name;
+pub use tool::{qualified_name, registered_spec};
 pub use transport::OS_ESSENTIAL_ENV;

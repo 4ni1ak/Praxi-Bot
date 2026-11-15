@@ -194,6 +194,7 @@ pub(crate) fn write(
     name: &str,
     content: &str,
     expected_version: Option<&str>,
+    untrusted: bool,
 ) -> Result<WrittenSkill, String> {
     disk_name(name)?;
     let dir = root.join(name);
@@ -242,11 +243,19 @@ pub(crate) fn write(
         .write_all(content.as_bytes())
         .map_err(|e| e.to_string())?;
     staged.as_file().sync_all().map_err(|e| e.to_string())?;
+    // Mark before replacing content while holding the scope lock. Failure
+    // leaves the previous definition intact; readers never see new trusted bytes.
+    if untrusted {
+        crate::index::set_untrusted_marker(&file, true)?;
+    }
     // NamedTempFile::persist atomically replaces an existing file on Windows
     // too; never remove the destination before attempting the replacement.
     staged
         .persist(&file)
         .map_err(|e| format!("replace {}: {e}", file.display()))?;
+    if !untrusted {
+        crate::index::set_untrusted_marker(&file, false)?;
+    }
     Ok(WrittenSkill {
         path: file,
         version,
@@ -321,13 +330,26 @@ pub(crate) fn publish(
     name: &str,
     replace: bool,
     bundled: &[String],
+    untrusted: bool,
 ) -> Result<PathBuf, String> {
     if !replace && bundled.iter().any(|b| b == name) {
         return Err(format!(
             "`{name}` is a built-in skill; publishing it would replace the built-in skill for all bots.              Rename the skill, or call skill_publish with replace: true to replace the built-in skill for all bots"
         ));
     }
-    publish_with(bot, shared, name, replace, |from, to| fs::rename(from, to))
+    publish_with(
+        bot,
+        shared,
+        name,
+        replace,
+        |staged| {
+            if untrusted {
+                fs::write(staged.join(crate::index::UNTRUSTED_MARKER), b"untrusted\n")?;
+            }
+            Ok(())
+        },
+        |from, to| fs::rename(from, to),
+    )
 }
 
 fn publish_with(
@@ -335,6 +357,7 @@ fn publish_with(
     shared: &Path,
     name: &str,
     replace: bool,
+    prepare: impl FnOnce(&Path) -> std::io::Result<()>,
     commit: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<PathBuf, String> {
     disk_name(name)?;
@@ -393,6 +416,9 @@ fn publish_with(
     if hash_files(&staged_files).map_err(|e| e.to_string())? != source_hash {
         return Err("skill changed while being staged for publication; retry".into());
     }
+    // The marker is staged before any published version is moved. A failed
+    // mark cannot leave a trusted shared copy behind or remove the old copy.
+    prepare(staged.path()).map_err(|e| format!("mark staged publication: {e}"))?;
     let mut moved = Vec::new();
     for original in previous {
         let backup = match tempfile::Builder::new()
@@ -427,6 +453,60 @@ mod tests {
     use crate::{SkillIndex, SkillRoots};
 
     #[test]
+    fn publication_marker_precedes_commit_and_failure_keeps_previous_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path()));
+        let bot = root.for_bot(Some("a")).unwrap();
+        bot.write("x", "---\nname: x\ndescription: d\n---\nbody")
+            .unwrap();
+        let original = bot.publish("x", false).unwrap();
+        let before = fs::read(original.join(SKILL_FILE)).unwrap();
+        let shared = tmp.path().join("skills");
+        let err = publish_with(
+            bot.write_dir().unwrap(),
+            &shared,
+            "x",
+            true,
+            |_| Err(std::io::ErrorKind::PermissionDenied.into()),
+            |_, _| panic!("must not commit after a marking failure"),
+        )
+        .unwrap_err();
+        assert!(err.contains("mark staged"));
+        assert_eq!(fs::read(original.join(SKILL_FILE)).unwrap(), before);
+        let path = publish_with(
+            bot.write_dir().unwrap(),
+            &shared,
+            "x",
+            true,
+            |staged| fs::write(staged.join(crate::index::UNTRUSTED_MARKER), b"untrusted\n"),
+            |staged, target| {
+                assert!(staged.join(crate::index::UNTRUSTED_MARKER).is_file());
+                fs::rename(staged, target)
+            },
+        )
+        .unwrap();
+        assert!(path.join(crate::index::UNTRUSTED_MARKER).is_file());
+        let published = bot.publish_with_trust("x", true, true).unwrap();
+        assert!(published.join(crate::index::UNTRUSTED_MARKER).is_file());
+        bot.write_versioned(
+            "x",
+            "---\nname: x\ndescription: d\n---\nuntrusted source",
+            Some("0.1.0"),
+            true,
+        )
+        .unwrap();
+        let published = bot.publish_with_trust("x", true, false).unwrap();
+        assert!(published.join(crate::index::UNTRUSTED_MARKER).is_file());
+        assert!(
+            bot.write_dir()
+                .unwrap()
+                .join("x")
+                .join(crate::index::UNTRUSTED_MARKER)
+                .is_file()
+        );
+    }
+
+    #[test]
     fn failed_publication_swap_rolls_back_the_previous_shared_version() {
         let tmp = tempfile::tempdir().unwrap();
         let root = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path()));
@@ -441,6 +521,7 @@ mod tests {
             &tmp.path().join("skills"),
             "x",
             true,
+            |_| Ok(()),
             |_, _| Err(std::io::ErrorKind::PermissionDenied.into()),
         )
         .unwrap_err();

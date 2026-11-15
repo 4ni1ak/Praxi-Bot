@@ -31,6 +31,8 @@ pub mod script;
 pub mod shell;
 mod util;
 
+pub use util::classify;
+
 /// Windows drive letters (DOS devices) live in the logon session, not in one
 /// test, and PowerShell enumerates all of them while it starts. A test that
 /// defines a drive letter pointing at an unreachable share therefore stalls
@@ -305,6 +307,111 @@ mod tests {
         async fn authorize(&self, _req: &GateRequest) -> Result<(), String> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn only_program_starters_and_desktop_input_are_registered_as_executing() {
+        // Read off the specs the registered tools carry, desktop and browser
+        // tools included, not off `classify` alone. A new tool that starts a
+        // program or drives input must be added here and in `classify`.
+        let executors = [
+            "shell_run",
+            "script_run",
+            "desktop_launch",
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_drag",
+        ];
+        let (_d, reg) = registry();
+        let specs = reg.list();
+        for name in executors {
+            assert!(specs.iter().any(|spec| spec.name == name), "{name} missing");
+        }
+        assert!(specs.iter().any(|spec| spec.name == "desktop_click"));
+        for spec in &specs {
+            assert_eq!(
+                spec.content.executes,
+                executors.contains(&spec.name.as_str()),
+                "{}",
+                spec.name
+            );
+            assert!(
+                !spec.content.executes || spec.content.egress,
+                "{} must show its arguments on a card",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_builtin_declares_its_classification() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new();
+        let cfg = BuiltinConfig::new(dir.path().into(), Arc::new(AllowAll));
+        let tools = build_builtin_tools(cfg, &registry);
+        assert!(tools.len() > 10);
+        for tool in &tools {
+            let spec = tool.spec();
+            let expected = crate::util::classify(&spec.name)
+                .unwrap_or_else(|| panic!("{} has no classification", spec.name));
+            assert_eq!(spec.content, expected, "{}", spec.name);
+            assert!(spec.content.is_declared(), "{} is not declared", spec.name);
+            assert!(
+                registry.register(Arc::clone(tool)),
+                "{} was rejected by the registry",
+                spec.name
+            );
+        }
+        for name in [
+            "desktop_list_apps",
+            "desktop_launch",
+            "desktop_get_state",
+            "desktop_click",
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_scroll",
+            "desktop_drag",
+        ] {
+            assert!(
+                crate::util::classify(name).is_some_and(tool_registry::ContentClass::is_declared),
+                "{name}"
+            );
+        }
+        assert!(crate::util::classify("not_a_builtin").is_none());
+        for name in [
+            "desktop_launch",
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_drag",
+            "browser_tabs",
+        ] {
+            assert!(
+                crate::util::classify(name).unwrap().egress,
+                "{name} sends data off the machine"
+            );
+        }
+        for name in ["desktop_click", "desktop_scroll", "browser_scroll"] {
+            let class = crate::util::classify(name).unwrap();
+            assert!(!class.egress, "{name} cannot carry data off the machine");
+        }
+        for name in [
+            "fs_write",
+            "fs_move",
+            "fs_delete",
+            "checkpoint_list",
+            "checkpoint_restore",
+            "schedule_list",
+        ] {
+            let class = crate::util::classify(name).unwrap();
+            assert!(!class.reads_private, "{name} is not a private read");
+            assert!(!class.ingests_untrusted, "{name} does not ingest content");
+        }
+        assert!(!crate::util::classify("desktop_list_apps").unwrap().egress);
+        assert!(!crate::util::classify("desktop_get_state").unwrap().egress);
+        assert!(!crate::util::classify("browser_snapshot").unwrap().egress);
     }
 
     fn registry() -> (tempfile::TempDir, ToolRegistry) {
@@ -612,6 +719,8 @@ mod tests {
                 effect: tool_registry::Effect::Read,
                 category: permission_engine::PermissionCategory::Meta,
                 platforms: vec![tool_registry::Platform::All],
+
+                content: tool_registry::ContentClass::none(),
             },
         }));
         // A refusal either is caught by the script or ends it with the gate's
@@ -865,8 +974,9 @@ mod tests {
 
     #[tokio::test]
     async fn script_can_call_registered_tools_through_the_registry() {
-        let (d, reg) = registry();
-        let file = d
+        let (_data, reg) = registry();
+        let work = tempfile::tempdir().unwrap();
+        let file = work
             .path()
             .join("s.txt")
             .display()

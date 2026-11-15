@@ -23,6 +23,7 @@ mod presets;
 mod prompt;
 mod remote;
 mod serve;
+mod skills_cmd;
 mod update;
 mod view_targets;
 mod web_host;
@@ -82,6 +83,11 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 enum Command {
+    /// Review local skills and explicitly trust reviewed content.
+    Skills {
+        #[command(subcommand)]
+        action: skills_cmd::SkillsCmd,
+    },
     /// Create or revoke scoped MCP credentials on the local daemon.
     Token {
         #[command(subcommand)]
@@ -597,6 +603,9 @@ fn run() -> Result<()> {
 
     // Daemon commands (no secret store needed, except `serve` with real providers).
     match command {
+        Command::Skills { action } => {
+            return skills_cmd::run(&data_dir, action, &mut std::io::stdout());
+        }
         Command::Mcp {
             action: McpCmd::Serve(args),
         } => return mcp_serve::run(&cli, args, &data_dir),
@@ -672,6 +681,7 @@ fn run() -> Result<()> {
             SecretsCmd::Delete { name } => commands::secrets_delete(store, name),
         },
         Command::Mcp { .. }
+        | Command::Skills { .. }
         | Command::Token { .. }
         | Command::Host { .. }
         | Command::SelfUpdate(_)

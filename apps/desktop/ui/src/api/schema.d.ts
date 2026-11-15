@@ -3922,7 +3922,8 @@ export interface components {
         /**
          * @description A configured MCP server (`GET /v1/mcp/servers`).  The full stored config,
          *     except secret *values*: `secret_env` / `secret_headers` carry secret
-         *     **names** only.
+         *     **names** only. `enabled`, `trust_hints`, `public_content` and `local_only`
+         *     are independent switches.
          */
         McpServerDto: {
             /** @description Arguments (stdio). */
@@ -3948,9 +3949,13 @@ export interface components {
             headers?: {
                 [key: string]: string;
             };
+            /** @description Tools cannot send data off the machine. Default `false`: every tool is egress. */
+            local_only?: boolean;
             /** @description Server name (the `<server>` of `mcp:<server>/<tool>`). */
             name: string;
             oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Default `false`: a result is a private read. */
+            public_content?: boolean;
             /** @description Environment variable -> secret name (stdio). */
             secret_env?: {
                 [key: string]: string;
@@ -4008,12 +4013,16 @@ export interface components {
             headers?: {
                 [key: string]: string;
             };
+            /** @description Tools cannot send data off the machine. Default `false` (every tool is egress). */
+            local_only?: boolean;
             /**
              * @description Server name; `id` is accepted as an alias.  Required on POST; on PUT the
              *     path wins (a different name in the body is rejected).
              */
             name?: string | null;
             oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Default `false` (a result is a private read). */
+            public_content?: boolean;
             /** @description Environment variable -> secret name. */
             secret_env?: {
                 [key: string]: string;
@@ -4070,12 +4079,16 @@ export interface components {
             headers?: {
                 [key: string]: string;
             } | null;
+            /** @description Tools cannot send data off the machine. Omit to keep the stored value. */
+            local_only?: boolean | null;
             /**
              * @description Server name; `id` is accepted as an alias.  The path wins (a different
              *     name in the body is rejected).
              */
             name?: string | null;
             oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Omit to keep the stored value. */
+            public_content?: boolean | null;
             /** @description Environment variable -> secret name.  Present object replaces the map. */
             secret_env?: {
                 [key: string]: string;

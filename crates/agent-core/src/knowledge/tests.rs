@@ -289,7 +289,12 @@ async fn explicit_search_honors_denied_file_permission_and_never_records_an_expo
         .filter(|step| step.name == STEP_TOOLS)
     {
         let result = &step.output.as_ref().unwrap()["results"][0];
-        assert!(result.get("fact").is_none());
+        // A refused call records no exposure: the one fact mechanism writes
+        // `ran: false` for it (it used to be absent), and replay skips it.
+        let fact = &result["fact"];
+        assert_ne!(fact["ran"], true, "{fact}");
+        assert_ne!(fact["ingests_untrusted"], true, "{fact}");
+        assert_ne!(fact["reads_private"], true, "{fact}");
         assert_eq!(result["is_error"], true);
     }
 }
