@@ -62,8 +62,11 @@ pub fn is_managed_oauth_name(name: &str) -> bool {
     if parts.next() != Some("mcp") {
         return false;
     }
+    // Exactly `mcp/<server>/oauth` or `mcp/<server>/oauth-<part>`: names
+    // below a server (`mcp/<server>/env/OAUTH_TOKEN`) stay ordinary secrets.
     let rest: Vec<&str> = parts.collect();
-    rest.len() >= 2 && rest.last().is_some_and(|last| last.starts_with("oauth"))
+    matches!(rest.as_slice(), [server, last]
+        if !server.is_empty() && (*last == "oauth" || last.starts_with("oauth-")))
 }
 
 /// A reference to a secret by name. Safe to persist and to show to the agent.
@@ -176,7 +179,6 @@ mod managed_oauth_tests {
             "mcp/victim/oauth",
             "MCP/Victim/OAuth",
             "mcp/victim/oauth-client",
-            "mcp//victim/oauth",
         ] {
             assert!(is_managed_oauth_name(name), "{name}");
             assert!(SecretRef::new(name).is_err(), "{name}");
@@ -190,6 +192,9 @@ mod managed_oauth_tests {
             "oauth",
             "mcp/oauth",
             "github/oauth",
+            "mcp/victim/env/OAUTH_TOKEN",
+            "mcp/victim/header/oauth",
+            "mcp/victim/oauthish",
         ] {
             assert!(!is_managed_oauth_name(name), "{name}");
         }

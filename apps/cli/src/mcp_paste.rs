@@ -69,7 +69,7 @@ pub fn parse(input: &str, name: Option<&str>) -> Result<Vec<Parsed>, String> {
         let [one] = parsed.as_mut_slice() else {
             return Err("--name applies to a paste with exactly one server".into());
         };
-        rename(one, name);
+        rename(one, name)?;
     }
     for p in &parsed {
         check(&p.config)?;
@@ -99,7 +99,7 @@ pub fn parse_argv(args: &[String], name: Option<&str>) -> Result<Vec<Parsed>, St
                 _ => vec![parse_launch(words)?],
             };
             if let Some(name) = name {
-                rename(&mut parsed[0], name);
+                rename(&mut parsed[0], name)?;
             }
             for p in &parsed {
                 check(&p.config)?;
@@ -109,9 +109,14 @@ pub fn parse_argv(args: &[String], name: Option<&str>) -> Result<Vec<Parsed>, St
     }
 }
 
-/// `bot mcp add`: store each pasted value in the secret store (through the
-/// daemon, write-only), then create the server; the daemon connects it and
-/// answers with its state.
+/// `bot mcp add`: create the server, store each pasted value in the secret
+/// store (through the daemon, write-only), then enable it; the daemon
+/// connects it and answers with its state.
+///
+/// Staged so a refused add never touches a live credential (review finding
+/// 8): a name already in use (in any letter case) is refused before anything
+/// is written; the server is created **disabled** first (a 409 / 422 writes
+/// no secret); a failed secret write removes the new server again.
 ///
 /// # Errors
 /// The daemon refusing a secret or the server (exit 6), or unreachable.
@@ -130,17 +135,53 @@ pub async fn add(
             results.push(json!({"would_create": body, "would_store_secrets": secrets}));
             continue;
         }
-        for (secret, value) in &p.secrets {
-            c.request(
-                reqwest::Method::POST,
-                &format!("/v1/secrets/{secret}"),
-                Some(json!({ "value": value })),
-            )
+        let existing = c
+            .request(reqwest::Method::GET, "/v1/mcp/servers", None)
             .await?;
+        let taken = existing.as_array().is_some_and(|servers| {
+            servers.iter().any(|s| {
+                s["name"]
+                    .as_str()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(&p.config.id))
+            })
+        });
+        if taken {
+            return Err(crate::email_cmd::rejected(
+                "a server with this name already exists; choose another with --name",
+            ));
+        }
+        if p.secrets.is_empty() {
+            results.push(
+                c.request(reqwest::Method::POST, "/v1/mcp/servers", Some(body))
+                    .await?,
+            );
+            continue;
+        }
+        let mut disabled = body;
+        disabled["enabled"] = json!(false);
+        c.request(reqwest::Method::POST, "/v1/mcp/servers", Some(disabled))
+            .await?;
+        let path = format!("/v1/mcp/servers/{}", p.config.id);
+        for (secret, value) in &p.secrets {
+            let stored = c
+                .request(
+                    reqwest::Method::POST,
+                    &format!("/v1/secrets/{secret}"),
+                    Some(json!({ "value": value })),
+                )
+                .await;
+            if let Err(error) = stored {
+                let _ = c.request(reqwest::Method::DELETE, &path, None).await;
+                return Err(error);
+            }
         }
         results.push(
-            c.request(reqwest::Method::POST, "/v1/mcp/servers", Some(body))
-                .await?,
+            c.request(
+                reqwest::Method::PUT,
+                &path,
+                Some(json!({ "enabled": p.config.enabled })),
+            )
+            .await?,
         );
     }
     if json_out {
@@ -201,31 +242,88 @@ pub fn create_body(cfg: &McpServerConfig) -> Value {
 }
 
 fn check(cfg: &McpServerConfig) -> Result<(), String> {
-    cfg.validate().map_err(|e| e.to_string())?;
+    cfg.validate().map_err(|e| without_paste(&e.to_string()))?;
     if let McpTransport::Stdio { command, args, .. } = &cfg.transport {
-        mcp_bridge::check_stdio_package_pin(&cfg.id, command, args).map_err(|e| e.to_string())?;
+        mcp_bridge::check_stdio_package_pin(&cfg.id, command, args)
+            .map_err(|e| without_paste(&e.to_string()))?;
     }
     Ok(())
+}
+
+/// A validation failure as a fixed message (review finding 12): the bridge's
+/// texts quote URLs, command lines and package specs, and any of those can
+/// carry a token the user pasted.
+fn without_paste(message: &str) -> String {
+    if message.contains("never-list") {
+        "the command is on the shell never-list and will not be run".into()
+    } else if message.contains("unpinned")
+        || message.contains("@latest")
+        || message.contains("no package argument")
+    {
+        "the package is unpinned: use an exact version (`pkg@1.2.3` or `pkg==1.2.3`), never @latest or a floating install".into()
+    } else if message.contains("is not accepted") || message.contains("is only accepted as") {
+        "this runner form or option is not accepted (it could run or install something unpinned)"
+            .into()
+    } else if message.contains("server id") {
+        "the server name must be 1 to 100 characters of A-Z, a-z, 0-9, `.`, `_` or `-`".into()
+    } else if message.contains("managed OAuth record") {
+        "a pasted value may not name an MCP sign-in record".into()
+    } else {
+        "the pasted server configuration is not valid".into()
+    }
 }
 
 fn is_url(s: &str) -> bool {
     s.starts_with("https://") || s.starts_with("http://")
 }
 
-/// Secret-store name for a value of server `server` under `key` (same rule as
-/// the desktop app's catalog: `mcp_<server>_<key>`, lowercase).
-fn secret_name(server: &str, key: &str) -> String {
-    format!("mcp_{server}_{key}")
-        .to_ascii_lowercase()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+/// Which config map a pasted value goes to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Env,
+    Header,
+}
+
+/// Secret-store name for a pasted value (review finding 8):
+/// `mcp/<server>/env/<KEY>` or `mcp/<server>/header/<name>`.  Nothing is
+/// folded or replaced, so distinct servers and keys never share a secret
+/// (`a-b` vs `a_b`, `X_A` vs `X-A`); header names are lower-cased because
+/// HTTP treats them case-insensitively.  Never a managed OAuth name.
+fn secret_name(server: &str, kind: Kind, key: &str) -> String {
+    match kind {
+        Kind::Env => format!("mcp/{server}/env/{key}"),
+        Kind::Header => format!("mcp/{server}/header/{}", key.to_ascii_lowercase()),
+    }
+}
+
+/// Config key -> secret name.
+type SecretRefs = BTreeMap<String, String>;
+
+/// Map `values` (pasted `KEY=value` / headers) to secret references.
+fn to_secrets(
+    server: &str,
+    kind: Kind,
+    values: Vec<(String, String)>,
+) -> Result<(SecretRefs, Vec<(String, String)>), String> {
+    let mut refs = BTreeMap::new();
+    let mut secrets = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (key, value) in values {
+        // Windows environments and HTTP headers are case-insensitive.
+        if !seen.insert(key.to_ascii_lowercase()) {
+            return Err(match kind {
+                Kind::Env => "the paste sets the same environment variable twice".into(),
+                Kind::Header => "the paste sets the same header twice".into(),
+            });
+        }
+        let reference = secret_name(server, kind, &key);
+        if secret_store::validate_name(&reference).is_err() {
+            return Err("a server name and key are too long to keep as a secret".into());
+        }
+        refs.insert(key, reference.clone());
+        secrets.push((reference, value));
+    }
+    Ok((refs, secrets))
 }
 
 /// Keep `[A-Za-z0-9._-]`, collapse the rest to `-`.
@@ -243,10 +341,10 @@ fn clean_name(raw: &str) -> String {
 
 /// `https://mcp.linear.app/mcp` → `linear`; `https://api.example.com/x` → `example`.
 fn name_from_url(url: &str) -> Result<String, String> {
-    let parsed = url::Url::parse(url).map_err(|_| format!("not a valid URL: `{url}`"))?;
+    let parsed = url::Url::parse(url).map_err(|_| "not a valid URL".to_owned())?;
     let host = parsed
         .host_str()
-        .ok_or_else(|| format!("the URL has no host: `{url}`"))?;
+        .ok_or_else(|| "the URL has no host".to_owned())?;
     if host.parse::<std::net::IpAddr>().is_ok() || !host.contains('.') {
         return Ok(clean_name(host));
     }
@@ -290,66 +388,83 @@ fn name_from_package(spec: &str) -> String {
     }
 }
 
-fn rename(p: &mut Parsed, name: &str) {
-    let old = p.config.id.clone();
-    let name = name.to_owned();
-    let remap = |map: &mut BTreeMap<String, String>, secrets: &mut Vec<(String, String)>| {
-        for (key, reference) in map.iter_mut() {
-            let renamed = secret_name(&name, key);
-            for (secret, _) in secrets.iter_mut() {
-                if *secret == *reference {
-                    secret.clone_from(&renamed);
-                }
-            }
-            *reference = renamed;
-        }
-    };
-    if old != name {
-        remap(&mut p.config.secret_env, &mut p.secrets);
-        remap(&mut p.config.secret_headers, &mut p.secrets);
-        p.config.id = name;
+fn rename(p: &mut Parsed, name: &str) -> Result<(), String> {
+    if p.config.id == name {
+        return Ok(());
     }
+    let values: BTreeMap<String, String> = p.secrets.drain(..).collect();
+    let mut secrets = Vec::new();
+    for (kind, map) in [
+        (Kind::Env, &mut p.config.secret_env),
+        (Kind::Header, &mut p.config.secret_headers),
+    ] {
+        let pasted: Vec<(String, String)> = map
+            .iter()
+            .map(|(key, old)| (key.clone(), values.get(old).cloned().unwrap_or_default()))
+            .collect();
+        let (refs, mut stored) = to_secrets(name, kind, pasted)?;
+        *map = refs;
+        secrets.append(&mut stored);
+    }
+    p.secrets = secrets;
+    name.clone_into(&mut p.config.id);
+    Ok(())
 }
 
 fn http_server(name: &str, url: &str, headers: Vec<(String, String)>) -> Result<Parsed, String> {
     if !is_url(url) {
-        return Err(format!(
-            "an HTTP server needs an http(s):// URL, got `{url}`"
-        ));
+        return Err("an HTTP server needs an http(s):// URL".into());
     }
     let mut config = McpServerConfig::http(name, url);
-    let mut secrets = Vec::new();
-    for (header, value) in headers {
-        let reference = secret_name(name, &header);
-        config.secret_headers.insert(header, reference.clone());
-        secrets.push((reference, value));
-    }
+    let (refs, secrets) = to_secrets(name, Kind::Header, headers)?;
+    config.secret_headers = refs;
     Ok(Parsed { config, secrets })
 }
 
-fn stdio_server(name: &str, command: &str, args: &[String], env: Vec<(String, String)>) -> Parsed {
-    let mut config = McpServerConfig::stdio(name, command, args.iter().cloned());
-    let mut secrets = Vec::new();
-    for (key, value) in env {
-        let reference = secret_name(name, &key);
-        config.secret_env.insert(key, reference.clone());
-        secrets.push((reference, value));
+fn stdio_server(
+    name: &str,
+    command: &str,
+    args: &[String],
+    env: Vec<(String, String)>,
+) -> Result<Parsed, String> {
+    if env.iter().any(|(key, _)| !is_env_key(key)) {
+        return Err("an environment variable name is not valid".into());
     }
-    Parsed { config, secrets }
+    let mut config = McpServerConfig::stdio(name, command, args.iter().cloned());
+    let (refs, secrets) = to_secrets(name, Kind::Env, env)?;
+    config.secret_env = refs;
+    Ok(Parsed { config, secrets })
+}
+
+/// An environment variable name: `[A-Za-z_][A-Za-z0-9_]*`.
+fn is_env_key(key: &str) -> bool {
+    key.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `KEY=value`, judged by the key alone (the value may hold `/`, `=`, a URL).
+fn env_assignment(word: &str) -> Option<(String, String)> {
+    word.split_once('=')
+        .filter(|(k, _)| is_env_key(k))
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
 }
 
 fn split_env(pair: &str) -> Result<(String, String), String> {
-    pair.split_once('=')
-        .filter(|(k, _)| !k.is_empty())
-        .map(|(k, v)| (k.to_owned(), v.to_owned()))
-        .ok_or_else(|| format!("expected KEY=value, got `{pair}`"))
+    env_assignment(pair).ok_or_else(|| "an `-e` value is not KEY=value".to_owned())
+}
+
+/// A header name: letters, digits and `-` (what MCP servers document).
+fn is_header_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 fn split_header(raw: &str) -> Result<(String, String), String> {
     raw.split_once(':')
         .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
-        .filter(|(k, _)| !k.is_empty())
-        .ok_or_else(|| format!("expected `Name: value` header, got `{raw}`"))
+        .filter(|(k, _)| is_header_name(k))
+        .ok_or_else(|| "a `--header` value is not `Name: value`".to_owned())
 }
 
 /// The derived name of a stdio launch: the package spec of a runner, else the
@@ -411,7 +526,14 @@ fn parse_claude(words: &[String]) -> Result<Parsed, String> {
                 _ => {} // --scope: Claude Code's own setting, meaningless here
             }
         } else if word.starts_with('-') {
-            return Err(format!("unknown `claude mcp add` option `{word}`"));
+            // The option name only: a value after `=` may be a secret.
+            let name = word.split('=').next().unwrap_or_default();
+            let shown = if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                name
+            } else {
+                "?"
+            };
+            return Err(format!("unknown `claude mcp add` option `{shown}`"));
         } else {
             positional.push(word.to_owned());
         }
@@ -437,7 +559,7 @@ fn parse_claude(words: &[String]) -> Result<Parsed, String> {
                 // Only the part after `--` runs; more words before it are ambiguous.
                 Some(after) if rest.is_empty() => after.to_vec(),
                 Some(_) => {
-                    return Err(format!("unexpected words before `--`: {}", rest.join(" ")));
+                    return Err("unexpected words between the name and `--`".into());
                 }
                 None => rest.to_vec(),
             };
@@ -447,10 +569,10 @@ fn parse_claude(words: &[String]) -> Result<Parsed, String> {
             if !headers.is_empty() {
                 return Err("`--header` applies to HTTP servers only".into());
             }
-            Ok(stdio_server(&name, program, args, env))
+            stdio_server(&name, program, args, env)
         }
         (Some(other), _) if !matches!(other, "http" | "stdio") => {
-            Err(format!("unknown transport `{other}`"))
+            Err("unknown transport (use `http` or `stdio`)".into())
         }
         _ => Err(format!("cannot read this `claude mcp add` line: {FORMATS}")),
     }
@@ -461,11 +583,12 @@ fn parse_launch(words: &[String]) -> Result<Parsed, String> {
     let mut env = Vec::new();
     let mut rest = words;
     while let Some((first, tail)) = rest.split_first() {
-        if first.contains('=') && !first.starts_with('-') && !first.contains('/') {
-            env.push(split_env(first)?);
-            rest = tail;
-        } else {
-            break;
+        match env_assignment(first) {
+            Some(pair) => {
+                env.push(pair);
+                rest = tail;
+            }
+            None => break,
         }
     }
     let Some((command, args)) = rest.split_first() else {
@@ -481,15 +604,10 @@ fn parse_launch(words: &[String]) -> Result<Parsed, String> {
         .any(|k| base == *k || base == format!("{k}.exe") || base == format!("{k}.cmd"))
     {
         return Err(format!(
-            "`{command}` is not a recognised MCP launch command: {FORMATS}"
+            "the command is not a recognised MCP launch command: {FORMATS}"
         ));
     }
-    Ok(stdio_server(
-        &launch_name(command, args),
-        command,
-        args,
-        env,
-    ))
+    stdio_server(&launch_name(command, args), command, args, env)
 }
 
 fn str_map(value: Option<&Value>, what: &str) -> Result<Vec<(String, String)>, String> {
@@ -554,16 +672,12 @@ fn server_from_json(name: &str, value: &Value) -> Result<Parsed, String> {
             "server `{name}`: `headers` apply to HTTP servers only"
         ));
     }
-    Ok(stdio_server(
-        name,
-        command,
-        &args,
-        str_map(object.get("env"), "env")?,
-    ))
+    stdio_server(name, command, &args, str_map(object.get("env"), "env")?)
 }
 
 fn parse_json(input: &str) -> Result<Vec<Parsed>, String> {
-    let value: Value = serde_json::from_str(input).map_err(|e| format!("invalid JSON: {e}"))?;
+    let value: Value = serde_json::from_str(input)
+        .map_err(|e| format!("invalid JSON (line {}, column {})", e.line(), e.column()))?;
     let object = value.as_object().ok_or("the JSON must be an object")?;
     let servers = object
         .get("mcpServers")
@@ -610,9 +724,17 @@ fn parse_json(input: &str) -> Result<Vec<Parsed>, String> {
     if list.is_empty() {
         return Err("the JSON lists no servers".into());
     }
-    list.into_iter()
-        .map(|(name, v)| server_from_json(&clean_name(&name), v))
-        .collect()
+    let mut names = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (name, v) in list {
+        let name = clean_name(&name);
+        // `a/b` and `a-b` both become `a-b`: one name, one server.
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err("two servers in the paste have the same name".into());
+        }
+        out.push(server_from_json(&name, v)?);
+    }
+    Ok(out)
 }
 
 /// POSIX-like word splitting: whitespace, `'...'`, `"..."`, backslash escapes
@@ -723,19 +845,19 @@ mod tests {
             golden(
                 "claude mcp add --transport http stripe https://mcp.stripe.com \\\n  --header \"Authorization: Bearer sk_test_123\""
             ),
-            r#"{"enabled":true,"name":"stripe","secret_env":{},"secret_headers":{"Authorization":"mcp_stripe_authorization"},"transport":"http","url":"https://mcp.stripe.com"} secrets=["mcp_stripe_authorization"]"#
+            r#"{"enabled":true,"name":"stripe","secret_env":{},"secret_headers":{"Authorization":"mcp/stripe/header/authorization"},"transport":"http","url":"https://mcp.stripe.com"} secrets=["mcp/stripe/header/authorization"]"#
         );
         assert_eq!(
             golden(
                 "claude mcp add github -s user -e GITHUB_TOKEN=ghp_x -- npx -y @modelcontextprotocol/server-github"
             ),
-            "error: invalid MCP server config: server `github`: stdio package `@modelcontextprotocol/server-github` is unpinned; use an exact version (`pkg@1.2.3` or `pkg==1.2.3`), not a floating npx/uvx install"
+            "error: the package is unpinned: use an exact version (`pkg@1.2.3` or `pkg==1.2.3`), never @latest or a floating install"
         );
         assert_eq!(
             golden(
                 "claude mcp add files -e ROOT_TOKEN=abc -- npx -y @modelcontextprotocol/server-filesystem@0.6.2 /home/me"
             ),
-            r#"{"args":["-y","@modelcontextprotocol/server-filesystem@0.6.2","/home/me"],"command":"npx","enabled":true,"name":"files","secret_env":{"ROOT_TOKEN":"mcp_files_root_token"},"secret_headers":{},"transport":"stdio"} secrets=["mcp_files_root_token"]"#
+            r#"{"args":["-y","@modelcontextprotocol/server-filesystem@0.6.2","/home/me"],"command":"npx","enabled":true,"name":"files","secret_env":{"ROOT_TOKEN":"mcp/files/env/ROOT_TOKEN"},"secret_headers":{},"transport":"stdio"} secrets=["mcp/files/env/ROOT_TOKEN"]"#
         );
         assert!(golden("claude mcp add --transport sse old https://x.example/sse").contains("SSE"));
     }
@@ -748,7 +870,7 @@ mod tests {
         );
         assert_eq!(
             golden("BRAVE_API_KEY=xyz npx -y @brave/brave-search-mcp-server@1.3.0"),
-            r#"{"args":["-y","@brave/brave-search-mcp-server@1.3.0"],"command":"npx","enabled":true,"name":"brave-search","secret_env":{"BRAVE_API_KEY":"mcp_brave_search_brave_api_key"},"secret_headers":{},"transport":"stdio"} secrets=["mcp_brave_search_brave_api_key"]"#
+            r#"{"args":["-y","@brave/brave-search-mcp-server@1.3.0"],"command":"npx","enabled":true,"name":"brave-search","secret_env":{"BRAVE_API_KEY":"mcp/brave-search/env/BRAVE_API_KEY"},"secret_headers":{},"transport":"stdio"} secrets=["mcp/brave-search/env/BRAVE_API_KEY"]"#
         );
         assert_eq!(
             golden("uvx mcp-server-fetch==2025.4.7"),
@@ -771,7 +893,7 @@ mod tests {
             ),
             [
                 r#"{"args":["-y","@modelcontextprotocol/server-filesystem@0.6.2","/tmp"],"command":"npx","enabled":true,"name":"filesystem","secret_env":{},"secret_headers":{},"transport":"stdio"} secrets=[]"#,
-                r#"{"enabled":true,"name":"linear","secret_env":{},"secret_headers":{"X-Api-Key":"mcp_linear_x_api_key"},"transport":"http","url":"https://mcp.linear.app/mcp"} secrets=["mcp_linear_x_api_key"]"#,
+                r#"{"enabled":true,"name":"linear","secret_env":{},"secret_headers":{"X-Api-Key":"mcp/linear/header/x-api-key"},"transport":"http","url":"https://mcp.linear.app/mcp"} secrets=["mcp/linear/header/x-api-key"]"#,
             ]
             .join("\n")
         );
@@ -779,7 +901,7 @@ mod tests {
             golden(
                 r#"{"command": "uvx", "args": ["mcp-server-git==0.6.2"], "env": {"GIT_TOKEN": "t"}}"#
             ),
-            r#"{"args":["mcp-server-git==0.6.2"],"command":"uvx","enabled":true,"name":"git","secret_env":{"GIT_TOKEN":"mcp_git_git_token"},"secret_headers":{},"transport":"stdio"} secrets=["mcp_git_git_token"]"#
+            r#"{"args":["mcp-server-git==0.6.2"],"command":"uvx","enabled":true,"name":"git","secret_env":{"GIT_TOKEN":"mcp/git/env/GIT_TOKEN"},"secret_headers":{},"transport":"stdio"} secrets=["mcp/git/env/GIT_TOKEN"]"#
         );
         assert!(
             golden(r#"{"x": {"type": "sse", "url": "https://a.example/sse"}}"#).contains("SSE")
@@ -799,7 +921,7 @@ mod tests {
         assert_eq!(
             p.secrets,
             vec![(
-                "mcp_my_files_root_token".to_owned(),
+                "mcp/my-files/env/ROOT_TOKEN".to_owned(),
                 "very-secret-value".to_owned()
             )]
         );
@@ -902,7 +1024,7 @@ mod tests {
         add(&client, &parsed, true, false, &mut dry).await.unwrap();
         let dry = String::from_utf8(dry).unwrap();
         assert!(dry.contains("would add remote (http)"), "{dry}");
-        assert!(store.get("mcp_remote_x_api_key").unwrap().is_none());
+        assert!(store.get("mcp/remote/header/x-api-key").unwrap().is_none());
 
         let mut out = Vec::new();
         add(&client, &parsed, false, false, &mut out).await.unwrap();
@@ -910,15 +1032,205 @@ mod tests {
         assert!(out.contains("added remote: auth_required"), "{out}");
         assert!(out.contains("Sign in"), "{out}");
         assert_eq!(
-            store.get("mcp_remote_x_api_key").unwrap().unwrap().expose(),
+            store
+                .get("mcp/remote/header/x-api-key")
+                .unwrap()
+                .unwrap()
+                .expose(),
             VALUE
         );
         let file = std::fs::read_to_string(dir.path().join(crate::doctor::MCP_FILE)).unwrap();
-        assert!(file.contains("mcp_remote_x_api_key"), "{file}");
+        assert!(file.contains("mcp/remote/header/x-api-key"), "{file}");
         for text in [&dry, &out, &file] {
             assert!(!text.contains(VALUE));
         }
         host.shutdown().await;
+    }
+
+    /// A daemon with a real `McpHost`; `secrets: false` leaves the secret
+    /// store out, so every secret write fails.
+    async fn paste_daemon(
+        secrets: bool,
+    ) -> (
+        crate::client::Client,
+        std::sync::Arc<dyn secret_store::SecretStore>,
+        std::sync::Arc<crate::mcp_host::McpHost>,
+        tempfile::TempDir,
+    ) {
+        use std::sync::Arc;
+        const TOKEN: &str = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+        let agent = crate::serve::build_agent(
+            &storage,
+            agent_core::Providers::single(Arc::new(daemon_api::fake::FakeProvider)),
+            dir.path(),
+            None,
+        );
+        let store: Arc<dyn secret_store::SecretStore> = Arc::new(secret_store::MemoryStore::new());
+        let host = crate::mcp_host::McpHost::start(
+            dir.path(),
+            agent.tool_registry(),
+            Some(Arc::clone(&store)),
+            None,
+            None,
+        );
+        let state = daemon_api::AppState::new(agent, storage, daemon_api::DaemonConfig::new(TOKEN))
+            .unwrap();
+        state.set_mcp(Arc::clone(&host) as Arc<dyn daemon_api::McpControl>);
+        if secrets {
+            state.set_secret_store(Arc::clone(&store));
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
+        (
+            crate::client::Client::new(&url, TOKEN.to_owned()),
+            store,
+            host,
+            dir,
+        )
+    }
+
+    /// Review finding 8: distinct servers and keys never share a secret, and
+    /// a refused or failing add never alters a live credential.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pasted_secret_names_never_collide_and_a_refused_add_writes_nothing() {
+        // Names differing only in `-` / `_` / case stay apart.
+        let a = parse("A_TOKEN=one npx -y pkg@1.2.3", Some("a-b")).unwrap();
+        let b = parse("A_TOKEN=two npx -y pkg@1.2.3", Some("a_b")).unwrap();
+        assert_ne!(a[0].secrets[0].0, b[0].secrets[0].0);
+        let headers = parse(
+            "claude mcp add --transport http s https://s.example/mcp -H \"X-A: 1\" -H \"X_B: 2\"",
+            None,
+        );
+        assert!(headers.is_err(), "`X_B` is not a header name");
+        for dup in [
+            "claude mcp add --transport http s https://s.example/mcp -H \"X-A: 1\" -H \"x-a: 2\"",
+            "A=1 a=2 npx -y pkg@1.2.3",
+            r#"{"mcpServers": {"a/b": {"url": "https://a.example/mcp"}, "a-b": {"url": "https://b.example/mcp"}}}"#,
+        ] {
+            assert!(parse(dup, None).is_err(), "{dup}");
+        }
+        // Names stay within the secret store's 128 bytes; ids are bounded.
+        let long = "x".repeat(101);
+        assert!(parse("https://s.example/mcp", Some(&long)).is_err());
+        let near = "x".repeat(100);
+        let near_limit = parse(
+            &format!(
+                "claude mcp add --transport http {near} https://s.example/mcp -H \"{}: v\"",
+                "h".repeat(20)
+            ),
+            None,
+        );
+        assert!(near_limit.is_err(), "secret name over 128 bytes accepted");
+
+        let (client, store, host, _dir) = paste_daemon(true).await;
+        // An existing server's credential is not overwritten by a second add
+        // of the same name (in any letter case).
+        // A command that does not exist: nothing is installed or fetched.
+        let missing = |value: &str| {
+            format!(
+                r#"{{"command": "definitely-missing-mcp-server", "env": {{"API_KEY": "{value}"}}}}"#
+            )
+        };
+        let first = parse(&missing("original-value"), Some("files")).unwrap();
+        let mut out = Vec::new();
+        add(&client, &first, false, false, &mut out).await.unwrap();
+        assert_eq!(
+            store
+                .get("mcp/files/env/API_KEY")
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "original-value"
+        );
+        for name in ["files", "FILES"] {
+            let again = parse(&missing("attacker-value"), Some(name)).unwrap();
+            assert!(
+                add(&client, &again, false, false, &mut Vec::new())
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            store
+                .get("mcp/files/env/API_KEY")
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "original-value"
+        );
+        host.shutdown().await;
+
+        // A secret that cannot be stored leaves no server behind.
+        let (client, _store, host, _dir) = paste_daemon(false).await;
+        let parsed = parse(&missing("v"), Some("orphan")).unwrap();
+        assert!(
+            add(&client, &parsed, false, false, &mut Vec::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            daemon_api::McpControl::list(host.as_ref()).len(),
+            0,
+            "the new server was not rolled back"
+        );
+        host.shutdown().await;
+    }
+
+    /// Review finding 12: a value is recognised by its key, and no error
+    /// quotes a pasted value, header, option value, URL or command.
+    #[test]
+    fn parser_errors_never_echo_pasted_values() {
+        const S: &str = "sentinel-secret-7c21";
+        let ok = parse("TOKEN=abc/def npx -y pkg@1.2.3", None).unwrap();
+        assert_eq!(ok[0].secrets[0].1, "abc/def");
+        let ok = parse("DB_URL=postgres://u:p@h/db?x=1 uvx pkg==1.0.0", None).unwrap();
+        assert_eq!(ok[0].secrets[0].1, "postgres://u:p@h/db?x=1");
+        for input in [
+            format!("claude mcp add x -e {S}-no-equals -- npx -y pkg@1.2.3"),
+            format!("claude mcp add --transport http x https://x.example/mcp -H {S}-no-colon"),
+            format!("claude mcp add x --api-key={S} -- npx -y pkg@1.2.3"),
+            format!("claude mcp add x {S} extra -- npx -y pkg@1.2.3"),
+            format!("claude mcp add --transport {S} x https://x.example/mcp"),
+            format!("{S}=bad=key? npx -y pkg@1.2.3"),
+            format!("not-a-runner --token={S}"),
+            format!("rm -rf / --token={S}"),
+            format!("npx -y pkg --api-key={S}"),
+            format!("npx --registry=https://{S}.example pkg@1.2.3"),
+            format!("https://{S}:pw@[bad"),
+            format!(r#"{{"mcpServers": {{"x": {{"command": "npx", "args": ["{S}"]}}}}}}"#),
+            format!(r#"{{"mcpServers": {{"x": "{S}"}}"#),
+        ] {
+            let error = parse(&input, None).unwrap_err();
+            assert!(!error.contains(S), "{input} -> {error}");
+        }
+    }
+
+    /// Review finding 7, through every paste entry point: a package named
+    /// by `--package` / `--with` / `--from` must be pinned too.
+    #[test]
+    fn every_entry_point_holds_runner_options_to_the_pin_rule() {
+        let argv = |line: &str| line.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        for input in [
+            "npx --package=unpinned-package pinned-command@1.2.3",
+            "uvx --with unpinned-dependency pinned-tool==1.2.3",
+            "claude mcp add x -- npx -p unpinned-package pinned-command@1.2.3",
+            "claude mcp add x -- uvx --from unpinned-src tool",
+            r#"{"command": "npx", "args": ["--package=unpinned", "cmd@1.2.3"]}"#,
+            r#"{"mcpServers": {"x": {"command": "uvx", "args": ["--with", "dep", "tool==1.0.0"]}}}"#,
+        ] {
+            let error = parse(input, None).unwrap_err();
+            assert!(error.contains("unpinned"), "{input}: {error}");
+        }
+        for line in [
+            "npx --package=unpinned-package pinned-command@1.2.3",
+            "claude mcp add x -- uvx --with unpinned-dependency pinned-tool==1.2.3",
+        ] {
+            assert!(parse_argv(&argv(line), None).is_err(), "{line}");
+        }
+        assert!(parse("npx -y --package=a@1.2.3 cmd", None).is_ok());
     }
 
     #[test]

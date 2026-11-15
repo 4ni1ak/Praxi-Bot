@@ -69,6 +69,9 @@ pub struct OAuthConfig {
     pub issuer: Option<String>,
 }
 
+/// Longest server id; see [`McpServerConfig::validate`].
+pub const MAX_SERVER_ID: usize = 100;
+
 /// One configured MCP server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerConfig {
@@ -214,14 +217,18 @@ impl McpServerConfig {
                 }
             }
         }
+        // At most 100 bytes: every derived secret name (`mcp/<id>/oauth-client`,
+        // `mcp/<id>/header/<name>`) must fit the secret store's 128 (review
+        // finding 8).
         if self.id.is_empty()
+            || self.id.len() > MAX_SERVER_ID
             || !self
                 .id
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         {
             return bad(format!(
-                "server id `{}` must be non-empty and use only [A-Za-z0-9._-]",
+                "server id `{}` must be 1 to 100 bytes of [A-Za-z0-9._-]",
                 self.id
             ));
         }
