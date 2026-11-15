@@ -13,6 +13,11 @@ export type Message = S["MessageDto"];
  */
 export type Run = S["RunDto"] & { schedule_id?: string | null };
 export type Approval = S["ApprovalDto"];
+export type StopRunsInput = S["StopRunsInput"];
+export type StopRunsResponse = S["StopRunsResponse"];
+export type StopRunResult = S["StopRunResult"];
+export type StopOutcome = S["StopOutcome"];
+export type StopScope = S["StopScope"];
 export type Health = S["Health"];
 export type UsageSummary = S["UsageSummary"];
 export type UsageTotals = S["UsageTotals"];

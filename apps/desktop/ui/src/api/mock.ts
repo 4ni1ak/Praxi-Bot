@@ -701,6 +701,11 @@ export class MockApiClient extends ApiClient {
       case "DELETE /mcp":
         return ok(this.mcp(method, seg, opts.body));
       case "POST /runs":
+        if (seg[1] === "stop") {
+          // The mock has no live runs: every Stop targets nothing and is confirmed at once.
+          const input = opts.body as { stop_id: string };
+          return ok({ stop_id: input.stop_id, first_seen: true, audited: true, results: [] });
+        }
         if (seg[2] === "changes" && seg[4] === "restore") {
           return ok({
             run_id: seg[1] ?? "",
