@@ -313,6 +313,13 @@ test("ack_stop is sent only once every targeted run is terminal", async () => {
   w.daemon.deliver(0);
   await flush();
   assert.deepEqual(w.native.acks, []);
+  // later native snapshots (step text, hotkey apply) re-evaluate the ack: still none
+  w.native.touch();
+  w.pumpNative();
+  w.clock.advance(500);
+  w.daemon.deliver();
+  await flush();
+  assert.deepEqual(w.native.acks, [], "r1 is cancel_requested, not terminal");
   w.ledger.observeRunFinished("r1");
   await flush();
   assert.deepEqual(w.native.acks, [1]);
