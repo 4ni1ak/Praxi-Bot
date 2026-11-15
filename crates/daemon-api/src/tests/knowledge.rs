@@ -218,6 +218,9 @@ async fn knowledge_conversation_requires_exact_bot_and_excludes_system_messages(
                 role: role.into(),
                 content: content.into(),
                 created_at_ms: 1,
+                exposure_untrusted: false,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
             })
             .unwrap();
     }

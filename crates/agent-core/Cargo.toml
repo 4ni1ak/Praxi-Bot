@@ -37,6 +37,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tool-registry = { path = "../tool-registry", version = "0.1.0" }
+url.workspace = true
 toml.workspace = true
 tracing = "0.1"
 uuid.workspace = true
@@ -49,6 +50,9 @@ rusqlite.workspace = true
 tempfile.workspace = true
 tiktoken-rs = "0.12"
 tokio = { workspace = true, features = ["test-util"] }
+doc-tools = { path = "../doc-tools", version = "0.1.0" }
+dev-tools = { path = "../dev-tools", version = "0.1.0" }
+openapi-tools = { path = "../openapi-tools", version = "0.1.0" }
 
 [[bin]]
 name = "agent-cli-fixture"

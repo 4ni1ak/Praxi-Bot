@@ -36,9 +36,17 @@ use crate::shared::{
     CallRec, ModelOut, ResultRec, RunCtx, STEP_COMMAND, STEP_MODEL, STEP_NUDGE, STEP_TOOLS,
     STEP_USER, STEP_WORKFLOW, Shared, xe,
 };
+use crate::taint;
 
 pub(crate) struct TurnExecutor {
     pub sh: Arc<Shared>,
+}
+
+/// Class captured when the call was resolved, before the tool ran.
+struct PlannedClass {
+    ingests_untrusted: bool,
+    reads_private: bool,
+    label: String,
 }
 
 fn external_agent_text(text: &str) -> String {
@@ -61,6 +69,7 @@ enum Slot {
         /// Set when the call was approved. [`ExecPermit::commit`] runs under
         /// the policy mutex immediately before the tool is invoked.
         permit: Option<ExecPermit>,
+        class: PlannedClass,
     },
     /// A `spawn_subagent` call, executed by the loop itself.
     Spawn {
@@ -73,7 +82,7 @@ enum Slot {
 
 fn user_denied(reason: Option<String>) -> String {
     format!(
-        "Permission denied by the user{}. Do not retry this call.",
+        "Tool call was not authorized{}. Do not retry this call.",
         reason.map_or_else(String::new, |r| format!(": {r}"))
     )
 }
@@ -116,6 +125,26 @@ fn card_covers(decision: &Decision, card: &CliApproval) -> bool {
         | Decision::Allow
         | Decision::Deny => true,
     }
+}
+
+/// A tainted egress needs a card. Used when a CLI permit was minted before the
+/// run became tainted.
+fn disclosure_now_required(
+    sh: &Shared,
+    ctx: &RunCtx,
+    name: &str,
+    input: &Value,
+    spec: Option<&ToolSpec>,
+) -> bool {
+    let Some(spec) = spec else {
+        return false;
+    };
+    if !ctx.taint.lock().exposure.is_tainted() {
+        return false;
+    }
+    let mut class = spec.content;
+    class.egress |= sh.content_class(ctx, name).egress;
+    taint::call_can_egress(name, class, input)
 }
 
 /// Remove the card for this exact invocation, leaving any other card in place.
@@ -425,6 +454,7 @@ impl TurnExecutor {
         ) {
             return text.to_owned();
         }
+        let text = text.to_owned();
         let Some(m) = self
             .sh
             .cfg
@@ -432,17 +462,28 @@ impl TurnExecutor {
             .as_ref()
             .filter(|m| m.enabled && ctx.parent_run_id.is_none())
         else {
-            return text.to_owned();
+            return text;
         };
         match m
             .store
-            .recall(ctx.user_id, ctx.bot_id, text, m.recall_budget_tokens)
+            .recall(ctx.user_id, ctx.bot_id, &text, m.recall_budget_tokens)
         {
-            Ok(mems) => memory_store::prepend_to_user_message(
-                &memory_store::render_recall_block(&mems),
-                text,
-            ),
-            Err(_) => text.to_owned(),
+            Ok(mems) => {
+                if !mems.is_empty() {
+                    let untrusted = mems
+                        .iter()
+                        .any(|mem| mem.trust == memory_store::Trust::Untrusted);
+                    ctx.taint.lock().note(
+                        tool_registry::ContentClass::declared(untrusted, true, false),
+                        "memory",
+                    );
+                }
+                memory_store::prepend_to_user_message(
+                    &memory_store::render_recall_block(&mems),
+                    &text,
+                )
+            }
+            Err(_) => text,
         }
     }
 
@@ -547,6 +588,13 @@ impl TurnExecutor {
         } else {
             self.sh.model_specs(&ctx.profile, ctx.bot_id, &hints.tools)
         };
+        // Descriptions and schemas of external tools are in this request.
+        // Recorded now, and again on the step output so a restart does not
+        // ask the current tool list whether they were shown.
+        let metadata = metadata_facts(&specs);
+        for fact in &metadata {
+            fact_note(&ctx, fact);
+        }
         let note = guard_reason
             .as_deref()
             .map(|r| GUARD_NOTE.replace("{reason}", r));
@@ -600,7 +648,8 @@ impl TurnExecutor {
         if primary.starts_with("cli:") {
             let mut call =
                 crate::usage::CallGuard::start(&self.sh, &ctx, &primary, purpose).map_err(xe)?;
-            let out = self.exec_cli(run, &req, &specs, cancel).await?;
+            let mut out = self.exec_cli(run, &req, &specs, cancel).await?;
+            out.metadata = metadata;
             if let Some(usage) = &out.usage {
                 call.usage(usage);
             }
@@ -669,6 +718,7 @@ impl TurnExecutor {
             };
             return Err(xe(message));
         };
+        out.metadata = metadata;
         if guard_reason.is_none()
             && step.input["nudged"] == true
             && out.text.trim().is_empty()
@@ -752,8 +802,12 @@ impl TurnExecutor {
             let listed = index
                 .for_bot(Some(&bot))
                 .map_or_else(|_| Vec::new(), |view| view.list());
+            // Same trust filter as the system prompt and the router: a skill
+            // saved after untrusted or private content was read is data. Its
+            // name must not reach a loop-authored hint.
             let names: Vec<String> = listed
                 .into_iter()
+                .filter(|s| !s.untrusted)
                 .filter(|s| s.matches(&skill_ctx) || suggested.contains(&s.name))
                 .map(|s| s.name)
                 .collect();
@@ -985,13 +1039,41 @@ impl TurnExecutor {
             // a policy revision or locked deny fails closed. Anything else
             // stays on the interactive path.
             let card = take_matching_card(&mut approved, &resolved.name, &resolved.input);
-            let carried = match card {
+            let mut carried = match card {
                 Some(card) if card_covers(&decision, &card) => Some(card.permit),
                 _ => None,
             };
+            // A permit answered before this run was tainted did not show the
+            // egress card. Drop it and ask with the disclosure. The
+            // flag was stored when that card was built, not recomputed now.
+            let redisclose = carried.as_ref().is_some_and(|permit| {
+                !permit.showed_disclosure
+                    && disclosure_now_required(
+                        &self.sh,
+                        &ctx,
+                        &resolved.name,
+                        &resolved.input,
+                        resolved.spec.as_ref(),
+                    )
+            });
+            if redisclose {
+                drop(carried.take());
+            }
             let is_spawn = resolved.name == crate::subagent::SPAWN_SUBAGENT;
             let spawn_input = resolved.input.clone();
             let tool = resolved.tool;
+            let class = match &resolved.spec {
+                Some(spec) => PlannedClass {
+                    ingests_untrusted: spec.content.ingests_untrusted,
+                    reads_private: spec.content.reads_private,
+                    label: taint::source_label(&resolved.name, &resolved.input),
+                },
+                None => PlannedClass {
+                    ingests_untrusted: false,
+                    reads_private: false,
+                    label: String::new(),
+                },
+            };
             let slot = if matches!(decision, Decision::Deny) && carried.is_none() {
                 self.sh.emit(
                     &ctx,
@@ -1008,7 +1090,8 @@ impl TurnExecutor {
                         .into(),
                     is_error: true,
                 }
-            } else if matches!(decision, Decision::Ask { .. }) && carried.is_none() {
+            } else if carried.is_none() && (matches!(decision, Decision::Ask { .. }) || redisclose)
+            {
                 let category = resolved
                     .spec
                     .as_ref()
@@ -1046,6 +1129,7 @@ impl TurnExecutor {
                         call: call_uuid,
                         meta,
                         permit: None,
+                        class,
                     }
                 } else {
                     match self
@@ -1067,12 +1151,24 @@ impl TurnExecutor {
                             call: call_uuid,
                             meta,
                             permit: Some(permit),
+                            class,
                         },
                         Err(reason) => Slot::Done {
                             text: user_denied(reason),
                             is_error: true,
                         },
                     }
+                }
+            } else if let Err(message) = self.sh.refuse_unshowable_egress(
+                &ctx,
+                &resolved.name,
+                &resolved.input,
+                None,
+                carried.is_some(),
+            ) {
+                Slot::Done {
+                    text: user_denied(Some(message)),
+                    is_error: true,
                 }
             } else {
                 Slot::Run {
@@ -1081,6 +1177,7 @@ impl TurnExecutor {
                     call: call_uuid,
                     meta,
                     permit: carried,
+                    class,
                 }
             };
             let slot = match slot {
@@ -1100,36 +1197,61 @@ impl TurnExecutor {
         // Reads batched by `pending_tools` run concurrently; everything else is a single call.
         let ctx_ref: &RunCtx = &ctx;
         let outcomes = futures::future::join_all(slots.into_iter().map(|slot| async move {
+            let not_run = taint::ExecFact::did_not_run();
             match slot {
-                Slot::Done { text, is_error } => (text, is_error, None, None, None),
+                Slot::Done { text, is_error } => (text, is_error, None, None, not_run),
                 Slot::Spawn {
                     input,
-                    call,
+                    call: call_id,
                     model_call_id,
                     permit,
                 } => {
                     if let Err(reason) = commit_or_deny(permit) {
-                        return (user_denied(reason), true, None, None, None);
+                        return (user_denied(reason), true, None, None, not_run);
                     }
                     let (t, e, d) = self
-                        .run_subagent(run, ctx_ref, call, &model_call_id, input)
+                        .run_subagent(run, ctx_ref, call_id, &model_call_id, input)
                         .await;
-                    (t, e, d, None, None)
+                    // The child's own steps carry its exposure. This row
+                    // is the spawn call, which does not itself ingest.
+                    (t, e, d, None, not_run)
                 }
                 Slot::Run {
                     tool,
                     input,
-                    call,
+                    call: call_id,
                     meta,
                     permit,
+                    class,
                 } => {
                     // Re-check under the policy mutex immediately before the
                     // call. A deny that landed after approval does not run the
                     // tool and does not keep a grant (`commit` stores it).
                     if let Err(reason) = commit_or_deny(permit) {
-                        return (user_denied(reason), true, None, None, None);
+                        return (user_denied(reason), true, None, None, not_run);
                     }
-                    self.run_tool(run, ctx_ref, call, &tool, input, meta).await
+                    let (text, is_error, duration_ms, own_spill, exposure) = self
+                        .run_tool(run, ctx_ref, call_id, &tool, input, meta)
+                        .await;
+                    // The result is in the model context even when the tool
+                    // returned an error. A denial before this point is not.
+                    // The class was captured at resolution time. Output
+                    // exposure, when the tool set one, replaces it: that
+                    // is how discovery carries the metadata it actually
+                    // returned. Neither value is read from the result text.
+                    let fact = match &exposure {
+                        Some(exposure) => taint::ExecFact::from_exposure(exposure, &class.label),
+                        None => taint::ExecFact::ran(
+                            tool_registry::ContentClass::declared(
+                                class.ingests_untrusted,
+                                class.reads_private,
+                                false,
+                            ),
+                            class.label,
+                        ),
+                    };
+                    fact_note(ctx_ref, &fact);
+                    (text, is_error, duration_ms, own_spill, fact)
                 }
             }
         }))
@@ -1137,7 +1259,7 @@ impl TurnExecutor {
 
         let g = &self.sh.cfg.guards;
         let mut results = Vec::with_capacity(calls.len());
-        for ((call, call_uuid), (text, mut is_error, duration_ms, own_spill, provenance)) in
+        for ((call, call_uuid), (text, mut is_error, duration_ms, own_spill, fact)) in
             calls.iter().zip(uuids).zip(outcomes)
         {
             let mut text = self.sh.redact(text);
@@ -1173,25 +1295,15 @@ impl TurnExecutor {
                     duration_ms,
                 }),
             );
-            let mut result = serde_json::to_value(ResultRec {
+            results.push(ResultRec {
                 id: call.id.clone(),
                 call_uuid: call_uuid.into_inner(),
                 name: call.name.clone(),
                 is_error,
                 text,
                 spill_path,
-            })
-            .map_err(xe)?;
-            let provenance = provenance.or_else(|| {
-                // Discovery delegates through use_tool. This classification
-                // comes from its resolved target, never the returned bytes.
-                (duration_ms.is_some() && knowledge_request.is_some())
-                    .then(|| tool_registry::OutputProvenance::untrusted_private("knowledge"))
+                fact: Some(fact),
             });
-            if let Some(provenance) = provenance {
-                result["fact"] = provenance.executed();
-            }
-            results.push(result);
         }
         Ok(json!({ "results": results }))
     }
@@ -1209,18 +1321,18 @@ impl TurnExecutor {
         bool,
         Option<u64>,
         Option<String>,
-        Option<tool_registry::OutputProvenance>,
+        Option<tool_registry::OutputExposure>,
     ) {
         let g = &self.sh.cfg.guards;
         let tctx = ToolContext {
             run_id: run.id.to_string(),
             max_inline_bytes: g.spill_threshold_bytes,
             bot_id: Some(run.bot_id.to_string()),
+            content_tainted: ctx.taint.lock().exposure.is_tainted(),
         };
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.
         let started = std::time::Instant::now();
-        let executed = std::sync::atomic::AtomicBool::new(false);
         let control = self.sh.control.read().clone();
         let outcome = crate::control::pause_aware_timeout(
             g.tool_timeout,
@@ -1235,13 +1347,16 @@ impl TurnExecutor {
                         .await
                         .map_err(tool_registry::ToolError::Execution)?;
                 }
-                executed.store(true, std::sync::atomic::Ordering::Relaxed);
                 tool.call(&tctx, input).await
             },
         )
         .await;
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let mut own_spill: Option<String> = None;
+        let exposure = match &outcome {
+            Ok(Ok(out)) => out.exposure.clone(),
+            _ => None,
+        };
         let (text, is_error) = match outcome {
             Err(()) => (
                 format!("Error: tool timed out after {:?}", g.tool_timeout),
@@ -1254,11 +1369,7 @@ impl TurnExecutor {
                 (render_output(&out), false)
             }
         };
-        let provenance = executed
-            .load(std::sync::atomic::Ordering::Relaxed)
-            .then(|| tool.output_provenance())
-            .flatten();
-        (text, is_error, Some(duration_ms), own_spill, provenance)
+        (text, is_error, Some(duration_ms), own_spill, exposure)
     }
 
     /// Turn the structured output of a `Meta` tool into events: a todo list
@@ -1359,6 +1470,35 @@ impl TurnExecutor {
             )
         }
     }
+}
+
+fn fact_note(ctx: &RunCtx, fact: &taint::ExecFact) {
+    if !fact.ran {
+        return;
+    }
+    ctx.taint.lock().note(
+        tool_registry::ContentClass::declared(fact.ingests_untrusted, fact.reads_private, false),
+        &fact.label,
+    );
+}
+
+/// External descriptions and schemas included in `specs`, as they were at
+/// request time.
+fn metadata_facts(specs: &[ToolSpec]) -> Vec<taint::ExecFact> {
+    specs
+        .iter()
+        .filter(|spec| spec.content.has_external_metadata())
+        .map(|spec| {
+            // A remote description is untrusted text. It is not a private read,
+            // so it must not turn off the untrusted-only exemption for search.
+            taint::ExecFact {
+                ran: true,
+                ingests_untrusted: true,
+                reads_private: false,
+                label: taint::source_label(&spec.name, &json!({})),
+            }
+        })
+        .collect()
 }
 
 /// Largest `output_preview` of a `tool_call_completed` event, in bytes.

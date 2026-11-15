@@ -362,6 +362,19 @@
         },
         "note": "This approval covers only this change; it is asked every time."
       },
+      "egress": {
+        "large": "This payload is too large for the compact card ({{bytes}} bytes). Open the full text and scroll to the end before approving.",
+        "reviewFull": "Review full payload",
+        "host": "Destination: {{host}}",
+        "read": "This run read: {{list}}",
+        "payload": {
+          "query": "Outgoing query (shown in full):",
+          "url": "Outgoing URL (shown in full):",
+          "body": "Outgoing data (shown in full):"
+        },
+        "size": "{{lines}} lines, {{chars}} characters, {{hidden}} non-printing characters shown as <U+XXXX>"
+      },
+      "computer": "This action runs on {{kind}} \"{{name}}\" (id {{id}}).",
       "app": {
         "arguments": "Show all arguments ({{count}} characters)",
         "footer": "Via Composio. Approve only this action with all arguments shown above."
@@ -785,6 +798,10 @@
     },
     "executorRequired": "The executor model is required.",
     "permissions": "Permissions",
+    "allowEgressAfterReads": {
+      "title": "Allow sending data after this bot has read something",
+      "hint": "Off by default. A tool grant does not turn this on. While it is off, a run that has read a file, mailbox, page or other private or untrusted content must ask before any tool sends data off this machine."
+    },
     "preset": {
       "read-only": {
         "name": "Read-only",

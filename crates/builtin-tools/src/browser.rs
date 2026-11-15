@@ -1875,6 +1875,25 @@ impl Tool for BrowserTool {
         &self.spec
     }
 
+    fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
+        if !matches!(self.op, Op::Open) {
+            return None;
+        }
+        let named = input
+            .get("profile")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty());
+        let line = match named {
+            Some("isolated") => "profile: isolated (temporary, not logged in)".to_owned(),
+            Some(name) => format!("profile: {name} (named profile, may be logged in)"),
+            None if self.shared.managed.is_some() => {
+                "profile: default (persistent per-bot profile, may be logged in)".to_owned()
+            }
+            None => "profile: isolated (temporary, not logged in)".to_owned(),
+        };
+        Some(line)
+    }
+
     /// Typing an owner-stored secret is confirmed on every call, however
     /// permissive the policy, preset, grants or read shortcuts are.
     fn always_ask_for(&self, input: &Value) -> bool {

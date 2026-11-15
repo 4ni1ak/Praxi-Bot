@@ -317,7 +317,7 @@ impl Shared {
         if let Some(index) = self.skills.get()
             && let Ok(view) = index.for_bot(Some(&bot.to_string()))
         {
-            for s in view.list() {
+            for s in view.list().into_iter().filter(|skill| !skill.untrusted) {
                 let version = format!("{}:{:016x}", s.version, fnv(s.body.as_bytes()));
                 out.push(
                     Candidate::new(CandidateKind::Skill, &s.name, &s.description)
@@ -713,14 +713,27 @@ impl TurnExecutor {
                 "level": level,
                 "note": "The saved workflow could not be replayed.",
                 "summary": format!("The saved workflow could not be replayed: {why}"),
+                "exposure": { "ran": false },
             })
         };
         let Some(w) = self.sh.router.workflows.get() else {
             return Ok(fail("workflows are not available".into()));
         };
+        // Loading/parsing can itself return file content in an error. Record
+        // exposure before touching the store and persist it on failure too.
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "saved workflow",
+        );
+        let fail_after_read = |why| {
+            let mut failed = fail(why);
+            failed["exposure"] = json!({"ran": true, "ingests_untrusted": true,
+                "reads_private": true, "label": "saved workflow"});
+            failed
+        };
         let wf = match w.store.get(&name) {
             Ok(wf) => wf,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
         let mut opts = w.opts.clone();
         opts.run_id = run.id.to_string();
@@ -733,9 +746,19 @@ impl TurnExecutor {
             .await
         {
             Ok(r) => r,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
         let summary = summarize(&report);
+        let exposure = json!({
+            "ran": true,
+            "ingests_untrusted": true,
+            "reads_private": true,
+            "label": "workflow replay",
+        });
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "workflow replay",
+        );
         if report.is_completed() {
             self.sh.emit(
                 &ctx,
@@ -750,6 +773,7 @@ impl TurnExecutor {
                 "final_text": summary,
                 "steps_replayed": report.steps_replayed,
                 "wall_time_ms": report.wall_time_ms,
+                "exposure": exposure,
             }));
         }
         Ok(json!({
@@ -758,6 +782,7 @@ impl TurnExecutor {
             "level": level,
             "note": "The saved workflow stopped early.",
             "summary": summary,
+            "exposure": exposure,
         }))
     }
 

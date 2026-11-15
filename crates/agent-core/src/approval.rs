@@ -7,19 +7,20 @@ use std::sync::{Arc, OnceLock, Weak};
 use async_trait::async_trait;
 use builtin_tools::{GateRequest, ToolGate, raw_command_for};
 use parking_lot::Mutex;
-use permission_engine::{ActionRequest, Decision, Policy};
+use permission_engine::{ActionRequest, Decision, Policy, egress_must_ask, executes_must_ask};
 use protocol::event::{ApprovalNeeded, QuestionAsked, ToolCallApproved, ToolCallDenied};
 use protocol::{BotId, Event, InitiatorKind, PermissionCategory, RunId, ToolCallId};
 use serde_json::{Value, json};
 use storage::{Approval, now_ms};
 use task_runtime::{RunState, can_transition};
 use tokio::sync::oneshot;
-use tool_registry::Effect;
+use tool_registry::{ContentClass, Effect};
 use uuid::Uuid;
 
 use crate::AUDIT_GRANT_ALWAYS;
 use crate::history::truncate_utf8;
 use crate::shared::{ApprovalScope, Grant, GrantTarget, Pending, RunCtx, Shared, Verdict};
+use crate::taint;
 
 /// The `approval_ref` token a tool put in its details, if any.
 fn approval_ref(details: &Value) -> Option<String> {
@@ -149,6 +150,7 @@ fn computer_approval(
 
 impl Shared {
     /// Resolve policy + grants for one call.
+    #[allow(clippy::too_many_lines)] // One decision pipeline: deny floors, policy, gate, grants.
     pub(crate) fn decide(
         &self,
         ctx: &RunCtx,
@@ -160,6 +162,20 @@ impl Shared {
         // Scoped admission allows only two active runs per credential. Until
         // child admission shares that counter, external agents cannot fan out.
         if ctx.initiator == InitiatorKind::ExternalAgent && name == crate::subagent::SPAWN_SUBAGENT
+        {
+            return Decision::Deny;
+        }
+        // Document converters are shell-free writers too. In particular a
+        // one-column CSV can be a valid SKILL.md or workflow/config document.
+        let output_field = match name {
+            "docx_write" | "xlsx_write" => Some("path"),
+            "csv_transform" => Some("output_path"),
+            _ => None,
+        };
+        if let Some(path) = output_field
+            .and_then(|field| input.get(field))
+            .and_then(Value::as_str)
+            && builtin_tools::files::check_daemon_write(self.storage.data_dir(), path).is_err()
         {
             return Decision::Deny;
         }
@@ -214,6 +230,7 @@ impl Shared {
                 d = Decision::Deny;
             }
         }
+        let must_ask = self.gate_must_ask(ctx, name, input);
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
         // The same holds for a call that types an owner-stored secret
@@ -232,6 +249,11 @@ impl Shared {
             return d;
         }
         if !d.is_ask() {
+            // A clean Allow becomes an ask once the run is tainted and this
+            // call can leave the machine. A Deny is unchanged.
+            if d == Decision::Allow && must_ask {
+                return Decision::ask();
+            }
             return d;
         }
         // An `Ask` forced by an absolute floor survives even a full policy.
@@ -244,6 +266,13 @@ impl Shared {
         }
         let floor = r.resolve(&Policy::full(), None, None, &req) != Decision::Allow;
         if floor {
+            return d;
+        }
+        // The egress gate and the executor rule are not grants and not the read
+        // shortcut. The only way past the egress gate is the bot's explicit
+        // `allow_egress_after_reads` flag, which already made that term false;
+        // it does not make the executor term false.
+        if must_ask {
             return d;
         }
         let granted = {
@@ -267,6 +296,43 @@ impl Shared {
         }
     }
 
+    /// The taint gate for this call: egress after a read, or a program start
+    /// after untrusted content. Not a grant and not the read shortcut.
+    ///
+    /// `web_search` can only reach the configured search provider. Every other
+    /// egress tool, including fetch, can be aimed at an arbitrary host. A click
+    /// or a scroll does not carry bytes; a drag can, and `browser_click` does
+    /// when `prompt_text` is set. A call that starts a program chosen by its
+    /// arguments also asks after untrusted content, and the egress waiver does
+    /// not cover it.
+    pub(crate) fn gate_must_ask(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        let class = self.content_class(ctx, name);
+        let exposure = ctx.taint.lock().exposure;
+        egress_must_ask(
+            exposure,
+            taint::call_can_egress(name, class, input),
+            name == "web_search",
+            ctx.profile.permissions.allow_egress_after_reads,
+        ) || executes_must_ask(exposure, class.executes)
+    }
+
+    /// Content class of tool `name` for this run's bot. A native step that
+    /// replay or a script authorizes without a registered tool still gets its
+    /// built-in class, so a launch or a shell step is never treated as a
+    /// non-executor. A tool can raise `egress` for one bot through
+    /// [`tool_registry::Tool::egress_for`] (knowledge search with a remote
+    /// embedding provider); that can only add egress, never remove it.
+    pub(crate) fn content_class(&self, ctx: &RunCtx, name: &str) -> ContentClass {
+        let Some(tool) = self.tools.get(name) else {
+            return builtin_tools::classify(name).unwrap_or_else(ContentClass::unspecified);
+        };
+        let mut class = tool.spec().content;
+        if tool.egress_for(Some(&ctx.bot_id.to_string())) == Some(true) {
+            class.egress = true;
+        }
+        class
+    }
+
     /// This very call must be confirmed (the tool always asks, or its
     /// [`tool_registry::Tool::always_ask_for`] says so for this input).
     pub(crate) fn must_ask(&self, name: &str, input: &Value) -> bool {
@@ -288,6 +354,11 @@ impl Shared {
         if !tool.always_ask_for(input) {
             return None;
         }
+        // An owner's standing grant covers the secret-fill ask. It is a grant,
+        // so it never waives the egress or executor ask of a tainted run.
+        if self.gate_must_ask(ctx, name, input) {
+            return None;
+        }
         let tctx = tool_registry::ToolContext {
             run_id: ctx.run_id.to_string(),
             bot_id: Some(ctx.bot_id.to_string()),
@@ -301,6 +372,44 @@ impl Shared {
             &json!({ "tool": name, "grant": grant.id, "label": grant.label }),
         );
         Some(grant)
+    }
+
+    /// Egress card for a tainted run. `None` when the run is clean, or the tool
+    /// cannot send data off the machine. Attached even when the ask came from
+    /// `always_ask` or a floor, so the card still names the read and the host.
+    ///
+    /// The payload is the revealed text. Tool-injected defaults (the browser
+    /// profile, the search backend, a skill body) are part of that text.
+    /// Every tool that starts a program is also an egress tool (the production
+    /// registry audit checks it), so its card carries the full command.
+    fn egress_card(&self, ctx: &RunCtx, name: &str, input: &Value) -> Option<Value> {
+        let class = self.content_class(ctx, name);
+        if !taint::call_can_egress(name, class, input) {
+            return None;
+        }
+        let mut details = {
+            let taint = ctx.taint.lock();
+            taint::egress_record(&taint, name, input)?
+        };
+        let tctx = tool_registry::ToolContext {
+            run_id: ctx.run_id.to_string(),
+            bot_id: Some(ctx.bot_id.to_string()),
+            content_tainted: true,
+            ..tool_registry::ToolContext::default()
+        };
+        if let Some(tool) = self.tools.get(name) {
+            if let Some(host) = tool.egress_host(input) {
+                taint::set_egress_host(&mut details, &host);
+            }
+            if let Some(extra) = tool.egress_extra(&tctx, input) {
+                taint::append_payload(&mut details, &extra);
+            }
+        }
+        if executes_must_ask(ctx.taint.lock().exposure, class.executes) {
+            taint::note_executes_on_egress(&mut details);
+        }
+        taint::finalize_egress_record(&mut details);
+        Some(details)
     }
 
     fn closed_guard(
@@ -576,6 +685,97 @@ impl Shared {
         None
     }
 
+    /// True when redaction would change the card or the input that would run.
+    fn shown_text_would_change(&self, details: Option<&Value>, input: &Value) -> bool {
+        let Some(r) = &self.cfg.redactor else {
+            return false;
+        };
+        let details_changed = details.is_some_and(|d| {
+            let mut shown = d.clone();
+            crate::shared::redact_value(r, &mut shown)
+        });
+        let mut input_shown = input.clone();
+        details_changed || crate::shared::redact_value(r, &mut input_shown)
+    }
+
+    /// Refuse, and tell the tool its preview is closed, when the user would
+    /// approve different text from the text that runs.
+    fn refuse_hidden_secret(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        input: &Value,
+        details: Option<&Value>,
+        token: Option<&str>,
+    ) -> Result<(), String> {
+        if !self.shown_text_would_change(details, input) {
+            return Ok(());
+        }
+        if let Some(tool) = self.tools.get(name) {
+            let tctx = tool_registry::ToolContext {
+                run_id: ctx.run_id.to_string(),
+                bot_id: Some(ctx.bot_id.to_string()),
+                ..tool_registry::ToolContext::default()
+            };
+            tool.approval_closed(&tctx, input, token);
+        }
+        Err(
+            "the request contains text that looks like a secret (a key or token), which cannot be shown for approval; remove it and ask again"
+                .into(),
+        )
+    }
+
+    /// Refuse egress the user cannot safely approve.
+    ///
+    /// Characters that are never legitimate (tags, bidi overrides, invisible
+    /// operators, private-use, U+FFFC, other controls) are refused whether or
+    /// not a card is shown. Characters that real text uses (emoji variation
+    /// selectors, ZWJ, ZWNJ, LRM/RLM, CR) are revealed on the card and may be
+    /// approved. A prompt-free send has no card, so those same characters are
+    /// refused unless they are in the small set that is ordinary in emoji and
+    /// in Arabic, Hebrew, Persian, or Hindi. Large payloads require full review.
+    ///
+    /// `showing_card` is true on the approval path. The allow path (a search
+    /// after untrusted content only, or the bot's egress waiver) passes false.
+    pub(crate) fn refuse_unshowable_egress(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        input: &Value,
+        token: Option<&str>,
+        showing_card: bool,
+    ) -> Result<(), String> {
+        let class = self.content_class(ctx, name);
+        if !taint::call_can_egress(name, class, input) || !ctx.taint.lock().exposure.is_tainted() {
+            return Ok(());
+        }
+        let message = if taint::input_forbids_egress(input) {
+            Some(
+                "the outgoing text contains characters that cannot be sent (hidden tags, direction overrides, private-use or similar); remove them and ask again"
+                    .to_owned(),
+            )
+        } else if !showing_card && taint::input_needs_a_card_to_show(input) {
+            Some(
+                "the outgoing text contains characters that would not be visible, and this call is not shown for approval; remove them and ask again"
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+        let Some(message) = message else {
+            return Ok(());
+        };
+        if let Some(tool) = self.tools.get(name) {
+            let tctx = tool_registry::ToolContext {
+                run_id: ctx.run_id.to_string(),
+                bot_id: Some(ctx.bot_id.to_string()),
+                ..tool_registry::ToolContext::default()
+            };
+            tool.approval_closed(&tctx, input, token);
+        }
+        Err(message)
+    }
+
     /// Park the run in `WaitingApproval` until `approve` / `deny` is called.
     ///
     /// `Ok(permit)` means the user approved and the post-approve recheck did
@@ -584,6 +784,7 @@ impl Shared {
     /// [`Shared::exec_gate`] and is what creates a grant. `Err` means the
     /// call is denied (no grant, tool must not run).
     #[allow(clippy::too_many_arguments)] // `details` joined an already wide call
+    #[allow(clippy::too_many_lines)] // Card assembly, park, emit and wait stay together.
     pub(crate) async fn request_approval(
         self: &Arc<Self>,
         ctx: &Arc<RunCtx>,
@@ -599,6 +800,18 @@ impl Shared {
         if let Some(o) = details.as_mut().and_then(Value::as_object_mut) {
             o.remove("approval_ref");
         }
+        self.refuse_unshowable_egress(ctx, name, input, token.as_deref(), true)
+            .map_err(Some)?;
+        let disclosure = self.egress_card(ctx, name, input);
+        let showed_disclosure = disclosure.is_some();
+        if let Some(extra) = disclosure {
+            taint::merge_egress(&mut details, extra);
+        }
+        // The tool's own card was checked before this merge. The egress
+        // payload is part of the card the user sees and part of what the
+        // permit will run.
+        self.refuse_hidden_secret(ctx, name, input, details.as_ref(), token.as_deref())
+            .map_err(Some)?;
         // An always-ask tool must show the user what it does: refuse to ask
         // without details rather than fall back to the generic card.
         let must_ask = self.must_ask(name, input);
@@ -673,6 +886,7 @@ impl Shared {
                     scope,
                     by,
                     parked_at,
+                    showed_disclosure,
                 })
             }
             Ok(Verdict::Denied { by, reason }) => {
@@ -842,6 +1056,10 @@ pub(crate) struct ExecPermit {
     scope: ApprovalScope,
     by: protocol::UserId,
     parked_at: u64,
+    /// True when the card built for this permit included the egress
+    /// disclosure. Captured then, not recomputed after the user answers:
+    /// another call can taint the run while this card is open.
+    pub(crate) showed_disclosure: bool,
 }
 
 impl ExecPermit {
@@ -1056,6 +1274,30 @@ pub(crate) struct LoopGate {
 
 #[async_trait]
 impl ToolGate for LoopGate {
+    fn note_exposure(&self, run_id: &str, content: ContentClass, label: &str) {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return;
+        };
+        if let Some(sh) = self.sh.upgrade()
+            && let Some(ctx) = sh.runs.lock().get(&protocol::RunId(id))
+        {
+            ctx.taint.lock().note(content, label);
+        }
+    }
+
+    fn content_tainted(&self, run_id: &str) -> bool {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return false;
+        };
+        let Some(sh) = self.sh.upgrade() else {
+            return false;
+        };
+        sh.runs
+            .lock()
+            .get(&protocol::RunId(id))
+            .is_some_and(|ctx| ctx.taint.lock().exposure.is_tainted())
+    }
+
     async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
         let sh = self.sh.upgrade().ok_or("agent loop is gone")?;
         let run_id = req
@@ -1073,7 +1315,9 @@ impl ToolGate for LoopGate {
             return Err(format!("unknown tool: {}", req.tool));
         }
         let result = match sh.decide(&ctx, &req.tool, req.effect, req.category, &req.input) {
-            Decision::Allow => Ok(()),
+            Decision::Allow => {
+                sh.refuse_unshowable_egress(&ctx, &req.tool, &req.input, None, false)
+            }
             Decision::Deny => Err(format!(
                 "permission denied: {} is not allowed by policy",
                 req.tool
@@ -1111,12 +1355,25 @@ impl ToolGate for LoopGate {
             }
         };
         result?;
+        // The slot is the host-wide computer semaphore. Take it only after the
+        // user (or policy) has allowed the call, and record taint only once the
+        // call will actually run: a denial or a failed admission read nothing.
         if matches!(
             req.category,
             PermissionCategory::Desktop | PermissionCategory::Browser
         ) {
             crate::control::acquire_computer_slot(&sh, &ctx).await?;
         }
+        note_gate(&ctx, req);
         Ok(())
     }
+}
+
+/// A script or workflow call that was allowed has put its result in front of
+/// the model by the time the next call is authorized. Record that now so the
+/// next inner call sees the taint. A denial records nothing.
+fn note_gate(ctx: &RunCtx, req: &GateRequest) {
+    ctx.taint
+        .lock()
+        .note(req.content, &taint::source_label(&req.tool, &req.input));
 }

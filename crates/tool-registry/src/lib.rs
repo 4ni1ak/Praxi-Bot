@@ -4,15 +4,16 @@
 //! and exposes a find-tool interface that narrows the visible set for each agent turn.
 
 pub mod error;
-pub mod provenance;
 pub mod registry;
 pub mod spec;
 pub mod tool;
 
 pub use error::ToolError;
-pub use provenance::OutputProvenance;
 pub use registry::ToolRegistry;
 // PermissionCategory and Platform are defined in `protocol` and re-exported here
 // for convenience.
-pub use spec::{Effect, ObservationScope, PermissionCategory, Platform, ToolSpec};
-pub use tool::{ContentPart, SpillRef, StandingGrant, Tool, ToolContext, ToolOutput, ToolWrapper};
+pub use spec::{ContentClass, Effect, ObservationScope, PermissionCategory, Platform, ToolSpec};
+pub use tool::{
+    ContentPart, OutputExposure, SpillRef, StandingGrant, Tool, ToolContext, ToolOutput,
+    ToolWrapper,
+};

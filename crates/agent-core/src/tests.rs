@@ -31,8 +31,8 @@ use storage::{Bot, Chat, Storage, User, now_ms, read_event_log};
 use task_runtime::{RetryPolicy, RunState};
 use tokio::sync::{Barrier, broadcast};
 use tool_registry::{
-    Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput, ToolRegistry,
-    ToolSpec,
+    ContentClass, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput,
+    ToolRegistry, ToolSpec,
 };
 
 use crate::{
@@ -42,7 +42,7 @@ use crate::{
 
 // ---------- fakes ----------
 
-enum Reply {
+pub(crate) enum Reply {
     Chunks(Vec<ChatChunk>),
     Hang,
     /// A provider error: `upstream` (retryable), `auth`, `api400`, `invalid`
@@ -53,7 +53,7 @@ enum Reply {
     RateLimited(Option<Duration>),
 }
 
-fn text(s: &str) -> Reply {
+pub(crate) fn text(s: &str) -> Reply {
     Reply::Chunks(vec![
         ChatChunk::TextDelta(s.to_owned()),
         ChatChunk::Usage(Usage {
@@ -68,7 +68,7 @@ fn text(s: &str) -> Reply {
     ])
 }
 
-fn calls(cs: &[(&str, &str, Value)]) -> Reply {
+pub(crate) fn calls(cs: &[(&str, &str, Value)]) -> Reply {
     let mut v: Vec<ChatChunk> = cs
         .iter()
         .map(|(id, name, args)| {
@@ -87,19 +87,19 @@ fn calls(cs: &[(&str, &str, Value)]) -> Reply {
     Reply::Chunks(v)
 }
 
-struct Fake {
+pub(crate) struct Fake {
     replies: Mutex<VecDeque<Reply>>,
     requests: Mutex<Vec<ChatRequest>>,
 }
 
 impl Fake {
-    fn new(replies: Vec<Reply>) -> Arc<Self> {
+    pub(crate) fn new(replies: Vec<Reply>) -> Arc<Self> {
         Arc::new(Self {
             replies: Mutex::new(replies.into()),
             requests: Mutex::new(Vec::new()),
         })
     }
-    fn request(&self, i: usize) -> ChatRequest {
+    pub(crate) fn request(&self, i: usize) -> ChatRequest {
         self.requests.lock()[i].clone()
     }
     fn n_requests(&self) -> usize {
@@ -155,17 +155,37 @@ pub(crate) struct TestTool {
     pub(crate) self_spill: Option<PathBuf>,
     /// `Some(ids)`: only these bots may see the tool (like an MCP server's `bots`).
     pub(crate) bots: Option<Vec<String>>,
+    /// Trust of text this tool puts in context, when it is not the spec class.
+    /// Discovery sets this from the tools it actually returned.
+    pub(crate) exposure: Option<tool_registry::OutputExposure>,
 }
 
 pub(crate) fn tool(name: &str, effect: Effect, output: &str) -> TestTool {
+    with_class(
+        name,
+        effect,
+        PermissionCategory::Fs,
+        ContentClass::none(),
+        output,
+    )
+}
+
+pub(crate) fn with_class(
+    name: &str,
+    effect: Effect,
+    category: PermissionCategory,
+    content: ContentClass,
+    output: &str,
+) -> TestTool {
     TestTool {
         spec: ToolSpec {
             name: name.to_owned(),
             description: format!("test tool {name}"),
             input_schema: json!({"type": "object"}),
             effect,
-            category: PermissionCategory::Fs,
+            category,
             platforms: vec![Platform::All],
+            content,
         },
         count: Arc::new(AtomicUsize::new(0)),
         delay: Duration::ZERO,
@@ -173,6 +193,7 @@ pub(crate) fn tool(name: &str, effect: Effect, output: &str) -> TestTool {
         output: output.to_owned(),
         self_spill: None,
         bots: None,
+        exposure: None,
     }
 }
 
@@ -205,9 +226,12 @@ impl Tool for TestTool {
                     mime_type: "text/plain".into(),
                     size_bytes: self.output.len() as u64,
                 }),
+                exposure: self.exposure.clone(),
             });
         }
-        Ok(ToolOutput::text(self.output.clone()))
+        let mut out = ToolOutput::text(self.output.clone());
+        out.exposure = self.exposure.clone();
+        Ok(out)
     }
 }
 
@@ -291,7 +315,7 @@ pub(crate) fn cfg(policy: Policy) -> LoopConfig {
     }
 }
 
-fn make_loop(
+pub(crate) fn make_loop(
     storage: &Arc<Storage>,
     bot: BotId,
     fake: &Arc<Fake>,
@@ -328,7 +352,7 @@ pub(crate) async fn until(
     }
 }
 
-fn tool_messages(req: &ChatRequest) -> Vec<String> {
+pub(crate) fn tool_messages(req: &ChatRequest) -> Vec<String> {
     req.messages
         .iter()
         .filter(|m| m.role == MessageRole::Tool)
@@ -336,7 +360,7 @@ fn tool_messages(req: &ChatRequest) -> Vec<String> {
         .collect()
 }
 
-fn t<T>(x: &Arc<T>) -> &Arc<T> {
+pub(crate) fn t<T>(x: &Arc<T>) -> &Arc<T> {
     x
 }
 
@@ -524,7 +548,7 @@ async fn ask_then_deny_tells_model_and_skips_tool() {
     let msgs = tool_messages(&fake.request(1));
     assert_eq!(msgs.len(), 1);
     assert!(
-        msgs[0].contains("denied by the user") && msgs[0].contains("too risky"),
+        msgs[0].contains("not authorized") && msgs[0].contains("too risky"),
         "{msgs:?}"
     );
     assert_eq!(
@@ -613,7 +637,8 @@ async fn web_fetch_asks_by_default_and_a_tool_grant_removes_the_prompt() {
         assert!(tool_messages(&fake.request(1))[0].contains("blocked"));
     }
 
-    // "Always allow this tool" for web_extract: the next call does not ask.
+    // The fetches above left the page in this chat. A later fetch still asks,
+    // and a standing grant is not what answers that ask.
     let fake = Fake::new(vec![
         calls(&[("c1", "web_extract", url.clone())]),
         text("one"),
@@ -627,17 +652,19 @@ async fn web_fetch_asks_by_default_and_a_tool_grant_removes_the_prompt() {
     else {
         unreachable!()
     };
-    lp.approve(a.call_id, ApprovalScope::Always, env.user)
+    lp.approve(a.call_id, ApprovalScope::Once, env.user)
         .unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    // The page is now in the chat, so the next fetch is egress after a read.
+    // A tool grant does not waive that ask.
+    let mut rx = lp.subscribe();
     let run2 = lp.run_turn(env.chat, "second").unwrap();
-    assert_eq!(lp.wait(run2).await.unwrap(), RunState::Succeeded);
-    assert_eq!(
-        env.storage.list_approvals(run2).unwrap().len(),
-        0,
-        "a tool-level grant removes the prompt"
-    );
-    assert!(tool_messages(&fake.request(3))[0].contains("blocked"));
+    let Event::ApprovalNeeded(a) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(a.tool_name, "web_extract");
+    lp.cancel(run2).unwrap();
 }
 
 #[tokio::test]
@@ -4428,6 +4455,8 @@ fn gate_loop(env: &Env, fake: &Arc<Fake>) -> AgentLoop {
             effect: Effect::Read,
             category: PermissionCategory::Desktop,
             platforms: vec![Platform::All],
+
+            content: tool_registry::ContentClass::none(),
         },
         gate: Arc::clone(&slot),
     });
@@ -5543,6 +5572,8 @@ fn ask_tool(veto: Option<&'static str>) -> Arc<AskTool> {
             effect: Effect::Write,
             category: PermissionCategory::System,
             platforms: vec![Platform::All],
+
+            content: tool_registry::ContentClass::none(),
         },
         count: Arc::new(AtomicUsize::new(0)),
         veto,
@@ -6433,6 +6464,7 @@ async fn run_computer_probe(
             effect: Effect::Read,
             category: PermissionCategory::Fs,
             platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
         },
         control: crate::control::LoopControl {
             sh: Arc::downgrade(&lp.sh),
@@ -6593,6 +6625,7 @@ async fn waiting_for_pc_pauses_cancels_and_resumes_when_pc_comes_online() {
             effect: Effect::Read,
             category: PermissionCategory::Fs,
             platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
         },
         control: crate::control::LoopControl {
             sh: Arc::downgrade(&lp.sh),
@@ -6762,6 +6795,7 @@ async fn computer_resolution_stays_fixed_across_resume() {
             effect: Effect::Read,
             category: PermissionCategory::Fs,
             platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
         },
         control: crate::control::LoopControl {
             sh: Arc::downgrade(&lp.sh),
@@ -6863,6 +6897,9 @@ async fn resumed_pc_never_switches_node_or_falls_back_before_provider_install() 
             role: "user".into(),
             content: "resume safely".into(),
             created_at_ms: now_ms(),
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: Vec::new(),
         })
         .unwrap();
     lp.sh.bind_computer(run, &resolved).unwrap();
@@ -7192,6 +7229,9 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             role: "user".into(),
             content: "resume safely".into(),
             created_at_ms: now_ms(),
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: Vec::new(),
         })
         .unwrap();
     lp.rt.pause_queued(run, None).unwrap();
@@ -7221,6 +7261,9 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             ALTER TABLE runs DROP COLUMN paused_at_ms;
             ALTER TABLE runs DROP COLUMN computer_target;
             ALTER TABLE runs DROP COLUMN pause_reason;
+            ALTER TABLE messages DROP COLUMN exposure_untrusted;
+            ALTER TABLE messages DROP COLUMN exposure_private;
+            ALTER TABLE messages DROP COLUMN exposure_sources;
             PRAGMA user_version = 3;",
         )
         .unwrap();
@@ -8101,6 +8144,79 @@ computer = \"browser\"
     assert_eq!(row.computer_node, None);
 }
 
+fn child_spec() -> Value {
+    json!({
+        "task": "t", "context": "", "tools": ["fs_read"],
+        "max_steps": 4, "token_budget": 0, "depth": 1, "spawn_key": "0:c1"
+    })
+}
+
+#[tokio::test]
+async fn a_resumed_child_must_carry_its_parents_computer_placement() {
+    let env = setup();
+    let fake = Fake::new(vec![text("never")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        profile("[runtime]\ncomputer = \"browser\"\n"),
+        cfg(Policy::full()),
+    );
+    let provider = Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    });
+    lp.set_computer_provider(provider);
+    let bot_profile = lp.sh.profile_for(env.bot).unwrap();
+    let resolved = lp.sh.resolve_computer_for_run(&bot_profile, None);
+    let parent = lp
+        .rt
+        .create_run(env.user, env.bot, Some(env.chat), "turn")
+        .unwrap();
+    lp.sh.bind_computer(parent, &resolved).unwrap();
+    let child_of = |parent| {
+        lp.rt
+            .create_child_run(
+                env.user,
+                env.bot,
+                Some(env.chat),
+                "turn:subagent",
+                Some(parent),
+                Some(child_spec()),
+            )
+            .unwrap()
+    };
+    let row = |id| env.storage.get_run(id).unwrap().unwrap();
+
+    // No stored target: fails closed even though the parent is valid.
+    let child = child_of(parent);
+    let err = lp.sh.ctx(&row(child)).err().expect("NULL target must fail");
+    assert!(err.to_string().contains("identity is unknown"), "{err}");
+
+    // A stored target that is not the parent's.
+    lp.sh
+        .storage
+        .bind_run_computer(child, "pc", Some("some-other-node"), Some("Other"))
+        .unwrap();
+    let err = lp.sh.ctx(&row(child)).err().expect("mismatch must fail");
+    assert!(err.to_string().contains("does not match"), "{err}");
+
+    // A direct resume of that child fails the run instead of using the parent's computer.
+    lp.rt.pause_queued(child, None).unwrap();
+    lp.resume(child).unwrap();
+    assert_eq!(lp.wait(child).await.unwrap(), RunState::Failed);
+    assert_eq!(fake.n_requests(), 0);
+
+    // The same placement as the parent's (what a newly created child gets) is accepted.
+    let good = child_of(parent);
+    lp.sh.bind_computer(good, &resolved).unwrap();
+    assert!(lp.sh.ctx(&row(good)).is_ok());
+}
+
 // ---------- @mention answers in the same chat ----------
 
 #[tokio::test]
@@ -8180,6 +8296,18 @@ preset = \"read-only\"
         env.bot
     );
     assert_eq!(read.count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // Atlas's reply is untrusted data for the owner's bot: its next run starts
+    // exposed through the same taint state the egress gate reads.
+    let second_run = env.storage.get_run(second).unwrap().unwrap();
+    assert!(
+        lp.sh
+            .ctx(&second_run)
+            .unwrap()
+            .taint
+            .lock()
+            .exposure
+            .is_tainted()
+    );
     // `@Atlas` inside the owner bot's own answer started nothing.
     assert_eq!(env.storage.list_runs(env.user).unwrap().len(), 2);
 }

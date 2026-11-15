@@ -258,6 +258,8 @@ async fn poll_trigger(
                     effect: Effect::Read,
                     raw_command: String::new(),
                     input,
+                    content: builtin_tools::classify("fs_list")
+                        .unwrap_or_else(tool_registry::ContentClass::unspecified),
                 })
                 .await
                 .map_err(exec_err)?;
@@ -430,6 +432,7 @@ mod c225_tests {
                     data: json!({"messages":self.messages.lock().clone()}),
                 }],
                 spill: None,
+                exposure: None,
             })
         }
     }
@@ -464,6 +467,7 @@ mod c225_tests {
                 effect: Effect::Read,
                 category: PermissionCategory::Messaging,
                 platforms: vec![Platform::All],
+                content: tool_registry::ContentClass::none(),
             },
             messages: parking_lot::Mutex::new(vec![]),
             calls: parking_lot::Mutex::new(vec![]),

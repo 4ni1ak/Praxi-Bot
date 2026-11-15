@@ -29,6 +29,21 @@ pub enum ContentPart {
     Binary { mime_type: String, base64: String },
 }
 
+/// Trust of a tool output, recorded by daemon code.
+///
+/// This is not read back from the bytes shown to the model. A tool sets it
+/// when the output's trust is not the tool's own declared class (discovery
+/// returning someone else's description, for example).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputExposure {
+    /// The output contains untrusted text.
+    pub ingests_untrusted: bool,
+    /// The output contains private data.
+    pub reads_private: bool,
+    /// Short source label for an approval card. Empty means the caller picks one.
+    pub label: String,
+}
+
 /// The result of a successful tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolOutput {
@@ -39,6 +54,10 @@ pub struct ToolOutput {
     /// If the full output exceeded the in-memory budget, the remainder was
     /// written to a temporary file and a pointer is returned here.
     pub spill: Option<SpillRef>,
+    /// Trust of this output when it differs from the tool's declared class.
+    /// `None` means "use the spec". Never derived from [`Self::content`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<OutputExposure>,
 }
 
 impl ToolOutput {
@@ -47,6 +66,7 @@ impl ToolOutput {
         Self {
             content: vec![ContentPart::Text { text: text.into() }],
             spill: None,
+            exposure: None,
         }
     }
 }
@@ -63,6 +83,9 @@ pub struct ToolContext {
     /// MCP servers with a `bots` allowlist refuse a call whose id is missing
     /// or not listed. `None` here is not "every bot".
     pub bot_id: Option<String>,
+    /// The run has already read untrusted or private content. A skill saved
+    /// from this call is stored as untrusted data, not as a trusted instruction.
+    pub content_tainted: bool,
 }
 
 impl Default for ToolContext {
@@ -71,6 +94,7 @@ impl Default for ToolContext {
             run_id: String::new(),
             max_inline_bytes: 1024 * 1024, // 1 MiB
             bot_id: None,
+            content_tainted: false,
         }
     }
 }
@@ -107,12 +131,6 @@ pub struct StandingGrant {
 pub trait Tool: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
-
-    /// Daemon-owned provenance for a call that actually starts executing.
-    /// This sideband must never be inferred from model-visible result bytes.
-    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
-        None
-    }
 
     /// Host-derived per-bot egress classification, when it differs from a
     /// static tool declaration. `None` keeps the native gate's static/default
@@ -163,6 +181,21 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Host the call actually contacts when the input does not name one.
+    ///
+    /// `OpenAPI` tools use this so the card footer shows the API host, not the
+    /// operation name. `None` leaves the card's own host text.
+    fn egress_host(&self, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Lines the tool itself adds to the outgoing text: a default browser
+    /// profile, the search backend that will be used, a skill body that is
+    /// not in the arguments. Empty when the input already shows everything.
+    fn egress_extra(&self, _ctx: &ToolContext, _input: &Value) -> Option<String> {
+        None
+    }
+
     /// Like [`Tool::always_ask`] but decided from this call's input: a call
     /// that types an owner-stored secret must be confirmed every time, however
     /// permissive the policy, grants, read shortcuts or presets are. Only an
@@ -190,12 +223,6 @@ pub trait Tool: Send + Sync {
 pub trait ToolWrapper: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
-
-    /// Forward the wrapped tool's provenance when available. Wrapping a tool
-    /// does not itself establish that private or untrusted content was read.
-    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
-        None
-    }
 
     /// Forward the wrapped tool's dynamic egress classification.
     fn egress_for(&self, bot_id: Option<&str>) -> Option<bool>;
@@ -240,10 +267,6 @@ impl<W: ToolWrapper> Tool for W {
         ToolWrapper::spec(self)
     }
 
-    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
-        ToolWrapper::output_provenance(self)
-    }
-
     fn egress_for(&self, bot_id: Option<&str>) -> Option<bool> {
         ToolWrapper::egress_for(self, bot_id)
     }
@@ -285,6 +308,8 @@ impl<W: ToolWrapper> Tool for W {
 mod delegation_guard {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
+
+    use crate::ContentClass;
 
     use syn::visit::{self, Visit};
     use syn::{
@@ -879,6 +904,8 @@ impl Tool for W {
                 effect: Effect::Write,
                 category: PermissionCategory::System,
                 platforms: vec![protocol::Platform::All],
+
+                content: ContentClass::none(),
             },
             closed: Arc::clone(&closed),
         });
@@ -893,10 +920,6 @@ impl Tool for W {
             .await
             .expect("the inner standing grant is forwarded");
         assert_eq!(grant.id, "g1");
-        assert!(
-            wrapped.output_provenance().is_none(),
-            "a wrapper must not invent private-content exposure for an ordinary tool"
-        );
         wrapped.approval_closed(
             &crate::ToolContext::default(),
             &serde_json::json!({}),

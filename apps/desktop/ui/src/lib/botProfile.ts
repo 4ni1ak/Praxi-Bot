@@ -45,6 +45,8 @@ export interface BotDraft {
   fallback: string;
   preset: PresetChoice;
   categories: Record<PermissionCategoryName, PermissionLevel>;
+  /** Per-bot waiver of the egress gate. Default off. */
+  allowEgressAfterReads: boolean;
   computer: "local";
   browser: "local";
   /** File access: "This computer" (default) or "Folder only". */
@@ -189,6 +191,7 @@ export function draftFromBot(bot?: Bot): BotDraft {
     fallback: fallback.join(", "),
     preset,
     categories,
+    allowEgressAfterReads: perms.allow_egress_after_reads === true,
     computer: "local",
     browser: "local",
     files: filesFromConfig(obj(cfg.files))
@@ -265,7 +268,7 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
   // PUT replaces the whole profile. Identity/model edits must retain the exact
   // policy, including inheritance, limits and per-initiator overrides that the
   // simple form cannot edit. Only an explicit preset choice resets the policy.
-  let permissions = old.permissions;
+  let permissions: unknown = old.permissions;
   if (!initial || draft.preset !== initial.preset || changedCategories.length > 0) {
     if (draft.preset === "custom") {
       const previous = obj(old.permissions);
@@ -278,6 +281,19 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
       permissions = { preset: draft.preset };
     }
   }
+  // The checkbox is not part of the preset. Write it when it is on, or when
+  // the stored profile already has the key, so turning it off sticks. Leaving
+  // it off an inherited profile does not invent a permissions object.
+  const hadEgressFlag = Object.hasOwn(obj(old.permissions), "allow_egress_after_reads");
+  const permissionsOut: Json | undefined =
+    permissions === undefined && !draft.allowEgressAfterReads && !hadEgressFlag
+      ? undefined
+      : {
+          ...obj(permissions),
+          ...(draft.allowEgressAfterReads || hadEgressFlag
+            ? { allow_egress_after_reads: draft.allowEgressAfterReads }
+            : {})
+        };
 
   // `files` is written only when the form changed it: the daemon validates the
   // folders, and an untouched value keeps the stored one.
@@ -302,7 +318,7 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
     ...old,
     bot: botSection,
     models,
-    ...(permissions === undefined ? {} : { permissions }),
+    ...(permissionsOut === undefined ? {} : { permissions: permissionsOut }),
     ...(files === undefined ? {} : { files }),
     ...(runtime === undefined ? {} : { runtime })
   };

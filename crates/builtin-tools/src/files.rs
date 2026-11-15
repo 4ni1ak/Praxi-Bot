@@ -306,6 +306,35 @@ pub struct FsTool {
     shared: Arc<Shared>,
 }
 
+/// Apply the same daemon boundary to local writers hosted outside this crate.
+/// The lexical, resolved and opened identities are all checked, including a
+/// missing leaf reached through a symlink. No credential/root check is waived.
+/// # Errors
+/// Unsafe/unverifiable path or a destination under the daemon data directory.
+pub fn check_daemon_write(data_dir: &Path, raw: &str) -> Result<(), ToolError> {
+    let data_dir = canonical_data_dir(data_dir);
+    let lexical = lexical_absolute(raw)?;
+    let drives = DriveCache::new();
+    let ctx = ResolveCtx {
+        follow: Follow::Write,
+        roots: &[],
+        drives: &drives,
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = resolve_local(&lexical, &ctx)?;
+    let opened = final_identity(&resolved)?;
+    if [&lexical, &resolved, &opened]
+        .iter()
+        .any(|p| under_daemon_data(p, &data_dir).is_some() || under_native_cli_authority(p))
+    {
+        return Err(denied(
+            "local writers cannot modify daemon data or native CLI configuration",
+        ));
+    }
+    Ok(())
+}
+
 /// Build all file tools; `data_dir` hosts checkpoints and spill files.
 ///
 /// UNC paths, device paths, and credential files are refused. No root limit
@@ -1389,6 +1418,53 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
     }
 }
 
+/// Native providers can load persistent instructions and configuration outside
+/// Praxi's data directory. These stores have no taint marker protocol, so file
+/// tools and shell-free writers must never modify them or their sidecars.
+fn native_cli_authority_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for home in [std::env::var_os("HOME"), std::env::var_os("USERPROFILE")]
+        .into_iter()
+        .flatten()
+        .filter(|home| !home.is_empty())
+    {
+        let home = PathBuf::from(home);
+        roots.extend([
+            home.join(".codex"),
+            home.join(".claude"),
+            home.join(".claude.json"),
+        ]);
+    }
+    for variable in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+        if let Some(root) = std::env::var_os(variable).filter(|root| !root.is_empty()) {
+            roots.push(PathBuf::from(root));
+        }
+    }
+    // Normalize syntax here; under_daemon_data widens and resolves the root
+    // at the point of comparison, including aliases created after startup.
+    let mut roots: Vec<_> = roots
+        .into_iter()
+        .filter_map(|root| lexical_absolute(&root.to_string_lossy()).ok())
+        .collect();
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn under_native_cli_authority(path: &Path) -> bool {
+    let path = widen_for_compare(path);
+    let parts: Vec<_> = norm_parts(&path)
+        .iter()
+        .map(|s| canonical_name(s))
+        .collect();
+    if let Some(hit) = cached_native(&parts) {
+        return hit;
+    }
+    native_cli_authority_roots()
+        .iter()
+        .any(|root| under_authority_parts(&parts, root).is_some())
+}
+
 /// Whether `root` must not be handed out as a whole folder (for example to a
 /// filesystem MCP server): it is, contains or lies inside the daemon's data
 /// directory, or it is or contains a credential-named entry on its own path.
@@ -1447,115 +1523,232 @@ fn widen_for_compare(path: &Path) -> PathBuf {
     }
 }
 
+/// The daemon directory is an authority boundary, not an extensible denylist.
+/// Only inert output stores may be read by file tools. All other current and
+/// future locations (including the root itself) are protected by default.
 fn under_data_sensitive(path: &Path, data_dir: &Path) -> bool {
+    under_daemon_data(path, data_dir).is_some_and(|rel| {
+        !rel.first().is_some_and(|name| {
+            matches!(
+                name.as_str(),
+                "checkpoints" | "files" | "spill" | "screenshots" | "logs"
+            )
+        })
+    })
+}
+
+fn under_daemon_data(path: &Path, data_dir: &Path) -> Option<Vec<String>> {
     let path = widen_for_compare(path);
-    let data_dir = widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
-    let p = norm_parts(&path);
-    let d = norm_parts(&data_dir);
-    if p.len() <= d.len() || p[..d.len()] != d[..] {
-        return false;
-    }
-    // Windows resolves a trailing dot or space and `:stream` / `::$DATA` to the
-    // same file, so names are compared canonically (on every platform: a
-    // lexical match is cheap and conservative).
-    let rel: Vec<String> = p[d.len()..]
+    let parts: Vec<_> = norm_parts(&path)
         .iter()
-        .map(|part| canonical_name(part))
+        .map(|s| canonical_name(s))
         .collect();
-    let Some(base) = rel.last().map(String::as_str) else {
-        return false;
+    match cached_data_relative(&parts, data_dir) {
+        DataHit::Inside(relative) => Some(relative),
+        DataHit::Outside => None,
+        DataHit::Miss => under_authority_parts(&parts, data_dir),
+    }
+}
+
+/// Protected roots for one top-level file operation. Directory walks compare
+/// component lists; they do not re-read the environment or re-canonicalize
+/// the data directory for every entry.
+struct RootParts {
+    configured: Vec<String>,
+    referent: Option<Vec<String>>,
+    widened: Vec<String>,
+}
+
+struct Authority {
+    data_dir: PathBuf,
+    data: RootParts,
+    native: Vec<RootParts>,
+}
+
+fn component_parts(path: &Path) -> Vec<String> {
+    norm_parts(path).iter().map(|s| canonical_name(s)).collect()
+}
+
+fn root_parts(root: &Path) -> RootParts {
+    RootParts {
+        configured: component_parts(root),
+        referent: authority_referent(root).map(|path| component_parts(&path)),
+        widened: component_parts(&canonical_data_dir(root)),
+    }
+}
+
+fn relative_to(path: &[String], root: &RootParts) -> Option<Vec<String>> {
+    let relative = |dir: &[String]| {
+        (path.len() >= dir.len() && path[..dir.len()] == *dir).then(|| path[dir.len()..].to_vec())
     };
-    // Directly under the data dir only: these names are ordinary elsewhere.
-    base == "devices.json"
-        || base == "peer-node"
-        || rel.iter().any(|s| s == "vault" || s == "secrets")
-        || rel
-            .first()
-            .is_some_and(|first| DAEMON_STATE_DIRS.contains(&first.as_str()))
-        || (rel.len() == 1 && daemon_state_name(base))
+    if let Some(relative) = relative(&root.configured) {
+        return Some(relative);
+    }
+    if let Some(referent) = &root.referent {
+        if let Some(relative) = relative(referent) {
+            return Some(relative);
+        }
+        if root.configured == *referent {
+            return None;
+        }
+    }
+    relative(&root.widened)
 }
 
-/// Compare-form of one path component: no `:stream` suffix, no trailing dots or
-/// spaces, lower case.
+thread_local! {
+    static AUTHORITY: RefCell<Option<Authority>> = const { RefCell::new(None) };
+}
+
+struct AuthorityGuard {
+    armed: bool,
+}
+
+impl Drop for AuthorityGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            AUTHORITY.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+}
+
+fn enter_authority(data_dir: &Path) -> AuthorityGuard {
+    AUTHORITY.with(|slot| {
+        let mut guard = slot.borrow_mut();
+        if guard
+            .as_ref()
+            .is_some_and(|auth| same_path(&auth.data_dir, data_dir))
+        {
+            return AuthorityGuard { armed: false };
+        }
+        *guard = Some(Authority {
+            data_dir: data_dir.to_path_buf(),
+            data: root_parts(data_dir),
+            native: native_cli_authority_roots()
+                .into_iter()
+                .map(|root| root_parts(&root))
+                .collect(),
+        });
+        AuthorityGuard { armed: true }
+    })
+}
+
+enum DataHit {
+    Miss,
+    Outside,
+    Inside(Vec<String>),
+}
+
+fn cached_data_relative(parts: &[String], data_dir: &Path) -> DataHit {
+    AUTHORITY.with(|slot| {
+        let guard = slot.borrow();
+        let Some(auth) = guard.as_ref() else {
+            return DataHit::Miss;
+        };
+        if !same_path(&auth.data_dir, data_dir) {
+            return DataHit::Miss;
+        }
+        match relative_to(parts, &auth.data) {
+            Some(relative) => DataHit::Inside(relative),
+            None => DataHit::Outside,
+        }
+    })
+}
+
+fn cached_native(parts: &[String]) -> Option<bool> {
+    AUTHORITY.with(|slot| {
+        let guard = slot.borrow();
+        let auth = guard.as_ref()?;
+        Some(
+            auth.native
+                .iter()
+                .any(|root| relative_to(parts, root).is_some()),
+        )
+    })
+}
+
+fn under_authority_parts(p: &[String], data_dir: &Path) -> Option<Vec<String>> {
+    let parts = |root: &Path| {
+        norm_parts(root)
+            .iter()
+            .map(|s| canonical_name(s))
+            .collect::<Vec<_>>()
+    };
+    let relative =
+        |d: &[String]| (p.len() >= d.len() && p[..d.len()] == *d).then(|| p[d.len()..].to_vec());
+    // Keep the configured spelling protected as well as its referent: deleting
+    // the configured link would let a later writer replace it with a plain dir.
+    let configured = parts(data_dir);
+    if let Some(relative) = relative(&configured) {
+        return Some(relative);
+    }
+    if let Some(referent) = authority_referent(data_dir) {
+        let referent = parts(&referent);
+        if let Some(relative) = relative(&referent) {
+            return Some(relative);
+        }
+        if configured == referent {
+            // The configured path already is its canonical spelling. Avoid
+            // walking all its ancestors again for every directory-tree entry.
+            return None;
+        }
+    }
+    // A junction object's long name can differ from both its configured 8.3
+    // spelling and its referent. Keep that third spelling protected too.
+    let widened = canonical_data_dir(data_dir);
+    relative(&parts(&widened))
+}
+
+/// Follow only the trusted, host-configured data root, never a tool's path.
+/// A root created after tool construction can have an aliased existing ancestor.
+fn authority_referent(data_dir: &Path) -> Option<PathBuf> {
+    let mut ancestor = data_dir.to_path_buf();
+    let mut missing = Vec::new();
+    loop {
+        match fs::canonicalize(&ancestor) {
+            Ok(mut root) => {
+                for name in missing.iter().rev() {
+                    root.push(name);
+                }
+                #[cfg(windows)]
+                {
+                    return normalize_final(&root).ok();
+                }
+                #[cfg(not(windows))]
+                {
+                    return Some(root);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing.push(ancestor.file_name()?.to_os_string());
+                ancestor = ancestor.parent()?.to_path_buf();
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 fn canonical_name(part: &str) -> String {
-    let base = part.split(':').next().unwrap_or(part);
-    base.trim_end_matches([' ', '.']).to_ascii_lowercase()
+    part.split(':')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches([' ', '.'])
+        .to_ascii_lowercase()
 }
 
-/// Directories under the data dir whose contents grant authority or are the
-/// daemon's own records, so the bot's file tools never touch them:
-/// `peer` (pairing keys and device list), `bots` and `profiles` (bot profiles
-/// and their policies), `runs` (the event logs the UI and replay trust).
-/// Deliberately NOT protected, with the reason: `skills` and `workflows`
-/// (the bot authors them on purpose), `checkpoints` (the file tools' own undo
-/// store), `files`, `spill` and `screenshots` (bot output), logs (no authority).
-const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
-
-/// The daemon's own state files directly under the data dir, each one a file
-/// that grants authority or forges history if tampered with:
-/// - `bot.db`, `schedules.db`, `memory.db` (+ `-wal`/`-shm`/`-journal`):
-///   chats, approvals, audit, schedules that run unattended, memory.
-/// - `control-latch.json` (the takeover latch and its release journal) and
-///   `policy.json` (the global permission policy).
-/// - `host.toml` (leader/epoch), `config.toml` (peer networking), `mcp.toml`
-///   (servers the daemon launches), `providers.toml` (where model traffic
-///   goes), `web.toml` (web tool limits).
-/// - `telegram_state.json` and `telegram-inbox.jsonl` (which chats may command
-///   the bot, and what they sent).
-/// - `email.toml` (mail server targets and secret references: tampering would
-///   redirect a stored password) and `email-secret-cleanup.json` (pending
-///   secret deletions after an account change).
-/// - `schedule.toml` (limits for bot-created schedules).
-/// - `fill-secrets.json` (the allowed origins / programs and standing grants of
-///   the owner's fill secrets: editing it would widen where a secret is typed).
-/// - `knowledge-host.json` (pins the native embedding library path and SHA),
-///   `knowledge-authority.db` (owner egress grants) and `knowledge-runtime.db`
-///   (embedding quota/cooldown ledger), with the same sidecars.
-/// - the atomic-write temp files (`.tmp*`) of any of them.
-///
-/// Deliberately NOT listed: `skills.lock.json` / `skills-usage.json` (counters
-/// and a lockfile for bot-writable skills; no authority) and logs.
-fn daemon_state_name(base: &str) -> bool {
-    const DATABASES: [&str; 5] = [
-        "bot.db",
-        "schedules.db",
-        "memory.db",
-        "knowledge-authority.db",
-        "knowledge-runtime.db",
-    ];
-    const FILES: [&str; 16] = [
-        "control-latch.json",
-        "view-privileges.json",
-        "policy.json",
-        "host.toml",
-        "config.toml",
-        "mcp.toml",
-        "providers.toml",
-        "composio.toml",
-        "web.toml",
-        "telegram_state.json",
-        "telegram-inbox.jsonl",
-        "email.toml",
-        "email-secret-cleanup.json",
-        "schedule.toml",
-        "fill-secrets.json",
-        "knowledge-host.json",
-    ];
-    base.starts_with("composio.toml.tmp")
-        || base.starts_with("composio.toml.bak")
-        || DATABASES.iter().any(|s| {
-            base == *s
-                || base
-                    .strip_prefix(s)
-                    .is_some_and(|rest| matches!(rest, "-wal" | "-shm" | "-journal"))
-        })
-        || FILES.iter().any(|s| {
-            base == *s
-                || base
-                    .strip_prefix(s)
-                    .is_some_and(|rest| matches!(rest, ".tmp" | ".bak"))
-        })
-        || base.starts_with(".tmp")
+/// Even an exact credential grant cannot authorize changing daemon behaviour.
+/// Output is readable, but only its owning daemon subsystem writes it.
+fn validate_mutation(sh: &Shared, raw: &str, resolved: &Path) -> Result<(), ToolError> {
+    let lexical = lexical_absolute(raw)?;
+    if under_daemon_data(&lexical, &sh.data_dir).is_some()
+        || under_daemon_data(resolved, &sh.data_dir).is_some()
+        || under_native_cli_authority(&lexical)
+        || under_native_cli_authority(resolved)
+    {
+        return Err(denied(
+            "file tools cannot modify daemon data or native CLI configuration; use the owning tool or user interface",
+        ));
+    }
+    Ok(())
 }
 
 /// A protected path is readable only when that path itself is granted.
@@ -1816,7 +2009,10 @@ fn hard_denied(path: &Path) -> bool {
 
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
     hard_denied(path)
-        || (is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path)))
+        || (is_protected(path, data_dir)
+            && (under_data_sensitive(path, data_dir)
+                || under_native_cli_authority(path)
+                || !grants.iter().any(|g| grant_matches(g, path))))
 }
 
 /// Exact path, or the same file under its 8.3 and long names.
@@ -2209,6 +2405,7 @@ fn with_checkpoint_gate<T>(sh: &Shared, f: impl FnOnce() -> T) -> T {
         });
     });
     let _clear = ClearGate;
+    let _auth = enter_authority(&sh.data_dir);
     f()
 }
 
@@ -2480,7 +2677,11 @@ pub(crate) fn vet_checkpoint_write(path: &Path) -> io::Result<()> {
     if !policy.roots.is_empty() && !roots_contain(&policy.roots, &opened) {
         return Err(deny_io(ROOT_MSG));
     }
-    if protected_paths(&[&lexical, &resolved, &opened], &policy) {
+    if [&lexical, &resolved, &opened]
+        .iter()
+        .any(|p| under_daemon_data(p, &policy.data_dir).is_some() || under_native_cli_authority(p))
+        || protected_paths(&[&lexical, &resolved, &opened], &policy)
+    {
         return Err(deny_io(GRANT_MSG));
     }
     Ok(())
@@ -2652,6 +2853,7 @@ pub(crate) fn remove_tree_skip_protected(
     data_dir: &Path,
     grants: &[PathBuf],
 ) -> io::Result<()> {
+    let _auth = enter_authority(data_dir);
     if entry_is_protected(path, data_dir, grants)? {
         return Ok(());
     }
@@ -2726,6 +2928,7 @@ pub(crate) fn remove_checkpoint_target(path: &Path) -> io::Result<()> {
 }
 
 fn has_protected_descendant(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> io::Result<bool> {
+    let _auth = enter_authority(data_dir);
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -2856,6 +3059,7 @@ impl<'a, F: Fn(&Path, &Path) -> io::Result<()>> MoveTransaction<'a, F> {
     }
 
     fn move_path(&mut self, from: &Path, to: &Path) -> io::Result<()> {
+        let _auth = enter_authority(&self.sh.data_dir);
         if entry_is_protected(from, &self.sh.data_dir, &self.sh.grants)? {
             return Ok(());
         }
@@ -3376,6 +3580,7 @@ fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
     let mutation_lock = file_mutations(&sh.data_dir);
     let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Write)?;
+    validate_mutation(sh, &i.path, &p)?;
     let (cp, note) = sh.checkpoint(run, "fs_write", &[(Path::new(&i.path), &p)])?;
     if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| exec_err(format!("create dirs: {e}")))?;
@@ -3396,14 +3601,15 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
         return Err(ToolError::InvalidInput("old must not be empty".into()));
     }
     let p = validate_path(sh, &i.path, Follow::Content)?;
+    validate_mutation(sh, &i.path, &p)?;
     let text = read_text(&p)?;
     let n = text.matches(&i.old).count();
     if n == 0 {
-        return Err(exec_err("old text not found; read the file again"));
+        return Err(exec_err("edit failed: old text not found"));
     }
     if n > 1 && !i.replace_all {
         return Err(exec_err(format!(
-            "old text matches {n} times; add more context or set replace_all"
+            "edit failed: old text matches {n} times; include more context or set replace_all"
         )));
     }
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
@@ -3441,6 +3647,8 @@ fn do_move_with(
     let result = (|| {
         let from = validate_path(sh, &i.from, Follow::Entry)?;
         let to = validate_path(sh, &i.to, Follow::Place)?;
+        validate_mutation(sh, &i.from, &from)?;
+        validate_mutation(sh, &i.to, &to)?;
         // Cheap preflight first: a rejected move must not copy the
         // destination into a checkpoint or leave an empty receipt behind.
         if fs::symlink_metadata(&from).is_err() {
@@ -3496,6 +3704,7 @@ fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> 
     let mutation_lock = file_mutations(&sh.data_dir);
     let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Entry)?;
+    validate_mutation(sh, &i.path, &p)?;
     let meta = fs::symlink_metadata(&p).map_err(|e| exec_err(format!("{}: {e}", i.path)))?;
     if meta.is_dir() && !meta.file_type().is_symlink() && !i.recursive {
         return Err(exec_err(format!(
@@ -3643,6 +3852,7 @@ mod tests {
             run_id: "run-1".into(),
             max_inline_bytes: 1 << 20,
             bot_id: None,
+            content_tainted: false,
         }
     }
 
@@ -3813,6 +4023,8 @@ mod tests {
 
     #[test]
     fn cli_configuration_and_credentials_are_protected_even_in_broad_roots() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
         let dir = tempfile::tempdir().unwrap();
         for path in [
             ".claude/settings.json",
@@ -3833,13 +4045,21 @@ mod tests {
             "AppData/Local/opencode/auth.json",
             ".CODEX. /auth.json",
         ] {
-            assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
+            assert!(
+                is_protected(&dir.path().join(path), outside.path()),
+                "{path}"
+            );
         }
-        assert!(!is_protected(&dir.path().join("report.txt"), dir.path()));
+        assert!(!is_protected(
+            &dir.path().join("report.txt"),
+            outside.path()
+        ));
     }
 
     #[test]
     fn repositories_named_like_a_cli_are_not_blocked() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
         let dir = tempfile::tempdir().unwrap();
         for path in [
             "code/opencode/src/main.rs",
@@ -3852,7 +4072,7 @@ mod tests {
             "a/.config/other/opencode/x",
         ] {
             assert!(
-                !is_protected(&dir.path().join(path), dir.path()),
+                !is_protected(&dir.path().join(path), outside.path()),
                 "{path} must stay usable"
             );
         }
@@ -3877,7 +4097,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn cli_executable_directories_are_protected() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
         const FIXTURE: &str = "PRAXI_C250_BIN_DIR_FIXTURE";
         if let Some(root) = std::env::var_os(FIXTURE) {
             let root = PathBuf::from(root);
@@ -3895,10 +4118,13 @@ mod tests {
                 "xdg-config/opencode/opencode.json",
                 "xdg-data/opencode/auth.json",
             ] {
-                assert!(is_protected(&root.join(path), &root), "{path}");
+                assert!(is_protected(&root.join(path), outside.path()), "{path}");
             }
-            assert!(!is_protected(&root.join("docs/claude.md"), &root));
-            assert!(!is_protected(&root.join(".local/other/claude"), &root));
+            assert!(!is_protected(&root.join("docs/claude.md"), outside.path()));
+            assert!(!is_protected(
+                &root.join(".local/other/claude"),
+                outside.path()
+            ));
             return;
         }
         let root = tempfile::tempdir().unwrap();
@@ -3974,7 +4200,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn cli_custom_config_paths_are_protected() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
         const FIXTURE: &str = "PRAXI_C250_CONFIG_PATH_FIXTURE";
         const OVERRIDES: &[&str] = &[
             "CODEX_HOME",
@@ -3987,10 +4216,13 @@ mod tests {
             let root = PathBuf::from(root);
             for key in OVERRIDES {
                 let private = root.join(key);
-                assert!(is_protected(&private, &root), "{key}");
-                assert!(is_protected(&private.join("settings.json"), &root), "{key}");
+                assert!(is_protected(&private, outside.path()), "{key}");
                 assert!(
-                    !is_protected(&root.join(format!("{key}-other")), &root),
+                    is_protected(&private.join("settings.json"), outside.path()),
+                    "{key}"
+                );
+                assert!(
+                    !is_protected(&root.join(format!("{key}-other")), outside.path()),
                     "{key}"
                 );
             }
@@ -4485,6 +4717,8 @@ mod tests {
             canonical_data_dir(&short).display(),
             long.display()
         );
+        assert!(under_daemon_data(&long, &short).is_some());
+        assert!(under_daemon_data(&real.join("skills/x/SKILL.md"), &short).is_some());
     }
 
     #[test]
@@ -4691,7 +4925,13 @@ mod tests {
             .call(&c, json!({"path": file, "old": "x", "new": "y"}))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("2 times"));
+        let missed = get(&t, "fs_edit")
+            .call(&c, json!({"path": file, "old": "zzz", "new": "y"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("matches 2 times"));
+        assert!(missed.to_string().contains("not found"));
+        assert!(get(&t, "fs_edit").spec().content.reads_private);
         get(&t, "fs_edit")
             .call(
                 &c,
@@ -4700,11 +4940,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "y y");
-        let err = get(&t, "fs_edit")
-            .call(&c, json!({"path": file, "old": "zzz", "new": "y"}))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
@@ -5055,6 +5290,184 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn daemon_directory_alias_cannot_bypass_authority_boundary() {
+        let base = tempfile::tempdir().unwrap();
+        let real = base.path().join("real-data");
+        fs::create_dir_all(real.join("skills/x")).unwrap();
+        let file = real.join("skills/x/SKILL.md");
+        fs::write(&file, "original").unwrap();
+        let alias = base.path().join("configured-data");
+        link_dir(&real, &alias).expect("local data-directory alias");
+        let alias_tools = tools(&alias);
+        for (name, input) in [
+            ("fs_write", json!({"path": file, "content": "forged"})),
+            ("fs_delete", json!({"path": alias, "recursive": true})),
+        ] {
+            let error = get(&alias_tools, name)
+                .call(&ctx(), input)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, ToolError::PermissionDenied(_)),
+                "{name}: {error}"
+            );
+        }
+        assert_eq!(fs::read_to_string(file).unwrap(), "original");
+        assert!(alias.exists());
+        assert!(
+            check_daemon_write(&alias, &real.join("workflows/new.toml").to_string_lossy()).is_err()
+        );
+
+        // Construction may precede creation of the daemon directory, with a
+        // configured ancestor already aliased. Protect its eventual referent.
+        let delayed = alias.join("later/data");
+        let delayed_tools = tools(&delayed);
+        let eventual = real.join("later/data/skills/x/SKILL.md");
+        fs::create_dir_all(eventual.parent().unwrap()).unwrap();
+        fs::write(&eventual, "original").unwrap();
+        let error = get(&delayed_tools, "fs_write")
+            .call(&ctx(), json!({"path": eventual, "content": "forged"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ToolError::PermissionDenied(_)), "{error}");
+        assert!(check_daemon_write(&delayed, &eventual.to_string_lossy()).is_err());
+        assert_eq!(fs::read_to_string(eventual).unwrap(), "original");
+    }
+
+    /// Inventory of stores later consumed as authority. The future-store case
+    /// asserts default denial so adding a new store does not require this list
+    /// to keep the boundary secure.
+    #[tokio::test]
+    async fn all_trusted_locations_reject_file_mutations_even_with_exact_grants() {
+        let (d, w, _) = setup();
+        let mut c = ctx();
+        c.content_tainted = true;
+        for relative in [
+            "skills/x/SKILL.md",
+            "skills/x/.praxi-untrusted",
+            "skills.lock.json",
+            "skills-usage.json",
+            "workflows/morning.toml",
+            "workflows/index.json",
+            "router/a.sqlite",
+            "bots/a/profile.toml",
+            "bots/a/skills/x/SKILL.md",
+            "profiles/a.toml",
+            "persona.md",
+            "bot.db",
+            "bot.db-wal",
+            "memory.db",
+            "memory.db-shm",
+            "schedules.db",
+            "schedule.toml",
+            "mcp.toml",
+            "cli-settings.json",
+            "plugins/x/config.toml",
+            "providers.toml",
+            "web.toml",
+            "email.toml",
+            "email-secret-cleanup.json",
+            "config.toml",
+            "policy.json",
+            "host.toml",
+            "control-latch.json",
+            "peer/devices.json",
+            "peer/identity.key",
+            "devices.json",
+            "peer-node",
+            "vault/state",
+            "secrets/state",
+            "telegram_state.json",
+            "telegram-inbox.jsonl",
+            "channels.toml",
+            "runs/history.json",
+            "notes/instructions.md",
+            "browsers/a/Preferences",
+            "checkpoints/forged.json",
+            "files/forged.txt",
+            "spill/forged.txt",
+            "screenshots/forged.png",
+            "logs/forged.log",
+            "future-trusted-store/instructions",
+        ] {
+            let file = d.path().join(relative);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, "original").unwrap();
+            let t = tools_bounded(d.path(), &[], std::slice::from_ref(&file));
+            let source = w.path().join("source.txt");
+            fs::write(&source, "replacement").unwrap();
+            for (name, input) in [
+                ("fs_write", json!({"path": file, "content": "forged"})),
+                (
+                    "fs_edit",
+                    json!({"path": file, "old": "original", "new": "forged"}),
+                ),
+                (
+                    "fs_move",
+                    json!({"from": source, "to": file, "overwrite": true}),
+                ),
+                (
+                    "fs_move",
+                    json!({"from": file, "to": source, "overwrite": true}),
+                ),
+                ("fs_delete", json!({"path": file})),
+            ] {
+                let error = get(&t, name).call(&c, input).await.unwrap_err();
+                assert!(
+                    matches!(error, ToolError::PermissionDenied(_)),
+                    "{relative} {name}: {error}"
+                );
+                assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_into_a_trusted_store_cannot_launder_file_writes() {
+        let (d, w, t) = setup();
+        let skills = d.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        let link = w.path().join("alias");
+        std::os::unix::fs::symlink(&skills, &link).unwrap();
+        let error = get(&t, "fs_write")
+            .call(
+                &ctx(),
+                json!({"path": link.join("SKILL.md"), "content": "forged"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ToolError::PermissionDenied(_)), "{error}");
+        assert!(!skills.join("SKILL.md").exists());
+    }
+
+    #[tokio::test]
+    async fn native_cli_authority_is_protected_without_touching_user_files() {
+        let (d, _w, _t) = setup();
+        let sh = shared_with(d.path(), Vec::new());
+        // Use the host's actual configured roots, but stop at validation:
+        // no file contents in those roots are read or modified by this test.
+        let roots = native_cli_authority_roots();
+        assert_ne!(roots.len(), 0, "host must provide a home/config root");
+        for root in roots {
+            for path in [
+                root.clone(),
+                root.join("config.toml"),
+                root.join("skills/x/SKILL.md"),
+            ] {
+                assert!(is_protected(&path, d.path()), "{}", path.display());
+                assert!(protected_ungranted(
+                    &path,
+                    d.path(),
+                    std::slice::from_ref(&path)
+                ));
+                assert!(validate_mutation(&sh, &path.to_string_lossy(), &path).is_err());
+                assert!(check_daemon_write(d.path(), &path.to_string_lossy()).is_err());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn daemon_state_files_in_the_data_dir_are_protected_for_read_and_write() {
         let (d, w, t) = setup();
         let c = ctx();
@@ -5281,10 +5694,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_state_directories_are_protected_but_bot_authored_ones_are_not() {
+    async fn daemon_state_directories_default_to_protected() {
         let (d, _w, t) = setup();
         let c = ctx();
-        for dir in ["peer", "bots", "profiles", "runs"] {
+        for dir in [
+            "peer",
+            "bots",
+            "profiles",
+            "runs",
+            "skills",
+            "workflows",
+            "future-trusted-store",
+        ] {
             let file = d.path().join(dir).join("x.toml");
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, "secret").unwrap();
@@ -5305,8 +5726,8 @@ mod tests {
                 "{dir}: {err}"
             );
         }
-        // Bot-authored by design (skills, workflows) or bot output: ordinary.
-        for dir in ["skills", "workflows", "screenshots", "files"] {
+        // Inert output stays readable.
+        for dir in ["screenshots", "files", "spill", "logs"] {
             let file = d.path().join(dir).join("note.txt");
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, "ok").unwrap();
@@ -5338,7 +5759,7 @@ mod tests {
                 "{spelled:?} must resolve to a protected name"
             );
         }
-        assert!(!is_protected(
+        assert!(is_protected(
             &d.path().join("data.").join("notes.txt:stream"),
             &data
         ));
@@ -5369,7 +5790,7 @@ mod tests {
             &d.path().join("bots. ").join("a.toml"),
             d.path()
         ));
-        assert!(!is_protected(&d.path().join("notes.txt."), d.path()));
+        assert!(is_protected(&d.path().join("notes.txt."), d.path()));
     }
 
     #[tokio::test]
@@ -5565,6 +5986,7 @@ mod tests {
                 run_id: "run-1".into(),
                 max_inline_bytes: 1 << 20,
                 bot_id: None,
+                content_tainted: false,
             };
             async move { reader.call(&c, json!({"path": p})).await }
         };
@@ -6031,12 +6453,12 @@ mod tests {
         let notes = data.path().join("notes.txt");
         let envf = data.path().join(".env");
         let token = data.path().join("api-token");
-        let sh = shared_with(data.path(), vec![notes.clone()]);
+        let sh = shared_with(&data.path().join("daemon"), vec![notes.clone()]);
         assert!(
             credential_blocked(&sh, &notes, &envf),
             "a grant of the lexical path must not authorize a resolved .env"
         );
-        let sh_env = shared_with(data.path(), vec![envf.clone()]);
+        let sh_env = shared_with(&data.path().join("daemon"), vec![envf.clone()]);
         assert!(
             credential_blocked(&sh_env, &envf, &token),
             "a grant of .env must not authorize api-token"
@@ -6660,7 +7082,8 @@ mod tests {
         fs::write(data.join("peer-node"), secret).unwrap();
         fs::write(data.join("vault").join("note.txt"), secret).unwrap();
         fs::write(data.join("secrets").join("note.txt"), secret).unwrap();
-        fs::write(data.join("notes.txt"), "ordinary").unwrap();
+        fs::create_dir(data.join("files")).unwrap();
+        fs::write(data.join("files/notes.txt"), "ordinary").unwrap();
         let short = win_fs::short_path(&data).unwrap();
         assert_ne!(
             short
@@ -6695,7 +7118,7 @@ mod tests {
         }
         let ok = text(
             &get(&t, "fs_read")
-                .call(&c, json!({"path": data.join("notes.txt")}))
+                .call(&c, json!({"path": data.join("files/notes.txt")}))
                 .await
                 .unwrap(),
         );
@@ -6880,11 +7303,12 @@ mod c225_watch_tests {
     #[test]
     fn c225_watch_glob_roots_and_metadata_only() {
         let root = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         fs::write(root.path().join("a.txt"), "private content never returned").unwrap();
         fs::write(root.path().join("b.csv"), "also private").unwrap();
         let files = watch_snapshot(
-            root.path(),
+            data.path(),
             &[root.path().to_path_buf()],
             &root.path().to_string_lossy(),
             "*.txt",
@@ -6895,29 +7319,30 @@ mod c225_watch_tests {
         assert!(!format!("{files:?}").contains("private content"));
         assert!(
             watch_snapshot(
-                root.path(),
+                data.path(),
                 &[root.path().to_path_buf()],
                 &outside.path().to_string_lossy(),
                 "*"
             )
             .is_err()
         );
-        assert!(watch_snapshot(root.path(), &[], &root.path().to_string_lossy(), "*").is_err());
+        assert!(watch_snapshot(data.path(), &[], &root.path().to_string_lossy(), "*").is_err());
     }
     #[cfg(unix)]
     #[test]
     fn c225_watch_never_follows_root_intermediate_or_descendant_symlinks() {
         let root = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         fs::write(outside.path().join("hidden.txt"), "never read").unwrap();
         std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
         let roots = [root.path().to_path_buf()];
         let files =
-            watch_snapshot(root.path(), &roots, &root.path().to_string_lossy(), "**/*").unwrap();
+            watch_snapshot(data.path(), &roots, &root.path().to_string_lossy(), "**/*").unwrap();
         assert!(files.is_empty());
         assert!(
             watch_snapshot(
-                root.path(),
+                data.path(),
                 &roots,
                 &root.path().join("link").to_string_lossy(),
                 "*"
@@ -6929,7 +7354,7 @@ mod c225_watch_tests {
         std::os::unix::fs::symlink(root.path().join("real"), root.path().join("internal")).unwrap();
         assert!(
             watch_snapshot(
-                root.path(),
+                data.path(),
                 &roots,
                 &root.path().join("internal").to_string_lossy(),
                 "*"
@@ -6940,7 +7365,7 @@ mod c225_watch_tests {
         // check alone cannot enforce the watcher's no-traversal guarantee.
         assert!(
             watch_snapshot(
-                root.path(),
+                data.path(),
                 &roots,
                 &root.path().join("internal/nested").to_string_lossy(),
                 "*"

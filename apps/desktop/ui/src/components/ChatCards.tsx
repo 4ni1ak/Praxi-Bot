@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { CalendarClock, Clock, ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -15,10 +15,14 @@ import {
   type ToolItem
 } from "../state/timeline";
 import {
+  computerDetails,
+  egressDetails,
+  payloadReviewComplete,
   appActionDetails,
   formatFiring,
   brainDetails,
   scheduleDetails,
+  type EgressApprovalDetails,
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
 import { brandIcon } from "../lib/brandIcons";
@@ -244,6 +248,60 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
   );
 }
 
+function EgressApprovalBody({ d, onReviewed }: {
+  d: EgressApprovalDetails;
+  onReviewed: (payload: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [expandedPayload, setExpandedPayload] = useState<string | null>(null);
+  const expanded = expandedPayload === d.payload;
+  const view = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (view.current && payloadReviewComplete(expanded, view.current)) onReviewed(d.payload);
+  }, [expanded, d.payload, onReviewed]);
+  const kind = d.payloadKind === "query" || d.payloadKind === "url" ? d.payloadKind : "body";
+  return (
+    <div data-testid="approval-egress">
+      <p className={styles.bodyLabel}>{t("chat.approval.egress.host", { host: d.host })}</p>
+      {d.read.length > 0 ? (
+        <p className={styles.bodyLabel}>
+          {t("chat.approval.egress.read", { list: d.read.join(", ") })}
+        </p>
+      ) : null}
+      <span className={styles.bodyLabel}>{t(`chat.approval.egress.payload.${kind}`)}</span>
+      {d.payloadLines != null && d.payloadChars != null ? (
+        <p className={styles.bodyLabel}>
+          {t("chat.approval.egress.size", {
+            lines: d.payloadLines,
+            chars: d.payloadChars,
+            hidden: d.hiddenChars ?? 0
+          })}
+        </p>
+      ) : null}
+      {d.reviewFullPayload ? (
+        <>
+          <p className={styles.bodyLabel}>{t("chat.approval.egress.large", { bytes: d.payloadBytes ?? 0 })}</p>
+          <Button size="sm" variant="secondary" onClick={() => setExpandedPayload(d.payload)}>
+            {t("chat.approval.egress.reviewFull")}
+          </Button>
+        </>
+      ) : null}
+      {!d.reviewFullPayload || expanded ? (
+        <pre
+          ref={view}
+          className={[styles.egressCode, d.reviewFullPayload ? styles.fullPayload : ""].join(" ")}
+          tabIndex={0}
+          onScroll={(event) => {
+            if (payloadReviewComplete(expanded, event.currentTarget)) onReviewed(d.payload);
+          }}
+        >
+          {d.payload}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
 export function ApprovalCard({
   tool,
   onDecide,
@@ -256,6 +314,10 @@ export function ApprovalCard({
   const outbound = isOutboundSend(tool.name);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const egress = egressDetails(tool.details);
+  const computer = computerDetails(tool.details);
+  const [reviewedPayload, setReviewedPayload] = useState<string | null>(null);
+  const reviewPending = egress?.reviewFullPayload && reviewedPayload !== egress.payload;
   const app = appActionDetails(tool.details);
   const brain = brainDetails(tool.details);
   const unrenderable =
@@ -332,7 +394,9 @@ export function ApprovalCard({
           </>
         ) : (
           <>
-            <p className={styles.approvalSummary}>{tool.summary ?? tool.name}</p>
+            <p className={styles.approvalSummary}>
+              {egress?.reason || tool.summary || tool.name}
+            </p>
             <div className={styles.approvalMeta}>
               <span className={styles.approvalTool}>{tool.name}</span>
               <span className={styles.inputSummary}>
@@ -341,11 +405,21 @@ export function ApprovalCard({
             </div>
           </>
         )}
+        {computer && (egress || schedule) ? (
+          <p className={styles.bodyLabel} data-testid="approval-computer">
+            {t("chat.approval.computer", {
+              kind: computer.kind,
+              name: computer.name,
+              id: computer.nodeId
+            })}
+          </p>
+        ) : null}
+        {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
         <div className={styles.actions}>
           <Button
             size="sm"
             variant="primary"
-            disabled={disabled || unrenderable}
+            disabled={disabled || reviewPending || unrenderable}
             onClick={() => void decide("approve", "once")}
           >
             {isSendTool(tool.name)

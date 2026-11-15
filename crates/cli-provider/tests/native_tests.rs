@@ -46,6 +46,7 @@ fn turn() -> Turn {
             effect: Effect::Read,
             category: PermissionCategory::Fs,
             platforms: vec![],
+            content: tool_registry::ContentClass::none(),
         }],
     }
 }

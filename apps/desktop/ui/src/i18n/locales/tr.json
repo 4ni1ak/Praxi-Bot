@@ -362,6 +362,19 @@
         },
         "note": "Bu onay yalnızca bu değişikliği kapsar; her seferinde sorulur."
       },
+      "egress": {
+        "large": "Bu içerik kısa kartta incelenemeyecek kadar büyük ({{bytes}} bayt). Onaylamadan önce tam metni açıp sonuna kadar kaydırın.",
+        "reviewFull": "İçeriğin tamamını incele",
+        "host": "Hedef: {{host}}",
+        "read": "Bu çalışma şunu okudu: {{list}}",
+        "payload": {
+          "query": "Giden sorgu (tamamı gösterilir):",
+          "url": "Giden adres (tamamı gösterilir):",
+          "body": "Giden veri (tamamı gösterilir):"
+        },
+        "size": "{{lines}} satır, {{chars}} karakter, {{hidden}} yazdırılmayan karakter <U+XXXX> olarak gösterilir"
+      },
+      "computer": "Bu işlem {{kind}} \"{{name}}\" üzerinde çalışır (kimlik {{id}}).",
       "app": {
         "arguments": "Tüm bağımsız değişkenleri göster ({{count}} karakter)",
         "footer": "Composio üzerinden. Yalnızca bu eylemi yukarıdaki tüm bağımsız değişkenlerle onaylayın."
@@ -785,6 +798,10 @@
     },
     "executorRequired": "Yürütücü model gerekli.",
     "permissions": "İzinler",
+    "allowEgressAfterReads": {
+      "title": "Bu bot bir şey okuduktan sonra veri göndermesine izin ver",
+      "hint": "Varsayılan kapalıdır. Bir araç izni bunu açmaz. Kapalıyken, dosya, posta kutusu, sayfa veya başka özel ya da güvenilmeyen içerik okumuş bir çalışma, bu makineden veri göndermeden önce sormak zorundadır."
+    },
     "preset": {
       "read-only": {
         "name": "Salt okunur",

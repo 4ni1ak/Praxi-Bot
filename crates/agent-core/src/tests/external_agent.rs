@@ -124,6 +124,12 @@ fn legacy_child(lp: &AgentLoop, env: &Env) -> (RunId, RunId) {
             })),
         )
         .unwrap();
+    // A resumed child must carry its parent's stored computer placement.
+    let placement = lp
+        .sh
+        .resolve_computer_for_run(&lp.sh.profile_for(env.bot).unwrap(), None);
+    lp.sh.bind_computer(root, &placement).unwrap();
+    lp.sh.bind_computer(child, &placement).unwrap();
     env.storage.update_run_state(child, "paused", None).unwrap();
     lp.resume(child).unwrap();
     (root, child)
