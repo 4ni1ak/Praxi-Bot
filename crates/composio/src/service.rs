@@ -794,7 +794,9 @@ impl ComposioService {
         args: &Value,
     ) -> Result<(ActionInfo, String)> {
         if !self.app_visible_to(app, ctx.bot_id.as_deref()) {
-            return Err(ComposioError::NotFound("app is not connected and enabled for this bot".into()));
+            return Err(ComposioError::NotFound(
+                "app is not connected and enabled for this bot".into(),
+            ));
         }
         self.refresh(app).await?;
         let a = self.action(app, action, ctx.bot_id.as_deref()).await?;

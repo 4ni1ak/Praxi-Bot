@@ -566,8 +566,15 @@ async fn controls_foreign_parents_and_unknown_kinds_never_reach_discovery_or_exe
             before,
             "forbidden toolkit reached upstream: {app}"
         );
-        assert!(h.registry.get("apps_run_action").unwrap().approval_details(&ctx(), &json!({"app":app,"action":"execute_tool"})).await.is_err());
-        assert_eq!(h.server.received_requests().await.unwrap().len(),before);
+        assert!(
+            h.registry
+                .get("apps_run_action")
+                .unwrap()
+                .approval_details(&ctx(), &json!({"app":app,"action":"execute_tool"}))
+                .await
+                .is_err()
+        );
+        assert_eq!(h.server.received_requests().await.unwrap().len(), before);
 
         assert!(h.svc.find(app, "", None).await.is_err());
         assert!(

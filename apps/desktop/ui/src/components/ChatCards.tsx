@@ -99,7 +99,7 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
           {open ? "▾" : "▸"}
         </span>
         <span className={styles.toolName}>
-          {subagent ? `${t("chat.tool.subagent")} �· ` : ""}
+          {subagent ? `${t("chat.tool.subagent")} · ` : ""}
           {tool.name}
         </span>
         <span className={styles.inputSummary}>
@@ -196,7 +196,7 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
         <div className={styles.scheduleWas} data-testid="approval-schedule-previous">
           <span className={styles.bodyLabel}>{t("chat.approval.schedule.was")}</span>
           <span>
-            {d.previous.name} �· {d.previous.schedule}
+            {d.previous.name} · {d.previous.schedule}
             {d.previous.timezone ? ` (${d.previous.timezone})` : ""}
           </span>
           <pre className={styles.code}>{d.previous.prompt}</pre>
@@ -219,7 +219,7 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
           <Clock size={14} aria-hidden="true" />
           <span>
             {t("chat.approval.schedule.next")}{" "}
-            {d.nextRuns.map((r) => formatFiring(r, i18n.language)).join(" �· ")}
+            {d.nextRuns.map((r) => formatFiring(r, i18n.language)).join(" · ")}
           </span>
         </div>
       ) : null}
