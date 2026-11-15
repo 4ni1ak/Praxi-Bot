@@ -1,7 +1,7 @@
-import { BellDot, ChevronDown, FlaskConical, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
+import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
 import { isMockMode } from "./api/mockMode";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -66,6 +66,8 @@ import { usePanelReserve } from "./state/usePanelReserve";
 import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
+import { useBotReorder } from "./components/useBotReorder";
+import { setBotOrderSnapshot } from "./store/botOrderStore";
 import { computerScopePlan } from "./lib/hostState";
 import { ComputerPicker } from "./components/ComputerPicker";
 import { HostStateBanner } from "./components/HostStateBanner";
@@ -311,6 +313,18 @@ function AppShell() {
       return next;
     });
   };
+
+  // Sidebar order: settings hold the ids, the daemon context sorts `bots` with them (top = main bot).
+  useEffect(() => {
+    setBotOrderSnapshot(settings.botOrder);
+  }, [settings.botOrder]);
+  const [orderNote, setOrderNote] = useState("");
+  const botIds = useMemo(() => bots.map((b) => b.id), [bots]);
+  const reorder = useBotReorder(
+    botIds,
+    (botOrder) => updateSettings({ botOrder }),
+    (id, pos) => setOrderNote(t("sidebar.reorderMoved", { name: bots.find((b) => b.id === id)?.name ?? "", pos }))
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -600,6 +614,8 @@ function AppShell() {
             ) : null}
           </SidebarHeader>
           <SidebarSection>
+            <span className={styles.srOnly} role="status" aria-live="polite">{orderNote}</span>
+            <div ref={reorder.containerRef} className={styles.botList}>
             {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={() => setRoute({ kind: "needs" })}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
             {bots.filter(bot => bot.name.toLowerCase().includes((botSearch ?? "").toLowerCase())).map((bot) => {
               const view = botView(bot);
@@ -608,11 +624,19 @@ function AppShell() {
               const live = runs.find(r => r.bot_id === bot.id && ["running", "pending", "waiting_approval"].includes(r.state));
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
               const avatarState = state === "thinking" || state === "working" || state === "waiting-approval" || state === "error" ? state : "idle";
-              return <SidebarItem key={bot.id} className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => latest ? openChat(latest.id) : setRoute({ kind: "bot", botId: bot.id })}>
-                <BotAvatar bot={view} size="md" state={avatarState} decorative />
-                <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
-              </SidebarItem>;
+              const index = botIds.indexOf(bot.id);
+              const canReorder = botSearch === null || botSearch === "";
+              const drag = reorder.drag;
+              const dropEdge = drag && drag.id !== bot.id && drag.over === index ? (drag.over < drag.from ? "before" : "after") : undefined;
+              return <div key={bot.id} className={styles.botRow} data-dragging={drag?.id === bot.id ? "true" : undefined} data-drop={dropEdge} {...(canReorder ? reorder.rowProps(bot.id) : { "data-bot-id": bot.id })}>
+                <SidebarItem className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => latest ? openChat(latest.id) : setRoute({ kind: "bot", botId: bot.id })}>
+                  <BotAvatar bot={view} size="md" state={avatarState} decorative />
+                  <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}{index === 0 && botIds.length > 1 ? <span className={styles.mainMark} title={t("sidebar.mainBotHint")}><Star aria-hidden="true" />{t("sidebar.mainBot")}</span> : null}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
+                </SidebarItem>
+                {canReorder && !mini && botIds.length > 1 ? <button type="button" className={styles.grip} aria-label={t("sidebar.reorderBot", { name: view.name })} title={t("sidebar.reorderHint")} {...reorder.gripProps(bot.id)}><GripVertical aria-hidden="true" /></button> : null}
+              </div>;
             })}
+            </div>
           </SidebarSection>
 
           <SidebarFooter className={styles.railFoot}>

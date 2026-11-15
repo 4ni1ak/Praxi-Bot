@@ -28,6 +28,8 @@ import {
   liveRunIds
 } from "../lib/hostState";
 import { markRemoteBaseUrl } from "../lib/liveViewState";
+import { orderBots } from "../lib/botOrder";
+import { useBotOrder } from "../store/botOrderStore";
 import {
   applyEvent,
   EMPTY_EVENTS,
@@ -157,7 +159,9 @@ type DaemonData = Pick<
 function useDaemonData(conn: Connection | null): DaemonData {
   const [health, setHealth] = useState<Health | null>(null);
   const [eventsConnected, setEventsConnected] = useState(false);
-  const [bots, setBots] = useState<Bot[]>([]);
+  const [rawBots, setBots] = useState<Bot[]>([]);
+  const botOrder = useBotOrder();
+  const bots = useMemo(() => orderBots(rawBots, botOrder), [rawBots, botOrder]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [events, dispatch] = useReducer(reducer, EMPTY_EVENTS);
