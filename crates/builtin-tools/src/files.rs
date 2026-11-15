@@ -3105,6 +3105,7 @@ mod tests {
             max_inline_bytes: 1 << 20,
             bot_id: None,
             content_tainted: false,
+            control_guard: None,
         }
     }
 
@@ -4750,6 +4751,7 @@ mod tests {
                 max_inline_bytes: 1 << 20,
                 bot_id: None,
                 content_tainted: false,
+                control_guard: None,
             };
             async move { reader.call(&c, json!({"path": p})).await }
         };

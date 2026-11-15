@@ -6,7 +6,7 @@
 //! * When the accessibility tree is `Weak`, the state also lists OCR text boxes
 //!   with set-of-marks numbers; `index: "mark:<n>"` clicks a mark by coordinates.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,14 +15,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use desktop_api::snapshot::AppSpec;
 use desktop_api::{
-    Action, ClickMethod, CoordinateSpace, DesktopBackend, DesktopError, Quality, Region, Snapshot,
-    Target, TreeQuality, render_snapshot,
+    ActGuard, Action, ClickMethod, CoordinateSpace, DesktopBackend, DesktopError, Quality, Region,
+    Snapshot, Target, TreeQuality, render_snapshot,
 };
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tool_registry::{
-    Effect, PermissionCategory, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
+    ControlIdentity, ControlKind, ControlTarget, Effect, PermissionCategory, Tool, ToolContext,
+    ToolError, ToolOutput, ToolSpec,
 };
 use tracing::Instrument as _;
 use vision::{BoundingBox, OcrEngine};
@@ -102,6 +103,8 @@ struct State {
     marks: BTreeMap<u32, (f64, f64)>,
     /// Element index to its label and on-screen bounds (for the control gate).
     targets: BTreeMap<u32, (String, Option<ControlRect>)>,
+    /// Indexes of password fields in the last observation (`secure` state).
+    secure: BTreeSet<u32>,
 }
 
 /// A small capped map of per-run states (LRU eviction: touch on every use).
@@ -434,10 +437,19 @@ impl Shared {
         run_id: &str,
         action: Action,
         permit: &ActionPermit,
+        guard: Option<&ActGuard>,
     ) -> Result<String, ToolError> {
         let backend = self.backend(run_id)?;
+        let guard = guard.cloned();
         let res = permit
-            .protect(async move { backend.act(action).await })
+            .protect(async move {
+                match guard {
+                    // Covered by a run-scoped control grant: the backend checks
+                    // the window right before the OS call and may refuse.
+                    Some(g) => backend.act_guarded(action, g).await,
+                    None => backend.act(action).await,
+                }
+            })
             .await
             .map_err(exec_err)?
             .map_err(|e| derr(&e))?;
@@ -480,6 +492,11 @@ impl Shared {
                 st.generation = Some(snap.generation);
                 st.observation_epoch = observation_epoch;
                 st.marks.clear();
+                st.secure = rendered_nodes
+                    .iter()
+                    .filter(|n| n.states.iter().any(|s| s == "secure"))
+                    .map(|n| n.index)
+                    .collect();
                 st.targets = rendered_nodes
                     .iter()
                     .map(|n| {
@@ -955,15 +972,130 @@ fn window_line(w: &desktop_api::WindowInfo) -> String {
     )
 }
 
+/// The backend guard for a program the loop named in `ToolContext::control_guard`.
+fn act_guard_for(id: &ControlIdentity) -> ActGuard {
+    ActGuard {
+        expect: desktop_api::ProcessIdentity {
+            image_path: id.image_path.clone(),
+            pid: id.pid,
+            start_time: id.start_time,
+        },
+    }
+}
+
+/// Window title for a card: no control characters, bounded.
+fn card_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(120)
+        .collect()
+}
+
 impl DesktopTool {
+    /// The kind of input this tool sends, for the four tools a run-scoped
+    /// control grant can ever cover. Click and scroll are not input in that
+    /// sense and have no target.
+    fn control_kind(&self) -> Option<ControlKind> {
+        match self.op {
+            Op::Type => Some(ControlKind::Type),
+            Op::SetValue => Some(ControlKind::SetValue),
+            Op::Key => Some(ControlKind::Key),
+            Op::Drag => Some(ControlKind::Drag),
+            _ => None,
+        }
+    }
+
+    /// Resolve, before the permission decision, which program this call would
+    /// send input to. `None` when the backend cannot name a program (Linux,
+    /// macOS, a remote computer): no grant is offered and the call behaves as
+    /// without this feature. The chord, password-field and window-class
+    /// verdicts are carried as `refusal`; the backend checks them again right
+    /// before it sends.
+    async fn resolve_control_target(&self, run_id: &str, input: &Value) -> Option<ControlTarget> {
+        let kind = self.control_kind()?;
+        let sh = &self.shared;
+        let backend = sh.backend(run_id).ok()?;
+        let secure_ref = |v: &Value| -> bool {
+            match parse_ref(v) {
+                Ok(ElementRef::Index(i)) => sh
+                    .state
+                    .lock()
+                    .get(run_id)
+                    .is_some_and(|st| st.secure.contains(&i)),
+                _ => false,
+            }
+        };
+        let mut refusal: Option<String> = None;
+        let mut focus_matters = false;
+        match self.op {
+            Op::Key => {
+                match input.get("keys").map(parse_keys) {
+                    Some(Ok(keys)) => {
+                        if let Some(r) = backend.key_chord_refusal(&keys) {
+                            refusal = Some(r.code().to_owned());
+                        }
+                    }
+                    _ => refusal = Some(desktop_api::Refusal::Chord.code().to_owned()),
+                }
+                match input.get("index") {
+                    Some(idx) if !idx.is_null() => {
+                        if secure_ref(idx) {
+                            refusal.get_or_insert_with(|| {
+                                desktop_api::Refusal::PasswordField.code().to_owned()
+                            });
+                        }
+                    }
+                    // No element: the keys go to whatever has the focus.
+                    _ => focus_matters = true,
+                }
+            }
+            Op::Type | Op::SetValue => {
+                if input.get("index").is_some_and(secure_ref) {
+                    refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
+                }
+            }
+            Op::Drag => {
+                if ["from", "to"]
+                    .iter()
+                    .any(|k| input.get(k).is_some_and(secure_ref))
+                {
+                    refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
+                }
+            }
+            _ => {}
+        }
+        let mut t = backend.input_target().await.ok()??;
+        if !focus_matters {
+            t.password_focus = false;
+        }
+        let refusal =
+            refusal.or_else(|| desktop_api::guard::judge(&t).map(|r| r.code().to_owned()));
+        Some(ControlTarget {
+            kind,
+            identity: ControlIdentity {
+                image_path: t.identity.image_path,
+                pid: t.identity.pid,
+                start_time: t.identity.start_time,
+            },
+            window_title: card_title(&t.title),
+            refusal,
+        })
+    }
+
     /// Observation tools discard their result if control changed while they
     /// ran: a screenshot, an OCR pass or a window list that straddles the start
     /// of a human takeover never reaches the model.
-    async fn run(&self, run_id: &str, input: Value) -> Result<String, ToolError> {
+    async fn run(
+        &self,
+        run_id: &str,
+        input: Value,
+        guard: Option<ActGuard>,
+    ) -> Result<String, ToolError> {
         let observing = matches!(self.op, Op::ListApps | Op::GetState);
         let gate = self.shared.control.clone();
         let epoch = gate.as_ref().map(|g| g.observation_epoch());
-        let text = self.run_inner(run_id, input).await?;
+        let text = self.run_inner(run_id, input, guard.as_ref()).await?;
         if let (Some(gate), Some(epoch)) = (gate, epoch) {
             if observing
                 && (gate.observation_epoch() != epoch || gate.observation_refused().is_some())
@@ -981,7 +1113,12 @@ impl DesktopTool {
         Ok(text)
     }
 
-    async fn run_inner(&self, run_id: &str, input: Value) -> Result<String, ToolError> {
+    async fn run_inner(
+        &self,
+        run_id: &str,
+        input: Value,
+        guard: Option<&ActGuard>,
+    ) -> Result<String, ToolError> {
         let sh = &self.shared;
         if matches!(self.op, Op::ListApps | Op::GetState)
             && let Some(message) = sh.control.as_ref().and_then(|g| g.observation_refused())
@@ -1131,7 +1268,7 @@ impl DesktopTool {
                     ));
                 }
                 let head = sh
-                    .act(run_id, Action::Click { target, method }, &permit)
+                    .act(run_id, Action::Click { target, method }, &permit, None)
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
@@ -1166,10 +1303,11 @@ impl DesktopTool {
                         method: ClickMethod::Global,
                     },
                     &permit,
+                    guard,
                 )
                 .await?;
                 let head = sh
-                    .act(run_id, Action::TypeText { text: i.text }, &permit)
+                    .act(run_id, Action::TypeText { text: i.text }, &permit, guard)
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
@@ -1204,6 +1342,7 @@ impl DesktopTool {
                             value: i.value,
                         },
                         &permit,
+                        guard,
                     )
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
@@ -1251,10 +1390,13 @@ impl DesktopTool {
                             method: ClickMethod::Global,
                         },
                         &permit,
+                        guard,
                     )
                     .await?;
                 }
-                let head = sh.act(run_id, Action::KeyPress { keys }, &permit).await?;
+                let head = sh
+                    .act(run_id, Action::KeyPress { keys }, &permit, guard)
+                    .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
             Op::Scroll => {
@@ -1305,6 +1447,7 @@ impl DesktopTool {
                             delta_y: i.dy,
                         },
                         &permit,
+                        None,
                     )
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
@@ -1339,7 +1482,7 @@ impl DesktopTool {
                     ));
                 }
                 let head = sh
-                    .act(run_id, Action::Drag { from, to, method }, &permit)
+                    .act(run_id, Action::Drag { from, to, method }, &permit, guard)
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
@@ -1353,9 +1496,20 @@ impl Tool for DesktopTool {
         &self.spec
     }
 
+    async fn control_target(&self, ctx: &ToolContext, input: &Value) -> Option<ControlTarget> {
+        self.resolve_control_target(&ctx.run_id, input).await
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+        // Only the four input tools take part in a control grant; any other
+        // tool ignores a guard.
+        let guard = if self.control_kind().is_some() {
+            ctx.control_guard.as_ref().map(act_guard_for)
+        } else {
+            None
+        };
         let text = self
-            .run(&ctx.run_id, input)
+            .run(&ctx.run_id, input, guard)
             .instrument(tracing::info_span!(
                 "desktop.tool",
                 tool = %self.spec.name,

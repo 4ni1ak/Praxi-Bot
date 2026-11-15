@@ -1174,6 +1174,7 @@ impl TurnExecutor {
             max_inline_bytes: g.spill_threshold_bytes,
             bot_id: Some(run.bot_id.to_string()),
             content_tainted: ctx.taint.lock().exposure.is_tainted(),
+            control_guard: None,
         };
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.

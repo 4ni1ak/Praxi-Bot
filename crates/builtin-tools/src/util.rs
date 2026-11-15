@@ -166,6 +166,7 @@ mod tests {
             max_inline_bytes: 1001,
             bot_id: None,
             content_tainted: false,
+            control_guard: None,
         };
         let text = "é".repeat(2000);
         let out = finish_text(&ctx, dir.path(), text.clone());
@@ -200,6 +201,7 @@ mod tests {
                     max_inline_bytes: max,
                     bot_id: None,
                     content_tainted: false,
+                    control_guard: None,
                 };
                 let out = finish_text(&ctx, dir.path(), text.clone());
                 assert!(out.spill.is_some());
@@ -220,6 +222,7 @@ mod tests {
             max_inline_bytes: 100,
             bot_id: None,
             content_tainted: false,
+            control_guard: None,
         };
         let out = finish_text(&ctx, &blocker.join("sub"), "é".repeat(500));
         assert!(out.spill.is_none());

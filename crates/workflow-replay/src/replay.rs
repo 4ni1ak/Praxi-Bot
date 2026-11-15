@@ -578,6 +578,7 @@ impl Replayer {
             raw_command: raw_command_for(tool, &input),
             input,
             content,
+            control: None,
         };
         gate.authorize(&req).await.map_err(Stop::Denied)
     }
