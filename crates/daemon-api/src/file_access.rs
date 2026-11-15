@@ -153,8 +153,25 @@ pub(crate) async fn put_files(
         .as_object_mut()
         .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?;
     object.insert("files".into(), value);
-    s.storage().update_bot(bot.id, &bot.name, &bot.config)?;
-    s.refresh_profile(&bot);
+    let (_, version) = s
+        .storage()
+        .get_bot_versioned(bot.id)?
+        .ok_or_else(|| ApiError::not_found("bot"))?;
+    match s
+        .storage()
+        .update_bot(bot.id, &bot.name, &bot.config, version)?
+    {
+        storage::BotPatch::Applied { bot: stored, .. } => {
+            s.refresh_profile(&stored);
+            bot = stored;
+        }
+        storage::BotPatch::Stale { .. } => {
+            return Err(ApiError::conflict(
+                "the bot changed while file access was being saved; retry",
+            ));
+        }
+        _ => return Err(ApiError::not_found("bot")),
+    }
     let host = s.leader().config().mode == crate::host::HostMode::Host;
     Ok(Json(current(&bot, host)))
 }

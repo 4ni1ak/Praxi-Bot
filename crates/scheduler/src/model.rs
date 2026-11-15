@@ -415,13 +415,135 @@ fn substitute_input_in_value(v: &Value, body: &str) -> Value {
 
 /// External event trigger attached to a schedule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Trigger {
-    /// Webhook trigger verified with an HMAC-SHA256 shared secret.
+    /// Poll local filenames and metadata inside explicitly configured roots.
+    FileWatch {
+        /// Local directory inside an explicitly configured workspace root.
+        path: String,
+        /// Relative filename glob; no file content is read.
+        glob: String,
+        /// Changes of interest.
+        events: Vec<FileEvent>,
+        /// Coalesce a burst for this many milliseconds (at most one minute).
+        debounce_ms: u64,
+    },
+    /// Poll INBOX headers through the registered e-mail connector.
+    Email {
+        /// Configured account name (credentials remain in the secret store).
+        account: String,
+        /// Required nonempty sender substring.
+        from_filter: String,
+        /// Optional subject substring.
+        #[serde(default)]
+        subject_filter: Option<String>,
+    },
     Webhook {
         /// Shared secret used to verify `HMAC-SHA256(secret, body)`.
         secret: String,
     },
+}
+
+/// Filesystem events supported by the bounded polling watcher.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileEvent {
+    /// A new directory entry appeared.
+    Created,
+    /// Metadata changed for an existing file.
+    Modified,
+}
+
+impl Trigger {
+    /// Validate definition bounds, independently of the host's permission policy.
+    ///
+    /// # Errors
+    /// An empty/oversized filter, invalid glob or debounce, or empty secret.
+    pub fn validate(&self) -> Result<()> {
+        let valid = match self {
+            Self::Webhook { secret } => !secret.is_empty(),
+            Self::FileWatch {
+                path,
+                glob,
+                events,
+                debounce_ms,
+            } => {
+                !path.trim().is_empty()
+                    && path.len() <= 4096
+                    && !glob.is_empty()
+                    && glob.len() <= 512
+                    && globset::Glob::new(glob).is_ok()
+                    && !events.is_empty()
+                    && events.len() <= 2
+                    && *debounce_ms <= 60_000
+            }
+            Self::Email {
+                account,
+                from_filter,
+                subject_filter,
+            } => {
+                !account.trim().is_empty()
+                    && account.len() <= 256
+                    && !from_filter.trim().is_empty()
+                    && from_filter.len() <= 256
+                    && subject_filter.as_ref().is_none_or(|s| s.len() <= 256)
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(SchedulerError::InvalidSpec(
+                "invalid trigger definition".into(),
+            ))
+        }
+    }
+}
+
+/// A deterministic, read-only condition evaluated before a model run exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Precheck {
+    /// First observation establishes a baseline; only changed output runs.
+    HashChanged {
+        /// Registered Read tool.
+        tool: String,
+        /// Exact input approved with this definition.
+        input: Value,
+    },
+    /// Capability-free `QuickJS` async function body. All tools must be Read.
+    Script {
+        /// Full source, displayed in the schedule approval preview.
+        code: String,
+    },
+}
+
+impl Precheck {
+    /// Reject oversized definitions before persistence or execution.
+    ///
+    /// # Errors
+    /// Invalid name or definition larger than 64 KiB.
+    pub fn validate(&self) -> Result<()> {
+        let valid = match self {
+            Self::HashChanged { tool, input } => {
+                !tool.is_empty() && tool.len() <= 256 && serde_json::to_vec(input)?.len() <= 65_536
+            }
+            Self::Script { code } => {
+                !code.trim().is_empty()
+                    && code.len() <= 65_536
+                    && !code.chars().any(|c| {
+                        protocol::approval_text::is_hidden(c)
+                            || (c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+                    })
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(SchedulerError::InvalidSpec(
+                "invalid precheck definition".into(),
+            ))
+        }
+    }
 }
 
 /// Who created a schedule.
@@ -471,6 +593,15 @@ pub struct Schedule {
     pub spec: ScheduleSpec,
     /// Action executed when triggered (`AgentPrompt`, `Workflow`, or `Tool`).
     pub payload: Payload,
+    /// Optional condition evaluated before creating any agent run.
+    #[serde(default)]
+    pub precheck: Option<Precheck>,
+    /// Ephemeral external data. Never persisted as a trusted schedule prompt.
+    #[serde(skip)]
+    pub external_input: Option<String>,
+    /// Fixed failure note, with no upstream errors or source bytes.
+    #[serde(skip)]
+    pub precheck_failed: bool,
     /// Whether this schedule is active.
     pub enabled: bool,
     /// Creation timestamp (Unix epoch milliseconds).
@@ -522,6 +653,9 @@ impl Schedule {
             name: name.into(),
             spec,
             payload,
+            precheck: None,
+            external_input: None,
+            precheck_failed: false,
             enabled: true,
             created_at: now_ms,
             last_run_at: None,

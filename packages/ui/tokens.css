@@ -125,8 +125,14 @@
   --color-warning-subtle: color-mix(in srgb, var(--color-warning) 10%, #191a1f);
   --color-focus: #7f8084;
   --color-scrollbar: #48494e;
-  --color-selection: color-mix(in srgb, #b6b8fa 35%, #111217);
-  --color-selection-text: #ecedf1;
+  --color-selection: #5e5f63;
+  --color-selection-text: #ffffff;
+  --color-selection-user: #7d7e8b;
+  --color-selection-user-text: #111111;
+  --color-selection-accent: #8586b4;
+  --color-selection-accent-text: #111111;
+  --color-selection-neutral: #5d5e63;
+  --color-selection-neutral-text: #ffffff;
   --color-code-bg: #111217;
   --color-code-text: #ecedf1;
   --color-code-keyword: #b6b8fa;

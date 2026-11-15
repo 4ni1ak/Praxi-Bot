@@ -732,16 +732,16 @@ async fn knowledge_generic_profile_save_cannot_restore_revoked_query_consent() {
         .status,
         StatusCode::OK
     );
-    let mut stale = request(&t, Method::GET, &format!("/v1/bots/{bot}"), None)
+    let loaded = request(&t, Method::GET, &format!("/v1/bots/{bot}"), None)
         .await
-        .json()["config"]
-        .clone();
+        .json();
+    let mut stale = loaded["config"].clone();
     stale["knowledge"] = json!({"auto_retrieve":true,"embedding":{"query_consent":{"profile_fingerprint":"a".repeat(64)}}});
     let result = request(
         &t,
         Method::PUT,
         &format!("/v1/bots/{bot}"),
-        Some(json!({"config":stale})),
+        Some(json!({"expected_version":loaded["version"],"config":stale})),
     )
     .await;
     assert_eq!(result.status, StatusCode::OK, "{}", result.json());

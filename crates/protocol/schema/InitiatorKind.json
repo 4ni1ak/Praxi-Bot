@@ -37,6 +37,20 @@
       "enum": [
         "schedule"
       ]
+    },
+    {
+      "description": "A separately scoped external MCP agent. Never inherits human authority.",
+      "type": "string",
+      "enum": [
+        "external_agent"
+      ]
+    },
+    {
+      "description": "A schedule supplied external trigger/precheck data; every tool needs once-only approval.",
+      "type": "string",
+      "enum": [
+        "external_schedule"
+      ]
     }
   ]
 }

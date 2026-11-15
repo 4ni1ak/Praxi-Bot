@@ -3,9 +3,9 @@
 //! One JSON object per line, schema version [`SCHEMA_VERSION`]:
 //!
 //! ```json
-//! {"schema":1,"ts_ms":0,"tier":1,"name":"repeat-detector","model":"fake/m",
+//! {"schema":2,"ts_ms":0,"tier":1,"name":"repeat-detector","model":"fake/m",
 //!  "success":true,"failures":[],"state":"failed","error":null,"wall_ms":12,
-//!  "llm_calls":5,"input_tokens":50,"output_tokens":25,"cached_tokens":0,
+//!  "llm_calls":5,"llm_calls_by_purpose":{"executor":4,"guard_close":1},"input_tokens":50,"output_tokens":25,"cached_tokens":0,
 //!  "cost_usd":null,"tool_calls":{"t_read":4},
 //!  "perception":{"tree":0,"ocr":0,"grid":0}}
 //! ```
@@ -21,7 +21,7 @@ use crate::Result;
 use crate::harness::TurnTrace;
 
 /// Version of the JSONL record layout.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// How often each rung of the perception ladder was used in a run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +90,9 @@ pub struct RunRecord {
     pub wall_ms: u64,
     /// Number of model calls.
     pub llm_calls: u32,
+    /// Actual invocations by purpose (empty for records predating schema 2).
+    #[serde(default)]
+    pub llm_calls_by_purpose: BTreeMap<String, u32>,
     /// Prompt tokens, summed.
     pub input_tokens: u64,
     /// Completion tokens, summed.
@@ -135,6 +138,7 @@ impl RunRecord {
             error: trace.error.clone(),
             wall_ms: u64::try_from(trace.wall.as_millis()).unwrap_or(u64::MAX),
             llm_calls: trace.llm_calls,
+            llm_calls_by_purpose: trace.llm_calls_by_purpose.clone(),
             input_tokens: trace.input_tokens,
             output_tokens: trace.output_tokens,
             cached_tokens: trace.cached_tokens,
@@ -165,6 +169,7 @@ impl RunRecord {
             error: Some(why),
             wall_ms: 0,
             llm_calls: 0,
+            llm_calls_by_purpose: BTreeMap::new(),
             input_tokens: 0,
             output_tokens: 0,
             cached_tokens: 0,
@@ -210,9 +215,9 @@ pub fn sum_usage<'a>(entries: impl IntoIterator<Item = &'a Value>) -> (u64, u64,
     let (mut i, mut o, mut c) = (0u64, 0u64, 0u64);
     let mut cost: Option<f64> = None;
     for d in entries {
-        i += d["prompt_tokens"].as_u64().unwrap_or(0);
-        o += d["completion_tokens"].as_u64().unwrap_or(0);
-        c += d["cached_tokens"].as_u64().unwrap_or(0);
+        i = i.saturating_add(d["prompt_tokens"].as_u64().unwrap_or(0));
+        o = o.saturating_add(d["completion_tokens"].as_u64().unwrap_or(0));
+        c = c.saturating_add(d["cached_tokens"].as_u64().unwrap_or(0));
         if let Some(x) = d["cost_usd"].as_f64() {
             *cost.get_or_insert(0.0) += x;
         }
@@ -297,6 +302,29 @@ mod tests {
         assert_eq!(sum_usage([&a, &b]), (11, 6, 2, None));
         let c = serde_json::json!({"prompt_tokens": 1, "completion_tokens": 1, "cost_usd": 0.5});
         assert_eq!(sum_usage([&c, &c]).3, Some(1.0));
+    }
+
+    #[test]
+    fn schema_one_records_still_read_and_schema_two_keeps_the_legacy_call_count() {
+        let record = RunRecord::setup_failure(1, "x", "fake/m", "boom".into());
+        assert_eq!(record.schema, 2);
+        let mut old = serde_json::to_value(&record).unwrap();
+        old["schema"] = serde_json::json!(1);
+        old["llm_calls"] = serde_json::json!(7);
+        old.as_object_mut().unwrap().remove("llm_calls_by_purpose");
+        let read: RunRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(read.schema, 1);
+        assert_eq!(read.llm_calls, 7);
+        assert!(read.llm_calls_by_purpose.is_empty());
+        let mut current = record;
+        current.llm_calls = 2;
+        current.llm_calls_by_purpose.insert("executor".into(), 3);
+        current.llm_calls_by_purpose.insert("router".into(), 1);
+        let restored: RunRecord =
+            serde_json::from_value(serde_json::to_value(&current).unwrap()).unwrap();
+        assert_eq!(restored, current);
+        assert_eq!(restored.llm_calls, 2);
+        assert_eq!(restored.llm_calls_by_purpose.values().sum::<u32>(), 4);
     }
 
     #[test]

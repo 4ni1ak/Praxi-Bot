@@ -157,6 +157,12 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
     ) -> Decision {
+        // Scoped admission allows only two active runs per credential. Until
+        // child admission shares that counter, external agents cannot fan out.
+        if ctx.initiator == InitiatorKind::ExternalAgent && name == crate::subagent::SPAWN_SUBAGENT
+        {
+            return Decision::Deny;
+        }
         let mut raw_command = raw_command_for(name, input);
         if raw_command.is_empty() {
             input
@@ -168,7 +174,13 @@ impl Shared {
         let req = ActionRequest {
             category,
             raw_command,
-            initiator: ctx.initiator,
+            // Preserve the bot's existing Human/Schedule policy as well as any new
+            // source-specific restrictions. External authority cannot relax it.
+            initiator: match ctx.initiator {
+                InitiatorKind::ExternalAgent => InitiatorKind::Human,
+                InitiatorKind::ExternalSchedule => InitiatorKind::Schedule,
+                other => other,
+            },
         };
         let r = &self.resolver;
         if self.locked_deny(category) {
@@ -180,13 +192,40 @@ impl Shared {
             None,
             &req,
         );
+        // Resolve the source-specific policy too: a Human/Schedule Allow must
+        // not bypass a base Deny or an explicit source-specific Deny, and the
+        // durable initiator used for external-data isolation cannot relax it.
+        if matches!(
+            ctx.initiator,
+            InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+        ) {
+            let source_req = ActionRequest {
+                category,
+                raw_command: req.raw_command.clone(),
+                initiator: ctx.initiator,
+            };
+            if r.resolve(
+                &self.global_policy.read(),
+                ctx.bot_policy.as_ref(),
+                None,
+                &source_req,
+            ) == Decision::Deny
+            {
+                d = Decision::Deny;
+            }
+        }
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
         // The same holds for a call that types an owner-stored secret
         // ([`Tool::always_ask_for`]): the policy level, the Full preset, read
         // shortcuts, "this chat" / "always" grants and any run-scoped control
         // grant sit BELOW this early return, so none of them can waive it.
-        if self.must_ask(name, input) {
+        if self.must_ask(name, input)
+            || matches!(
+                ctx.initiator,
+                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+            )
+        {
             if d == Decision::Allow {
                 d = Decision::ask();
             }
@@ -211,6 +250,7 @@ impl Shared {
             let g = self.grants.lock();
             g.this_chat.contains(&(
                 ctx.chat_id,
+                ctx.bot_id,
                 name.to_owned(),
                 ctx.tool_grant_scope(name, category),
             )) || g.covers(
@@ -397,7 +437,7 @@ impl Shared {
     }
 
     /// Locked deny-all mode applies to `category`.
-    fn locked_deny(&self, category: PermissionCategory) -> bool {
+    pub(crate) fn locked_deny(&self, category: PermissionCategory) -> bool {
         category != PermissionCategory::Meta
             && self.policy_locked.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -513,7 +553,10 @@ impl Shared {
         ctx: &RunCtx,
         rx: oneshot::Receiver<Verdict>,
     ) -> Option<Result<Verdict, oneshot::error::RecvError>> {
-        if ctx.initiator != InitiatorKind::Schedule {
+        if !matches!(
+            ctx.initiator,
+            InitiatorKind::Schedule | InitiatorKind::ExternalSchedule
+        ) {
             return Some(rx.await);
         }
         let limit = self.cfg.schedule_approval_timeout;
@@ -565,10 +608,18 @@ impl Shared {
                     .into(),
             ));
         }
-        let once_only = details.is_some() || must_ask;
+        let once_only = details.is_some()
+            || must_ask
+            || matches!(
+                ctx.initiator,
+                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+            );
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
-        let prefix = computer_approval(ctx, name, category, &mut details);
+        let mut prefix = computer_approval(ctx, name, category, &mut details);
+        if ctx.initiator == InitiatorKind::ExternalAgent {
+            prefix.push_str("[External agent: approve once only] ");
+        }
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
         let parked_at = policy_revision(self);
@@ -832,7 +883,11 @@ impl ExecPermit {
             .storage
             .decide_approval(self.approval_id, "approved");
         // Approving an always-ask tool confirms this one call only.
-        let scope = if self.sh.must_ask(&self.name, &self.input) {
+        let scope = if self.sh.must_ask(&self.name, &self.input)
+            || matches!(
+                self.ctx.initiator,
+                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+            ) {
             ApprovalScope::Once
         } else {
             self.scope
@@ -842,6 +897,7 @@ impl ExecPermit {
             ApprovalScope::ThisChat => {
                 self.sh.grants.lock().this_chat.insert((
                     self.ctx.chat_id,
+                    self.ctx.bot_id,
                     self.name.clone(),
                     self.ctx.tool_grant_scope(&self.name, self.category),
                 ));

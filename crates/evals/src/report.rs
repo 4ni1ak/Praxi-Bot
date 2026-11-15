@@ -214,6 +214,8 @@ pub fn render(
         );
     }
 
+    render_purposes(&mut out, before, after);
+
     let regressions: Vec<&&str> = both
         .iter()
         .filter(|n| next[**n].passed < base[**n].passed)
@@ -225,6 +227,43 @@ pub fn render(
         }
     }
     out
+}
+
+/// Raw invocation totals are separate from the legacy per-task mean step count.
+fn render_purposes(out: &mut String, before: &[RunRecord], after: &[RunRecord]) {
+    let sum = |records: &[RunRecord]| {
+        let mut counts = BTreeMap::<&str, f64>::new();
+        for record in records {
+            for (purpose, count) in &record.llm_calls_by_purpose {
+                *counts.entry(purpose.as_str()).or_default() += f64::from(*count);
+            }
+        }
+        counts
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let (old, new) = (sum(before), sum(after));
+    let names = old
+        .keys()
+        .chain(new.keys())
+        .collect::<std::collections::BTreeSet<_>>();
+    if names.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "\n## Observed invocations by purpose\n");
+    let _ = writeln!(
+        out,
+        "Totals across all recorded runs; older records have no purpose breakdown.\n"
+    );
+    let _ = writeln!(out, "| Purpose | Before → after |\n| --- | --- |");
+    for name in names {
+        let _ = writeln!(
+            out,
+            "| {name} | {} |",
+            pair(old.get(name).copied(), new.get(name).copied(), num)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +284,7 @@ mod tests {
             error: None,
             wall_ms: wall,
             llm_calls: calls,
+            llm_calls_by_purpose: BTreeMap::new(),
             input_tokens: tin,
             output_tokens: 10,
             cached_tokens: 0,
@@ -254,6 +294,18 @@ mod tests {
             tool_time: std::collections::BTreeMap::new(),
             model_time: crate::metrics::ToolTime::default(),
         }
+    }
+
+    #[test]
+    fn report_displays_observed_purposes_without_redefining_legacy_calls() {
+        let before = rec("x", true, 100, 2, 10, None);
+        let mut after = before.clone();
+        after.schema = 2;
+        after.llm_calls_by_purpose = BTreeMap::from([("executor".into(), 3), ("router".into(), 1)]);
+        let report = render(&[before], &[after], "old", "new");
+        assert!(report.contains("| executor | - → 3 |"));
+        assert!(report.contains("| router | - → 1 |"));
+        assert!(report.contains("- LLM calls: 2 → 2 (=)"));
     }
 
     #[test]

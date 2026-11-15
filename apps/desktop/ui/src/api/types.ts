@@ -16,6 +16,7 @@ export type KnowledgeEmbeddingGrantTarget = S["EmbeddingGrantTarget"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];
+export type BotPatchInput = S["BotPatchInput"];
 export type Chat = S["ChatDto"];
 export type Message = S["MessageDto"];
 /**
@@ -323,6 +324,14 @@ export type McpTool = S["McpToolDto"];
 export type McpRequiredSecret = S["McpRequiredSecretDto"];
 export type McpCatalogEntry = S["McpCatalogEntryDto"];
 
+export type ComposioStatus = S["ComposioStatusDto"];
+export type ComposioConnState = S["ComposioConnState"];
+export type ComposioToolkit = S["ComposioToolkitDto"];
+export type ComposioCatalog = S["ComposioCatalogDto"];
+export type ComposioApp = S["ComposioAppDto"];
+export type ComposioConnect = S["ComposioConnectDto"];
+export type ComposioDisconnect = S["ComposioDisconnectDto"];
+
 // ---- E-mail accounts (`/v1/email/*`) ---------------------------------------
 
 export type EmailAccount = S["EmailAccountDto"];
@@ -367,4 +376,5 @@ export type BotSkills = S["BotSkillsDto"];
 export type PutBotSkillsInput = S["PutBotSkillsInput"];
 
 export type CliEngineDto = S["CliEngineDto"];
+export type BotEngineInput = S["BotEngineInput"];
 export type CliInstallApproval = S["CliInstallApproval"];

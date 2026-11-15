@@ -143,6 +143,9 @@ fn quoted(label: &str, text: &str) -> String {
 /// well-formed schedule card (unknown kind, missing action or timing).
 #[must_use]
 pub fn describe_details(details: &Value) -> Option<String> {
+    if details.get("kind").and_then(Value::as_str) == Some("app_action") {
+        return describe_app_action(details);
+    }
     if details.get("kind").and_then(Value::as_str) != Some("schedule") {
         return None;
     }
@@ -235,6 +238,35 @@ pub fn describe_details(details: &Value) -> Option<String> {
     footer.push_str(".\n");
     out.push_str(&footer);
     Some(out)
+}
+
+fn describe_app_action(details: &Value) -> Option<String> {
+    let args = details.get("arguments").filter(|v| v.is_object())?;
+    if args.to_string().len() > 32 * 1024 {
+        return None;
+    }
+    let action = details.get("action_slug")?.as_str()?;
+    let app = details.get("app_name")?.as_str()?;
+    let version = details.get("version")?.as_str()?;
+    let raw = serde_json::to_string_pretty(args).ok()?;
+    let mut text = String::new();
+    for c in raw.chars() {
+        if is_hidden(c) {
+            let mut units = [0; 2];
+            for unit in c.encode_utf16(&mut units) {
+                text.push_str(&format!("\\u{unit:04x}"));
+            }
+        } else {
+            text.push(c);
+        }
+    }
+    Some(format!(
+        "App action approval: {} / {} (version {})\n{}DAEMON SUMMARY: via Composio. Approve only this exact action and all arguments.\n",
+        scrub(app, false),
+        scrub(action, false),
+        scrub(version, false),
+        quoted("ARGUMENTS (JSON)", &text)
+    ))
 }
 
 fn utf16_len(s: &str) -> usize {
@@ -475,5 +507,22 @@ mod tests {
         assert_eq!(chunks.concat(), emoji);
         let multi = "é".repeat(7);
         assert_eq!(chunk_text(&multi, 3).concat(), multi);
+    }
+}
+
+#[cfg(test)]
+mod app_action_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn app_payload_is_complete_and_size_capped() {
+        let payload = format!("{}TAIL-RECIPIENT", "x".repeat(1500));
+        let mut card = json!({"kind":"app_action","app_name":"GitHub","action_slug":"GITHUB_SEND","version":"20260901_00","arguments":{"body":payload}});
+        let text = describe_details(&card).unwrap();
+        assert!(text.contains(&payload));
+        assert!(text.contains("GitHub / GITHUB_SEND") && text.contains("20260901_00"));
+        assert!(text.ends_with("Approve only this exact action and all arguments.\n"));
+        card["arguments"]["body"] = json!("x".repeat(33 * 1024));
+        assert!(describe_details(&card).is_none());
     }
 }

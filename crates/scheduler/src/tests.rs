@@ -508,11 +508,13 @@ async fn webhook_hmac_sha256_verification_and_input_substitution() {
     assert_eq!(
         exec.recorded()[0].payload,
         Payload::AgentPrompt {
-            text: format!("Triage webhook payload: {body}"),
+            text: "Triage webhook payload: {input}".into(),
         }
     );
 
-    // Also test Workflow and Tool payload {input} substitution via free `handle_webhook` function
+    assert_eq!(exec.recorded()[0].external_input.as_deref(), Some(body));
+
+    // Also test separate external data via free `handle_webhook` function
     let wf_sched = Schedule::new(
         BotId::new(),
         None,
@@ -545,7 +547,7 @@ async fn webhook_hmac_sha256_verification_and_input_substitution() {
         exec.recorded()[1].payload,
         Payload::Workflow {
             name: "deploy".into(),
-            params: json!({ "event": body }),
+            params: json!({ "event": "{input}" }),
         }
     );
 
@@ -1155,12 +1157,13 @@ async fn webhook_rejects_empty_secret_disabled_and_concurrent_runs() {
     release.notify_waiters();
     first.await.unwrap().unwrap();
     assert_eq!(exec.count(), 1);
-    // A null tool input receives the raw body.
+    // The executor receives raw external data separately from the trusted definition.
+    assert_eq!(exec.recorded()[0].external_input.as_deref(), Some("body"));
     assert_eq!(
         exec.recorded()[0].payload,
         Payload::Tool {
             name: "echo".into(),
-            input: json!("body")
+            input: json!(null)
         }
     );
 
@@ -1242,7 +1245,7 @@ async fn run_now_and_trigger_webhook_return_before_the_execution_ends() {
     assert_eq!(
         runs[1].payload,
         Payload::AgentPrompt {
-            text: "go x".into()
+            text: "go {input}".into()
         }
     );
     scheduler.shutdown().await;

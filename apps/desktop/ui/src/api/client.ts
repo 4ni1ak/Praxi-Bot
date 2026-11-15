@@ -5,6 +5,7 @@ import type {
   AcceptedResponse,
   Approval,
   Bot,
+  BotEngineInput,
   BotInput,
   Chat,
   ConfiguredProviderDto,
@@ -31,6 +32,11 @@ import type {
   EmailTestReport,
   InputBatch,
   InputResult,
+  ComposioApp,
+  ComposioCatalog,
+  ComposioConnect,
+  ComposioDisconnect,
+  ComposioStatus,
   McpCatalogEntry,
   McpAuthState,
   McpAuthStart,
@@ -70,6 +76,7 @@ import type {
   RestorePreview,
   RestoreResponse,
   BotSkills,
+  BotPatchInput,
   PutBotSkillsInput,
   SkillsCatalog,
   StopRunsInput,
@@ -82,12 +89,15 @@ export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** The parsed JSON body of the error response, when it had one (a `409` carries `current`). */
+  readonly body?: unknown;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -215,14 +225,16 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
   }
@@ -292,6 +304,21 @@ export class ApiClient {
   }
   updateBot(id: string, input: BotInput): Promise<Bot> {
     return this.request("PUT", `/bots/${id}`, { body: input });
+  }
+  /**
+   * Change only the listed fields of a bot, atomically, if `expected_version` is still current;
+   * a stale version is a `409` whose body carries the current bot (`conflictBot`).
+   */
+  patchBot(id: string, input: BotPatchInput): Promise<Bot> {
+    return this.request("PATCH", `/bots/${id}`, { body: input });
+  }
+  /** Owner-only: engine mode, approval level and workspace of a bot. */
+  putBotEngine(id: string, input: BotEngineInput): Promise<Bot> {
+    return this.request("PUT", `/bots/${id}/engine`, { body: input });
+  }
+  /** Owner kill switch: back to Praxi-governed and end the bot's CLI processes. */
+  killBotEngine(id: string): Promise<Bot> {
+    return this.request("POST", `/bots/${id}/engine/kill`);
   }
   deleteBot(id: string): Promise<void> {
     return this.request("DELETE", `/bots/${id}`);
@@ -544,14 +571,16 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
   }
@@ -630,6 +659,45 @@ export class ApiClient {
     return this.request("POST", `/secrets/${encodeURIComponent(name)}`, {
       body: { value }
     });
+  }
+
+  // ---- Composio app connections (owner-only routes) ---------------------
+
+  composioStatus(): Promise<ComposioStatus> {
+    return this.request("GET", "/composio");
+  }
+  /** The key is write-only: validated, stored in the OS secret store, never returned. */
+  setComposioKey(value: string): Promise<ComposioStatus> {
+    return this.request("PUT", "/composio/key", { body: { value } });
+  }
+  removeComposioKey(): Promise<ComposioStatus> {
+    return this.request("DELETE", "/composio/key");
+  }
+  composioToolkits(q: {
+    search?: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<ComposioCatalog> {
+    return this.request("GET", "/composio/toolkits", {
+      query: { search: q.search || null, cursor: q.cursor ?? null, limit: q.limit ?? null }
+    });
+  }
+  composioApps(): Promise<ComposioApp[]> {
+    return this.request("GET", "/composio/apps");
+  }
+  composioApp(slug: string): Promise<ComposioApp> {
+    return this.request("GET", `/composio/apps/${encodeURIComponent(slug)}`);
+  }
+  composioConnect(slug: string): Promise<ComposioConnect> {
+    return this.request("POST", `/composio/apps/${encodeURIComponent(slug)}/connect`);
+  }
+  composioSetEnabled(slug: string, enabled: boolean): Promise<ComposioApp> {
+    return this.request("PUT", `/composio/apps/${encodeURIComponent(slug)}/enabled`, {
+      body: { enabled }
+    });
+  }
+  composioDisconnect(slug: string): Promise<ComposioDisconnect> {
+    return this.request("DELETE", `/composio/apps/${encodeURIComponent(slug)}`);
   }
 
   // ---- E-mail accounts -------------------------------------------------

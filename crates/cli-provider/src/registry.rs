@@ -43,12 +43,27 @@ pub struct CliEngineSpec {
     pub minimum_version: Option<(u32, u32, u32)>,
     pub install_windows: Option<InstallCommand>,
     pub install_unix: Option<InstallCommand>,
+    /// Short curated list (the CLI's own `models` / `--list-models` is account-specific and
+    /// not probed); the picker also accepts any other model id the CLI takes.
     pub models: &'static [&'static str],
     pub login: &'static str,
     pub docs_url: &'static str,
 }
 
 impl CliEngineSpec {
+    /// The native-tools driver for this engine, if it has one.
+    #[must_use]
+    pub fn driver(&self) -> Option<crate::levels::Driver> {
+        crate::levels::Driver::from_id(self.id)
+    }
+
+    /// Can be enabled as a provider: the confined engine runs it, or it has a
+    /// native-tools driver (which only runs with the CLI's own tools).
+    #[must_use]
+    pub fn can_enable(&self) -> bool {
+        self.runnable || self.driver().is_some()
+    }
+
     #[must_use]
     pub const fn install(&self) -> Option<InstallCommand> {
         if cfg!(windows) {
@@ -84,7 +99,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: Some(CLAUDE_SECURITY_FLOOR),
         install_windows: npm(&["install", "-g", "@anthropic-ai/claude-code"], true),
         install_unix: npm(&["install", "-g", "@anthropic-ai/claude-code"], true),
-        models: &["default", "sonnet", "opus"],
+        models: &["default", "sonnet", "opus", "haiku"],
         login: "claude auth login",
         docs_url: "https://docs.anthropic.com/en/docs/claude-code/setup",
     },
@@ -99,7 +114,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: None,
         install_windows: npm(&["install", "-g", "@openai/codex"], true),
         install_unix: npm(&["install", "-g", "@openai/codex"], true),
-        models: &[],
+        models: &["default", "gpt-5-codex", "gpt-5"],
         login: "codex login",
         docs_url: "https://github.com/openai/codex",
     },
@@ -128,7 +143,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
             verified: true,
             executable: true,
         }),
-        models: &[],
+        models: &["auto", "gpt-5.3-codex", "sonnet-4-thinking"],
         login: "cursor-agent login",
         docs_url: "https://cursor.com/docs/cli",
     },
@@ -143,7 +158,11 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: None,
         install_windows: npm(&["install", "-g", "opencode-ai"], true),
         install_unix: npm(&["install", "-g", "opencode-ai"], true),
-        models: &[],
+        models: &[
+            "default",
+            "google/gemini-2.5-pro",
+            "google/gemini-2.5-flash",
+        ],
         login: "opencode auth login",
         docs_url: "https://opencode.ai/docs/",
     },
@@ -158,7 +177,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: None,
         install_windows: npm(&["install", "-g", "@google/gemini-cli"], false),
         install_unix: npm(&["install", "-g", "@google/gemini-cli"], false),
-        models: &[],
+        models: &["default", "gemini-2.5-pro", "gemini-2.5-flash"],
         login: "gemini",
         docs_url: "https://github.com/google-gemini/gemini-cli",
     },
@@ -223,5 +242,18 @@ mod tests {
             }
         }
         assert!(!engine_spec("opencode").unwrap().runnable);
+    }
+
+    #[test]
+    fn every_engine_with_a_driver_offers_models_the_cli_accepts() {
+        for spec in CLI_ENGINES.iter().filter(|s| s.driver().is_some()) {
+            assert!(spec.models.len() >= 2, "{}", spec.id);
+            assert!(
+                spec.models
+                    .iter()
+                    .all(|m| !m.starts_with('-') && !m.contains(' '))
+            );
+        }
+        assert!(engine_spec("claude").unwrap().models.contains(&"haiku"));
     }
 }

@@ -291,6 +291,12 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
         ? { mode: "folder", folders }
         : { mode: "computer" }
       : undefined;
+  // `runtime` (computer / browser target) is not edited by this form.  An existing bot keeps it
+  // exactly as stored (any target: off, browser, host, auto, a node id ...); only a new bot gets
+  // the form's default.
+  const runtime = existing
+    ? old.runtime
+    : { ...obj(old.runtime), computer: draft.computer, browser: draft.browser };
 
   return {
     ...old,
@@ -298,12 +304,20 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
     models,
     ...(permissions === undefined ? {} : { permissions }),
     ...(files === undefined ? {} : { files }),
-    runtime: {
-      ...obj(old.runtime),
-      computer: draft.computer,
-      browser: draft.browser
-    }
+    ...(runtime === undefined ? {} : { runtime })
   };
+}
+
+/** How a stored `runtime` target reads in the UI (read-only): the value as stored, or `auto`. */
+export function runtimeTargetLabel(config: unknown, key: "computer" | "browser"): string {
+  const v = obj(obj(config).runtime)[key];
+  if (typeof v === "string" && v.trim()) return v.trim();
+  if (v && typeof v === "object") {
+    const o = v as Json;
+    const named = str(o.node) || str(o.id) || str(o.name) || str(o.kind);
+    return named || JSON.stringify(v);
+  }
+  return "auto";
 }
 
 export interface BotView {

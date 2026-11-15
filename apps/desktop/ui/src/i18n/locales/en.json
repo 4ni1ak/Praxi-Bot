@@ -8,6 +8,11 @@
     "usage": "Usage",
     "schedules": "Scheduled tasks",
     "apps": "Apps",
+    "mainBot": "Main",
+    "mainBotHint": "Main bot: the default for new chats",
+    "reorderBot": "Reorder {{name}} (arrow keys move it up or down)",
+    "reorderHint": "Drag the row, or focus this handle and press the up/down arrow",
+    "reorderMoved": "{{name}} moved to position {{pos}}",
     "searchBots": "Search bots",
     "unread": "Unread message"
   },
@@ -237,9 +242,6 @@
     "notFound": "This bot no longer exists.",
     "noModel": "No model",
     "newChat": "New chat",
-    "confirmDelete": "Click again to delete",
-    "chats": "Chats",
-    "noChats": "No chats yet. Start one with “New chat”.",
     "skills": {
       "heading": "Skills",
       "loading": "Loading skills…",
@@ -247,8 +249,7 @@
       "summarySelected": "{{count}} of {{total}} shared skills",
       "summaryLearned": "(+{{count}} learned)",
       "summaryMissing": "{{count}} assigned skill unavailable on disk",
-      "chooseButton": "Choose skills…",
-      "modalTitle": "Choose skills",
+      "modalTitle": "Skills",
       "modeLabel": "Shared skills access",
       "modeAll": "All shared skills",
       "modeSelected": "Only the skills I pick",
@@ -267,12 +268,18 @@
       "scope": {
         "shared": "shared",
         "bundled": "bundled"
-      }
+      },
+      "modalSubtitle": "What {{name}} is offered",
+      "manage": "Manage skills",
+      "more": "+{{count}} more",
+      "saved": "Skills saved.",
+      "loadFailed": "Skills could not be loaded"
     },
     "chatState": {
       "needs": "Needs you",
       "running": "Running"
-    }
+    },
+    "newChatFailed": "Could not start a chat: {{detail}}"
   },
   "chat": {
     "notFound": "This chat does not exist.",
@@ -354,6 +361,10 @@
           "read_only": "read-only"
         },
         "note": "This approval covers only this change; it is asked every time."
+      },
+      "app": {
+        "arguments": "Show all arguments ({{count}} characters)",
+        "footer": "Via Composio. Approve only this action with all arguments shown above."
       }
     },
     "question": {
@@ -751,10 +762,7 @@
       "notApplied": "{{names}}: not applied, the app changed in the meantime (for example it is now open to all bots). The list shows its current state.",
       "partialFail": "The bot was saved, but app access could not be updated for: {{names}}. Try Save again."
     },
-    "createTitle": "New bot",
     "editTitle": "Edit bot",
-    "create": "Create bot",
-    "identity": "Identity",
     "name": "Name",
     "nameRequired": "A name is required.",
     "avatar": "Avatar",
@@ -769,19 +777,13 @@
     "persona": "Persona",
     "personaPlaceholder": "How should this bot behave? (system instruction)",
     "models": "Models",
-    "modelsHint": "Pick a provider and type the model name for each role. Only the executor is required.",
     "role": {
       "executor": "Executor",
       "planner": "Planner",
       "classifier": "Classifier",
       "fallback": "Fallback models"
     },
-    "provider": "provider",
-    "model": "model",
-    "defaultProvider": "Default provider",
-    "modelPlaceholder": "model name",
     "executorRequired": "The executor model is required.",
-    "fallbackPlaceholder": "provider/model, provider/model",
     "permissions": "Permissions",
     "preset": {
       "read-only": {
@@ -826,8 +828,10 @@
     "computer": "Computer",
     "browser": "Browser",
     "local": "Local (this machine)",
-    "remoteSoon": "Remote (coming soon)",
-    "runtimeHint": "Only this machine is supported for now."
+    "runtimeHint": "Only this machine is supported for now.",
+    "engine": {
+      "title": "Engine"
+    }
   },
   "usage": {
     "title": "Usage",
@@ -1123,7 +1127,7 @@
   "apps": {
     "title": "Apps",
     "search": "Search apps",
-    "mcpServers": "Your own MCP server",
+    "mcpServers": "Advanced",
     "categoriesLabel": "Categories",
     "categories": {
       "all": "All",
@@ -1232,7 +1236,47 @@
     "manage": "Manage",
     "close": "Close",
     "usedBy": "Used by",
-    "connectApp": "Connect {{name}}"
+    "connectApp": "Connect {{name}}",
+    "localSection": "On this computer",
+    "advanced": {
+      "title": "Custom MCP server",
+      "tokenCards": "Services with an access token",
+      "tokenHint": "These ask for a personal token you create yourself. Most services connect without one through Composio on the main screen."
+    },
+    "composio": {
+      "title": "Composio",
+      "via": "via Composio",
+      "setupTitle": "Connect apps without tokens",
+      "setupBody": "Composio signs you in to Instagram, LinkedIn, Gmail and hundreds more. Create a free project API key once, paste it here, and you never enter another token.",
+      "getKey": "Open the Composio key page",
+      "keyLabel": "Composio API key",
+      "keyHint": "Checked immediately, then kept in your system keychain. It is never shown again.",
+      "keySave": "Save key",
+      "dataNotice": "Inputs and results of these apps pass through Composio's servers and are logged there by default. Praxi asks you before every action.",
+      "dataNoticeSensitive": "Your mail, documents or messages from this app pass through Composio's servers and are logged there by default. Praxi asks you before every action.",
+      "continue": "Continue to sign-in",
+      "nativeNote": "Praxi also connects this one directly",
+      "popular": "Popular",
+      "catalog": "All apps",
+      "connectedSection": "Connected",
+      "loadMore": "Show more",
+      "loading": "Loading apps…",
+      "noResults": "No matching apps.",
+      "waiting": "Waiting for sign-in in your browser…",
+      "state": {
+        "not_connected": "Not connected",
+        "pending": "Signing in",
+        "active": "Connected",
+        "expired": "Sign-in expired"
+      },
+      "enable": "Turn on",
+      "disable": "Turn off",
+      "removeKey": "Remove key",
+      "removeKeyConfirm": "Remove the key",
+      "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "disconnectedLocal": "{{name}} was removed here. Remove it in the Composio dashboard too.",
+      "retryOpen": "Retry opening sign-in"
+    }
   },
   "help": {
     "title": "Keyboard shortcuts",
@@ -1254,7 +1298,8 @@
       "medium": "Medium",
       "high": "High",
       "max": "Max"
-    }
+    },
+    "otherId": "Use \"{{id}}\" with {{provider}}"
   },
   "settingsModal": {
     "title": "Settings",
@@ -1357,7 +1402,9 @@
           "timeout": "Installation exceeded ten minutes and was stopped. Check the output before retrying.",
           "output_limit": "Installer output exceeded the limit and installation was stopped. Use your terminal to continue.",
           "install_failed": "Installation did not finish successfully. Check the output or run the command in your terminal."
-        }
+        },
+        "nativeOnly": "Runs with its own tools: choose this in a bot's Engine settings.",
+        "experimental": "Experimental: interface not verified on a live install."
       },
       "advanced": "Advanced provider settings"
     },
@@ -1869,12 +1916,12 @@
   "botPanel": {
     "toggle": "Bot panel",
     "close": "Close panel",
-    "settings": "Bot settings",
     "profile": "Bot profile",
     "chats": "Chats",
     "noChats": "No chats yet.",
     "untitled": "New chat",
     "computer": "Computer",
+    "edit": "Edit bot",
     "runsOnHost": "Runs on {{name}} (host)",
     "runsOnLocal": "Runs on this computer"
   },
@@ -2011,6 +2058,7 @@
     "releaseFocus": "Exit keyboard",
     "emergencyStop": "Stop bots",
     "watchAction": "Take control",
+    "handBackAction": "Hand back",
     "doneAction": "Bitirdim",
     "doneLabel": "I'm done",
     "retryingDone": "Handing back…",
@@ -2102,6 +2150,192 @@
     "connectionLost": "Connection to the screen lost. Reconnecting…",
     "clearForeignPause": "Clear {{owner}}'s pause"
   },
+  "botEmpty": {
+    "title": "Start a chat with {{name}}",
+    "body": "Nothing here yet. Ask for something, and the conversation will open in this space."
+  },
+  "botProfile": {
+    "facts": "Created {{date}} · {{chats}} chats",
+    "noPersona": "No persona yet. Add one in Edit bot to shape how this bot behaves.",
+    "noApps": "This bot has no connected apps."
+  },
+  "botEdit": {
+    "sections": "Sections",
+    "section": {
+      "identity": "Identity",
+      "models": "Models",
+      "permissions": "Permissions",
+      "skills": "Skills",
+      "apps": "Apps",
+      "advanced": "Advanced"
+    },
+    "sectionHint": {
+      "identity": "Name, look and personality.",
+      "models": "Which model does the work, and which ones help.",
+      "permissions": "What the bot may do without asking you.",
+      "skills": "The shared skills this bot is offered.",
+      "apps": "The connected apps this bot may use.",
+      "advanced": "Custom model ids, where the bot runs, and deleting it."
+    },
+    "look": "Look",
+    "personaHint": "Sent to the model as the bot's standing instruction.",
+    "mainModel": "Main model",
+    "pickModel": "Choose a model",
+    "sameAsMain": "Same as main model",
+    "roleHint": {
+      "executor": "Does the actual work in every chat.",
+      "planner": "Breaks larger tasks into steps. Optional.",
+      "classifier": "Sorts incoming requests cheaply. Optional."
+    },
+    "noProvidersTitle": "No AI provider is connected",
+    "noProvidersBody": "Connect a provider in Settings → AI to choose a model here.",
+    "fallbackHint": "Tried in this order when the main model is unavailable.",
+    "addFallback": "Add a fallback",
+    "removeFallback": "Remove {{name}}",
+    "categories": "Per category",
+    "categoriesHint": "Deny blocks it, Ask stops for your approval, Allow runs without asking.",
+    "appsLoading": "Loading apps…",
+    "appsNoneBody": "Connect an app from the Apps screen, then choose here which bots may use it.",
+    "customTitle": "Custom model id",
+    "customHint": "For a model the pickers do not list. Type it as provider/model.",
+    "customPlaceholder": "provider/model",
+    "customIssue": {
+      "empty": "The main model is required.",
+      "spaces": "A model id cannot contain spaces.",
+      "noModel": "Add the model after the provider: provider/model."
+    },
+    "dangerTitle": "Danger zone",
+    "deleteTitle": "Delete this bot",
+    "deleteHint": "Removes the bot, its access to apps and its e-mail accounts. Only possible while it has no chats or runs. This cannot be undone.",
+    "delete": "Delete bot",
+    "deleteConfirmTitle": "Delete {{name}}?",
+    "deleteConfirmBody": "The bot, its access to apps and its e-mail accounts will be removed. This cannot be undone. A bot that still has chats or runs cannot be deleted: in that case nothing is removed and you will see why.",
+    "deleted": "{{name}} was deleted.",
+    "unsaved": "Unsaved changes",
+    "needsAttention": "Needs attention",
+    "problem": {
+      "nameMissing": "Give the bot a name to save.",
+      "executorMissing": "Choose a main model to save.",
+      "customInvalid": "A custom model id is not valid yet (Advanced).",
+      "fallbackPending": "Add or clear the model id you typed under Fallback models."
+    },
+    "saving": "Saving…",
+    "saved": "{{name}} was saved.",
+    "skillsFailed": "The bot was saved, but its skills were not: {{detail}}",
+    "discardTitle": "Discard your changes?",
+    "discardBody": "You have unsaved changes. If you close now, they are lost.",
+    "discard": "Discard",
+    "keepEditing": "Keep editing",
+    "conflict": {
+      "title": "This bot was changed elsewhere",
+      "body": "While you were editing, {{parts}} changed in the saved bot. Nothing was saved. Reload shows the saved version (your profile edits are dropped); overwrite writes only the fields you changed on top of it.",
+      "reload": "Reload saved version",
+      "overwrite": "Overwrite with my changes",
+      "part": {
+        "identity": "name or look",
+        "models": "models",
+        "permissions": "permissions",
+        "runtime": "where it runs",
+        "other": "other settings"
+      }
+    },
+    "fallbackCustom": "Other model id",
+    "fallbackCustomHint": "Any model id as provider/model, even one that is not listed. Separate several with commas.",
+    "target": {
+      "auto": "Automatic",
+      "pc": "This computer",
+      "host": "Host",
+      "browser": "Browser",
+      "off": "Off"
+    },
+    "deleteBlocked": "This bot still has chats ({{count}}), so it cannot be deleted. Only a bot without chats or runs can be removed.",
+    "deleteBlockedRuns": "This bot still has {{count}} retained run(s), so it cannot be deleted. Only a bot without chats or runs can be removed."
+  },
+  "addSkill": {
+    "open": "Add skill",
+    "title": "Add a skill",
+    "subtitle": "Teach your bots a repeatable way of doing something.",
+    "installSubtitle": "Put the file in the skills folder and check it.",
+    "source": "Where the skill comes from",
+    "sourceWrite": "Write it",
+    "sourceFile": "From a file",
+    "chooseFile": "Choose SKILL.md",
+    "fileHint": "No file chosen",
+    "fileNote": "Only the SKILL.md itself is read. You can review and edit it below before continuing.",
+    "parse": {
+      "title": "This file is not a valid skill",
+      "tooLarge": "The file is larger than 64 KB.",
+      "noFrontmatter": "It must start with a --- line followed by name and description.",
+      "unterminated": "The opening --- block is never closed with a second --- line.",
+      "badLine": "This line is not in the form key: value — {{detail}}",
+      "unknownKey": "Unknown key “{{detail}}”. Only name, description, version and when are allowed.",
+      "badWhen": "The “when” block is not valid near “{{detail}}”. Use domains, apps or keywords with a [a, b] list.",
+      "unreadable": "The file could not be read as text.",
+      "duplicateKey": "The key “{{detail}}” appears twice.",
+      "emptyVersion": "`version` is present but empty."
+    },
+    "name": "Name",
+    "nameHint": "Lowercase letters, digits, - _ and . — this is also the folder name.",
+    "useSuggestion": "Use “{{name}}”",
+    "version": "Version",
+    "description": "Description",
+    "descriptionHint": "One line. The bot reads this to decide when the skill applies.",
+    "descriptionPlaceholder": "Check an invoice against the order before paying.",
+    "body": "Instructions",
+    "bodyHint": "Markdown. Write the steps the way you would explain them to a careful colleague.",
+    "bodyPlaceholder": "# Invoice check\n\n1. Open the order.\n2. Compare the totals.\n3. Ask before paying if they differ.",
+    "triggers": "Suggest it automatically (optional)",
+    "triggersHint": "Comma separated. The skill is suggested when the bot is on one of these sites or apps, or the task mentions a keyword.",
+    "domains": "Websites",
+    "apps": "Apps",
+    "keywords": "Keywords",
+    "keywordsPlaceholder": "invoice, payment",
+    "issue": {
+      "nameEmpty": "A name is required.",
+      "nameLength": "The name can be at most 64 characters.",
+      "nameChars": "Use only lowercase letters, digits, - _ and .",
+      "nameStart": "The name must start with a letter or digit.",
+      "nameDots": "The name cannot contain “..” or end with a dot.",
+      "nameTaken": "A skill with this name already exists.",
+      "descriptionEmpty": "A description is required.",
+      "descriptionLong": "The description can be at most 200 characters.",
+      "descriptionLines": "The description must be a single line.",
+      "versionEmpty": "A version is required.",
+      "bodyEmpty": "Write the instructions.",
+      "tooLarge": "The skill is larger than 64 KB."
+    },
+    "continue": "Continue",
+    "done": "Done",
+    "discardBody": "The skill you wrote is not saved anywhere yet. If you close now, it is lost.",
+    "boundaryTitle": "One manual step for now",
+    "boundaryBody": "The app cannot save a skill into the skills folder by itself yet. Your skill passed a preliminary check in the app; whether it loads is decided by the daemon. Place the file once, then press Check.",
+    "stepCopy": "Copy the skill file",
+    "copyFile": "Copy file contents",
+    "copied": "Copied",
+    "stepSave": "Save it as this file",
+    "copyPath": "Copy path",
+    "pathHint": "Create the folder if it does not exist.",
+    "pathHintRelative": "Inside Praxi-Bot's data folder. Create the folder if it does not exist.",
+    "stepCheck": "Check that it was picked up",
+    "check": "Check",
+    "checking": "Checking…",
+    "found": "“{{name}}” is installed",
+    "foundAll": "{{bot}} uses all shared skills, so it already has this one.",
+    "foundPicked": "{{bot}} only uses the skills you pick. Give it this one?",
+    "assign": "Give it to {{bot}}",
+    "assigned": "{{bot}} can use it now.",
+    "rejected": "The skill was found but could not be loaded",
+    "notFound": "Not found yet",
+    "notFoundBody": "Make sure the file is named SKILL.md and sits in the folder shown above, then check again.",
+    "checkFailed": "Could not check",
+    "namePlaceholder": "invoice-check",
+    "domainsPlaceholder": "github.com, gitlab.com",
+    "appsPlaceholder": "Excel, SystemSettings",
+    "different": "A different skill has this name",
+    "differentBody": "The catalog lists “{{name}}” (version {{version}}, {{scope}}), but it is not the file you prepared. Change the name or version, or replace the old file, then check again.",
+    "discardInstallBody": "The skill file has not been found in the skills folder yet. If you close now, what you wrote is lost.",
+    "unverified": "This daemon does not report a fingerprint of the instructions, so an older file with the same name, version and description cannot be ruled out. Closing still asks before discarding what you wrote."
+  },
   "stopStatus": {
     "title": {
       "stopping": "Stopping…",
@@ -2175,5 +2409,48 @@
     "versionWarning": "This app is {{local}} and {{name}} is {{host}}: a small difference, everything should work.",
     "noModelKey": "{{name}} has no model key yet. You can watch its screen and manage its bots, but chats cannot be answered until a key is added on the host.",
     "useThisComputer": "Use this computer"
+  },
+  "botEngine": {
+    "hint": "Who runs this bot's files and shell commands. Praxi's own tools (browser, apps, secrets, memory) always keep Praxi's approvals.",
+    "needCli": "Choose a coding CLI model for this bot above and save it first (a model that starts with cli:). Enable the CLI in Settings, AI, Detected accounts.",
+    "mode": "Engine mode",
+    "label": "Files and shell: governed by {{cli}}",
+    "governed": {
+      "name": "Praxi-governed",
+      "text": "Praxi runs files and shell with its own tools and asks you per action. The CLI's own tools are off."
+    },
+    "native": {
+      "name": "{{cli}} with its own tools",
+      "text": "{{cli}} reads, edits and runs commands itself in the workspace folder, under the approval level below. Praxi does not see or control those actions."
+    },
+    "experimental": "Experimental: the {{cli}} interface was taken from its documentation, not tried here. Expect rough edges.",
+    "level": {
+      "title": "Approval level",
+      "ask": {
+        "name": "Ask",
+        "text": "The CLI asks before it changes anything. Each question appears as an approval card."
+      },
+      "accept_edits": {
+        "name": "Accept edits",
+        "text": "File edits in the workspace go through; commands and everything else still ask."
+      },
+      "auto": {
+        "name": "Auto",
+        "text": "The CLI's own automatic reviewer decides what is safe. Only where the CLI has one."
+      },
+      "full": {
+        "name": "Full access",
+        "text": "No approval prompts. The CLI can change files and run commands without asking."
+      },
+      "maps": "{{cli}} setting: {{setting}}",
+      "notOffered": "{{cli}} cannot hold this level ({{setting}}); it would run as {{applied}}, so it is not offered."
+    },
+    "workspace": "Workspace folder",
+    "workspacePlaceholder": "Absolute path, for example C:/Projects/my-app",
+    "workspaceHint": "The CLI works in this folder. Praxi's data folder, your home folder, drive roots and credential or CLI settings folders are refused.",
+    "consentNative": "I understand {{cli}} will run file and shell actions on this computer, in this folder, and Praxi will not control them.",
+    "consentFull": "I understand Full access means {{cli}} will not ask before changing files or running commands.",
+    "apply": "Apply engine settings",
+    "kill": "Stop and turn off"
   }
 }

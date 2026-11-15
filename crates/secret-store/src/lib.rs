@@ -38,6 +38,7 @@ pub use open::{
 };
 pub use redact::{REDACTED, Redactor, secret_variants};
 pub use secret::{
-    FILL_PREFIX, SecretRef, SecretStore, SecretValue, is_fill_name, is_managed_oauth_name,
-    refuse_fill_namespace, resolve, validate_name,
+    FILL_PREFIX, RESERVED_PREFIX, SecretRef, SecretStore, SecretValue, is_fill_name,
+    is_host_credential, is_managed_oauth_name, is_reserved_name, refuse_fill_namespace, resolve,
+    validate_name,
 };

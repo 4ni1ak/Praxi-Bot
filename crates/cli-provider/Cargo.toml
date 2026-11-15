@@ -48,3 +48,7 @@ path = "tests/fixtures/fake_cli.rs"
 [[bin]]
 name = "runtime-cli-fixture"
 path = "tests/fixtures/runtime_cli.rs"
+
+[[bin]]
+name = "native-cli-fixture"
+path = "tests/fixtures/native_cli.rs"

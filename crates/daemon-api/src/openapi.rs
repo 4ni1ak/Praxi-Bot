@@ -9,9 +9,9 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, file_access, fill_routes,
-    host, host_links, knowledge, knowledge_settings, live_view, mcp, mcp_routes, routes, skills,
-    sse, web, web_routes,
+    changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
+    file_access, fill_routes, host, host_links, knowledge, knowledge_settings, live_view, mcp,
+    mcp_routes, mcp_server, routes, skill_management, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -72,7 +72,12 @@ impl Modify for Security {
         skills::list_skills,
         skills::get_bot_skills,
         skills::put_bot_skills,
+        skill_management::create,
+        skill_management::import,
+        skill_management::update,
+        skill_management::delete,
         routes::update_bot,
+        routes::patch_bot,
         routes::delete_bot,
         routes::list_chats,
         routes::create_chat,
@@ -102,6 +107,8 @@ impl Modify for Security {
         routes::list_providers,
         routes::detect_providers,
         routes::enable_cli_provider,
+        crate::bot_engine::put_engine,
+        crate::bot_engine::kill_engine,
         routes::reload_providers,
         doctor_routes::get_doctor,
         doctor_routes::repair,
@@ -129,6 +136,17 @@ impl Modify for Security {
         mcp_routes::mcp_auth_status,
         mcp_routes::logout_mcp_auth,
         mcp_routes::set_secret,
+        mcp_server::create_token, mcp_server::revoke_token,
+        mcp_server::list_tools, mcp_server::call_tool,
+        composio_routes::composio_status,
+        composio_routes::composio_set_key,
+        composio_routes::composio_remove_key,
+        composio_routes::composio_catalog,
+        composio_routes::composio_list_apps,
+        composio_routes::composio_get_app,
+        composio_routes::composio_connect,
+        composio_routes::composio_set_enabled,
+        composio_routes::composio_disconnect,
         fill_routes::list_fill_secrets,
         fill_routes::create_fill_secret,
         fill_routes::update_fill_secret,
@@ -149,7 +167,7 @@ impl Modify for Security {
     ),
     components(schemas(
         ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
-        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
+        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::BotPatchInput, dto::BotPatchOp, dto::BotPatchKind, dto::BotConflictBody, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
         dto::MessageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
         dto::DecisionResponse, dto::RunDto, dto::StopScope, dto::StopRunsInput, dto::StopOutcome, dto::StopRunResult, dto::StopRunsResponse, dto::UsageTotals, dto::BotUsage,
@@ -158,12 +176,17 @@ impl Modify for Security {
         dto::CategoryDecisionDto, dto::ControlMode, dto::ControlStateInput,
         dto::ControlStateDto, dto::LatestCursor, dto::ControlVerdict, dto::ControlDecisionInput,
         dto::ControlDecisionResponse, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
-        dto::ConfiguredProviderDto, dto::ModelMetadataDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
+        dto::ConfiguredProviderDto, dto::ModelMetadataDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, crate::bot_engine::BotEngineInput, crate::cli_engines::CliNativeDto, crate::cli_engines::CliLevelDto, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
         dto::ParseSchedule, dto::ParsedSchedule, dto::AcceptedResponse, dto::ChannelDto, dto::PairCodeDto, dto::ScheduleChanged, dto::ScheduleChangeKind,
         mcp::McpTransportKind, mcp::McpStatus, mcp::McpErrorKind, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
         mcp::McpOAuthConfig, mcp::McpAuthState, mcp::McpAuthStart, mcp::McpAuthCallback,
         mcp::McpCatalogInstallDto, mcp::McpFolderDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
+        composio::ComposioConnState, composio::ComposioStatusDto, composio::ComposioKeyInput,
+        composio::ComposioToolkitDto, composio::ComposioCatalogDto, composio::ComposioAppDto,
+        composio::ComposioConnectDto, composio::ComposioEnabledInput, composio::ComposioDisconnectDto,
+        mcp_server::McpScope, mcp_server::McpTokenGrant, mcp_server::CreateMcpToken,
+        mcp_server::McpCallInput, mcp_server::ExportedMcpTool,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,
@@ -177,6 +200,10 @@ impl Modify for Security {
         changes::RestorePreviewDto, changes::RestoreRequestDto, changes::RestoreResponseDto,
         skills::SkillScope, skills::SkillIssueScope, skills::SkillRequiresDto, skills::SkillHubInfoDto,
         skills::CatalogSkillDto, skills::SkillIssueDto, skills::SkillsCatalogDto,
+        skills::SkillLocationsDto,
+        skill_management::SkillDocumentInput, skill_management::SkillImportInput,
+        skill_management::ManagedSkillDto, skill_management::DeleteSkillQuery,
+        skill_management::SkillUsingBotDto, skill_management::DeleteSkillResult,
         skills::SkillAssignmentModeDto, skills::AssignedSkillState, skills::AssignedSkillDto,
         skills::AvailableSkillDto, skills::OwnSkillDto, skills::BotSkillsDto, skills::PutBotSkillsInput,
         doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
@@ -190,8 +217,8 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"),
-        (name = "skills"), (name = "doctor")
+        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"),
+        (name = "skills"), (name = "doctor"), (name = "mcp-server")
     )
 )]
 pub struct ApiDoc;

@@ -186,8 +186,13 @@ export function DetectedAccountsBlock() {
         ) : (
           <ul className={styles.list}>
             {rows.map((row) => {
-              const action = detectedRowAction(row, enabledCli);
               const engine = engines.find((entry) => entry.detected.id === row.id);
+              // A CLI the confined engine cannot run can still be enabled for bots that
+              // use its own tools (chosen per bot in the Engine settings).
+              const nativeOnly = Boolean(engine?.native) && row.installed && !row.runnable;
+              const action = nativeOnly
+                ? ({ kind: enabledCli.has(`cli:${row.id}`) ? "enabled" : "enable" } as const)
+                : detectedRowAction(row, enabledCli);
               const install = engine?.install;
               return (
                 <li key={row.id} className={styles.item} data-testid={`detected-${row.id}`}>
@@ -199,6 +204,8 @@ export function DetectedAccountsBlock() {
                     </span>
                     {engine?.path ? <span className={styles.cliPath}>{engine.path}</span> : null}
                     {engine?.limitation === "native_tools_not_confined" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.nativeToolsOpen")}</span> : null}
+                    {engine?.native?.support === "experimental" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.experimental")}</span> : null}
+                    {engine?.limitation === "native_only" ? <span className={styles.sub}>{t("settingsModal.ai.detected.nativeOnly")}</span> : null}
                     {engine?.limitation === "detection_only" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.detectionOnly")}</span> : null}
                     {engine?.limitation === "codex_unconfinable" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.codexBlocked")}</span> : null}
                     {row.runnable ? <span className={styles.sub}>{t("settingsModal.ai.detected.runnableEngine")}</span> : null}
