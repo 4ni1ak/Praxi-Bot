@@ -1,0 +1,15 @@
+{
+  "identifier": "app-commands-widget",
+  "description": "Custom app commands the floating widget may call: read state and the run controls it shows",
+  "windows": [
+    "widget"
+  ],
+  "permissions": [
+    "allow-get-control-state",
+    "allow-pause-bot-run",
+    "allow-resume-bot-run",
+    "allow-take-the-wheel",
+    "allow-give-back-control",
+    "allow-stop-bot-run"
+  ]
+}

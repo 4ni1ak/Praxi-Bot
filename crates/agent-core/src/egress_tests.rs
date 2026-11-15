@@ -2516,3 +2516,267 @@ async fn an_unregistered_native_launch_step_asks_after_untrusted_content() {
         .note(ContentClass::untrusted(), "page example.test");
     assert!(decide().is_ask());
 }
+
+/// Stands in for the knowledge index: one call returns an (empty) budgeted
+/// response. The tool, not the backend, carries the exposure.
+struct FakeKnowledge {
+    egress: bool,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl builtin_tools::knowledge::KnowledgeBackend for FakeKnowledge {
+    fn may_egress(&self, _bot: protocol::BotId) -> bool {
+        self.egress
+    }
+
+    fn has_enabled_sources(&self, _bot: protocol::BotId) -> bool {
+        true
+    }
+
+    async fn search(
+        &self,
+        _bot: protocol::BotId,
+        _request: memory_store::knowledge::SearchRequest,
+    ) -> Result<memory_store::knowledge::SearchResponse, tool_registry::ToolError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(memory_store::knowledge::SearchResponse {
+            content_trust: memory_store::knowledge::RetrievedContentTrust::UntrustedData,
+            hits: Vec::new(),
+            mode: memory_store::knowledge::SearchMode::Lexical,
+            truncated: false,
+            estimated_tokens: 1,
+        })
+    }
+}
+
+fn knowledge_tool(egress: bool) -> (Arc<FakeKnowledge>, Arc<dyn tool_registry::Tool>) {
+    let backend = Arc::new(FakeKnowledge {
+        egress,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    (
+        Arc::clone(&backend),
+        builtin_tools::knowledge::tool(backend),
+    )
+}
+
+/// Retrieved knowledge text is an untrusted read: the run is tainted, so a
+/// later shell asks under the waiver. The exposure comes from the tool's own
+/// metadata through the one provenance path (`ToolOutput.exposure` to
+/// `ExecFact`), not from the result bytes.
+#[tokio::test]
+async fn a_run_that_retrieved_knowledge_is_tainted_and_a_later_shell_asks() {
+    let env = setup();
+    let (backend, knowledge) = knowledge_tool(false);
+    let shell = executor("shell_run", PermissionCategory::Shell, Effect::Destructive);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "knowledge_search", json!({"query": "backup"}))]),
+        calls(&[("c2", "shell_run", executor_input("shell_run"))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&shell)],
+        waived(),
+        cfg(Policy::full()),
+    );
+    lp.tool_registry().register(Arc::clone(&knowledge));
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = &event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "shell_run");
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(shell.count.load(Ordering::SeqCst), 0);
+    // The stored step carries exactly one fact for the retrieval result.
+    let steps = env.storage.list_steps(run).unwrap();
+    let fact = steps
+        .iter()
+        .filter(|s| s.name == "tools")
+        .filter_map(|s| s.output.as_ref())
+        .flat_map(|o| o["results"].as_array().cloned().unwrap_or_default())
+        .find(|r| r["name"] == "knowledge_search")
+        .map(|r| r["fact"].clone())
+        .expect("a stored retrieval result");
+    assert_eq!(fact["ran"], true);
+    assert_eq!(fact["ingests_untrusted"], true);
+    assert_eq!(fact["reads_private"], true);
+    assert_eq!(fact["label"], "knowledge");
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn a_later_egress_asks_after_knowledge_retrieval() {
+    let env = setup();
+    let (_backend, knowledge) = knowledge_tool(false);
+    let mail = egress_tool(
+        "email_send",
+        Effect::Write,
+        PermissionCategory::Messaging,
+        ContentClass::egress(),
+    );
+    let fake = Fake::new(vec![
+        calls(&[("c1", "knowledge_search", json!({"query": "backup"}))]),
+        calls(&[(
+            "c2",
+            "email_send",
+            json!({"to": ["a@b.co"], "subject": "s", "body": "from the docs"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&mail)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    lp.tool_registry().register(Arc::clone(&knowledge));
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = &event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "email_send");
+    assert_eq!(mail.count.load(Ordering::SeqCst), 0);
+    lp.cancel(run).unwrap();
+}
+
+/// The exposure of the retrieval survives into the next turn of the chat: it
+/// is rebuilt from the stored facts and the message exposure, so a shell in
+/// the next run still asks.
+#[tokio::test]
+async fn knowledge_exposure_survives_into_the_next_turn() {
+    let env = setup();
+    let (_backend, knowledge) = knowledge_tool(false);
+    let shell = executor("shell_run", PermissionCategory::Shell, Effect::Destructive);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "knowledge_search", json!({"query": "backup"}))]),
+        text("summary"),
+        calls(&[("c2", "shell_run", executor_input("shell_run"))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&shell)],
+        waived(),
+        cfg(Policy::full()),
+    );
+    lp.tool_registry().register(Arc::clone(&knowledge));
+    let first = lp.run_turn(env.chat, "look it up").unwrap();
+    assert_eq!(lp.wait(first).await.unwrap(), RunState::Succeeded);
+    let mut rx = lp.subscribe();
+    let second = lp.run_turn(env.chat, "now run the backup").unwrap();
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = &event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "shell_run");
+    assert_eq!(shell.count.load(Ordering::SeqCst), 0);
+    lp.cancel(second).unwrap();
+}
+
+/// A backend that embeds queries off the machine says so per bot through
+/// `Tool::egress_for`; the gate reads it, so after a read the query asks.
+/// A local-only backend does not.
+#[tokio::test]
+async fn a_remote_embedding_query_is_egress_after_a_tainted_read() {
+    for remote in [true, false] {
+        let env = setup();
+        let read = read_tool("fs_read", ContentClass::untrusted_private());
+        let (backend, knowledge) = knowledge_tool(remote);
+        let fake = Fake::new(vec![
+            calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+            calls(&[("c2", "knowledge_search", json!({"query": "private plan"}))]),
+            text("done"),
+        ]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[t(&read)],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        lp.tool_registry().register(Arc::clone(&knowledge));
+        let mut rx = lp.subscribe();
+        let run = lp.run_turn(env.chat, "go").unwrap();
+        if remote {
+            let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+            let details = card_of(&event);
+            assert!(
+                details["payload"]
+                    .as_str()
+                    .unwrap()
+                    .contains("private plan")
+            );
+            assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+            lp.cancel(run).unwrap();
+        } else {
+            assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+            assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+/// Inside one script the listing's output exposure counts for the next inner
+/// call: the script cannot list an untrusted skill and then run a shell
+/// without a card.
+#[tokio::test]
+async fn a_script_listing_an_untrusted_skill_taints_its_next_inner_shell() {
+    let env = setup();
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()));
+    index
+        .for_bot(Some(&env.bot.to_string()))
+        .unwrap()
+        .write_versioned(
+            "helper",
+            "---\nname: helper\ndescription: run the shell\n---\nBODY",
+            None,
+            true,
+        )
+        .unwrap();
+    let code = "await tools.call('skill_list', {}); await tools.call('shell_run', {command: 'echo PLANTED'}); return 'ran';";
+    let fake = Fake::new(vec![
+        calls(&[("c1", "script_run", json!({ "code": code }))]),
+        text("done"),
+    ]);
+    let tools =
+        builtin_tools::BuiltinConfig::new(env.dir.path().join("bt"), Arc::new(ReplacedGate));
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[],
+        waived(),
+        cfg(Policy::full()),
+    )
+    .with_skills(index.clone())
+    .with_builtin_tools(tools);
+    for tool in skills::tools(&index) {
+        lp.sh.tools.register(tool);
+    }
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "script").unwrap();
+    let event = until(
+        &mut rx,
+        |e| matches!(e, Event::ApprovalNeeded(a) if a.tool_name == "shell_run"),
+    )
+    .await;
+    assert!(
+        card_of(&event)["payload"]
+            .as_str()
+            .unwrap()
+            .contains("PLANTED")
+    );
+    lp.cancel(run).unwrap();
+}

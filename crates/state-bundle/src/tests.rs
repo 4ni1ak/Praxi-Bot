@@ -86,6 +86,50 @@ pub(super) fn replace_payload(bytes: &[u8], name: &str, payload: Vec<u8>) -> Vec
     pack(&entries)
 }
 
+#[tokio::test]
+async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
+    use sha2::{Digest, Sha256};
+
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), true);
+    let bot = "00000000-0000-0000-0000-000000000002";
+    let root = source.path().join("bots").join(bot);
+    fs::create_dir_all(&root).unwrap();
+    for name in ["knowledge.db", "knowledge.db-wal", "knowledge.db-shm"] {
+        fs::write(root.join(name), b"unchecked knowledge bytes").unwrap();
+    }
+    let bytes = bundle(source.path()).await;
+    assert!(
+        unpack(&bytes)
+            .iter()
+            .all(|(path, _)| !path.contains("knowledge.db"))
+    );
+    for name in [
+        "knowledge.db",
+        "knowledge.db-wal",
+        "knowledge.db-shm",
+        "KNOWLEDGE.DB",
+    ] {
+        let path = format!("bots/{bot}/{name}");
+        let payload = b"crafted unchecked database".to_vec();
+        let mut entries = unpack(&bytes);
+        let last = entries.pop().unwrap();
+        let mut manifest: Manifest = serde_json::from_slice(&last.1).unwrap();
+        manifest.files.push(FileRecord {
+            path: path.clone(),
+            size: payload.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(&payload)),
+        });
+        entries.push((path, payload));
+        entries.push((
+            "manifest.json".into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        ));
+        let error = rejected(&pack(&entries), ImportOptions::default()).await;
+        assert!(error.to_string().contains("allowlist"), "{name}: {error}");
+    }
+}
+
 // BUG-23: a valid archive checksum does not establish SQLite integrity.
 #[tokio::test]
 async fn corrupt_secondary_database_preserves_destination() {

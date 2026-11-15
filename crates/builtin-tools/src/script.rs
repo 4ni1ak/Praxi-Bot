@@ -242,6 +242,18 @@ impl ScriptHost for GateHost {
         } else {
             tool.call(&ctx, input).await
         };
+        // The output's own exposure replaces the static class for the calls
+        // that follow, as it does between model turns (a listing that
+        // contains an untrusted skill, for example).
+        if let Ok(o) = &out
+            && let Some(exposure) = &o.exposure
+        {
+            self.gate.note_exposure(
+                &self.run_id,
+                ContentClass::declared(exposure.ingests_untrusted, exposure.reads_private, false),
+                &exposure.label,
+            );
+        }
         out.map(|o| output_to_json(&o)).map_err(|e| e.to_string())
     }
 }

@@ -118,6 +118,13 @@ pub trait Tool: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
 
+    /// Host-derived per-bot egress classification, when it differs from a
+    /// static tool declaration. `None` keeps the native gate's static/default
+    /// classification; this metadata alone does not authorize an operation.
+    fn egress_for(&self, _bot_id: Option<&str>) -> Option<bool> {
+        None
+    }
+
     /// Whether the bot `bot_id` (`None` = no bot) may see this tool in
     /// discovery and in the model's tool list.  Default: every bot.  This is
     /// a visibility filter only; a tool that restricts callers must still
@@ -186,6 +193,9 @@ pub trait ToolWrapper: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
 
+    /// Forward the wrapped tool's dynamic egress classification.
+    fn egress_for(&self, bot_id: Option<&str>) -> Option<bool>;
+
     /// Whether the bot `bot_id` (`None` = no bot) may see this tool.
     fn visible_to(&self, _bot_id: Option<&str>) -> bool {
         true
@@ -218,6 +228,10 @@ pub trait ToolWrapper: Send + Sync {
 impl<W: ToolWrapper> Tool for W {
     fn spec(&self) -> &ToolSpec {
         ToolWrapper::spec(self)
+    }
+
+    fn egress_for(&self, bot_id: Option<&str>) -> Option<bool> {
+        ToolWrapper::egress_for(self, bot_id)
     }
 
     fn visible_to(&self, bot_id: Option<&str>) -> bool {
@@ -752,6 +766,9 @@ impl tool_registry::Tool for Good {
         impl crate::ToolWrapper for Wrap {
             fn spec(&self) -> &ToolSpec {
                 self.0.spec()
+            }
+            fn egress_for(&self, bot_id: Option<&str>) -> Option<bool> {
+                self.0.egress_for(bot_id)
             }
             async fn call(
                 &self,

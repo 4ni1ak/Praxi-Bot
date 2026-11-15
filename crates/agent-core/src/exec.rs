@@ -123,6 +123,7 @@ fn card_covers(decision: &Decision, card: &CliApproval) -> bool {
 /// A tainted egress needs a card. Used when a CLI permit was minted before the
 /// run became tainted.
 fn disclosure_now_required(
+    sh: &Shared,
     ctx: &RunCtx,
     name: &str,
     input: &Value,
@@ -134,7 +135,9 @@ fn disclosure_now_required(
     if !ctx.taint.lock().exposure.is_tainted() {
         return false;
     }
-    taint::call_can_egress(name, spec.content, input)
+    let mut class = spec.content;
+    class.egress |= sh.content_class(ctx, name).egress;
+    taint::call_can_egress(name, class, input)
 }
 
 /// Remove the card for this exact invocation, leaving any other card in place.
@@ -329,6 +332,11 @@ impl TurnExecutor {
         if tokens >= max_tokens {
             let reason = format!("token budget exhausted: {tokens} >= {max_tokens}");
             return Ok(Some(Self::guard_step(&ctx, model_steps, &reason)));
+        }
+        if model_steps == 0
+            && let Some(step) = self.knowledge_step(&ctx, history)
+        {
+            return Ok(Some(step));
         }
         let cli_session = std::iter::once(&ctx.profile.models.executor)
             .chain(&ctx.profile.models.fallback)
@@ -855,6 +863,7 @@ impl TurnExecutor {
 
         let mut slots = Vec::with_capacity(calls.len());
         let mut uuids = Vec::with_capacity(calls.len());
+        let mut knowledge_requests = std::collections::HashMap::new();
         for call in &calls {
             let call_uuid = ToolCallId::new();
             uuids.push(call_uuid);
@@ -895,6 +904,16 @@ impl TurnExecutor {
                 .spec
                 .as_ref()
                 .is_some_and(|s| s.category == PermissionCategory::Meta);
+            if resolved.name == builtin_tools::knowledge::KNOWLEDGE_SEARCH
+                && let Ok(mut request) = serde_json::from_value::<
+                    memory_store::knowledge::SearchRequest,
+                >(resolved.input.clone())
+            {
+                request.max_bytes = request
+                    .max_bytes
+                    .min(self.sh.cfg.guards.spill_threshold_bytes);
+                knowledge_requests.insert(call_uuid, request);
+            }
             let decision = match &resolved.spec {
                 Some(spec) => self.sh.decide(
                     &ctx,
@@ -922,6 +941,7 @@ impl TurnExecutor {
             let redisclose = carried.as_ref().is_some_and(|permit| {
                 !permit.showed_disclosure
                     && disclosure_now_required(
+                        &self.sh,
                         &ctx,
                         &resolved.name,
                         &resolved.input,
@@ -1111,10 +1131,15 @@ impl TurnExecutor {
 
         let g = &self.sh.cfg.guards;
         let mut results = Vec::with_capacity(calls.len());
-        for ((call, call_uuid), (text, is_error, duration_ms, own_spill, fact)) in
+        for ((call, call_uuid), (text, mut is_error, duration_ms, own_spill, fact)) in
             calls.iter().zip(uuids).zip(outcomes)
         {
-            let text = self.sh.redact(text);
+            let mut text = self.sh.redact(text);
+            let knowledge_request = knowledge_requests.get(&call_uuid);
+            if !is_error && let Some(request) = knowledge_request {
+                text = crate::knowledge::rebudget_text(&text, request);
+                is_error = text == crate::knowledge::RETRIEVAL_UNAVAILABLE;
+            }
             let output_preview = preview(&text);
             // A tool that already spilled its own output is not spilled again.
             let (mut text, spill_path) = if own_spill.is_some() {
@@ -1122,7 +1147,9 @@ impl TurnExecutor {
             } else {
                 self.spill(run, call_uuid, text)
             };
-            if call.repeat >= g.repeat_warn {
+            // Keep a knowledge result valid, budgeted JSON. The existing hard
+            // repeat-stop guard still applies; no unbudgeted footer is appended.
+            if call.repeat >= g.repeat_warn && knowledge_request.is_none() {
                 let _ = write!(
                     text,
                     "\n[warning: this exact call has now been made {} times in a row; \

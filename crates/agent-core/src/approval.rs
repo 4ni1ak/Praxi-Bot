@@ -195,7 +195,7 @@ impl Shared {
             None,
             &req,
         );
-        let class = self.content_class(name);
+        let class = self.content_class(ctx, name);
         let exposure = ctx.taint.lock().exposure;
         // `web_search` can only reach the configured search provider. Every
         // other egress tool, including fetch, can be aimed at an arbitrary host.
@@ -264,14 +264,21 @@ impl Shared {
         }
     }
 
-    /// Content class of tool `name`. A native step that replay or a script
-    /// authorizes without a registered tool still gets its built-in class, so
-    /// a launch or a shell step is never treated as a non-executor.
-    pub(crate) fn content_class(&self, name: &str) -> ContentClass {
-        self.tools.get(name).map_or_else(
-            || builtin_tools::classify(name).unwrap_or_else(ContentClass::unspecified),
-            |t| t.spec().content,
-        )
+    /// Content class of tool `name` for this run's bot. A native step that
+    /// replay or a script authorizes without a registered tool still gets its
+    /// built-in class, so a launch or a shell step is never treated as a
+    /// non-executor. A tool can raise `egress` for one bot through
+    /// [`tool_registry::Tool::egress_for`] (knowledge search with a remote
+    /// embedding provider); that can only add egress, never remove it.
+    pub(crate) fn content_class(&self, ctx: &RunCtx, name: &str) -> ContentClass {
+        let Some(tool) = self.tools.get(name) else {
+            return builtin_tools::classify(name).unwrap_or_else(ContentClass::unspecified);
+        };
+        let mut class = tool.spec().content;
+        if tool.egress_for(Some(&ctx.bot_id.to_string())) == Some(true) {
+            class.egress = true;
+        }
+        class
     }
 
     /// The registered tool `name` must be confirmed on every call
@@ -289,7 +296,7 @@ impl Shared {
     /// Every tool that starts a program is also an egress tool (the production
     /// registry audit checks it), so its card carries the full command.
     fn egress_card(&self, ctx: &RunCtx, name: &str, input: &Value) -> Option<Value> {
-        let class = self.content_class(name);
+        let class = self.content_class(ctx, name);
         if !taint::call_can_egress(name, class, input) {
             return None;
         }
@@ -648,7 +655,7 @@ impl Shared {
         token: Option<&str>,
         showing_card: bool,
     ) -> Result<(), String> {
-        let class = self.content_class(name);
+        let class = self.content_class(ctx, name);
         if !taint::call_can_egress(name, class, input) || !ctx.taint.lock().exposure.is_tainted() {
             return Ok(());
         }

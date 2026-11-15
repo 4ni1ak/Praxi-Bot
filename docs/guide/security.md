@@ -236,12 +236,21 @@ card. A standing grant, the read shortcut, a Full preset and
 What counts as untrusted here is wider than web pages. Any file read, listing or
 search (`fs_read`, `fs_list`, `fs_search`), any git read (`git_status`,
 `git_diff`, `git_log`, `git_show`, `git_branch`), every document reader, and any
-web, mail, MCP, skill or workflow read counts, including a read of your own
-project, because a file can hold text you did not write. Listing skills counts
-when one of them was stored as untrusted, and listing saved workflows always
-counts. Only `fs_edit`, `git_commit`, `process_list` and a listing of trusted
-skills leave a run private-only, and a private-only run is not held by this
-rule.
+web, mail, MCP, skill, workflow or knowledge search read counts, including a
+read of your own project, because a file can hold text you did not write.
+Screen and page observation counts too: `desktop_get_state`,
+`desktop_list_apps`, `desktop_click`, screenshots and browser snapshots. So a
+desktop task taints itself with its first look at the screen, and from then on
+each `desktop_launch`, `desktop_type`, `desktop_key`, `desktop_set_value` and
+`desktop_drag` call is its own once-only card: approving one covers nothing
+after it, and `allow_egress_after_reads` does not change that. A run-scoped
+control grant is planned as a separate change and is not part of this one.
+Listing skills counts when one of them was stored as untrusted, and listing
+saved workflows always counts. Only `fs_edit`, `git_commit`, `process_list`,
+`email_list_folders`, a listing of trusted skills and recalled memory that was
+stored by a clean run leave a run private-only, and a private-only run is not
+held by this rule. A knowledge search whose embedding provider is remote
+counts as sending data: after a read it asks, like any other egress.
 
 Consequences to expect:
 - The taint lasts for the later turns of the same chat for as long as the

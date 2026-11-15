@@ -295,6 +295,9 @@ fn build_agent_with_skills(
     tools.desktop.clone_from(&desktop);
     tools.dynamic_desktop = dynamic_desktop;
     tools.view_registry = view_registry;
+    tools.knowledge = Some(Arc::new(
+        builtin_tools::knowledge::LocalKnowledgeBackend::new(Arc::clone(storage)),
+    ));
     let host_limits = std::fs::read_to_string(data_dir.join("host.toml")).unwrap_or_default();
     let (max_computer_runs, idle) = computer_limits(
         &host_limits,
@@ -310,6 +313,9 @@ fn build_agent_with_skills(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
+            knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
+                Arc::clone(storage),
+            ))),
             ..LoopConfig::default()
         },
     )

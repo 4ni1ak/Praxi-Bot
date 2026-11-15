@@ -335,6 +335,8 @@ pub struct LoopConfig {
     pub redactor: Option<SharedRedactor>,
     /// Memory hook; `None` = no memory.
     pub memory: Option<MemoryConfig>,
+    /// Optional bounded pre-retrieval decision; `None` adds no automatic search.
+    pub knowledge_decider: Option<Arc<dyn crate::KnowledgeDecider>>,
     /// How long a schedule-started run waits for an approval (or a question
     /// answer) before it pauses (default [`DEFAULT_SCHEDULE_APPROVAL_TIMEOUT`]).
     pub schedule_approval_timeout: Duration,
@@ -367,6 +369,7 @@ impl Default for LoopConfig {
             router_budget: Duration::from_secs(2),
             redactor: None,
             memory: None,
+            knowledge_decider: None,
             schedule_approval_timeout: DEFAULT_SCHEDULE_APPROVAL_TIMEOUT,
             wait_for_pc_timeout: DEFAULT_WAIT_FOR_PC_TIMEOUT,
             journal: JournalSlot::default(),

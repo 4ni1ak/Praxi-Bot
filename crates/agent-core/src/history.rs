@@ -303,6 +303,12 @@ pub(crate) fn build_messages(
             STEP_TOOLS => {
                 let calls: Vec<CallRec> =
                     serde_json::from_value(step.input["calls"].clone()).unwrap_or_default();
+                let pre_retrieval = step.input["pre_retrieval"] == true;
+                if pre_retrieval {
+                    // This was a host read, never a model function call. Its
+                    // replay must not invent a provider signature or prefill.
+                    flush(&mut out, &mut outstanding);
+                }
                 let results: Vec<ResultRec> = step
                     .output
                     .as_ref()
@@ -318,7 +324,7 @@ pub(crate) fn build_messages(
                         },
                         |r| r.text.clone(),
                     );
-                    if let Some(r) = found {
+                    if let Some(r) = found.filter(|_| !pre_retrieval) {
                         metas.push(tool_meta(
                             compaction,
                             out.len(),
@@ -332,7 +338,9 @@ pub(crate) fn build_messages(
                     // A scheduled directive has no model-issued tool call
                     // to pair with a Tool message. Use the same explicitly
                     // untrusted data boundary as workflow handovers.
-                    if scheduled_tool && index == 1 {
+                    if pre_retrieval {
+                        out.push(crate::knowledge::pre_retrieval_message(&call, &text));
+                    } else if scheduled_tool && index == 1 {
                         out.push(scheduled_tool_message(&text));
                     } else {
                         out.push(Message::tool_result(call.id, text));
@@ -376,9 +384,10 @@ fn defuse_hints(out: &mut [Message]) {
 fn fold_hint(out: &mut [Message], note: &str) {
     let target = out.iter_mut().rev().find(|m| {
         m.role == MessageRole::User
-            && m.content
-                .as_str()
-                .is_some_and(|t| !t.starts_with("[router data: UNTRUSTED"))
+            && m.content.as_str().is_some_and(|t| {
+                !t.starts_with("[router data: UNTRUSTED")
+                    && !t.starts_with(crate::knowledge::RETRIEVAL_DATA_LABEL)
+            })
     });
     if let Some(m) = target
         && let Value::String(t) = &mut m.content
@@ -406,10 +415,14 @@ pub(crate) fn truncate_utf8(s: &str, max: usize) -> &str {
 }
 
 #[cfg(test)]
+#[path = "knowledge/replay_tests.rs"]
+mod knowledge_replay_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn fixture() -> (Storage, Run, BotProfile) {
+    pub(super) fn fixture() -> (Storage, Run, BotProfile) {
         let storage = Storage::open_in_memory(std::env::temp_dir()).unwrap();
         let user = storage::User {
             id: protocol::UserId::new(),
@@ -459,7 +472,13 @@ mod tests {
         (storage, run, profile)
     }
 
-    fn step(run: &Run, idx: u32, name: &str, input: Value, output: Option<Value>) -> RunStep {
+    pub(super) fn step(
+        run: &Run,
+        idx: u32,
+        name: &str,
+        input: Value,
+        output: Option<Value>,
+    ) -> RunStep {
         RunStep {
             id: uuid::Uuid::from_u128(u128::from(idx) + 1),
             run_id: run.id,

@@ -20,6 +20,7 @@ pub mod checkpoint;
 pub mod control;
 pub mod desktop;
 pub mod files;
+pub mod knowledge;
 pub mod meta;
 pub mod schedule;
 pub mod script;
@@ -101,6 +102,8 @@ pub struct BuiltinConfig {
     pub email: Option<Arc<connector_email::EmailConnector>>,
     /// Web tools (search, fetch, feeds, sitemaps, metadata). `None` = web tools skipped.
     pub web: Option<web_tools::WebToolsConfig>,
+    /// Bot-scoped knowledge search. No model-facing source-management methods.
+    pub knowledge: Option<Arc<dyn knowledge::KnowledgeBackend>>,
     /// Directories `fs_*` may read and write. Empty does not add a root limit.
     /// A non-empty list that cannot be resolved denies every `fs_*` call.
     /// UNC paths, device paths, and credential files are still refused.
@@ -130,6 +133,7 @@ impl BuiltinConfig {
             control: None,
             email: None,
             web: None,
+            knowledge: None,
             fs_allowed_roots: Vec::new(),
             fs_granted_paths: Vec::new(),
         }
@@ -185,6 +189,9 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         cfg.control,
     ));
     all.extend(meta::tools());
+    if let Some(backend) = cfg.knowledge {
+        all.push(knowledge::tool(backend));
+    }
     if let Some(email) = &cfg.email {
         all.extend(connector_email::tools(email));
     }
