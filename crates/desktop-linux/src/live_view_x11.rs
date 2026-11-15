@@ -1450,7 +1450,7 @@ mod linux_x11 {
     };
 
     const X11_PROBE_IO_TIMEOUT: Duration = Duration::from_millis(1500);
-    /// Total budget for the connection, XTest query and layout read made when
+    /// Total budget for the connection, `XTest` query and layout read made when
     /// the target is created. A server that accepts connections but stalls
     /// fails the open within this, instead of hanging the caller.
     const X11_START_IO_TIMEOUT: Duration = Duration::from_secs(4);
@@ -1585,7 +1585,7 @@ mod linux_x11 {
     }
 
     impl RealX11Capture<BoundedStream> {
-        /// Whether the XTest extension answers, within this connection's deadline.
+        /// Whether the `XTest` extension answers, within this connection's deadline.
         fn xtest_available(&self) -> bool {
             self.conn
                 .xtest_get_version(2, 1)
@@ -2003,7 +2003,7 @@ mod linux_x11 {
     }
 
     /// [`open_x11_live_view_target`] for an explicit display. Every X11 round
-    /// trip made here (handshake, XTest query, layout) shares one `io_timeout`
+    /// trip made here (handshake, `XTest` query, layout) shares one `io_timeout`
     /// deadline, so a stalled server fails the call instead of hanging it.
     pub(super) fn open_x11_live_view_target_on(
         options: &LiveViewOptions,
