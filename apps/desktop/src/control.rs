@@ -247,6 +247,10 @@ pub struct ControlStateMachine {
     bot: Option<BotRunMeta>,
     current_step: Option<String>,
     stop_hotkey: String,
+    /// Parsed form of `stop_hotkey`, cached so the hotkey listener never re-parses per tick.
+    parsed_hotkey: ParsedHotkey,
+    /// Raised whenever the configured hotkey is (re)set; lets the listener re-seed its edge detector.
+    hotkey_gen: u64,
     active_target: Option<OverlayShowTargetPayload>,
     last_click: Option<OverlayClickPayload>,
     refused_actions_count: u64,
@@ -272,6 +276,14 @@ impl ControlStateMachine {
             bot: None,
             current_step: None,
             stop_hotkey: DEFAULT_STOP_HOTKEY.to_string(),
+            parsed_hotkey: ParsedHotkey {
+                ctrl: true,
+                alt: true,
+                shift: false,
+                meta: false,
+                key: HotkeyKey::Escape,
+            },
+            hotkey_gen: 0,
             active_target: None,
             last_click: None,
             refused_actions_count: 0,
@@ -297,6 +309,13 @@ impl ControlStateMachine {
     #[must_use]
     pub fn run_generation(&self) -> u64 {
         self.run_generation
+    }
+
+    /// Cheap (`Copy`, no allocation) view of the configured hotkey for the listener:
+    /// `(generation, parsed)`. The generation changes whenever the hotkey is set.
+    #[must_use]
+    pub fn hotkey_view(&self) -> (u64, ParsedHotkey) {
+        (self.hotkey_gen, self.parsed_hotkey)
     }
 
     /// Current state revision.
@@ -518,6 +537,8 @@ impl ControlStateMachine {
         let raw = hotkey.into();
         let parsed = parse_hotkey(&raw)?;
         self.bump_rev();
+        self.hotkey_gen = self.hotkey_gen.wrapping_add(1);
+        self.parsed_hotkey = parsed;
         self.stop_hotkey = parsed.canonical_string();
         Ok(self.snapshot())
     }
@@ -572,11 +593,14 @@ impl ControlStateMachine {
     /// Confirms after the ~300 ms pre-action highlight delay that the bot is still allowed to act
     /// and that the run generation has not changed.
     pub fn confirm_action_after_highlight(&mut self, expected_generation: u64) -> bool {
-        self.bump_rev();
+        // Only a refusal changes/emits state; a confirmed action leaves the state (and the
+        // revision) untouched, so `state_rev` has no gaps between emitted snapshots.
         if self.run_generation != expected_generation {
+            self.bump_rev();
             return false;
         }
         if self.mode != ControlMode::BotDriving {
+            self.bump_rev();
             if self.mode == ControlMode::HumanDriving {
                 self.refused_actions_count = self.refused_actions_count.saturating_add(1);
             }
@@ -1222,6 +1246,41 @@ pub fn hotkey_edge(was_pressed: bool, pressed_now: bool) -> (bool, bool) {
     (pressed_now && !was_pressed, pressed_now)
 }
 
+/// Edge-detector state of the listener, re-seeded whenever the configured hotkey changes so a
+/// combination that is already physically held when it becomes the hotkey (e.g. the user just
+/// recorded it in Settings) never synthesises a press edge.
+#[derive(Debug, Default)]
+pub struct HotkeyWatcher {
+    seen_gen: Option<u64>,
+    was_pressed: bool,
+}
+
+impl HotkeyWatcher {
+    /// One listener tick. `view` is `(generation, parsed)` from [`ControlHandle::hotkey_view`]
+    /// (`None` = no usable hotkey: the detector is reset). `is_pressed` reads the keyboard and is
+    /// only called with the current parsed hotkey; no parsing happens here.
+    pub fn tick(
+        &mut self,
+        control: &ControlHandle,
+        view: Option<(u64, ParsedHotkey)>,
+        is_pressed: impl FnOnce(ParsedHotkey) -> bool,
+    ) {
+        let Some((generation, parsed)) = view else {
+            self.was_pressed = false;
+            self.seen_gen = None;
+            return;
+        };
+        let pressed_now = is_pressed(parsed);
+        if self.seen_gen != Some(generation) {
+            // Hotkey (re)configured: adopt the current key state as the baseline, no press.
+            self.seen_gen = Some(generation);
+            self.was_pressed = pressed_now;
+            return;
+        }
+        self.was_pressed = poll_hotkey_once(control, self.was_pressed, pressed_now);
+    }
+}
+
 /// One poll step of the hotkey listener: applies [`hotkey_edge`] and, on a press edge,
 /// performs a user stop (`stop_seq` rises) from whatever mode the handle is in.
 /// Returns the new `was_pressed`. Testable without Win32.
@@ -1280,16 +1339,13 @@ pub fn spawn_global_hotkey_listener(control: ControlHandle) {
     std::thread::Builder::new()
         .name("bot-global-stop-hotkey".to_string())
         .spawn(move || {
-            let mut was_pressed = false;
+            let mut watcher = HotkeyWatcher::default();
             loop {
                 std::thread::sleep(HOTKEY_POLL_INTERVAL);
                 // Polled in EVERY mode including Idle: a restored browser/remote run has no
                 // native run, yet the global shortcut must still produce a Stop.
-                let hotkey_str = control.state.lock().stop_hotkey.clone();
-                let Ok(parsed) = parse_hotkey(&hotkey_str) else {
-                    continue;
-                };
-                was_pressed = poll_hotkey_once(&control, was_pressed, is_hotkey_pressed(parsed));
+                let view = Some(control.state.lock().hotkey_view());
+                watcher.tick(&control, view, is_hotkey_pressed);
             }
         })
         .ok();
@@ -1494,8 +1550,8 @@ mod tests {
         assert!(sm.begin_action_untargeted("u"));
         check(sm.snapshot(), "begin_action_untargeted");
         let generation = sm.run_generation();
-        let _ = sm.confirm_action_after_highlight(generation);
-        check(sm.snapshot(), "confirm_action_after_highlight");
+        assert!(!sm.confirm_action_after_highlight(generation + 1)); // refusal emits
+        check(sm.snapshot(), "confirm_action_after_highlight (refused)");
         sm.record_click(1.0, 2.0, 3).expect("click");
         check(sm.snapshot(), "record_click");
         check(sm.set_current_step("x"), "set_current_step");
@@ -1742,6 +1798,125 @@ mod tests {
                 "{mode:?}: second press"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn changing_the_hotkey_while_held_produces_no_stop_and_one_press_one_stop() {
+        let handle = ControlHandle::new(Duration::from_millis(1));
+        let mut watcher = HotkeyWatcher::default();
+        // key state shared by the fake keyboard: which hotkey combos are physically down
+        let down = |hk: ParsedHotkey| hk.key == HotkeyKey::Letter('S');
+        let tick = |w: &mut HotkeyWatcher| {
+            let view = Some(handle.state.lock().hotkey_view());
+            w.tick(&handle, view, down);
+        };
+        tick(&mut watcher); // seed on the default hotkey (not held)
+        assert_eq!(handle.snapshot().stop_seq, 0);
+
+        // user records Ctrl+Shift+S in Settings while the keys are still held
+        handle.set_stop_hotkey("Ctrl+Shift+S").expect("hotkey");
+        for _ in 0..5 {
+            tick(&mut watcher);
+        }
+        assert_eq!(
+            handle.snapshot().stop_seq,
+            0,
+            "held keys must not synthesise a press"
+        );
+
+        // release (fake keyboard: nothing down), press again = exactly one Stop
+        let released = |w: &mut HotkeyWatcher| {
+            let view = Some(handle.state.lock().hotkey_view());
+            w.tick(&handle, view, |_| false);
+        };
+        released(&mut watcher);
+        for _ in 0..5 {
+            tick(&mut watcher);
+        }
+        assert_eq!(handle.snapshot().stop_seq, 1);
+    }
+
+    #[tokio::test]
+    async fn hotkey_view_is_cached_and_only_changes_when_the_hotkey_is_set() {
+        let handle = ControlHandle::new(Duration::from_millis(1));
+        let (gen0, parsed0) = handle.state.lock().hotkey_view();
+        assert_eq!(parsed0, parse_hotkey(DEFAULT_STOP_HOTKEY).expect("default"));
+        // stops, runs and steps never touch it: the listener has nothing to re-parse
+        handle.start_run(sample_bot(), "r");
+        handle.set_current_step("x");
+        handle.stop_all();
+        assert_eq!(handle.state.lock().hotkey_view(), (gen0, parsed0));
+        // an invalid hotkey is rejected without changing the cached value
+        assert!(handle.set_stop_hotkey("nonsense").is_err());
+        assert_eq!(handle.state.lock().hotkey_view(), (gen0, parsed0));
+        handle.set_stop_hotkey("Alt+F4").expect("hotkey");
+        let (gen1, parsed1) = handle.state.lock().hotkey_view();
+        assert_ne!(gen1, gen0);
+        assert_eq!(parsed1, parse_hotkey("Alt+F4").expect("parse"));
+    }
+
+    #[tokio::test]
+    async fn unusable_hotkey_resets_the_edge_detector() {
+        let handle = ControlHandle::new(Duration::from_millis(1));
+        let mut watcher = HotkeyWatcher::default();
+        let view = Some(handle.state.lock().hotkey_view());
+        watcher.tick(&handle, view, |_| true); // seeded as held
+        watcher.tick(&handle, None, |_| true); // hotkey unset/invalid: reset
+        let view = Some(handle.state.lock().hotkey_view());
+        watcher.tick(&handle, view, |_| true); // re-seeded as held, still no Stop
+        assert_eq!(handle.snapshot().stop_seq, 0);
+    }
+
+    #[test]
+    fn confirmed_action_leaves_state_rev_alone_but_refusals_raise_it() {
+        let mut sm = ControlStateMachine::new();
+        sm.start_run(sample_bot(), "s");
+        let generation = sm.run_generation();
+        let rev = sm.state_rev();
+        assert!(sm.confirm_action_after_highlight(generation));
+        assert_eq!(
+            sm.state_rev(),
+            rev,
+            "confirmed: nothing changed, nothing emitted"
+        );
+        assert!(!sm.confirm_action_after_highlight(generation + 1));
+        assert_eq!(sm.state_rev(), rev + 1, "stale generation emits a refusal");
+        sm.take_the_wheel().expect("wheel");
+        let rev = sm.state_rev();
+        assert!(!sm.confirm_action_after_highlight(generation));
+        assert_eq!(sm.state_rev(), rev + 1, "refused while human drives");
+    }
+
+    #[tokio::test]
+    async fn handle_show_target_click_and_refusals_emit_strictly_higher_revisions() {
+        let handle = ControlHandle::new(Duration::from_millis(1));
+        let sink = Arc::new(RecordingSink::default());
+        handle.set_sink(sink.clone());
+        let last_rev = || sink.snapshots.lock().last().map(|s| s.state_rev);
+
+        handle.start_run(sample_bot(), "r");
+        let r0 = last_rev().expect("start_run emitted");
+        handle.show_target(sample_rect(), "t", "click", None);
+        let r1 = last_rev().expect("show_target emitted");
+        assert!(r1 > r0, "show_target must raise state_rev");
+        let before = handle.snapshot().state_rev;
+        handle.click(1.0, 2.0);
+        assert!(
+            handle.snapshot().state_rev > before,
+            "click must raise state_rev"
+        );
+        // refused begin_action (human driving) emits a higher revision
+        handle.take_the_wheel().expect("wheel");
+        let r2 = last_rev().expect("take_the_wheel emitted");
+        assert!(!handle.begin_action(sample_rect(), "refused").await);
+        assert!(last_rev().expect("refusal emitted") > r2);
+        // ack after a real Stop: acknowledges, emits nothing, keeps the revision
+        let stopped = handle.stop_all();
+        let emitted = sink.snapshots.lock().len();
+        let acked = handle.ack_stop(stopped.stop_seq);
+        assert_eq!(acked.stop_acked_seq, stopped.stop_seq);
+        assert_eq!(acked.state_rev, stopped.state_rev);
+        assert_eq!(sink.snapshots.lock().len(), emitted);
     }
 
     #[tokio::test]
