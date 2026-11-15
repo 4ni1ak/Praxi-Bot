@@ -184,6 +184,14 @@ pub(crate) async fn set_secret(
         .secret_store()
         .ok_or_else(|| ApiError::unavailable("this daemon has no secret store"))?;
     secret_store::validate_name(&name).map_err(|_| ApiError::bad_request("invalid secret name"))?;
+    // The fill namespace belongs to the owner-only `/v1/fill-secrets` routes,
+    // which bind each secret to its allow-lists; this generic sink (reachable
+    // by a paired desktop) must not create or overwrite one.
+    if secret_store::is_fill_name(&name) {
+        return Err(ApiError::bad_request(
+            "names starting with `fill/` are managed through /v1/fill-secrets",
+        ));
+    }
     if input.value.is_empty() || input.value.len() > MAX_SECRET_BYTES {
         return Err(ApiError::bad_request(
             "the value must be between 1 byte and 64 KiB",

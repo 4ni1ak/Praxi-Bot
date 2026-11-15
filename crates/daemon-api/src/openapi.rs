@@ -9,8 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
-    mcp_routes, routes, skills, sse, web, web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, fill_routes, host, live_view,
+    mcp, mcp_routes, routes, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -116,6 +116,13 @@ impl Modify for Security {
         mcp_routes::list_mcp_tools,
         mcp_routes::mcp_catalog,
         mcp_routes::set_secret,
+        fill_routes::list_fill_secrets,
+        fill_routes::create_fill_secret,
+        fill_routes::update_fill_secret,
+        fill_routes::delete_fill_secret,
+        fill_routes::list_fill_grants,
+        fill_routes::create_fill_grant,
+        fill_routes::revoke_fill_grant,
         email_routes::list_email_accounts,
         email_routes::create_email_account,
         email_routes::update_email_account,
@@ -159,6 +166,8 @@ impl Modify for Security {
         skills::AvailableSkillDto, skills::OwnSkillDto, skills::BotSkillsDto, skills::PutBotSkillsInput,
         doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
         doctor_routes::RepairResult,
+        fill_routes::FillSecretDto, fill_routes::CreateFillSecret, fill_routes::UpdateFillSecret,
+        fill_routes::FillGrantDto, fill_routes::CreateFillGrant,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
