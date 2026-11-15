@@ -543,7 +543,7 @@ export function OnboardingView({
 
       const input = { name: step4Draft.name, config };
       const savedBot = existingStep4Bot
-        ? await client.updateBot(existingStep4Bot.id, input)
+        ? await client.updateBot(existingStep4Bot.id, { ...input, expected_version: existingStep4Bot.version })
         : await client.createBot(input);
 
       setCreatedBotId(savedBot.id);

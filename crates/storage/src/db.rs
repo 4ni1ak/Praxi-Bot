@@ -92,7 +92,7 @@ impl Storage {
         migrate::migrate(&mut conn)?;
         for select in [
             "SELECT id, name, created_at_ms FROM users",
-            "SELECT id, user_id, name, config_json, created_at_ms FROM bots",
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots",
             "SELECT id, user_id, bot_id, title, created_at_ms FROM chats",
             "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages",
             RUN_SELECT,
@@ -113,6 +113,20 @@ impl Storage {
             while let Some(row) = rows.next()? {
                 let _ = skill_assignment_row(row)?;
             }
+        }
+        let version_column_valid: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('bots') WHERE name='version' AND upper(type)='INTEGER' AND \"notnull\"=1)",
+            [], |r| r.get(0),
+        )?;
+        let malformed_version: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bots WHERE typeof(version) != 'integer' OR version < 1)",
+            [],
+            |r| r.get(0),
+        )?;
+        if !version_column_valid || malformed_version {
+            return Err(StorageError::Conflict(
+                "invalid bots.version: required positive INTEGER NOT NULL".into(),
+            ));
         }
         if conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
             return Err(rusqlite::Error::SqliteFailure(
@@ -258,16 +272,43 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Replace a bot's name and configuration.  Returns `false` if it does not exist.
+    /// Replace a profile only when its revision still matches the caller's snapshot.
     ///
     /// # Errors
     /// Fails on SQLite/JSON errors.
-    pub fn update_bot(&self, id: BotId, name: &str, config: &Value) -> Result<bool> {
-        let n = self.conn().execute(
-            "UPDATE bots SET name = ?2, config_json = ?3, version = version + 1 WHERE id = ?1",
-            params![id.to_string(), name, serde_json::to_string(config)?],
-        )?;
-        Ok(n > 0)
+    pub fn update_bot(
+        &self,
+        id: BotId,
+        name: &str,
+        config: &Value,
+        expected_version: i64,
+    ) -> Result<BotPatch> {
+        self.patch_bot(id, expected_version, |_, _| {
+            Ok((name.to_owned(), config.clone()))
+        })
+    }
+
+    /// Read a profile and revision in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn get_bot_versioned(&self, id: BotId) -> Result<Option<(Bot, i64)>> {
+        Ok(self.conn().query_row(
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+            [id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)),
+        ).optional()?)
+    }
+
+    /// Read a user's profiles and revisions in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn list_bots_versioned(&self, user_id: UserId) -> Result<Vec<(Bot, i64)>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE user_id = ?1 ORDER BY id")?;
+        Ok(st
+            .query_map([user_id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)))?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
     /// The profile version of a bot (bumped by every write), `None` if it does not exist.
@@ -311,7 +352,7 @@ impl Storage {
         F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
     {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let stored = tx
             .query_row(
                 "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
@@ -1626,7 +1667,11 @@ mod tests {
         let f = fx();
         let v0 = f.st.bot_version(f.bot.id).unwrap().unwrap();
         // A plain replace bumps the version too, so a patch built on the old one is stale.
-        assert!(f.st.update_bot(f.bot.id, "n", &json!({"a": 1})).unwrap());
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "n", &json!({"a": 1}), v0)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
         let v1 = f.st.bot_version(f.bot.id).unwrap().unwrap();
         assert_eq!(v1, v0 + 1);
         match f
@@ -1675,18 +1720,77 @@ mod tests {
     }
 
     #[test]
+    fn review95_all_profile_and_skill_writers_bump_one_bot_revision_transactionally() {
+        let f = fx();
+        let bid = f.bot.id.to_string();
+        let assert_revision = |expected| {
+            assert_eq!(
+                f.st.get_bot_versioned(f.bot.id).unwrap().unwrap().1,
+                expected
+            )
+        };
+        assert_revision(1);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["one".into()])
+            .unwrap();
+        assert_revision(2);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["two".into()])
+            .unwrap();
+        assert_revision(3);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::All, &[])
+            .unwrap();
+        assert_revision(4);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &[])
+            .unwrap();
+        assert_revision(5);
+        f.st.delete_bot_skill_assignment(f.bot.id).unwrap();
+        assert_revision(6);
+        assert!(!f.st.delete_bot_skill_assignment(f.bot.id).unwrap());
+        assert_revision(6); // No changed assignment, no revision.
+        {
+            let mut conn = f.st.conn();
+            let tx = conn.transaction().unwrap();
+            tx.execute("UPDATE bots SET config_json='{}' WHERE id=?1", [&bid])
+                .unwrap();
+            assert_eq!(
+                tx.query_row("SELECT version FROM bots WHERE id=?1", [&bid], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                7
+            );
+            // Rollback includes both the profile and its revision.
+        }
+        assert_revision(6);
+        f.st.conn()
+            .execute("UPDATE bots SET name='sql writer' WHERE id=?1", [&bid])
+            .unwrap();
+        assert_revision(7);
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "stale", &json!({}), 6).unwrap(),
+            BotPatch::Stale { version: 7, .. }
+        ));
+        assert_revision(7);
+        let list = f.st.list_bots_versioned(f.user.id).unwrap();
+        assert_eq!(list[0].1, 7);
+        assert_eq!(list[0].0.name, "sql writer");
+    }
+
+    #[test]
     fn update_and_delete_bot() {
         let f = fx();
-        assert!(
-            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}))
-                .unwrap()
-        );
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}), 1)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
         let got = f.st.get_bot(f.bot.id).unwrap().unwrap();
         assert_eq!(
             (got.name.as_str(), got.config),
             ("renamed", json!({"a": 1}))
         );
-        assert!(!f.st.update_bot(BotId::new(), "x", &json!({})).unwrap());
+        assert_eq!(
+            f.st.update_bot(BotId::new(), "x", &json!({}), 1).unwrap(),
+            BotPatch::Missing
+        );
         // The fixture chat still references the bot.
         assert!(f.st.delete_bot(f.bot.id).is_err());
         let spare = Bot {

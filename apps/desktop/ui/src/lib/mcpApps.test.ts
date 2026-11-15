@@ -383,12 +383,13 @@ test("saving a bot: a failing server list after create reports failure and a ret
   const api = new MockApiClient();
   let creates = 0;
   const updates: string[] = [];
-  const made = { id: "new-bot-uuid", name: "N" } as unknown as import("../api/types.ts").Bot;
+  const made = { id: "new-bot-uuid", name: "N", version: 7 } as unknown as import("../api/types.ts").Bot;
   api.createBot = async () => {
     creates += 1;
     return made;
   };
-  api.updateBot = async (id) => {
+  api.updateBot = async (id, payload) => {
+    assert.equal(payload.expected_version, 7);
     updates.push(id);
     return made;
   };

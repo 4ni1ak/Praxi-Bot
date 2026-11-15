@@ -301,15 +301,11 @@ pub(crate) async fn health(State(s): State<AppState>) -> Json<Health> {
 #[utoipa::path(get, path = "/v1/bots", tag = "bots", security(("bearer" = [])),
     responses((status = 200, body = Vec<BotDto>), (status = 401, body = ErrorBody)))]
 pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotDto>>, ApiError> {
-    let versions = s.storage().bot_versions(s.user_id())?;
     Ok(Json(
         s.storage()
-            .list_bots(s.user_id())?
+            .list_bots_versioned(s.user_id())?
             .into_iter()
-            .map(|b| {
-                let v = versions.get(&b.id).copied().unwrap_or(1);
-                bot_dto(b, v)
-            })
+            .map(|(bot, version)| bot_dto(bot, version))
             .collect(),
     ))
 }
@@ -345,9 +341,12 @@ pub(crate) async fn get_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
 ) -> Result<Json<BotDto>, ApiError> {
-    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let (bot, version) = s
+        .storage()
+        .get_bot_versioned(BotId(id(&bid)?))?
+        .filter(|(bot, _)| bot.user_id == s.user_id())
+        .ok_or_else(|| ApiError::not_found("bot"))?;
     let effective = s.agent().effective_policy(bot.id).ok();
-    let version = s.storage().bot_version(bot.id)?.unwrap_or(1);
     let mut dto = bot_dto(bot, version);
     dto.effective_policy = effective.map(effective_policy_dto);
     Ok(Json(dto))
@@ -392,35 +391,38 @@ pub(crate) async fn revoke_grant(
     }
 }
 
-/// Replace a bot's name and profile.
+/// Replace a bot profile using its loaded expected_version (required; missing is 428).
 #[utoipa::path(put, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Bot id")),
     request_body = BotInput,
     responses((status = 200, body = BotDto), (status = 404, body = ErrorBody),
+              (status = 428, body = ErrorBody), (status = 409, body = BotConflictBody),
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
     ApiJson(input): ApiJson<BotInput>,
-) -> Result<Json<BotDto>, ApiError> {
-    let mut bot = s.bot_of_user(BotId(id(&bid)?))?;
+) -> Result<Json<BotDto>, BotPatchError> {
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let expected = input.expected_version.ok_or_else(|| ApiError::new(
+        StatusCode::PRECONDITION_REQUIRED, "precondition_required",
+        "PUT requires expected_version from the profile being replaced; reload and retry explicitly",
+    ))?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
-    if preserve_runtime
-        && config.get("runtime").is_none()
-        && let Some(runtime) = bot.config.get("runtime")
-    {
-        config
-            .as_object_mut()
-            .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?
-            .insert("runtime".into(), runtime.clone());
-    }
-    s.storage().update_bot(bot.id, &name, &config)?;
-    bot.name = name;
-    bot.config = config;
-    s.refresh_profile(&bot);
-    let version = s.storage().bot_version(bot.id)?.unwrap_or(1);
-    Ok(Json(bot_dto(bot, version)))
+    let outcome = s.storage().patch_bot(bot.id, expected, |_, stored| {
+        if preserve_runtime
+            && config.get("runtime").is_none()
+            && let Some(runtime) = stored.get("runtime")
+        {
+            config
+                .as_object_mut()
+                .ok_or_else(|| "bad_profile:bot config must be an object".to_owned())?
+                .insert("runtime".into(), runtime.clone());
+        }
+        Ok((name, config))
+    })?;
+    profile_write_response(&s, outcome)
 }
 
 /// Why a patch cannot be applied.
@@ -461,8 +463,43 @@ impl axum::response::IntoResponse for BotPatchError {
     }
 }
 
+const MAX_PROFILE_DEPTH: usize = 32;
+const MAX_PROFILE_BYTES: usize = 1024 * 1024;
+const MAX_PATCH_OPS: usize = 128;
+
+/// Iterative bound on the resulting JSON, including keys and escaped strings.
+/// Checked before cloning/applying values and after each operation.
+fn check_profile_bounds(value: &Value, depth: usize) -> Result<(), String> {
+    let mut pending = vec![(value, depth)];
+    let mut bytes = 0usize;
+    while let Some((node, depth)) = pending.pop() {
+        if depth > MAX_PROFILE_DEPTH {
+            return Err("profile exceeds maximum depth (32)".into());
+        }
+        bytes = bytes.saturating_add(16);
+        match node {
+            Value::String(text) => bytes = bytes.saturating_add(text.len().saturating_mul(6)),
+            Value::Object(map) => {
+                for (key, child) in map {
+                    bytes = bytes.saturating_add(key.len().saturating_mul(6));
+                    pending.push((child, depth + 1));
+                }
+            }
+            Value::Array(array) => pending.extend(array.iter().map(|child| (child, depth + 1))),
+            _ => {}
+        }
+        if bytes > MAX_PROFILE_BYTES || pending.len() > MAX_PROFILE_BYTES / 16 {
+            return Err("profile exceeds maximum size (1 MiB escaped JSON budget)".into());
+        }
+    }
+    Ok(())
+}
+
 /// Split a JSON Pointer into object keys (RFC 6901 escapes).
 fn pointer_keys(path: &str) -> Result<Vec<String>, String> {
+    if path.len() > 4096 || path.bytes().filter(|b| *b == b'/').count() > MAX_PROFILE_DEPTH {
+        return Err("patch path exceeds maximum length (4096) or depth (32)".into());
+    }
     let rest = path
         .strip_prefix('/')
         .ok_or_else(|| format!("path `{path}` must start with `/`"))?;
@@ -514,10 +551,12 @@ fn patch_at(
 
 /// Apply field-level ops to a profile.  Only the named keys change.
 fn apply_patch_ops(config: &mut Value, ops: &[BotPatchOp]) -> Result<(), String> {
+    check_profile_bounds(config, 0)?;
     for op in ops {
         let keys = pointer_keys(&op.path)?;
         let value = (op.op == BotPatchKind::Set).then_some(&op.value);
         patch_at(config, &keys, value, &op.path)?;
+        check_profile_bounds(config, 0)?;
     }
     Ok(())
 }
@@ -529,6 +568,7 @@ fn apply_patch_ops(config: &mut Value, ops: &[BotPatchOp]) -> Result<(), String>
     responses((status = 200, body = BotDto), (status = 404, body = ErrorBody),
               (status = 409, body = BotConflictBody,
                description = "the bot changed since `expected_version`; `current` is its state now"),
+              (status = 400, body = ErrorBody, description = "patch exceeds depth, size or operation limits"),
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn patch_bot(
     State(s): State<AppState>,
@@ -541,6 +581,21 @@ pub(crate) async fn patch_bot(
         return Err(ApiError::bad_request("bot name must not be empty").into());
     }
     let ops = input.ops;
+    if ops.len() > MAX_PATCH_OPS {
+        return Err(ApiError::bad_request("patch exceeds maximum operation count (128)").into());
+    }
+    for op in &ops {
+        if op.path.len() > 4096
+            || op.path.bytes().filter(|b| *b == b'/').count() > MAX_PROFILE_DEPTH
+        {
+            return Err(ApiError::bad_request(
+                "patch path exceeds maximum length (4096) or depth (32)",
+            )
+            .into());
+        }
+        let depth = op.path.bytes().filter(|b| *b == b'/').count();
+        check_profile_bounds(&op.value, depth).map_err(ApiError::bad_request)?;
+    }
     let outcome = s
         .storage()
         .patch_bot(bot.id, input.expected_version, |name, config| {
@@ -550,6 +605,13 @@ pub(crate) async fn patch_bot(
                 .map_err(|e| format!("bad_profile:invalid bot profile: {e}"))?;
             Ok((new_name.unwrap_or_else(|| name.to_owned()), next))
         })?;
+    profile_write_response(&s, outcome)
+}
+
+fn profile_write_response(
+    s: &AppState,
+    outcome: storage::BotPatch,
+) -> Result<Json<BotDto>, BotPatchError> {
     match outcome {
         storage::BotPatch::Applied { bot, version } => {
             s.refresh_profile(&bot);

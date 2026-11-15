@@ -213,7 +213,7 @@ async fn populated_round_trip_with_selected_secrets_and_progress() {
     let source = tempfile::tempdir().unwrap();
     database(source.path(), true);
     let live = Connection::open(source.path().join("bot.db")).unwrap();
-    live.execute_batch("PRAGMA journal_mode=WAL; INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000004', 'wal-only', 4)").unwrap();
+    live.execute_batch("PRAGMA journal_mode=WAL; UPDATE bots SET version=17; INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000004', 'wal-only', 4)").unwrap();
     let schedule = Connection::open(source.path().join("schedules.db")).unwrap();
     schedule
         .execute_batch(include_str!(
@@ -283,12 +283,29 @@ async fn populated_round_trip_with_selected_secrets_and_progress() {
     );
     assert!(target_store.get("unselected").unwrap().is_none());
     let original = storage::Storage::open(source.path()).unwrap();
+    // Export uses SQLite backup, including the nondefault revision even in WAL.
+    let exported = tempfile::tempdir().unwrap();
+    let payload = unpack(&bytes)
+        .into_iter()
+        .find(|(path, _)| path == "bot.db")
+        .unwrap()
+        .1;
+    fs::write(exported.path().join("bot.db"), payload).unwrap();
+    let exported_conn = Connection::open(exported.path().join("bot.db")).unwrap();
+    assert_eq!(
+        exported_conn
+            .query_row("SELECT version FROM bots", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        17
+    );
     let imported = storage::Storage::open(target.path()).unwrap();
     assert_eq!(
         original.list_users().unwrap(),
         imported.list_users().unwrap()
     );
     let user = original.list_users().unwrap()[0].id;
+    let bot = original.list_bots(user).unwrap()[0].id;
+    assert_eq!(imported.get_bot_versioned(bot).unwrap().unwrap().1, 17);
     assert_eq!(
         original.list_bots(user).unwrap(),
         imported.list_bots(user).unwrap()
@@ -889,7 +906,9 @@ async fn older_schema_migrates_forward() {
     let conn = Connection::open(dir.path().join("bot.db")).unwrap();
     conn.execute_batch(include_str!("../../storage/migrations/0001_init.sql"))
         .unwrap();
-    conn.execute_batch("PRAGMA user_version=1").unwrap();
+    conn.execute_batch("PRAGMA user_version=1;
+        INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001','owner',1);
+        INSERT INTO bots (id,user_id,name,created_at_ms) VALUES ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','legacy',2);").unwrap();
     drop(conn);
     let bytes = bundle(dir.path()).await;
     let target = tempfile::tempdir().unwrap();
@@ -908,6 +927,14 @@ async fn older_schema_migrates_forward() {
         storage::migrate::latest_version()
     );
     conn.prepare("SELECT spec_json FROM runs").unwrap();
+    assert_eq!(
+        conn.query_row("SELECT name,version FROM bots", [], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?
+        )))
+        .unwrap(),
+        ("legacy".into(), 1)
+    );
 }
 
 #[tokio::test]
@@ -1581,4 +1608,44 @@ async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert(
             .iter()
             .any(|g| g.computer.as_deref() == Some(&format!("host:{b}")))
     );
+}
+
+#[tokio::test]
+async fn review95_invalid_bot_revision_bundle_preserves_destination_before_swap() {
+    for damage in ["missing", "zero", "text", "nullable"] {
+        let source = tempfile::tempdir().unwrap();
+        database(source.path(), true);
+        let conn = Connection::open(source.path().join("bot.db")).unwrap();
+        conn.execute_batch("DROP TRIGGER IF EXISTS bots_profile_revision; DROP TRIGGER IF EXISTS bot_skills_revision_ai; DROP TRIGGER IF EXISTS bot_skills_revision_au; DROP TRIGGER IF EXISTS bot_skills_revision_ad;").unwrap();
+        match damage {
+            "missing" => conn.execute_batch("ALTER TABLE bots DROP COLUMN version").unwrap(),
+            "zero" => conn.execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE bots SET version=0").unwrap(),
+            "text" => conn.execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE bots SET version='bad'").unwrap(),
+            "nullable" => conn.execute_batch("ALTER TABLE bots DROP COLUMN version; ALTER TABLE bots ADD COLUMN version INTEGER DEFAULT 1").unwrap(),
+            _ => unreachable!(),
+        }
+        drop(conn);
+        let bytes = bundle(source.path()).await;
+        let target = tempfile::tempdir().unwrap();
+        database(target.path(), true);
+        let before = fs::read(target.path().join("bot.db")).unwrap();
+        let err = import(
+            target.path(),
+            &MemoryStore::new(),
+            bytes.as_slice(),
+            ImportOptions {
+                replace: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("bot.db"), "{damage}: {err}");
+        assert_eq!(
+            fs::read(target.path().join("bot.db")).unwrap(),
+            before,
+            "{damage}"
+        );
+        assert!(!target.path().join("import-staging").exists());
+    }
 }

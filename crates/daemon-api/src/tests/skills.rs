@@ -601,3 +601,42 @@ fn hub_source_tags_never_carry_credentials() {
     assert_eq!(r("git:https://host?x=1"), "git:https://host");
     assert_eq!(r("local:/some/path"), "local:/some/path");
 }
+
+#[tokio::test]
+async fn review95_skills_writes_invalidate_profile_revision_without_changing_profile_or_audit_contract()
+ {
+    let t = setup_skills(|_| {});
+    let bid = create_bot(&t).await;
+    let path = format!("/v1/bots/{bid}");
+    let before = call(&t, Method::GET, &path, None).await.json();
+    let assignment = format!("{path}/skills");
+    for (body, expected) in [
+        (
+            json!({"mode":"selected","names":[],"expected_version":0}),
+            2,
+        ),
+        (json!({"mode":"all"}), 3),
+    ] {
+        let saved = call(&t, Method::PUT, &assignment, Some(body)).await;
+        assert_eq!(saved.status, StatusCode::OK, "{:?}", saved.json());
+        let current = call(&t, Method::GET, &path, None).await.json();
+        assert_eq!(current["version"], expected);
+        assert_eq!(current["config"], before["config"]);
+        let stale = call(
+            &t,
+            Method::PATCH,
+            &path,
+            Some(json!({"expected_version":1,"name":"stale"})),
+        )
+        .await;
+        assert_eq!(stale.status, StatusCode::CONFLICT);
+    }
+    let audits = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert_eq!(
+        audits
+            .iter()
+            .filter(|a| a.action == "bot.skills_assigned")
+            .count(),
+        2
+    );
+}

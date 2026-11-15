@@ -137,7 +137,7 @@ async fn a_stale_version_is_refused_with_the_current_bot_and_writes_nothing() {
         &t,
         Method::PUT,
         &path,
-        Some(json!({"config": {"bot": {"id": "tester", "name": "T"}, "models": {"executor": "fake/echo"}}})),
+        Some(json!({"expected_version": 2, "config": {"bot": {"id": "tester", "name": "T"}, "models": {"executor": "fake/echo"}}})),
     )
     .await;
     assert_eq!(r.json()["version"], 3);
@@ -328,4 +328,224 @@ async fn peer_roles_treat_patch_like_put() {
             "{role:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn review95_legacy_put_requires_the_loaded_revision_and_never_reverts_a_patch() {
+    let t = setup();
+    let (path, before) = make_bot(&t).await;
+    let r = call(
+        &t,
+        Method::PATCH,
+        &path,
+        Some(json!({"expected_version":1,"ops":[
+            set("/permissions/categories/shell/level", json!({"level":"deny"})),
+            set("/runtime/computer", json!("host"))
+        ]})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let newer = r.json();
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    let missing = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"name":"Mine", "config":before["config"]})),
+    )
+    .await;
+    assert_eq!(missing.status, StatusCode::PRECONDITION_REQUIRED);
+    assert_eq!(missing.json()["error"]["code"], "precondition_required");
+    let stale = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"expected_version":1,"name":"Mine","config":before["config"]})),
+    )
+    .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    assert_eq!(stale.json()["current"]["version"], newer["version"]);
+    assert_eq!(stale.json()["current"]["config"], newer["config"]);
+    let current = call(&t, Method::GET, &path, None).await.json();
+    assert_eq!(current["config"], newer["config"]);
+    assert_eq!(current["version"], 2);
+    // A deliberate replacement against the fresh revision preserves omitted runtime.
+    let mut config = newer["config"].clone();
+    config.as_object_mut().unwrap().remove("runtime");
+    let saved = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"expected_version":2,"name":"Mine","config":config})),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK);
+    assert_eq!(saved.json()["version"], 3);
+    assert_eq!(saved.json()["config"]["runtime"]["computer"], "host");
+    assert_eq!(
+        saved.json()["config"]["permissions"],
+        newer["config"]["permissions"]
+    );
+    let stale_patch = call(
+        &t,
+        Method::PATCH,
+        &path,
+        Some(json!({"expected_version":2,"name":"Old"})),
+    )
+    .await;
+    assert_eq!(stale_patch.status, StatusCode::CONFLICT);
+    assert_eq!(stale_patch.json()["current"]["name"], "Mine");
+    // Profile PUT/PATCH have never appended an audit row; preserve that contract.
+    assert_eq!(
+        t.state.storage().list_audit(t.state.user_id()).unwrap(),
+        audit
+    );
+}
+
+#[tokio::test]
+async fn review95_patch_limits_depth_size_and_operation_count_without_writing() {
+    let t = setup();
+    let (path, before) = make_bot(&t).await;
+    for ops in [
+        vec![set(&format!("/future{}", "/x".repeat(100_000)), json!(1))],
+        vec![set(&format!("/future{}", "/x".repeat(32)), json!(1))],
+        vec![set("/future", json!({"nested": "x".repeat(180_000)}))],
+        vec![set("/future", json!(1)); 129],
+    ] {
+        let r = call(
+            &t,
+            Method::PATCH,
+            &path,
+            Some(json!({"expected_version":1,"ops":ops})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{:?}", r.json());
+    }
+    // Shallow operations cannot build a too-deep result over successive requests either.
+    let mut value = json!(1);
+    for _ in 0..32 {
+        value = json!({"x":value});
+    }
+    let r = call(
+        &t,
+        Method::PATCH,
+        &path,
+        Some(json!({"expected_version":1,"ops":[set("/future",value)]})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let current = call(&t, Method::GET, &path, None).await.json();
+    assert_eq!(current["config"], before["config"]);
+    assert_eq!(current["version"], 1);
+}
+
+#[tokio::test]
+async fn review95_profile_put_patch_peer_roles_cover_encoded_and_noncanonical_paths() {
+    let t = setup();
+    let (canonical, _) = make_bot(&t).await;
+    let bid = canonical.rsplit('/').next().unwrap();
+    for role in [
+        PeerRole::Node,
+        PeerRole::Host,
+        PeerRole::Desktop,
+        PeerRole::Phone,
+    ] {
+        for method in [Method::PUT, Method::PATCH] {
+            for path in [
+                canonical.clone(),
+                format!("{canonical}/"),
+                format!("/v1//bots//{bid}"),
+                format!("/v1/%62ots/{bid}"),
+                format!("/v1/bots%2F{bid}"),
+            ] {
+                let before = call(&t, Method::GET, &canonical, None).await.json();
+                let body = if method == Method::PUT {
+                    json!({"expected_version":before["version"],"config":before["config"],"name":"Peer"})
+                } else {
+                    json!({"expected_version":before["version"],"name":"Peer"})
+                };
+                let status = peer(&t, role, method.clone(), &path, body).await;
+                if matches!(role, PeerRole::Node | PeerRole::Host) {
+                    assert_eq!(status, StatusCode::FORBIDDEN, "{role:?} {method} {path}");
+                } else if path == canonical {
+                    assert_eq!(status, StatusCode::OK, "{role:?} {method} {path}");
+                } else {
+                    assert_eq!(status, StatusCode::NOT_FOUND, "{role:?} {method} {path}");
+                }
+                let after = call(&t, Method::GET, &canonical, None).await.json();
+                let delta = i64::from(status == StatusCode::OK);
+                assert_eq!(
+                    after["version"].as_i64().unwrap(),
+                    before["version"].as_i64().unwrap() + delta
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn review95_get_list_and_put_responses_keep_their_own_snapshot_under_concurrent_writes() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let t = setup();
+    let (path, bot) = make_bot(&t).await;
+    let bid = bot["id"].as_str().unwrap().to_owned();
+    let saved = call(
+        &t,
+        Method::PATCH,
+        &path,
+        Some(json!({"expected_version":1,"name":"2"})),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK);
+    let stop = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(std::sync::Barrier::new(2));
+    let writer = {
+        let stop = stop.clone();
+        let started = started.clone();
+        let db = t._dir.path().join("bot.db");
+        std::thread::spawn(move || {
+            let conn = rusqlite::Connection::open(db).unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            started.wait();
+            while !stop.load(Ordering::SeqCst) {
+                conn.execute(
+                    "UPDATE bots SET name=CAST(version+1 AS TEXT),version=version+1 WHERE id=?1",
+                    [&bid],
+                )
+                .unwrap();
+                std::thread::yield_now();
+            }
+        })
+    };
+    started.wait();
+    let mut mismatches = Vec::new();
+    for _ in 0..300 {
+        let got = call(&t, Method::GET, &path, None).await.json();
+        if got["name"].as_str().unwrap().parse::<i64>().unwrap() != got["version"].as_i64().unwrap()
+        {
+            mismatches.push(got);
+        }
+        let list = call(&t, Method::GET, "/v1/bots", None).await.json();
+        let got = &list[0];
+        if got["name"].as_str().unwrap().parse::<i64>().unwrap() != got["version"].as_i64().unwrap()
+        {
+            mismatches.push(got.clone());
+        }
+        let expected = got["version"].as_i64().unwrap();
+        let response = call(&t, Method::PUT, &path, Some(json!({"expected_version":expected,"name":(expected+1).to_string(),"config":got["config"]}))).await;
+        if response.status == StatusCode::OK && response.json()["version"] != expected + 1 {
+            mismatches.push(response.json());
+        }
+    }
+    stop.store(true, Ordering::SeqCst);
+    writer.join().unwrap();
+    assert!(
+        mismatches.is_empty(),
+        "inconsistent snapshots: {:?}",
+        mismatches.first()
+    );
 }
