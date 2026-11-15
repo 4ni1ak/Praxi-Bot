@@ -569,6 +569,78 @@ fn skill_payload(input: &Value) -> String {
     render_transmitted(input)
 }
 
+/// Whether a call can create, modify, or delete a file.
+///
+/// The class flag is necessary. `csv_transform` writes only when `output_path`
+/// is set, and `git_branch` writes only when it creates or switches a branch.
+pub(crate) fn call_writes_files(name: &str, class: ContentClass, input: &Value) -> bool {
+    if !class.writes_files {
+        return false;
+    }
+    match name {
+        "csv_transform" => input
+            .get("output_path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| !path.trim().is_empty()),
+        "git_branch" => !matches!(
+            input.get("action").and_then(Value::as_str),
+            Some("list") | None
+        ),
+        _ => true,
+    }
+}
+
+/// Path the file-write card names. A shell or script has no single path; the
+/// command itself is the content.
+fn file_write_host(name: &str, input: &Value) -> String {
+    let field = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let or_name = |path: String| {
+        if path.is_empty() {
+            name.to_owned()
+        } else {
+            path
+        }
+    };
+    match name {
+        "fs_move" => {
+            let from = field("from");
+            let to = field("to");
+            if from.is_empty() && to.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{from} -> {to}")
+            }
+        }
+        "csv_transform" => or_name(field("output_path")),
+        "shell_run" => "the shell".to_owned(),
+        "script_run" => "a script".to_owned(),
+        "skill_write" | "skill_publish" => "this bot's skills".to_owned(),
+        "checkpoint_restore" => {
+            let id = field("id");
+            if id.is_empty() {
+                "a checkpoint".to_owned()
+            } else {
+                format!("checkpoint {id}")
+            }
+        }
+        "git_commit" | "git_branch" => {
+            let repo = field("repo");
+            if repo.is_empty() {
+                "the git repository".to_owned()
+            } else {
+                repo
+            }
+        }
+        _ => or_name(field("path")),
+    }
+}
+
 /// A click names an on-screen target. `prompt_text` is typed into the page,
 /// so that call can carry data even though the tool is still called a click.
 pub(crate) fn call_can_egress(name: &str, class: ContentClass, input: &Value) -> bool {
@@ -810,6 +882,57 @@ pub(crate) fn egress_record(taint: &ContentTaint, name: &str, input: &Value) -> 
         "payload": payload,
         "payload_kind": payload_kind,
     }))
+}
+
+/// Card for a tainted file write that does not itself leave the machine.
+///
+/// Same shape as an egress card so every channel already shows the path and
+/// the content. The reason names the file instead of a destination host.
+pub(crate) fn file_write_record(taint: &ContentTaint, name: &str, input: &Value) -> Option<Value> {
+    if !taint.exposure.is_tainted() {
+        return None;
+    }
+    let host = file_write_host(name, input);
+    let payload = render_transmitted(input);
+    let mut read: Vec<String> = taint.sources.clone();
+    if taint.earlier > 0 {
+        let word = if taint.earlier == 1 { "read" } else { "reads" };
+        read.push(format!("and {} earlier {word}", taint.earlier));
+    }
+    let sources = if read.is_empty() {
+        "untrusted or private content".to_owned()
+    } else {
+        read.join(", ")
+    };
+    let reason =
+        format!("this run read {sources} and now wants to create or change a file at {host}");
+    Some(json!({
+        "kind": "egress",
+        "reason": reason,
+        "read": read,
+        "host": host,
+        "payload": payload,
+        "payload_kind": "body",
+    }))
+}
+
+/// A tool that both leaves the machine and can write a file keeps the egress
+/// card. The extra sentence is why a waiver of egress does not cover it.
+pub(crate) fn note_file_write_on_egress(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let reason = obj
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    obj.insert(
+        "reason".to_owned(),
+        json!(format!(
+            "{reason} This call can also create or change files."
+        )),
+    );
 }
 
 /// Replace `payload` with the text the user can see, and record its real size.

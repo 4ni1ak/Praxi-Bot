@@ -119,6 +119,24 @@ fn card_covers(decision: &Decision, card: &CliApproval) -> bool {
     }
 }
 
+/// A tainted egress or file write needs a card. Used when a CLI permit was
+/// minted before the run became tainted.
+fn disclosure_now_required(
+    ctx: &RunCtx,
+    name: &str,
+    input: &Value,
+    spec: Option<&ToolSpec>,
+) -> bool {
+    let Some(spec) = spec else {
+        return false;
+    };
+    if !ctx.taint.lock().exposure.is_tainted() {
+        return false;
+    }
+    taint::call_can_egress(name, spec.content, input)
+        || taint::call_writes_files(name, spec.content, input)
+}
+
 /// Remove the card for this exact invocation, leaving any other card in place.
 #[must_use]
 fn take_matching_card(
@@ -838,10 +856,25 @@ impl TurnExecutor {
             // a policy revision or locked deny fails closed. Anything else
             // stays on the interactive path.
             let card = take_matching_card(&mut approved, &resolved.name, &resolved.input);
-            let carried = match card {
+            let mut carried = match card {
                 Some(card) if card_covers(&decision, &card) => Some(card.permit),
                 _ => None,
             };
+            // A permit answered before this run was tainted did not show the
+            // egress or file card. Drop it and ask with the disclosure. The
+            // flag was stored when that card was built, not recomputed now.
+            let redisclose = carried.as_ref().is_some_and(|permit| {
+                !permit.showed_disclosure
+                    && disclosure_now_required(
+                        &ctx,
+                        &resolved.name,
+                        &resolved.input,
+                        resolved.spec.as_ref(),
+                    )
+            });
+            if redisclose {
+                drop(carried.take());
+            }
             let is_spawn = resolved.name == crate::subagent::SPAWN_SUBAGENT;
             let spawn_input = resolved.input.clone();
             let tool = resolved.tool;
@@ -873,7 +906,8 @@ impl TurnExecutor {
                         .into(),
                     is_error: true,
                 }
-            } else if matches!(decision, Decision::Ask { .. }) && carried.is_none() {
+            } else if carried.is_none() && (matches!(decision, Decision::Ask { .. }) || redisclose)
+            {
                 let category = resolved
                     .spec
                     .as_ref()

@@ -50,7 +50,9 @@ fn mk_spec(
             // A write or publish from a tainted run sends instructions that
             // later runs would treat as trusted. That is egress. A clean run
             // is unchanged: Full still allows the write without a prompt.
-            "skill_write" | "skill_publish" => ContentClass::declared(false, true, true),
+            "skill_write" | "skill_publish" => {
+                ContentClass::declared(false, true, true).file_write()
+            }
             "skill_list" => ContentClass::private_read(),
             _ => ContentClass::unspecified(),
         },

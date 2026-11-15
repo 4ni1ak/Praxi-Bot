@@ -34,6 +34,11 @@ fn default_true() -> bool {
     true
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if passes `&bool`
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// How a tool relates to untrusted content, private data, and data leaving
 /// the machine.
 ///
@@ -41,8 +46,9 @@ fn default_true() -> bool {
 /// [`ContentClass::unspecified`] is the conservative default (all three
 /// flags true) and is **not** a declaration: the registry refuses it.
 ///
-/// The four flags are independent: the three classification bits and whether
-/// an author declared them. Folding them into an enum would hide the
+/// The classification bits and whether an author declared them are
+/// independent. `writes_files` defaults to false so an older spec does not
+/// start asking on every call. Folding the bits into an enum would hide the
 /// "missing means all three, undeclared" serde default.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +64,10 @@ pub struct ContentClass {
     /// The call can send data off the machine.
     #[serde(default = "default_true")]
     pub egress: bool,
+    /// The call can create, modify, or delete a file on disk. A tainted run
+    /// must ask before any such call. Missing on the wire means it does not.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub writes_files: bool,
     /// `false` only for [`ContentClass::unspecified`] and for a spec that was
     /// deserialized without an explicit declaration.
     #[serde(default)]
@@ -84,9 +94,17 @@ impl ContentClass {
             ingests_untrusted,
             reads_private,
             egress,
+            writes_files: false,
             declared: true,
             external_metadata: false,
         }
+    }
+
+    /// This call can create, modify, or delete a file on disk.
+    #[must_use]
+    pub const fn file_write(mut self) -> Self {
+        self.writes_files = true;
+        self
     }
 
     /// This spec's description and schema are attacker-controlled text.
@@ -148,6 +166,7 @@ impl ContentClass {
             ingests_untrusted: true,
             reads_private: true,
             egress: true,
+            writes_files: false,
             declared: false,
             external_metadata: false,
         }

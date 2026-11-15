@@ -83,6 +83,17 @@ pub const fn egress_must_ask(
     !configured_search
 }
 
+/// Whether a file-writing call must ask because the run is tainted.
+///
+/// Clean runs are unchanged. A tainted run asks for every call that can
+/// create, modify, or delete a file. A standing grant, the read shortcut, a
+/// Full preset, and the egress waiver do not satisfy it: the waiver allows
+/// sending data out, not writing files other programs will trust.
+#[must_use]
+pub const fn tainted_write_must_ask(exposure: ContentExposure, writes_files: bool) -> bool {
+    writes_files && exposure.is_tainted()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +134,20 @@ mod tests {
         exposure.observe(true, true);
         assert!(!egress_must_ask(exposure, true, false, true));
         assert!(egress_must_ask(exposure, true, false, false));
+    }
+
+    #[test]
+    fn a_tainted_file_write_asks_and_a_clean_one_does_not() {
+        let clean = ContentExposure::clean();
+        assert!(!tainted_write_must_ask(clean, true));
+        assert!(!tainted_write_must_ask(clean, false));
+        let mut untrusted = ContentExposure::clean();
+        untrusted.observe(true, false);
+        assert!(tainted_write_must_ask(untrusted, true));
+        assert!(!tainted_write_must_ask(untrusted, false));
+        let mut private = ContentExposure::clean();
+        private.observe(false, true);
+        assert!(tainted_write_must_ask(private, true));
     }
 
     #[test]
