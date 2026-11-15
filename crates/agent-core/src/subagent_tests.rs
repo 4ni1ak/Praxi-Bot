@@ -945,6 +945,381 @@ body
     assert!(!sys.contains("learned-by-b"), "{sys}");
 }
 
+#[tokio::test]
+async fn selected_bot_system_prompt_excludes_unassigned_skills() {
+    struct StaticAssignment {
+        bot: String,
+        allowed: &'static str,
+    }
+    impl skills::AssignmentSource for StaticAssignment {
+        fn assignment(&self, bot_id: &str) -> Result<Option<skills::Assignment>, String> {
+            if bot_id == self.bot {
+                Ok(Some(skills::Assignment {
+                    mode: skills::AssignmentMode::Selected,
+                    names: std::iter::once(self.allowed.to_owned()).collect(),
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        fn generation(&self) -> u64 {
+            1
+        }
+    }
+
+    let env = setup();
+    for (name, desc) in [
+        ("assigned-skill", "Allowed for this bot"),
+        ("unassigned-skill", "Hidden from this bot"),
+    ] {
+        let dir = env.dir.path().join("skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {desc}\n---\nbody\n"),
+        )
+        .unwrap();
+    }
+    let bot_dir = env
+        .dir
+        .path()
+        .join("bots")
+        .join(env.bot.to_string())
+        .join("skills")
+        .join("bot-learned");
+    std::fs::create_dir_all(&bot_dir).unwrap();
+    std::fs::write(
+        bot_dir.join("SKILL.md"),
+        "---\nname: bot-learned\ndescription: Own skill\n---\nbody\n",
+    )
+    .unwrap();
+
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(StaticAssignment {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+    let brain = Brain::new(|_| say("ok"));
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let sys = system_of(&brain.requests()[0]);
+    assert!(
+        sys.contains("- assigned-skill: Allowed for this bot"),
+        "{sys}"
+    );
+    assert!(sys.contains("- bot-learned: Own skill"), "{sys}");
+    assert!(!sys.contains("unassigned-skill"), "{sys}");
+    assert!(!sys.contains("custom-dropdowns"), "{sys}");
+}
+
+fn link_dir_for_test(target: &std::path::Path, link: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(target, link).is_ok();
+    #[cfg(windows)]
+    let linked = {
+        // mklink parses forward slashes as switches, even inside absolute paths.
+        let target: std::path::PathBuf = target.components().collect();
+        let link: std::path::PathBuf = link.components().collect();
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .is_ok_and(|out| out.status.success())
+            || std::os::windows::fs::symlink_dir(target, link).is_ok()
+    };
+    #[cfg(not(any(unix, windows)))]
+    let linked = false;
+    assert!(
+        linked || std::env::var_os("CI").is_none(),
+        "directory link could not be created on CI"
+    );
+    linked
+}
+
+struct SelectedOne {
+    bot: String,
+    allowed: &'static str,
+}
+
+impl skills::AssignmentSource for SelectedOne {
+    fn assignment(&self, bot_id: &str) -> Result<Option<skills::Assignment>, String> {
+        if bot_id == self.bot {
+            Ok(Some(skills::Assignment {
+                mode: skills::AssignmentMode::Selected,
+                names: std::iter::once(self.allowed.to_owned()).collect(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    fn generation(&self) -> u64 {
+        1
+    }
+}
+
+fn write_test_skill(dir: &std::path::Path, name: &str, desc: &str, body: &str) {
+    let root = dir.join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {desc}\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn skills_block_fails_closed_on_bot_dir_reparse_point() {
+    let env = setup();
+    write_test_skill(
+        &env.dir.path().join("skills"),
+        "secret-shared",
+        "Must stay hidden",
+        "SECRET_BODY",
+    );
+    let other_bot = protocol::BotId::new();
+    write_test_skill(
+        &env.dir
+            .path()
+            .join("bots")
+            .join(other_bot.to_string())
+            .join("skills"),
+        "other-private",
+        "Other bot skill",
+        "OTHER_BODY",
+    );
+    let bot_root = env.dir.path().join("bots").join(env.bot.to_string());
+    std::fs::create_dir_all(&bot_root).unwrap();
+    if !link_dir_for_test(
+        &env.dir
+            .path()
+            .join("bots")
+            .join(other_bot.to_string())
+            .join("skills"),
+        &bot_root.join("skills"),
+    ) {
+        return;
+    }
+
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedOne {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+    let brain = Brain::new(|_| say("ok"));
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+    lp.set_skill_hints(Arc::new(|| SkillHints {
+        domain: Some("example.com".into()),
+        app: None,
+    }));
+
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    for m in &brain.requests()[0].messages {
+        let text = m.content.as_str().unwrap_or_default();
+        assert!(!text.contains("secret-shared"), "hint leaked: {text}");
+        assert!(!text.contains("other-private"), "hint leaked: {text}");
+    }
+    let sys = system_of(&brain.requests()[0]);
+    assert!(!sys.contains("secret-shared"), "{sys}");
+    assert!(!sys.contains("other-private"), "{sys}");
+    assert!(!sys.contains("custom-dropdowns"), "{sys}");
+}
+
+#[tokio::test]
+async fn subagent_inherits_selected_bot_skill_assignment() {
+    let env = setup();
+    write_test_skill(
+        &env.dir.path().join("skills"),
+        "assigned-skill",
+        "Allowed for this bot",
+        "ASSIGNED_BODY",
+    );
+    write_test_skill(
+        &env.dir.path().join("skills"),
+        "unassigned-skill",
+        "Hidden from this bot",
+        "UNASSIGNED_BODY",
+    );
+    write_test_skill(
+        &env.dir
+            .path()
+            .join("bots")
+            .join(env.bot.to_string())
+            .join("skills"),
+        "bot-learned",
+        "Own skill",
+        "OWN_BODY",
+    );
+
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedOne {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+    let brain = Brain::new(|req| {
+        if is_child(req) {
+            let res = results(req);
+            if res.is_empty() {
+                call(&[
+                    ("r1", "skill_read", json!({"name": "unassigned-skill"})),
+                    ("r2", "skill_read", json!({"name": "assigned-skill"})),
+                ])
+            } else {
+                say(&format!("child saw: {}", res.join(" | ")))
+            }
+        } else if results(req).is_empty() {
+            calls_owned(vec![spawn("c1", "check assigned and unassigned skills")])
+        } else {
+            say(&results(req)[0])
+        }
+    });
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+
+    let parent = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(parent).await.unwrap(), RunState::Succeeded);
+
+    let reqs = brain.requests();
+    let child_reqs: Vec<_> = reqs.iter().filter(|r| is_child(r)).collect();
+    assert_eq!(child_reqs.len(), 2);
+
+    let child_sys = system_of(child_reqs[0]);
+    assert!(child_sys.contains("- assigned-skill:"), "{child_sys}");
+    assert!(child_sys.contains("- bot-learned:"), "{child_sys}");
+    assert!(!child_sys.contains("unassigned-skill"), "{child_sys}");
+    assert!(!child_sys.contains("custom-dropdowns"), "{child_sys}");
+
+    let child_results = results(child_reqs[1]);
+    assert_eq!(child_results.len(), 2);
+    assert!(
+        child_results[0].contains("unknown skill"),
+        "{child_results:?}"
+    );
+    assert!(
+        child_results[1].contains("ASSIGNED_BODY"),
+        "{child_results:?}"
+    );
+    assert!(
+        !child_results[0].contains("UNASSIGNED_BODY"),
+        "{child_results:?}"
+    );
+}
+
+fn tool_step_output(env: &Env, run: protocol::RunId) -> String {
+    env.storage
+        .list_steps(run)
+        .unwrap()
+        .iter()
+        .filter(|s| s.name == "tools")
+        .map(|s| serde_json::to_string(&s.output).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn scheduled_run_enforces_selected_bot_skill_assignment() {
+    let env = setup();
+    write_test_skill(
+        &env.storage.data_dir().join("skills"),
+        "assigned-skill",
+        "Allowed for this bot",
+        "ASSIGNED_BODY",
+    );
+    write_test_skill(
+        &env.storage.data_dir().join("skills"),
+        "unassigned-skill",
+        "Hidden from this bot",
+        "UNASSIGNED_BODY",
+    );
+
+    let index =
+        skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.storage.data_dir()))
+            .with_assignments(Arc::new(SelectedOne {
+                bot: env.bot.to_string(),
+                allowed: "assigned-skill",
+            }));
+    let brain = Brain::new(|_| say("scheduled ok"));
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+
+    // Scheduled tool run on an unassigned skill fails closed ("unknown skill").
+    let denied = lp
+        .run_scheduled(
+            env.chat,
+            protocol::TaskId::new(),
+            crate::ScheduleWork::Tool {
+                name: "skill_read".into(),
+                input: json!({ "name": "unassigned-skill" }),
+            },
+        )
+        .unwrap();
+    lp.wait(denied).await.unwrap();
+    let out = tool_step_output(&env, denied);
+    assert!(out.contains("unknown skill"), "{out}");
+    assert!(!out.contains("UNASSIGNED_BODY"), "{out}");
+
+    // Scheduled tool run on an assigned skill succeeds.
+    let allowed = lp
+        .run_scheduled(
+            env.chat,
+            protocol::TaskId::new(),
+            crate::ScheduleWork::Tool {
+                name: "skill_read".into(),
+                input: json!({ "name": "assigned-skill" }),
+            },
+        )
+        .unwrap();
+    lp.wait(allowed).await.unwrap();
+    let out = tool_step_output(&env, allowed);
+    assert!(out.contains("ASSIGNED_BODY"), "{out}");
+
+    // Scheduled prompt turn excludes unassigned and bundled skills from its system prompt.
+    let prompted = lp
+        .run_scheduled(
+            env.chat,
+            protocol::TaskId::new(),
+            crate::ScheduleWork::Prompt("scheduled prompt".into()),
+        )
+        .unwrap();
+    assert_eq!(lp.wait(prompted).await.unwrap(), RunState::Succeeded);
+    let sys = system_of(&brain.requests()[0]);
+    assert!(sys.contains("- assigned-skill:"), "{sys}");
+    assert!(!sys.contains("unassigned-skill"), "{sys}");
+    assert!(!sys.contains("custom-dropdowns"), "{sys}");
+}
+
 // ---------- catalog prices ----------
 
 fn priced(input: f64, output: f64) -> ModelInfo {
@@ -1255,4 +1630,60 @@ async fn no_skill_suggestions_when_skill_read_is_not_available() {
             "{m:?}"
         );
     }
+}
+
+fn write_hint_skill(dir: &std::path::Path, name: &str) {
+    let root = dir.join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("SKILL.md"),
+        format!(
+            "---\nname: {name}\ndescription: d-{name}\nwhen:\n  domains: [example.com]\n---\nbody\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// The per-turn skill hint (folded into the user message, not the system
+/// prompt) is built from the bot-filtered view too: a skill the user withheld
+/// from this bot is never named in it, even when its `when:` matches the page.
+#[tokio::test]
+async fn the_per_turn_skill_hint_uses_the_bot_filtered_view() {
+    let env = setup();
+    write_hint_skill(&env.dir.path().join("skills"), "assigned-skill");
+    write_hint_skill(&env.dir.path().join("skills"), "unassigned-skill");
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedOne {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+    let brain = Brain::new(|_| say("ok"));
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+    lp.set_skill_hints(Arc::new(|| SkillHints {
+        domain: Some("example.com".into()),
+        app: None,
+    }));
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let reqs = brain.requests();
+    let user = reqs[0]
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .unwrap();
+    let note = user.content.as_str().unwrap();
+    assert!(note.contains("Suggested skills"), "{note}");
+    assert!(note.contains("assigned-skill"), "{note}");
+    assert!(!note.contains("unassigned-skill"), "{note}");
+    let sys = system_of(&reqs[0]);
+    assert!(!sys.contains("unassigned-skill"), "{sys}");
 }

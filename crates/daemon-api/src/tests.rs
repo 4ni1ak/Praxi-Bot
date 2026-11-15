@@ -27,6 +27,7 @@ mod email;
 mod host;
 mod mcp;
 mod schedules;
+mod skills;
 mod web;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

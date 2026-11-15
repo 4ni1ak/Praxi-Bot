@@ -107,6 +107,18 @@ fn stop_refused(method: &Method, check_path: &str, role: PeerRole) -> bool {
         && !matches!(role, PeerRole::Desktop | PeerRole::Phone)
 }
 
+// File contents and host restores require a desktop user.
+fn host_file_review(path: &str) -> bool {
+    path.starts_with("/v1/runs/") && path.split('/').nth(4) == Some("changes")
+}
+
+/// `/v1/bots/{id}/skills` mutates a bot's prompt-trust boundary.
+fn is_bot_skills_path(path: &str) -> bool {
+    path.strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.strip_suffix("/skills"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(peer) = req.extensions().get::<PeerIdentity>().cloned() else {
         return ApiError::forbidden("paired peer identity required").into_response();
@@ -122,16 +134,16 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::forbidden(why).into_response();
     }
     let denied = peer.role != PeerRole::Desktop
-        && (peer.role != PeerRole::Phone
+        && (host_file_review(&check_path)
+            || peer.role != PeerRole::Phone
             || (req.method() == Method::POST
                 && PHONE_DENIED_POST_PATHS.contains(&check_path.as_str()))
             || (matches!(*req.method(), Method::POST | Method::PUT)
-                && check_path.starts_with("/v1/secrets")));
-    if denied {
+                && check_path.starts_with("/v1/secrets"))
+            || (req.method() != Method::GET
+                && (is_bot_skills_path(&check_path) || check_path == "/v1/skills")));
+    if denied || stop_refused(req.method(), &check_path, peer.role) {
         return ApiError::forbidden("peer role does not allow this operation").into_response();
-    }
-    if stop_refused(req.method(), &check_path, peer.role) {
-        return ApiError::forbidden("peer role does not allow stopping runs").into_response();
     }
     if req.method() == Method::POST && answers_overlay_question(&check_path) {
         return ApiError::forbidden("only the local user answers overlay questions")
