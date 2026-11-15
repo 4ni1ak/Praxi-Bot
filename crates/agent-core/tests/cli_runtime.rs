@@ -198,7 +198,7 @@ async fn child(case: &str) {
         LoopConfig {
             model_retry: task_runtime::RetryPolicy {
                 max_attempts: 2,
-                ..Default::default()
+                ..LoopConfig::default().model_retry
             },
             global_policy: if approval {
                 Policy::approve_destructive()

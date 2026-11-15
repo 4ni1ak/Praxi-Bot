@@ -75,7 +75,7 @@ async fn ledger_idle_wait_pc_failure_keeps_earlier_model_calls() {
     // Recover the durable state of a turn that already called a model and
     // then lost its computer while paused. The actual timeout handler runs.
     env.storage
-        .set_run_pause_reason(run, Some(crate::computer_target::WAIT_FOR_PC_REASON))
+        .set_run_pause_reason(run, Some(crate::WAIT_FOR_PC_REASON))
         .unwrap();
     lp.fail_waiting_pc_run(run, Duration::from_secs(60));
     lp.fail_waiting_pc_run(run, Duration::from_secs(60));
