@@ -7,11 +7,13 @@ on:
   pull_request:
     paths:
       - "scripts/**"
+      - "**/*.sh"
       - ".github/workflows/linux-scripts.yml"
   push:
     branches: [main]
     paths:
       - "scripts/**"
+      - "**/*.sh"
       - ".github/workflows/linux-scripts.yml"
 
 permissions:
@@ -40,9 +42,9 @@ jobs:
         run: |
           # A runaway test must hit EAGAIN instead of exhausting the runner.
           # RLIMIT_NPROC counts every process of this user, so allow headroom
-          # above what is running now and apply it to all later steps via the
-          # wrapper below.
-          current="$(ps -u "$(id -u)" --no-headers | wc -l)"
+          # above the threads running now (ps -L) and apply it with an inline
+          # `ulimit -u` in each script step.
+          current="$(ps -Lu "$(id -u)" --no-headers | wc -l)"
           echo "PRAXI_NPROC_LIMIT=$((current + 1024))" >> "$GITHUB_ENV"
 
       - name: shellcheck and bash -n on every tracked script

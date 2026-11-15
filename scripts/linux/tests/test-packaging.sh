@@ -470,6 +470,19 @@ fi
 rc=0
 _PRAXI_FAKE_DEPTH="${SHIM_MAX_DEPTH}" "${FAKE_BIN}/systemctl" is-active praxi.service >/dev/null 2>&1 || rc=$?
 [[ "${rc}" -eq 99 ]] || fail "expected exit 99 from recursion guard, got ${rc}"
+# A shim must export its incremented depth to children, and must refuse to run
+# once the global call budget is spent.
+write_fake_shim probe <<'PROBE'
+bash -c 'printf "%s" "${_PRAXI_FAKE_DEPTH:-unset}"'
+PROBE
+probe_depth="$("${FAKE_BIN}/probe")"
+[[ "${probe_depth}" == "1" ]] || fail "shim did not export _PRAXI_FAKE_DEPTH=1 to its child (got ${probe_depth})"
+head -c "${SHIM_MAX_CALLS}" /dev/zero > "${SHIM_BUDGET_FILE}"
+rc=0
+"${FAKE_BIN}/probe" >/dev/null 2>&1 || rc=$?
+[[ "${rc}" -eq 99 ]] || fail "expected exit 99 once the shim call budget is spent, got ${rc}"
+: > "${SHIM_BUDGET_FILE}"
+rm -f "${FAKE_BIN}/probe"
 pass "FAKE_BIN recursion guard prevents runaway recursion"
 
 # 5. Legacy bare-Xvfb (origin/main without -auth / xdpyinfo) preserved on no-flag upgrade,
