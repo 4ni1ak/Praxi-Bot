@@ -68,6 +68,14 @@ export interface ControlSnapshot {
   activeTarget: OverlayShowTargetPayload | null;
   lastClick: OverlayClickPayload | null;
   refusedActionsCount: number;
+  /** Monotonic revision of every snapshot (additive; absent on older native builds). */
+  stateRev?: number;
+  /** Raised only by user stops (additive). */
+  stopSeq?: number;
+  /** Token of the user stop that produced `stopSeq`, when it carried one (additive). */
+  lastStopToken?: string;
+  /** Highest `stopSeq` acknowledged through `ack_stop` (additive). */
+  stopAckedSeq?: number;
 }
 
 export interface MonitorGeometry {

@@ -475,6 +475,160 @@
         ]
       }
     },
+    "/v1/bots/{id}/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Effective skill assignment, available catalog, and bot-learned skills for one bot.",
+        "operationId": "get_bot_skills",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotSkillsDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown bot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "skills are not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Assign shared/bundled skills to a bot (`mode: \"all\"` restores the default).\nLocal user or paired desktop only; peer phones are refused.",
+        "operationId": "put_bot_skills",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutBotSkillsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotSkillsDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "peer role not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown bot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the assignment changed since `expected_version`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid skill name or too many skills",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "skills are not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/channels": {
       "get": {
         "tags": [
@@ -1061,6 +1215,205 @@
           },
           "404": {
             "description": "unknown, answered or timed-out request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/doctor": {
+      "get": {
+        "tags": [
+          "doctor"
+        ],
+        "summary": "Run the read-only diagnostics.",
+        "operationId": "get_doctor",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoctorReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "a diagnostics run is already in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/doctor/repair/{id}": {
+      "post": {
+        "tags": [
+          "doctor"
+        ],
+        "summary": "Run one allow-listed repair.  The request is the local user's click in\nSettings (bots have no API token; paired peers are refused by the peer\nrouter).  An attributed `doctor.repair_requested` audit record is written\nbefore anything runs (no record, no repair), and `doctor.repair` records\nthe outcome.",
+        "operationId": "repair",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Repair id: create_data_dir, reload_providers or restart_browser",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not an allow-listed repair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "this daemon cannot run that repair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the repair ran and failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "the audit record could not be written; nothing ran",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/doctor/report": {
+      "get": {
+        "tags": [
+          "doctor"
+        ],
+        "summary": "A redacted Markdown support report: versions, platform, check results and\nconfig file names (never contents).  The home directory becomes `~`;\nsecrets known to the daemon (and their encoded forms), the API token,\nkey-shaped strings, credentials in URLs and assignments, host names, user\nnames and e-mail addresses are masked.  Ends within 15 s.",
+        "operationId": "report",
+        "responses": {
+          "200": {
+            "description": "Markdown report",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "safe redaction unavailable or the report did not finish in time",
             "content": {
               "application/json": {
                 "schema": {
@@ -2537,6 +2890,62 @@
         ]
       }
     },
+    "/v1/runs/stop": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Stop runs: cancel a target set that is fixed at the first receipt of\n`stop_id`. Idempotent per `stop_id`.",
+        "operationId": "stop_runs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopRunsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopRunsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "scope all_existing is for the local user only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/runs/{id}": {
       "get": {
         "tags": [
@@ -2627,6 +3036,214 @@
           },
           "409": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}/changes": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "List net file changes made by a run's file tools, with capped inline diffs.",
+        "operationId": "get_run_changes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "File offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, maximum 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunChangesDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}/changes/{cp}/preview": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Dry-run preview of restoring checkpoint `cp` (or `\"all\"` across the run).",
+        "operationId": "preview_restore",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cp",
+            "in": "path",
+            "description": "Checkpoint id or 'all'",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePreviewDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}/changes/{cp}/restore": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Restore checkpoint `cp` (or `\"all\"` across the run), refusing with `409 modified_since`\nunless `force: true` is provided.",
+        "operationId": "restore_changes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cp",
+            "in": "path",
+            "description": "Checkpoint id or 'all'",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RestoreRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "modified_since or run still active",
             "content": {
               "application/json": {
                 "schema": {
@@ -3153,6 +3770,42 @@
           },
           "503": {
             "description": "no secret store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Catalog of shared and bundled skills (metadata only, never bodies).",
+        "operationId": "list_skills",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillsCatalogDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "skills are not available",
             "content": {
               "application/json": {
                 "schema": {
@@ -3904,9 +4557,90 @@
           }
         }
       },
+      "AssignedSkillDto": {
+        "type": "object",
+        "description": "One explicitly assigned skill name and whether it is currently installed.",
+        "required": [
+          "name",
+          "state"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Assigned skill name."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AssignedSkillState",
+            "description": "`ok` when present in catalog, `missing` otherwise."
+          }
+        }
+      },
+      "AssignedSkillState": {
+        "type": "string",
+        "description": "Availability of an assigned skill name in the current catalog.",
+        "enum": [
+          "ok",
+          "missing"
+        ]
+      },
+      "AvailableSkillDto": {
+        "type": "object",
+        "description": "Catalog skill entry annotated with whether it is assigned to the bot.",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "scope",
+          "assigned"
+        ],
+        "properties": {
+          "assigned": {
+            "type": "boolean",
+            "description": "True when this skill is visible to the bot under its current assignment."
+          },
+          "description": {
+            "type": "string",
+            "description": "One-line description from frontmatter."
+          },
+          "hub": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillHubInfoDto",
+                "description": "Hub provenance when installed through `SkillHub`, else `null`."
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique skill name."
+          },
+          "requires": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillRequiresDto",
+                "description": "Optional `when:` triggers."
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SkillScope",
+            "description": "Skill scope (`shared` or `bundled`)."
+          },
+          "version": {
+            "type": "string",
+            "description": "Skill version string."
+          }
+        }
+      },
       "BotDto": {
         "type": "object",
-        "description": "A bot.",
+        "description": "Public bot representation.",
         "required": [
           "id",
           "name",
@@ -3941,6 +4675,17 @@
           "name": {
             "type": "string",
             "description": "Display name."
+          },
+          "runtime": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeConfigDto",
+                "description": "Parsed `[runtime]` computer target settings (`auto` when omitted in profile)."
+              }
+            ]
           }
         }
       },
@@ -3964,6 +4709,61 @@
               "null"
             ],
             "description": "Profile as TOML text (the contents of a bot profile file)."
+          },
+          "runtime": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeConfigDto",
+                "description": "Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`\nwhen both are supplied. Omission on update preserves the stored target."
+              }
+            ]
+          }
+        }
+      },
+      "BotSkillsDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`.",
+        "required": [
+          "version",
+          "mode",
+          "assigned",
+          "available",
+          "own"
+        ],
+        "properties": {
+          "assigned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssignedSkillDto"
+            },
+            "description": "Explicitly assigned names when `mode == \"selected\"`."
+          },
+          "available": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailableSkillDto"
+            },
+            "description": "Shared + bundled catalog entries with `assigned` state."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SkillAssignmentModeDto",
+            "description": "Current assignment mode (`all` or `selected`)."
+          },
+          "own": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnSkillDto"
+            },
+            "description": "Skills learned by this bot (`bots/<id>/skills/`), read-only."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version of the stored assignment (`0` when none). Send it back as\n`expected_version` on `PUT` so a stale dialog gets `409` instead of\noverwriting a newer assignment.",
+            "minimum": 0
           }
         }
       },
@@ -4079,6 +4879,56 @@
           }
         }
       },
+      "CatalogSkillDto": {
+        "type": "object",
+        "description": "Catalog entry for a shared or bundled skill (metadata only, never the body).",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "scope"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "One-line description from frontmatter."
+          },
+          "hub": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillHubInfoDto",
+                "description": "Hub provenance when installed through `SkillHub`, else `null`."
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique skill name."
+          },
+          "requires": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillRequiresDto",
+                "description": "Optional `when:` triggers."
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SkillScope",
+            "description": "Skill scope (`shared` or `bundled`)."
+          },
+          "version": {
+            "type": "string",
+            "description": "Skill version string."
+          }
+        }
+      },
       "CategoryDecisionDto": {
         "type": "object",
         "description": "Effective decision of one permission category.",
@@ -4090,6 +4940,13 @@
           "decision": {
             "type": "string",
             "description": "`allow`, `ask` or `deny`."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Computers where a category grant allows this category. The decision\nstays `ask` for every computer not listed."
           },
           "via_grant": {
             "type": "boolean",
@@ -4103,6 +4960,16 @@
           "idle",
           "action",
           "refresh"
+        ]
+      },
+      "ChangeKindDto": {
+        "type": "string",
+        "description": "Net file change classification.",
+        "enum": [
+          "created",
+          "modified",
+          "deleted",
+          "moved"
         ]
       },
       "ChannelDto": {
@@ -4182,6 +5049,88 @@
             "description": "Title."
           }
         }
+      },
+      "Check": {
+        "type": "object",
+        "description": "One diagnostic result.",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What was found."
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How to fix it by hand (for warn / fail)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id (`data_dir`, `providers`, ...)."
+          },
+          "repair": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Repair",
+                "description": "The one-click repair, when one is allowed for this finding."
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status",
+            "description": "Result class."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short human name (`data dir`, `providers`, ...), as `bot doctor` prints it."
+          }
+        }
+      },
+      "CheckpointComputerDto": {
+        "type": "object",
+        "description": "Run computer binding and the actual location of its file checkpoints.\nComputer targeting routes desktop/browser actions only. Built-in file tools\nalways execute in this daemon, even when the run uses a remote desktop node.\nAny future remote file-tool dispatch must add checkpoint origin validation\nand refuse local restore of remote-origin entries before enabling that path.",
+        "required": [
+          "checkpoint_location"
+        ],
+        "properties": {
+          "checkpoint_location": {
+            "$ref": "#/components/schemas/CheckpointLocationDto"
+          },
+          "computer_node": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "computer_node_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "computer_target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CheckpointLocationDto": {
+        "type": "string",
+        "enum": [
+          "daemon_local"
+        ]
       },
       "CliAuthState": {
         "type": "string",
@@ -4618,6 +5567,40 @@
               "null"
             ],
             "description": "CLI version (first line, trimmed, max 80 chars, or null)."
+          }
+        }
+      },
+      "DiffOmittedReasonDto": {
+        "type": "string",
+        "description": "Why inline text diffing was omitted for a changed path.",
+        "enum": [
+          "binary",
+          "too_large",
+          "run_budget_exceeded",
+          "directory",
+          "symlink",
+          "not_accessible",
+          "line_endings"
+        ]
+      },
+      "DoctorReport": {
+        "type": "object",
+        "description": "`GET /v1/doctor` response.",
+        "required": [
+          "ok",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            },
+            "description": "Results, in display order."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "`false` when any check failed."
           }
         }
       },
@@ -5091,6 +6074,109 @@
           }
         }
       },
+      "FileChangeDto": {
+        "type": "object",
+        "description": "One collapsed file change recorded during a run.",
+        "required": [
+          "accessible",
+          "path",
+          "op",
+          "checkpoint_id",
+          "existed",
+          "kind",
+          "current_matches_after",
+          "verification",
+          "is_dir",
+          "is_link"
+        ],
+        "properties": {
+          "accessible": {
+            "type": "boolean"
+          },
+          "after_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "before_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "changed_by_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "current_matches_after": {
+            "type": "boolean"
+          },
+          "diff_omitted_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DiffOmittedReasonDto"
+              }
+            ]
+          },
+          "existed": {
+            "type": "boolean"
+          },
+          "is_dir": {
+            "type": "boolean"
+          },
+          "is_link": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChangeKindDto"
+          },
+          "moved_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "op": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "text": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UnifiedDiffDto"
+              }
+            ]
+          },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationDto"
+          },
+          "via_link_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "FrameMetadata": {
         "type": "object",
         "required": [
@@ -5206,10 +6292,21 @@
           "granted_at_ms"
         ],
         "properties": {
+          "computer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Computer scope of this grant, when it controls a desktop/browser."
+          },
           "granted_at_ms": {
             "type": "integer",
             "format": "int64",
             "description": "When it was granted."
+          },
+          "inert": {
+            "type": "boolean",
+            "description": "Legacy desktop/browser rule with no computer. It does not authorize\nanything; it is listed so the user can see that it stopped applying."
           },
           "target": {
             "$ref": "#/components/schemas/GrantTargetDto",
@@ -6739,6 +7836,24 @@
           "completed"
         ]
       },
+      "OwnSkillDto": {
+        "type": "object",
+        "description": "A skill learned by the bot itself (per-bot scope, read-only here).",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Skill name."
+          },
+          "version": {
+            "type": "string",
+            "description": "Skill version string."
+          }
+        }
+      },
       "PairCodeDto": {
         "type": "object",
         "description": "A one-time pairing code (`POST /v1/channels/telegram/pair-code`).",
@@ -6906,6 +8021,35 @@
               "null"
             ],
             "description": "Id of the loop's default provider."
+          }
+        }
+      },
+      "PutBotSkillsInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/bots/{id}/skills`.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Version the client loaded (`BotSkillsDto::version`). When set and not\ncurrent the write is refused with `409`; omit for an unconditional write.",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SkillAssignmentModeDto",
+            "description": "Assignment mode (`all` or `selected`)."
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Skill names to assign when `mode == \"selected\"` (max 200)."
           }
         }
       },
@@ -7164,6 +8308,214 @@
           }
         }
       },
+      "Repair": {
+        "type": "string",
+        "description": "An allow-listed, one-click repair.  Deliberately closed: nothing here runs\na shell command, and regenerating the API token is not offered.",
+        "enum": [
+          "create_data_dir",
+          "reload_providers",
+          "restart_browser"
+        ]
+      },
+      "RepairResult": {
+        "type": "object",
+        "description": "`POST /v1/doctor/repair/{id}` response.",
+        "required": [
+          "repair",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What it did."
+          },
+          "repair": {
+            "$ref": "#/components/schemas/Repair",
+            "description": "The repair that ran."
+          }
+        }
+      },
+      "RestoreActionDto": {
+        "type": "string",
+        "description": "Action a restore operation will apply to a path.",
+        "enum": [
+          "restore",
+          "delete",
+          "keep"
+        ]
+      },
+      "RestorePreviewDto": {
+        "type": "object",
+        "description": "Response for `GET /v1/runs/{id}/changes/{cp}/preview`.",
+        "required": [
+          "computer",
+          "run_id",
+          "checkpoint_id",
+          "entries",
+          "modified_since",
+          "could_not_verify",
+          "covered",
+          "not_covered"
+        ],
+        "properties": {
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "computer": {
+            "$ref": "#/components/schemas/CheckpointComputerDto"
+          },
+          "could_not_verify": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestorePreviewEntryDto"
+            }
+          },
+          "modified_since": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "not_covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RestorePreviewEntryDto": {
+        "type": "object",
+        "description": "Per-path dry-run entry for a checkpoint or whole-run restore.",
+        "required": [
+          "accessible",
+          "path",
+          "current_matches_after",
+          "verification",
+          "action"
+        ],
+        "properties": {
+          "accessible": {
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/components/schemas/RestoreActionDto"
+          },
+          "changed_by_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "current_matches_after": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationDto"
+          },
+          "via_link_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RestoreRequestDto": {
+        "type": "object",
+        "description": "Body for `POST /v1/runs/{id}/changes/{cp}/restore`.",
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RestoreResponseDto": {
+        "type": "object",
+        "description": "Response for `POST /v1/runs/{id}/changes/{cp}/restore`.",
+        "required": [
+          "computer",
+          "partial",
+          "run_id",
+          "checkpoint_id",
+          "safety_checkpoint_ids",
+          "restored",
+          "warnings",
+          "covered",
+          "not_covered"
+        ],
+        "properties": {
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "computer": {
+            "$ref": "#/components/schemas/CheckpointComputerDto"
+          },
+          "covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "not_covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "partial": {
+            "type": "boolean"
+          },
+          "restored": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "safety_checkpoint_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "RevokeGrant": {
         "type": "object",
         "description": "`DELETE /v1/bots/{id}/grants`.",
@@ -7174,6 +8526,58 @@
           "target": {
             "$ref": "#/components/schemas/GrantTargetDto",
             "description": "The rule to remove."
+          }
+        }
+      },
+      "RunChangesDto": {
+        "type": "object",
+        "description": "Response for `GET /v1/runs/{id}/changes`.",
+        "required": [
+          "computer",
+          "safety_checkpoint_ids",
+          "run_id",
+          "changes",
+          "covered",
+          "not_covered"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileChangeDto"
+            }
+          },
+          "computer": {
+            "$ref": "#/components/schemas/CheckpointComputerDto"
+          },
+          "covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "not_covered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "safety_checkpoint_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -7206,6 +8610,27 @@
             "format": "uuid",
             "description": "Chat, if any."
           },
+          "computer_node": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable key of the PC used by this run (`local` for the daemon desktop)."
+          },
+          "computer_node_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name captured at target binding."
+          },
+          "computer_target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Resolved computer target label fixed at run start (`pc`, `host`, `browser`, `off`)."
+          },
           "created_at_ms": {
             "type": "integer",
             "format": "int64",
@@ -7235,6 +8660,21 @@
             "format": "uuid",
             "description": "The run that spawned this one when it is a subagent run."
           },
+          "pause_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reason the run is currently `paused` (e.g. `waiting_for_pc`)."
+          },
+          "paused_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Start of the current pause in Unix milliseconds."
+          },
           "schedule_id": {
             "type": [
               "string",
@@ -7251,6 +8691,19 @@
             "type": "integer",
             "format": "int64",
             "description": "Last state change."
+          }
+        }
+      },
+      "RuntimeConfigDto": {
+        "type": "object",
+        "description": "Bot `[runtime]` settings (ADR-0027 §7).",
+        "required": [
+          "computer"
+        ],
+        "properties": {
+          "computer": {
+            "type": "string",
+            "description": "Configured computer target (`auto`, `pc`, `host`, `browser`, `off`, or `node:<id>`)."
           }
         }
       },
@@ -7615,6 +9068,128 @@
           }
         }
       },
+      "SkillAssignmentModeDto": {
+        "type": "string",
+        "description": "Per-bot skill assignment mode.",
+        "enum": [
+          "all",
+          "selected"
+        ]
+      },
+      "SkillHubInfoDto": {
+        "type": "object",
+        "description": "Hub lockfile metadata for a shared skill installed via `SkillHub`.",
+        "required": [
+          "source",
+          "locked"
+        ],
+        "properties": {
+          "locked": {
+            "type": "boolean",
+            "description": "True when the on-disk tree matches the lockfile hash."
+          },
+          "source": {
+            "type": "string",
+            "description": "Provenance tag (e.g. `git:https://...`, `local:...`)."
+          }
+        }
+      },
+      "SkillIssueDto": {
+        "type": "object",
+        "description": "A non-fatal skill load problem surfaced by `SkillIndex::issues`.",
+        "required": [
+          "scope",
+          "path",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Diagnostic message."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path (or `bundled:<name>`)."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SkillIssueScope",
+            "description": "Layer where the problem occurred."
+          }
+        }
+      },
+      "SkillIssueScope": {
+        "type": "string",
+        "description": "Scope where a skill load issue occurred.",
+        "enum": [
+          "bundled",
+          "shared",
+          "bot"
+        ]
+      },
+      "SkillRequiresDto": {
+        "type": "object",
+        "description": "Auto-suggestion triggers declared in a skill's `when:` frontmatter.",
+        "required": [
+          "domains",
+          "apps",
+          "keywords"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Application names."
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Domains (e.g. `github.com`)."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Task text keywords."
+          }
+        }
+      },
+      "SkillScope": {
+        "type": "string",
+        "description": "Scope of a catalog skill (`shared` or `bundled`).",
+        "enum": [
+          "shared",
+          "bundled"
+        ]
+      },
+      "SkillsCatalogDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/skills`.",
+        "required": [
+          "skills",
+          "issues"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillIssueDto"
+            },
+            "description": "Non-fatal problems found while loading skills."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogSkillDto"
+            },
+            "description": "Shared and bundled catalog skills."
+          }
+        }
+      },
       "SourceRect": {
         "type": "object",
         "required": [
@@ -7676,6 +9251,130 @@
             "minimum": 0
           }
         }
+      },
+      "Status": {
+        "type": "string",
+        "description": "Result class of one check.",
+        "enum": [
+          "ok",
+          "warn",
+          "fail",
+          "skipped"
+        ]
+      },
+      "StopOutcome": {
+        "type": "string",
+        "description": "What happened to one run of a Stop's target set.\n\n`cancelled` is the only outcome that means the run has stopped. For a live\nrun the daemon can only fire the run's cancel token: `cancel_requested`\nsays it did so, and the run's effects (a tool call, a shell child, a\nbrowser or desktop action) have ceased only once its `state` is terminal or\n`run_finished` arrives. A human takeover is not touched by this route\n(`/v1/control/override` handles it).",
+        "enum": [
+          "cancelled",
+          "cancel_requested",
+          "already_terminal",
+          "not_found",
+          "failed"
+        ]
+      },
+      "StopRunResult": {
+        "type": "object",
+        "description": "One member of a Stop's target set.",
+        "required": [
+          "run_id",
+          "outcome"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the cancel failed."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/StopOutcome",
+            "description": "Cancel outcome."
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Run id."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current run state, if the run exists."
+          }
+        }
+      },
+      "StopRunsInput": {
+        "type": "object",
+        "description": "Body of `POST /v1/runs/stop`.",
+        "required": [
+          "stop_id",
+          "scope"
+        ],
+        "properties": {
+          "run_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Runs the caller knew about (at most 1024). Only the first receipt reads them."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/StopScope",
+            "description": "Which runs the Stop targets besides `run_ids`."
+          },
+          "stop_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "One user decision to stop, minted by the caller. The daemon fixes the\ntarget set the first time it sees this id; a repeat never changes it."
+          }
+        }
+      },
+      "StopRunsResponse": {
+        "type": "object",
+        "description": "Response of `POST /v1/runs/stop`.",
+        "required": [
+          "stop_id",
+          "first_seen",
+          "results"
+        ],
+        "properties": {
+          "audited": {
+            "type": "boolean",
+            "description": "`false` when the audit row of this call could not be written. Only the\nlocal user's Stop proceeds without it (peers fail with 500)."
+          },
+          "expired": {
+            "type": "boolean",
+            "description": "`true` when this `stop_id` was seen before but its target set is no\nlonger kept (expired or evicted): nothing was cancelled and `results`\nis empty. The original target set is unknown, so the daemon will not\nguess it. To retry, send a NEW `stop_id` with `scope: listed` and the\nrun ids the client still holds as stop-held. `all_existing` with a new\n`stop_id` sweeps every run open now, including runs started after the\noriginal Stop: use it only for a new user decision. The client should\ntell the user that the Stop expired."
+          },
+          "first_seen": {
+            "type": "boolean",
+            "description": "`true` when this call fixed the target set, `false` for a repeat."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StopRunResult"
+            },
+            "description": "Every member of the target set. A run that is not listed was not\ntargeted (it was created after the first receipt). A repeat retries\n`failed` members and re-issues the cancel of `cancel_requested` ones;\nterminal and unknown members are never touched again."
+          },
+          "stop_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Echo of the request's `stop_id`."
+          }
+        }
+      },
+      "StopScope": {
+        "type": "string",
+        "description": "Which runs a Stop targets (`POST /v1/runs/stop`).",
+        "enum": [
+          "all_existing",
+          "listed"
+        ]
       },
       "TakeoverAccepted": {
         "type": "object",
@@ -7850,6 +9549,33 @@
           "desktop"
         ]
       },
+      "UnifiedDiffDto": {
+        "type": "object",
+        "description": "Unified text diff payload for a single changed text file.",
+        "required": [
+          "unified",
+          "added_lines",
+          "removed_lines",
+          "hunks"
+        ],
+        "properties": {
+          "added_lines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "removed_lines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unified": {
+            "type": "string"
+          }
+        }
+      },
       "Units": {
         "type": "string",
         "enum": [
@@ -7928,6 +9654,15 @@
             "minimum": 0
           }
         }
+      },
+      "VerificationDto": {
+        "type": "string",
+        "description": "Whether bounded hashing verified the recorded after-state.",
+        "enum": [
+          "matched",
+          "changed",
+          "unknown"
+        ]
       },
       "ViewState": {
         "type": "string",
@@ -8210,6 +9945,12 @@
     },
     {
       "name": "web"
+    },
+    {
+      "name": "skills"
+    },
+    {
+      "name": "doctor"
     }
   ]
 }

@@ -37,18 +37,15 @@ pub fn secret_variants(value: &str) -> Vec<String> {
     if let Ok(j) = serde_json::to_string(value) {
         out.push(j[1..j.len() - 1].to_owned());
     }
-    let mut url = String::new();
-    for b in value.bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
-            url.push(char::from(b));
-        } else {
-            {
-                use std::fmt::Write as _;
-                let _ = write!(url, "%{b:02X}");
-            }
+    // Percent-encodings: RFC 3986 (`.` and `~` kept), strict (every
+    // non-alphanumeric byte but `-` / `_` escaped, as older encoders do) and
+    // HTML form (space as `+`), each with upper- and lower-case hex.
+    for lower in [false, true] {
+        for strict in [false, true] {
+            out.push(percent_encode(value, strict, false, lower));
         }
+        out.push(percent_encode(value, false, true, lower));
     }
-    out.push(url);
     // Base64 of a substring depends on its alignment in the encoded text; the
     // stable middle of each of the 3 alignments is what appears in practice.
     for k in 0..3usize {
@@ -67,6 +64,29 @@ pub fn secret_variants(value: &str) -> Vec<String> {
     }
     out.sort();
     out.dedup();
+    out
+}
+
+/// Percent-encode `value`: unreserved bytes stay (`.` and `~` too unless
+/// `strict`), a space becomes `+` when `form`, everything else is `%XX` with
+/// upper- or `lower`-case hex.
+fn percent_encode(value: &str, strict: bool, form: bool, lower: bool) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        if b.is_ascii_alphanumeric()
+            || matches!(b, b'-' | b'_')
+            || (!strict && matches!(b, b'.' | b'~'))
+        {
+            out.push(char::from(b));
+        } else if form && b == b' ' {
+            out.push('+');
+        } else if lower {
+            let _ = write!(out, "%{b:02x}");
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
     out
 }
 
@@ -189,6 +209,38 @@ mod tests {
             let out = r.redact(&format!("key: {c} end"));
             assert_eq!(out, format!("key: {REDACTED} end"), "case {c}");
         }
+    }
+
+    #[test]
+    fn masks_every_percent_encoding_of_a_short_or_dotted_secret() {
+        let mut r = Redactor::new();
+        for v in secret_variants("pass/wd")
+            .into_iter()
+            .chain(secret_variants("my.pass/word~1 x"))
+        {
+            r.add_secret(&v);
+        }
+        for text in [
+            "pass%2Fwd",
+            "pass%2fwd",
+            "my.pass%2Fword~1%20x",
+            "my.pass%2fword~1%20x",
+            "my%2Epass%2Fword%7E1%20x",
+            "my%2epass%2fword%7e1%20x",
+            "my.pass%2fword~1+x",
+        ] {
+            let out = r.redact(&format!("at https://h/{text}?q end"));
+            assert_eq!(out, format!("at https://h/{REDACTED}?q end"), "{text}");
+        }
+    }
+
+    #[test]
+    fn plain_secrets_add_no_extra_variants() {
+        // Only base64 alignments and the value itself for an alphanumeric
+        // secret: the extra encodings collapse into the original.
+        let v = secret_variants("abcdef123456");
+        assert_eq!(v.iter().filter(|x| x.contains('%')).count(), 0);
+        assert!(v.len() <= 7, "{v:?}");
     }
 
     #[test]

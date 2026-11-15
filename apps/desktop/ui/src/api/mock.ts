@@ -3,11 +3,13 @@ import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
 import { MockLiveViewService } from "./mockLiveView.ts";
 import type {
   Bot,
+  BotSkills,
   Chat,
   ConfiguredProviderDto,
   ControlModeName,
   CreateSessionInput,
   DetectedProviderDto,
+  DoctorCheck,
   EmailAccount,
   EmailAccountInput,
   InputBatch,
@@ -15,10 +17,14 @@ import type {
   McpServerConfig,
   McpTool,
   Message,
+  OwnSkill,
   PolicyDto,
   ProvidersDto,
+  PutBotSkillsInput,
   ReleaseRequest,
   SessionUpdate,
+  SkillAssignmentMode,
+  SkillsCatalog,
   TakeoverRequest,
   UsageSummary,
   GlobalEnvelope,
@@ -47,6 +53,51 @@ function bot(id: string, name: string, color: string, shape: string, model: stri
     }
   };
 }
+
+const MOCK_SKILLS_CATALOG: SkillsCatalog = {
+  skills: [
+    {
+      name: "code-review",
+      description: "Inspect pull requests for subtle bugs, missing tests, and style regressions.",
+      version: "1.2.0",
+      scope: "bundled",
+      requires: { apps: [], domains: [], keywords: ["review", "pr"] },
+      hub: null
+    },
+    {
+      name: "github-triage",
+      description: "Categorize new issues, check duplicates, and suggest labels.",
+      version: "1.0.4",
+      scope: "shared",
+      requires: { apps: ["github"], domains: ["github.com"], keywords: ["issues"] },
+      hub: { source: "clawhub", locked: true }
+    },
+    {
+      name: "meeting-notes",
+      description: "Turn transcripts into crisp action items and owners.",
+      version: "0.9.0",
+      scope: "shared",
+      requires: { apps: [], domains: [], keywords: [] },
+      hub: null
+    },
+    {
+      name: "release-notes",
+      description: "Draft changelog highlights grouped by user impact.",
+      version: "1.1.0",
+      scope: "bundled",
+      requires: { apps: [], domains: [], keywords: [] },
+      hub: null
+    }
+  ],
+  issues: []
+};
+
+const MOCK_OWN_SKILLS: Record<string, OwnSkill[]> = {
+  [ATLAS]: [{ name: "atlas-standup", version: "0.1.0" }],
+  [NOVA]: []
+};
+
+const SKILL_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 const BOTS: Bot[] = [
   bot(ATLAS, "Atlas", "#9D9AE8", "cloud", "anthropic/claude-sonnet-5-5"),
@@ -282,6 +333,21 @@ function serverFromConfig(c: McpServerConfig, category = "other"): McpServer {
   };
 }
 
+/** Diagnostics of the mock daemon: one of each status, two fixable. */
+const DOCTOR_CHECKS: DoctorCheck[] = [
+  { id: "daemon", title: "daemon", status: "ok", detail: "running (v0.1.0-mock, API 1.0), up 3600 s", hint: null, repair: null },
+  { id: "data_dir", title: "data dir", status: "ok", detail: "~/AppData/Roaming/praxi (writable)", hint: null, repair: null },
+  { id: "unicode_path", title: "unicode paths", status: "ok", detail: "non-ASCII file names work in the data dir", hint: null, repair: null },
+  { id: "providers", title: "providers", status: "fail", detail: "openai: API key not available; anthropic: configured", hint: "`bot secrets set provider.<id>.api_key` or `bot providers add <id>` to fix the key", repair: null },
+  { id: "providers_loaded", title: "loaded providers", status: "warn", detail: "enabled but not loaded: anthropic", hint: "reload the providers; if that fails, see the providers check", repair: "reload_providers" },
+  { id: "cli_accounts", title: "cli accounts", status: "warn", detail: "ready: Claude Code; signed out: Codex", hint: "open a terminal and sign in to the CLI once (e.g. `claude`, `codex login`)", repair: null },
+  { id: "browser", title: "browser", status: "ok", detail: "C:/Program Files/Google/Chrome/Application/chrome.exe (found; not launched)", hint: null, repair: null },
+  { id: "desktop_automation", title: "desktop automation", status: "ok", detail: "windows: accessibility tree, screenshots, app launch", hint: null, repair: null },
+  { id: "peer_link", title: "peer link", status: "skipped", detail: "no peer or host link configured (optional)", hint: null, repair: null },
+  { id: "disk_space", title: "disk space", status: "ok", detail: "48211 MiB free", hint: null, repair: null },
+  { id: "clock", title: "clock", status: "ok", detail: "plausible (checked locally, not against network time)", hint: null, repair: null }
+];
+
 /**
  * An in-memory daemon: the typed client methods run unchanged against it, so
  * the UI and its tests exercise the real request paths.
@@ -294,6 +360,9 @@ export class MockApiClient extends ApiClient {
   readonly chats: Chat[] = structuredClone([...CHATS, ...BOTS.slice(1).map((b,i) => ({ id: `mock-chat-${i}`, chat_id: `mock-chat-${i}`, bot_id: b.id, title: previews[i+1], created_at_ms: NOW }))]);
   readonly messages = new Map<string, Message[]>();
   readonly secrets = new Map<string, number>();
+  readonly doctorChecks: DoctorCheck[] = structuredClone(DOCTOR_CHECKS);
+  /** Repairs run so far (tests). */
+  readonly repairs: string[] = [];
   private readonly liveView = new MockLiveViewService();
   private webSearchConfig: WebSearchConfig = {
     order: ["searxng", "brave", "tavily", "duckduckgo", "duckduckgo_lite", "bing"],
@@ -335,6 +404,12 @@ export class MockApiClient extends ApiClient {
       custom_ca: false
     }
   ];
+
+  private botSkills = new Map<
+    string,
+    { mode: SkillAssignmentMode; names: string[]; version: number }
+  >([[NOVA, { mode: "selected", names: ["meeting-notes", "removed-skill"], version: 1 }]]);
+  private botSkillsVersion = 1;
 
   constructor() {
     super({ base_url: MOCK_BASE_URL, token: "mock" });
@@ -381,6 +456,31 @@ export class MockApiClient extends ApiClient {
     ];
   }
 
+  protected override async requestText(method: string, path: string): Promise<string> {
+    await Promise.resolve();
+    if (method === "GET" && path === "/doctor/report") {
+      const rows = this.doctorChecks
+        .map((c) => `| ${c.status} | ${c.title} | ${c.detail} |`)
+        .join("\n");
+      return [
+        "# Praxi diagnostics report",
+        "",
+        "- Version: 0.1.0-mock",
+        "- Platform: windows/x86_64",
+        "- Data dir: `~/AppData/Roaming/praxi`",
+        "- Config files: providers.toml",
+        "",
+        "## Checks",
+        "",
+        "| Status | Check | Detail |",
+        "| --- | --- | --- |",
+        rows,
+        ""
+      ].join("\n");
+    }
+    throw new ApiError(404, "not_found", `mock: no text route ${method} ${path}`);
+  }
+
   override async openViewFrameStream(
     sessionId: string,
     signal?: AbortSignal
@@ -399,7 +499,12 @@ export class MockApiClient extends ApiClient {
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
         return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+      case "GET /skills":
+        return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":
+        if (seg[1] && seg[2] === "skills") {
+          return ok(this.getBotSkillsState(seg[1]));
+        }
         return ok(structuredClone(this.bots));
       case "GET /chats":
         if (seg[2] === "messages") {
@@ -440,9 +545,49 @@ export class MockApiClient extends ApiClient {
           ? [{ call_id: "mock-sch", run_id: "mock-live", requested_at_ms: Date.now() - 3000, decision: null, tool_name: "schedule_create", summary: "Create a schedule" }]
           : []);
       case "GET /runs":
+        if (seg[2] === "changes") {
+          const runId = seg[1] ?? "";
+          if (seg[4] === "preview") {
+            return ok({
+              run_id: runId,
+              checkpoint_id: seg[3] ?? "all",
+              entries: [],
+              modified_since: [],
+              covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
+              not_covered: ["shell", "web", "email", "desktop"]
+            });
+          }
+          return ok({
+            run_id: runId,
+            changes: [],
+            next_offset: null,
+            covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
+            not_covered: ["shell", "web", "email", "desktop"]
+          });
+        }
         return ok([]);
       case "GET /usage":
         return ok(USAGE);
+      case "GET /doctor": {
+        const checks = structuredClone(this.doctorChecks);
+        return ok({ ok: checks.every((c) => c.status !== "fail"), checks });
+      }
+      case "POST /doctor": {
+        const id = seg[1] === "repair" ? (seg[2] ?? "") : "";
+        if (!["create_data_dir", "reload_providers", "restart_browser"].includes(id)) {
+          throw new ApiError(404, "not_found", `repair ${id} not found`);
+        }
+        this.repairs.push(id);
+        for (const c of this.doctorChecks) {
+          if (c.repair === id) {
+            c.status = "ok";
+            c.repair = null;
+            c.hint = null;
+            c.detail = "fixed";
+          }
+        }
+        return ok({ repair: id, detail: "done" });
+      }
       case "GET /providers":
         if (seg[1] === "detected") {
           const screen =
@@ -539,6 +684,9 @@ export class MockApiClient extends ApiClient {
         return ok(created);
       }
       case "PUT /bots":
+        if (seg[1] && seg[2] === "skills") {
+          return ok(this.putBotSkillsState(seg[1], opts.body as PutBotSkillsInput));
+        }
         { const index = this.bots.findIndex(b => b.id === seg[1]);
           if (index >= 0) this.bots[index] = { ...this.bots[index], ...(opts.body as Partial<Bot>) };
           return ok(this.bots[index] ?? this.bots[0]); }
@@ -552,6 +700,21 @@ export class MockApiClient extends ApiClient {
       case "PUT /mcp":
       case "DELETE /mcp":
         return ok(this.mcp(method, seg, opts.body));
+      case "POST /runs":
+        if (seg[2] === "changes" && seg[4] === "restore") {
+          return ok({
+            run_id: seg[1] ?? "",
+            checkpoint_id: seg[3] ?? "all",
+            partial: false,
+            error: null,
+            safety_checkpoint_ids: [],
+            restored: [],
+            warnings: [],
+            covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
+            not_covered: ["shell", "web", "email", "desktop"]
+          });
+        }
+        throw new ApiError(404, "not_found", `mock: ${method} ${path}`);
       case "GET /view":
       case "POST /view":
       case "PATCH /view":
@@ -638,6 +801,71 @@ export class MockApiClient extends ApiClient {
       return { request_id: sub, decision: verdict.decision ?? "proceed" };
     }
     throw new ApiError(404, "not_found", `mock control: ${method} /${seg.join("/")}`);
+  }
+
+  private getBotSkillsState(botId: string): BotSkills {
+    if (!this.bots.some((b) => b.id === botId)) {
+      throw new ApiError(404, "not_found", `bot ${botId} not found`);
+    }
+    const stored = this.botSkills.get(botId);
+    const mode: SkillAssignmentMode = stored?.mode ?? "all";
+    const names = mode === "selected" ? stored?.names ?? [] : [];
+    const availableByName = new Map(
+      MOCK_SKILLS_CATALOG.skills.map((s) => [s.name, s])
+    );
+    const selectedSet = new Set(names);
+    return {
+      version: stored?.version ?? 0,
+      mode,
+      assigned: names.map((name) => ({
+        name,
+        state: availableByName.has(name) ? "ok" : "missing"
+      })),
+      available: MOCK_SKILLS_CATALOG.skills.map((s) => ({
+        ...structuredClone(s),
+        assigned: mode === "all" || selectedSet.has(s.name)
+      })),
+      own: structuredClone(MOCK_OWN_SKILLS[botId] ?? [])
+    };
+  }
+
+  private putBotSkillsState(botId: string, body: PutBotSkillsInput): BotSkills {
+    if (!this.bots.some((b) => b.id === botId)) {
+      throw new ApiError(404, "not_found", `bot ${botId} not found`);
+    }
+    const current = this.botSkills.get(botId)?.version ?? 0;
+    if (body.expected_version != null && body.expected_version !== current) {
+      throw new ApiError(
+        409,
+        "conflict",
+        `bot skill assignment changed (expected version ${body.expected_version}, current ${current})`
+      );
+    }
+    if (body.mode === "all") {
+      this.botSkills.delete(botId);
+      return this.getBotSkillsState(botId);
+    }
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const raw of body.names ?? []) {
+      if (!SKILL_NAME_RE.test(raw)) {
+        throw new ApiError(422, "unprocessable_entity", `invalid skill name: ${raw}`);
+      }
+      if (!seen.has(raw)) {
+        seen.add(raw);
+        normalized.push(raw);
+      }
+    }
+    if (normalized.length > 200) {
+      throw new ApiError(422, "unprocessable_entity", "too many assigned skills");
+    }
+    this.botSkillsVersion += 1;
+    this.botSkills.set(botId, {
+      mode: "selected",
+      names: normalized,
+      version: this.botSkillsVersion
+    });
+    return this.getBotSkillsState(botId);
   }
 
   private email(method: string, seg: string[], body: unknown): unknown {

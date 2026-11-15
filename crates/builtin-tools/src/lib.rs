@@ -20,6 +20,7 @@ pub mod checkpoint;
 pub mod control;
 pub mod desktop;
 pub mod files;
+pub mod knowledge;
 pub mod meta;
 pub mod schedule;
 pub mod script;
@@ -47,11 +48,16 @@ pub use browser::{
     ActStep, BrowserDriver, BrowserSettings, CdpDriver, HIDDEN_VALUE, MAX_ACT_STEPS, RefFact,
     StepOutcome, Wait, act_can_egress, check_ref_identity, ref_identity,
 };
-pub use checkpoint::{Checkpoint, CheckpointEntry, CheckpointStore};
+pub use checkpoint::{
+    ChangeKind, Checkpoint, CheckpointEntry, CheckpointStore, DiffOmittedReason, FileChange,
+    MAX_DIFF_FILE_BYTES, MAX_DIFF_RUN_BYTES, RestoreAction, RestorePreviewEntry, RestoreReport,
+    UnifiedDiff, Verification,
+};
 pub use control::{
     ActionPermit, ControlRequest, DesktopControlGate, OBSERVATION_DISCARDED, PermitValidator,
 };
 pub use desktop::{DesktopSettings, SharedOcr};
+pub use files::{try_with_exclusive_file_access, with_checkpoint_access};
 pub use meta::{META_TOOL_NAMES, QUESTION_CARD_KIND, TODO_LIST_KIND, TodoItem, TodoStatus};
 pub use schedule::{
     PreviousSchedule, SCHEDULE_TOOL_NAMES, ScheduleCaller, ScheduleChange, ScheduleHost,
@@ -71,8 +77,13 @@ pub struct BuiltinConfig {
     /// Existing platform/CDP adapters only. No screenshot-tool fallback or new browser.
     pub view_registry: Option<Arc<live_view::TargetRegistry>>,
     pub view_targets: Vec<Arc<dyn live_view::ViewTarget>>,
-    /// Desktop backend (local or remote). Desktop tools are skipped when `None`.
+    /// Desktop backend (local or remote). Desktop tools are skipped when `None`
+    /// unless `dynamic_desktop` is true.
     pub desktop: Option<Arc<dyn DesktopBackend>>,
+    /// Register desktop tools without an upfront static backend so a per-run
+    /// backend resolved via [`DesktopControlGate::desktop_for_run`] can supply one
+    /// (e.g. a remote PC node coming online later).
+    pub dynamic_desktop: bool,
     /// OCR engine used for set-of-marks when the accessibility tree is weak.
     pub ocr: Option<SharedOcr>,
     /// Desktop timing settings.
@@ -92,6 +103,8 @@ pub struct BuiltinConfig {
     pub email: Option<Arc<connector_email::EmailConnector>>,
     /// Web tools (search, fetch, feeds, sitemaps, metadata). `None` = web tools skipped.
     pub web: Option<web_tools::WebToolsConfig>,
+    /// Bot-scoped knowledge search. No model-facing source-management methods.
+    pub knowledge: Option<Arc<dyn knowledge::KnowledgeBackend>>,
     /// Directories `fs_*` may read and write. Empty does not add a root limit.
     /// A non-empty list that cannot be resolved denies every `fs_*` call.
     /// UNC paths, device paths, and credential files are still refused.
@@ -110,6 +123,7 @@ impl BuiltinConfig {
             browser_settings: BrowserSettings::isolated(&data_dir),
             data_dir,
             desktop: None,
+            dynamic_desktop: false,
             view_registry: None,
             view_targets: Vec::new(),
             ocr: None,
@@ -120,6 +134,7 @@ impl BuiltinConfig {
             control: None,
             email: None,
             web: None,
+            knowledge: None,
             fs_allowed_roots: Vec::new(),
             fs_granted_paths: Vec::new(),
         }
@@ -144,9 +159,9 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         }
     }
     let mut all: Vec<Arc<dyn Tool>> = Vec::new();
-    if let Some(backend) = cfg.desktop {
-        all.extend(desktop::tools(
-            backend,
+    if cfg.desktop.is_some() || cfg.dynamic_desktop {
+        all.extend(desktop::tools_dynamic(
+            cfg.desktop,
             cfg.ocr,
             &cfg.data_dir,
             cfg.desktop_settings,
@@ -175,6 +190,9 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         cfg.control,
     ));
     all.extend(meta::tools());
+    if let Some(backend) = cfg.knowledge {
+        all.push(knowledge::tool(backend));
+    }
     if let Some(email) = &cfg.email {
         all.extend(connector_email::tools(email));
     }
