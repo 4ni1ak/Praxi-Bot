@@ -427,6 +427,9 @@ pub(crate) async fn delete_bot(
     s.storage()
         .delete_bot(bot.id)
         .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+    // The bot's browser slot, driver and screen target go with it; nothing
+    // selectable or resident stays behind for a bot that no longer exists.
+    s.live_view().registry.retire_bot(bot.id.0);
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.

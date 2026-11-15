@@ -214,6 +214,11 @@ pub struct ApiDoc;
 /// `{"type":"control_state_changed","state","owner","target_id","reason"}`) when
 /// a screen takeover is acquired, becomes active, is interrupted, released or
 /// recovered (no ids, epochs, pixels or text); not replayed.
+///
+/// And `view_targets_changed` events (`{"type":"view_targets_changed"}`) when a screen
+/// target appears, goes idle, attaches to a page or closes, or a missing-screen
+/// reason changes: a pixel-free hint to refetch `/v1/view/targets` and
+/// `/v1/view/availability`; not replayed.
 #[utoipa::path(get, path = "/v1/events", tag = "events", security(("bearer" = [])),
     params(
         ("run_id" = Option<uuid::Uuid>, Query, description = "Follow only this run; the stream ends after run_finished"),
