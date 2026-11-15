@@ -55,9 +55,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use agent_router::decider::{
-    Answers, ChatJsonBackend, Decider, DeciderConfig, DeciderMetrics, DecisionBackend,
-    DecisionRequest, GeminiDecisions, OpenRouterDecisions, Outcome, Question, RateLimits,
-    TurnBudget, yes,
+    Answers, ChatJsonBackend, DayCounters, Decider, DeciderConfig, DeciderMetrics, DecisionBackend,
+    DecisionRequest, GeminiDecisions, ModelResolver, ModelRule, OpenRouterDecisions, Outcome,
+    Question, RateLimits, TurnBudget, yes,
 };
 use protocol::PermissionCategory;
 use provider_catalog::{Auth, Catalog, ModelRef, ProviderConfig, config_path};
@@ -79,6 +79,13 @@ pub const DECIDER_CALL_PURPOSE: &str = "decider";
 /// File name of the decider settings inside the data directory.
 pub const DECIDER_FILE: &str = "decider.toml";
 
+/// File of the persisted per-day counters (requests made, calls saved).
+pub const DECIDER_DAY_FILE: &str = "decider-day.json";
+
+/// Starting value of the Gemini decision model. It is only a default of the
+/// editable settings: nothing else in the code depends on this id.
+pub const DEFAULT_GEMINI_DECISION_MODEL: &str = "gemini-decision-1";
+
 /// Which HTTP API a decider backend speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,8 +104,17 @@ pub struct DeciderBackendSettings {
     /// Provider id as in `providers.toml` / the catalog (`gemini`,
     /// `openrouter`, ...). Its API key is the provider's key.
     pub provider: String,
-    /// Model id at that provider.
+    /// Model id at that provider. May be empty when `model_match` is set.
+    #[serde(default)]
     pub model: String,
+    /// Resolve the model by rule instead of a fixed id (`OpenRouter` only):
+    /// a glob over the ids of the provider's live model list, for example
+    /// `*decider*:free`. Only zero-priced, unexpired models qualify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_match: Option<String>,
+    /// Substrings in order of preference when several models match.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefer: Vec<String>,
     /// API to use; `None` = by provider (`gemini` -> Decisions API,
     /// `openrouter` -> Decisions API, anything else -> chat JSON).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,6 +170,9 @@ pub struct DeciderSettings {
     pub timeout_ms: u64,
     /// Decider calls one turn may make.
     pub max_calls_per_turn: u32,
+    /// Backend requests the decider may make per local day (`0` = unlimited).
+    /// When it is spent the turns run without a decider until midnight.
+    pub daily_budget: u64,
     /// Lifetime of a cached decision in seconds (`0` = no cache).
     pub cache_ttl_secs: u64,
     /// A turn is trivial when P(needs tools) is at most this.
@@ -176,13 +195,16 @@ impl Default for DeciderSettings {
             light_model: None,
             timeout_ms: 1500,
             max_calls_per_turn: 2,
+            daily_budget: 2000,
             cache_ttl_secs: 600,
             trivial_max: 0.10,
             family_min: 0.25,
             standalone_max: 0.10,
             backends: vec![DeciderBackendSettings {
                 provider: "gemini".into(),
-                model: "gemini-decision-1".into(),
+                model: DEFAULT_GEMINI_DECISION_MODEL.into(),
+                model_match: None,
+                prefer: Vec::new(),
                 api: None,
                 base_url: None,
                 rpm: 200,
@@ -263,8 +285,22 @@ impl DeciderSettings {
             if !plain(&b.provider, 64) || b.provider.contains('/') {
                 return Err(format!("invalid backend provider {:?}", b.provider));
             }
-            if !plain(&b.model, 200) {
+            if b.model.is_empty() == b.model_match.is_none() {
+                return Err(format!(
+                    "backend {:?}: set exactly one of `model` and `model_match`",
+                    b.provider
+                ));
+            }
+            if !b.model.is_empty() && !plain(&b.model, 200) {
                 return Err(format!("invalid backend model {:?}", b.model));
+            }
+            if let Some(m) = &b.model_match
+                && (!plain(m, 200) || b.effective_api() != DeciderApi::OpenrouterDecisions)
+            {
+                return Err("`model_match` is a glob for an `OpenRouter` backend".into());
+            }
+            if b.prefer.len() > 8 || b.prefer.iter().any(|p| !plain(p, 64)) {
+                return Err("`prefer` takes at most 8 plain words".into());
             }
             if let Some(u) = &b.base_url
                 && !(u.starts_with("https://") || u.starts_with("http://"))
@@ -280,6 +316,20 @@ impl DeciderSettings {
         Ok(())
     }
 }
+
+/// The decider's numbers for the current local day.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeciderToday {
+    /// Requests sent to a decision backend today.
+    pub calls_made: u64,
+    /// Main-model calls a cheaper model answered today.
+    pub main_calls_saved: u64,
+    /// The daily request budget (`0` = unlimited).
+    pub daily_budget: u64,
+}
+
+/// Day-counter key of main-model calls saved.
+const SAVED_KEY: &str = "saved";
 
 /// What the decider saved the main model (monotonic since it was installed).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,6 +356,7 @@ pub(crate) struct Savings {
     tool_schema_bytes_full: AtomicU64,
     tool_schema_bytes_sent: AtomicU64,
     main_calls_saved: AtomicU64,
+    day: Option<Arc<DayCounters>>,
 }
 
 impl Savings {
@@ -331,6 +382,9 @@ impl Savings {
 
     pub(crate) fn main_call_saved(&self) {
         self.main_calls_saved.fetch_add(1, Ordering::Relaxed);
+        if let Some(d) = &self.day {
+            d.bump(SAVED_KEY);
+        }
     }
 }
 
@@ -353,11 +407,26 @@ impl TurnDecider {
     /// Wrap a ready [`Decider`] (tests, embedders with their own backends).
     #[must_use]
     pub fn new(decider: Arc<Decider>, settings: DeciderSettings) -> Arc<Self> {
+        let day = decider.day_counters().cloned();
         Arc::new(Self {
             decider,
             settings,
-            savings: Savings::default(),
+            savings: Savings {
+                day,
+                ..Savings::default()
+            },
         })
+    }
+
+    /// Today's numbers (local day, persisted across restarts): decider
+    /// requests made, main-model calls saved, and the daily budget.
+    #[must_use]
+    pub fn today(&self) -> DeciderToday {
+        DeciderToday {
+            calls_made: self.decider.calls_today(),
+            main_calls_saved: self.savings.day.as_ref().map_or(0, |d| d.get(SAVED_KEY)),
+            daily_budget: self.settings.daily_budget,
+        }
     }
 
     /// What the plans saved the main model.
@@ -435,8 +504,14 @@ pub fn build_decider(
     }
     let cfg = ProviderConfig::load(&config_path(data_dir)).unwrap_or_default();
     let mut chain: Vec<(Arc<dyn DecisionBackend>, RateLimits)> = Vec::new();
-    for b in &settings.backends {
-        let id = format!("{}/{}", b.provider, b.model);
+    for (n, b) in settings.backends.iter().enumerate() {
+        // A rule-based backend is named after its rule: the resolved id
+        // changes, the egress provider (the part before `/`) does not.
+        let id = format!(
+            "{}/{}",
+            b.provider,
+            b.model_match.as_deref().unwrap_or(&b.model)
+        );
         let limits = RateLimits {
             rpm: b.rpm,
             tpm: b.tpm,
@@ -475,6 +550,16 @@ pub fn build_decider(
                     if let Some(u) = &b.base_url {
                         o = o.with_base_url(u.clone());
                     }
+                    if let Some(pattern) = &b.model_match {
+                        // The model id comes from the live list by rule;
+                        // the last good id is cached next to the settings.
+                        let rule = ModelRule {
+                            pattern: pattern.clone(),
+                            prefer: b.prefer.clone(),
+                        };
+                        let cache = data_dir.join(format!("decider-model-{n}.json"));
+                        o = o.with_resolver(Arc::new(ModelResolver::new(rule, Some(cache))));
+                    }
                     Arc::new(o)
                 }
             }
@@ -492,7 +577,9 @@ pub fn build_decider(
             cache_ttl: Duration::from_secs(settings.cache_ttl_secs),
             ..DeciderConfig::default()
         },
-    );
+    )
+    .with_day_counters(DayCounters::open(Some(data_dir.join(DECIDER_DAY_FILE))))
+    .with_daily_budget(settings.daily_budget);
     Some(TurnDecider::new(Arc::new(decider), settings.clone()))
 }
 

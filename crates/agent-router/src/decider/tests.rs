@@ -463,12 +463,7 @@ fn chat_prompt_keeps_the_input_as_quoted_data_after_the_questions() {
     assert_eq!(p[data_at..].lines().count(), 2);
 }
 
-fn counted(
-    b: &Arc<FakeBackend>,
-    rpd: u32,
-    day: &Arc<DayCounters>,
-    daily_budget: u64,
-) -> Decider {
+fn counted(b: &Arc<FakeBackend>, rpd: u32, day: &Arc<DayCounters>, daily_budget: u64) -> Decider {
     Decider::new(
         vec![(
             Arc::clone(b) as Arc<dyn DecisionBackend>,
@@ -611,12 +606,14 @@ async fn the_resolved_model_follows_the_list_and_a_404_drops_it() {
     let cache = dir.path().join("model.json");
     Mock::given(method("GET"))
         .and(path("/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(list(vec![model_entry(
-            "acme/decider-flash-v1.3:free",
-            "0",
-            "0",
-            None,
-        )])))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(list(vec![model_entry(
+                "acme/decider-flash-v1.3:free",
+                "0",
+                "0",
+                None,
+            )])),
+        )
         .up_to_n_times(1)
         .mount(&server)
         .await;
@@ -630,13 +627,17 @@ async fn the_resolved_model_follows_the_list_and_a_404_drops_it() {
         .await;
     Mock::given(method("POST"))
         .and(path("/decisions"))
-        .and(body_partial_json(json!({"model": "acme/decider-flash-v1.3:free"})))
+        .and(body_partial_json(
+            json!({"model": "acme/decider-flash-v1.3:free"}),
+        ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(path("/decisions"))
-        .and(body_partial_json(json!({"model": "acme/decider-flash-v1.4:free"})))
+        .and(body_partial_json(
+            json!({"model": "acme/decider-flash-v1.4:free"}),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"answers": good()})))
         .mount(&server)
         .await;
@@ -690,17 +691,22 @@ async fn an_empty_model_list_makes_the_backend_unavailable() {
         .respond_with(ResponseTemplate::new(200).set_body_json(list(vec![])))
         .mount(&server)
         .await;
-    let resolver = Arc::new(
-        ModelResolver::new(rule(), None).with_url(format!("{}/models", server.uri())),
-    );
+    let resolver =
+        Arc::new(ModelResolver::new(rule(), None).with_url(format!("{}/models", server.uri())));
     let first = OpenRouterDecisions::new("k", "")
         .with_base_url(server.uri())
         .with_resolver(resolver);
     let next = fake("next", Script::Answers(good()));
     let d = Decider::new(
         vec![
-            (Arc::new(first) as Arc<dyn DecisionBackend>, RateLimits::UNLIMITED),
-            (Arc::clone(&next) as Arc<dyn DecisionBackend>, RateLimits::UNLIMITED),
+            (
+                Arc::new(first) as Arc<dyn DecisionBackend>,
+                RateLimits::UNLIMITED,
+            ),
+            (
+                Arc::clone(&next) as Arc<dyn DecisionBackend>,
+                RateLimits::UNLIMITED,
+            ),
         ],
         DeciderConfig::default(),
     );

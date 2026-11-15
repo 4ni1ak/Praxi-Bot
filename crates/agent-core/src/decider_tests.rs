@@ -34,6 +34,8 @@ fn backend(provider: &str, model: &str, api: Option<DeciderApi>) -> DeciderBacke
     DeciderBackendSettings {
         provider: provider.into(),
         model: model.into(),
+        model_match: None,
+        prefer: Vec::new(),
         api,
         base_url: None,
         rpm: 0,
@@ -156,4 +158,55 @@ fn the_loop_holds_the_decider_it_is_given() {
     assert_eq!(lp.decider().unwrap().backend_ids(), ["fake/small"]);
     lp.set_decider(None);
     assert!(lp.decider().is_none());
+}
+
+/// A free model is named by a rule, never by an id; the backend of a rule is
+/// named after the rule and its provider (the egress unit) is kept.
+#[test]
+fn a_rule_based_backend_is_built_without_a_model_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let rule: DeciderSettings = toml::from_str(
+        "enabled = true\n[[backends]]\nprovider = \"openrouter\"\nmodel_match = \"*decider*:free\"\n\
+         prefer = [\"flash\"]\nrpm = 20\nrpd = 50\n",
+    )
+    .unwrap();
+    rule.validate().unwrap();
+    let catalog = provider_catalog::Catalog::default();
+    let store = secret_store::MemoryStore::default();
+    // No key: skipped like any keyless backend.
+    let mut w = Vec::new();
+    assert!(
+        build_decider(
+            &rule,
+            dir.path(),
+            &catalog,
+            &store,
+            &providers(),
+            &mut |m| {
+                w.push(m.to_owned());
+            }
+        )
+        .is_none()
+    );
+    assert!(w.iter().any(|m| m.contains("openrouter/*decider*:free")));
+}
+
+#[test]
+fn the_daily_budget_and_counters_are_part_of_a_built_decider() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = DeciderSettings {
+        enabled: true,
+        daily_budget: 7,
+        backends: vec![backend("fake", "small", None)],
+        ..DeciderSettings::default()
+    };
+    let catalog = provider_catalog::Catalog::default();
+    let store = secret_store::MemoryStore::default();
+    let td = build_decider(&s, dir.path(), &catalog, &store, &providers(), &mut |_| {}).unwrap();
+    let t = td.today();
+    assert_eq!(
+        (t.calls_made, t.main_calls_saved, t.daily_budget),
+        (0, 0, 7)
+    );
+    assert!(td.decider().day_counters().is_some());
 }
