@@ -632,6 +632,24 @@ mod tests {
     }
 
     #[test]
+    fn cli_egress_card_shows_the_computer_target() {
+        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let text = approval_text(&needed(Some(serde_json::json!({
+            "kind": "egress",
+            "reason": "typing after a read",
+            "host": "the desktop",
+            "payload": "hello",
+            "payload_kind": "body",
+            "computer_target": {"kind": "pc", "node_id": id, "node_name": "Work PC"},
+        }))));
+        assert!(
+            text.contains(&format!("COMPUTER: pc \"Work PC\" (id {id})")),
+            "{text}"
+        );
+        assert!(text.contains("bot approve"), "{text}");
+    }
+
+    #[test]
     fn cli_refuses_an_approval_too_large_to_review() {
         let marker = "PAYLOAD-MARKER-XYZ";
         let payload = marker.repeat(40 * 3500);

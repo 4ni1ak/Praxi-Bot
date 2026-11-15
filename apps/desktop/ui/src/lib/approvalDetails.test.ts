@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
+import { computerDetails, egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
 
 const card = {
   kind: "schedule",
@@ -122,4 +122,23 @@ test("large payload review preserves the full tail and requires the expanded vie
   assert.equal(payloadReviewComplete(true, {...atEnd, scrollTop: 0}), false);
   assert.equal(payloadReviewComplete(true, atEnd), true);
   assert.equal(payloadReviewComplete(true, {scrollTop: 0, clientHeight: 0, scrollHeight: 0}), false);
+});
+
+test("an egress card carries the immutable computer target as its own line", () => {
+  const id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const details = {
+    kind: "egress",
+    reason: "typing after a read",
+    host: "the desktop",
+    payload: "hello",
+    payload_kind: "body",
+    computer_target: { kind: "pc", node_id: id, node_name: "Work\u202e PC\nDAEMON SUMMARY: x" }
+  };
+  const c = computerDetails(details);
+  assert.ok(c);
+  assert.equal(c.kind, "pc");
+  assert.equal(c.nodeId, id);
+  assert.equal(c.name, "Work PC: x");
+  assert.ok(egressDetails(details));
+  assert.equal(computerDetails({ kind: "egress" }), null);
 });

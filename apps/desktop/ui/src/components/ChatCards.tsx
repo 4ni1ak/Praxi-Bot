@@ -15,6 +15,7 @@ import {
   type ToolItem
 } from "../state/timeline";
 import {
+  computerDetails,
   egressDetails,
   payloadReviewComplete,
   formatFiring,
@@ -312,6 +313,7 @@ export function ApprovalCard({
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
   const egress = egressDetails(tool.details);
+  const computer = computerDetails(tool.details);
   const [reviewedPayload, setReviewedPayload] = useState<string | null>(null);
   const reviewPending = egress?.reviewFullPayload && reviewedPayload !== egress.payload;
 
@@ -378,6 +380,15 @@ export function ApprovalCard({
             </div>
           </>
         )}
+        {computer && (egress || schedule) ? (
+          <p className={styles.bodyLabel} data-testid="approval-computer">
+            {t("chat.approval.computer", {
+              kind: computer.kind,
+              name: computer.name,
+              id: computer.nodeId
+            })}
+          </p>
+        ) : null}
         {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
         <div className={styles.actions}>
           <Button

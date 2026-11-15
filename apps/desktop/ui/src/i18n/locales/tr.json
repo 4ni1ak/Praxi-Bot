@@ -332,7 +332,8 @@
           "body": "Giden veri (tamamı gösterilir):"
         },
         "size": "{{lines}} satır, {{chars}} karakter, {{hidden}} yazdırılmayan karakter <U+XXXX> olarak gösterilir"
-      }
+      },
+      "computer": "Bu işlem {{kind}} \"{{name}}\" üzerinde çalışır (kimlik {{id}})."
     },
     "question": {
       "title": "Bot soruyor",

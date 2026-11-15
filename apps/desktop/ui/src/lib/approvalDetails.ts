@@ -125,6 +125,49 @@ export function egressDetails(details: unknown): EgressApprovalDetails | null {
   };
 }
 
+export interface ComputerApprovalDetails {
+  /** `pc`, `host` or `browser`. */
+  kind: string;
+  name: string;
+  /** Immutable node id (a machine fingerprint for a real computer). */
+  nodeId: string;
+}
+
+// Control, invisible and direction-override characters. A device label is
+// chosen by a peer, so it is shown as one short plain line.
+const HIDDEN_CLASS = /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}]$/u;
+const HIDDEN_POINTS = new Set([0x34f, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x2800, 0x3164, 0xffa0]);
+
+function isHidden(ch: string): boolean {
+  const cp = ch.codePointAt(0) ?? 0;
+  return (
+    HIDDEN_CLASS.test(ch) ||
+    HIDDEN_POINTS.has(cp) ||
+    (cp >= 0x180b && cp <= 0x180f) ||
+    (cp >= 0xfe00 && cp <= 0xfe0f)
+  );
+}
+
+function plain(value: unknown, max: number): string {
+  if (typeof value !== "string") return "";
+  const shown = [...value].filter((ch) => !isHidden(ch)).join("");
+  return [...shown.replace(/DAEMON SUMMARY/g, "")].slice(0, max).join("").trim();
+}
+
+/**
+ * The computer the daemon bound to this call (`details.computer_target`), for
+ * a card whose headline is replaced by a schedule or egress body.
+ */
+export function computerDetails(details: unknown): ComputerApprovalDetails | null {
+  if (!isObject(details) || !isObject(details.computer_target)) return null;
+  const c = details.computer_target;
+  const kind = plain(c.kind, 16);
+  const name = plain(c.node_name, 80);
+  const nodeId = plain(c.node_id, 80) || "local";
+  if (!kind && !name && nodeId === "local") return null;
+  return { kind, name, nodeId };
+}
+
 function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

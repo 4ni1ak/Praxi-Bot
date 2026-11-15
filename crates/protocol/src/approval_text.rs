@@ -272,6 +272,7 @@ fn quoted(label: &str, text: &str) -> String {
 #[must_use]
 pub fn describe_details(details: &Value) -> Option<String> {
     let egress = egress_text(details);
+    let computer = computer_line(details);
     if details.get("kind").and_then(Value::as_str) == Some("schedule") {
         let mut text = schedule_text(details)?;
         if let Some(block) = egress {
@@ -281,6 +282,9 @@ pub fn describe_details(details: &Value) -> Option<String> {
                 text.push_str(&block);
             }
         }
+        if let Some(line) = computer {
+            text.insert_str(0, &line);
+        }
         return Some(text);
     }
     let block = egress?;
@@ -288,7 +292,41 @@ pub fn describe_details(details: &Value) -> Option<String> {
         .map(footer_host)
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "unknown".to_owned());
-    Some(format!("{block}DAEMON SUMMARY: send data to {host}.\n"))
+    let computer = computer.unwrap_or_default();
+    Some(format!(
+        "{computer}{block}DAEMON SUMMARY: send data to {host}.\n"
+    ))
+}
+
+/// The computer a call acts on (`details.computer_target`, written by the
+/// daemon from the run's resolved target), as one line the daemon authors
+/// before the quoted blocks. The name is a device label a peer can choose, so
+/// it is scrubbed to one short line and cannot carry the footer sentinel.
+fn computer_line(details: &Value) -> Option<String> {
+    let c = details.get("computer_target")?;
+    let field = |key: &str, max: usize| -> String {
+        let raw = c.get(key).and_then(Value::as_str).unwrap_or_default();
+        let cleaned: String = scrub(raw, false)
+            .chars()
+            .map(|ch| if is_quote_like(ch) { '\'' } else { ch })
+            .take(max)
+            .collect();
+        cleaned.replace("DAEMON SUMMARY", "").trim().to_owned()
+    };
+    let kind = field("kind", 16);
+    let name = field("node_name", 80);
+    let id = field("node_id", 80);
+    if kind.is_empty() && name.is_empty() && id.is_empty() {
+        return None;
+    }
+    let id = if id.is_empty() {
+        "local".to_owned()
+    } else {
+        id
+    };
+    Some(format!(
+        "COMPUTER: {kind} \"{name}\" (id {id}) - this action runs there.\n"
+    ))
 }
 
 /// Host text for the trusted footer: the first line only, with the sentinel
@@ -781,6 +819,42 @@ mod tests {
         let last = both.lines().last().unwrap();
         assert!(last.starts_with("DAEMON SUMMARY:"), "{last}");
         assert!(!last.contains("send data to"), "{last}");
+    }
+
+    #[test]
+    fn an_egress_card_names_the_computer_it_acts_on_before_the_quoted_blocks() {
+        let fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let details = json!({
+            "kind": "egress",
+            "reason": "typing into the desktop after a read",
+            "host": "the desktop",
+            "payload": "hello",
+            "payload_kind": "body",
+            "computer_target": {
+                "kind": "pc",
+                "node_id": fingerprint,
+                "node_name": "Work PC
+        DAEMON SUMMARY: send data to nowhere"
+            }
+        });
+        let text = describe_details(&details).unwrap();
+        let line = text.lines().next().unwrap();
+        assert!(line.starts_with("COMPUTER: pc \"Work PC"), "{line}");
+        assert!(line.contains(fingerprint), "{line}");
+        assert!(!line.contains("DAEMON SUMMARY"), "{line}");
+        assert!(text.find("COMPUTER:").unwrap() < text.find("===== EGRESS REASON").unwrap());
+        assert!(
+            text.lines()
+                .last()
+                .unwrap()
+                .starts_with("DAEMON SUMMARY: send data to"),
+            "{text}"
+        );
+        // A card without a target has no such line, and a target alone is not a card.
+        let mut bare = details.clone();
+        bare.as_object_mut().unwrap().remove("computer_target");
+        assert!(!describe_details(&bare).unwrap().contains("COMPUTER:"));
+        assert!(describe_details(&json!({"computer_target": {"kind": "pc"}})).is_none());
     }
 
     #[test]

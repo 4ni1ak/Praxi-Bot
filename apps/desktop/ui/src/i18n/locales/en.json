@@ -332,7 +332,8 @@
           "body": "Outgoing data (shown in full):"
         },
         "size": "{{lines}} lines, {{chars}} characters, {{hidden}} non-printing characters shown as <U+XXXX>"
-      }
+      },
+      "computer": "This action runs on {{kind}} \"{{name}}\" (id {{id}})."
     },
     "question": {
       "title": "The bot asks",
