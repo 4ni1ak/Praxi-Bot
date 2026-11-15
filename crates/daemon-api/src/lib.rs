@@ -196,6 +196,8 @@ struct Inner {
     policy_lock: parking_lot::Mutex<()>,
     /// Target sets of `POST /v1/runs/stop` (see `stop`).
     stops: parking_lot::Mutex<stop::StopBook>,
+    #[cfg(test)]
+    stop_seam: stop::Seam,
     restore_locks: parking_lot::Mutex<std::collections::HashSet<RunId>>,
     #[cfg(test)]
     restore_fail_at: parking_lot::Mutex<Option<usize>>,
@@ -343,6 +345,8 @@ impl AppState {
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
             stops: parking_lot::Mutex::new(stop::StopBook::default()),
+            #[cfg(test)]
+            stop_seam: stop::Seam::default(),
             restore_locks: parking_lot::Mutex::new(std::collections::HashSet::new()),
             #[cfg(test)]
             restore_fail_at: parking_lot::Mutex::new(None),
@@ -732,6 +736,10 @@ impl AppState {
     }
     pub(crate) fn set_policy_load_error(&self, e: Option<String>) {
         *self.0.policy_load_error.lock() = e;
+    }
+    #[cfg(test)]
+    pub(crate) fn stop_seam(&self) -> &stop::Seam {
+        &self.0.stop_seam
     }
     pub(crate) fn stops(&self) -> &parking_lot::Mutex<stop::StopBook> {
         &self.0.stops

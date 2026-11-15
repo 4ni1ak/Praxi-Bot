@@ -920,12 +920,23 @@ pub struct StopRunsInput {
 }
 
 /// What happened to one run of a Stop's target set.
+///
+/// `cancelled` is the only outcome that means the run has stopped. For a live
+/// run the daemon can only fire the run's cancel token: `cancel_requested`
+/// says it did so, and the run's effects (a tool call, a shell child, a
+/// browser or desktop action) have ceased only once its `state` is terminal or
+/// `run_finished` arrives. A human takeover is not touched by this route
+/// (`/v1/control/override` handles it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StopOutcome {
-    /// The run was cancelled by this Stop (or a retry of it).
+    /// The run is cancelled (terminal) because of this Stop.
     Cancelled,
-    /// The run was already finished when the Stop reached the daemon.
+    /// The cancel was issued but the run is not terminal yet. A repeat of the
+    /// same `stop_id` re-issues it and updates this outcome once the run ended.
+    CancelRequested,
+    /// The run was already finished when the Stop reached the daemon (or ended
+    /// by itself before the cancel took effect).
     AlreadyTerminal,
     /// The id is not a run of this user. Never cancelled later, even if a run
     /// with that id appears.
@@ -954,7 +965,22 @@ pub struct StopRunsResponse {
     pub stop_id: Uuid,
     /// `true` when this call fixed the target set, `false` for a repeat.
     pub first_seen: bool,
+    /// `true` when this `stop_id` was seen before but its target set is no
+    /// longer kept (expired or evicted): nothing was cancelled and `results`
+    /// is empty. Send a new `stop_id` to stop again.
+    #[serde(default)]
+    pub expired: bool,
+    /// `false` when the audit row of this call could not be written. Only the
+    /// local user's Stop proceeds without it (peers fail with 500).
+    #[serde(default = "audited_default")]
+    pub audited: bool,
     /// Every member of the target set. A run that is not listed was not
-    /// targeted (it was created after the first receipt).
+    /// targeted (it was created after the first receipt). A repeat retries
+    /// `failed` members and re-issues the cancel of `cancel_requested` ones;
+    /// terminal and unknown members are never touched again.
     pub results: Vec<StopRunResult>,
+}
+
+fn audited_default() -> bool {
+    true
 }
