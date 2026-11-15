@@ -1,6 +1,8 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { rank } from "../lib/fuzzy";
+import { layerStack } from "../lib/modalStack";
 import styles from "./CommandPalette.module.css";
 
 export interface PaletteCommand {
@@ -46,6 +48,16 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
 
+  // A layer like Modal/Popover: whatever sits below (the live viewer) stops
+  // owning Tab/Escape while the palette is open.
+  const seqRef = useRef(0);
+  if (seqRef.current === 0) seqRef.current = layerStack.next();
+  useEffect(() => {
+    const seq = seqRef.current;
+    layerStack.add(seq);
+    return () => layerStack.remove(seq);
+  }, []);
+
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
@@ -87,13 +99,16 @@ export function CommandPalette({
     } else if (e.key === "Enter") {
       e.preventDefault();
       choose(active);
-    } else if (e.key === "Escape") {
+    } else if (e.key === "Escape" && layerStack.isTop(seqRef.current)) {
       e.preventDefault();
+      e.stopPropagation();
       onClose();
     }
   };
 
-  return (
+  // Portaled to <body>: a Modal makes #root inert, and a palette inside it
+  // would paint above the modal (z-index 60) yet could not take focus or keys.
+  return createPortal(
     <div
       className={styles.backdrop}
       onMouseDown={(e) => {
@@ -159,6 +174,7 @@ export function CommandPalette({
         </ul>
         <div className={styles.footer}>{t("palette.hint")}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
