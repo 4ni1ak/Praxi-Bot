@@ -509,6 +509,15 @@ pub fn check_config(dir: &Path) -> Check {
         );
     }
     match ProviderConfig::load(&path) {
+        Ok(c) if !c.quarantined.is_empty() => Check::fail(
+            ID,
+            N,
+            format!(
+                "{} provider(s) disabled because of reserved secret references",
+                c.quarantined.len()
+            ),
+            "remove the reserved key reference in providers.toml and reconnect each disabled provider",
+        ),
         Ok(c) => Check::ok(
             ID,
             N,

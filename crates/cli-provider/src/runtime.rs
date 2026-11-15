@@ -25,6 +25,9 @@ use crate::detect::{
     ChildTree, PathEnv, apply_sanitized_env, binary_pin, find_candidate, isolate, resolve_spawn,
 };
 
+mod native;
+pub use native::{NativeTurn, run_native_turn};
+
 /// Supported session dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
@@ -57,6 +60,9 @@ pub enum CliError {
     /// The file at the exact path that would be spawned changed between probes.
     #[error("binary_changed")]
     BinaryChanged,
+    /// The workspace folder chosen for a native-tools bot is gone.
+    #[error("workspace_unavailable")]
+    WorkspaceUnavailable,
 }
 
 impl CliError {
@@ -74,6 +80,7 @@ impl CliError {
             Self::Io => "cli_io_error",
             Self::CodexUnconfinable => "codex_unconfinable",
             Self::BinaryChanged => "binary_changed",
+            Self::WorkspaceUnavailable => "workspace_unavailable",
         }
     }
 }
@@ -95,12 +102,28 @@ impl ToolReply {
     }
 }
 
+/// A permission request a CLI forwards for one of its OWN tools (native-tools mode).
+#[derive(Debug, Clone)]
+pub struct NativePermission {
+    /// The CLI's name for the action (`Bash`, `Edit`, `shell`, `edit`, a title...).
+    pub tool: String,
+    /// One-line description shown on the approval card. Untrusted CLI output.
+    pub summary: String,
+    /// The CLI's own description of the input. Untrusted CLI output.
+    pub input: Value,
+}
+
 /// Host boundary: implementations use the agent's existing permission resolver and executor.
 #[async_trait]
 pub trait TurnHost: Send + Sync + 'static {
     fn text(&self, text: &str);
     async fn call(&self, name: &str, input: Value) -> ToolReply;
     async fn approve(&self, name: &str, input: Value) -> bool;
+    /// Answer a permission request for the CLI's own tool: `true` allows it.
+    /// The default refuses, so a host that does not support native mode never allows anything.
+    async fn permission(&self, _request: NativePermission) -> bool {
+        false
+    }
 }
 
 /// Session input. Neither prompt is ever used to build arguments.
@@ -173,6 +196,8 @@ struct Bridge {
     tools: Arc<Vec<ToolSpec>>,
     host: Arc<dyn TurnHost>,
     stop: CancellationToken,
+    /// Native-tools mode: the bridge also serves the `approve` permission-prompt tool.
+    native: bool,
     /// `0` until the turn's CLI process exists. Connections are refused until then.
     #[cfg(not(windows))]
     child_pid: Arc<AtomicU32>,
@@ -199,7 +224,34 @@ impl Bridge {
             }
             "ping" => json!({}),
             "tools/list" => {
-                json!({"tools":self.tools.iter().map(|s| json!({"name":tool_name(&s.name),"description":s.description,"inputSchema":s.input_schema})).collect::<Vec<_>>()})
+                let mut tools = self.tools.iter().map(|s| json!({"name":tool_name(&s.name),"description":s.description,"inputSchema":s.input_schema})).collect::<Vec<_>>();
+                if self.native {
+                    tools.push(json!({"name":"approve","description":"Permission prompt handler used by the host.","inputSchema":{"type":"object","properties":{"tool_name":{"type":"string"},"input":{"type":"object"},"tool_use_id":{"type":"string"}},"required":["tool_name"]}}));
+                }
+                json!({"tools":tools})
+            }
+            "tools/call" if self.native && req["params"]["name"].as_str() == Some("approve") => {
+                let args = &req["params"]["arguments"];
+                let tool = args["tool_name"].as_str().unwrap_or("tool").to_owned();
+                let input = args["input"].clone();
+                let allow = tokio::select! {
+                    () = self.stop.cancelled() => false,
+                    allow = self.host.permission(NativePermission {
+                        summary: native::describe(&tool, &input),
+                        tool,
+                        input: input.clone(),
+                    }) => allow,
+                };
+                let verdict = if allow {
+                    json!({"behavior":"allow","updatedInput":input})
+                } else {
+                    json!({"behavior":"deny","message":"The owner did not allow this action."})
+                };
+                ToolReply {
+                    text: verdict.to_string(),
+                    is_error: false,
+                }
+                .wire()
             }
             "tools/call" => {
                 if let Some(name) = req["params"]["name"].as_str().and_then(|n| self.resolve(n)) {
@@ -376,7 +428,7 @@ async fn restrict_sidecar(_: &std::path::Path) -> Result<(), CliError> {
 }
 
 /// Minimum supported versions for CLI providers. Below these floors, we refuse to spawn.
-const MIN_CLAUDE_VERSION: (u32, u32, u32) = (2, 1, 257);
+use crate::registry::CLAUDE_SECURITY_FLOOR as MIN_CLAUDE_VERSION;
 const MIN_CLAUDE_VERSION_STRIC_MCP: (u32, u32, u32) = (1, 0, 60);
 const MIN_CLAUDE_VERSION_SETTING_SOURCES: (u32, u32, u32) = (1, 0, 122);
 
@@ -701,6 +753,7 @@ async fn session(
         tools: Arc::new(turn.tools.clone()),
         host: host.clone(),
         stop: stop.clone(),
+        native: false,
         #[cfg(not(windows))]
         child_pid: Arc::new(AtomicU32::new(0)),
         #[cfg(windows)]
@@ -1342,6 +1395,7 @@ mod tests {
             tools: Arc::new(vec![]),
             host: Arc::new(NoCalls),
             stop: CancellationToken::new(),
+            native: false,
             #[cfg(not(windows))]
             child_pid: Arc::new(AtomicU32::new(std::process::id())),
             #[cfg(windows)]

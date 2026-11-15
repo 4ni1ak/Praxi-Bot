@@ -22,10 +22,19 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod bot_patch;
+mod cli_engines;
+mod composio;
 mod doctor;
 mod email;
+mod fill_secrets;
 mod host;
+mod host_slice;
+mod knowledge;
+mod knowledge_brain;
 mod mcp;
+mod model_catalog;
+mod peer_knowledge;
 mod schedules;
 mod skills;
 mod web;
@@ -444,7 +453,7 @@ async fn bots_crud() {
         &t,
         Method::PUT,
         &path,
-        Some(json!({"config": {
+        Some(json!({"expected_version": 1, "config": {
             "bot": {"id": "tester", "name": "Renamed"},
             "models": {"executor": "fake/other"}
         }})),
@@ -2586,6 +2595,7 @@ async fn providers_lists_secret_free_cli_records_without_probing() {
         command: "missing-c062-fixture".into(),
     });
     let cfg = provider_catalog::ProviderConfig {
+        quarantined: std::collections::BTreeMap::default(),
         providers: vec![p],
         default_provider: None,
     };
@@ -2843,14 +2853,8 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
     let t = setup();
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
 
-    for id in [
-        "codex",
-        "chatgpt-plan",
-        "cursor",
-        "opencode",
-        "gemini",
-        "unknown",
-    ] {
+    // CLIs with a native-tools driver can be enabled; they only run with their own tools.
+    for id in ["chatgpt-plan", "unknown"] {
         let r = call(
             &t,
             Method::POST,
@@ -2886,6 +2890,15 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
         !cfg_path.exists(),
         "no providers.toml should be written when all enables were refused"
     );
+    let native = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/enable",
+        Some(json!({ "id": "opencode" })),
+    )
+    .await;
+    assert_eq!(native.status, StatusCode::OK, "{:?}", native.json());
+    assert_eq!(native.json()["id"], "cli:opencode");
 }
 
 #[test]
@@ -3055,6 +3068,7 @@ async fn providers_cli_enable_preserves_existing_default_model_and_model_caps() 
         },
     );
     provider_catalog::ProviderConfig {
+        quarantined: std::collections::BTreeMap::default(),
         providers: vec![existing],
         default_provider: None,
     }
@@ -3134,7 +3148,8 @@ async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
                     "bot": {"id": "tester", "name": "Tester"},
                     "models": {"executor": "fake/echo"}
                 },
-                "runtime": {"computer": input}
+                "runtime": {"computer": input},
+                "expected_version": call(&t, Method::GET, &bot_path, None).await.json()["version"]
             })),
         )
         .await;
@@ -3168,7 +3183,8 @@ async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
                 "bot": {"id": "tester", "name": "Tester"},
                 "models": {"executor": "fake/echo"}
             },
-            "runtime": {"computer": "quantum"}
+            "runtime": {"computer": "quantum"},
+            "expected_version": 7
         })),
     )
     .await;
@@ -3328,7 +3344,7 @@ async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_overri
         &t,
         Method::PUT,
         &path,
-        Some(json!({"profile_toml": PROFILE})),
+        Some(json!({"profile_toml": PROFILE, "expected_version": 1})),
     )
     .await;
     assert_eq!(updated.status, StatusCode::OK);
@@ -3339,13 +3355,98 @@ async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_overri
         &path,
         Some(json!({
             "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"host\"\n"),
-            "runtime": {"computer": "pc"}
+            "runtime": {"computer": "pc"},
+            "expected_version": 2
         })),
     )
     .await;
     assert_eq!(conflict.status, StatusCode::BAD_REQUEST);
     let current = call(&t, Method::GET, &path, None).await;
     assert_eq!(current.json()["runtime"]["computer"], "pc");
+}
+
+#[tokio::test]
+async fn engine_settings_change_only_through_the_owner_endpoint_with_consent() {
+    let t = setup();
+    let workspace = tempfile::tempdir().unwrap();
+    let profile = PROFILE.replace("fake/echo", "cli:claude/sonnet");
+    let engine = format!(
+        "{profile}
+[engine]
+mode = \"native_tools\"
+"
+    );
+    // Create and update refuse an engine table that arrives through the profile.
+    let denied = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": engine})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    let created = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": profile})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let bot = created.json()["id"].as_str().unwrap().to_owned();
+    let path = format!("/v1/bots/{bot}");
+    let denied = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": engine, "expected_version": 1})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    // The engine endpoint needs the consent flag and a safe workspace.
+    let body = |consent: bool| {
+        json!({
+            "mode": "native_tools", "workspace": workspace.path().display().to_string(),
+            "consent_native_tools": consent
+        })
+    };
+    let no = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(body(false)),
+    )
+    .await;
+    assert_eq!(no.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let data = t.state.storage().data_dir().display().to_string();
+    let bad = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(json!({
+            "mode": "native_tools", "workspace": data, "consent_native_tools": true
+        })),
+    )
+    .await;
+    assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ok = call(&t, Method::PUT, &format!("{path}/engine"), Some(body(true))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.json());
+    assert_eq!(ok.json()["config"]["engine"]["approval_level"], "ask");
+    assert!(ok.json()["config"]["engine"]["consent"]["native_tools_at_ms"].is_number());
+    // A profile edit that does not mention the engine keeps it.
+    let kept = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": profile, "expected_version": ok.json()["version"]})),
+    )
+    .await;
+    assert_eq!(kept.status, StatusCode::OK);
+    assert_eq!(kept.json()["config"]["engine"]["mode"], "native_tools");
+    // The kill switch returns the bot to Praxi-governed.
+    let killed = call(&t, Method::POST, &format!("{path}/engine/kill"), None).await;
+    assert_eq!(killed.status, StatusCode::OK);
+    assert_eq!(killed.json()["config"]["engine"]["mode"], "praxi_governed");
 }
 
 // ------------------------------------------------------ POST /v1/runs/stop
@@ -4087,4 +4188,93 @@ async fn c225_schedule_extensions_local_owner_only_for_every_role_and_path_alias
         .unwrap();
     assert!(!event.detail.to_string().contains("return false"));
     assert!(event.detail.get("schedule_id").is_some());
+}
+
+#[tokio::test]
+async fn usage_purpose_totals_are_additive_and_preserve_the_legacy_shape() {
+    let t = setup();
+    let (bot, chat) = make_chat(&t).await;
+    run_and_reply(&t, &chat, "hello").await;
+    let initial = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(initial["by_purpose"]["executor"], initial["total"]);
+    assert_eq!(
+        initial["total"],
+        json!({
+            "prompt_tokens": 10, "completion_tokens": 5, "cached_tokens": 0,
+            "model_calls": 1, "cost_usd": null
+        })
+    );
+    let mut legacy_view = initial.clone();
+    legacy_view.as_object_mut().unwrap().remove("by_purpose");
+    assert_eq!(
+        legacy_view,
+        json!({"runs": 1, "total": initial["total"],
+        "by_bot": [{"bot_id": bot, "prompt_tokens": 10, "completion_tokens": 5,
+            "cached_tokens": 0, "model_calls": 1, "cost_usd": null}]})
+    );
+
+    let st = t.state.storage();
+    let user = t.state.user_id();
+    let run = st.list_runs(user).unwrap()[0].id;
+    // A classifier invocation with no token report is still a real call.
+    let intent = json!({"ledger_version": 1, "call_id": uuid::Uuid::now_v7(),
+        "purpose": "router", "model": "fake/classifier", "step_n": 0,
+        "calls": 1, "tokens": null, "cost_usd": null});
+    st.append_audit(user, Some(run), "bot", "llm.call_started", &intent)
+        .unwrap();
+    st.append_audit(user, Some(run), "bot", "usage", &intent)
+        .unwrap();
+    let u = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(u["by_purpose"]["router"]["model_calls"], 1);
+    assert_eq!(u["total"]["model_calls"], 2);
+    for key in [
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_tokens",
+        "model_calls",
+    ] {
+        let sum: u64 = u["by_purpose"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|p| p[key].as_u64().unwrap())
+            .sum();
+        assert_eq!(u["total"][key], sum, "{key}");
+        assert_eq!(u["by_bot"][0][key], sum, "{key}");
+    }
+}
+
+#[tokio::test]
+async fn usage_legacy_steps_remain_counted_after_a_run_acquires_ledger_entries() {
+    let t = setup();
+    let (_, chat) = make_chat(&t).await;
+    run_and_reply(&t, &chat, "hello").await;
+    let st = t.state.storage();
+    let user = t.state.user_id();
+    let original = st.list_runs(user).unwrap()[0].clone();
+    let mut legacy = original.clone();
+    legacy.id = protocol::RunId::new();
+    st.insert_run(&legacy).unwrap();
+    for mut step in st.list_steps(original.id).unwrap() {
+        step.id = uuid::Uuid::now_v7();
+        step.run_id = legacy.id;
+        st.insert_step(&step).unwrap();
+    }
+    // Only the resumed call is ledger-aware; old successful steps still count.
+    st.append_audit(
+        user,
+        Some(legacy.id),
+        "bot",
+        "llm.call_started",
+        &json!({
+            "ledger_version": 1, "call_id": uuid::Uuid::now_v7(), "purpose": "executor",
+            "model": "fake/echo", "step_n": 9, "tokens": null
+        }),
+    )
+    .unwrap();
+    let u = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(u["runs"], 2);
+    assert_eq!(u["total"]["model_calls"], 3);
+    assert_eq!(u["total"]["prompt_tokens"], 20);
+    assert_eq!(u["by_purpose"]["executor"], u["total"]);
 }

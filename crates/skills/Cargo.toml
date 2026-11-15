@@ -22,6 +22,10 @@ tempfile.workspace = true
 thiserror.workspace = true
 tool-registry = { path = "../tool-registry", version = "0.1.0" }
 unicode-normalization = "0.1.26"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["fs", "std"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

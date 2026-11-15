@@ -43,6 +43,8 @@ uuid.workspace = true
 workflow-replay = { path = "../workflow-replay", version = "0.1.0" }
 
 [dev-dependencies]
+composio = { path = "../composio", version = "0.1.0" }
+wiremock.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
 tiktoken-rs = "0.12"

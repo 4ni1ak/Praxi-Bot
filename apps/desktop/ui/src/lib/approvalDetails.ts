@@ -41,6 +41,25 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
+export interface BrainApprovalDetails {
+  path: string;
+  content: string;
+  sha256: string;
+  sources: { id: string; revision: number; label: string }[];
+}
+
+/** Daemon-frozen content, rendered as text and never as HTML/instructions. */
+export function brainDetails(details: unknown): BrainApprovalDetails | null {
+  if (!isObject(details) || details.kind !== "knowledge_brain_write" ||
+      typeof details.path !== "string" || typeof details.content !== "string" ||
+      typeof details.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(details.sha256) ||
+      details.content.length > 65_536 || !Array.isArray(details.sources)) return null;
+  const sources = details.sources.filter((source): source is { id: string; revision: number; label: string } =>
+    isObject(source) && typeof source.id === "string" && typeof source.revision === "number" && typeof source.label === "string");
+  if (sources.length !== details.sources.length || sources.length > 16) return null;
+  return { path: details.path, content: details.content, sha256: details.sha256, sources };
+}
+
 /** Parse `details` of an approval; `null` when it is not a schedule card. */
 export function scheduleDetails(details: unknown): ScheduleApprovalDetails | null {
   if (!isObject(details) || details.kind !== "schedule") return null;
@@ -99,4 +118,18 @@ export function formatFiring(rfc3339: string, locale?: string): string {
     timeZone: "UTC"
   }).format(d);
   return `${date}, ${m[4]}:${m[5]}`;
+}
+
+/** App actions carry the complete JSON arguments; malformed cards cannot approve. */
+export function appActionDetails(details: unknown) {
+  if (!isObject(details) || details.kind !== "app_action" || !isObject(details.arguments) ||
+      typeof details.app_name !== "string" || typeof details.action_slug !== "string" ||
+      typeof details.version !== "string" || typeof details.class !== "string") return null;
+  const compact = JSON.stringify(details.arguments);
+  if (new TextEncoder().encode(compact).length > 32 * 1024) return null;
+  // Preserve every value while making invisible/bidi characters visible as JSON escapes.
+  const argumentsText = JSON.stringify(details.arguments, null, 2).replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Zl}\p{Zp}\u2800]/gu,
+    (c) => c.split("").map((unit) => "\\u" + unit.charCodeAt(0).toString(16).padStart(4, "0")).join(""));
+  return { app: details.app_name, action: details.action_slug, version: details.version,
+    class: details.class, argumentsText, count: [...argumentsText].length };
 }

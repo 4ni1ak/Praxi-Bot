@@ -5,6 +5,7 @@
     "main"
   ],
   "permissions": [
+    "allow-open-composio-link",
     "allow-get-control-state",
     "allow-begin-action",
     "allow-start-bot-run",
@@ -13,6 +14,7 @@
     "allow-take-the-wheel",
     "allow-give-back-control",
     "allow-stop-bot-run",
+    "allow-dismiss-stop-widget",
     "allow-finish-bot-run",
     "allow-ack-stop",
     "allow-set-stop-hotkey",

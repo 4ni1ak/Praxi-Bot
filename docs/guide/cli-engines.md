@@ -1,0 +1,142 @@
+# Coding CLI engines
+
+Settings → Providers lists CLI engines on the **daemon's computer**. Refresh
+re-runs bounded version and authentication probes. Detection also warms at
+daemon startup. Terminal PATH entries are supplemented with user-local, npm,
+Node version-manager and native Windows installation directories. Relative
+PATH entries, the working directory and links back into it are refused.
+Resolved shim programs and scripts are checked again against that boundary.
+An unrelated `agent` on PATH cannot hide Cursor's vendor-directory alias.
+
+| Engine | Commands (Windows uses PATHEXT) | Auth evidence | Install command, all OS unless specified | Brain |
+| --- | --- | --- | --- | --- |
+| Claude Code | `claude` | `auth status --json` | `npm install -g @anthropic-ai/claude-code` (verified local reference) | Yes, minimum 2.1.257 plus runtime capability checks |
+| Codex | `codex` | `login status` | `npm install -g @openai/codex` (verified local reference) | Blocked: `unified_exec` cannot be disabled |
+| Gemini CLI | `gemini` | Credential-file metadata only; contents never opened | `npm install -g @google/gemini-cli` (**unverified**, copy only) | Detection only; minimum unverified |
+| OpenCode | `opencode` | Credential-file metadata only; contents never opened | `npm install -g opencode-ai` (verified local reference) | Detect/install only: inspected CLI has no switch to disable native tools |
+| Cursor | `cursor-agent`; `agent` only inside a `cursor-agent` directory | `status --format json`, then `status` | Windows: `irm 'https://cursor.com/install?win32=true' \| iex`; Unix: `curl https://cursor.com/install -fsS \| bash` (verified local reference) | Detection only; minimum unverified |
+| ChatGPT plan | Same Codex executable | Unknown; no Praxi PKCE flow | Use the Codex row | Detection only |
+
+"Verified" means the command appears in a local reference. No installer or
+real model prompt was run while implementing this feature. Minimum versions
+are unknown unless listed above. Missing credential files do not prove that
+an engine cannot use an OS keychain; the UI distinguishes unknown status.
+Ambient API keys are withheld and are not evidence of a usable CLI login.
+
+Install shows the exact fixed command and an expiring **Approve once / Deny**
+card. It runs only after the authenticated local owner approves. No standing
+grant, bot policy, tool call, schedule or paired-device role can approve it.
+All peer roles are refused before route dispatch, including encoded and
+slash-normalized variants. The installer is not an agent tool. The local
+bearer credential is therefore owner authority and must remain private.
+
+`POST /v1/providers/cli/install` prepares the approval. The separate
+`POST /v1/providers/cli/install/{approval_id}/decision` consumes it once.
+The response streams `output` and `done` SSE events. Installer text is
+untrusted and is rendered as text, never Markdown, HTML or commands.
+Audit records precede spawning. One installer runs at a time, for at most ten
+minutes, with a 64 KiB output limit and no requested elevation. Disconnecting
+the stream or shutting down the daemon terminates the owned process tree;
+version/auth detection is refreshed afterwards. Installation uses the
+vendor's global command as the current user: system-owned npm prefixes can
+fail with a permission error; Praxi does not retry with administrator rights.
+
+Windows npm is launched as `node.exe <canonical npm-cli.js>`; no `.cmd` is
+passed to `cmd.exe`. Cursor uses its fixed vendor PowerShell command on
+Windows and the fixed vendor shell command on Unix. These strings come from
+the registry; no request/model value is interpolated. Unverified commands
+cannot reach this executor. Some npm JavaScript shims remain refused by
+normal engine detection; those entries report `shim_refused` rather than
+claiming a verified version or usable brain.
+
+Sign in separately in your terminal using the command shown in Settings.
+Praxi does not log in for you, read/copy tokens, or turn CLI credentials into
+API keys. Quota windows remain unknown; existing quota errors still stop
+turns. Check the vendor's subscription terms for your intended use.
+
+After enabling a detected Claude engine, select `cli:claude` in a bot's
+executor model picker and choose `default`, `sonnet` or `opus`.
+Model access is determined by the CLI account. CLI engines are excluded
+from classifier/planner selection as before. No new Tauri invocation is used.
+
+## Security boundary
+
+Claude continues to run with `--tools ""`, strict MCP configuration, isolated
+settings and runtime tool checks. Codex's existing read-only sandbox does not
+disable every native tool and remains blocked. CLI configuration directories
+(including hooks and MCP settings), credential files and home overrides are
+protected by file tools, including `.opencode`, `opencode.json`/`opencode.jsonc`,
+`OPENCODE_CONFIG_DIR` and the file named by `OPENCODE_CONFIG`.
+Child environments use an explicit allowlist of OS
+essentials and CLI home paths. Praxi secrets, provider keys, proxy credentials
+and code-injection variables such as `NODE_OPTIONS` are not inherited.
+
+OpenCode is deliberately unavailable as a bot brain. Installed OpenCode
+**v2.2.5** `--help`, `run --help`, `acp --help`, and `auth --help` were inspected
+without a login or model prompt. Headless `run --format json`, model
+`provider/model#variant`, `--session` and stdio `acp` are advertised, but no
+verified native-tool-disable facility is advertised. There is no existing
+delegated coding-tool integration to expose it through instead.
+
+`cli-provider/src/opencode.rs` contains experimental ACP request construction
+and a fail-closed frame decoder, disconnected from process execution. It
+preserves exact model IDs, sessions, text/thought separation and completion,
+and rejects native-tool events/requests. Its transcript is **synthetic**,
+based on local protocol references; it is not a recording of a live session.
+Claude `--help` also confirmed `sonnet`/`opus` aliases, `--tools ""`,
+`--setting-sources` and `--strict-mcp-config` without sending a prompt.
+
+Enabling OpenCode execution requires vendor-source confirmation of confinement and
+recorded, credential-free compatibility fixtures for the installed CLI.
+
+## Local evidence and attribution
+
+The implementation is original Rust/React code. Design ideas were learned
+from [OpenMausBot](https://github.com/milind-soni/OpenMausBot) (local checkout,
+Apache-2.0 LICENSE inspected; no source code copied):
+
+- `docs/cli-onboarding.md`, `docs/custom-engines.md`, `docs/opencode-go.md`,
+  `docs/cursor.md`, `docs/headless-cli.md`: onboarding and CLI/ACP semantics.
+- `server/env-path.ts`, `server/cli-probe.ts`, `server/harness/registry.ts`:
+  GUI path augmentation, safe probes and snapshots.
+- `server/engine-install.ts`, `server/cli-setup.ts`: fixed npm arguments,
+  confirmation, timeout, bounded output and re-detection.
+- `server/drivers/claude.ts`, `server/drivers/codex.ts`,
+  `server/drivers/acp/cursor.ts`, `server/drivers/acp/opencode-go.ts`:
+  install and login descriptors.
+- `server/drivers/acp/core.ts`: session/new/load, set_config_option,
+  session/prompt, session/update and stopReason.
+
+Praxi PR #97's branch `fix/c244a-mcp-start-and-tool-availability`,
+`crates/mcp-bridge/src/transport.rs`, was also inspected: it resolves the
+parent's executable before clearing the child environment and preserves only
+explicit OS essentials. CLI discovery adds deterministic GUI install paths
+without executing login-shell startup scripts.
+
+## Running a CLI with its own tools (engine mode)
+
+Each bot has an engine mode, set by the local owner only (bot settings, "Engine"):
+
+- **Praxi-governed** (default): Praxi runs files and shell with its own tools and
+  permission engine; the CLI's native tools are off (Claude Code only today).
+- **Native tools**: the CLI keeps its own file and shell tools in a workspace folder
+  you choose. The bot's approval level maps to the CLI's own permission mode, and
+  every permission request the CLI forwards becomes a normal Praxi approval card.
+  Praxi's own tools (browser, apps, secrets, memory) are offered to the CLI over a
+  per-run local MCP endpoint and keep Praxi's approvals.
+
+The default level is **Ask**. **Full access** needs its own consent per bot. Switching
+a bot to native tools needs a consent too; both are recorded in the audit log.
+
+| CLI | Ask | Accept edits | Auto | Full access |
+| --- | --- | --- | --- | --- |
+| Claude Code | `--permission-mode default` (`manual` on newer builds) | `acceptEdits` | `auto` | `bypassPermissions` |
+| Codex | `on-request` + `workspace-write` | runs as Ask | + `auto_review` reviewer | `never` + `danger-full-access` |
+| Cursor (`acp`) | default | runs as Ask | `--auto-review` | `--force` |
+| OpenCode (`acp`) | every request asks | runs as Ask | runs as Ask | requests approved automatically |
+| Gemini CLI (`--acp`, experimental) | default | `--approval-mode auto_edit` | runs as Ask | `--yolo` |
+
+A level a CLI has no mode for runs as Ask, never as something wider. The workspace
+cannot be a drive root, your home folder, Praxi's data folder or a credential or CLI
+settings folder. The CLI runs with an allowlisted environment (no Praxi secrets, no
+provider keys) and Stop or the per-bot kill switch ends its whole process tree.
