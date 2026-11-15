@@ -515,7 +515,7 @@ for d in ("/usr/bin", "/bin"):
         if name == "xdpyinfo":
             continue
         p = os.path.join(dst, name)
-        if not os.path.exists(p):
+        if not os.path.lexists(p):
             os.symlink(os.path.join(d, name), p)
 ' "${NO_X_HOST}"
 for b in "${FAKE_BIN}"/*; do
