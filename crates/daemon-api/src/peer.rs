@@ -69,6 +69,12 @@ pub const PEER_DENIED_POST_PATHS: &[&str] = &["/v1/providers/cli/enable", "/v1/p
 /// platform, provider set), so peers do not read them either.
 pub const PEER_DENIED_PREFIX_DOCTOR: &str = "/v1/doctor";
 
+/// The owner-only fill-secret management prefixes, refused to ALL paired peers
+/// for every method (a device must never create a secret, widen an allow-list
+/// or add a standing grant). `crate::fill_routes::is_fill_path` matches them on
+/// the decoded, slash-normalised path.
+pub const PEER_DENIED_FILL_PREFIXES: &[&str] = &["/v1/fill-secrets", "/v1/fill-grants"];
+
 /// MCP server management starts programs and names host secrets: a mutation
 /// is an action of the local user at this host, never of a paired peer.
 pub const PEER_DENIED_PREFIX_MCP: &str = "/v1/mcp";
@@ -139,6 +145,9 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     }
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
+    }
+    if crate::fill_routes::is_fill_path(check_path) {
+        return Some("fill secrets are managed by the local owner only");
     }
     if is_mcp_path(check_path) && !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return Some("MCP server management is only allowed for the local user");
