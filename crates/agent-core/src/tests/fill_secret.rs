@@ -325,6 +325,9 @@ async fn the_value_is_absent_from_every_sink_with_a_positive_control() {
         ],
     );
     let mut rx = r.lp.subscribe();
+    // A second subscriber keeps the whole stream (the first one is consumed
+    // while waiting for the card).
+    let mut whole = r.lp.subscribe();
     let run = r.lp.run_turn(r.env.chat, "log in").unwrap();
     let Event::ApprovalNeeded(a) = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
     else {
@@ -343,7 +346,7 @@ async fn the_value_is_absent_from_every_sink_with_a_positive_control() {
     }
     // Events as streamed.
     let mut streamed = String::new();
-    while let Ok(i) = rx.try_recv() {
+    while let Ok(i) = whole.try_recv() {
         streamed.push_str(&serde_json::to_string(&i.envelope.event).unwrap());
     }
     let stored = sinks_text(&r);
