@@ -1165,6 +1165,7 @@ export function ChatView({
                 <ModelPicker
                   groups={pickerGroups}
                   value={view?.executor ?? ""}
+                  engines
                   disabled={!client}
                   thinking
                   placement="top-start"

@@ -23,6 +23,14 @@ const PROVIDERS: Record<string, ProviderBrand> = {
   ollama: { company: "ollama", label: "Ollama" }
 };
 
+const CLI_LABELS: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  gemini: "Gemini CLI"
+};
+
 function pretty(id: string): string {
   const bare = id.replace(/^cli:/, "");
   return bare ? bare.charAt(0).toUpperCase() + bare.slice(1) : id;
@@ -32,6 +40,11 @@ export function providerBrand(providerId: string): ProviderBrand {
   const known = PROVIDERS[providerId];
   if (known) return known;
   const bare = providerId.replace(/^cli:/, "");
+  const cliLabel = providerId.startsWith("cli:") ? CLI_LABELS[bare] : undefined;
+  if (cliLabel) {
+    const company = { claude: "anthropic", codex: "openai", gemini: "googlegemini" }[bare] ?? bare;
+    return { company, label: cliLabel, note: "CLI" };
+  }
   const base = PROVIDERS[bare];
   if (base) return { ...base, note: base.note ?? "CLI" };
   return {

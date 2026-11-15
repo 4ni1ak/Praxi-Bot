@@ -1299,7 +1299,19 @@
       "high": "High",
       "max": "Max"
     },
-    "otherId": "Use \"{{id}}\" with {{provider}}"
+    "otherId": "Use \"{{id}}\" with {{provider}}",
+    "recommended": "Recommended",
+    "all": "All models ({{count}})",
+    "engines": "Coding CLIs",
+    "cliDefault": "Default (the CLI decides)",
+    "install": "Install {{name}}",
+    "connect": "Connect {{name}}",
+    "engineError": "Could not connect this CLI.",
+    "hint": {
+      "fast": "fast",
+      "balanced": "balanced",
+      "strongest": "best for hard tasks"
+    }
   },
   "settingsModal": {
     "title": "Settings",

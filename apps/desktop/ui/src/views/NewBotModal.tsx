@@ -289,6 +289,7 @@ function NewBotDialogContent({
                 }}
                 reviewOpen={false}
                 placement="bottom-end"
+                engines
                 testId="new-bot-brain"
                 onPick={(ref) => {
                   const i = ref.indexOf("/");

@@ -228,3 +228,49 @@
   background-color: var(--color-text);
   color: var(--color-background);
 }
+
+.rawId {
+  display: block;
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.allToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--space-8);
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: calc(var(--radius-md) * 1.25);
+  background: none;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-ui);
+  cursor: pointer;
+}
+
+.allToggle:hover,
+.allToggle:focus-visible {
+  outline: none;
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.allToggle:focus-visible {
+  box-shadow: inset 0 0 0 var(--size-border-thick) var(--color-focus);
+}
+
+.allToggle > svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  color: var(--color-text-faint);
+  transition: transform 0.15s ease;
+}
+
+.allToggle > svg.chevOpen {
+  transform: rotate(180deg);
+}

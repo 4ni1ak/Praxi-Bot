@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProvidersDto } from "../api/types.ts";
-import { filterModelGroups, modelGroups } from "./modelPicker.ts";
+import { engineRows, filterModelGroups, isCliDefault, modelGroups, modelHint, recommendedOptions } from "./modelPicker.ts";
 import { foldText, matchesQuery } from "./searchText.ts";
 
 const dto = {
@@ -45,7 +45,7 @@ test("modelGroups wires daemon display names and recommendation order without ch
     "anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5", "anthropic/custom-id"
   ]);
   assert.equal(models?.[0].displayName, "Claude Sonnet 5.5");
-  assert.equal(models?.[2].displayName, "custom-id");
+  assert.equal(models?.[2].displayName, "Custom Id");
   assert.equal(models?.[2].recommended, false);
   assert.equal(filterModelGroups(groups, "Sonnet 5.5")[0].models[0].ref, "anthropic/claude-sonnet-5-5");
 });
@@ -136,4 +136,34 @@ test("modelGroups includes enabled CLI providers with single default model and e
     classifierGroups.some((g) => g.provider === "cli:claude"),
     false
   );
+});
+
+test("recommendedOptions: at most four, spread over providers, CLI default never recommended", () => {
+  const rec = (id: string, rank: number) => ({ id, display_name: id, kind: "chat", recommended: true, recommended_rank: rank, deprecated: false, note: null });
+  const d = structuredClone(dto);
+  d.configured[0].model_details = [rec("claude-sonnet-5-5", 1), rec("claude-opus-5-5", 2), rec("claude-haiku-5-5", 3)] as never;
+  d.configured[0].models = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"];
+  d.configured[1].model_details = [rec("gemini-3.5-flash-lite", 1), rec("gemini-4-carbon", 2)] as never;
+  d.configured[1].models = ["gemini-3.5-flash-lite", "gemini-4-carbon"];
+  d.configured.push({ id: "cli:claude", active: true, custom: false, default_model: null, enabled: true, has_key: false, is_default: false, models: ["default", "sonnet"],
+    model_details: [rec("default", 1), rec("sonnet", 2)] } as never);
+  const picked = recommendedOptions(modelGroups(d));
+  assert.equal(picked.length, 4);
+  assert.deepEqual(picked.map((m) => m.ref), ["gemini/gemini-3.5-flash-lite", "anthropic/claude-sonnet-5-5", "cli:claude/sonnet", "gemini/gemini-4-carbon"]);
+  assert.ok(!picked.some(isCliDefault));
+  assert.equal(modelHint("gemini-3.5-flash-lite"), "fast");
+  assert.equal(modelHint("claude-opus-5-5"), "strongest");
+});
+
+test("engineRows: installed-not-enabled connect first, uninstalled install last, enabled hidden", () => {
+  const e = (id: string, installed: boolean, install: boolean, runnable = true) =>
+    ({ detected: { id, display_name: id, installed, runnable }, install: install ? { command: "npm" } : null }) as never;
+  const rows = engineRows([e("opencode", false, true), e("claude", true, true), e("codex", true, true), e("chatgpt-plan", false, false), e("cursor", true, true, false)], new Set(["claude"]));
+  assert.deepEqual(rows.map((r) => `${r.action}:${r.id}`), ["connect:codex", "install:opencode"]);
+});
+
+test("model names fall back to a prettified id and a CLI model shows as a name", () => {
+  const g = modelGroups(dto, "cli:opencode/google/gemini-2.5-pro");
+  const m = g.find((x) => x.provider === "cli:opencode")!.models[0];
+  assert.notEqual(m.displayName, m.model);
 });

@@ -1,4 +1,5 @@
-import type { ProvidersDto } from "../api/types.ts";
+import type { CliEngineDto, ProvidersDto } from "../api/types.ts";
+import { modelDisplayName } from "./modelName.ts";
 import { isCliProvider } from "./providerView.ts";
 import { matchesQuery } from "./searchText.ts";
 
@@ -77,7 +78,7 @@ export function modelGroups(
           ref: `${provider}/${model}`,
           provider,
           model,
-          displayName: metadata?.display_name ?? model,
+          displayName: metadata?.display_name ?? modelDisplayName(model),
           recommended: metadata?.recommended ?? false,
           recommendedRank: metadata?.recommended_rank ?? null
         };
@@ -100,4 +101,80 @@ export function filterModelGroups(
       models: g.models.filter((m) => matchesQuery(query, m.provider, m.model, m.displayName))
     }))
     .filter((g) => g.models.length > 0);
+}
+
+/** Most models shown in the "Recommended" group. */
+export const RECOMMENDED_MAX = 4;
+
+/** CLI models that mean "let the CLI choose"; the picker words them as one default row. */
+export function isCliDefault(option: Pick<ModelOption, "provider" | "model">): boolean {
+  return option.provider.startsWith("cli:") && (option.model === "default" || option.model === "auto");
+}
+
+/**
+ * Up to four recommended models of the connected providers and engines: the best-ranked model of
+ * each provider first, then the next ranks, so one provider cannot fill the whole group.  The
+ * "CLI decides" rows never count as a recommendation.
+ */
+export function recommendedOptions(groups: ModelGroup[], max = RECOMMENDED_MAX): ModelOption[] {
+  const lists = groups.map((g) =>
+    g.models
+      .filter((m) => m.recommended && !isCliDefault(m))
+      .sort((a, b) => (a.recommendedRank ?? 99) - (b.recommendedRank ?? 99))
+  );
+  const picked: ModelOption[] = [];
+  for (let round = 0; picked.length < max && lists.some((l) => l.length > round); round += 1) {
+    for (const list of lists) {
+      const m = list[round];
+      if (m && picked.length < max) {
+        picked.push(m);
+      }
+    }
+  }
+  return picked;
+}
+
+export type ModelHint = "fast" | "balanced" | "strongest";
+
+/** One-line hint for a recommended model, from its id (the catalog carries no hint text). */
+export function modelHint(model: string): ModelHint {
+  const id = model.toLowerCase();
+  if (/(flash|haiku|lite|mini|nano|small|luna|:[1-8]b\b)/.test(id)) {
+    return "fast";
+  }
+  if (/(opus|fable|-pro|carbon|sol\b|:(30|32|70)b)/.test(id)) {
+    return "strongest";
+  }
+  return "balanced";
+}
+
+export interface EngineRow {
+  id: string;
+  name: string;
+  /** `connect`: installed, not switched on yet. `install`: not on this computer. */
+  action: "connect" | "install";
+}
+
+/**
+ * Coding CLIs the picker offers below the model list: installed ones that are not enabled yet,
+ * then supported ones that are not installed (they open the install flow).
+ */
+export function engineRows(engines: CliEngineDto[], enabledCliIds: ReadonlySet<string>): EngineRow[] {
+  const rows: EngineRow[] = [];
+  for (const e of engines) {
+    const d = e.detected;
+    if (enabledCliIds.has(d.id)) {
+      continue;
+    }
+    if (d.installed) {
+      // Only engines Praxi can run (confined, or with the CLI's own tools) can be connected.
+      if (!d.runnable && !e.native) {
+        continue;
+      }
+      rows.push({ id: d.id, name: d.display_name, action: "connect" });
+    } else if (e.install) {
+      rows.push({ id: d.id, name: d.display_name, action: "install" });
+    }
+  }
+  return rows.sort((a, b) => (a.action === b.action ? 0 : a.action === "connect" ? -1 : 1));
 }
