@@ -2,7 +2,7 @@ import { Info, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { CliEngineDto, CliInstallApproval, DetectedProviderDto } from "../../api/types";
-import { ApprovalCard } from "../../components/ChatCards";
+import { ApprovalCard, useCountdown } from "../../components/ChatCards";
 import { BrandIcon } from "../../components/BrandIcon";
 import { Switch } from "../../components/SettingsUi";
 import { useToast } from "../../components/Toast";
@@ -34,6 +34,7 @@ export function DetectedAccountsBlock() {
   const [rows, setRows] = useState<DetectedProviderDto[]>([]);
   const [engines, setEngines] = useState<CliEngineDto[]>([]);
   const [approval, setApproval] = useState<CliInstallApproval | null>(null);
+  const approvalRemaining = useCountdown(approval?.expires_at_ms);
   const [installing, setInstalling] = useState(false);
   const [installOutput, setInstallOutput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -199,6 +200,7 @@ export function DetectedAccountsBlock() {
                     {engine?.path ? <span className={styles.cliPath}>{engine.path}</span> : null}
                     {engine?.limitation === "native_tools_not_confined" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.nativeToolsOpen")}</span> : null}
                     {engine?.limitation === "detection_only" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.detectionOnly")}</span> : null}
+                    {engine?.limitation === "codex_unconfinable" ? <span className={styles.subWarn}>{t("settingsModal.ai.detected.codexBlocked")}</span> : null}
                     {row.runnable ? <span className={styles.sub}>{t("settingsModal.ai.detected.runnableEngine")}</span> : null}
                     {install ? <>
                       <code className={styles.cliCommand}>{install.command}</code>
@@ -249,6 +251,7 @@ export function DetectedAccountsBlock() {
           summary: t("settingsModal.ai.detected.installSummary", { engine: approval.engine_id }),
           details: { command: approval.command }
         }} onDecide={decideInstall} />
+        {approvalRemaining === 0 && !installing ? <button type="button" className={styles.textBtn} onClick={() => setApproval(null)}>{t("settingsModal.ai.detected.dismissExpired")}</button> : null}
       </div> : null}
       {installing ? <p role="status" className={styles.hint}>{t("settingsModal.ai.detected.installRunning")}</p> : null}
       {installOutput ? <pre className={styles.cliOutput} role="log" aria-label={t("settingsModal.ai.detected.installOutput")}>{installOutput}</pre> : null}

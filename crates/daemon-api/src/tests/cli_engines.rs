@@ -17,6 +17,11 @@ async fn registry_is_authenticated_and_preserves_confinement() {
     assert_eq!(claude["minimum_version"], "2.1.257");
     assert_eq!(claude["version_args"], json!(["--version"]));
     assert_eq!(claude["auth_args"], json!(["auth", "status", "--json"]));
+    let codex = rows
+        .iter()
+        .find(|r| r["detected"]["id"] == "codex")
+        .unwrap();
+    assert_eq!(codex["limitation"], "codex_unconfinable");
     let opencode = rows
         .iter()
         .find(|r| r["detected"]["id"] == "opencode")

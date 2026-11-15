@@ -164,6 +164,8 @@ pub(crate) async fn list(
                 limitation: (!spec.runnable).then(|| {
                     if spec.id == "opencode" {
                         "native_tools_not_confined"
+                    } else if spec.id == "codex" {
+                        "codex_unconfinable"
                     } else {
                         "detection_only"
                     }
