@@ -929,6 +929,17 @@ const CREDENTIAL_NAMES: &[&str] = &[
     "praxi-node.env",
     "secrets.enc",
     "identity.key",
+    // CLI configuration can install hooks/tools as well as carry credentials.
+    ".claude",
+    ".claude.json",
+    ".codex",
+    ".gemini",
+    ".cursor",
+    ".cursor-agent",
+    "cursor",
+    "opencode",
+    "cursor-agent",
+    "oauth_creds.json",
 ];
 
 /// Hard link to a credential file under another name (`notes.txt` → `.env`)
@@ -939,6 +950,22 @@ fn name_is_credential(name: &str) -> bool {
     n == ".env" || n.starts_with(".env.") || CREDENTIAL_NAMES.contains(&n.as_str())
 }
 
+fn cli_home_override(path: &Path) -> bool {
+    let path = norm_parts(&widen_for_compare(path));
+    ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GEMINI_CLI_HOME"]
+        .iter()
+        .any(|key| {
+            let Some(dir) = std::env::var_os(key)
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+            else {
+                return false;
+            };
+            let dir = norm_parts(&widen_for_compare(&dir));
+            path.starts_with(&dir)
+        })
+}
+
 fn is_protected(path: &Path, data_dir: &Path) -> bool {
     let named = path.components().any(|c| match c {
         Component::Normal(name) => name_is_credential(&name.to_string_lossy()),
@@ -946,7 +973,7 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
             false
         }
     });
-    named || under_data_sensitive(path, data_dir)
+    named || cli_home_override(path) || under_data_sensitive(path, data_dir)
 }
 
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
@@ -3045,6 +3072,28 @@ mod tests {
     }
 
     #[test]
+    fn cli_configuration_and_credentials_are_protected_even_in_broad_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            ".claude/settings.json",
+            ".claude/.credentials.json",
+            ".claude.json",
+            ".codex/auth.json",
+            ".gemini/oauth_creds.json",
+            ".cursor/mcp.json",
+            ".cursor-agent/auth.json",
+            "AppData/Roaming/Cursor/User/settings.json",
+            ".config/opencode/opencode.json",
+            ".local/share/opencode/auth.json",
+            "AppData/Local/opencode/auth.json",
+            ".CODEX. /auth.json",
+        ] {
+            assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
+        }
+        assert!(!is_protected(&dir.path().join("report.txt"), dir.path()));
+    }
+
+    #[test]
     fn restore_keeps_protected_descendants_and_exact_credential_grants() {
         let data = tempfile::tempdir().unwrap();
         let work = tempfile::tempdir().unwrap();
@@ -4209,6 +4258,15 @@ mod tests {
             "praxi-node.env",
             "secrets.enc",
             "identity.key",
+            // CLI configuration can install hooks/tools as well as carry credentials.
+            ".claude",
+            ".claude.json",
+            ".codex",
+            ".gemini",
+            ".cursor",
+            "opencode",
+            "cursor-agent",
+            "oauth_creds.json",
         ] {
             let file = w.path().join(name);
             fs::write(&file, secret).unwrap();
