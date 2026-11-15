@@ -1552,6 +1552,11 @@ fn parse_act_steps(steps: Vec<ActStepIn>) -> Result<Vec<ActStep>, ToolError> {
                     r: need_ref(st.r#ref)?,
                     checked: st.checked,
                 },
+                // HOOK(PR #105, `secret` reference for browser_fill): when it lands, the
+                // `secret` field belongs HERE, resolved by the very function `browser_fill`
+                // uses (one code path, no second mechanism), and the value must never reach
+                // `describe`, the approval card or the result. Until then a fill step takes
+                // only `text`, exactly like `browser_fill` today.
                 "fill" => ActStep::Fill {
                     r: need_ref(st.r#ref)?,
                     text: st.text.ok_or_else(|| bad("text is required"))?,
@@ -2683,6 +2688,161 @@ mod tests {
             "{calls:?}"
         );
         assert!(!calls.iter().any(|c| c.starts_with("click:")), "{calls:?}");
+    }
+
+    fn step_json(kind: &str) -> Value {
+        match kind {
+            "click" => json!({"action": "click", "ref": "e1"}),
+            "fill" => json!({"action": "fill", "ref": "e2", "text": "x"}),
+            "select" => json!({"action": "select", "ref": "e3", "value": "v"}),
+            "press" => json!({"action": "press", "key": "Enter"}),
+            "scroll" => json!({"action": "scroll", "dy": 10}),
+            _ => json!({"action": "wait", "idle": true}),
+        }
+    }
+
+    const KINDS: [(&str, &str); 6] = [
+        ("click", "browser_click"),
+        ("fill", "browser_fill"),
+        ("select", "browser_select"),
+        ("press", "browser_press"),
+        ("scroll", "browser_scroll"),
+        ("wait", "browser_wait"),
+    ];
+
+    /// A batch is never classified more weakly than running its steps one by one:
+    /// its effect is at least the strictest single tool's, its category is the same,
+    /// and it can egress whenever any single step could. Checked for every subset of
+    /// step kinds.
+    #[test]
+    fn a_batch_is_never_weaker_than_its_steps_run_one_by_one() {
+        let (_d, _f, t) = build();
+        let act = get(&t, "browser_act");
+        for (_, single) in KINDS {
+            let s = get(&t, single);
+            assert!(
+                act.spec().effect >= s.spec().effect,
+                "browser_act weaker than {single}"
+            );
+            assert_eq!(act.spec().category, s.spec().category, "{single}");
+        }
+        for mask in 1u32..(1 << KINDS.len()) {
+            let picked: Vec<&str> = KINDS
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(_, (k, _))| *k)
+                .collect();
+            let batch = json!({"steps": picked.iter().map(|k| step_json(k)).collect::<Vec<_>>()});
+            let union = picked
+                .iter()
+                .any(|k| act_can_egress(&json!({"steps": [step_json(k)]})));
+            assert_eq!(act_can_egress(&batch), union, "{picked:?}");
+            for k in &picked {
+                if act_can_egress(&json!({"steps": [step_json(k)]})) {
+                    assert!(act_can_egress(&batch), "{picked:?} hides {k}");
+                }
+            }
+        }
+        // Unknown actions and unreadable input fail closed.
+        assert!(act_can_egress(&json!({"steps": [{"action": "eval"}]})));
+        assert!(act_can_egress(&json!(null)));
+    }
+
+    /// Scripted tasks run against the fake driver, once step by step with the
+    /// single-action tools and once through `browser_act` (continuing from the
+    /// reported unexecuted suffix). One tool-call turn is one model call; the final
+    /// answer is one more. FIXTURE-BASED: counts the round trips the stop rules cause,
+    /// not real model behaviour or latency.
+    #[tokio::test]
+    async fn fixture_eval_model_calls_single_steps_versus_browser_act() {
+        // `eNAV` navigates, so a batch must stop after it.
+        let tasks: Vec<(&str, Vec<Value>)> = vec![
+            (
+                "form: 5 fills + submit",
+                vec![
+                    json!({"action": "fill", "ref": "e1", "text": "a"}),
+                    json!({"action": "fill", "ref": "e2", "text": "b"}),
+                    json!({"action": "fill", "ref": "e3", "text": "c"}),
+                    json!({"action": "select", "ref": "e4", "value": "TR"}),
+                    json!({"action": "fill", "ref": "e5", "text": "d"}),
+                    json!({"action": "click", "ref": "e6"}),
+                ],
+            ),
+            (
+                "search: fill, submit navigates, open result",
+                vec![
+                    json!({"action": "fill", "ref": "e1", "text": "q"}),
+                    json!({"action": "click", "ref": "eNAV"}),
+                    json!({"action": "click", "ref": "e7"}),
+                ],
+            ),
+            (
+                "wizard: 3 pages, navigation after step 3 and 6",
+                vec![
+                    json!({"action": "fill", "ref": "e1", "text": "a"}),
+                    json!({"action": "fill", "ref": "e2", "text": "b"}),
+                    json!({"action": "click", "ref": "eNAV"}),
+                    json!({"action": "fill", "ref": "e3", "text": "c"}),
+                    json!({"action": "select", "ref": "e4", "value": "x"}),
+                    json!({"action": "click", "ref": "eNAV"}),
+                    json!({"action": "fill", "ref": "e5", "text": "d"}),
+                    json!({"action": "click", "ref": "e6"}),
+                ],
+            ),
+        ];
+        let mut report = Vec::new();
+        for (name, steps) in &tasks {
+            // Single-step tools: one call per step.
+            let (_d, fake, t) = build();
+            let ctx = ToolContext::default();
+            for st in steps {
+                let tool = match st["action"].as_str().unwrap() {
+                    "fill" => "browser_fill",
+                    "select" => "browser_select",
+                    _ => "browser_click",
+                };
+                let mut input = st.clone();
+                input.as_object_mut().unwrap().remove("action");
+                get(&t, tool).call(&ctx, input).await.unwrap();
+            }
+            assert_eq!(fake.calls.lock().len(), steps.len());
+            let single_calls = steps.len() + 1;
+
+            // browser_act: send what is left, continue from the reported suffix.
+            let (_d, fake, t) = build();
+            let mut rest: &[Value] = steps;
+            let mut turns = 0;
+            while !rest.is_empty() {
+                let n = rest.len().min(MAX_ACT_STEPS);
+                let out = text(
+                    &get(&t, "browser_act")
+                        .call(&ctx, json!({"steps": &rest[..n]}))
+                        .await
+                        .unwrap(),
+                );
+                turns += 1;
+                let done: usize = out
+                    .strip_prefix("done: ")
+                    .and_then(|r| r.split('/').next())
+                    .and_then(|k| k.parse().ok())
+                    .unwrap_or_else(|| panic!("no done line: {out}"));
+                assert!(done >= 1, "a batch must make progress: {out}");
+                rest = &rest[done..];
+            }
+            let act_calls = turns + 1;
+            let ran = fake
+                .calls
+                .lock()
+                .iter()
+                .filter(|c| c.starts_with("act:"))
+                .count();
+            assert_eq!(ran, steps.len(), "every step ran exactly once");
+            report.push((*name, single_calls, act_calls));
+        }
+        let got: Vec<(usize, usize)> = report.iter().map(|(_, s, a)| (*s, *a)).collect();
+        eprintln!("fixture model calls (single, act): {report:?}");
+        assert_eq!(got, vec![(7, 2), (4, 3), (9, 4)], "{report:?}");
     }
 
     #[tokio::test]
