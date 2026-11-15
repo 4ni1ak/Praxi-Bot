@@ -598,6 +598,7 @@ pub(crate) async fn decide_approval(
                 Scope::ThisChat => ApprovalScope::ThisChat,
                 Scope::Always => ApprovalScope::Always,
                 Scope::AlwaysCategory => ApprovalScope::AlwaysCategory,
+                Scope::RunControl => ApprovalScope::RunControl,
             };
             s.agent().approve(call_id, scope, s.user_id())?;
         }

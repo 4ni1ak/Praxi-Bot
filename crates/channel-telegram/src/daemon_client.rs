@@ -83,6 +83,8 @@ pub enum ApprovalScope {
     Always,
     /// Persist a grant for the tool's category on the bot.
     AlwaysCategory,
+    /// Let this run type into the one program the card names, until it ends.
+    RunControl,
 }
 
 /// Daemon status summary for `/status`.
@@ -494,6 +496,7 @@ pub fn parse_approval_callback(
     match action {
         "once" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::Once)),
         "always" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::Always)),
+        "run" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::RunControl)),
         "deny" => Some((call_id, ApprovalDecision::Deny, ApprovalScope::Once)),
         _ => None,
     }

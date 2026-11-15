@@ -8917,7 +8917,8 @@
           "once",
           "this_chat",
           "always",
-          "always_category"
+          "always_category",
+          "run_control"
         ]
       },
       "ScreenPrivilegesInput": {

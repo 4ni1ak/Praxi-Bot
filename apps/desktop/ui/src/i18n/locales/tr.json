@@ -328,6 +328,28 @@
       "always": "Her zaman",
       "deny": "Reddet",
       "reasonPlaceholder": "Reddetme gerekçesi (isteğe bağlı)",
+      "control": {
+        "button": "Bu görev: {{program}}",
+        "offered": "Yalnızca bu görev için {{program}} içine yazmaya izin verilsin mi?",
+        "refused": "{{program}} için görev boyunca izin yok: bu çağrıyı bir kez onaylayın.",
+        "covers": "Görev bitene kadar yalnızca bu tek programın içinde yazmayı, tuşlara basmayı, değer girmeyi ve sürüklemeyi kapsar. Başka hiçbir şeyi değil.",
+        "risk": "Praxi okuduğu şeyleri bu uygulamaya yazabilir.",
+        "stillAsks": "Şunlar için yine sorar: başka programlar, program başlatma, komutlar, betikler, dosya iletişim kutuları, parola alanları, terminaller, tarayıcılar ve yükseltilmiş pencereler.",
+        "reason": {
+          "terminal": "Bu pencere bir terminal veya kabuk.",
+          "command_app": "Bu uygulamanın yerleşik bir komut satırı var.",
+          "browser": "Bu bir tarayıcı. Bunun yerine tarayıcı araçlarını kullanın.",
+          "password_manager": "Bu bir parola yöneticisi.",
+          "system_surface": "Bu bir sistem başlatıcısı veya oturum açma yüzeyi.",
+          "uwp_frame": "Bu paketli uygulama tek bir programa bağlanamıyor.",
+          "dialog": "Bu bir iletişim kutusu. Dosya iletişim kutuları ve Çalıştır her zaman sorar.",
+          "password_field": "Bu bir parola alanı.",
+          "chord": "Bu tuşlar bir başlatıcı açar veya pencere değiştirir.",
+          "elevated": "Bu program yükseltilmiş çalışıyor veya denetlenemedi.",
+          "no_identity": "Bu pencerenin arkasındaki program belirlenemedi.",
+          "unknown": "Bu çağrı görev boyunca geçerli bir izinle kapsanamaz."
+        }
+      },
       "schedule": {
         "title": {
           "create": "Yinelenen görev oluşturulsun mu?",

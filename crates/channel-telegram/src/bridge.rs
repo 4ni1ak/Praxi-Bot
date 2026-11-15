@@ -355,6 +355,9 @@ struct Inner {
     /// Approvals that carry details: only "approve once" may be pressed for
     /// them, whatever callback data arrives (the daemon refuses a grant too).
     once_only_approvals: Mutex<HashSet<ToolCallId>>,
+    /// Approvals whose card fit one message and carries the run-scoped control
+    /// grant button. Only these accept the run-control scope from this chat.
+    run_control_approvals: Mutex<HashSet<ToolCallId>>,
     /// Key identifying the bot the persisted polling offset belongs to.
     offset_key: String,
     cancel: CancellationToken,
@@ -456,11 +459,27 @@ fn validate_base_url(url: &str) -> Result<()> {
     }
 }
 
-fn approval_markup(a: &protocol::event::ApprovalNeeded) -> Option<InlineKeyboardMarkup> {
+fn approval_markup(
+    a: &protocol::event::ApprovalNeeded,
+    offer_run_control: bool,
+) -> Option<InlineKeyboardMarkup> {
     let mut row = vec![InlineButton::new(
         "Approve once",
         format_approval_callback(a.call_id, "once"),
     )];
+    // Only when the whole card fits one message: the daemon-written lines that
+    // name the program and what it covers are then on screen with the button.
+    if offer_run_control
+        && let Some(program) = a
+            .details
+            .as_ref()
+            .and_then(protocol::approval_text::control_grant_program)
+    {
+        row.push(InlineButton::new(
+            &format!("This task: {program}"),
+            format_approval_callback(a.call_id, "run"),
+        ));
+    }
     // No standing grant for tools that bring details.
     if a.details.is_none() {
         row.push(InlineButton::new(
@@ -536,6 +555,7 @@ impl TelegramChannel {
             clock_offset_ms: std::sync::atomic::AtomicI64::new(0),
             pending_approvals: Mutex::new(HashMap::new()),
             once_only_approvals: Mutex::new(HashSet::new()),
+            run_control_approvals: Mutex::new(HashSet::new()),
             offset_key,
             cancel: CancellationToken::new(),
             status: watch::channel(ChannelStatus::Stopped).0,
@@ -1077,7 +1097,18 @@ impl TelegramChannel {
                 }
                 once.insert(a.call_id);
             }
-            approval_markup(&a)
+            let offer_run_control = chunks.len() == 1
+                && a.details
+                    .as_ref()
+                    .is_some_and(protocol::approval_text::control_grant_offered);
+            if offer_run_control {
+                let mut run = self.inner.run_control_approvals.lock();
+                if run.len() >= MAX_PENDING_PROMPTS {
+                    run.clear();
+                }
+                run.insert(a.call_id);
+            }
+            approval_markup(&a, offer_run_control)
         } else {
             None
         };
@@ -1093,6 +1124,7 @@ impl TelegramChannel {
                 // answerable from the desktop app) and say so.
                 self.inner.pending_approvals.lock().remove(&a.call_id);
                 self.inner.once_only_approvals.lock().remove(&a.call_id);
+                self.inner.run_control_approvals.lock().remove(&a.call_id);
                 eprintln!(
                     "telegram: approval {} for {} not offered here: message {} of {} failed: {e}",
                     a.call_id,
@@ -1746,9 +1778,12 @@ impl TelegramChannel {
             }
             // A card with details is approved once, never as a standing grant.
             let once_only = self.inner.once_only_approvals.lock().contains(&call_id);
+            let run_control_ok = scope == crate::daemon_client::ApprovalScope::RunControl
+                && self.inner.run_control_approvals.lock().contains(&call_id);
             if once_only
                 && decision == ApprovalDecision::Approve
                 && scope != crate::daemon_client::ApprovalScope::Once
+                && !run_control_ok
             {
                 self.inner
                     .bot_api
@@ -1769,6 +1804,7 @@ impl TelegramChannel {
             self.inner.inbox.delivered(update_id, None)?;
             self.inner.pending_approvals.lock().remove(&call_id);
             self.inner.once_only_approvals.lock().remove(&call_id);
+            self.inner.run_control_approvals.lock().remove(&call_id);
             let ack = match decision {
                 ApprovalDecision::Approve => "Approved",
                 ApprovalDecision::Deny => "Denied",

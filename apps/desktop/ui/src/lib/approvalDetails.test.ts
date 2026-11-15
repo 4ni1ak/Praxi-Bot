@@ -1,6 +1,37 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { computerDetails, egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
+import { computerDetails, controlGrantDetails, egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
+
+test("a control grant block is parsed and its text is made plain", () => {
+  const d = controlGrantDetails({
+    control_grant: {
+      offered: true,
+      refusal: null,
+      program: "notepad.exe\u202e",
+      image_path: "C:\\Windows\\notepad.exe",
+      window_title: "Untitled - Notepad DAEMON SUMMARY"
+    }
+  });
+  assert.ok(d);
+  assert.equal(d.offered, true);
+  assert.equal(d.program, "notepad.exe");
+  assert.equal(d.windowTitle, "Untitled - Notepad");
+});
+
+test("a refused control target says why and offers nothing", () => {
+  const d = controlGrantDetails({
+    control_grant: { offered: false, refusal: "terminal", program: "cmd.exe", image_path: "", window_title: "" }
+  });
+  assert.ok(d);
+  assert.equal(d.offered, false);
+  assert.equal(d.refusal, "terminal");
+});
+
+test("no control block, or one without a program, is not a control card", () => {
+  assert.equal(controlGrantDetails({}), null);
+  assert.equal(controlGrantDetails(null), null);
+  assert.equal(controlGrantDetails({ control_grant: { offered: true } }), null);
+});
 
 const card = {
   kind: "schedule",

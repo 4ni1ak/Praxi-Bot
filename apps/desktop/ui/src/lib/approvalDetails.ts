@@ -168,6 +168,32 @@ export function computerDetails(details: unknown): ComputerApprovalDetails | nul
   return { kind, name, nodeId };
 }
 
+/** The run-scoped control grant a card offers, or explains it cannot (`details.control_grant`). */
+export interface ControlGrantDetails {
+  /** The daemon offers "This task: <program>" on this card. */
+  offered: boolean;
+  /** Stable reason code when it is not offered (`terminal`, `dialog`, ...). */
+  refusal: string;
+  program: string;
+  imagePath: string;
+  windowTitle: string;
+}
+
+/** Parse `details.control_grant`; `null` when the card has none. */
+export function controlGrantDetails(details: unknown): ControlGrantDetails | null {
+  if (!isObject(details) || !isObject(details.control_grant)) return null;
+  const c = details.control_grant;
+  const program = plain(c.program, 60);
+  if (!program) return null;
+  return {
+    offered: c.offered === true,
+    refusal: plain(c.refusal, 40),
+    program,
+    imagePath: plain(c.image_path, 200),
+    windowTitle: plain(c.window_title, 80)
+  };
+}
+
 function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

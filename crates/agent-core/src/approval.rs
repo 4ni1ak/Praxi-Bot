@@ -14,12 +14,15 @@ use serde_json::{Value, json};
 use storage::{Approval, now_ms};
 use task_runtime::{RunState, can_transition};
 use tokio::sync::oneshot;
-use tool_registry::{ContentClass, Effect};
+use tool_registry::{ContentClass, ControlTarget, Effect};
 use uuid::Uuid;
 
 use crate::AUDIT_GRANT_ALWAYS;
 use crate::history::truncate_utf8;
-use crate::shared::{ApprovalScope, Grant, GrantTarget, Pending, RunCtx, Shared, Verdict};
+use crate::shared::{
+    ApprovalScope, ControlGrant, Grant, GrantTarget, Pending, RunCtx, Shared, Verdict,
+    control_kind_of,
+};
 use crate::taint;
 
 /// The `approval_ref` token a tool put in its details, if any.
@@ -99,6 +102,30 @@ impl Drop for PendingGuard {
     }
 }
 
+/// What the card says about a run-scoped control grant: which program it
+/// would cover, what it covers and what still asks. Daemon-authored.
+fn attach_control_card(details: &mut Option<Value>, t: &ControlTarget, offered: bool) {
+    let Some(obj) = details.as_mut().and_then(Value::as_object_mut) else {
+        return;
+    };
+    obj.insert(
+        "control_grant".into(),
+        json!({
+            "offered": offered,
+            "refusal": t.refusal,
+            "program": t.program_name(),
+            "image_path": t.identity.image_path,
+            "pid": t.identity.pid,
+            "window_title": t.window_title,
+            "covers": ["type", "set_value", "key", "drag"],
+            "still_asks": [
+                "other_programs", "launching", "commands", "scripts", "file_dialogs",
+                "password_fields", "terminals", "browsers", "elevated"
+            ],
+        }),
+    );
+}
+
 /// Serialised detail of a grant audit entry.
 pub(crate) fn grant_detail(g: &Grant) -> Value {
     let mut detail = match &g.target {
@@ -158,6 +185,25 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
     ) -> Decision {
+        self.decide_with_target(ctx, name, effect, category, input, None)
+    }
+
+    /// [`Self::decide`] with the program a desktop input call would reach.
+    ///
+    /// A run-scoped control grant that covers this call (card 243-1) satisfies
+    /// the egress and executor terms and a plain policy-level ask, exactly like
+    /// a this-chat grant satisfies a plain ask, and nothing more: a deny,
+    /// `always_ask`, unsupported limits and the absolute floors are all decided
+    /// before the grant is looked at, in the same order as without it.
+    pub(crate) fn decide_with_target(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        effect: Effect,
+        category: PermissionCategory,
+        input: &Value,
+        target: Option<&ControlTarget>,
+    ) -> Decision {
         // Document converters are shell-free writers too. In particular a
         // one-column CSV can be a valid SKILL.md or workflow/config document.
         let output_field = match name {
@@ -209,6 +255,11 @@ impl Shared {
             name == "web_search",
             ctx.profile.permissions.allow_egress_after_reads,
         ) || executes_must_ask(exposure, class.executes);
+        // Only a call that already has to ask can be covered, so the lookup is
+        // skipped for every other call.
+        let control_covered = must_ask
+            && target.is_some_and(|t| ctx.control_covers(name, category, t));
+        let must_ask = must_ask && !control_covered;
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
         if self.always_ask(name) {
@@ -244,7 +295,7 @@ impl Shared {
         if must_ask {
             return d;
         }
-        let granted = {
+        let granted = control_covered || {
             let g = self.grants.lock();
             g.this_chat.contains(&(
                 ctx.chat_id,
@@ -533,11 +584,17 @@ impl Shared {
         call_id: ToolCallId,
         summary: &str,
         once_only: bool,
+        grantable: bool,
     ) -> (Uuid, PendingGuard, oneshot::Receiver<Verdict>) {
         let (tx, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .insert(call_id, Pending { tx, once_only });
+        self.pending.lock().insert(
+            call_id,
+            Pending {
+                tx,
+                once_only,
+                grantable,
+            },
+        );
         *self.parked.lock().entry(ctx.run_id).or_insert(0) += 1;
         let guard = PendingGuard {
             sh: Arc::clone(self),
@@ -696,6 +753,7 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
         mut details: Option<Value>,
+        target: Option<ControlTarget>,
     ) -> Result<ExecPermit, Option<String>> {
         // The tool's token for this approval: kept for the close guard, never shown.
         let token = details.as_ref().and_then(approval_ref);
@@ -723,11 +781,24 @@ impl Shared {
             ));
         }
         let once_only = details.is_some() || self.always_ask(name);
+        // A control grant is offered only on a once-only card, for a tool that
+        // is not always-ask, on a computer that has an identity, and only when
+        // the daemon resolved an eligible target for this very call.
+        let target = target.filter(|t| {
+            control_kind_of(name) == Some(t.kind)
+                && details.is_some()
+                && !self.always_ask(name)
+                && ctx.tool_grant_scope(name, category).is_some()
+        });
+        let grantable = target.as_ref().is_some_and(ControlTarget::eligible);
+        if let Some(t) = &target {
+            attach_control_card(&mut details, t, grantable);
+        }
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
         let prefix = computer_approval(ctx, name, category, &mut details);
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
+        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only, grantable);
         let parked_at = policy_revision(self);
         self.remember_parked(call_id, ctx, name, effect, category, input);
         self.emit(
@@ -759,7 +830,7 @@ impl Shared {
                 {
                     let _gate = self.exec_gate.lock();
                     if matches!(
-                        self.decide(ctx, name, effect, category, input),
+                        self.decide_with_target(ctx, name, effect, category, input, target.as_ref()),
                         Decision::Deny
                     ) {
                         self.record_policy_denial(ctx, approval_id, call_id, name, by);
@@ -780,6 +851,7 @@ impl Shared {
                     by,
                     parked_at,
                     showed_disclosure,
+                    target: target.filter(|_| grantable),
                 })
             }
             Ok(Verdict::Denied { by, reason }) => {
@@ -895,7 +967,7 @@ impl Shared {
     ) -> Result<String, Option<String>> {
         let question = self.redact(question.to_owned());
         let summary = format!("question: {}", truncate_utf8(&question, 300));
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, false);
+        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, false, false);
         self.emit(
             ctx,
             Event::QuestionAsked(QuestionAsked {
@@ -953,6 +1025,9 @@ pub(crate) struct ExecPermit {
     /// disclosure. Captured then, not recomputed after the user answers:
     /// another call can taint the run while this card is open.
     pub(crate) showed_disclosure: bool,
+    /// The eligible control target the card offered a grant for. `Some` only
+    /// when the card offered [`ApprovalScope::RunControl`].
+    target: Option<ControlTarget>,
 }
 
 impl ExecPermit {
@@ -971,12 +1046,13 @@ impl ExecPermit {
             }
         }
         if matches!(
-            self.sh.decide(
+            self.sh.decide_with_target(
                 &self.ctx,
                 &self.name,
                 self.effect,
                 self.category,
-                &self.input
+                &self.input,
+                self.target.as_ref(),
             ),
             Decision::Deny
         ) {
@@ -1023,6 +1099,23 @@ impl ExecPermit {
                     self.category,
                     &self.name,
                 );
+            }
+            ApprovalScope::RunControl => {
+                // `approve` refuses this scope unless the card offered it, so a
+                // target is present; without one nothing is granted.
+                if let (Some(target), Some(computer)) = (
+                    &self.target,
+                    self.ctx.tool_grant_scope(&self.name, self.category),
+                ) {
+                    let mut grants = self.ctx.control_grants.lock();
+                    let grant = ControlGrant {
+                        computer,
+                        identity: target.identity.clone(),
+                    };
+                    if !grants.contains(&grant) {
+                        grants.push(grant);
+                    }
+                }
             }
         }
         self.sh.audit(
@@ -1187,6 +1280,27 @@ impl ToolGate for LoopGate {
     }
 
     async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
+        self.authorize_inner(req).await.map(|_| ())
+    }
+
+    async fn authorize_control(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.authorize_inner(req).await
+    }
+}
+
+impl LoopGate {
+    /// The shared body of [`ToolGate::authorize`] and
+    /// [`ToolGate::authorize_control`]. The returned program is the one the
+    /// caller must pass to the backend's guarded path: `Some` only when a
+    /// run-scoped control grant covers this call. A script call carries no
+    /// target, so it is never covered.
+    async fn authorize_inner(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
         let sh = self.sh.upgrade().ok_or("agent loop is gone")?;
         let run_id = req
             .run_id
@@ -1202,7 +1316,15 @@ impl ToolGate for LoopGate {
         if !ctx.profile.tool_visible(&req.tool) || !ctx.profile.category_visible(req.category) {
             return Err(format!("unknown tool: {}", req.tool));
         }
-        let result = match sh.decide(&ctx, &req.tool, req.effect, req.category, &req.input) {
+        let target = req.control.as_ref();
+        let result = match sh.decide_with_target(
+            &ctx,
+            &req.tool,
+            req.effect,
+            req.category,
+            &req.input,
+            target,
+        ) {
             Decision::Allow => {
                 sh.refuse_unshowable_egress(&ctx, &req.tool, &req.input, None, false)
             }
@@ -1223,6 +1345,7 @@ impl ToolGate for LoopGate {
                     req.category,
                     &req.input,
                     details,
+                    target.cloned(),
                 )
                 .await
                 .and_then(ExecPermit::commit)
@@ -1245,7 +1368,9 @@ impl ToolGate for LoopGate {
             crate::control::acquire_computer_slot(&sh, &ctx).await?;
         }
         note_gate(&ctx, req);
-        Ok(())
+        Ok(target
+            .filter(|t| ctx.control_covers(&req.tool, req.category, t))
+            .map(|t| t.identity.clone()))
     }
 }
 

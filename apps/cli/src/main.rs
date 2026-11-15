@@ -175,8 +175,10 @@ enum Command {
     Approve {
         /// Tool call id (shown in the chat stream / `approval_needed` event).
         tool_call_id: String,
-        /// How far the approval reaches.
-        #[arg(long, value_parser = ["once", "this_chat", "always", "always_category"], default_value = "once")]
+        /// How far the approval reaches. `run_control` lets the run type into
+        /// the one program the card names, until the run ends; the daemon
+        /// refuses it unless the card offered it.
+        #[arg(long, value_parser = ["once", "this_chat", "always", "always_category", "run_control"], default_value = "once")]
         scope: String,
         /// Deny instead of approving.
         #[arg(long)]

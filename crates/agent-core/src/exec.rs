@@ -63,6 +63,9 @@ enum Slot {
         /// the policy mutex immediately before the tool is invoked.
         permit: Option<ExecPermit>,
         class: PlannedClass,
+        /// The program a desktop input call would reach, resolved before the
+        /// decision. The run-control guard is derived from it after commit.
+        target: Option<tool_registry::ControlTarget>,
     },
     /// A `spawn_subagent` call, executed by the loop itself.
     Spawn {
@@ -895,13 +898,31 @@ impl TurnExecutor {
                 .spec
                 .as_ref()
                 .is_some_and(|s| s.category == PermissionCategory::Meta);
+            // Which program would a desktop input call reach? Resolved here,
+            // before the synchronous decision, and only once the run has read
+            // something (before that nothing asks, so nothing needs a target).
+            let target = match (&resolved.tool, &resolved.spec) {
+                (tool, Some(_))
+                    if crate::shared::control_kind_of(&resolved.name).is_some()
+                        && ctx.taint.lock().exposure.is_tainted() =>
+                {
+                    let tctx = ToolContext {
+                        run_id: ctx.run_id.to_string(),
+                        bot_id: Some(ctx.bot_id.to_string()),
+                        ..ToolContext::default()
+                    };
+                    tool.control_target(&tctx, &resolved.input).await
+                }
+                _ => None,
+            };
             let decision = match &resolved.spec {
-                Some(spec) => self.sh.decide(
+                Some(spec) => self.sh.decide_with_target(
                     &ctx,
                     &resolved.name,
                     spec.effect,
                     spec.category,
                     &resolved.input,
+                    target.as_ref(),
                 ),
                 // Malformed `use_tool`: executes nothing, only reports the error.
                 None => Decision::Allow,
@@ -995,6 +1016,7 @@ impl TurnExecutor {
                         category,
                         &resolved.input,
                         details,
+                        target.clone(),
                     )
                     .await
                 {
@@ -1005,6 +1027,7 @@ impl TurnExecutor {
                         meta,
                         permit: Some(permit),
                         class,
+                        target,
                     },
                     Err(reason) => Slot::Done {
                         text: user_denied(reason),
@@ -1030,6 +1053,7 @@ impl TurnExecutor {
                     meta,
                     permit: carried,
                     class,
+                    target,
                 }
             };
             let slot = match slot {
@@ -1075,6 +1099,7 @@ impl TurnExecutor {
                     meta,
                     permit,
                     class,
+                    target,
                 } => {
                     // Re-check under the policy mutex immediately before the
                     // call. A deny that landed after approval does not run the
@@ -1083,7 +1108,7 @@ impl TurnExecutor {
                         return (user_denied(reason), true, None, None, not_run);
                     }
                     let (text, is_error, duration_ms, own_spill, exposure) = self
-                        .run_tool(run, ctx_ref, call_id, &tool, input, meta)
+                        .run_tool(run, ctx_ref, call_id, &tool, input, meta, target)
                         .await;
                     // The result is in the model context even when the tool
                     // returned an error. A denial before this point is not.
@@ -1161,6 +1186,7 @@ impl TurnExecutor {
         tool: &Arc<dyn Tool>,
         input: Value,
         meta: bool,
+        target: Option<tool_registry::ControlTarget>,
     ) -> (
         String,
         bool,
@@ -1169,12 +1195,21 @@ impl TurnExecutor {
         Option<tool_registry::OutputExposure>,
     ) {
         let g = &self.sh.cfg.guards;
+        // A run-scoped control grant that covers this call (looked up after the
+        // permit was committed, so a grant minted by this very card counts)
+        // makes the tool send through the backend's guarded path. Any other
+        // call carries no guard.
+        let control_guard = target.as_ref().and_then(|t| {
+            let spec = tool.spec();
+            ctx.control_covers(&spec.name, spec.category, t)
+                .then(|| t.identity.clone())
+        });
         let tctx = ToolContext {
             run_id: run.id.to_string(),
             max_inline_bytes: g.spill_threshold_bytes,
             bot_id: Some(run.bot_id.to_string()),
             content_tainted: ctx.taint.lock().exposure.is_tainted(),
-            control_guard: None,
+            control_guard,
         };
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.
