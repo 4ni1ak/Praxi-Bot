@@ -758,6 +758,37 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn selected_junction_cannot_escape_capability() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let junction = root.path().join("outside-link");
+        std::fs::write(root.path().join("owned.txt"), "Selected evidence.").unwrap();
+        std::fs::write(outside.path().join("private.txt"), "Outside evidence.").unwrap();
+        let result = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(outside.path())
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "junction fixture: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(SelectedSource::open(&junction, true).is_err());
+        assert!(SelectedSource::open(&junction.join("private.txt"), false).is_err());
+        let selected = SelectedSource::open(root.path(), true).unwrap();
+        assert_eq!(selected.files(), &["owned.txt"]);
+        assert!(selected.read("outside-link/private.txt").is_err());
+        assert_eq!(
+            std::fs::read_to_string(outside.path().join("private.txt")).unwrap(),
+            "Outside evidence."
+        );
+        std::fs::remove_dir(junction).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn replaced_file_and_directory_symlinks_cannot_escape_capability() {

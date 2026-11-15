@@ -11,7 +11,8 @@ export type KnowledgeSettings = S["KnowledgeSettingsDto"];
 export type KnowledgeSettingsInput = S["KnowledgeSettingsInput"];
 export type KnowledgeEmailCapture = S["KnowledgeEmailCapture"];
 export type KnowledgeEmbeddingProgress = S["KnowledgeEmbeddingProgress"];
-export type KnowledgeLocalArtifacts = S["KnowledgeLocalArtifacts"];
+export type KnowledgeEmbeddingApproval = S["EmbeddingApprovalChallenge"];
+export type KnowledgeEmbeddingGrantTarget = S["EmbeddingGrantTarget"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];

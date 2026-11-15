@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Card } from "ui";
-import type { Chat, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeLocalArtifacts, KnowledgeSource, KnowledgeSourceKind, KnowledgeSettings, KnowledgeSettingsInput } from "../../api/types";
+import type { Chat, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget, KnowledgeSource, KnowledgeSourceKind, KnowledgeSettings, KnowledgeSettingsInput } from "../../api/types";
 import { useDaemon } from "../../state/DaemonContext";
 import { useProviders } from "../../state/useProviders";
 import { advanceKnowledgeEmbeddings } from "../../lib/knowledgeEmbedding";
@@ -35,7 +35,7 @@ export function KnowledgeCard() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [cursors, setCursors] = useState<Record<string, string>>({});
-  const [grant, setGrant] = useState<KnowledgeSource | null>(null);
+  const [grant, setGrant] = useState<KnowledgeEmbeddingApproval | null>(null);
   const [removing, setRemoving] = useState<KnowledgeSource | null>(null);
   const [renaming, setRenaming] = useState<KnowledgeSource | null>(null);
   const [renameLabel, setRenameLabel] = useState("");
@@ -44,6 +44,8 @@ export function KnowledgeCard() {
   const [indexFailures, setIndexFailures] = useState<Record<string, { locator: string; code: string }[]>>({});
   const [embeddingProgress, setEmbeddingProgress] = useState<Record<string, KnowledgeEmbeddingProgress>>({});
   const epoch = useRef(0);
+  const approvalRef = useRef<HTMLElement>(null);
+  useEffect(() => { if (grant) { approvalRef.current?.focus(); approvalRef.current?.scrollIntoView({ block: "nearest" }); } }, [grant]);
 
   const reload = useCallback(async () => {
     if (!client || !activeBot) return;
@@ -86,12 +88,15 @@ export function KnowledgeCard() {
     setLabel(""); setContent("");
   });
 
-  const change = (source: KnowledgeSource, action: "enable" | "disable" | "grant_remote" | "revoke_remote") => act(async () => {
+  const change = (source: KnowledgeSource, action: "enable" | "disable" | "revoke_remote") => act(async () => {
     await client?.updateKnowledgeSource(activeBot, source.id, {
-      action, expected_revision: source.revision, label: null,
-      profile_fingerprint: action === "grant_remote" ? settings?.embedding?.profile_fingerprint ?? null : null
+      action, expected_revision: source.revision, label: null
     });
     setGrant(null);
+  });
+
+  const requestApproval = (target: KnowledgeEmbeddingGrantTarget) => act(async () => {
+    if (client) setGrant(await client.requestKnowledgeEmbeddingApproval(activeBot, target));
   });
 
   return <Card padding="md" className={styles.root}>
@@ -116,6 +121,7 @@ export function KnowledgeCard() {
           {indexFailures[source.id]?.length ? <details><summary>{t("knowledge.skippedFiles", { count: indexFailures[source.id].length })}</summary><ul>{indexFailures[source.id].map((failure) => <li key={failure.locator}><code className={styles.locator}>{failure.locator}</code> · {t("knowledge.fileSkipped")}</li>)}</ul></details> : null}
           {embeddingProgress[source.id] ? <p role="status" className={form.hint}>
             {t(`knowledge.embeddingStatus.${embeddingProgress[source.id].status}`)} · {t("knowledge.embeddingRemaining", { count: embeddingProgress[source.id].remaining_chunks })}
+            {embeddingProgress[source.id].skipped_chunks ? <> · {t("knowledge.embeddingSkipped", { count: embeddingProgress[source.id].skipped_chunks })}</> : null}
             {embeddingProgress[source.id].next_attempt_ms ? <> · {t("knowledge.embeddingRetry", { time: new Date(embeddingProgress[source.id].next_attempt_ms!).toLocaleString() })}</> : null}
           </p> : null}
           <div className={styles.actions}>
@@ -127,7 +133,7 @@ export function KnowledgeCard() {
               setIndexFailures((previous) => ({ ...previous, [source.id]: result.indexing.failures ?? [] }));
               setNotice(t("knowledge.indexed", { count: result.indexing.processed }));
             })}>{t(cursors[source.id] ? "knowledge.continue" : "knowledge.reindex")}</Button>
-            {settings?.embedding?.provider_id !== "local-onnx" ? <Button size="sm" variant="secondary" disabled={busy || !source.enabled || !settings?.embedding} onClick={() => source.remote_profile_fingerprint ? void change(source, "revoke_remote") : setGrant(source)}>{t(source.remote_profile_fingerprint ? "knowledge.revokeRemote" : "knowledge.grantRemote")}</Button> : null}
+            {settings?.embedding?.provider_id !== "local-onnx" ? <Button size="sm" variant="secondary" disabled={busy || !source.enabled || !settings?.embedding} onClick={() => source.remote_profile_fingerprint ? void change(source, "revoke_remote") : void requestApproval({ kind: "documents", source_id: source.id })}>{t(source.remote_profile_fingerprint ? "knowledge.revokeRemote" : "knowledge.grantRemote")}</Button> : null}
             <Button size="sm" variant="secondary" disabled={busy || !source.enabled || !settings?.embedding || (settings.embedding.provider_id !== "local-onnx" && !source.remote_profile_fingerprint)} onClick={() => void act(async () => {
               if (!client) return;
               await advanceKnowledgeEmbeddings(
@@ -152,7 +158,7 @@ export function KnowledgeCard() {
       {renaming ? <section className={styles.review} aria-label={t("knowledge.rename")}>
         <label className={form.field}>{t("knowledge.newName")}<input className={form.input} value={renameLabel} maxLength={200} onChange={(e) => setRenameLabel(e.target.value)} /></label>
         <div className={styles.actions}>
-          <Button disabled={busy || !renameLabel.trim()} onClick={() => void act(async () => { await client!.updateKnowledgeSource(activeBot, renaming.id, { action: "rename", expected_revision: renaming.revision, label: renameLabel.trim(), profile_fingerprint: null }); setRenaming(null); })}>{t("knowledge.saveName")}</Button>
+          <Button disabled={busy || !renameLabel.trim()} onClick={() => void act(async () => { await client!.updateKnowledgeSource(activeBot, renaming.id, { action: "rename", expected_revision: renaming.revision, label: renameLabel.trim() }); setRenaming(null); })}>{t("knowledge.saveName")}</Button>
           <Button variant="secondary" disabled={busy} onClick={() => setRenaming(null)}>{t("common.cancel")}</Button>
         </div>
       </section> : null}
@@ -160,17 +166,19 @@ export function KnowledgeCard() {
         <strong>{rebinding.label}</strong><p>{t("knowledge.reselectHint")}</p>
         <label className={form.field}>{t("knowledge.path")}<input className={form.input} value={bindingPath} onChange={(e) => setBindingPath(e.target.value)} /></label>
         <div className={styles.actions}>
-          <Button disabled={busy || !bindingPath.trim()} onClick={() => void act(async () => { await client!.updateKnowledgeSource(activeBot, rebinding.id, { action: "rebind", expected_revision: rebinding.revision, label: null, path: bindingPath, profile_fingerprint: null }); setRebinding(null); })}>{t("knowledge.confirmPath")}</Button>
+          <Button disabled={busy || !bindingPath.trim()} onClick={() => void act(async () => { await client!.updateKnowledgeSource(activeBot, rebinding.id, { action: "rebind", expected_revision: rebinding.revision, label: null, path: bindingPath }); setRebinding(null); })}>{t("knowledge.confirmPath")}</Button>
           <Button variant="secondary" disabled={busy} onClick={() => setRebinding(null)}>{t("common.cancel")}</Button>
         </div>
       </section> : null}
-      {grant && settings?.embedding ? <section className={styles.review} aria-label={t("knowledge.grantRemote")}>
-        <strong>{t("knowledge.consentTitle", { source: grant.label })}</strong>
-        <p>{t("knowledge.consentDescription")}</p>
-        <code className={styles.locator}>{settings.embedding.endpoint} · {settings.embedding.model}</code>
-        <code className={styles.locator}>{settings.embedding.profile_fingerprint}</code>
+      {grant ? <section ref={approvalRef} tabIndex={-1} className={styles.review} aria-label={t("knowledge.approvalTitle")}>
+        <strong>{grant.target.kind === "documents" ? t("knowledge.consentTitle", { source: grant.source_label }) : t("knowledge.queryConsentTitle")}</strong>
+        <p>{t(grant.target.kind === "documents" ? "knowledge.consentDescription" : "knowledge.queryConsentDescription")}</p>
+        <code className={styles.locator}>{grant.provider_id} · {grant.model}</code>
+        <code className={styles.locator}>{grant.endpoint_identity}</code>
+        <code className={styles.locator}>{grant.profile_fingerprint}</code>
+        <p className={form.hint}>{t("knowledge.approvalExpiry", { time: new Date(grant.expires_at_ms).toLocaleTimeString() })}</p>
         <div className={styles.actions}>
-          <Button disabled={busy} onClick={() => void change(grant, "grant_remote")}>{t("knowledge.confirmConsent")}</Button>
+          <Button disabled={busy} onClick={() => void act(async () => { await client!.confirmKnowledgeEmbeddingApproval(activeBot, grant.id); setGrant(null); })}>{t(grant.target.kind === "documents" ? "knowledge.confirmConsent" : "knowledge.confirmQuery")}</Button>
           <Button variant="secondary" disabled={busy} onClick={() => setGrant(null)}>{t("common.cancel")}</Button>
         </div>
       </section> : null}
@@ -188,12 +196,16 @@ export function KnowledgeCard() {
           <Button disabled={busy || (kind !== "shared_brain" && !label.trim())} onClick={() => void add()}>{t("knowledge.add")}</Button>
         </div>
       </details>
-      {settings ? <EmbeddingSettings key={activeBot + JSON.stringify(settings)} settings={settings} providerIds={providers?.configured.filter((p) => p.enabled && (p.custom || providers.catalog.some((entry) => entry.id === p.id && ["gemini", "openai_compatible"].includes(entry.kind)))).map((p) => p.id) ?? []} busy={busy} save={(value) => act(() => client!.updateKnowledgeSettings(activeBot, value))} /> : null}
+      {settings ? <EmbeddingSettings key={activeBot + JSON.stringify(settings)} settings={settings} providerIds={providers?.configured.filter((p) => p.enabled && (p.custom || providers.catalog.some((entry) => entry.id === p.id && ["gemini", "openai_compatible"].includes(entry.kind)))).map((p) => p.id) ?? []} busy={busy} save={(value) => act(() => client!.updateKnowledgeSettings(activeBot, value))} queryApproval={() => requestApproval({ kind: "queries" })} revokeQuery={() => act(() => client!.revokeKnowledgeEmbeddingGrant(activeBot, { kind: "queries" }))} resetCooldown={() => act(() => client!.resetKnowledgeEmbeddingCooldown(activeBot))} /> : null}
     </>}
   </Card>;
 }
 
-function EmbeddingSettings({ settings, providerIds, busy, save }: { settings: KnowledgeSettings; providerIds: string[]; busy: boolean; save: (value: KnowledgeSettingsInput) => Promise<void> }) {
+function EmbeddingSettings({ settings, providerIds, busy, save, queryApproval, revokeQuery, resetCooldown }: {
+  settings: KnowledgeSettings; providerIds: string[]; busy: boolean;
+  save: (value: KnowledgeSettingsInput) => Promise<void>;
+  queryApproval: () => Promise<void>; revokeQuery: () => Promise<void>; resetCooldown: () => Promise<void>;
+}) {
   const { t } = useTranslation();
   const current = settings.embedding;
   const [enabled, setEnabled] = useState(Boolean(current));
@@ -204,51 +216,40 @@ function EmbeddingSettings({ settings, providerIds, busy, save }: { settings: Kn
   const [requestDimensions, setRequestDimensions] = useState(current?.request_dimensions ?? true);
   const [rpm, setRpm] = useState(current?.requests_per_minute ?? 100);
   const [rpd, setRpd] = useState(current?.requests_per_day ?? 1000);
-  const [query, setQuery] = useState(current?.query_remote ?? false);
-  const [manifest, setManifest] = useState(JSON.stringify(current?.local_artifacts ?? Object.fromEntries(["runtime", "model", "tokenizer", "config", "special_tokens_map", "tokenizer_config"].map((name) => [name, { path: "", sha256: "" }])), null, 2));
+  const [profileId, setProfileId] = useState(current?.local_profile_id ?? settings.local_profiles[0]?.id ?? "");
   const local = provider === "local-onnx";
-  const artifacts = parseArtifacts(manifest);
+  const profile = settings.local_profiles.find((item) => item.id === profileId);
   const reviewed = Boolean(current && current.provider_id === provider && current.model === model && current.dimensions === dimensions && current.request_dimensions === requestDimensions);
   return <details className={styles.group}>
     <summary>{t("knowledge.settings")}</summary>
     <div className={styles.form}>
-      <label><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> {t("knowledge.auto")}</label>
+      <label><input type="checkbox" disabled={!settings.auto_retrieval_available} checked={auto && settings.auto_retrieval_available} onChange={(e) => setAuto(e.target.checked)} /> {t("knowledge.auto")}</label>
+      {!settings.auto_retrieval_available ? <p className={form.hint}>{t("knowledge.autoUnavailable")}</p> : null}
       <label><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> {t("knowledge.embeddings")}</label>
       <p className={form.hint}>{t("knowledge.lexicalHint")}</p>
       {enabled ? <>
-        <label className={form.field}>{t("knowledge.provider")}<select className={form.select} value={provider} onChange={(e) => { setProvider(e.target.value); setQuery(false); }}><option value="">{t("knowledge.select")}</option>{providerIds.map((id) => <option key={id} value={id}>{id}</option>)}<option value="local-onnx">{t("knowledge.local")}</option></select></label>
+        <label className={form.field}>{t("knowledge.provider")}<select className={form.select} value={provider} onChange={(e) => setProvider(e.target.value)}><option value="">{t("knowledge.select")}</option>{providerIds.map((id) => <option key={id} value={id}>{id}</option>)}<option value="local-onnx">{t("knowledge.local")}</option></select></label>
         {local ? <>
           <p className={form.hint}>{t("knowledge.localHint")}</p>
           {!settings.local_embeddings_available ? <p role="status" className={form.hint}>{t("knowledge.localUnavailable")}</p> : null}
-          <label className={form.field}>{t("knowledge.artifacts")}<textarea className={form.textarea} rows={18} spellCheck={false} value={manifest} onChange={(e) => setManifest(e.target.value)} /></label>
-          {!artifacts ? <p className={form.hint}>{t("knowledge.artifactsInvalid")}</p> : null}
-        </> : <><label className={form.field}>{t("knowledge.model")}<input className={form.input} value={model} onChange={(e) => { setModel(e.target.value); setQuery(false); }} /></label>
-        <label className={form.field}>{t("knowledge.dimensions")}<input className={form.input} type="number" min={1} max={4096} value={dimensions} onChange={(e) => { setDimensions(Number(e.target.value)); setQuery(false); }} /></label>
-        <label><input type="checkbox" checked={requestDimensions} onChange={(e) => { setRequestDimensions(e.target.checked); setQuery(false); }} /> {t("knowledge.requestDimensions")}</label>
-        <label className={form.field}>{t("knowledge.rpm")}<input className={form.input} type="number" min={1} value={rpm} onChange={(e) => setRpm(Number(e.target.value))} /></label>
-        <label className={form.field}>{t("knowledge.rpd")}<input className={form.input} type="number" min={1} value={rpd} onChange={(e) => setRpd(Number(e.target.value))} /></label>
-        <p className={form.hint}>{t("knowledge.quotaHint")}</p>
-        {current ? <code className={styles.locator}>{current.endpoint} · {current.profile_fingerprint}</code> : null}
-        <label><input type="checkbox" disabled={!reviewed} checked={query && reviewed} onChange={(e) => setQuery(e.target.checked)} /> {t("knowledge.queryConsent")}</label>
-        <p className={form.hint}>{t("knowledge.queryHint")}</p>
+          <label className={form.field}>{t("knowledge.localProfile")}<select className={form.select} value={profileId} onChange={(e) => setProfileId(e.target.value)}><option value="">{t("knowledge.select")}</option>{settings.local_profiles.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.model} · {item.dimensions}</option>)}</select></label>
+          {!settings.local_profiles.length ? <p className={form.hint}>{t("knowledge.noLocalProfiles")}</p> : null}
+        </> : <>
+          <label className={form.field}>{t("knowledge.model")}<input className={form.input} value={model} onChange={(e) => setModel(e.target.value)} /></label>
+          <label className={form.field}>{t("knowledge.dimensions")}<input className={form.input} type="number" min={1} max={4096} value={dimensions} onChange={(e) => setDimensions(Number(e.target.value))} /></label>
+          <label><input type="checkbox" checked={requestDimensions} onChange={(e) => setRequestDimensions(e.target.checked)} /> {t("knowledge.requestDimensions")}</label>
+          <label className={form.field}>{t("knowledge.rpm")}<input className={form.input} type="number" min={1} value={rpm} onChange={(e) => setRpm(Number(e.target.value))} /></label>
+          <label className={form.field}>{t("knowledge.rpd")}<input className={form.input} type="number" min={1} value={rpd} onChange={(e) => setRpd(Number(e.target.value))} /></label>
+          <p className={form.hint}>{t("knowledge.quotaHint")}</p>
+          {current ? <code className={styles.locator}>{current.endpoint} · {current.profile_fingerprint}</code> : null}
+          <p className={form.hint}>{t("knowledge.queryHint")}</p>
+          <div className={styles.actions}>
+            <Button variant="secondary" disabled={busy || !reviewed} onClick={() => void (current?.query_remote ? revokeQuery() : queryApproval())}>{t(current?.query_remote ? "knowledge.revokeQuery" : "knowledge.reviewQuery")}</Button>
+            <Button variant="secondary" disabled={busy || !current} onClick={() => void resetCooldown()}>{t("knowledge.resetCooldown")}</Button>
+          </div>
         </>}
       </> : null}
-      <Button disabled={busy || (enabled && (!provider || (local ? !artifacts : !model.trim())))} onClick={() => void save({ auto_retrieve: auto, embedding: enabled ? { provider_id: provider, model: local ? "multilingual-e5-small" : model, dimensions: local ? 384 : dimensions, request_dimensions: local ? false : requestDimensions, requests_per_minute: rpm, requests_per_day: rpd, query_remote: !local && query && reviewed, consent_profile_fingerprint: !local && query && reviewed ? current?.profile_fingerprint ?? null : null, local_artifacts: local ? artifacts : null } : null })}>{t("knowledge.save")}</Button>
+      <Button disabled={busy || (enabled && (!provider || (local ? !profile : !model.trim())))} onClick={() => void save({ auto_retrieve: auto && settings.auto_retrieval_available, embedding: enabled ? { provider_id: provider, model: local ? profile!.model : model, dimensions: local ? profile!.dimensions : dimensions, request_dimensions: local ? false : requestDimensions, requests_per_minute: rpm, requests_per_day: rpd, local_profile_id: local ? profileId : null } : null })}>{t("knowledge.save")}</Button>
     </div>
   </details>;
-}
-
-function parseArtifacts(raw: string): KnowledgeLocalArtifacts | null {
-  try {
-    const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== "object") return null;
-    const record = value as Record<string, unknown>;
-    for (const key of ["runtime", "model", "tokenizer", "config", "special_tokens_map", "tokenizer_config"]) {
-      const artifact = record[key];
-      if (!artifact || typeof artifact !== "object") return null;
-      const fields = artifact as Record<string, unknown>;
-      if (typeof fields.path !== "string" || !fields.path.trim() || typeof fields.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(fields.sha256)) return null;
-    }
-    return value as KnowledgeLocalArtifacts;
-  } catch { return null; }
 }

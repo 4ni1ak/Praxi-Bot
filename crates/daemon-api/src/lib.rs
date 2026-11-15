@@ -894,6 +894,22 @@ fn api_routes() -> Router<AppState> {
             get(knowledge::email_captures),
         )
         .route(
+            "/v1/bots/{bot}/knowledge/embedding-approvals",
+            post(knowledge_settings::request_embedding_approval),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm",
+            post(knowledge_settings::confirm_embedding_approval),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-grants",
+            axum::routing::delete(knowledge_settings::revoke_embedding_grant),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-cooldown/reset",
+            post(knowledge_settings::reset_embedding_cooldown),
+        )
+        .route(
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )

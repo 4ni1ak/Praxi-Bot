@@ -252,6 +252,221 @@
         ]
       }
     },
+    "/v1/bots/{bot}/knowledge/embedding-approvals": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Ask policy for an owner-reviewable destination and source snapshot. Merely\nopening the card grants no authority and starts no provider request.",
+        "operationId": "request_embedding_approval",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingGrantTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingApprovalChallenge"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Confirm exactly the server snapshot the local owner reviewed. A changed\nprofile/source, expired card or replay requires a fresh owner decision.",
+        "operationId": "confirm_embedding_approval",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "approval",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-cooldown/reset": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Explicit owner recovery for a provider's shared retry delay; quota usage and\nper-source failure records remain intact.",
+        "operationId": "reset_embedding_cooldown",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-grants": {
+      "delete": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "revoke_embedding_grant",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingGrantTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{bot}/knowledge/settings": {
       "get": {
         "tags": [
@@ -6533,6 +6748,90 @@
           }
         }
       },
+      "EmbeddingApprovalChallenge": {
+        "type": "object",
+        "required": [
+          "id",
+          "target",
+          "profile_fingerprint",
+          "provider_id",
+          "model",
+          "endpoint_identity",
+          "expires_at_ms",
+          "policy_decision"
+        ],
+        "properties": {
+          "endpoint_identity": {
+            "type": "string"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "model": {
+            "type": "string"
+          },
+          "policy_decision": {
+            "type": "string"
+          },
+          "profile_fingerprint": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/EmbeddingGrantTarget"
+          }
+        }
+      },
+      "EmbeddingGrantTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "queries"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "source_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "documents"
+                ]
+              },
+              "source_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ]
+      },
       "EnableCliProviderInput": {
         "type": "object",
         "description": "Request body for `POST /v1/providers/cli/enable`.",
@@ -7498,23 +7797,6 @@
           "up"
         ]
       },
-      "KnowledgeArtifact": {
-        "type": "object",
-        "description": "An explicit operator-selected artifact. Files are hash-verified before load.",
-        "required": [
-          "path",
-          "sha256"
-        ],
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "sha256": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
       "KnowledgeEmailCapture": {
         "type": "object",
         "required": [
@@ -7580,14 +7862,10 @@
           "endpoint": {
             "type": "string"
           },
-          "local_artifacts": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/KnowledgeLocalArtifacts"
-              }
+          "local_profile_id": {
+            "type": [
+              "string",
+              "null"
             ]
           },
           "model": {
@@ -7627,36 +7905,22 @@
           "requests_per_day"
         ],
         "properties": {
-          "consent_profile_fingerprint": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Exact profile previously displayed to the user; required for query egress."
-          },
           "dimensions": {
             "type": "integer",
             "minimum": 0
           },
-          "local_artifacts": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/KnowledgeLocalArtifacts"
-              }
-            ]
+          "local_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Select an already installed host profile; cannot choose native files."
           },
           "model": {
             "type": "string"
           },
           "provider_id": {
             "type": "string"
-          },
-          "query_remote": {
-            "type": "boolean",
-            "description": "Separate explicit permission to send retrieval queries to this provider."
           },
           "request_dimensions": {
             "type": "boolean"
@@ -7681,7 +7945,8 @@
           "status",
           "embedded_chunks",
           "cache_hits",
-          "remaining_chunks"
+          "remaining_chunks",
+          "skipped_chunks"
         ],
         "properties": {
           "cache_hits": {
@@ -7709,6 +7974,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "skipped_chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
           "status": {
             "$ref": "#/components/schemas/KnowledgeEmbeddingStatus"
           }
@@ -7725,15 +7994,38 @@
           "failed"
         ]
       },
+      "KnowledgeFileFailure": {
+        "type": "object",
+        "description": "A skipped file never prevents the page cursor from advancing.",
+        "required": [
+          "locator",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "locator": {
+            "type": "string"
+          }
+        }
+      },
       "KnowledgeIndexStatus": {
         "type": "object",
         "description": "A bounded indexing page. Replay starts from hashes already committed.",
         "required": [
           "processed",
           "unchanged",
-          "removed"
+          "removed",
+          "failures"
         ],
         "properties": {
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeFileFailure"
+            }
+          },
           "next_cursor": {
             "type": [
               "string",
@@ -7754,38 +8046,30 @@
           }
         }
       },
-      "KnowledgeLocalArtifacts": {
+      "KnowledgeLocalProfileDto": {
         "type": "object",
-        "description": "Complete offline E5 bundle, including the explicitly selected native runtime.",
+        "description": "A host-installed local model. Native file locations are never API inputs.",
         "required": [
-          "runtime",
+          "id",
+          "label",
           "model",
-          "tokenizer",
-          "config",
-          "special_tokens_map",
-          "tokenizer_config"
+          "dimensions"
         ],
         "properties": {
-          "config": {
-            "$ref": "#/components/schemas/KnowledgeArtifact"
+          "dimensions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
           },
           "model": {
-            "$ref": "#/components/schemas/KnowledgeArtifact"
-          },
-          "runtime": {
-            "$ref": "#/components/schemas/KnowledgeArtifact"
-          },
-          "special_tokens_map": {
-            "$ref": "#/components/schemas/KnowledgeArtifact"
-          },
-          "tokenizer": {
-            "$ref": "#/components/schemas/KnowledgeArtifact"
-          },
-          "tokenizer_config": {
-            "$ref": "#/components/schemas/KnowledgeArtifact"
+            "type": "string"
           }
-        },
-        "additionalProperties": false
+        }
       },
       "KnowledgeMutation": {
         "type": "object",
@@ -7841,9 +8125,14 @@
         "type": "object",
         "required": [
           "auto_retrieve",
-          "local_embeddings_available"
+          "auto_retrieval_available",
+          "local_embeddings_available",
+          "local_profiles"
         ],
         "properties": {
+          "auto_retrieval_available": {
+            "type": "boolean"
+          },
           "auto_retrieve": {
             "type": "boolean"
           },
@@ -7859,6 +8148,12 @@
           },
           "local_embeddings_available": {
             "type": "boolean"
+          },
+          "local_profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeLocalProfileDto"
+            }
           }
         }
       },
@@ -7890,9 +8185,9 @@
         "enum": [
           "enable",
           "disable",
-          "grant_remote",
           "revoke_remote",
-          "rename"
+          "rename",
+          "rebind"
         ]
       },
       "KnowledgeSourceChange": {
@@ -7916,12 +8211,12 @@
               "null"
             ]
           },
-          "profile_fingerprint": {
+          "path": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Required for a grant: the exact destination/model fingerprint displayed\nto the user. A concurrently changed provider cannot inherit the click."
+            "description": "An owner-selected replacement path, required to rebind imported files."
           }
         },
         "additionalProperties": false
@@ -7935,6 +8230,7 @@
           "label",
           "locator",
           "enabled",
+          "requires_path_selection",
           "revision",
           "documents",
           "chunks",
@@ -7971,6 +8267,9 @@
               "null"
             ]
           },
+          "requires_path_selection": {
+            "type": "boolean"
+          },
           "revision": {
             "type": "integer",
             "format": "int64",
@@ -7986,8 +8285,7 @@
         "type": "object",
         "description": "A user-selected source. Body fields cannot choose an owner, trust or consent.",
         "required": [
-          "kind",
-          "label"
+          "kind"
         ],
         "properties": {
           "account": {
@@ -8009,7 +8307,7 @@
               "string",
               "null"
             ],
-            "description": "Saved text/HTML or a note; never interpreted as a source URL to fetch."
+            "description": "Saved text/HTML or a note; never interpreted as a source URL to fetch.\nAt most 4 MiB decoded UTF-8 input and 1 MiB extracted/indexed text.\nThe JSON envelope permits up to 24 MiB + 64 KiB for escaped input."
           },
           "html": {
             "type": "boolean"

@@ -33,7 +33,7 @@ import type {
   WebSearchConfigInput,
   WebSearchTestInput
 } from "./types.ts";
-import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeSourceChange } from "./types.ts";
+import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeSourceChange, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types.ts";
 
 import { isMockMode, MOCK_BASE_URL } from "./mockMode.ts";
 export { isMockMode, MOCK_BASE_URL };
@@ -356,6 +356,7 @@ const DOCTOR_CHECKS: DoctorCheck[] = [
 export class MockApiClient extends ApiClient {
   private readonly knowledgeSources = new Map<string, KnowledgeSource[]>();
   private readonly knowledgeSettings = new Map<string, KnowledgeSettings>();
+  private readonly knowledgeApprovals = new Map<string, { bot: string; card: KnowledgeEmbeddingApproval; revision?: number }>();
   readonly servers: McpServer[];
   readonly providersDto: ProvidersDto = structuredClone(PROVIDERS);
   readonly detectedProvidersList: DetectedProviderDto[] = structuredClone(DETECTED_PROVIDERS);
@@ -503,50 +504,84 @@ export class MockApiClient extends ApiClient {
       if (!this.bots.some((bot) => bot.id === seg[1])) throw new ApiError(404, "not_found", "bot");
       const bot = seg[1];
       const sources = this.knowledgeSources.get(bot) ?? [];
-      const settings = this.knowledgeSettings.get(bot) ?? { auto_retrieve: false, embedding: null, local_embeddings_available: false };
+      const settings: KnowledgeSettings = this.knowledgeSettings.get(bot) ?? { auto_retrieve: false, auto_retrieval_available: false, embedding: null, local_embeddings_available: false, local_profiles: [{ id: "offline-e5", label: "Installed multilingual model", model: "multilingual-e5-small", dimensions: 384 }] };
       if (seg[3] === "email-captures" && method === "GET") return ok([]);
       if (seg[3] === "settings") {
         if (method === "GET") return ok(settings);
         const input = opts.body as KnowledgeSettingsInput;
         const embedding = input.embedding;
-        const next: KnowledgeSettings = { auto_retrieve: input.auto_retrieve, local_embeddings_available: false, embedding: embedding ? {
+        const identity = embedding ? JSON.stringify([embedding.provider_id, embedding.model, embedding.dimensions, embedding.request_dimensions, embedding.local_profile_id]) : "disabled";
+        const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+        const changed = settings.embedding?.profile_fingerprint !== fingerprint;
+        if (changed) for (const source of sources) source.remote_profile_fingerprint = null;
+        const next: KnowledgeSettings = { ...settings, auto_retrieve: false, embedding: embedding ? {
           provider_id: embedding.provider_id, model: embedding.model, dimensions: embedding.dimensions,
           request_dimensions: embedding.request_dimensions ?? false,
-          endpoint: "https://embedding.example.invalid", profile_fingerprint: "a".repeat(64),
-          query_remote: embedding.query_remote ?? false,
+          endpoint: "https://embedding.example.invalid", profile_fingerprint: fingerprint,
+          query_remote: !changed && (settings.embedding?.query_remote ?? false),
           requests_per_minute: embedding.requests_per_minute, requests_per_day: embedding.requests_per_day,
-          local_artifacts: embedding.local_artifacts ?? null
+          local_profile_id: embedding.local_profile_id ?? null
         } : null };
         this.knowledgeSettings.set(bot, next);
         return ok(next);
       }
+      if (seg[3] === "embedding-approvals") {
+        const embedding = settings.embedding;
+        if (!embedding || embedding.provider_id === "local-onnx") throw new ApiError(409, "conflict", "choose a remote embedding provider first");
+        if (!seg[4]) {
+          const target = opts.body as KnowledgeEmbeddingGrantTarget;
+          const source = target.kind === "documents" ? sources.find((source) => source.id === target.source_id) : undefined;
+          if (target.kind === "documents" && !source?.enabled) throw new ApiError(409, "conflict", "source must be enabled");
+          const card: KnowledgeEmbeddingApproval = { id: crypto.randomUUID(), target, source_label: source?.label ?? null, profile_fingerprint: embedding.profile_fingerprint, provider_id: embedding.provider_id, model: embedding.model, endpoint_identity: embedding.endpoint, expires_at_ms: Date.now() + 300_000, policy_decision: "ask" };
+          for (const [id, saved] of this.knowledgeApprovals) if (saved.bot === bot) this.knowledgeApprovals.delete(id);
+          this.knowledgeApprovals.set(card.id, { bot, card, revision: source?.revision });
+          return ok(card);
+        }
+        const saved = this.knowledgeApprovals.get(seg[4]);
+        if (!saved || saved.bot !== bot || saved.card.expires_at_ms <= Date.now() || saved.card.profile_fingerprint !== embedding.profile_fingerprint) throw new ApiError(409, "conflict", "approval expired or changed");
+        if (saved.card.target.kind === "documents") {
+          const id = saved.card.target.source_id;
+          const source = sources.find((source) => source.id === id);
+          if (!source?.enabled || source.revision !== saved.revision) throw new ApiError(409, "conflict", "source changed");
+          source.remote_profile_fingerprint = embedding.profile_fingerprint; source.revision += 1;
+        } else embedding.query_remote = true;
+        this.knowledgeApprovals.delete(seg[4]);
+        return ok(undefined);
+      }
+      if (seg[3] === "embedding-grants") {
+        const target = opts.body as KnowledgeEmbeddingGrantTarget;
+        if (target.kind === "queries" && settings.embedding) settings.embedding.query_remote = false;
+        if (target.kind === "documents") {
+          const source = sources.find((source) => source.id === target.source_id);
+          if (source?.remote_profile_fingerprint) { source.remote_profile_fingerprint = null; source.revision += 1; }
+        }
+        return ok(undefined);
+      }
+      if (seg[3] === "embedding-cooldown") return ok(undefined);
       if (seg[3] === "sources") {
         if (method === "GET") return ok(structuredClone(sources));
         if (method === "POST" && !seg[4]) {
           const input = opts.body as KnowledgeSourceInput;
-          const source: KnowledgeSource = { id: crypto.randomUUID(), kind: input.kind, label: input.label,
-            locator: input.path ?? input.url ?? `saved:${input.kind}`, enabled: true, revision: 1,
+          const source: KnowledgeSource = { id: crypto.randomUUID(), kind: input.kind, label: input.label ?? "Shared brain",
+            locator: input.path ?? input.url ?? `saved:${input.kind}`, enabled: true, requires_path_selection: false, revision: 1,
             remote_profile_fingerprint: null, documents: 1, chunks: 1, updated_ms: Date.now() };
           sources.push(source); this.knowledgeSources.set(bot, sources);
-          return ok({ source, indexing: { processed: 1, unchanged: 0, removed: 0, next_cursor: null } });
+          return ok({ source, indexing: { processed: 1, unchanged: 0, removed: 0, next_cursor: null, failures: [] } });
         }
         const source = sources.find((item) => item.id === seg[4]);
         if (!source) throw new ApiError(404, "not_found", "source");
         const input = opts.body as KnowledgeSourceChange;
         if (source.revision !== input.expected_revision) throw new ApiError(409, "conflict", "source changed");
         if (method === "DELETE") { this.knowledgeSources.set(bot, sources.filter((item) => item !== source)); return ok(undefined); }
-        if (seg[5] === "reindex") return ok({ source, indexing: { processed: 1, unchanged: 1, removed: 0, next_cursor: null } });
+        if (seg[5] === "reindex") return ok({ source, indexing: { processed: 1, unchanged: 1, removed: 0, next_cursor: null, failures: [] } });
         if (seg[5] === "embed") {
-          if (settings.embedding?.provider_id === "local-onnx") return ok({ status: "failed", embedded_chunks: 0, cache_hits: 0, remaining_chunks: 1, next_attempt_ms: null, failure_code: "local_embeddings_unavailable" });
-          return ok({ status: source.remote_profile_fingerprint ? "complete" : "awaiting_consent", embedded_chunks: source.remote_profile_fingerprint ? 1 : 0, cache_hits: 0, remaining_chunks: source.remote_profile_fingerprint ? 0 : 1, next_attempt_ms: null, failure_code: null });
-        }
-        if (input.action === "grant_remote") {
-          if (!source.enabled || input.profile_fingerprint !== settings.embedding?.profile_fingerprint) throw new ApiError(409, "conflict", "review the profile");
-          source.remote_profile_fingerprint = input.profile_fingerprint;
+          if (settings.embedding?.provider_id === "local-onnx") return ok({ status: "failed", embedded_chunks: 0, cache_hits: 0, skipped_chunks: 0, remaining_chunks: 1, next_attempt_ms: null, failure_code: "local_embeddings_unavailable" });
+          return ok({ status: source.remote_profile_fingerprint ? "complete" : "awaiting_consent", embedded_chunks: source.remote_profile_fingerprint ? 1 : 0, cache_hits: 0, skipped_chunks: 0, remaining_chunks: source.remote_profile_fingerprint ? 0 : 1, next_attempt_ms: null, failure_code: null });
         }
         if (input.action === "revoke_remote") source.remote_profile_fingerprint = null;
         if (input.action === "disable") { source.enabled = false; source.remote_profile_fingerprint = null; }
-        if (input.action === "enable") source.enabled = true;
+        if (input.action === "enable") { if (source.requires_path_selection) throw new ApiError(409, "conflict", "select a local path"); source.enabled = true; }
+        if (input.action === "rebind" && input.path) { source.locator = input.path; source.requires_path_selection = false; source.enabled = true; source.remote_profile_fingerprint = null; source.documents = 0; source.chunks = 0; }
         if (input.action === "rename" && input.label) source.label = input.label;
         source.revision += 1;
         return ok(structuredClone(source));

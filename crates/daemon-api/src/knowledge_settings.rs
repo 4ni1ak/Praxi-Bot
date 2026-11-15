@@ -6,11 +6,8 @@ use axum::{
     extract::{Path, State},
 };
 use memory_store::knowledge::{
-    KnowledgeStore, RemoteEmbeddingConsent, Scope, SourceUpdate,
-    embedding::{
-        EmbeddingConfig, EmbeddingProfile, LocalEmbeddingArtifacts, PinnedEmbeddingArtifact,
-        local_embeddings_available,
-    },
+    KnowledgeStore, Scope,
+    embedding::{EmbeddingConfig, EmbeddingProfile, local_embeddings_available},
 };
 use protocol::BotId;
 use provider_catalog::{EmbeddingTaskFormat, ProviderConfig, ProviderKind};
@@ -20,77 +17,25 @@ use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::knowledge_runtime::{EmbeddingApprovalChallenge, EmbeddingGrantTarget};
 use crate::{ApiError, AppState, error::ErrorBody, routes::ApiJson};
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct KnowledgeSettingsDto {
     pub auto_retrieve: bool,
+    pub auto_retrieval_available: bool,
     pub embedding: Option<KnowledgeEmbeddingDto>,
     pub local_embeddings_available: bool,
+    pub local_profiles: Vec<KnowledgeLocalProfileDto>,
 }
 
-/// An explicit operator-selected artifact. Files are hash-verified before load.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct KnowledgeArtifact {
-    pub path: String,
-    pub sha256: String,
-}
-
-/// Complete offline E5 bundle, including the explicitly selected native runtime.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct KnowledgeLocalArtifacts {
-    pub runtime: KnowledgeArtifact,
-    pub model: KnowledgeArtifact,
-    pub tokenizer: KnowledgeArtifact,
-    pub config: KnowledgeArtifact,
-    pub special_tokens_map: KnowledgeArtifact,
-    pub tokenizer_config: KnowledgeArtifact,
-}
-
-impl From<KnowledgeArtifact> for PinnedEmbeddingArtifact {
-    fn from(value: KnowledgeArtifact) -> Self {
-        Self {
-            path: value.path.into(),
-            sha256: value.sha256,
-        }
-    }
-}
-
-impl From<PinnedEmbeddingArtifact> for KnowledgeArtifact {
-    fn from(value: PinnedEmbeddingArtifact) -> Self {
-        Self {
-            path: value.path.to_string_lossy().into_owned(),
-            sha256: value.sha256,
-        }
-    }
-}
-
-impl From<KnowledgeLocalArtifacts> for LocalEmbeddingArtifacts {
-    fn from(value: KnowledgeLocalArtifacts) -> Self {
-        Self {
-            runtime: value.runtime.into(),
-            model: value.model.into(),
-            tokenizer: value.tokenizer.into(),
-            config: value.config.into(),
-            special_tokens_map: value.special_tokens_map.into(),
-            tokenizer_config: value.tokenizer_config.into(),
-        }
-    }
-}
-
-impl From<LocalEmbeddingArtifacts> for KnowledgeLocalArtifacts {
-    fn from(value: LocalEmbeddingArtifacts) -> Self {
-        Self {
-            runtime: value.runtime.into(),
-            model: value.model.into(),
-            tokenizer: value.tokenizer.into(),
-            config: value.config.into(),
-            special_tokens_map: value.special_tokens_map.into(),
-            tokenizer_config: value.tokenizer_config.into(),
-        }
-    }
+/// A host-installed local model. Native file locations are never API inputs.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct KnowledgeLocalProfileDto {
+    pub id: String,
+    pub label: String,
+    pub model: String,
+    pub dimensions: usize,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -104,7 +49,7 @@ pub struct KnowledgeEmbeddingDto {
     pub query_remote: bool,
     pub requests_per_minute: u32,
     pub requests_per_day: u32,
-    pub local_artifacts: Option<KnowledgeLocalArtifacts>,
+    pub local_profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -115,14 +60,10 @@ pub struct KnowledgeEmbeddingInput {
     pub dimensions: usize,
     #[serde(default)]
     pub request_dimensions: bool,
-    /// Separate explicit permission to send retrieval queries to this provider.
-    #[serde(default)]
-    pub query_remote: bool,
-    /// Exact profile previously displayed to the user; required for query egress.
-    pub consent_profile_fingerprint: Option<String>,
     pub requests_per_minute: u32,
     pub requests_per_day: u32,
-    pub local_artifacts: Option<KnowledgeLocalArtifacts>,
+    /// Select an already installed host profile; cannot choose native files.
+    pub local_profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -153,7 +94,7 @@ fn profile_fingerprint(config: &EmbeddingConfig) -> Result<String, ApiError> {
         .map_err(|e| ApiError::bad_request(e.to_string()))
 }
 
-fn settings_dto(bot: &storage::Bot) -> Result<KnowledgeSettingsDto, ApiError> {
+fn settings_dto(s: &AppState, bot: &storage::Bot) -> Result<KnowledgeSettingsDto, ApiError> {
     let embedding = embedding_config(bot)?
         .map(|config| -> Result<KnowledgeEmbeddingDto, ApiError> {
             let fingerprint = profile_fingerprint(&config)?;
@@ -163,22 +104,37 @@ fn settings_dto(bot: &storage::Bot) -> Result<KnowledgeSettingsDto, ApiError> {
                 dimensions: config.profile.dimensions,
                 request_dimensions: config.profile.request_dimensions,
                 endpoint: config.profile.endpoint_identity,
-                query_remote: config
-                    .query_consent
-                    .is_some_and(|g| g.profile_fingerprint == fingerprint),
+                query_remote: crate::knowledge_runtime::authorized(
+                    s,
+                    bot.id,
+                    &EmbeddingGrantTarget::Queries,
+                    &fingerprint,
+                )
+                .is_some(),
                 profile_fingerprint: fingerprint,
                 requests_per_minute: config.budget.requests_per_minute,
                 requests_per_day: config.budget.requests_per_day,
-                local_artifacts: config.local_artifacts.map(Into::into),
+                local_profile_id: config.local_profile_id,
             })
         })
         .transpose()?;
     Ok(KnowledgeSettingsDto {
-        auto_retrieve: bot.config["knowledge"]["auto_retrieve"]
-            .as_bool()
-            .unwrap_or(false),
+        auto_retrieve: agent_core::knowledge_auto_retrieval_available()
+            && bot.config["knowledge"]["auto_retrieve"]
+                .as_bool()
+                .unwrap_or(false),
         embedding,
+        auto_retrieval_available: agent_core::knowledge_auto_retrieval_available(),
         local_embeddings_available: local_embeddings_available(),
+        local_profiles: crate::knowledge_runtime::list_local_profiles(s)?
+            .into_iter()
+            .map(|entry| KnowledgeLocalProfileDto {
+                id: entry.id,
+                label: entry.label,
+                model: entry.profile.model,
+                dimensions: entry.profile.dimensions,
+            })
+            .collect(),
     })
 }
 
@@ -220,31 +176,20 @@ fn make_embedding(
     input: KnowledgeEmbeddingInput,
 ) -> Result<EmbeddingConfig, ApiError> {
     if input.provider_id == "local-onnx" {
-        if input.query_remote {
-            return Err(ApiError::bad_request(
-                "local embeddings do not accept remote query consent",
-            ));
-        }
-        let artifacts: LocalEmbeddingArtifacts = input
-            .local_artifacts
-            .ok_or_else(|| {
-                ApiError::bad_request("local embeddings require all six pinned artifacts")
-            })?
-            .into();
-        let profile = artifacts
-            .profile()
-            .map_err(|e| ApiError::bad_request(e.to_string()))?;
-        let account = profile.endpoint_identity.clone();
-        let mut config = EmbeddingConfig::new(profile, account);
-        config.local_artifacts = Some(artifacts);
+        let id = input
+            .local_profile_id
+            .ok_or_else(|| ApiError::bad_request("choose an installed local embedding profile"))?;
+        let profile = crate::knowledge_runtime::resolve_local_profile(s, &id)?;
+        let mut config = EmbeddingConfig::new(profile, "local-host");
+        config.local_profile_id = Some(id);
         config
             .validate()
             .map_err(|e| ApiError::bad_request(e.to_string()))?;
         return Ok(config);
     }
-    if input.local_artifacts.is_some() {
+    if input.local_profile_id.is_some() {
         return Err(ApiError::bad_request(
-            "local artifacts require the local-onnx provider",
+            "local profiles require the local-onnx provider",
         ));
     }
     let (settings, entry) = configured_provider(s, &input.provider_id)?;
@@ -286,27 +231,15 @@ fn make_embedding(
     config
         .validate()
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
-    if input.query_remote {
-        let fingerprint = profile_fingerprint(&config)?;
-        if input.consent_profile_fingerprint.as_deref() != Some(&fingerprint) {
-            return Err(ApiError::conflict(
-                "save and review the embedding destination before enabling query egress",
-            ));
-        }
-        config.query_consent = Some(RemoteEmbeddingConsent {
-            profile_fingerprint: fingerprint,
-            granted_at_ms: storage::now_ms(),
-        });
-    }
     Ok(config)
 }
 
-/// Grant only the current configured provider/model/destination identity.
-pub(crate) fn source_consent(s: &AppState, bot: Uuid) -> Result<RemoteEmbeddingConsent, ApiError> {
+/// Display only the current configured provider/model/destination identity.
+pub(crate) fn remote_fingerprint(s: &AppState, bot: Uuid) -> Result<String, ApiError> {
     let bot = s.bot_of_user(BotId(bot))?;
     let config = embedding_config(&bot)?
         .ok_or_else(|| ApiError::conflict("configure an embedding provider first"))?;
-    if config.local_artifacts.is_some() {
+    if config.local_profile_id.is_some() {
         return Err(ApiError::bad_request(
             "local embeddings do not need a remote source grant",
         ));
@@ -319,10 +252,7 @@ pub(crate) fn source_consent(s: &AppState, bot: Uuid) -> Result<RemoteEmbeddingC
             "provider destination changed; save the embedding settings again",
         ));
     }
-    Ok(RemoteEmbeddingConsent {
-        profile_fingerprint: profile_fingerprint(&config)?,
-        granted_at_ms: storage::now_ms(),
-    })
+    profile_fingerprint(&config)
 }
 
 #[utoipa::path(get, path = "/v1/bots/{bot}/knowledge/settings", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), responses((status = 200, body = KnowledgeSettingsDto), (status = 404, body = ErrorBody)))]
@@ -330,7 +260,10 @@ pub(crate) async fn get_settings(
     State(s): State<AppState>,
     Path(bot): Path<Uuid>,
 ) -> Result<Json<KnowledgeSettingsDto>, ApiError> {
-    Ok(Json(settings_dto(&s.bot_of_user(BotId(bot))?)?))
+    crate::knowledge::read_blocking(move || {
+        Ok(Json(settings_dto(&s, &s.bot_of_user(BotId(bot))?)?))
+    })
+    .await
 }
 
 #[utoipa::path(put, path = "/v1/bots/{bot}/knowledge/settings", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), request_body = KnowledgeSettingsInput, responses((status = 200, body = KnowledgeSettingsDto), (status = 400, body = ErrorBody)))]
@@ -339,64 +272,125 @@ pub(crate) async fn put_settings(
     Path(bot): Path<Uuid>,
     ApiJson(input): ApiJson<KnowledgeSettingsInput>,
 ) -> Result<Json<KnowledgeSettingsDto>, ApiError> {
-    let authority = crate::knowledge::authority_lock(&s)
-        .try_lock_owned()
-        .map_err(|_| {
-            ApiError::new(
-                axum::http::StatusCode::TOO_MANY_REQUESTS,
-                "knowledge_busy",
-                "a knowledge authority change is already running",
-            )
-        })?;
-    crate::knowledge::blocking(move || {
+    s.bot_of_user(BotId(bot))?;
+    if input.auto_retrieve && !agent_core::knowledge_auto_retrieval_available() {
+        return Err(ApiError::conflict(
+            "automatic retrieval is unavailable until native untrusted-read enforcement is installed",
+        ));
+    }
+    let authority = crate::knowledge::try_authority(&s, BotId(bot))?;
+    crate::knowledge_runtime::quiesce_bot(&s, BotId(bot)).await?;
+    crate::knowledge::blocking(s.data_dir(), move || {
         let _authority = authority;
         let mut bot = s.bot_of_user(BotId(bot))?;
+        let previous = embedding_config(&bot)
+            .ok()
+            .flatten()
+            .as_ref()
+            .map(profile_fingerprint)
+            .transpose()?;
         let embedding = input
             .embedding
             .map(|settings| make_embedding(&s, settings))
             .transpose()?;
-        let new_fingerprint = embedding.as_ref().map(profile_fingerprint).transpose()?;
-        let store = KnowledgeStore::open(
-            s.data_dir(),
-            Scope {
-                user_id: bot.user_id,
-                bot_id: bot.id,
-            },
-        )
-        .map_err(|_| ApiError::internal("knowledge index unavailable"))?;
-        for source in store
-            .list_sources()
-            .map_err(|_| ApiError::internal("knowledge sources unavailable"))?
-        {
-            if source
-                .remote_embedding
-                .as_ref()
-                .is_some_and(|grant| Some(&grant.profile_fingerprint) != new_fingerprint.as_ref())
-            {
-                store
-                    .update_source(
-                        source.id,
-                        source.revision,
-                        SourceUpdate {
-                            remote_embedding: Some(None),
-                            ..Default::default()
-                        },
-                    )
-                    .map_err(|_| {
-                        ApiError::conflict("source changed while revoking old embedding consent")
-                    })?;
-            }
+        let fingerprint = embedding.as_ref().map(profile_fingerprint).transpose()?;
+        if embedding.is_some() {
+            // Explicit configuration initializes the index identity used by
+            // owner approval cards even before the first source is selected.
+            KnowledgeStore::open(
+                s.data_dir(),
+                Scope {
+                    user_id: bot.user_id,
+                    bot_id: bot.id,
+                },
+            )
+            .map_err(|_| ApiError::internal("knowledge index unavailable"))?;
+        }
+        if previous != fingerprint {
+            crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
+            // Old source metadata is inert without its host grant. Retain paid
+            // vectors until a replacement profile generation completes.
         }
         bot.config["knowledge"] =
             json!({"auto_retrieve":input.auto_retrieve,"embedding":embedding});
         if !s.storage().update_bot(bot.id, &bot.name, &bot.config)? {
             return Err(ApiError::not_found("bot"));
         }
-        // The authority lock also guards runtime dispatch, so no old query/model
-        // generation can remain active after the new settings become visible.
-        crate::knowledge_runtime::forget_bot(&s, bot.id);
+        crate::knowledge_runtime::invalidate_bot(&s, bot.id);
         s.refresh_profile(&bot);
-        Ok(Json(settings_dto(&bot)?))
+        Ok(Json(settings_dto(&s, &bot)?))
+    })
+    .await
+}
+
+/// Ask policy for an owner-reviewable destination and source snapshot. Merely
+/// opening the card grants no authority and starts no provider request.
+#[utoipa::path(post, path = "/v1/bots/{bot}/knowledge/embedding-approvals", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), request_body = EmbeddingGrantTarget, responses((status = 200, body = EmbeddingApprovalChallenge), (status = 403, body = ErrorBody), (status = 409, body = ErrorBody)))]
+pub(crate) async fn request_embedding_approval(
+    State(s): State<AppState>,
+    Path(bot): Path<Uuid>,
+    ApiJson(target): ApiJson<EmbeddingGrantTarget>,
+) -> Result<Json<EmbeddingApprovalChallenge>, ApiError> {
+    s.bot_of_user(BotId(bot))?;
+    let authority = crate::knowledge::try_authority(&s, BotId(bot))?;
+    crate::knowledge::blocking(s.data_dir(), move || {
+        let _authority = authority;
+        Ok(Json(crate::knowledge_runtime::grant_request(
+            &s,
+            BotId(bot),
+            target,
+        )?))
+    })
+    .await
+}
+
+/// Confirm exactly the server snapshot the local owner reviewed. A changed
+/// profile/source, expired card or replay requires a fresh owner decision.
+#[utoipa::path(post, path = "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path), ("approval" = Uuid, Path)), responses((status = 204), (status = 403, body = ErrorBody), (status = 409, body = ErrorBody)))]
+pub(crate) async fn confirm_embedding_approval(
+    State(s): State<AppState>,
+    Path((bot, approval)): Path<(Uuid, Uuid)>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    s.bot_of_user(BotId(bot))?;
+    let authority = crate::knowledge::try_authority(&s, BotId(bot))?;
+    crate::knowledge::blocking(s.data_dir(), move || {
+        let _authority = authority;
+        crate::knowledge_runtime::grant_confirm(&s, BotId(bot), approval)?;
+        Ok(axum::http::StatusCode::NO_CONTENT)
+    })
+    .await
+}
+
+#[utoipa::path(delete, path = "/v1/bots/{bot}/knowledge/embedding-grants", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), request_body = EmbeddingGrantTarget, responses((status = 204), (status = 404, body = ErrorBody)))]
+pub(crate) async fn revoke_embedding_grant(
+    State(s): State<AppState>,
+    Path(bot): Path<Uuid>,
+    ApiJson(target): ApiJson<EmbeddingGrantTarget>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    s.bot_of_user(BotId(bot))?;
+    let authority = crate::knowledge::try_authority(&s, BotId(bot))?;
+    crate::knowledge_runtime::quiesce_bot(&s, BotId(bot)).await?;
+    crate::knowledge::blocking(s.data_dir(), move || {
+        let _authority = authority;
+        crate::knowledge_runtime::revoke_grant(&s, BotId(bot), target)?;
+        Ok(axum::http::StatusCode::NO_CONTENT)
+    })
+    .await
+}
+
+/// Explicit owner recovery for a provider's shared retry delay; quota usage and
+/// per-source failure records remain intact.
+#[utoipa::path(post, path = "/v1/bots/{bot}/knowledge/embedding-cooldown/reset", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), responses((status = 204), (status = 409, body = ErrorBody)))]
+pub(crate) async fn reset_embedding_cooldown(
+    State(s): State<AppState>,
+    Path(bot): Path<Uuid>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    s.bot_of_user(BotId(bot))?;
+    let authority = crate::knowledge::try_authority(&s, BotId(bot))?;
+    crate::knowledge::blocking(s.data_dir(), move || {
+        let _authority = authority;
+        crate::knowledge_runtime::reset_embedding_cooldown(&s, BotId(bot))?;
+        Ok(axum::http::StatusCode::NO_CONTENT)
     })
     .await
 }

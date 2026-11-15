@@ -26,7 +26,10 @@ use uuid::Uuid;
 
 use crate::{ApiError, AppState, error::ErrorBody, routes::ApiJson};
 
-static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+type SourceWorkers = parking_lot::Mutex<
+    std::collections::BTreeMap<std::path::PathBuf, std::sync::Weak<tokio::sync::Semaphore>>,
+>;
+static WORKERS: OnceLock<SourceWorkers> = OnceLock::new();
 
 /// JSON may encode each decoded input byte as a six-byte Unicode escape.
 /// Decoded snapshots remain limited to 4 MiB and indexed text to 1 MiB.
@@ -37,12 +40,15 @@ pub(crate) static SOURCE_WORKER_PROBE: parking_lot::Mutex<
     Option<(BotId, std::sync::mpsc::Sender<std::thread::ThreadId>)>,
 > = parking_lot::Mutex::new(None);
 
-pub(crate) fn authority_lock(s: &AppState) -> Arc<tokio::sync::Mutex<()>> {
-    crate::knowledge_runtime::authority_lock(s)
+pub(crate) fn authority_lock(s: &AppState, bot: BotId) -> Arc<tokio::sync::Mutex<()>> {
+    crate::knowledge_runtime::authority_lock(s, bot)
 }
 
-fn try_authority(s: &AppState) -> Result<tokio::sync::OwnedMutexGuard<()>, ApiError> {
-    authority_lock(s).try_lock_owned().map_err(|_| {
+pub(crate) fn try_authority(
+    s: &AppState,
+    bot: BotId,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, ApiError> {
+    authority_lock(s, bot).try_lock_owned().map_err(|_| {
         ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "knowledge_busy",
@@ -160,6 +166,7 @@ pub struct KnowledgeEmbeddingProgress {
     pub embedded_chunks: usize,
     pub cache_hits: usize,
     pub remaining_chunks: usize,
+    pub skipped_chunks: usize,
     pub next_attempt_ms: Option<i64>,
     pub failure_code: Option<String>,
 }
@@ -180,6 +187,7 @@ impl From<memory_store::knowledge::embedding::EmbeddingProgress> for KnowledgeEm
             embedded_chunks: value.embedded_chunks,
             cache_hits: value.cache_hits,
             remaining_chunks: value.remaining_chunks,
+            skipped_chunks: value.skipped_chunks,
             next_attempt_ms: value.next_attempt_ms,
             failure_code: value.failure_code,
         }
@@ -218,12 +226,11 @@ pub struct KnowledgeReindex {
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum KnowledgeSourceAction {
     Enable,
     Disable,
-    GrantRemote,
     RevokeRemote,
     Rename,
     Rebind,
@@ -237,9 +244,6 @@ pub struct KnowledgeSourceChange {
     pub label: Option<String>,
     /// An owner-selected replacement path, required to rebind imported files.
     pub path: Option<String>,
-    /// Required for a grant: the exact destination/model fingerprint displayed
-    /// to the user. A concurrently changed provider cannot inherit the click.
-    pub profile_fingerprint: Option<String>,
 }
 
 fn err(error: memory_store::MemoryError) -> ApiError {
@@ -269,7 +273,11 @@ fn required(value: Option<&str>, name: &str) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError::bad_request(format!("{name} is required")))
 }
 
-fn source_dto(store: &KnowledgeStore, source: Source) -> Result<KnowledgeSourceDto, ApiError> {
+fn source_dto(
+    s: &AppState,
+    store: &KnowledgeStore,
+    source: Source,
+) -> Result<KnowledgeSourceDto, ApiError> {
     let docs = store.list_documents(source.id).map_err(err)?;
     let kind = match source.kind {
         SourceKind::File => KnowledgeSourceKind::File,
@@ -280,6 +288,20 @@ fn source_dto(store: &KnowledgeStore, source: Source) -> Result<KnowledgeSourceD
         SourceKind::Note => KnowledgeSourceKind::Note,
         SourceKind::SharedBrain => KnowledgeSourceKind::SharedBrain,
     };
+    let remote_profile_fingerprint =
+        crate::knowledge_settings::remote_fingerprint(s, store.scope().bot_id.0)
+            .ok()
+            .filter(|fingerprint| {
+                crate::knowledge_runtime::authorized(
+                    s,
+                    store.scope().bot_id,
+                    &crate::knowledge_runtime::EmbeddingGrantTarget::Documents {
+                        source_id: source.id,
+                    },
+                    fingerprint,
+                )
+                .is_some()
+            });
     Ok(KnowledgeSourceDto {
         id: source.id,
         kind,
@@ -289,7 +311,7 @@ fn source_dto(store: &KnowledgeStore, source: Source) -> Result<KnowledgeSourceD
             && source.locator == "imported:requires-path-selection",
         locator: source.locator,
         revision: source.revision,
-        remote_profile_fingerprint: source.remote_embedding.map(|g| g.profile_fingerprint),
+        remote_profile_fingerprint,
         documents: docs.len(),
         chunks: docs.iter().map(|d| d.chunks).sum(),
         updated_ms: source.updated_ms,
@@ -637,29 +659,54 @@ fn reindex_inner(
         .map_err(err)?
         .ok_or_else(|| ApiError::not_found("source removed while indexing"))?;
     Ok(KnowledgeMutation {
-        source: source_dto(&store, latest)?,
+        source: source_dto(s, &store, latest)?,
         indexing: status,
     })
 }
 
 pub(crate) async fn blocking<T: Send + 'static>(
+    data_dir: std::path::PathBuf,
     work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
 ) -> Result<T, ApiError> {
-    blocking_with_permit(worker_permit()?, work).await
+    blocking_with_permit(worker_permit(data_dir)?, work).await
 }
 
-pub(crate) fn worker_permit() -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
-    WORKERS
-        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+/// Read-only settings/listing work has a separate bound so one settings page's
+/// concurrent reads do not contend for the serialized source mutation worker.
+pub(crate) async fn read_blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    static READERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    let permit = READERS
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
         .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "knowledge_busy",
-                "a knowledge indexing worker is already running",
-            )
-        })
+        .acquire_owned()
+        .await
+        .map_err(|_| ApiError::unavailable("knowledge reader unavailable"))?;
+    blocking_with_permit(permit, work).await
+}
+
+pub(crate) fn worker_permit(
+    data_dir: std::path::PathBuf,
+) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
+    let mut workers = WORKERS.get_or_init(SourceWorkers::default).lock();
+    workers.retain(|_, worker| worker.strong_count() > 0);
+    let worker = workers
+        .get(&data_dir)
+        .and_then(std::sync::Weak::upgrade)
+        .unwrap_or_else(|| {
+            let worker = Arc::new(tokio::sync::Semaphore::new(1));
+            workers.insert(data_dir, Arc::downgrade(&worker));
+            worker
+        });
+    drop(workers);
+    worker.try_acquire_owned().map_err(|_| {
+        ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "knowledge_busy",
+            "a knowledge indexing worker is already running",
+        )
+    })
 }
 
 pub(crate) async fn blocking_with_permit<T: Send + 'static>(
@@ -680,15 +727,20 @@ pub(crate) async fn list_sources(
     ApiPath(bot): ApiPath<Uuid>,
 ) -> Result<Json<Vec<KnowledgeSourceDto>>, ApiError> {
     let owner = scope(&s, bot)?;
-    let store = store(&s, owner)?;
-    Ok(Json(
-        store
-            .list_sources()
-            .map_err(err)?
-            .into_iter()
-            .map(|source| source_dto(&store, source))
-            .collect::<Result<_, _>>()?,
-    ))
+    read_blocking(move || {
+        let Some(store) = KnowledgeStore::open_existing(s.data_dir(), owner).map_err(err)? else {
+            return Ok(Json(Vec::new()));
+        };
+        Ok(Json(
+            store
+                .list_sources()
+                .map_err(err)?
+                .into_iter()
+                .map(|source| source_dto(&s, &store, source))
+                .collect::<Result<_, _>>()?,
+        ))
+    })
+    .await
 }
 
 #[utoipa::path(post, path = "/v1/bots/{bot}/knowledge/sources", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), request_body = KnowledgeSourceInput, responses((status = 201, body = KnowledgeMutation), (status = 409, body = ErrorBody)))]
@@ -698,8 +750,8 @@ pub(crate) async fn create_source(
     ApiJson(input): ApiJson<KnowledgeSourceInput>,
 ) -> Result<(StatusCode, Json<KnowledgeMutation>), ApiError> {
     let owner = scope(&s, bot)?;
-    let authority = try_authority(&s)?;
-    let result = blocking(move || {
+    let authority = try_authority(&s, owner.bot_id)?;
+    let result = blocking(s.data_dir(), move || {
         let _authority = authority;
         s.agent().refresh_external_redactor();
         let kind = SourceKind::from(input.kind);
@@ -797,7 +849,7 @@ pub(crate) async fn create_source(
                 .map_err(err)?
                 .ok_or_else(|| ApiError::not_found("source removed"))?;
             Ok(KnowledgeMutation {
-                source: source_dto(&store, source)?,
+                source: source_dto(&s, &store, source)?,
                 indexing: KnowledgeIndexStatus {
                     processed: 1,
                     ..Default::default()
@@ -826,11 +878,12 @@ pub(crate) async fn reindex_source(
     ApiJson(input): ApiJson<KnowledgeReindex>,
 ) -> Result<Json<KnowledgeMutation>, ApiError> {
     let owner = scope(&s, bot)?;
-    let authority = try_authority(&s)?;
-    s.agent().refresh_external_redactor();
+    let authority = try_authority(&s, owner.bot_id)?;
+    crate::knowledge_runtime::quiesce_bot(&s, owner.bot_id).await?;
     Ok(Json(
-        blocking(move || {
+        blocking(s.data_dir(), move || {
             let _authority = authority;
+            s.agent().refresh_external_redactor();
             let source = existing(&store(&s, owner)?, id, input.expected_revision)?;
             reindex_inner(&s, owner, &source, input.cursor.as_deref())
         })
@@ -868,9 +921,11 @@ pub(crate) async fn update_source(
     ApiJson(input): ApiJson<KnowledgeSourceChange>,
 ) -> Result<Json<KnowledgeSourceDto>, ApiError> {
     let owner = scope(&s, bot)?;
-    let authority = try_authority(&s)?;
-    blocking(move || {
+    let authority = try_authority(&s, owner.bot_id)?;
+    crate::knowledge_runtime::quiesce_bot(&s, owner.bot_id).await?;
+    blocking(s.data_dir(), move || {
         let _authority = authority;
+        s.agent().refresh_external_redactor();
         let store = store(&s, owner)?;
         let source = existing(&store, id, input.expected_revision)?;
         let mut update = SourceUpdate::default();
@@ -906,29 +961,29 @@ pub(crate) async fn update_source(
                 let rebound = store
                     .rebind_source(id, input.expected_revision, path)
                     .map_err(err)?;
-                crate::knowledge_runtime::forget_bot(&s, owner.bot_id);
-                return Ok(Json(source_dto(&store, rebound)?));
+                crate::knowledge_runtime::revoke_grant(
+                    &s,
+                    owner.bot_id,
+                    crate::knowledge_runtime::EmbeddingGrantTarget::Documents { source_id: id },
+                )?;
+                return Ok(Json(source_dto(&s, &store, rebound)?));
             }
             KnowledgeSourceAction::RevokeRemote => update.remote_embedding = Some(None),
-            KnowledgeSourceAction::GrantRemote => {
-                if !source.enabled {
-                    return Err(ApiError::conflict(
-                        "reauthorize the source before granting remote embeddings",
-                    ));
-                }
-                let grant = crate::knowledge_settings::source_consent(&s, bot)?;
-                if input.profile_fingerprint.as_deref() != Some(&grant.profile_fingerprint) {
-                    return Err(ApiError::conflict(
-                        "embedding profile changed; review its destination again",
-                    ));
-                }
-                update.remote_embedding = Some(Some(grant));
-            }
         }
         let updated = store
             .update_source(id, input.expected_revision, update)
             .map_err(err)?;
-        Ok(Json(source_dto(&store, updated)?))
+        if matches!(
+            input.action,
+            KnowledgeSourceAction::Disable | KnowledgeSourceAction::RevokeRemote
+        ) {
+            crate::knowledge_runtime::revoke_grant(
+                &s,
+                owner.bot_id,
+                crate::knowledge_runtime::EmbeddingGrantTarget::Documents { source_id: id },
+            )?;
+        }
+        Ok(Json(source_dto(&s, &store, updated)?))
     })
     .await
 }
@@ -940,12 +995,18 @@ pub(crate) async fn delete_source(
     ApiJson(input): ApiJson<KnowledgeRevision>,
 ) -> Result<StatusCode, ApiError> {
     let owner = scope(&s, bot)?;
-    let authority = try_authority(&s)?;
-    blocking(move || {
+    let authority = try_authority(&s, owner.bot_id)?;
+    crate::knowledge_runtime::quiesce_bot(&s, owner.bot_id).await?;
+    blocking(s.data_dir(), move || {
         let _authority = authority;
         store(&s, owner)?
             .delete_source(id, input.expected_revision)
             .map_err(err)?;
+        crate::knowledge_runtime::revoke_grant(
+            &s,
+            owner.bot_id,
+            crate::knowledge_runtime::EmbeddingGrantTarget::Documents { source_id: id },
+        )?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -958,71 +1019,118 @@ pub(crate) async fn email_captures(
     ApiPath(bot): ApiPath<Uuid>,
 ) -> Result<Json<Vec<KnowledgeEmailCapture>>, ApiError> {
     let owner = scope(&s, bot)?;
-    let bot_text = owner.bot_id.to_string();
-    let accounts: Vec<String> = s
-        .email()
-        .map(|host| {
-            host.list()
-                .into_iter()
-                .filter(|a| a.bot.as_ref().is_none_or(|b| b == &bot_text))
-                .map(|a| a.name)
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut found = Vec::new();
-    for step in s.storage().knowledge_tool_steps(
-        owner.user_id,
-        owner.bot_id,
-        None,
-        100,
-        MAX_TEXT_BYTES * 4,
-    )? {
-        if step.name != "tools" || step.user_id != owner.user_id {
-            continue;
-        }
-        let Some(results) = step.output.as_ref().and_then(|v| v["results"].as_array()) else {
-            continue;
-        };
-        for result in results {
-            if result["name"] != "email_read"
-                || result["is_error"] != false
-                || result["spill_path"].is_string()
-            {
+    read_blocking(move || {
+        let bot_text = owner.bot_id.to_string();
+        let accounts: Vec<String> = s
+            .email()
+            .map(|host| {
+                host.list()
+                    .into_iter()
+                    .filter(|a| a.bot.as_ref().is_none_or(|b| b == &bot_text))
+                    .map(|a| a.name)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut found = Vec::new();
+        for step in s.storage().knowledge_tool_steps(
+            owner.user_id,
+            owner.bot_id,
+            None,
+            100,
+            MAX_TEXT_BYTES * 4,
+        )? {
+            if step.name != "tools" || step.user_id != owner.user_id {
                 continue;
             }
-            let Some(call_id) = result["call_uuid"]
-                .as_str()
-                .and_then(|id| id.parse::<Uuid>().ok())
+            let Some(results) = step.output.as_ref().and_then(|v| v["results"].as_array()) else {
+                continue;
+            };
+            for result in results {
+                if result["name"] != "email_read"
+                    || result["is_error"] != false
+                    || result["spill_path"].is_string()
+                {
+                    continue;
+                }
+                let Some(call_id) = result["call_uuid"]
+                    .as_str()
+                    .and_then(|id| id.parse::<Uuid>().ok())
+                else {
+                    continue;
+                };
+                let Some(call) = step.input["calls"].as_array().and_then(|calls| {
+                    calls
+                        .iter()
+                        .find(|call| call["id"] == result["id"] && call["name"] == "email_read")
+                }) else {
+                    continue;
+                };
+                let args: Value =
+                    serde_json::from_str(call["arguments"].as_str().unwrap_or_default())
+                        .unwrap_or(Value::Null);
+                let Some(account) = args["account"]
+                    .as_str()
+                    .filter(|account| accounts.iter().any(|a| a == *account))
+                else {
+                    continue;
+                };
+                found.push(KnowledgeEmailCapture {
+                    run_id: step.run_id.0,
+                    tool_call_id: call_id,
+                    account: account.into(),
+                    created_ms: step.finished_at_ms.unwrap_or(step.started_at_ms),
+                });
+                if found.len() == 50 {
+                    return Ok(Json(found));
+                }
+            }
+        }
+        Ok(Json(found))
+    })
+    .await
+}
+
+/// Caller already owns the source mutation permit, preventing new selections
+/// during this scan. Sorted per-bot lanes cannot deadlock with another account.
+pub(crate) async fn email_authorities(
+    s: &AppState,
+    account: &str,
+) -> Result<Vec<tokio::sync::OwnedMutexGuard<()>>, ApiError> {
+    let state = s.clone();
+    let account = account.to_owned();
+    let mut affected = read_blocking(move || {
+        let mut affected = Vec::new();
+        for bot in state.storage().list_bots(state.user_id())? {
+            let Some(index) = KnowledgeStore::open_existing(
+                state.data_dir(),
+                Scope {
+                    user_id: bot.user_id,
+                    bot_id: bot.id,
+                },
+            )
+            .map_err(err)?
             else {
                 continue;
             };
-            let Some(call) = step.input["calls"].as_array().and_then(|calls| {
-                calls
-                    .iter()
-                    .find(|call| call["id"] == result["id"] && call["name"] == "email_read")
-            }) else {
-                continue;
-            };
-            let args: Value = serde_json::from_str(call["arguments"].as_str().unwrap_or_default())
-                .unwrap_or(Value::Null);
-            let Some(account) = args["account"]
-                .as_str()
-                .filter(|account| accounts.iter().any(|a| a == *account))
-            else {
-                continue;
-            };
-            found.push(KnowledgeEmailCapture {
-                run_id: step.run_id.0,
-                tool_call_id: call_id,
-                account: account.into(),
-                created_ms: step.finished_at_ms.unwrap_or(step.started_at_ms),
-            });
-            if found.len() == 50 {
-                return Ok(Json(found));
+            if index.list_sources().map_err(err)?.iter().any(|source| {
+                source.kind == SourceKind::Email
+                    && serde_json::from_str::<EmailLocator>(&source.locator)
+                        .is_ok_and(|locator| locator.account == account)
+            }) {
+                affected.push(bot.id);
             }
         }
+        Ok(affected)
+    })
+    .await?;
+    affected.sort_unstable_by_key(|bot| bot.0);
+    let mut guards = Vec::with_capacity(affected.len());
+    for bot in affected {
+        let guard = authority_lock(s, bot).lock_owned().await;
+        crate::knowledge_runtime::quiesce_bot(s, bot).await?;
+        guards.push(guard);
     }
-    Ok(Json(found))
+    Ok(guards)
 }
 
 /// Rebinding/removing a mailbox revokes every copied source of that account.
@@ -1063,13 +1171,20 @@ pub(crate) fn revoke_email_sources(s: &AppState, account: &str) -> Result<(), Ap
                         },
                     )
                     .map_err(err)?;
+                crate::knowledge_runtime::revoke_grant(
+                    s,
+                    bot.id,
+                    crate::knowledge_runtime::EmbeddingGrantTarget::Documents {
+                        source_id: source.id,
+                    },
+                )?;
             }
         }
     }
     Ok(())
 }
 
-/// Caller holds the host authority lock and the bot deletion transaction.
+/// Caller holds the bot authority lane and the bot deletion transaction.
 /// Remove only this bot's knowledge files through no-follow directory handles.
 pub(crate) fn remove_bot_index(s: &AppState, bot: &storage::Bot) -> std::io::Result<()> {
     crate::knowledge_runtime::forget_bot(s, bot.id);

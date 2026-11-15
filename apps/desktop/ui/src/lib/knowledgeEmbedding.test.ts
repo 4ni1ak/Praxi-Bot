@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { advanceKnowledgeEmbeddings } from "./knowledgeEmbedding.ts";
 import type { KnowledgeEmbeddingProgress } from "../api/types";
 
-const progress: KnowledgeEmbeddingProgress = { status: "progress", embedded_chunks: 1, cache_hits: 0, remaining_chunks: 20, next_attempt_ms: null, failure_code: null };
+const progress: KnowledgeEmbeddingProgress = { status: "progress", embedded_chunks: 1, cache_hits: 0, remaining_chunks: 20, skipped_chunks: 0, next_attempt_ms: null, failure_code: null };
 
 test("one explicit embedding retry never resets subsequent failures automatically", async () => {
   const resets: boolean[] = [];

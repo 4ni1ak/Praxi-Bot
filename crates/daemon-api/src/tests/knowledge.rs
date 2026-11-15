@@ -381,33 +381,78 @@ async fn knowledge_email_uses_owned_capture_and_revokes_on_account_change() {
 }
 
 #[tokio::test]
-async fn knowledge_local_profile_is_derived_and_query_grant_is_separate() {
+async fn knowledge_local_profile_is_host_installed_and_paths_are_not_api_inputs() {
     let _serial = crate::knowledge_runtime::test_guard().await;
     let t = setup();
     let (bot, _) = make_chat(&t).await;
     let route = format!("/v1/bots/{bot}/knowledge/settings");
     let initial = request(&t, Method::GET, &route, None).await;
     assert_eq!(initial.json()["auto_retrieve"], false);
+    assert_eq!(initial.json()["auto_retrieval_available"], false);
     assert!(initial.json()["embedding"].is_null());
-    let artifact =
-        json!({"path":t._dir.path().join("operator-selected-file"),"sha256":"a".repeat(64)});
+    assert!(
+        initial.json()["local_profiles"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let artifact = json!({"path":t._dir.path().join("private-operator-selected-file"),"sha256":"a".repeat(64)});
     let artifacts = json!({"runtime":artifact,"model":artifact,"tokenizer":artifact,"config":artifact,"special_tokens_map":artifact,"tokenizer_config":artifact});
-    let mut config = json!({"auto_retrieve":true,"embedding":{"provider_id":"local-onnx","model":"ignored-client-model","dimensions":999,"requests_per_minute":100,"requests_per_day":1000,"local_artifacts":artifacts}});
+    let mut config = json!({"auto_retrieve":false,"embedding":{"provider_id":"local-onnx","model":"ignored-client-model","dimensions":999,"requests_per_minute":100,"requests_per_day":1000,"local_profile_id":"offline-e5"}});
+    let mut forged = config.clone();
+    forged["embedding"]["local_artifacts"] = artifacts.clone();
+    assert_eq!(
+        request(&t, Method::PUT, &route, Some(forged)).await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(&t, Method::PUT, &route, Some(config.clone()))
+            .await
+            .status,
+        StatusCode::BAD_REQUEST,
+        "an unknown profile cannot select files"
+    );
+    let host = t.state.data_dir().join("knowledge-host.json");
+    std::fs::write(
+        &host,
+        json!({"profiles":{"offline-e5":{"label":"Installed E5","artifacts":artifacts}}})
+            .to_string(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let saved = request(&t, Method::PUT, &route, Some(config.clone())).await;
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.json());
     assert_eq!(saved.json()["embedding"]["dimensions"], 384);
     assert_eq!(saved.json()["embedding"]["model"], "multilingual-e5-small");
+    assert_eq!(saved.json()["embedding"]["local_profile_id"], "offline-e5");
     assert_eq!(saved.json()["embedding"]["query_remote"], false);
+    assert_eq!(saved.json()["local_profiles"][0]["label"], "Installed E5");
     assert!(
-        saved.json()["embedding"]["endpoint"]
-            .as_str()
-            .unwrap()
-            .starts_with("local-onnx:")
+        !saved
+            .json()
+            .to_string()
+            .contains("private-operator-selected-file")
     );
+    assert!(!saved.json().to_string().contains("local_artifacts"));
     config["embedding"]["query_remote"] = true.into();
     assert_eq!(
         request(&t, Method::PUT, &route, Some(config)).await.status,
         StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &t,
+            Method::PUT,
+            &route,
+            Some(json!({"auto_retrieve":true,"embedding":null}))
+        )
+        .await
+        .status,
+        StatusCode::CONFLICT
     );
 }
 
@@ -524,12 +569,14 @@ async fn knowledge_provider_aliases_share_secret_reference_quota() {
 }
 
 #[tokio::test]
-async fn knowledge_remote_grants_bind_reviewed_profile_and_query_independently() {
+async fn knowledge_remote_grants_require_owner_cards_and_queries_are_independent() {
     let _serial = crate::knowledge_runtime::test_guard().await;
     let t = setup();
     let (bot, _) = make_chat(&t).await;
     configure_remote(&t, "https://embedding.example.invalid/v1");
     let route = format!("/v1/bots/{bot}/knowledge/settings");
+    let sources = format!("/v1/bots/{bot}/knowledge/sources");
+    let approvals = format!("/v1/bots/{bot}/knowledge/embedding-approvals");
     let source = add(
         &t,
         &bot,
@@ -537,55 +584,139 @@ async fn knowledge_remote_grants_bind_reviewed_profile_and_query_independently()
     )
     .await["source"]
         .clone();
-    let source_route = format!(
-        "/v1/bots/{bot}/knowledge/sources/{}",
-        source["id"].as_str().unwrap()
-    );
+    let source_route = format!("{sources}/{}", source["id"].as_str().unwrap());
     let mut input = json!({"auto_retrieve":false,"embedding":{"provider_id":"fixture-embedding","model":"embed-v1","dimensions":384,"requests_per_minute":100,"requests_per_day":1000}});
     let saved = request(&t, Method::PUT, &route, Some(input.clone())).await;
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.json());
     let fingerprint = saved.json()["embedding"]["profile_fingerprint"].clone();
-    let wrong = request(&t, Method::PUT, &source_route, Some(json!({"action":"grant_remote","expected_revision":source["revision"],"profile_fingerprint":"b".repeat(64)}))).await;
-    assert_eq!(wrong.status, StatusCode::CONFLICT);
-    let granted = request(&t, Method::PUT, &source_route, Some(json!({"action":"grant_remote","expected_revision":source["revision"],"profile_fingerprint":fingerprint}))).await;
-    assert_eq!(granted.status, StatusCode::OK, "{}", granted.json());
+    let shortcut = request(&t, Method::PUT, &source_route, Some(json!({"action":"grant_remote","expected_revision":source["revision"],"profile_fingerprint":fingerprint}))).await;
+    assert_eq!(shortcut.status, StatusCode::BAD_REQUEST);
+    let mut shortcut = input.clone();
+    shortcut["embedding"]["query_remote"] = true.into();
+    shortcut["embedding"]["consent_profile_fingerprint"] = fingerprint.clone();
+    assert_eq!(
+        request(&t, Method::PUT, &route, Some(shortcut))
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+    let card = request(
+        &t,
+        Method::POST,
+        &approvals,
+        Some(json!({"kind":"documents","source_id":source["id"]})),
+    )
+    .await;
+    assert_eq!(card.status, StatusCode::OK, "{}", card.json());
+    assert_eq!(card.json()["profile_fingerprint"], fingerprint);
+    assert_eq!(card.json()["policy_decision"], "ask");
+    assert!(
+        request(&t, Method::GET, &sources, None).await.json()[0]["remote_profile_fingerprint"]
+            .is_null()
+    );
+    let confirm = format!(
+        "{approvals}/{}/confirm",
+        card.json()["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        request(&t, Method::POST, &confirm, None).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(&t, Method::POST, &confirm, None).await.status,
+        StatusCode::NOT_FOUND,
+        "confirmation must be single use"
+    );
+    assert_eq!(
+        request(&t, Method::GET, &sources, None).await.json()[0]["remote_profile_fingerprint"],
+        fingerprint
+    );
     assert_eq!(
         request(&t, Method::GET, &route, None).await.json()["embedding"]["query_remote"],
         false
     );
-    input["embedding"]["query_remote"] = true.into();
-    assert_eq!(
-        request(&t, Method::PUT, &route, Some(input.clone()))
-            .await
-            .status,
-        StatusCode::CONFLICT
+    let card = request(
+        &t,
+        Method::POST,
+        &approvals,
+        Some(json!({"kind":"queries"})),
+    )
+    .await;
+    assert_eq!(card.status, StatusCode::OK);
+    let confirm = format!(
+        "{approvals}/{}/confirm",
+        card.json()["id"].as_str().unwrap()
     );
-    input["embedding"]["consent_profile_fingerprint"] = fingerprint;
     assert_eq!(
-        request(&t, Method::PUT, &route, Some(input.clone()))
-            .await
-            .status,
-        StatusCode::OK
+        request(&t, Method::POST, &confirm, None).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request(&t, Method::GET, &route, None).await.json()["embedding"]["query_remote"],
+        true
     );
     input["embedding"]["model"] = "embed-v2".into();
     assert_eq!(
         request(&t, Method::PUT, &route, Some(input.clone()))
             .await
             .status,
-        StatusCode::CONFLICT
-    );
-    input["embedding"]["query_remote"] = false.into();
-    input["embedding"]["consent_profile_fingerprint"] = Value::Null;
-    assert_eq!(
-        request(&t, Method::PUT, &route, Some(input)).await.status,
         StatusCode::OK
+    );
+    assert_eq!(
+        request(&t, Method::GET, &route, None).await.json()["embedding"]["query_remote"],
+        false
+    );
+    assert!(
+        request(&t, Method::GET, &sources, None).await.json()[0]["remote_profile_fingerprint"]
+            .is_null()
     );
     let record = index(&t, &bot)
         .source(source["id"].as_str().unwrap().parse().unwrap())
         .unwrap()
         .unwrap();
-    assert!(record.remote_embedding.is_none());
-    assert!(record.revision > granted.json()["revision"].as_u64().unwrap());
+    assert!(
+        record.remote_embedding.is_some(),
+        "inert metadata preserves the old paid generation until replacement"
+    );
+    input["embedding"]["model"] = "embed-v1".into();
+    assert_eq!(
+        request(&t, Method::PUT, &route, Some(input)).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(&t, Method::GET, &route, None).await.json()["embedding"]["query_remote"],
+        false,
+        "restoring a profile must not resurrect host consent"
+    );
+    let revoked = request(
+        &t,
+        Method::PUT,
+        &source_route,
+        Some(json!({"action":"revoke_remote","expected_revision":record.revision})),
+    )
+    .await;
+    assert_eq!(revoked.status, StatusCode::OK);
+    assert!(
+        index(&t, &bot)
+            .source(record.id)
+            .unwrap()
+            .unwrap()
+            .remote_embedding
+            .is_none()
+    );
+    t.agent
+        .set_global_policy(permission_engine::Policy::read_only());
+    assert_eq!(
+        request(
+            &t,
+            Method::POST,
+            &approvals,
+            Some(json!({"kind":"queries"}))
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN
+    );
 }
 
 #[tokio::test]

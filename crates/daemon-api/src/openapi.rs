@@ -58,6 +58,8 @@ impl Modify for Security {
         live_view::stream::frames,
         knowledge::list_sources, knowledge::create_source, knowledge::update_source, knowledge::delete_source, knowledge::reindex_source, knowledge::embed_source,
         knowledge_settings::get_settings, knowledge_settings::put_settings, knowledge::email_captures,
+        knowledge_settings::request_embedding_approval, knowledge_settings::confirm_embedding_approval,
+        knowledge_settings::revoke_embedding_grant, knowledge_settings::reset_embedding_cooldown,
         routes::list_bots,
         routes::create_bot,
         routes::get_bot,

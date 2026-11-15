@@ -91,7 +91,24 @@ instead of reopening an unchecked path. Saved web pages accept saved content and
 a validated HTTP(S) locator; they do not crawl or refresh that URL. A conversation
 snapshot requires owner **and** bot/chat equality. Email snapshots come from an
 authorized read by this bot and are rechecked against the account's current
-binding. Account rebind/delete invalidates related sources.
+binding. Only a successful account binding change or removal invalidates related
+sources; password rotation, unrelated edits and failed updates preserve them.
+
+The daemon resolves its own data directory once at startup as a trusted root.
+Source selection rejects that directory, its descendants, and any ancestor that
+would include it. Only an explicit shared-brain attachment may read the exact
+`data_dir/brain` directory. Credential roots (`.kube`, `.docker`, cloud credential
+stores and browser profiles) and protected filenames remain excluded after
+canonicalization, including Windows short-name aliases. No-follow handle checks
+still apply below the selected root. Paths and labels are checked against live
+registered secret values; normal long paths are not treated as base64 secrets.
+Saved URLs also reject userinfo and secret-bearing query/fragment values.
+
+Source mutations, embedding configuration and owner approval/reset routes reject
+all paired peer roles, including Desktop, Phone, Node and Host. Generic bot
+JSON/TOML editors reject peer changes to the decoded knowledge subtree while
+preserving ordinary name/profile edits. The owner uses dedicated knowledge
+settings so stale generic profile snapshots cannot restore saved consent.
 
 The email selector only offers a successful, persisted `email_read` result with
 an explicit account argument from an owned run of this same bot. Failed or
@@ -117,12 +134,20 @@ per chunk, 4,096 chunks per document, 256 sources, 50,000 documents and 100,000
 chunks per bot. Source adapters impose their own input/extraction/scan limits
 before invoking parsers. Indexing publishes one document at a time, reports a
 cursor for bounded folder pages, and can restart safely through hash comparison.
-Removed files are pruned only after a complete successful scan; a partial scan
-must not delete unseen documents. Files larger than the limit are reported as
-skipped/errors instead of being silently truncated into a complete-looking index.
+Individual folder files that fail reading, extraction or indexing are recorded
+with safe failure codes; the cursor continues past them. Missing files are pruned
+only once discovery reaches the end, including when other entries were skipped.
+A partial scan must not delete unseen documents. A fatal initial scan rolls back
+the new source. Oversized or incomplete extraction is explicitly refused rather
+than saved as a complete-looking truncated document.
 
 The shipped file adapter admits at most 4 MiB of input bytes and 1 MiB of
-extracted text per document. Folder discovery is bounded by 4,096 directory
+extracted UTF-8 text per document. Saved-content source requests allow a JSON
+body of `6 × 4 MiB + 64 KiB`: the sixfold allowance covers JSON Unicode/control
+escaping of the decoded byte budget, and the remainder bounds metadata overhead.
+The decoded content still has its own 4 MiB limit. Complete PDF/DOCX extraction
+must fit the 1 MiB text limit; interactive document-tool preview limits do not
+silently shorten indexed content. Folder discovery is bounded by 4,096 directory
 entries and a depth of 24; a single indexing page handles at most 32 files.
 Hidden entries, dependency/build directories and known credential files are
 excluded. An opened file must be regular, have one hard link and remain within
@@ -152,10 +177,11 @@ Uncommon or complex PDFs may need a simplified export. The parser remains
 in-process: these are input, retained-object and work admission limits, not an
 OS-enforced RSS/CPU ceiling or a claim about transient allocator overhead.
 
-CPU-heavy parsing/indexing runs off async executor threads with a shared bounded
-worker permit. The permit stays with blocking work if its awaiting request is
+CPU-heavy parsing/indexing and source/configuration writes run off async executor
+threads with one bounded mutation worker per trusted data directory. The permit stays with blocking work if its awaiting request is
 cancelled. This avoids releasing capacity while a parser is still running.
-Lexical search admits two concurrent blocking operations; indexing admits one.
+Read-only source/settings metadata uses a separate bounded read queue. Lexical
+search admits two concurrent blocking operations; indexing admits one.
 An occupied indexing slot returns a busy response instead of accumulating an
 unbounded queue of parser tasks.
 No GPU, remote vector server, daemon-managed model download or telemetry is
@@ -414,9 +440,10 @@ per-bot index. The first write operation creates a new Markdown note rather than
 overwriting a human edit. `knowledge_brain_write` always asks for approval,
 including under otherwise permissive policies. Before the card appears, it
 freezes the exact rendered bytes, target relative path, source labels/revisions,
-bot/run identity and hash in a bounded, expiring, one-use approval record. The
+bot/run identity and hash in a bounded, one-use approval record tied to the live
+approval guard. The
 card shows the proposed content, not a vague summary. Changed arguments,
-expired/reused approvals or changed source revisions fail. Capability-scoped
+closed/reused approvals or changed source revisions fail. Capability-scoped
 no-replace publication prevents traversal and accidental overwrite. Imported
 frontmatter does not grant trust or write authority.
 
@@ -433,7 +460,11 @@ approved brain directory identity immediately before linking the new file.
 A directory replaced while publication waits for that transaction cannot retarget
 the approved note. Pending records follow the live approval guard, are bounded to 64 per bot, and
 contain at most 64 KiB of rendered Markdown; the approval card shows those exact
-bytes and their hash.
+bytes and their hash. Startup cleanup only removes ordinary files with an exact
+`.praxi-brain-<canonical UUID>.tmp` name below the trusted brain handle. It unlinks
+the staging name without following links; published Markdown and external
+targets survive. Fake names, directories and symlinks are left untouched. Staging
+names were already excluded from state bundles and remain excluded.
 
 State bundles explicitly snapshot nested knowledge databases using SQLite's
 backup API and validate scope/schema/foreign keys/index consistency before

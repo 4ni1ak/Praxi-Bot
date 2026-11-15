@@ -151,7 +151,6 @@ pub(crate) async fn update_email_account(
     Path(name): Path<String>,
     ApiJson(mut patch): ApiJson<serde_json::Value>,
 ) -> Result<Json<EmailAccountDto>, ApiError> {
-    let knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
     let control = email(&s)?;
     if let Some(obj) = patch.as_object_mut() {
         match obj.get("password") {
@@ -184,9 +183,9 @@ pub(crate) async fn update_email_account(
         .map(str::to_owned);
     // Reserve the bounded scan before mutating the mailbox. The detached task
     // owns both guards, so disconnecting the HTTP request cannot skip cleanup.
-    let permit = crate::knowledge::worker_permit()?;
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
     tokio::spawn(async move {
-        let _knowledge_authority = knowledge_authority;
+        let _knowledge_authority = crate::knowledge::email_authorities(&s, &name).await?;
         let updated = control.update(&name, patch).await?;
         if let Some(bot) = bound
             && let Err(e) = canonical_bot(&s, &bot)
@@ -245,11 +244,10 @@ pub(crate) async fn delete_email_account(
     Path(name): Path<String>,
     Query(q): Query<DeleteAccountQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let knowledge_authority = crate::knowledge::authority_lock(&s).lock_owned().await;
     let control = email(&s)?;
-    let permit = crate::knowledge::worker_permit()?;
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
     tokio::spawn(async move {
-        let _knowledge_authority = knowledge_authority;
+        let _knowledge_authority = crate::knowledge::email_authorities(&s, &name).await?;
         control.remove_account(&name, q.delete_inbox).await?;
         crate::knowledge::blocking_with_permit(permit, move || {
             crate::knowledge::revoke_email_sources(&s, &name)

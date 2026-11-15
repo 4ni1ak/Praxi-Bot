@@ -627,30 +627,66 @@ async fn review_81_owner_scope_precedes_authority_lane() {
     let _serial = crate::knowledge_runtime::test_guard().await;
     let t = setup();
     let foreign = protocol::UserId::new();
-    t.state.storage().insert_user(&storage::User {
-        id: foreign,
-        name: "Other owner".into(),
-        created_at_ms: 1,
-    }).unwrap();
+    t.state
+        .storage()
+        .insert_user(&storage::User {
+            id: foreign,
+            name: "Other owner".into(),
+            created_at_ms: 1,
+        })
+        .unwrap();
     let bot = BotId::new();
-    t.state.storage().insert_bot(&storage::Bot {
-        id: bot,
-        user_id: foreign,
-        name: "Private bot".into(),
-        config: json!({}),
-        created_at_ms: 1,
-    }).unwrap();
+    t.state
+        .storage()
+        .insert_bot(&storage::Bot {
+            id: bot,
+            user_id: foreign,
+            name: "Private bot".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        })
+        .unwrap();
     let lane = crate::knowledge_runtime::authority_lock(&t.state, bot);
     let _active = lane.lock_owned().await;
     for (method, suffix, body) in [
-        (Method::PUT, "settings".into(), Some(json!({"auto_retrieve":false,"embedding":null}))),
-        (Method::POST, "embedding-approvals".into(), Some(json!({"kind":"queries"}))),
-        (Method::POST, format!("embedding-approvals/{}/confirm", Uuid::now_v7()), None),
-        (Method::DELETE, "embedding-grants".into(), Some(json!({"kind":"queries"}))),
+        (
+            Method::PUT,
+            "settings".into(),
+            Some(json!({"auto_retrieve":false,"embedding":null})),
+        ),
+        (
+            Method::POST,
+            "embedding-approvals".into(),
+            Some(json!({"kind":"queries"})),
+        ),
+        (
+            Method::POST,
+            format!("embedding-approvals/{}/confirm", Uuid::now_v7()),
+            None,
+        ),
+        (
+            Method::DELETE,
+            "embedding-grants".into(),
+            Some(json!({"kind":"queries"})),
+        ),
         (Method::POST, "embedding-cooldown/reset".into(), None),
     ] {
-        let response = call(&t, method.clone(), &format!("/v1/bots/{bot}/knowledge/{suffix}"), body).await;
-        assert_eq!(response.status, StatusCode::NOT_FOUND, "foreign bot must be scoped before its work can be observed or cancelled: {method} {suffix}: {}", response.json());
+        let response = call(
+            &t,
+            method.clone(),
+            &format!("/v1/bots/{bot}/knowledge/{suffix}"),
+            body,
+        )
+        .await;
+        assert_eq!(
+            response.status,
+            StatusCode::NOT_FOUND,
+            "foreign bot must be scoped before its work can be observed or cancelled: {method} {suffix}: {}",
+            response.json()
+        );
     }
-    assert_eq!(t.state.storage().get_bot(bot).unwrap().unwrap().config, json!({}));
+    assert_eq!(
+        t.state.storage().get_bot(bot).unwrap().unwrap().config,
+        json!({})
+    );
 }

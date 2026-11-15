@@ -1,5 +1,5 @@
 import type { Connection } from "./connection";
-import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress } from "./types";
+import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
 import type {
   AcceptedResponse,
   Approval,
@@ -120,6 +120,21 @@ export class ApiClient {
 
   updateKnowledgeSettings(bot: string, body: KnowledgeSettingsInput): Promise<KnowledgeSettings> {
     return this.request("PUT", `/bots/${encodeURIComponent(bot)}/knowledge/settings`, { body });
+  }
+  requestKnowledgeEmbeddingApproval(bot: string, body: KnowledgeEmbeddingGrantTarget): Promise<KnowledgeEmbeddingApproval> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-approvals`, { body });
+  }
+
+  confirmKnowledgeEmbeddingApproval(bot: string, approval: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-approvals/${encodeURIComponent(approval)}/confirm`);
+  }
+
+  revokeKnowledgeEmbeddingGrant(bot: string, body: KnowledgeEmbeddingGrantTarget): Promise<void> {
+    return this.request("DELETE", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-grants`, { body });
+  }
+
+  resetKnowledgeEmbeddingCooldown(bot: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-cooldown/reset`);
   }
   readonly baseUrl: string;
   private readonly token: string;

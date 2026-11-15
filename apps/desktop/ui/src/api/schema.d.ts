@@ -73,6 +73,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{bot}/knowledge/embedding-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask policy for an owner-reviewable destination and source snapshot. Merely
+         *     opening the card grants no authority and starts no provider request.
+         */
+        post: operations["request_embedding_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm exactly the server snapshot the local owner reviewed. A changed
+         *     profile/source, expired card or replay requires a fresh owner decision.
+         */
+        post: operations["confirm_embedding_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-cooldown/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explicit owner recovery for a provider's shared retry delay; quota usage and
+         *     per-source failure records remain intact.
+         */
+        post: operations["reset_embedding_cooldown"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["revoke_embedding_grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{bot}/knowledge/settings": {
         parameters: {
             query?: never;
@@ -2147,6 +2223,28 @@ export interface components {
             /** @description SMTP (sending mail); authentication only, nothing is sent. */
             smtp: components["schemas"]["EmailProbeStatus"];
         };
+        EmbeddingApprovalChallenge: {
+            endpoint_identity: string;
+            /** Format: int64 */
+            expires_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            model: string;
+            policy_decision: string;
+            profile_fingerprint: string;
+            provider_id: string;
+            source_label?: string | null;
+            target: components["schemas"]["EmbeddingGrantTarget"];
+        };
+        EmbeddingGrantTarget: {
+            /** @enum {string} */
+            kind: "queries";
+        } | {
+            /** @enum {string} */
+            kind: "documents";
+            /** Format: uuid */
+            source_id: string;
+        };
         /** @description Request body for `POST /v1/providers/cli/enable`. */
         EnableCliProviderInput: {
             /** @description Engine id (`claude` is currently runnable). */
@@ -2440,11 +2538,6 @@ export interface components {
         InviteRole: "desktop" | "phone" | "node" | "host";
         /** @enum {string} */
         KeyPhase: "down" | "up";
-        /** @description An explicit operator-selected artifact. Files are hash-verified before load. */
-        KnowledgeArtifact: {
-            path: string;
-            sha256: string;
-        };
         KnowledgeEmailCapture: {
             account: string;
             /** Format: int64 */
@@ -2466,7 +2559,7 @@ export interface components {
         KnowledgeEmbeddingDto: {
             dimensions: number;
             endpoint: string;
-            local_artifacts?: null | components["schemas"]["KnowledgeLocalArtifacts"];
+            local_profile_id?: string | null;
             model: string;
             profile_fingerprint: string;
             provider_id: string;
@@ -2478,14 +2571,11 @@ export interface components {
             requests_per_minute: number;
         };
         KnowledgeEmbeddingInput: {
-            /** @description Exact profile previously displayed to the user; required for query egress. */
-            consent_profile_fingerprint?: string | null;
             dimensions: number;
-            local_artifacts?: null | components["schemas"]["KnowledgeLocalArtifacts"];
+            /** @description Select an already installed host profile; cannot choose native files. */
+            local_profile_id?: string | null;
             model: string;
             provider_id: string;
-            /** @description Separate explicit permission to send retrieval queries to this provider. */
-            query_remote?: boolean;
             request_dimensions?: boolean;
             /** Format: int32 */
             requests_per_day: number;
@@ -2503,25 +2593,30 @@ export interface components {
             /** Format: int64 */
             next_attempt_ms?: number | null;
             remaining_chunks: number;
+            skipped_chunks: number;
             status: components["schemas"]["KnowledgeEmbeddingStatus"];
         };
         /** @enum {string} */
         KnowledgeEmbeddingStatus: "progress" | "complete" | "awaiting_consent" | "deferred" | "cancelled" | "failed";
+        /** @description A skipped file never prevents the page cursor from advancing. */
+        KnowledgeFileFailure: {
+            code: string;
+            locator: string;
+        };
         /** @description A bounded indexing page. Replay starts from hashes already committed. */
         KnowledgeIndexStatus: {
+            failures: components["schemas"]["KnowledgeFileFailure"][];
             next_cursor?: string | null;
             processed: number;
             removed: number;
             unchanged: number;
         };
-        /** @description Complete offline E5 bundle, including the explicitly selected native runtime. */
-        KnowledgeLocalArtifacts: {
-            config: components["schemas"]["KnowledgeArtifact"];
-            model: components["schemas"]["KnowledgeArtifact"];
-            runtime: components["schemas"]["KnowledgeArtifact"];
-            special_tokens_map: components["schemas"]["KnowledgeArtifact"];
-            tokenizer: components["schemas"]["KnowledgeArtifact"];
-            tokenizer_config: components["schemas"]["KnowledgeArtifact"];
+        /** @description A host-installed local model. Native file locations are never API inputs. */
+        KnowledgeLocalProfileDto: {
+            dimensions: number;
+            id: string;
+            label: string;
+            model: string;
         };
         KnowledgeMutation: {
             indexing: components["schemas"]["KnowledgeIndexStatus"];
@@ -2538,26 +2633,25 @@ export interface components {
             expected_revision: number;
         };
         KnowledgeSettingsDto: {
+            auto_retrieval_available: boolean;
             auto_retrieve: boolean;
             embedding?: null | components["schemas"]["KnowledgeEmbeddingDto"];
             local_embeddings_available: boolean;
+            local_profiles: components["schemas"]["KnowledgeLocalProfileDto"][];
         };
         KnowledgeSettingsInput: {
             auto_retrieve: boolean;
             embedding?: null | components["schemas"]["KnowledgeEmbeddingInput"];
         };
         /** @enum {string} */
-        KnowledgeSourceAction: "enable" | "disable" | "grant_remote" | "revoke_remote" | "rename";
+        KnowledgeSourceAction: "enable" | "disable" | "revoke_remote" | "rename" | "rebind";
         KnowledgeSourceChange: {
             action: components["schemas"]["KnowledgeSourceAction"];
             /** Format: int64 */
             expected_revision: number;
             label?: string | null;
-            /**
-             * @description Required for a grant: the exact destination/model fingerprint displayed
-             *     to the user. A concurrently changed provider cannot inherit the click.
-             */
-            profile_fingerprint?: string | null;
+            /** @description An owner-selected replacement path, required to rebind imported files. */
+            path?: string | null;
         };
         /** @description Source metadata; source bodies and credentials are never listed. */
         KnowledgeSourceDto: {
@@ -2570,6 +2664,7 @@ export interface components {
             label: string;
             locator: string;
             remote_profile_fingerprint?: string | null;
+            requires_path_selection: boolean;
             /** Format: int64 */
             revision: number;
             /** Format: int64 */
@@ -2581,11 +2676,15 @@ export interface components {
             account?: string | null;
             /** Format: uuid */
             chat_id?: string | null;
-            /** @description Saved text/HTML or a note; never interpreted as a source URL to fetch. */
+            /**
+             * @description Saved text/HTML or a note; never interpreted as a source URL to fetch.
+             *     At most 4 MiB decoded UTF-8 input and 1 MiB extracted/indexed text.
+             *     The JSON envelope permits up to 24 MiB + 64 KiB for escaped input.
+             */
             content?: string | null;
             html?: boolean;
             kind: components["schemas"]["KnowledgeSourceKind"];
-            label: string;
+            label?: string;
             /** @description Absolute path on the daemon host, for a file or folder only. */
             path?: string | null;
             /**
@@ -3912,6 +4011,141 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["KnowledgeEmailCapture"][];
                 };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    request_embedding_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingGrantTarget"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingApprovalChallenge"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    confirm_embedding_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                approval: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reset_embedding_cooldown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_embedding_grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingGrantTarget"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             404: {
                 headers: {
