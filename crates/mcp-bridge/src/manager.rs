@@ -25,7 +25,7 @@ use tool_registry::{Tool, ToolRegistry};
 
 use crate::{
     client::Signals,
-    config::{McpServerConfig, ToolFilter},
+    config::{McpServerConfig, McpTransport, ToolFilter},
     diagnostics::StderrLog,
     discovery::discover,
     error::{McpError, Result},
@@ -127,9 +127,13 @@ pub struct ServerSnapshot {
     pub tools: Vec<String>,
     /// Most recent error message.
     pub last_error: Option<String>,
+    /// The server asked for an OAuth sign-in (or its stored sign-in can no
+    /// longer be used). Only the user can clear this, by signing in.
+    pub auth_required: bool,
 }
 
 struct State {
+    auth_required: bool,
     generation: u64,
     retired: bool,
     status: ServerStatus,
@@ -158,6 +162,8 @@ pub(crate) struct Server {
     bots: Mutex<Option<Vec<String>>>,
     /// Raised by every session of this server (list-changed notifications).
     signals: Arc<Signals>,
+    /// Told about OAuth token values before they are used.
+    registrar: Option<crate::oauth::SecretRegistrar>,
     /// Whether the list-changed watcher task was started.
     watching: AtomicBool,
 }
@@ -281,13 +287,36 @@ impl Server {
         // Secrets are resolved fresh on every connect cycle and only held for
         // the attempts and the connection's diagnostic redactor. A missing secret means nothing is
         // spawned and nothing is retried.
-        let secrets = match resolve_secrets(&self.config, self.secrets.as_deref()) {
+        let mut secrets = match resolve_secrets(&self.config, self.secrets.as_deref()) {
             Ok(s) => s,
             Err(e) => {
                 self.record_failure(&e);
                 return Err(e);
             }
         };
+        // A stored OAuth sign-in for exactly this server and URL. It is looked
+        // up (and refreshed when it is about to expire) on every connect cycle.
+        if let (McpTransport::Http { url, .. }, Some(store)) =
+            (&self.config.transport, self.secrets.as_ref())
+        {
+            // Boxed: the OAuth client's future is large and would be embedded in
+            // every call future otherwise.
+            match Box::pin(crate::oauth::stored_bearer(
+                self.id(),
+                url,
+                store,
+                self.registrar.as_ref(),
+            ))
+            .await
+            {
+                Ok(Some(token)) => secrets = secrets.with_bearer(&token),
+                Ok(None) => {}
+                Err(e) => {
+                    self.note_connect_error(&e);
+                    return Err(e);
+                }
+            }
+        }
         let attempts = self.policy.backoff.max_attempts.max(1);
         let mut last = None;
         for attempt in 0..attempts {
@@ -311,11 +340,18 @@ impl Server {
                     if st.status == ServerStatus::Disconnected {
                         st.status = ServerStatus::Connected;
                     }
+                    st.auth_required = false;
                     if reset_on_success {
                         st.failures = 0;
                         st.last_error = None;
                     }
                     return Ok(session);
+                }
+                // Waiting for the user to sign in is not a failing server:
+                // no retry, no failure count, no quarantine.
+                Err(e @ McpError::AuthRequired(_)) => {
+                    self.note_connect_error(&e);
+                    return Err(e);
                 }
                 // A config error cannot be fixed by retrying.
                 Err(e @ McpError::Config(_)) => {
@@ -334,6 +370,23 @@ impl Server {
         let err = last.expect("at least one attempt was made");
         self.record_failure(&err);
         Err(err)
+    }
+
+    /// Record why a connect did not happen. An authorization requirement is
+    /// remembered as such; anything else is an ordinary failure.
+    fn note_connect_error(&self, error: &McpError) {
+        if matches!(error, McpError::AuthRequired(_)) {
+            let mut st = self.state.lock();
+            if !st.retired {
+                st.auth_required = true;
+                st.last_error = Some(error.to_string());
+                if st.status == ServerStatus::Connected {
+                    st.status = ServerStatus::Disconnected;
+                }
+            }
+        } else {
+            self.record_failure(error);
+        }
     }
 
     async fn drop_session(&self) {
@@ -629,6 +682,7 @@ impl Server {
             consecutive_failures: st.failures,
             tools: st.tools.clone(),
             last_error: st.last_error.clone(),
+            auth_required: st.auth_required,
         }
     }
 }
@@ -696,6 +750,7 @@ pub struct McpManager {
     policy: McpPolicy,
     secrets: Option<Arc<dyn SecretStore>>,
     redactor: Option<ExternalRedactor>,
+    registrar: Option<crate::oauth::SecretRegistrar>,
     servers: Mutex<BTreeMap<String, Arc<Server>>>,
 }
 
@@ -714,6 +769,7 @@ impl McpManager {
             policy,
             secrets: None,
             redactor: None,
+            registrar: None,
             servers: Mutex::new(BTreeMap::new()),
         }
     }
@@ -733,6 +789,60 @@ impl McpManager {
     pub fn with_redactor(mut self, redactor: ExternalRedactor) -> Self {
         self.redactor = Some(redactor);
         self
+    }
+
+    /// Registers secret values with the host's redactor (the daemon's
+    /// `SharedRedactor::register`). OAuth access and refresh tokens are passed
+    /// to it before they are stored or sent.
+    #[must_use]
+    pub fn with_secret_registrar(mut self, registrar: crate::oauth::SecretRegistrar) -> Self {
+        self.registrar = Some(registrar);
+        self
+    }
+
+    /// Begin an OAuth sign-in for the HTTP server `id`. **Call this only for
+    /// an explicit user action**: it contacts the server's authorization
+    /// server and opens a loopback listener. The caller sends the user's
+    /// browser to [`crate::oauth::SignIn::authorization_url`], awaits
+    /// [`crate::oauth::SignIn::finish`] and then calls [`Self::reenable`].
+    ///
+    /// # Errors
+    /// Unknown server, not an HTTP server, no secret store, or the errors of
+    /// [`crate::oauth::SignIn::start`].
+    pub async fn start_sign_in(
+        &self,
+        id: &str,
+        options: crate::oauth::SignInOptions,
+    ) -> Result<crate::oauth::SignIn> {
+        let server = self.get(id)?;
+        let McpTransport::Http { url, .. } = &server.config.transport else {
+            return Err(McpError::Config(format!(
+                "server `{id}` is not an http server; OAuth sign-in does not apply"
+            )));
+        };
+        let store = self.secrets.clone().ok_or_else(|| {
+            McpError::Config(format!(
+                "server `{id}`: OAuth sign-in needs a secret store to keep the tokens in"
+            ))
+        })?;
+        crate::oauth::SignIn::start(id, url, store, self.registrar.clone(), options).await
+    }
+
+    /// Forget the stored OAuth sign-in of server `id` and drop its session.
+    /// Returns whether credentials existed.
+    ///
+    /// # Errors
+    /// Unknown server, no secret store, or a secret-store failure.
+    pub async fn sign_out(&self, id: &str) -> Result<bool> {
+        let server = self.get(id)?;
+        let store = self.secrets.clone().ok_or_else(|| {
+            McpError::Config(format!("server `{id}`: no secret store is configured"))
+        })?;
+        let existed = store
+            .delete(&crate::oauth::credential_name(id))
+            .map_err(|_| McpError::Store("cannot delete OAuth credentials".to_owned()))?;
+        server.drop_session().await;
+        Ok(existed)
     }
 
     fn get(&self, id: &str) -> Result<Arc<Server>> {
@@ -780,11 +890,13 @@ impl McpManager {
                 failures: 0,
                 tools: Vec::new(),
                 last_error: None,
+                auth_required: false,
             }),
             operation: tokio::sync::Mutex::new(()),
             retired: tokio::sync::watch::channel(false).0,
             bots: Mutex::new(config.bots.clone()),
             signals: Arc::default(),
+            registrar: self.registrar.clone(),
             watching: AtomicBool::new(false),
             config,
         });

@@ -317,6 +317,7 @@ impl SignIn {
             .await
             .map_err(|e| auth_error(server, &e))?;
         check_metadata(server, &resolution.metadata, options.allow_loopback_http)?;
+        check_endpoint_addresses(server, url, &resolution.metadata).await?;
         manager.set_metadata(resolution.metadata);
 
         let listener = CallbackListener::bind(server).await?;
@@ -370,6 +371,135 @@ impl SignIn {
             .map(|_| ())
             .map_err(|e| auth_error(&self.server, &e))
     }
+}
+
+/// The access token to connect `server` (at `url`) with, refreshed first when
+/// it is about to expire (rmcp refreshes ahead of expiry inside
+/// `get_access_token`). `Ok(None)` when no sign-in was ever stored for this
+/// server and URL: nothing is contacted then.
+///
+/// # Errors
+/// [`McpError::AuthRequired`] when stored credentials can no longer be used
+/// (issuer changed, refresh token missing or rejected); a transport error for
+/// a transient failure of the authorization server.
+pub async fn stored_bearer(
+    server: &str,
+    url: &str,
+    store: &Arc<dyn SecretStore>,
+    registrar: Option<&SecretRegistrar>,
+) -> Result<Option<String>> {
+    let probe = SecretCredentialStore::new(Arc::clone(store), server, url, registrar.cloned())?;
+    let stored = probe.load().await.map_err(|e| auth_error(server, &e))?;
+    if stored.is_none_or(|c| c.token_response.is_none()) {
+        return Ok(None);
+    }
+    // rmcp's own HTTP client: its address filter stays in place.
+    let mut manager = AuthorizationManager::new(url)
+        .await
+        .map_err(|e| auth_error(server, &e))?;
+    manager.set_credential_store(probe);
+    match manager.initialize_from_store().await {
+        Ok(true) => {}
+        Ok(false) => return Err(McpError::AuthRequired(server.to_owned())),
+        Err(e) => return Err(auth_error(server, &e)),
+    }
+    match manager.get_access_token().await {
+        Ok(token) => {
+            if let Some(registrar) = registrar {
+                registrar(&token);
+            }
+            Ok(Some(token))
+        }
+        Err(AuthError::AuthorizationRequired) => Err(McpError::AuthRequired(server.to_owned())),
+        Err(e) => Err(auth_error(server, &e)),
+    }
+}
+
+/// Addresses no authorization or token endpoint may have, whatever the
+/// server: link-local (cloud metadata), unspecified, multicast, broadcast.
+fn always_blocked(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_link_local() || v4.is_unspecified() || v4.is_multicast() || v4.is_broadcast()
+        }
+        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => always_blocked(std::net::IpAddr::V4(v4)),
+            None => {
+                v6.is_unspecified() || v6.is_multicast() || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        },
+    }
+}
+
+fn internal(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+        }
+        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => internal(std::net::IpAddr::V4(v4)),
+            None => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+        },
+    }
+}
+
+async fn addresses(url: &str) -> Option<Vec<std::net::IpAddr>> {
+    let uri: http::Uri = url.parse().ok()?;
+    let host = uri.host()?.trim_matches(['[', ']']).to_owned();
+    if let Ok(ip) = host.parse() {
+        return Some(vec![ip]);
+    }
+    let port = uri
+        .port_u16()
+        .unwrap_or(if uri.scheme_str() == Some("http") {
+            80
+        } else {
+            443
+        });
+    let found: Vec<_> = tokio::net::lookup_host((host, port))
+        .await
+        .ok()?
+        .map(|a| a.ip())
+        .collect();
+    Some(found)
+}
+
+/// Resolve the authorization and token endpoints ourselves and refuse
+/// internal targets. rmcp filters the addresses its own client connects to,
+/// but not when a proxy (`HTTPS_PROXY`) does the connecting; this check does
+/// not depend on who connects. Link-local and other reserved addresses are
+/// always refused; loopback and private ones only pass when the MCP server
+/// itself is at such an address.
+///
+/// # Errors
+/// [`McpError::Config`] when an endpoint cannot be resolved or is internal.
+pub async fn check_endpoint_addresses(
+    server: &str,
+    server_url: &str,
+    metadata: &AuthorizationMetadata,
+) -> Result<()> {
+    let refuse = |why: &str| {
+        Err(McpError::Config(format!(
+            "server `{server}`: authorization server refused: {why}"
+        )))
+    };
+    let server_internal = addresses(server_url)
+        .await
+        .is_some_and(|found| !found.is_empty() && found.iter().all(|ip| internal(*ip)));
+    for endpoint in [&metadata.authorization_endpoint, &metadata.token_endpoint] {
+        let Some(found) = addresses(endpoint).await.filter(|f| !f.is_empty()) else {
+            return refuse("an endpoint host cannot be resolved");
+        };
+        if found.iter().any(|ip| always_blocked(*ip)) {
+            return refuse("an endpoint is at a link-local or reserved address");
+        }
+        if !server_internal && found.iter().any(|ip| internal(*ip)) {
+            return refuse("an endpoint of a public server is at a private or loopback address");
+        }
+    }
+    Ok(())
 }
 
 /// What the authorization server sent back on the redirect.
@@ -768,6 +898,60 @@ mod tests {
         );
         assert!(check_metadata("s", &local, false).is_err());
         check_metadata("s", &local, true).unwrap();
+    }
+
+    #[tokio::test]
+    async fn internal_authorization_endpoints_are_refused_whoever_connects() {
+        let metadata = |authorize: &str, token: &str| {
+            let mut m = AuthorizationMetadata::default();
+            m.authorization_endpoint = authorize.into();
+            m.token_endpoint = token.into();
+            m
+        };
+        let public = "https://93.184.216.34/mcp";
+        let ok = "https://93.184.216.34/authorize";
+        // Cloud metadata and other reserved targets: never, even for a
+        // server that is itself on loopback or a private network.
+        for bad in [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://[::ffff:169.254.169.254]/token",
+            "https://[fe80::1]/token",
+            "https://0.0.0.0/token",
+        ] {
+            for server_url in [public, "http://127.0.0.1:9/mcp", "https://10.0.0.2/mcp"] {
+                let error = check_endpoint_addresses("s", server_url, &metadata(ok, bad))
+                    .await
+                    .unwrap_err()
+                    .to_string();
+                assert!(error.contains("link-local or reserved"), "{bad}: {error}");
+            }
+        }
+        // Private and loopback targets: not for a public server.
+        for bad in [
+            "https://10.0.0.5/token",
+            "https://192.168.1.1/token",
+            "https://172.16.0.9/token",
+            "https://100.64.0.1/token",
+            "https://127.0.0.1/token",
+            "https://[::1]/token",
+            "https://[fd00::1]/token",
+        ] {
+            let error = check_endpoint_addresses("s", public, &metadata(bad, ok))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("private or loopback"), "{bad}: {error}");
+        }
+        check_endpoint_addresses("s", public, &metadata(ok, ok))
+            .await
+            .unwrap();
+        check_endpoint_addresses(
+            "s",
+            "http://127.0.0.1:9/mcp",
+            &metadata("http://127.0.0.1:9/authorize", "http://127.0.0.1:9/token"),
+        )
+        .await
+        .unwrap();
     }
 
     async fn get(port: u16, target: &str) -> std::io::Result<String> {

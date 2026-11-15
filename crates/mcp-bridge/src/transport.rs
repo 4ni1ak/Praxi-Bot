@@ -111,6 +111,17 @@ impl fmt::Debug for ResolvedSecrets {
     }
 }
 
+impl ResolvedSecrets {
+    /// Attach the OAuth access token of this server. It is sent like a secret
+    /// header (marked sensitive, masked by the session redactor) and only to
+    /// the URL of the config this value was resolved for.
+    pub(crate) fn with_bearer(mut self, token: &str) -> Self {
+        self.headers
+            .insert("Authorization".to_owned(), format!("Bearer {token}"));
+        self
+    }
+}
+
 /// Resolve `secret_headers` / `secret_env` through the store.  Fails (so the
 /// server is never started) if there is no store or a secret is missing.
 /// Error messages carry the secret *name*, never a value.
@@ -411,11 +422,7 @@ pub(crate) async fn open(
                     .await
                     .map_err(|e| {
                         if e.is_authorization_required() {
-                            // A config error is not retried with backoff: only
-                            // the user can supply the missing credential.
-                            McpError::Config(format!(
-                                "server `{id}` requires authorization (HTTP 401/403). The OAuth                                  sign-in flow is not supported yet: store an access token in the                                  secret store and reference it under `secret_headers.Authorization`"
-                            ))
+                            McpError::AuthRequired(id.to_owned())
                         } else {
                             transport_err(id, e)
                         }

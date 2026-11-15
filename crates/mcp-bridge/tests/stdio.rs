@@ -1020,7 +1020,8 @@ async fn unauthorized_endpoint() -> (String, tokio::task::JoinHandle<()>) {
 async fn an_http_server_that_wants_oauth_gives_an_actionable_error_and_is_not_retried() {
     let (url, endpoint) = unauthorized_endpoint().await;
     let reg = ToolRegistry::new();
-    let mut policy = fast_policy(3);
+    // One counted failure would quarantine the server.
+    let mut policy = fast_policy(1);
     // A retried connect would wait for these.
     policy.backoff.initial = Duration::from_secs(30);
     policy.backoff.max = Duration::from_secs(30);
@@ -1034,6 +1035,10 @@ async fn an_http_server_that_wants_oauth_gives_an_actionable_error_and_is_not_re
         .to_string();
     assert!(err.contains("requires authorization"), "{err}");
     assert!(err.contains("secret_headers.Authorization"), "{err}");
+    let snapshot = mgr.snapshot("remote").unwrap();
+    assert!(snapshot.auth_required, "{snapshot:?}");
+    assert_eq!(snapshot.consecutive_failures, 0, "{snapshot:?}");
+    assert_eq!(snapshot.status, ServerStatus::Disconnected, "{snapshot:?}");
     assert!(
         started.elapsed() < Duration::from_secs(25),
         "connect was retried"

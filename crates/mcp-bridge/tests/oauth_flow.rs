@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use base64::Engine as _;
 use mcp_bridge::oauth::{SecretRegistrar, SignIn, SignInOptions, credential_name};
+use mcp_bridge::{Backoff, McpError, McpManager, McpPolicy, McpServerConfig, ServerStatus};
 use parking_lot::Mutex;
 use secret_store::{SecretError, SecretStore, SecretValue};
 use sha2::{Digest, Sha256};
@@ -42,6 +43,8 @@ struct Seen {
     token_requests: Vec<BTreeMap<String, String>>,
     /// Request paths, in order.
     paths: Vec<String>,
+    /// `Authorization` header of every request to the MCP endpoint itself.
+    mcp_authorization: Vec<Option<String>>,
 }
 
 fn decode(raw: &str) -> String {
@@ -119,6 +122,24 @@ async fn fake_authorization_server(
                     };
                     let path = head.split(' ').nth(1).unwrap_or("/").to_owned();
                     seen.lock().paths.push(path.clone());
+                    if path == "/mcp" {
+                        // The protected MCP endpoint: note what credential
+                        // arrived and always ask for a sign-in.
+                        let authorization = head.lines().find_map(|l| {
+                            let (name, value) = l.split_once(':')?;
+                            name.eq_ignore_ascii_case("authorization")
+                                .then(|| value.trim().to_owned())
+                        });
+                        seen.lock().mcp_authorization.push(authorization);
+                        let _ = socket
+                            .write_all(
+                                b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\n\
+                                  Content-Length: 0\r\nConnection: close\r\n\r\n",
+                            )
+                            .await;
+                        let _ = socket.shutdown().await;
+                        return;
+                    }
                     let (status, json) = if path.contains("oauth-protected-resource") {
                         (
                             "200 OK",
@@ -340,4 +361,100 @@ async fn an_authorization_server_without_pkce_is_refused_before_any_browser_step
     assert!(error.contains("https"), "{error}");
     server.abort();
     strict.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sign_in_is_sent_only_to_its_own_server_and_waiting_for_one_is_not_a_failure() {
+    let (a, seen_a, server_a) = fake_authorization_server(true).await;
+    let (b, seen_b, server_b) = fake_authorization_server(true).await;
+    let store = Arc::new(MemoryStore::default());
+    let registered = Arc::new(Mutex::new(Vec::<String>::new()));
+    let registrar: SecretRegistrar = {
+        let registered = Arc::clone(&registered);
+        Arc::new(move |value: &str| registered.lock().push(value.to_owned()))
+    };
+    let manager = McpManager::with_policy(
+        tool_registry::ToolRegistry::new(),
+        McpPolicy {
+            // One counted failure would quarantine a server.
+            quarantine_after: 1,
+            backoff: Backoff {
+                initial: Duration::from_secs(30),
+                max: Duration::from_secs(30),
+                max_attempts: 3,
+            },
+            connect_timeout: Duration::from_secs(20),
+            call_timeout: Duration::from_secs(20),
+        },
+    )
+    .with_secret_store(store.clone())
+    .with_secret_registrar(registrar);
+
+    // Both servers answer 401: they wait for the user, unquarantined.
+    for (id, base) in [("a", &a), ("b", &b)] {
+        let error = manager
+            .add_server(McpServerConfig::http(id, format!("{base}/mcp")))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, McpError::AuthRequired(_)), "{error}");
+        let snapshot = manager.snapshot(id).unwrap();
+        assert!(snapshot.auth_required, "{snapshot:?}");
+        assert_eq!(snapshot.consecutive_failures, 0, "{snapshot:?}");
+        assert_eq!(snapshot.status, ServerStatus::Disconnected, "{snapshot:?}");
+    }
+    assert_eq!(seen_a.lock().mcp_authorization, vec![None]);
+
+    // The user signs in to A (and only to A).
+    let sign_in = manager.start_sign_in("a", options()).await.unwrap();
+    let url = sign_in.authorization_url().to_owned();
+    let params = pairs(url.split_once('?').unwrap().1);
+    seen_a.lock().challenge = Some(params["code_challenge"].clone());
+    let finishing = tokio::spawn(sign_in.finish(Duration::from_secs(20)));
+    redirect(
+        &url,
+        &format!("code=code-1&state={}&iss={a}", params["state"]),
+    )
+    .await
+    .unwrap();
+    finishing.await.unwrap().unwrap();
+    assert_eq!(store.list_names().unwrap(), vec![credential_name("a")]);
+
+    // Reconnect both. On the wire: A gets its bearer, B gets nothing.
+    let after_a = manager.reenable("a").await.unwrap_err().to_string();
+    let after_b = manager.reenable("b").await.unwrap_err().to_string();
+    assert_eq!(
+        seen_a.lock().mcp_authorization.last().cloned().flatten(),
+        Some(format!("Bearer {ACCESS}"))
+    );
+    let to_b = seen_b.lock().mcp_authorization.clone();
+    assert!(to_b.len() >= 2, "{to_b:?}");
+    assert!(to_b.iter().all(Option::is_none), "{to_b:?}");
+    for path in &seen_b.lock().paths {
+        assert!(!path.contains(ACCESS), "{path}");
+    }
+    // Nothing the manager reports carries a token.
+    let reported = format!(
+        "{after_a} {after_b} {:?} {:?}",
+        manager.snapshots(),
+        manager.stderr_tail("a")
+    );
+    assert!(!reported.contains(ACCESS), "{reported}");
+    assert!(!reported.contains(REFRESH), "{reported}");
+    assert!(registered.lock().contains(&ACCESS.to_owned()));
+    assert_eq!(manager.snapshot("a").unwrap().consecutive_failures, 0);
+
+    // The same server name pointed at B's URL must not carry A's token there.
+    manager.remove_server("a").await.unwrap();
+    let _ = manager
+        .add_server(McpServerConfig::http("a", format!("{b}/mcp")))
+        .await;
+    let to_b = seen_b.lock().mcp_authorization.clone();
+    assert!(to_b.iter().all(Option::is_none), "{to_b:?}");
+    assert_eq!(store.list_names().unwrap(), Vec::<String>::new());
+
+    // Signing out removes the secret.
+    assert!(!manager.sign_out("a").await.unwrap());
+    manager.shutdown().await;
+    server_a.abort();
+    server_b.abort();
 }
