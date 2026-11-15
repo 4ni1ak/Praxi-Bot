@@ -21,6 +21,11 @@ pub enum DesktopError {
     #[error("unsupported on this platform: {0}")]
     Unsupported(String),
 
+    /// The window that would receive input was not the program the call was
+    /// approved for, or could not be checked. Nothing was sent.
+    #[error("not sent: {0}")]
+    GuardRefused(String),
+
     /// An unrecoverable internal error.
     #[error("internal error: {0}")]
     Internal(String),

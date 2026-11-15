@@ -152,6 +152,9 @@ fn desktop_to_rpc(e: &DesktopError) -> RpcError {
                 .with_data(json!({ "index": index, "generation": generation }))
         }
         DesktopError::Accessibility(m) => RpcError::new(ERR_ACCESSIBILITY, m.clone()),
+        // A remote node never offers a control grant, so a guard refusal only
+        // reaches here from a node that checked one; report it as a plain refusal.
+        DesktopError::GuardRefused(m) => RpcError::new(ERR_ACCESSIBILITY, format!("not sent: {m}")),
         DesktopError::Screenshot(m) => RpcError::new(ERR_SCREENSHOT, m.clone()),
         DesktopError::Unsupported(m) => RpcError::new(ERR_UNSUPPORTED, m.clone()),
         DesktopError::Internal(m) => RpcError::new(ERR_DESKTOP_INTERNAL, m.clone()),

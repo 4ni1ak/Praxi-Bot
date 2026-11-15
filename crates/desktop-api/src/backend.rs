@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use crate::{
     action::{Action, ActionResult},
     error::DesktopError,
+    guard::{ActGuard, InputTarget, Refusal},
     snapshot::{AppSpec, Image, Pid, Quality, Region, Snapshot, WindowInfo},
 };
 
@@ -52,6 +53,45 @@ pub trait DesktopBackend: Send + Sync {
 
     /// Launch an application and return the new process ID.
     async fn launch(&self, app: AppSpec) -> Result<Pid, DesktopError>;
+
+    /// The window and program that keyboard input would reach right now, with
+    /// its process identity, elevation and class (card 243-1).
+    ///
+    /// `Ok(None)` (the default) means this backend cannot bind input to one
+    /// program, so a run-scoped control grant is never offered or applied.
+    ///
+    /// # Errors
+    /// The OS query failed; callers treat that as "no identity".
+    async fn input_target(&self) -> Result<Option<InputTarget>, DesktopError> {
+        Ok(None)
+    }
+
+    /// [`Self::act`], but the backend first checks `guard` against the window
+    /// that would receive the input, as close to the OS send as it can, and
+    /// does not send when the check fails. Replay and the desktop tools both
+    /// pass through here.
+    ///
+    /// The default refuses: a backend that cannot check must not claim to.
+    ///
+    /// # Errors
+    /// [`DesktopError::GuardRefused`] when nothing was sent because of the
+    /// guard, otherwise as [`Self::act`].
+    async fn act_guarded(
+        &self,
+        _action: Action,
+        _guard: ActGuard,
+    ) -> Result<ActionResult, DesktopError> {
+        Err(DesktopError::GuardRefused(
+            "this computer cannot check the target window before sending input".into(),
+        ))
+    }
+
+    /// Whether `keys` open a launcher or switch windows (Win/Super, Ctrl+Esc,
+    /// Alt+Tab, ...), judged with this backend's own key parser. The default
+    /// refuses every chord.
+    fn key_chord_refusal(&self, _keys: &[String]) -> Option<Refusal> {
+        Some(Refusal::Chord)
+    }
 
     /// Report what this backend supports.
     fn capabilities(&self) -> Capabilities;
