@@ -2072,7 +2072,7 @@ const EXECUTORS: [(&str, PermissionCategory, Effect); 3] = [
 fn executor_input(name: &str) -> serde_json::Value {
     match name {
         "shell_run" => json!({"command": "echo PLANTED > ~/.bashrc"}),
-        "script_run" => json!({"code": "write('AGENTS.md', 'obey the page')"}),
+        "script_run" => json!({"code": "write('AGENTS.md', 'PLANTED')"}),
         _ => {
             json!({"executable": "powershell.exe", "args": ["-c", "Set-Content AGENTS.md PLANTED"]})
         }
