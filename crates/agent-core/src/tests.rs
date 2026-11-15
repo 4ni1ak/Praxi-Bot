@@ -2695,6 +2695,81 @@ async fn many_tools_switch_to_discovery_and_use_tool_is_gated_by_the_target() {
     assert_eq!(tool_messages(&fake.request(1)), vec!["read ok".to_owned()]);
 }
 
+fn system_text(req: &ChatRequest) -> String {
+    req.messages[0].content.as_str().unwrap().to_owned()
+}
+
+/// 244-B: in discovery mode the system prompt names the permitted tool
+/// families (and only those), identically on every model call of a run.
+#[tokio::test]
+async fn discovery_mode_prompt_names_only_permitted_families_and_is_stable() {
+    let env = setup();
+    let names = [
+        "browser_open",
+        "fs_read",
+        "email_send",
+        "web_search",
+        "mcp:github/issues",
+    ];
+    let tools: Vec<Arc<TestTool>> = names
+        .iter()
+        .map(|n| Arc::new(tool(n, Effect::Read, "ok")))
+        .collect();
+    let all: Vec<&Arc<TestTool>> = tools.iter().collect();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "find_tool", json!({"query": "browser"}))]),
+        text("done"),
+    ]);
+    let mut config = cfg(Policy::full());
+    config.discovery_threshold = 2;
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &all,
+        profile(
+            "[tools]
+exclude = [\"email_send\"]
+",
+        ),
+        config,
+    );
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let first = system_text(&fake.request(0));
+    assert!(first.contains("Tool access:"), "{first}");
+    assert!(first.contains("browser") && first.contains("files") && first.contains("web search"));
+    assert!(
+        !first.contains("e-mail"),
+        "excluded family advertised: {first}"
+    );
+    assert!(first.contains("Connected apps (by id): github."));
+    assert!(first.contains("call find_tool first"));
+    assert_eq!(
+        first,
+        system_text(&fake.request(1)),
+        "prompt must be byte-stable"
+    );
+}
+
+#[tokio::test]
+async fn direct_tool_mode_has_no_discovery_block() {
+    let env = setup();
+    let r = Arc::new(tool("browser_open", Effect::Read, "ok"));
+    let fake = Fake::new(vec![text("done")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&r)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert!(!system_text(&fake.request(0)).contains("Tool access:"));
+}
+
 #[tokio::test]
 async fn use_tool_cannot_reach_tools_hidden_from_the_bot() {
     let env = setup();

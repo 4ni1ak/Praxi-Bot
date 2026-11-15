@@ -472,6 +472,19 @@ impl TurnExecutor {
             .map(|r| GUARD_NOTE.replace("{reason}", r));
         let (skills, suggested_skills) =
             self.skills_block(run.id, &ctx, &steps, &hints.skills, &specs);
+        // Discovery mode: say where the tools are (stable block, before the skills index).
+        let skills = match (
+            self.sh.discovery_block(&ctx.profile, ctx.bot_id, &specs),
+            skills,
+        ) {
+            (Some(d), Some(s)) => Some(format!(
+                "{d}
+
+{s}"
+            )),
+            (Some(d), None) => Some(d),
+            (None, s) => s,
+        };
         let lookup = |n: &str| self.sh.tools.get(n).map(|t| t.spec().clone());
         let spill_dir = self
             .sh
