@@ -7,6 +7,7 @@
 //! string that leaves this module toward the model, an event or a log is first
 //! scrubbed of the value and its encoded forms.
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -132,8 +133,9 @@ impl Tool for SecretsList {
                         .map(|p| format!("program {}", sanitize_label(p, SHOWN_CAP))),
                 )
                 .collect();
-            out.push_str(&format!(
-                "- {}{}: {}\n",
+            let _ = writeln!(
+                out,
+                "- {}{}: {}",
                 sanitize_label(&s.name, SHOWN_CAP),
                 if s.has_value {
                     ""
@@ -145,10 +147,10 @@ impl Tool for SecretsList {
                 } else {
                     places.join(", ")
                 }
-            ));
+            );
         }
         if list.len() > LIST_CAP {
-            out.push_str(&format!("... and {} more\n", list.len() - LIST_CAP));
+            let _ = writeln!(out, "... and {} more", list.len() - LIST_CAP);
         }
         Ok(ToolOutput::text(out))
     }

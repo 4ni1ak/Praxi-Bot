@@ -1411,6 +1411,13 @@ fn openapi_snapshot() {
     }
     let on_disk = std::fs::read_to_string(&path)
         .expect("docs/api/openapi.json missing: run with UPDATE_OPENAPI=1");
+    if on_disk.replace("\r\n", "\n") != json {
+        eprintln!("OPENAPI_JSON_BEGIN");
+        for line in json.lines() {
+            eprintln!("OA|{line}");
+        }
+        eprintln!("OPENAPI_JSON_END");
+    }
     assert_eq!(
         on_disk.replace("\r\n", "\n"),
         json,

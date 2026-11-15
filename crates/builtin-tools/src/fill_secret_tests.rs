@@ -138,70 +138,71 @@ async fn a_secret_fill_types_the_value_and_never_returns_it() {
     assert!(!r.fake.calls.lock().iter().any(|c| c.contains(VALUE)));
 }
 
+/// A page that reports the typed value in its failure.
+struct Leaky(Arc<FakeBrowser>);
+#[async_trait::async_trait]
+impl browser::BrowserDriver for Leaky {
+    async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+        self.0.field_target(r).await
+    }
+    async fn fill_secret(
+        &self,
+        _r: &str,
+        text: &str,
+        _accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+    ) -> Result<String, String> {
+        Err(format!("input handler threw: {text}"))
+    }
+    async fn open(&self, _: &str, _: Option<&str>) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn snapshot(&self, _: bool) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn click(&self, _: &str) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn fill(&self, _: &str, _: &str) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn select(&self, _: &str, _: &str) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn press(&self, _: &str) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn scroll(&self, _: Option<&str>, _: f64, _: f64) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn wait(
+        &self,
+        _: browser::Wait,
+        _: Option<std::time::Duration>,
+    ) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn back(&self) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn tabs(&self, _: Option<usize>) -> Result<String, String> {
+        unreachable!()
+    }
+    async fn screenshot(
+        &self,
+        _: bool,
+        _: Option<&str>,
+    ) -> Result<(Vec<u8>, &'static str), String> {
+        unreachable!()
+    }
+    async fn eval(&self, _: &str) -> Result<Value, String> {
+        unreachable!()
+    }
+}
+
 /// Guard: the error of a failed typing is scrubbed too.
 #[tokio::test]
 async fn a_failed_secret_fill_error_does_not_carry_the_value() {
     let r = rig();
-    // A page that reports the value in its failure.
-    struct Leaky(Arc<FakeBrowser>);
-    #[async_trait::async_trait]
-    impl browser::BrowserDriver for Leaky {
-        async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
-            self.0.field_target(r).await
-        }
-        async fn fill_secret(
-            &self,
-            _r: &str,
-            text: &str,
-            _accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
-        ) -> Result<String, String> {
-            Err(format!("input handler threw: {text}"))
-        }
-        async fn open(&self, _: &str, _: Option<&str>) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn snapshot(&self, _: bool) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn click(&self, _: &str) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn fill(&self, _: &str, _: &str) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn select(&self, _: &str, _: &str) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn press(&self, _: &str) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn scroll(&self, _: Option<&str>, _: f64, _: f64) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn wait(
-            &self,
-            _: browser::Wait,
-            _: Option<std::time::Duration>,
-        ) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn back(&self) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn tabs(&self, _: Option<usize>) -> Result<String, String> {
-            unreachable!()
-        }
-        async fn screenshot(
-            &self,
-            _: bool,
-            _: Option<&str>,
-        ) -> Result<(Vec<u8>, &'static str), String> {
-            unreachable!()
-        }
-        async fn eval(&self, _: &str) -> Result<Value, String> {
-            unreachable!()
-        }
-    }
     let dir = tempfile::tempdir().unwrap();
     let t = browser::tools_with_secrets(
         Arc::new(Leaky(r.fake.clone())),

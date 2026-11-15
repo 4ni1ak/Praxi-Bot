@@ -292,7 +292,17 @@ async fn an_always_grant_never_waives_the_next_secret_fill() {
         else {
             unreachable!()
         };
-        r.lp.approve(a.call_id, ApprovalScope::Always, r.env.user)
+        // An "always" answer is refused outright for this call (once only) ...
+        assert!(
+            matches!(
+                r.lp.approve(a.call_id, ApprovalScope::Always, r.env.user),
+                Err(crate::LoopError::OnceOnly(_))
+            ),
+            "a secret fill can only be approved once"
+        );
+        // ... and the card is still open, so a one-time yes works. The next
+        // identical call then asks again.
+        r.lp.approve(a.call_id, ApprovalScope::Once, r.env.user)
             .unwrap();
     }
     assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);

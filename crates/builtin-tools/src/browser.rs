@@ -645,7 +645,7 @@ impl BrowserDriver for CdpDriver {
         accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
     ) -> Result<String, String> {
         let acted = with_session!(self, None, false, |sess| {
-            sess.page.fill_secret(r, text, |o| accept(o)).await
+            sess.page.fill_secret(r, text, accept).await
         })?;
         render_action(&acted)
     }
@@ -1185,6 +1185,11 @@ fn check_open_url(url: &str) -> Result<(), ToolError> {
 /// before the value is read. The value is read from the store only now, kept in
 /// memory, handed to the driver (which re-checks the frame origin immediately
 /// before inserting) and wiped on drop. Nothing returned contains it.
+///
+/// # Errors
+/// The field cannot be located, its frame origin is not on the secret's
+/// allow-list, the secret has no value, or the browser refuses; the message
+/// never contains the value.
 pub async fn fill_with_secret(
     driver: &dyn BrowserDriver,
     secrets: &FillSecrets,
