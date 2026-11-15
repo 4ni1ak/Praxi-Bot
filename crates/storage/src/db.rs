@@ -671,6 +671,41 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Ids and states of the user's runs that are not terminal (`queued`,
+    /// `running`, `waiting_approval`, `paused`): one statement, no spec
+    /// payloads, so it is cheap on a long history and a consistent snapshot.
+    /// The state list is a literal: `daemon-api` tests pin it against
+    /// `RunState::ALL` minus the terminal states.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_open_run_states(&self, user_id: UserId) -> Result<Vec<(RunId, String)>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, state FROM runs WHERE user_id = ?1 AND state IN ('queued', 'running', 'waiting_approval', 'paused') ORDER BY id",
+        )?;
+        Ok(st
+            .query_map([user_id.to_string()], |r| {
+                Ok((RunId(uuid_at(r, 0)?), r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The state of one run of `user_id` (`None`: no such run for that user).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn run_state_of_user(&self, user_id: UserId, id: RunId) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT state FROM runs WHERE id = ?1 AND user_id = ?2",
+                [id.to_string(), user_id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// The direct children (subagent runs) of a run, oldest first.
     ///
     /// # Errors
