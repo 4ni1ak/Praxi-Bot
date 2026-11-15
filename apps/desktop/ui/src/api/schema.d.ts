@@ -1155,6 +1155,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_setup_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_setup_ssh_keys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/{job}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_setup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/{job}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_setup_cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/{job}/host-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_setup_host_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["hosts_forget"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hosts/{id}/connect": {
         parameters: {
             query?: never;
@@ -3353,6 +3449,17 @@ export interface components {
             /** Format: int64 */
             ttl_secs?: number | null;
         };
+        /** @description `POST /v1/hosts/setup/{job}/host-key`. */
+        HostKeyAnswer: {
+            accept: boolean;
+        };
+        /** @description The server's SSH host key, shown on first use. */
+        HostKeyPrompt: {
+            fingerprint: string;
+            host: string;
+            /** Format: int32 */
+            port: number;
+        };
         HostLimits: {
             /**
              * Format: int64
@@ -3407,6 +3514,45 @@ export interface components {
             online: boolean;
             role: string;
         };
+        /** @description A setup job as seen by the app (poll `GET /v1/hosts/setup/{job}`). */
+        HostSetupJob: {
+            /** @description Paired host id once pairing worked: select it in the computer list. */
+            host_id?: string | null;
+            host_key?: null | components["schemas"]["HostKeyPrompt"];
+            host_name?: string | null;
+            id: string;
+            /**
+             * @description False while Praxi has no published release: only a server that already
+             *     runs Praxi can be added.
+             */
+            install_available: boolean;
+            /** @description Free-text progress lines ("installing ..."). */
+            notes: string[];
+            state: components["schemas"]["HostSetupState"];
+            steps: components["schemas"]["HostSetupStep"][];
+            /** @description `user@host:port` being set up. */
+            target: string;
+            /**
+             * Format: int32
+             * @description Live-view targets on the host (`null`: not known / older host).
+             */
+            view_targets?: number | null;
+        };
+        /** @enum {string} */
+        HostSetupState: "running" | "awaiting_host_key" | "succeeded" | "failed" | "cancelled";
+        /**
+         * @description One finished step. Texts are English and technical (for "copy details");
+         *     the app shows its own localised sentence per `id`.
+         */
+        HostSetupStep: {
+            detail: string;
+            hint?: string | null;
+            id: string;
+            status: components["schemas"]["HostSetupStepStatus"];
+            title: string;
+        };
+        /** @enum {string} */
+        HostSetupStepStatus: "pass" | "warn" | "fail" | "skip";
         /** @enum {string} */
         HostState: "active" | "standby" | "fresh";
         HostStatus: {
@@ -3803,7 +3949,8 @@ export interface components {
         /**
          * @description A configured MCP server (`GET /v1/mcp/servers`).  The full stored config,
          *     except secret *values*: `secret_env` / `secret_headers` carry secret
-         *     **names** only.
+         *     **names** only. `enabled`, `trust_hints`, `public_content` and `local_only`
+         *     are independent switches.
          */
         McpServerDto: {
             /** @description Arguments (stdio). */
@@ -3829,9 +3976,13 @@ export interface components {
             headers?: {
                 [key: string]: string;
             };
+            /** @description Tools cannot send data off the machine. Default `false`: every tool is egress. */
+            local_only?: boolean;
             /** @description Server name (the `<server>` of `mcp:<server>/<tool>`). */
             name: string;
             oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Default `false`: a result is a private read. */
+            public_content?: boolean;
             /** @description Environment variable -> secret name (stdio). */
             secret_env?: {
                 [key: string]: string;
@@ -3889,12 +4040,16 @@ export interface components {
             headers?: {
                 [key: string]: string;
             };
+            /** @description Tools cannot send data off the machine. Default `false` (every tool is egress). */
+            local_only?: boolean;
             /**
              * @description Server name; `id` is accepted as an alias.  Required on POST; on PUT the
              *     path wins (a different name in the body is rejected).
              */
             name?: string | null;
             oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Default `false` (a result is a private read). */
+            public_content?: boolean;
             /** @description Environment variable -> secret name. */
             secret_env?: {
                 [key: string]: string;
@@ -3951,12 +4106,16 @@ export interface components {
             headers?: {
                 [key: string]: string;
             } | null;
+            /** @description Tools cannot send data off the machine. Omit to keep the stored value. */
+            local_only?: boolean | null;
             /**
              * @description Server name; `id` is accepted as an alias.  The path wins (a different
              *     name in the body is rejected).
              */
             name?: string | null;
             oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Omit to keep the stored value. */
+            public_content?: boolean | null;
             /** @description Environment variable -> secret name.  Present object replaces the map. */
             secret_env?: {
                 [key: string]: string;
@@ -4532,7 +4691,7 @@ export interface components {
          * @description How far an approval reaches.
          * @enum {string}
          */
-        Scope: "once" | "this_chat" | "always" | "always_category";
+        Scope: "once" | "this_chat" | "always" | "always_category" | "run_control";
         /** @description Body of `PUT /v1/view/privileges/{peer_key}` (local user only). */
         ScreenPrivilegesInput: {
             /** @description May take over and drive input (`screen:input`); requires `view`. */
@@ -4708,6 +4867,33 @@ export interface components {
              * @description Event streams open right now.
              */
             sse_subscribers: number;
+        };
+        /** @description A private key file found in `~/.ssh` (path only). */
+        SshKeyHint: {
+            name: string;
+            path: string;
+        };
+        SshKeyList: {
+            keys: components["schemas"]["SshKeyHint"][];
+        };
+        /** @description `POST /v1/hosts/setup`. */
+        StartHostSetupInput: {
+            /** @description Host name or IP address of the server. */
+            host: string;
+            /**
+             * @description Path of a private key file. Omit to use the SSH agent. Only the path is
+             *     used: the file is never copied into Praxi's data or logs.
+             */
+            key_path?: string | null;
+            /** @description Local name for the server (default: derived from the address). */
+            name?: string | null;
+            /**
+             * Format: int32
+             * @description SSH port (default 22).
+             */
+            port?: number | null;
+            /** @description SSH user (default `ubuntu`). */
+            user?: string | null;
         };
         /**
          * @description Result class of one check.
@@ -7845,6 +8031,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostLinkInfo"];
+                };
+            };
+        };
+    };
+    hosts_setup_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartHostSetupInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_setup_ssh_keys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKeyList"];
+                };
+            };
+        };
+    };
+    hosts_setup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_setup_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_setup_host_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostKeyAnswer"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_forget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

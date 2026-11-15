@@ -1,5 +1,5 @@
-import { type ReactNode, useEffect, useState } from "react";
-import { CalendarClock, Clock, ShieldAlert } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { AppWindow, CalendarClock, Clock, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { Scope } from "../api/types";
@@ -15,10 +15,16 @@ import {
   type ToolItem
 } from "../state/timeline";
 import {
+  computerDetails,
+  controlGrantDetails,
+  egressDetails,
+  payloadReviewComplete,
   appActionDetails,
   formatFiring,
   brainDetails,
   scheduleDetails,
+  type ControlGrantDetails,
+  type EgressApprovalDetails,
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
 import { brandIcon } from "../lib/brandIcons";
@@ -244,6 +250,104 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
   );
 }
 
+function EgressApprovalBody({ d, onReviewed }: {
+  d: EgressApprovalDetails;
+  onReviewed: (payload: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [expandedPayload, setExpandedPayload] = useState<string | null>(null);
+  const expanded = expandedPayload === d.payload;
+  const view = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (view.current && payloadReviewComplete(expanded, view.current)) onReviewed(d.payload);
+  }, [expanded, d.payload, onReviewed]);
+  const kind = d.payloadKind === "query" || d.payloadKind === "url" ? d.payloadKind : "body";
+  return (
+    <div data-testid="approval-egress">
+      <p className={styles.bodyLabel}>{t("chat.approval.egress.host", { host: d.host })}</p>
+      {d.read.length > 0 ? (
+        <p className={styles.bodyLabel}>
+          {t("chat.approval.egress.read", { list: d.read.join(", ") })}
+        </p>
+      ) : null}
+      <span className={styles.bodyLabel}>{t(`chat.approval.egress.payload.${kind}`)}</span>
+      {d.payloadLines != null && d.payloadChars != null ? (
+        <p className={styles.bodyLabel}>
+          {t("chat.approval.egress.size", {
+            lines: d.payloadLines,
+            chars: d.payloadChars,
+            hidden: d.hiddenChars ?? 0
+          })}
+        </p>
+      ) : null}
+      {d.reviewFullPayload ? (
+        <>
+          <p className={styles.bodyLabel}>{t("chat.approval.egress.large", { bytes: d.payloadBytes ?? 0 })}</p>
+          <Button size="sm" variant="secondary" onClick={() => setExpandedPayload(d.payload)}>
+            {t("chat.approval.egress.reviewFull")}
+          </Button>
+        </>
+      ) : null}
+      {!d.reviewFullPayload || expanded ? (
+        <pre
+          ref={view}
+          className={[styles.egressCode, d.reviewFullPayload ? styles.fullPayload : ""].join(" ")}
+          tabIndex={0}
+          onScroll={(event) => {
+            if (payloadReviewComplete(expanded, event.currentTarget)) onReviewed(d.payload);
+          }}
+        >
+          {d.payload}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+/** What a run-scoped control grant covers, or why this call cannot get one. */
+function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
+  const { t } = useTranslation();
+  return (
+    <div className={styles.controlGrant} data-testid="approval-control-grant">
+      <p className={styles.controlHead}>
+        {d.offered ? (
+          <ShieldCheck size={16} aria-hidden="true" />
+        ) : (
+          <ShieldAlert size={16} aria-hidden="true" />
+        )}
+        <span>
+          {d.offered
+            ? t("chat.approval.control.offered", { program: d.program })
+            : t("chat.approval.control.refused", { program: d.program })}
+        </span>
+      </p>
+      <p className={styles.controlLine}>
+        <AppWindow size={14} aria-hidden="true" />
+        <span>
+          {d.program}
+          {d.windowTitle ? ` · ${d.windowTitle}` : ""}
+        </span>
+      </p>
+      {d.imagePath ? <p className={styles.controlPath}>{d.imagePath}</p> : null}
+      {d.offered ? (
+        <>
+          <p className={styles.bodyText}>
+            {t("chat.approval.control.covers", { program: d.program, path: d.imagePath })}
+          </p>
+          <p className={styles.bodyText}>{t("chat.approval.control.risk")}</p>
+          <p className={styles.bodyText}>{t("chat.approval.control.stillAsks")}</p>
+        </>
+      ) : (
+        <p className={styles.bodyText}>
+          {t(`chat.approval.control.reason.${d.refusal}`, {
+            defaultValue: t("chat.approval.control.reason.unknown")
+          })}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ApprovalCard({
   tool,
   onDecide,
@@ -256,6 +360,11 @@ export function ApprovalCard({
   const outbound = isOutboundSend(tool.name);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const egress = egressDetails(tool.details);
+  const computer = computerDetails(tool.details);
+  const control = controlGrantDetails(tool.details);
+  const [reviewedPayload, setReviewedPayload] = useState<string | null>(null);
+  const reviewPending = egress?.reviewFullPayload && reviewedPayload !== egress.payload;
   const app = appActionDetails(tool.details);
   const brain = brainDetails(tool.details);
   const unrenderable =
@@ -332,7 +441,9 @@ export function ApprovalCard({
           </>
         ) : (
           <>
-            <p className={styles.approvalSummary}>{tool.summary ?? tool.name}</p>
+            <p className={styles.approvalSummary}>
+              {egress?.reason || tool.summary || tool.name}
+            </p>
             <div className={styles.approvalMeta}>
               <span className={styles.approvalTool}>{tool.name}</span>
               <span className={styles.inputSummary}>
@@ -341,17 +452,39 @@ export function ApprovalCard({
             </div>
           </>
         )}
+        {computer && (egress || schedule) ? (
+          <p className={styles.bodyLabel} data-testid="approval-computer">
+            {t("chat.approval.computer", {
+              kind: computer.kind,
+              name: computer.name,
+              id: computer.nodeId
+            })}
+          </p>
+        ) : null}
+        {control ? <ControlGrantBody d={control} /> : null}
+        {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
         <div className={styles.actions}>
           <Button
             size="sm"
             variant="primary"
-            disabled={disabled || unrenderable}
+            disabled={disabled || reviewPending || unrenderable}
             onClick={() => void decide("approve", "once")}
           >
             {isSendTool(tool.name)
               ? t("chat.approval.sendOnce")
               : t("chat.approval.once")}
           </Button>
+          {/* One program, until this task ends: only when the daemon offered it. */}
+          {control?.offered ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={disabled || reviewPending}
+              onClick={() => void decide("approve", "run_control")}
+            >
+              {t("chat.approval.control.button", { program: control.program })}
+            </Button>
+          ) : null}
           {/* The daemon refuses a standing grant for any card with details. */}
           {tool.details != null ? null : (
             <>

@@ -38,6 +38,7 @@ use uuid::Uuid;
 use crate::config::{LoopConfig, ModelPrice, SharedRedactor};
 use crate::profile::BotProfile;
 use crate::subagent::SubSpec;
+use crate::taint::{self, ContentTaint};
 
 /// Errors of the public loop API.
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +94,11 @@ pub enum ApprovalScope {
     /// The tool's whole permission category for this bot: a persisted grant
     /// rule.  Absolute floors (money, never-list) still win.
     AlwaysCategory,
+    /// Typing, keys, value setting and dragging into the one program the card
+    /// names, for the rest of this run only (card 243-1). Never persisted, not
+    /// inherited by sub-agents. Accepted only on a card for which the daemon
+    /// resolved an eligible control target.
+    RunControl,
 }
 
 /// What a persisted "always allow" grant covers.
@@ -555,6 +561,9 @@ pub(crate) struct Pending {
     /// The card carries tool details or the tool is always-ask: only a
     /// one-time approval may be given for it, on every channel.
     pub once_only: bool,
+    /// The card offers [`ApprovalScope::RunControl`]: the daemon resolved an
+    /// eligible control target for this call.
+    pub grantable: bool,
 }
 
 #[derive(Default)]
@@ -653,9 +662,63 @@ pub(crate) struct RunCtx {
     /// Spawn parameters of a subagent run.
     pub sub: Option<SubSpec>,
     pub state: Mutex<CtxState>,
+    /// Untrusted and private content this run has already shown the model.
+    /// Never cleared. Copied from the parent when a subagent starts, and
+    /// rebuilt from stored steps when the process resumes a run.
+    pub taint: Mutex<ContentTaint>,
+    /// Run-scoped control grants (card 243-1). In memory, per run: gone when
+    /// the run ends and not copied to a sub-agent's own context.
+    pub control_grants: Mutex<Vec<ControlGrant>>,
+}
+
+/// "Let this run type into this program" on one computer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ControlGrant {
+    /// `tool_grant_scope` of the computer it was given on.
+    pub computer: String,
+    /// The one program it covers.
+    pub identity: tool_registry::ControlIdentity,
+}
+
+/// The control kind a built-in tool sends, for the three tools a run-scoped
+/// grant can ever cover. `desktop_launch`, `shell_run`, `script_run` and every
+/// other tool return `None`: nothing covers them.
+pub(crate) fn control_kind_of(name: &str) -> Option<tool_registry::ControlKind> {
+    use tool_registry::ControlKind as K;
+    match name {
+        "desktop_type" => Some(K::Type),
+        "desktop_set_value" => Some(K::SetValue),
+        "desktop_key" => Some(K::Key),
+        _ => None,
+    }
 }
 
 impl RunCtx {
+    /// A run-scoped control grant covers this call: same computer, same
+    /// running program (path, pid and start time), a covered kind, and a target
+    /// the deny rules did not refuse.
+    pub(crate) fn control_covers(
+        &self,
+        name: &str,
+        category: PermissionCategory,
+        target: &tool_registry::ControlTarget,
+    ) -> bool {
+        if control_kind_of(name) != Some(target.kind) || !target.eligible() {
+            return false;
+        }
+        let Some(scope) = self.tool_grant_scope(name, category) else {
+            return false;
+        };
+        self.control_grants.lock().iter().any(|g| {
+            g.computer == scope
+                && g.identity.pid == target.identity.pid
+                && g.identity.start_time == target.identity.start_time
+                && g.identity
+                    .image_path
+                    .eq_ignore_ascii_case(&target.identity.image_path)
+        })
+    }
+
     pub(crate) fn grant_scope(&self, category: PermissionCategory) -> Option<String> {
         self.tool_grant_scope("", category)
     }
@@ -1199,6 +1262,33 @@ impl Shared {
         None
     }
 
+    /// Why a child run may not take the placement its parent resolved:
+    /// either row is unusable on its own (no stored target, a legacy local id,
+    /// or a host/browser id that is not this machine), or the child's stored
+    /// target or node differs from what the validated parent resolved.
+    fn child_placement_error(
+        child: &Run,
+        parent: &Run,
+        resolved: &RunComputer,
+        provider: Option<&dyn ComputerProvider>,
+    ) -> Option<String> {
+        if let Some(reason) = Self::persisted_computer_error(child, provider)
+            .or_else(|| Self::persisted_computer_error(parent, provider))
+        {
+            return Some(reason.to_owned());
+        }
+        let node = resolved.node.as_ref().map(|n| n.id.as_str());
+        if child.computer_target.as_deref() != Some(resolved.label.as_str())
+            || child.computer_node.as_deref() != node
+        {
+            return Some(
+                "Cannot resume: this sub-agent's stored computer does not match its parent's; start a new run"
+                    .to_owned(),
+            );
+        }
+        None
+    }
+
     /// A stored host/browser run that cannot be compared with this boot's local
     /// identity because the identity key was unreadable. The run stays paused
     /// (retryable on a later boot); it is neither failed nor rebound.
@@ -1313,6 +1403,48 @@ impl Shared {
         }
     }
 
+    /// Exposure a run starts with: the parent's (subagents), what its own
+    /// history already holds, and the provenance of the chat messages that
+    /// enter its context.
+    fn initial_taint(&self, run: &Run, chat_id: ChatId) -> ContentTaint {
+        let mut taint = ContentTaint::default();
+        if let Some(parent_id) = run.parent_run_id {
+            let inherited = self
+                .runs
+                .lock()
+                .get(&parent_id)
+                .map(|ctx| ctx.taint.lock().clone());
+            if let Some(parent) = inherited {
+                taint.inherit(&parent);
+            }
+        }
+        absorb_run_history(&mut taint, self, run.id, 0);
+        // A subagent does not see the chat. A top-level turn, including a
+        // scheduled one, does: provenance rides on the messages that enter
+        // the context. Dropped by the history bound means the bytes are not
+        // in front of the model, so those bits are not inherited.
+        if run.parent_run_id.is_none() {
+            let prior = crate::history::chat_provenance(
+                &self.storage,
+                chat_id,
+                Some(run.id),
+                schedule_id_of(&run.kind),
+            );
+            taint.exposure.inherit(prior.exposure);
+            for label in prior.sources {
+                taint.note_label(&label);
+            }
+            // Another bot's reply (an `@mention` chat) reaches this run as
+            // untrusted data whatever that bot read. Same single exposure
+            // state as every other source: no separate flag for mentions.
+            if crate::history::has_foreign_replies(&self.storage, run) {
+                taint.exposure.observe(true, false);
+                taint.note_label("another bot's reply");
+            }
+        }
+        taint
+    }
+
     /// Per-run context, built on first use (also after a restart).
     pub fn ctx(&self, run: &Run) -> Result<Arc<RunCtx>, ExecError> {
         if let Some(c) = self.runs.lock().get(&run.id) {
@@ -1348,6 +1480,20 @@ impl Shared {
                     .map_err(xe)?
                     .ok_or_else(|| xe(format!("parent run {parent_id} not found")))?;
                 let pctx = self.ctx(&parent)?;
+                // A child inherits its parent's resolved computer, but its own
+                // stored placement must agree with it. A resumed child with no
+                // stored target, a legacy id or a different node fails closed
+                // here, before anything runs, with or without startup
+                // reconciliation.
+                let provider = self.computer_provider.read().clone();
+                if let Some(reason) = Self::child_placement_error(
+                    run,
+                    &parent,
+                    &pctx.resolved_computer,
+                    provider.as_deref(),
+                ) {
+                    return Err(xe(reason));
+                }
                 let spec: SubSpec =
                     serde_json::from_value(run.spec.clone().unwrap_or(Value::Null)).map_err(xe)?;
                 let model = spec.model_for(&pctx.profile).map_err(xe)?;
@@ -1374,6 +1520,7 @@ impl Shared {
                     .map(|ctx| Arc::clone(&ctx.computer))
             })
             .unwrap_or_else(|| Arc::new(tokio::sync::OnceCell::new()));
+        let taint = self.initial_taint(run, chat_id);
         let steer = self.pending_steering(run)?;
         let ctx = Arc::new(RunCtx {
             computer,
@@ -1399,6 +1546,8 @@ impl Shared {
                 seq,
                 todos: Vec::new(),
             }),
+            taint: Mutex::new(taint),
+            control_grants: Mutex::new(Vec::new()),
         });
         Ok(Arc::clone(self.runs.lock().entry(run.id).or_insert(ctx)))
     }
@@ -1739,6 +1888,28 @@ fn needs_barrier(event: &Event) -> bool {
     )
 }
 
+/// Rebuild taint from stored steps of `run_id` and its subagents.
+///
+/// Used when a run context is created (resume, or a parent absorbing a child
+/// whose in-memory context is already gone).
+pub(crate) fn absorb_run_history(taint: &mut ContentTaint, sh: &Shared, run_id: RunId, depth: u32) {
+    if depth > 8 {
+        return;
+    }
+    let Ok(steps) = sh.storage.list_steps(run_id) else {
+        return;
+    };
+    for step in &steps {
+        taint::observe_history_step(taint, &step.name, &step.input, step.output.as_ref());
+    }
+    let Ok(kids) = sh.storage.list_child_runs(run_id) else {
+        return;
+    };
+    for kid in kids {
+        absorb_run_history(taint, sh, kid.id, depth + 1);
+    }
+}
+
 /// Result of [`Shared::resolve_call`].
 pub(crate) struct Resolved {
     pub tool: Arc<dyn tool_registry::Tool>,
@@ -1778,6 +1949,13 @@ pub(crate) struct ModelOut {
     /// Which guard stopped the turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard_reason: Option<String>,
+    /// Tool calls a CLI session ran inside this model step. The ordinary tool
+    /// step is not written for those calls; the facts are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub executed: Vec<crate::taint::ExecFact>,
+    /// External tool descriptions and schemas that were part of this request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub metadata: Vec<crate::taint::ExecFact>,
 }
 
 /// One call inside a persisted tool step's input.
@@ -1798,6 +1976,10 @@ pub(crate) struct ResultRec {
     pub is_error: bool,
     pub text: String,
     pub spill_path: Option<String>,
+    /// What this call did to the model's context. Absent only on rows written
+    /// before the field existed; those rows are not classified from their text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<crate::taint::ExecFact>,
 }
 
 pub(crate) const STEP_USER: &str = "user_message";

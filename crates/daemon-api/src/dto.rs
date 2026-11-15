@@ -380,6 +380,10 @@ pub enum Scope {
     /// The tool's whole permission category for this bot, persisted.  Money and
     /// never-list floors still ask.
     AlwaysCategory,
+    /// Typing, keys, value setting and dragging into the one program the card
+    /// names, for the rest of this run only. Accepted only on a card whose
+    /// `details.control_grant.offered` is true; refused everywhere else.
+    RunControl,
 }
 
 /// `POST /v1/approvals/{call_id}`.

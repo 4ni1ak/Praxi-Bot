@@ -161,7 +161,7 @@ async fn lexical_tool_is_registered_with_bot_scope_and_needs_no_provider() {
 }
 
 #[tokio::test]
-async fn poisoning_cannot_change_execution_side_provenance_or_escape_output_budget() {
+async fn poisoning_cannot_change_execution_side_exposure_or_escape_output_budget() {
     let (_dir, storage, a, _, store) = fixture();
     add(
         &store,
@@ -178,11 +178,13 @@ async fn poisoning_cannot_change_execution_side_provenance_or_escape_output_budg
         .unwrap();
     assert!(text(&out).len() <= 2000);
     assert!(memory_store::estimate_tokens(text(&out)) <= 400);
-    let provenance = tool.output_provenance().unwrap();
-    assert!(provenance.ingests_untrusted);
-    assert!(provenance.reads_private);
-    assert_eq!(provenance.executed()["ran"], true);
-    assert_eq!(provenance.executed()["label"], "knowledge");
+    let exposure = out.exposure.as_ref().expect("retrieval is a tainting read");
+    assert!(exposure.ingests_untrusted);
+    assert!(exposure.reads_private);
+    assert_eq!(exposure.label, "knowledge");
+    let class = tool.spec().content;
+    assert!(class.is_declared() && class.ingests_untrusted && class.reads_private);
+    assert!(!class.egress && !class.executes);
 }
 
 #[test]

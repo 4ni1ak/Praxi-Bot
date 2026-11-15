@@ -10,8 +10,8 @@ use utoipa::{Modify, OpenApi};
 
 use crate::{
     changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
-    file_access, fill_routes, host, host_links, knowledge, knowledge_settings, live_view, mcp,
-    mcp_routes, mcp_server, routes, skill_management, skills, sse, web, web_routes,
+    file_access, fill_routes, host, host_links, host_setup, knowledge, knowledge_settings,
+    live_view, mcp, mcp_routes, mcp_server, routes, skill_management, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -45,7 +45,7 @@ impl Modify for Security {
     ),
     paths(
         crate::cli_engines::list, crate::cli_engines::preview, crate::cli_engines::decide,
-        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host::invite, host::revoke, host::standby, host::activate, host::update,
+        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_links::forget, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
         live_view::availability,
@@ -195,6 +195,7 @@ impl Modify for Security {
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host_links::HostLinkState, host_links::HostLinkInfo, host_links::HostLinkList, host_links::PairHostInput, host_links::HostLinkConnection,
+        host_setup::StartHostSetupInput, host_setup::HostSetupState, host_setup::HostSetupStepStatus, host_setup::HostSetupStep, host_setup::HostKeyPrompt, host_setup::HostSetupJob, host_setup::HostKeyAnswer, host_setup::SshKeyHint, host_setup::SshKeyList,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
         changes::CheckpointComputerDto, changes::CheckpointLocationDto, changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
         changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,

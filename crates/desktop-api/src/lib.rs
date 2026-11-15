@@ -7,6 +7,8 @@ pub mod action;
 pub mod backend;
 pub mod error;
 pub mod grid;
+pub mod guard;
+pub mod guarded;
 pub mod live_view;
 pub mod render;
 pub mod snapshot;
@@ -15,6 +17,8 @@ pub use action::{Action, ActionResult, ClickMethod, CoordinateSpace, Target};
 pub use backend::{Capabilities, DesktopBackend};
 pub use error::DesktopError;
 pub use grid::Grid;
+pub use guard::{ActGuard, InputTarget, ProcessIdentity, Refusal};
+pub use guarded::{GuardFailure, InputProbe, InputSink};
 pub use live_view::{CaptureScope, LiveViewOptions};
 pub use render::{render_node, render_snapshot};
 pub use snapshot::{

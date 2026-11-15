@@ -89,6 +89,8 @@ fn build_cli_only_app(root: &std::path::Path) -> Router {
             effect: Effect::Read,
             category: PermissionCategory::Fs,
             platforms: vec![Platform::All],
+
+            content: tool_registry::ContentClass::none(),
         },
     }));
 
@@ -143,7 +145,7 @@ async fn run_child_turn() {
     assert_eq!(providers["default_provider"], "cli:claude");
     assert_eq!(
         providers["configured"][0]["models"],
-        json!(["default", "sonnet", "opus", "haiku"])
+        json!(["default", "sonnet", "opus", "haiku", "fable"])
     );
 
     let profile_toml = "\

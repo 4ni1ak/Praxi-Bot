@@ -26,6 +26,8 @@ pub enum Sub {
     Invite,
     Devices,
     Screen,
+    /// Take screen view + input back from a device (rollback of a pairing).
+    ScreenRevoke,
     Revoke,
     Uninstall,
     Purge,
@@ -87,6 +89,7 @@ impl RemoteCmd {
             Self::Provision(Sub::Invite) => root_cmd!("invite"),
             Self::Provision(Sub::Devices) => root_cmd!("devices"),
             Self::Provision(Sub::Screen) => root_cmd!("screen"),
+            Self::Provision(Sub::ScreenRevoke) => root_cmd!("screen-revoke"),
             Self::Provision(Sub::Revoke) => root_cmd!("revoke"),
             Self::Provision(Sub::Uninstall) => root_cmd!("uninstall"),
             Self::Provision(Sub::Purge) => root_cmd!("purge"),

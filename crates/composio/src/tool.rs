@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tool_registry::{
-    ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput,
-    ToolSpec,
+    ContentClass, ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError,
+    ToolOutput, ToolSpec,
 };
 
 use crate::error::ComposioError;
@@ -25,7 +25,13 @@ fn to_tool_error(e: &ComposioError) -> ToolError {
     }
 }
 
-fn spec(name: String, description: String, schema: Value, effect: Effect) -> ToolSpec {
+fn spec(
+    name: String,
+    description: String,
+    schema: Value,
+    effect: Effect,
+    content: ContentClass,
+) -> ToolSpec {
     ToolSpec {
         name,
         description,
@@ -33,7 +39,16 @@ fn spec(name: String, description: String, schema: Value, effect: Effect) -> Too
         effect,
         category: PermissionCategory::Accounts,
         platforms: vec![Platform::All],
+        content,
     }
+}
+
+/// A connected app can return mail, messages or files (untrusted and private)
+/// and an action can send data to the app's service, so a run that has read
+/// something untrusted or private asks again before it runs one. Descriptions
+/// and schemas come from the app's catalogue, so they are external metadata.
+fn app_action_class() -> ContentClass {
+    ContentClass::all().with_external_metadata()
 }
 
 fn card(svc: &ComposioService, app: &str, a: &ActionInfo, args: &Value) -> Value {
@@ -99,7 +114,13 @@ impl ActionTool {
             svc.display_name(app),
             clean_text(&a.description, 300)
         );
-        let spec = spec(name, desc, a.schema.clone(), Effect::Destructive);
+        let spec = spec(
+            name,
+            desc,
+            a.schema.clone(),
+            Effect::Destructive,
+            app_action_class(),
+        );
         Self {
             svc,
             app: app.to_owned(),
@@ -168,6 +189,7 @@ impl RunActionTool {
                 "arguments": {"type": "object", "description": "arguments of the action"}
             }, "required": ["app", "action"], "additionalProperties": false}),
             Effect::Destructive,
+            app_action_class(),
         );
         Self { svc, spec }
     }
@@ -246,6 +268,8 @@ impl FindActionTool {
                 "query": {"type": "string", "description": "what you want to do"}
             }, "required": ["app", "query"], "additionalProperties": false}),
             Effect::Read,
+            // Catalogue lookup only: external text in, nothing private, no payload out.
+            ContentClass::declared(true, false, false).with_external_metadata(),
         );
         Self { svc, spec }
     }
@@ -286,6 +310,7 @@ impl Tool for FindActionTool {
                 text: format!("{UNTRUSTED}{}", Value::Array(list)),
             }],
             spill: None,
+            exposure: None,
         })
     }
 }

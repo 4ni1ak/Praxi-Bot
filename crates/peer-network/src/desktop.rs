@@ -151,7 +151,12 @@ fn desktop_to_rpc(e: &DesktopError) -> RpcError {
             RpcError::new(ERR_ELEMENT_NOT_FOUND, e.to_string())
                 .with_data(json!({ "index": index, "generation": generation }))
         }
-        DesktopError::Accessibility(m) => RpcError::new(ERR_ACCESSIBILITY, m.clone()),
+        // A remote node never offers a control grant, so a guard stop only
+        // reaches here from a node that checked one; its text already says what
+        // was and was not delivered, so it is passed on as it is.
+        DesktopError::Accessibility(m) | DesktopError::GuardRefused(m) => {
+            RpcError::new(ERR_ACCESSIBILITY, m.clone())
+        }
         DesktopError::Screenshot(m) => RpcError::new(ERR_SCREENSHOT, m.clone()),
         DesktopError::Unsupported(m) => RpcError::new(ERR_UNSUPPORTED, m.clone()),
         DesktopError::Internal(m) => RpcError::new(ERR_DESKTOP_INTERNAL, m.clone()),

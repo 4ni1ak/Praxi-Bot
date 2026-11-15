@@ -4410,7 +4410,13 @@ mod tests {
         let err = store
             .create("run", "fs_delete", &[data.path()])
             .unwrap_err();
-        assert!(err.to_string().contains("ancestor"), "{err}");
+        // Either refusal is correct. The daemon-data default-deny (this
+        // branch) reports the protected store before the ancestor check does.
+        let message = err.to_string();
+        assert!(
+            message.contains("ancestor") || message.contains("explicit grant"),
+            "{err}"
+        );
         assert_no_partial(data.path());
         assert_eq!(
             fs::read_to_string(data.path().join("note.txt")).unwrap(),

@@ -340,6 +340,29 @@
       "always": "Her zaman",
       "deny": "Reddet",
       "reasonPlaceholder": "Reddetme gerekçesi (isteğe bağlı)",
+      "control": {
+        "button": "Bu görev: {{program}}",
+        "offered": "Yalnızca bu görev için {{program}} içine yazmaya izin verilsin mi?",
+        "refused": "{{program}} için görev boyunca izin yok: bu çağrıyı bir kez onaylayın.",
+        "covers": "Praxi bu görev boyunca {{program}} ({{path}}) içine yazabilir: metin, birkaç düzenleme tuşu (Enter, Tab, oklar, Esc, Ctrl+A/C/X/V/Z/Y/S/F) ve değerler. Başka hiçbir şey değil.",
+        "risk": "Praxi okuduğu şeyleri bu uygulamaya yazabilir.",
+        "stillAsks": "Şunlar için yine sorar: başka programlar, program başlatma, komutlar, betikler, sürükleme, dosya iletişim kutuları, parola alanları ve diğer tüm tuşlar. Terminaller, tarayıcılar, başlatıcılar ve uzak masaüstü görüntüleyicileri yalnızca dosya adına göre tanınır; bu bir sezgiseldir, adı değiştirilmiş kopya tanınmaz. İzin görevle biter ve durdurulan veya başarısız olan her gönderimden sonra geri alınır.",
+        "reason": {
+          "terminal": "Bu pencere bir terminal veya kabuk.",
+          "command_app": "Bu uygulamanın yerleşik bir komut satırı var.",
+          "browser": "Bu bir tarayıcı. Bunun yerine tarayıcı araçlarını kullanın.",
+          "password_manager": "Bu bir parola yöneticisi.",
+          "system_surface": "Bu bir sistem başlatıcısı veya oturum açma yüzeyi.",
+          "uwp_frame": "Bu paketli uygulama tek bir programa bağlanamıyor.",
+          "dialog": "Bu bir iletişim kutusu. Dosya iletişim kutuları ve Çalıştır her zaman sorar.",
+          "password_field": "Bu bir parola alanı.",
+          "chord": "Bu tuşlar bir başlatıcı açar veya pencere değiştirir.",
+          "elevated": "Bu program yükseltilmiş çalışıyor veya denetlenemedi.",
+          "no_identity": "Bu pencerenin arkasındaki program belirlenemedi.",
+          "unknown": "Bu çağrı görev boyunca geçerli bir izinle kapsanamaz.",
+          "remote_control": "Bu bir uzak masaüstü veya sanal makine görüntüleyicisi."
+        }
+      },
       "schedule": {
         "title": {
           "create": "Yinelenen görev oluşturulsun mu?",
@@ -362,6 +385,19 @@
         },
         "note": "Bu onay yalnızca bu değişikliği kapsar; her seferinde sorulur."
       },
+      "egress": {
+        "large": "Bu içerik kısa kartta incelenemeyecek kadar büyük ({{bytes}} bayt). Onaylamadan önce tam metni açıp sonuna kadar kaydırın.",
+        "reviewFull": "İçeriğin tamamını incele",
+        "host": "Hedef: {{host}}",
+        "read": "Bu çalışma şunu okudu: {{list}}",
+        "payload": {
+          "query": "Giden sorgu (tamamı gösterilir):",
+          "url": "Giden adres (tamamı gösterilir):",
+          "body": "Giden veri (tamamı gösterilir):"
+        },
+        "size": "{{lines}} satır, {{chars}} karakter, {{hidden}} yazdırılmayan karakter <U+XXXX> olarak gösterilir"
+      },
+      "computer": "Bu işlem {{kind}} \"{{name}}\" üzerinde çalışır (kimlik {{id}}).",
       "app": {
         "arguments": "Tüm bağımsız değişkenleri göster ({{count}} karakter)",
         "footer": "Composio üzerinden. Yalnızca bu eylemi yukarıdaki tüm bağımsız değişkenlerle onaylayın."
@@ -785,6 +821,10 @@
     },
     "executorRequired": "Yürütücü model gerekli.",
     "permissions": "İzinler",
+    "allowEgressAfterReads": {
+      "title": "Bu bot bir şey okuduktan sonra veri göndermesine izin ver",
+      "hint": "Varsayılan kapalıdır. Bir araç izni bunu açmaz. Kapalıyken, dosya, posta kutusu, sayfa veya başka özel ya da güvenilmeyen içerik okumuş bir çalışma, bu makineden veri göndermeden önce sormak zorundadır."
+    },
     "preset": {
       "read-only": {
         "name": "Salt okunur",
@@ -1301,13 +1341,18 @@
     },
     "otherId": "\"{{id}}\" modelini {{provider}} ile kullan",
     "recommended": "Önerilen",
-    "all": "Tüm modeller ({{count}})",
-    "engines": "Kodlama CLI'ları",
-    "cliDefault": "Varsayılan (CLI karar verir)",
+    "showAll": "Tüm modeller ({{count}})",
+    "noModels": "Kullanmak için aramaya model kimliği yazın.",
+    "sectionCli": "Kodlama CLI'ları (aboneliğiniz)",
+    "sectionApi": "API sağlayıcıları",
+    "addEngines": "Kodlama CLI'ı ekle",
     "install": "{{name}} kur",
     "connect": "{{name}} bağla",
     "engineError": "Bu CLI bağlanamadı.",
     "hint": {
+      "new": "yeni",
+      "free": "ücretsiz",
+      "quota": "yüksek kota",
       "fast": "hızlı",
       "balanced": "dengeli",
       "strongest": "zor işler için en iyisi"
@@ -2478,5 +2523,114 @@
     "consentFull": "Tam erişimin, {{cli}} dosyaları değiştirmeden veya komut çalıştırmadan önce sormayacağı anlamına geldiğini anlıyorum.",
     "apply": "Motor ayarlarını uygula",
     "kill": "Durdur ve kapat"
+  },
+  "addServer": {
+    "title": "Sunucu ekle",
+    "lead": "Kiraladığın bir sunucuyu bağla. Kopyalanacak bilet yok.",
+    "host": "Sunucu adresi",
+    "user": "Kullanıcı",
+    "port": "Port",
+    "auth": "Giriş",
+    "auth_key": "Anahtar dosyası",
+    "auth_agent": "SSH ajanı",
+    "keyFile": "Özel anahtar dosyası",
+    "keyHint": "Yalnızca yol kullanılır. Praxi anahtarın kendisini kopyalamaz ve saklamaz.",
+    "agentHint": "Praxi, SSH ajanında yüklü anahtarları kullanır. Parola desteklenmez.",
+    "releaseNote": "Praxi, zaten Praxi çalıştıran bir sunucuyu ekleyebilir. Senin için kurması yayımlanmış bir sürüm gerektirir; henüz yok.",
+    "manual": "Bunun yerine eşleştirme biletim var",
+    "connect": "Bağlan",
+    "starting": "Başlıyor…",
+    "noDaemon": "Yerel Praxi hizmeti çalışmıyor. Uygulamayı yeniden başlatıp tekrar dene.",
+    "startFailed": "Başlatılamadı. Yukarıdaki ayrıntılara bakıp tekrar dene.",
+    "formInvalid": "Sunucu adresini ve geçerli bir port gir.",
+    "keyMissing": "Bir özel anahtar dosyası seç ya da SSH ajanına geç.",
+    "progress": "Kurulum ilerlemesi",
+    "stage": {
+      "connect": "Bağlan ve sunucuyu doğrula",
+      "check": "Sistemi denetle",
+      "install": "Praxi'yi kur veya bul",
+      "pair": "Bu bilgisayarı eşleştir",
+      "verify": "Çalıştığını denetle"
+    },
+    "state": {
+      "pending": "Bekliyor",
+      "running": "Çalışıyor…",
+      "waiting": "Yanıtın gerekiyor",
+      "done": "Tamam",
+      "skipped": "Zaten hazır, yapılacak bir şey yok",
+      "warn": "Tamam, bir notla",
+      "failed": "Burada durdu"
+    },
+    "hostKeyTitle": "Bu senin sunucun mu?",
+    "hostKeyBody": "Bu bilgisayar {{host}} adresine ilk kez bağlanıyor. Sağlayıcının konsolu bir parmak izi gösteriyorsa bununla karşılaştır.",
+    "hostKeyYes": "Evet, bu sunucuya güven",
+    "hostKeyNo": "Hayır, dur",
+    "cancelNote": "İptal, çalışan adımın önce bitmesine izin verir.",
+    "doneTitle": "{{name}} bağlandı",
+    "doneScreen": "Bilgisayar listende. Botlarıyla sohbet edebilir ve ekranını izleyebilirsin.",
+    "doneNoScreen": "Bilgisayar listende. İzlenecek bir ekranı henüz yok.",
+    "useServer": "Bu sunucuyu kullan",
+    "viewScreen": "Ekranı gör",
+    "copy": "Ayrıntıları kopyala",
+    "copied": "Ayrıntılar kopyalandı.",
+    "copyFailed": "Kopyalanamadı.",
+    "edit": "Ayarları değiştir",
+    "retry": "Tekrar dene",
+    "cancelled": "Kurulum iptal edildi",
+    "cancelledBody": "Başka bir şey yapılmadı. İstediğin zaman yeniden başlayabilirsin.",
+    "fail": {
+      "hostkey_changed": {
+        "msg": "Bu, daha önce kurduğun sunucu değil.",
+        "fix": "Kimliği değişti ve hiçbir şey gönderilmedi. Sunucuyu bilerek yeniden kurduysan kaldırıp yeniden ekle."
+      },
+      "hostkey_declined": {
+        "msg": "Bu sunucuya güvenmedin.",
+        "fix": "Parmak izini sağlayıcının konsoluyla karşılaştır, sonra tekrar dene."
+      },
+      "ssh_client": {
+        "msg": "Praxi bu bilgisayarda SSH programını bulamadı.",
+        "fix": "OpenSSH istemcisini kur, sonra tekrar dene."
+      },
+      "auth": {
+        "msg": "Sunucu girişi kabul etmedi.",
+        "fix": "Kullanıcı adını kontrol et (Ubuntu imajları ubuntu, Oracle Linux opc kullanır) ve doğru anahtar dosyasını seç."
+      },
+      "network": {
+        "msg": "Praxi sunucuya ulaşamadı.",
+        "fix": "Adresi ve portu, sunucunun açık olduğunu ve güvenlik duvarının SSH'a izin verdiğini kontrol et."
+      },
+      "needs_sudo": {
+        "msg": "Bu kullanıcı parolasız yönetici komutu çalıştıramıyor.",
+        "fix": "Varsayılan bulut kullanıcısı gibi parolasız sudo'su olan bir kullanıcı kullan."
+      },
+      "preflight": {
+        "msg": "Sunucu bir gereksinimi karşılamıyor.",
+        "fix": "Hangisi olduğunu görmek için ayrıntıları kopyala. Praxi Ubuntu 22.04 veya üstü, yeterli bellek ve disk ile systemd ister."
+      },
+      "not_installed": {
+        "msg": "Bu sunucuda Praxi kurulu değil.",
+        "fix": "Otomatik kurulum yayımlanmış bir sürüm gerektirir; henüz yok. Praxi'yi sunucuya elle kur, sonra yeniden ekle."
+      },
+      "not_host_mode": {
+        "msg": "Sunucudaki Praxi ana makine olarak çalışmıyor.",
+        "fix": "Bunu değiştirmek yayımlanmış bir sürüm gerektirir; henüz yok. Sunucuda ana makine kipinde başlat, sonra yeniden ekle."
+      },
+      "service_down": {
+        "msg": "Praxi kurulu ama sunucuda çalışmıyor.",
+        "fix": "Sunucuda şunu çalıştır: sudo systemctl start praxi. Sonra tekrar dene."
+      },
+      "pair": {
+        "msg": "Praxi bu bilgisayarı sunucuyla eşleştiremedi.",
+        "fix": "Tekrar dene. Sürekli başarısız olursa ayrıntıları kopyala ve sunucudaki hizmeti kontrol et."
+      },
+      "health": {
+        "msg": "Sunucu eşleşti ama doğru yanıt vermedi.",
+        "fix": "Bir dakika bekleyip tekrar dene; sürerse ayrıntıları kopyala."
+      },
+      "generic": {
+        "msg": "Sunucu kurulurken bir şey ters gitti.",
+        "fix": "Tekrar dene. Sürekli başarısız olursa ayrıntıları kopyala."
+      }
+    }
   }
 }

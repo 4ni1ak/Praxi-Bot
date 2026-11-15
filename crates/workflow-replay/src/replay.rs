@@ -17,7 +17,7 @@ use protocol::{Event, RunId};
 use serde::Serialize;
 use serde_json::{Value, json};
 use tool_registry::{
-    ContentPart, Effect, PermissionCategory, ToolContext, ToolError, ToolRegistry,
+    ContentClass, ContentPart, Effect, PermissionCategory, ToolContext, ToolError, ToolRegistry,
 };
 
 use crate::error::{ReplayError, WorkflowError};
@@ -36,6 +36,14 @@ pub const MAX_WORKFLOW_DEPTH: usize = 4;
 tokio::task_local! {
     /// Names of the workflows currently being replayed on this task chain.
     static WORKFLOW_STACK: Vec<String>;
+}
+
+/// Classification for a workflow step that is not a registered tool (native
+/// browser and desktop actions). The same table as [`builtin_tools::classify`],
+/// so a desktop launch is egress here too. Unknown names stay undeclared,
+/// which the loop treats as private and untrusted.
+fn content_for_unnamed(name: &str) -> ContentClass {
+    builtin_tools::classify(name).unwrap_or_else(ContentClass::unspecified)
 }
 
 /// Workflows currently being replayed (outermost first) on this task.
@@ -561,6 +569,11 @@ impl Replayer {
         effect: Effect,
         input: Value,
     ) -> Result<(), Stop> {
+        let content = self
+            .handles
+            .tools
+            .get(tool)
+            .map_or_else(|| content_for_unnamed(tool), |t| t.spec().content);
         let req = GateRequest {
             run_id: self.opts.run_id.clone(),
             tool: tool.to_owned(),
@@ -568,8 +581,46 @@ impl Replayer {
             effect,
             raw_command: raw_command_for(tool, &input),
             input,
+            content,
+            control: None,
         };
         gate.authorize(&req).await.map_err(Stop::Denied)
+    }
+
+    /// [`Self::authorize`] for a desktop input step the replayer sends itself.
+    /// `control` is the program the step would reach. When a run-scoped control
+    /// grant covers the step the returned guard must go with every dispatch of
+    /// it, so the backend checks the window right before it sends.
+    async fn authorize_input(
+        &self,
+        gate: &dyn ToolGate,
+        tool: &str,
+        input: Value,
+        control: Option<tool_registry::ControlTarget>,
+    ) -> Result<Option<desktop_api::ActGuard>, Stop> {
+        let content = self
+            .handles
+            .tools
+            .get(tool)
+            .map_or_else(|| content_for_unnamed(tool), |t| t.spec().content);
+        let req = GateRequest {
+            run_id: self.opts.run_id.clone(),
+            tool: tool.to_owned(),
+            category: PermissionCategory::Desktop,
+            effect: Effect::Write,
+            raw_command: raw_command_for(tool, &input),
+            input,
+            content,
+            control,
+        };
+        let identity = gate.authorize_control(&req).await.map_err(Stop::Denied)?;
+        Ok(identity.map(|id| desktop_api::ActGuard {
+            expect: desktop_api::ProcessIdentity {
+                image_path: id.image_path,
+                pid: id.pid,
+                start_time: id.start_time,
+            },
+        }))
     }
 
     /// Ask the desktop control gate (if any) before a mutating action.
@@ -782,6 +833,7 @@ impl Replayer {
         let ctx = ToolContext {
             run_id: self.opts.run_id.clone(),
             bot_id: self.opts.bot_id.clone(),
+            content_tainted: gate.content_tainted(&self.opts.run_id),
             ..ToolContext::default()
         };
         match tool.call(&ctx, input).await {
@@ -916,55 +968,55 @@ impl Replayer {
             ),
             DesktopActionKind::Key => ("desktop_key", json!({"keys": value, "index": index_json})),
         };
-        self.authorize(
-            gate,
-            tool,
-            PermissionCategory::Desktop,
-            Effect::Write,
-            input,
-        )
-        .await?;
+        // Typing, keys and value setting are the calls a run-scoped control
+        // grant can cover. A click is not input in that sense and never has a
+        // target, so it takes the plain path.
+        let kind = match d.action {
+            DesktopActionKind::Click => None,
+            DesktopActionKind::Type => Some(tool_registry::ControlKind::Type),
+            DesktopActionKind::SetValue => Some(tool_registry::ControlKind::SetValue),
+            // A key step that first clicks an element is a click: it asks.
+            DesktopActionKind::Key if target.is_some() => None,
+            DesktopActionKind::Key => Some(tool_registry::ControlKind::Key),
+        };
+        let secure_element = match (&snap, &found) {
+            (Some(s), Some(f)) => s.nodes[f.node].states.iter().any(|st| st == "secure"),
+            _ => false,
+        };
+        let chord: Option<Vec<String>> = (d.action == DesktopActionKind::Key).then(|| {
+            value
+                .clone()
+                .unwrap_or_default()
+                .split('+')
+                .map(|k| k.trim().to_owned())
+                .filter(|k| !k.is_empty())
+                .collect()
+        });
+        let control = match kind {
+            Some(kind) => {
+                builtin_tools::resolve_input_target(
+                    backend.as_ref(),
+                    kind,
+                    chord.as_deref(),
+                    secure_element,
+                    d.action == DesktopActionKind::Key && target.is_none(),
+                )
+                .await
+            }
+            None => None,
+        };
+        let guard = self.authorize_input(gate, tool, input, control).await?;
+        let guard = guard.as_ref();
 
-        match d.action {
-            DesktopActionKind::Click => {
-                let t = target.ok_or_else(|| Stop::Failed("click without target".into()))?;
-                dispatch(backend, Action::Click { target: t, method }, permit).await?;
-            }
-            DesktopActionKind::Type => {
-                let t = target.ok_or_else(|| Stop::Failed("type without target".into()))?;
-                // Same as `desktop_type`: a real click focuses, then keys go to the focus.
-                dispatch(
-                    backend,
-                    Action::Click {
-                        target: t,
-                        method: ClickMethod::Global,
-                    },
-                    permit,
-                )
-                .await?;
-                dispatch(
-                    backend,
-                    Action::TypeText {
-                        text: value.unwrap_or_default(),
-                    },
-                    permit,
-                )
-                .await?;
-            }
-            DesktopActionKind::SetValue => {
-                let t = target.ok_or_else(|| Stop::Failed("set_value without target".into()))?;
-                dispatch(
-                    backend,
-                    Action::SetValue {
-                        target: t,
-                        value: value.unwrap_or_default(),
-                    },
-                    permit,
-                )
-                .await?;
-            }
-            DesktopActionKind::Key => {
-                if let Some(t) = target {
+        let sent: Result<(), Stop> = async {
+            match d.action {
+                DesktopActionKind::Click => {
+                    let t = target.ok_or_else(|| Stop::Failed("click without target".into()))?;
+                    dispatch(backend, Action::Click { target: t, method }, permit, None).await?;
+                }
+                DesktopActionKind::Type => {
+                    let t = target.ok_or_else(|| Stop::Failed("type without target".into()))?;
+                    // Same as `desktop_type`: a real click focuses, then keys go to the focus.
                     dispatch(
                         backend,
                         Action::Click {
@@ -972,21 +1024,67 @@ impl Replayer {
                             method: ClickMethod::Global,
                         },
                         permit,
+                        guard,
+                    )
+                    .await?;
+                    dispatch(
+                        backend,
+                        Action::TypeText {
+                            text: value.unwrap_or_default(),
+                        },
+                        permit,
+                        guard,
                     )
                     .await?;
                 }
-                let keys: Vec<String> = value
-                    .unwrap_or_default()
-                    .split('+')
-                    .map(|k| k.trim().to_owned())
-                    .filter(|k| !k.is_empty())
-                    .collect();
-                if keys.is_empty() {
-                    return Err(Stop::Failed("empty key chord".into()));
+                DesktopActionKind::SetValue => {
+                    let t =
+                        target.ok_or_else(|| Stop::Failed("set_value without target".into()))?;
+                    dispatch(
+                        backend,
+                        Action::SetValue {
+                            target: t,
+                            value: value.unwrap_or_default(),
+                        },
+                        permit,
+                        guard,
+                    )
+                    .await?;
                 }
-                dispatch(backend, Action::KeyPress { keys }, permit).await?;
+                DesktopActionKind::Key => {
+                    if let Some(t) = target {
+                        dispatch(
+                            backend,
+                            Action::Click {
+                                target: t,
+                                method: ClickMethod::Global,
+                            },
+                            permit,
+                            guard,
+                        )
+                        .await?;
+                    }
+                    let keys: Vec<String> = value
+                        .unwrap_or_default()
+                        .split('+')
+                        .map(|k| k.trim().to_owned())
+                        .filter(|k| !k.is_empty())
+                        .collect();
+                    if keys.is_empty() {
+                        return Err(Stop::Failed("empty key chord".into()));
+                    }
+                    dispatch(backend, Action::KeyPress { keys }, permit, guard).await?;
+                }
             }
+            Ok(())
         }
+        .await;
+        // A guarded send that stopped or failed withdraws the run's task-wide
+        // permissions, exactly as it does on the direct tool path.
+        if sent.is_err() && guard.is_some() {
+            gate.revoke_control(&self.opts.run_id);
+        }
+        sent?;
         sleep(self.opts.action_settle).await;
         Ok(Done {
             resolved_via: found.as_ref().map(|f| f.strategy),
@@ -1319,10 +1417,19 @@ async fn dispatch(
     backend: &Arc<dyn DesktopBackend>,
     action: Action,
     permit: &ActionPermit,
+    guard: Option<&desktop_api::ActGuard>,
 ) -> Result<(), Stop> {
     let backend = Arc::clone(backend);
+    let guard = guard.cloned();
     let r = permit
-        .protect(async move { backend.act(action).await })
+        .protect(async move {
+            match guard {
+                // Covered by a run-scoped control grant: the backend checks the
+                // window right before it sends, replay included.
+                Some(g) => backend.act_guarded(action, g).await,
+                None => backend.act(action).await,
+            }
+        })
         .await
         .map_err(Stop::Failed)?
         .map_err(|e| Stop::Failed(e.to_string()))?;
@@ -1362,4 +1469,32 @@ enum Hit {
     None,
     Ref(String, Found),
     Css(String),
+}
+
+#[cfg(test)]
+mod class_tests {
+    use super::*;
+
+    #[test]
+    fn unnamed_steps_use_the_builtin_classification() {
+        for name in [
+            "desktop_launch",
+            "desktop_type",
+            "desktop_key",
+            "browser_scroll",
+            "browser_tabs",
+            "fs_read",
+            "desktop_list_apps",
+        ] {
+            assert_eq!(
+                content_for_unnamed(name),
+                builtin_tools::classify(name).unwrap(),
+                "{name}"
+            );
+        }
+        assert!(content_for_unnamed("desktop_launch").egress);
+        assert!(!content_for_unnamed("browser_scroll").egress);
+        assert!(content_for_unnamed("browser_tabs").egress);
+        assert!(!content_for_unnamed("browser_snapshot").egress);
+    }
 }

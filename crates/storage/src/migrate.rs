@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::{Result, StorageError};
 
 /// Embedded migrations, ordered by their explicit numeric prefix.
-/// 0007 belongs to PR #89; 0008..0012 are reserved by other open drafts.
+/// 0007 is message exposure (PR #89); 0008..0012 are reserved by other open drafts.
 /// The ledger allows those migrations to be integrated later without being
 /// skipped just because this build has already applied 0013.
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -29,6 +29,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0006_bot_skill_assignment",
         include_str!("../migrations/0006_bot_skill_assignment.sql"),
+    ),
+    (
+        "0007_message_exposure",
+        include_str!("../migrations/0007_message_exposure.sql"),
     ),
     (
         "0013_bot_version",
@@ -147,7 +151,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         assert_eq!(current_version(&conn).unwrap(), 0);
         assert_eq!(latest_version(), 13);
-        assert_eq!(migrate(&mut conn).unwrap(), 7);
+        assert_eq!(migrate(&mut conn).unwrap(), 8);
         assert_eq!(current_version(&conn).unwrap(), 13);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         assert_eq!(
@@ -195,7 +199,28 @@ mod tests {
     }
 
     #[test]
-    fn main_v5_upgrades_by_the_skill_assignment_and_bot_version_migrations() {
+    fn fresh_database_ends_at_latest_version() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(latest_version(), 13);
+        assert_eq!(current_version(&conn).unwrap(), 13);
+        assert_eq!(MIGRATIONS[5].0, "0006_bot_skill_assignment");
+        assert_eq!(MIGRATIONS[6].0, "0007_message_exposure");
+        assert_eq!(MIGRATIONS[7].0, "0013_bot_version");
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('messages')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(std::result::Result::unwrap)
+            .collect();
+        for c in ["exposure_untrusted", "exposure_private", "exposure_sources"] {
+            assert!(cols.iter().any(|x| x == c), "missing column {c}");
+        }
+    }
+
+    #[test]
+    fn main_v5_upgrades_by_the_skill_assignment_exposure_and_bot_version_migrations() {
         let mut conn = Connection::open_in_memory().unwrap();
         for (_, sql) in &MIGRATIONS[..5] {
             conn.execute_batch(sql).unwrap();
@@ -210,7 +235,7 @@ mod tests {
                 .iter()
                 .any(|t| t.starts_with("bot_skill_assignment"))
         );
-        assert_eq!(migrate(&mut conn).unwrap(), 2);
+        assert_eq!(migrate(&mut conn).unwrap(), 3);
         assert_eq!(current_version(&conn).unwrap(), 13);
         // An existing bot starts at version 1.
         let v: i64 = conn
@@ -248,45 +273,17 @@ mod tests {
     }
 
     #[test]
-    fn review95_reserved_migrations_upgrade_v6_and_pr89_v7_without_skipping_later_integration() {
-        for legacy in [6, 7] {
-            let mut conn = Connection::open_in_memory().unwrap();
-            for (_, sql) in &MIGRATIONS[..6] {
-                conn.execute_batch(sql).unwrap();
-            }
-            conn.execute_batch("INSERT INTO users VALUES ('u','owner',1); INSERT INTO bots (id,user_id,name,created_at_ms) VALUES ('b','u','kept',2)").unwrap();
-            // Exact additive schema from PR #89's reserved 0007_message_exposure.
-            let exposure =
-                "ALTER TABLE messages ADD COLUMN exposure_untrusted INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE messages ADD COLUMN exposure_private INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE messages ADD COLUMN exposure_sources TEXT NOT NULL DEFAULT '[]';";
-            if legacy == 7 {
-                conn.execute_batch(exposure).unwrap();
-            }
-            conn.pragma_update(None, "user_version", legacy).unwrap();
-            assert_eq!(migrate(&mut conn).unwrap(), 1);
-            assert_eq!(current_version(&conn).unwrap(), 13);
-            let kept: (String, i64) = conn
-                .query_row("SELECT name,version FROM bots WHERE id='b'", [], |r| {
-                    Ok((r.get(0)?, r.get(1)?))
-                })
-                .unwrap();
-            assert_eq!(kept, ("kept".into(), 1));
-            // Simulate incorporating #89 after this PR. v6 must run it; v7 must skip it.
-            let mut integrated = MIGRATIONS[..6].to_vec();
-            integrated.push(("0007_message_exposure", exposure));
-            integrated.push(MIGRATIONS[6]);
-            assert_eq!(
-                migrate_list(&mut conn, &integrated).unwrap(),
-                u32::from(legacy == 6)
-            );
-            assert_eq!(migrate_list(&mut conn, &integrated).unwrap(), 0);
-            conn.prepare(
-                "SELECT exposure_untrusted,exposure_private,exposure_sources FROM messages",
-            )
+    fn database_already_at_0013_still_gets_message_exposure() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // What a build without 0007 produced: 0001..0006 and 0013 applied.
+        let mut without_exposure = MIGRATIONS[..6].to_vec();
+        without_exposure.push(MIGRATIONS[7]);
+        assert_eq!(migrate_list(&mut conn, &without_exposure).unwrap(), 7);
+        assert_eq!(current_version(&conn).unwrap(), 13);
+        assert_eq!(migrate(&mut conn).unwrap(), 1);
+        conn.prepare("SELECT exposure_untrusted,exposure_private,exposure_sources FROM messages")
             .unwrap();
-            assert_eq!(current_version(&conn).unwrap(), 13);
-        }
+        assert_eq!(migrate(&mut conn).unwrap(), 0);
     }
 
     #[test]

@@ -58,6 +58,7 @@ impl Transport for Fake {
         let name = match cmd {
             RemoteCmd::Provision(Sub::Install) => "install",
             RemoteCmd::Provision(Sub::Status) => "status",
+            RemoteCmd::Provision(Sub::Screen) => "screen",
             _ => "",
         };
         if let Some(code) = self.fail.borrow().get(name) {
@@ -101,6 +102,7 @@ impl Transport for Fake {
 #[derive(Default)]
 struct Local {
     paired: RefCell<bool>,
+    forgotten: RefCell<Vec<String>>,
 }
 
 impl LocalHost for Local {
@@ -127,17 +129,29 @@ impl LocalHost for Local {
     fn revoke_host(&self, _id: &str) -> Result<(), String> {
         Ok(())
     }
+    fn host_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn forget_host(&self, id: &str) -> Result<(), String> {
+        self.forgotten.borrow_mut().push(id.into());
+        *self.paired.borrow_mut() = false;
+        Ok(())
+    }
 }
 
 #[derive(Default)]
 struct TestUi {
     accept: bool,
     asked: usize,
+    cancel_after_pair: Option<std::rc::Rc<std::cell::Cell<bool>>>,
 }
 
 impl Ui for TestUi {
     fn progress(&mut self, _r: &StepResult) {}
     fn note(&mut self, _l: &str) {}
+    fn cancelled(&self) -> bool {
+        self.cancel_after_pair.as_ref().is_some_and(|c| c.get())
+    }
     fn confirm_host_key(&mut self, _h: &str, _p: u16, _fp: &str) -> bool {
         self.asked += 1;
         self.accept
@@ -159,6 +173,17 @@ fn record() -> HostRecord {
 }
 
 fn run(dir: &std::path::Path, fake: &Fake, local: &Local, ui: &mut TestUi, mode: Mode) -> Report {
+    run_with(dir, fake, local, ui, mode, true)
+}
+
+fn run_with(
+    dir: &std::path::Path,
+    fake: &Fake,
+    local: &Local,
+    ui: &mut TestUi,
+    mode: Mode,
+    allow_install: bool,
+) -> Report {
     let store = Store::new(dir.join("hosts"));
     let kh = KnownHosts::new(store.known_hosts_path());
     let record = store.load("oracle").unwrap_or_else(record);
@@ -174,6 +199,7 @@ fn run(dir: &std::path::Path, fake: &Fake, local: &Local, ui: &mut TestUi, mode:
             app_version: "0.1.0".into(),
             desktop: true,
             retry_delay: Duration::ZERO,
+            allow_install,
         },
     };
     engine.run()
@@ -196,6 +222,7 @@ fn happy_path_installs_pairs_and_checks_health() {
         TestUi {
             accept: true,
             asked: 0,
+            cancel_after_pair: None,
         },
     );
     let r = run(dir.path(), &fake, &local, &mut ui, Mode::Add);
@@ -238,6 +265,7 @@ fn failing_preflight_stops_before_anything_is_installed() {
         TestUi {
             accept: true,
             asked: 0,
+            cancel_after_pair: None,
         },
     );
     *fake.preflight.borrow_mut() = good_facts().replace("ram_mb=24000", "ram_mb=900");
@@ -266,6 +294,7 @@ fn host_key_mismatch_is_a_hard_stop_that_runs_nothing() {
         TestUi {
             accept: true,
             asked: 0,
+            cancel_after_pair: None,
         },
     );
     let r = run(dir.path(), &fake, &local, &mut ui, Mode::Add);
@@ -289,6 +318,7 @@ fn plain_serve_install_is_refused_by_add_and_migrated_by_repair() {
         TestUi {
             accept: true,
             asked: 0,
+            cancel_after_pair: None,
         },
     );
     *fake.preflight.borrow_mut() = installed_facts().replace("unit_hostmode=1", "unit_hostmode=0");
@@ -312,6 +342,7 @@ fn resume_after_a_failed_step_skips_what_is_already_done() {
         TestUi {
             accept: true,
             asked: 0,
+            cancel_after_pair: None,
         },
     );
     fake.fail.borrow_mut().insert("install", 1);
@@ -376,6 +407,7 @@ fn an_installed_but_unpaired_host_can_be_uninstalled_and_purged() {
                 app_version: "0.1.0".into(),
                 desktop: true,
                 retry_delay: Duration::ZERO,
+                allow_install: true,
             },
         };
         let r = engine.remove(level);
@@ -393,4 +425,106 @@ fn an_installed_but_unpaired_host_can_be_uninstalled_and_purged() {
         drop(calls);
         kh.pin("203.0.113.7", 22, &fake.keys[0]).unwrap(); // remove forgets the pin
     }
+}
+
+#[test]
+fn already_installed_host_is_only_paired_when_install_is_not_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, local, mut ui) = (
+        Fake::new(),
+        Local::default(),
+        TestUi {
+            accept: true,
+            asked: 0,
+            cancel_after_pair: None,
+        },
+    );
+    *fake.preflight.borrow_mut() = installed_facts();
+    let r = run_with(dir.path(), &fake, &local, &mut ui, Mode::Add, false);
+    assert!(r.ok(), "{}", r.table());
+    assert_eq!(status_of(&r, "install"), Status::Skip);
+    assert_eq!(status_of(&r, "pair"), Status::Pass);
+    assert!(
+        !fake.ran(RemoteCmd::Provision(Sub::Install))
+            && !fake.ran(RemoteCmd::Stage(StageFile::Installer)),
+        "nothing is downloaded or installed"
+    );
+
+    // A fresh server is refused plainly, before anything is staged.
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, local) = (Fake::new(), Local::default());
+    let r = run_with(dir.path(), &fake, &local, &mut ui, Mode::Add, false);
+    assert!(!r.ok());
+    assert_eq!(status_of(&r, "install"), Status::Fail);
+    assert!(r.results.iter().all(|s| s.id != "pair"));
+    assert!(!fake.ran(RemoteCmd::Provision(Sub::Install)));
+}
+
+#[test]
+fn a_failure_after_pairing_rolls_back_the_peers_this_run_created() {
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, local) = (Fake::new(), Local::default());
+    let mut ui = TestUi {
+        accept: true,
+        ..TestUi::default()
+    };
+    *fake.preflight.borrow_mut() = installed_facts();
+    // The screen grant fails after the invite was consumed and the key exists.
+    fake.fail.borrow_mut().insert("screen", 1);
+    let r = run_with(dir.path(), &fake, &local, &mut ui, Mode::Add, false);
+    assert_eq!(status_of(&r, "pair"), Status::Fail);
+    assert_eq!(*local.forgotten.borrow(), ["hostid1"], "local peer removed");
+    let calls = fake.calls.borrow();
+    let revoke = calls
+        .iter()
+        .find(|(c, _)| *c == RemoteCmd::Provision(Sub::Revoke))
+        .expect("server entry revoked");
+    assert_eq!(
+        revoke.1,
+        "key=deskkey1
+"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|(c, _)| *c == RemoteCmd::Provision(Sub::ScreenRevoke)),
+        "screen and input access taken back"
+    );
+    let hint = r
+        .results
+        .iter()
+        .find(|s| s.id == "pair")
+        .unwrap()
+        .remediation
+        .clone()
+        .unwrap();
+    assert!(hint.contains("removed from the server"), "{hint}");
+    drop(calls);
+
+    // Cancelled before the invite: nothing is created at all.
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, local) = (Fake::new(), Local::default());
+    *fake.preflight.borrow_mut() = installed_facts();
+    let flag = std::rc::Rc::new(std::cell::Cell::new(true));
+    let mut ui = TestUi {
+        accept: true,
+        cancel_after_pair: Some(flag),
+        ..TestUi::default()
+    };
+    let _ = run_with(dir.path(), &fake, &local, &mut ui, Mode::Add, false);
+    assert!(!fake.ran(RemoteCmd::Provision(Sub::Invite)));
+    assert!(local.forgotten.borrow().is_empty() && !*local.paired.borrow());
+}
+
+#[test]
+fn an_edited_saved_record_is_not_trusted() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path().join("hosts"));
+    store.save(&record()).unwrap();
+    assert!(store.load("oracle").is_some());
+    let mut evil = record();
+    evil.host = "-oProxyCommand=calc".into();
+    let text = serde_json::to_string(&evil).unwrap();
+    std::fs::write(dir.path().join("hosts/oracle/host.json"), text).unwrap();
+    assert!(store.load("oracle").is_none(), "hostile host field refused");
 }

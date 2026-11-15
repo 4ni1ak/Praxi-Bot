@@ -18,7 +18,9 @@ use crate::locator::fingerprint_hex;
 use crate::recorder::{RecordOptions, Recorder};
 use crate::replay::{EventSink, Handles, HandoverReason, ReplayOptions, Replayer};
 use crate::store::WorkflowStore;
-use crate::testkit::{CaptureTool, FakeBrowser, FakeDesktop, RecordingGate, node, window};
+use crate::testkit::{
+    CaptureTool, CoveringGate, FakeBrowser, FakeDesktop, RecordingGate, node, window,
+};
 
 const NOTEPAD_TREE: &str = "# window \"Untitled - Notepad\" pid=101 gen=1 quality=Good nodes=2\n[0] button \"Close\" (790,10)\n[1] edit \"Text editor\" (400,300) {focused}\n";
 
@@ -1139,6 +1141,206 @@ async fn remote_pc_replay_cannot_navigate_host_browser() {
         .unwrap();
     assert!(!report.is_completed());
     assert!(browser.calls.lock().is_empty());
+}
+
+// ---- run-scoped control grant (card 243-1): replay goes through the guard ----
+
+fn typed_step(kind: DesktopActionKind, value: &str) -> Workflow {
+    screen_wf(vec![Step::DesktopAction(DesktopAction {
+        app: None,
+        window_title_pattern: Some("*App".into()),
+        target: Some(desk_loc("button", "OK")),
+        action: kind,
+        value: Some(value.into()),
+        method: None,
+        secret: None,
+    })])
+}
+
+fn named_desktop() -> Arc<FakeDesktop> {
+    let desktop = FakeDesktop::new(
+        vec![window(1, "A - App")],
+        vec![node(0, "button", "OK", 10.0, 10.0)],
+    );
+    *desktop.input.lock() = Some(FakeDesktop::notepad_target());
+    desktop
+}
+
+#[tokio::test]
+async fn a_key_step_that_first_clicks_an_element_is_never_covered() {
+    let desktop = named_desktop();
+    let gate = CoveringGate::default();
+    let report = replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        &typed_step(DesktopActionKind::Key, "ctrl+s"),
+        &params(&json!({})),
+        &gate,
+    )
+    .await
+    .unwrap();
+    assert!(report.is_completed());
+    assert!(gate.requests.lock()[0].control.is_none(), "it asks");
+    assert!(
+        desktop.guarded.lock().is_empty(),
+        "nothing took the guarded path"
+    );
+    assert_eq!(desktop.actions.lock().len(), 2, "click and key, unguarded");
+}
+
+#[tokio::test]
+async fn replay_passes_through_the_guard_when_a_grant_covers_the_step() {
+    for (kind, value, guarded) in [
+        (DesktopActionKind::Type, "hello", 2),
+        (DesktopActionKind::SetValue, "hello", 1),
+    ] {
+        let desktop = named_desktop();
+        let gate = CoveringGate::default();
+        let report = replayer(
+            handles(Some(desktop.clone()), None),
+            ReplayOptions::instant(),
+        )
+        .replay(&typed_step(kind, value), &params(&json!({})), &gate)
+        .await
+        .unwrap();
+        assert!(report.is_completed(), "{kind:?}");
+        let seen = gate.requests.lock();
+        let control = seen[0].control.as_ref().expect("a target was resolved");
+        assert!(control.eligible(), "{kind:?}: {control:?}");
+        assert_eq!(control.program_name(), "notepad.exe");
+        assert_eq!(
+            desktop.guarded.lock().len(),
+            guarded,
+            "{kind:?}: every input action of the step, the focusing click included, was guarded"
+        );
+        assert_eq!(desktop.actions.lock().len(), guarded, "{kind:?}");
+    }
+}
+
+struct Swap(Arc<FakeDesktop>);
+#[async_trait::async_trait]
+impl builtin_tools::ToolGate for Swap {
+    async fn authorize(&self, _: &builtin_tools::GateRequest) -> Result<(), String> {
+        Ok(())
+    }
+    async fn authorize_control(
+        &self,
+        req: &builtin_tools::GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        let id = req.control.as_ref().map(|t| t.identity.clone());
+        self.0.input.lock().as_mut().unwrap().identity.pid += 1;
+        Ok(id)
+    }
+}
+
+/// [`Swap`] that records the run-wide withdrawals.
+struct SwapSpy(Swap, parking_lot::Mutex<Vec<String>>);
+#[async_trait::async_trait]
+impl builtin_tools::ToolGate for SwapSpy {
+    async fn authorize(&self, r: &builtin_tools::GateRequest) -> Result<(), String> {
+        self.0.authorize(r).await
+    }
+    async fn authorize_control(
+        &self,
+        r: &builtin_tools::GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.0.authorize_control(r).await
+    }
+    fn revoke_control(&self, run_id: &str) {
+        self.1.lock().push(run_id.to_owned());
+    }
+}
+
+#[tokio::test]
+async fn a_guarded_failure_in_replay_withdraws_the_runs_control_grants() {
+    let desktop = named_desktop();
+    let gate = SwapSpy(Swap(desktop.clone()), parking_lot::Mutex::default());
+    let report = replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        &typed_step(DesktopActionKind::Type, "hello"),
+        &params(&json!({})),
+        &gate,
+    )
+    .await
+    .unwrap();
+    assert!(!report.is_completed());
+    assert_eq!(gate.1.lock().len(), 1, "the grant was withdrawn once");
+}
+
+#[tokio::test]
+async fn replay_does_not_send_when_the_window_is_not_the_granted_program() {
+    let desktop = named_desktop();
+    // Another program owns the window by the time the guard runs.
+    let report = replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        &typed_step(DesktopActionKind::Type, "powershell -w hidden"),
+        &params(&json!({})),
+        &Swap(desktop.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(!report.is_completed());
+    assert!(desktop.actions.lock().is_empty(), "nothing was sent");
+}
+
+#[tokio::test]
+async fn replay_without_a_grant_does_not_use_the_guarded_path() {
+    let desktop = named_desktop();
+    let report = replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        &typed_step(DesktopActionKind::Type, "hello"),
+        &params(&json!({})),
+        &RecordingGate::default(),
+    )
+    .await
+    .unwrap();
+    assert!(report.is_completed());
+    assert!(desktop.guarded.lock().is_empty());
+    assert_eq!(desktop.actions.lock().len(), 2);
+}
+
+#[tokio::test]
+async fn a_replayed_win_chord_has_no_eligible_target() {
+    let desktop = named_desktop();
+    let gate = CoveringGate::default();
+    replayer(
+        handles(Some(desktop.clone()), None),
+        ReplayOptions::instant(),
+    )
+    .replay(
+        // No element: the keys go to the live focus, the covered shape of a key step.
+        &screen_wf(vec![Step::DesktopAction(DesktopAction {
+            app: None,
+            window_title_pattern: Some("*App".into()),
+            target: None,
+            action: DesktopActionKind::Key,
+            value: Some("win+r".into()),
+            method: None,
+            secret: None,
+        })]),
+        &params(&json!({})),
+        &gate,
+    )
+    .await
+    .unwrap();
+    let seen = gate.requests.lock();
+    let control = seen[0].control.as_ref().unwrap();
+    assert_eq!(control.refusal.as_deref(), Some("chord"));
+    assert!(
+        desktop.guarded.lock().is_empty(),
+        "not covered, so not guarded"
+    );
 }
 
 // ---------------------------------------------------------------- secrets

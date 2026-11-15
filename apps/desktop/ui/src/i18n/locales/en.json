@@ -340,6 +340,29 @@
       "always": "Always",
       "deny": "Deny",
       "reasonPlaceholder": "Reason for denying (optional)",
+      "control": {
+        "button": "This task: {{program}}",
+        "offered": "Allow typing into {{program}} for this task only?",
+        "refused": "No task-wide permission for {{program}}: approve this call once.",
+        "covers": "Praxi may type into {{program}} ({{path}}) for this task: text, a few editing keys (Enter, Tab, arrows, Esc, Ctrl+A/C/X/V/Z/Y/S/F) and values. Nothing else.",
+        "risk": "Praxi may type things it has read into this app.",
+        "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send.",
+        "reason": {
+          "terminal": "This window is a terminal or shell.",
+          "command_app": "This app has a built-in command line.",
+          "browser": "This is a browser. Use the browser tools instead.",
+          "password_manager": "This is a password manager.",
+          "system_surface": "This is a system launcher or sign-in surface.",
+          "uwp_frame": "This packaged app cannot be tied to one program.",
+          "dialog": "This is a dialog. File dialogs and the Run box always ask.",
+          "password_field": "This is a password field.",
+          "chord": "These keys open a launcher or switch windows.",
+          "elevated": "This program runs elevated or could not be checked.",
+          "no_identity": "The program behind this window could not be identified.",
+          "unknown": "This call cannot be covered by a task-wide permission.",
+          "remote_control": "This is a remote-desktop or virtual-machine viewer."
+        }
+      },
       "schedule": {
         "title": {
           "create": "Create a recurring task?",
@@ -362,6 +385,19 @@
         },
         "note": "This approval covers only this change; it is asked every time."
       },
+      "egress": {
+        "large": "This payload is too large for the compact card ({{bytes}} bytes). Open the full text and scroll to the end before approving.",
+        "reviewFull": "Review full payload",
+        "host": "Destination: {{host}}",
+        "read": "This run read: {{list}}",
+        "payload": {
+          "query": "Outgoing query (shown in full):",
+          "url": "Outgoing URL (shown in full):",
+          "body": "Outgoing data (shown in full):"
+        },
+        "size": "{{lines}} lines, {{chars}} characters, {{hidden}} non-printing characters shown as <U+XXXX>"
+      },
+      "computer": "This action runs on {{kind}} \"{{name}}\" (id {{id}}).",
       "app": {
         "arguments": "Show all arguments ({{count}} characters)",
         "footer": "Via Composio. Approve only this action with all arguments shown above."
@@ -785,6 +821,10 @@
     },
     "executorRequired": "The executor model is required.",
     "permissions": "Permissions",
+    "allowEgressAfterReads": {
+      "title": "Allow sending data after this bot has read something",
+      "hint": "Off by default. A tool grant does not turn this on. While it is off, a run that has read a file, mailbox, page or other private or untrusted content must ask before any tool sends data off this machine."
+    },
     "preset": {
       "read-only": {
         "name": "Read-only",
@@ -1301,13 +1341,18 @@
     },
     "otherId": "Use \"{{id}}\" with {{provider}}",
     "recommended": "Recommended",
-    "all": "All models ({{count}})",
-    "engines": "Coding CLIs",
-    "cliDefault": "Default (the CLI decides)",
+    "showAll": "All models ({{count}})",
+    "noModels": "Type a model id in the search to use one.",
+    "sectionCli": "Coding CLIs (your subscription)",
+    "sectionApi": "API providers",
+    "addEngines": "Add a coding CLI",
     "install": "Install {{name}}",
     "connect": "Connect {{name}}",
     "engineError": "Could not connect this CLI.",
     "hint": {
+      "new": "new",
+      "free": "free",
+      "quota": "high quota",
       "fast": "fast",
       "balanced": "balanced",
       "strongest": "best for hard tasks"
@@ -2409,7 +2454,7 @@
       "offline": "Not answering",
       "unreachable": "No longer paired"
     },
-    "add": "Add a host…",
+    "add": "Add server…",
     "stopHost": "Stop all runs on the host",
     "stopHostHint": "Stops what is running there now",
     "stopNone": "Nothing is running on the host.",
@@ -2478,5 +2523,114 @@
     "consentFull": "I understand Full access means {{cli}} will not ask before changing files or running commands.",
     "apply": "Apply engine settings",
     "kill": "Stop and turn off"
+  },
+  "addServer": {
+    "title": "Add a server",
+    "lead": "Connect a server you rent. No ticket to copy.",
+    "host": "Server address",
+    "user": "User",
+    "port": "Port",
+    "auth": "Sign-in",
+    "auth_key": "Key file",
+    "auth_agent": "SSH agent",
+    "keyFile": "Private key file",
+    "keyHint": "Only the path is used. Praxi never copies or stores the key itself.",
+    "agentHint": "Praxi will use the keys already loaded in your SSH agent. Passwords are not supported.",
+    "releaseNote": "Praxi can add a server that already runs Praxi. Installing it for you needs a published release, which does not exist yet.",
+    "manual": "I have a pairing ticket instead",
+    "connect": "Connect",
+    "starting": "Starting…",
+    "noDaemon": "The local Praxi service is not running. Restart the app and try again.",
+    "startFailed": "Could not start. Check the details above and try again.",
+    "formInvalid": "Enter the server address and a valid port.",
+    "keyMissing": "Choose a private key file, or switch to the SSH agent.",
+    "progress": "Setup progress",
+    "stage": {
+      "connect": "Connect and confirm the server",
+      "check": "Check the system",
+      "install": "Install or find Praxi",
+      "pair": "Pair this computer",
+      "verify": "Check that it works"
+    },
+    "state": {
+      "pending": "Waiting",
+      "running": "Working…",
+      "waiting": "Needs your answer",
+      "done": "Done",
+      "skipped": "Already in place, nothing to do",
+      "warn": "Done, with a note",
+      "failed": "Stopped here"
+    },
+    "hostKeyTitle": "Is this your server?",
+    "hostKeyBody": "This is the first time this computer connects to {{host}}. Compare this fingerprint with the one in your provider's console if it shows one.",
+    "hostKeyYes": "Yes, trust this server",
+    "hostKeyNo": "No, stop",
+    "cancelNote": "Cancelling lets the step that is running finish first.",
+    "doneTitle": "{{name}} is connected",
+    "doneScreen": "It is in your computer list. You can chat with its bots and watch its screen.",
+    "doneNoScreen": "It is in your computer list. It has no screen to watch yet.",
+    "useServer": "Use this server",
+    "viewScreen": "View screen",
+    "copy": "Copy details",
+    "copied": "Details copied.",
+    "copyFailed": "Could not copy.",
+    "edit": "Change settings",
+    "retry": "Try again",
+    "cancelled": "Setup cancelled",
+    "cancelledBody": "Nothing more was done. You can start again at any time.",
+    "fail": {
+      "hostkey_changed": {
+        "msg": "This is not the server you set up before.",
+        "fix": "Its identity changed and nothing was sent. If you rebuilt the server on purpose, remove it and add it again."
+      },
+      "hostkey_declined": {
+        "msg": "You did not trust this server.",
+        "fix": "Compare the fingerprint with your provider's console, then try again."
+      },
+      "ssh_client": {
+        "msg": "Praxi could not find the SSH program on this computer.",
+        "fix": "Install the OpenSSH client, then try again."
+      },
+      "auth": {
+        "msg": "The server did not accept the login.",
+        "fix": "Check the user name (Ubuntu images use ubuntu, Oracle Linux uses opc) and choose the right key file."
+      },
+      "network": {
+        "msg": "Praxi could not reach the server.",
+        "fix": "Check the address and port, that the server is on, and that its firewall allows SSH."
+      },
+      "needs_sudo": {
+        "msg": "This user cannot run administrator commands without a password.",
+        "fix": "Use a user with passwordless sudo, such as the default cloud user."
+      },
+      "preflight": {
+        "msg": "The server does not meet a requirement.",
+        "fix": "Copy the details to see which one. Praxi needs Ubuntu 22.04 or newer, enough memory and disk, and systemd."
+      },
+      "not_installed": {
+        "msg": "Praxi is not installed on this server.",
+        "fix": "Automatic install needs a published release, which does not exist yet. Install Praxi on the server by hand, then add it again."
+      },
+      "not_host_mode": {
+        "msg": "Praxi on this server is not running as a host.",
+        "fix": "Switching it needs a published release, which does not exist yet. Start it in host mode on the server, then add it again."
+      },
+      "service_down": {
+        "msg": "Praxi is installed but not running on the server.",
+        "fix": "On the server run: sudo systemctl start praxi. Then try again."
+      },
+      "pair": {
+        "msg": "Praxi could not pair this computer with the server.",
+        "fix": "Try again. If it keeps failing, copy the details and check the server's service."
+      },
+      "health": {
+        "msg": "The server is paired but did not answer correctly.",
+        "fix": "Wait a minute and try again; copy the details if it persists."
+      },
+      "generic": {
+        "msg": "Something went wrong while setting up the server.",
+        "fix": "Try again. If it keeps failing, copy the details."
+      }
+    }
   }
 }

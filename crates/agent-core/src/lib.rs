@@ -28,8 +28,13 @@ mod router;
 mod schedule_precheck;
 mod shared;
 mod subagent;
+mod taint;
 pub mod usage;
 
+#[cfg(test)]
+mod control_grant_tests;
+#[cfg(test)]
+mod egress_tests;
 #[cfg(test)]
 mod router_tests;
 #[cfg(test)]

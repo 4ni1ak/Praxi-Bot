@@ -329,6 +329,48 @@ impl AgentLoop {
         self.sh.tools.clone()
     }
 
+    /// Audit outgoing card coverage against the registry actually assembled by
+    /// the host, including optional and dynamically registered tools.
+    /// # Errors
+    /// Names the first schema field omitted by its outgoing payload renderer.
+    pub fn audit_egress_card_schemas(&self) -> std::result::Result<Vec<String>, String> {
+        let mut audited = Vec::new();
+        for spec in self
+            .sh
+            .tools
+            .list()
+            .into_iter()
+            .filter(|s| s.content.egress)
+        {
+            let Some(properties) = spec
+                .input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+            else {
+                continue;
+            };
+            let input = serde_json::Value::Object(
+                properties
+                    .keys()
+                    .map(|key| {
+                        (
+                            key.clone(),
+                            serde_json::Value::String(format!("SNTNL_{key}_END")),
+                        )
+                    })
+                    .collect(),
+            );
+            let (_, payload, _) = crate::taint::egress_payload(&spec.name, &input);
+            for key in properties.keys() {
+                if !payload.contains(&format!("SNTNL_{key}_END")) {
+                    return Err(format!("{} omits outgoing schema field {key}", spec.name));
+                }
+            }
+            audited.push(spec.name);
+        }
+        Ok(audited)
+    }
+
     /// The loop's providers (cheap clone).
     #[must_use]
     pub fn providers(&self) -> Providers {
@@ -947,14 +989,17 @@ impl AgentLoop {
     pub fn approve(&self, call_id: ToolCallId, scope: ApprovalScope, by: UserId) -> Result<()> {
         // Server-side, for every channel: an approval that carries details (a
         // schedule) or whose tool is always-ask is given once, never as a grant.
-        if scope != ApprovalScope::Once
-            && self
-                .sh
-                .pending
-                .lock()
-                .get(&call_id)
-                .is_some_and(|p| p.once_only)
-        {
+        // The run-scoped control scope is the one non-Once scope a once-only
+        // card may carry, and only when the daemon built it with an eligible
+        // control target. It is refused everywhere else, for every client.
+        let refused = self.sh.pending.lock().get(&call_id).is_some_and(|p| {
+            if scope == ApprovalScope::RunControl {
+                !p.grantable
+            } else {
+                scope != ApprovalScope::Once && p.once_only
+            }
+        });
+        if refused {
             return Err(LoopError::OnceOnly(call_id));
         }
         self.take_pending(call_id)?
@@ -1663,6 +1708,9 @@ impl AgentLoop {
             .to_owned(),
             content: content.clone(),
             created_at_ms: now_ms(),
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: Vec::new(),
         })?;
         Ok(content)
     }
@@ -1980,6 +2028,7 @@ impl AgentLoop {
             // to memory extraction: mask it as a whole (a secret split across
             // streamed deltas is only whole here).
             let text = self.sh.redact(text);
+            let exposure = ctx.as_ref().map(|c| c.taint.lock().clone());
             let _ = self.sh.storage.insert_message(&DbMessage {
                 id: Uuid::now_v7(),
                 user_id: run.user_id,
@@ -1988,6 +2037,9 @@ impl AgentLoop {
                 role: "assistant".to_owned(),
                 content: text.clone(),
                 created_at_ms: now_ms(),
+                exposure_untrusted: exposure.as_ref().is_some_and(|t| t.exposure.untrusted),
+                exposure_private: exposure.as_ref().is_some_and(|t| t.exposure.private),
+                exposure_sources: exposure.map(|t| t.sources().to_vec()).unwrap_or_default(),
             });
             self.enqueue_memory(run, &text);
         }

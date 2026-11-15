@@ -14,6 +14,7 @@ mod host;
 mod host_links;
 mod host_provision;
 mod host_runtime;
+mod host_setup;
 mod mcp_host;
 mod mcp_paste;
 mod mcp_serve;
@@ -22,6 +23,7 @@ mod presets;
 mod prompt;
 mod remote;
 mod serve;
+mod skills_cmd;
 mod update;
 mod view_targets;
 mod web_host;
@@ -81,6 +83,11 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 enum Command {
+    /// Review local skills and explicitly trust reviewed content.
+    Skills {
+        #[command(subcommand)]
+        action: skills_cmd::SkillsCmd,
+    },
     /// Create or revoke scoped MCP credentials on the local daemon.
     Token {
         #[command(subcommand)]
@@ -185,8 +192,10 @@ enum Command {
     Approve {
         /// Tool call id (shown in the chat stream / `approval_needed` event).
         tool_call_id: String,
-        /// How far the approval reaches.
-        #[arg(long, value_parser = ["once", "this_chat", "always", "always_category"], default_value = "once")]
+        /// How far the approval reaches. `run_control` lets the run type into
+        /// the one program the card names, until the run ends; the daemon
+        /// refuses it unless the card offered it.
+        #[arg(long, value_parser = ["once", "this_chat", "always", "always_category", "run_control"], default_value = "once")]
         scope: String,
         /// Deny instead of approving.
         #[arg(long)]
@@ -596,6 +605,9 @@ fn run() -> Result<()> {
 
     // Daemon commands (no secret store needed, except `serve` with real providers).
     match command {
+        Command::Skills { action } => {
+            return skills_cmd::run(&data_dir, action, &mut std::io::stdout());
+        }
         Command::Mcp {
             action: McpCmd::Serve(args),
         } => return mcp_serve::run(&cli, args, &data_dir),
@@ -671,6 +683,7 @@ fn run() -> Result<()> {
             SecretsCmd::Delete { name } => commands::secrets_delete(store, name),
         },
         Command::Mcp { .. }
+        | Command::Skills { .. }
         | Command::Token { .. }
         | Command::Host { .. }
         | Command::SelfUpdate(_)

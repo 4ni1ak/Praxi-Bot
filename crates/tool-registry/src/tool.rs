@@ -29,6 +29,21 @@ pub enum ContentPart {
     Binary { mime_type: String, base64: String },
 }
 
+/// Trust of a tool output, recorded by daemon code.
+///
+/// This is not read back from the bytes shown to the model. A tool sets it
+/// when the output's trust is not the tool's own declared class (discovery
+/// returning someone else's description, for example).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputExposure {
+    /// The output contains untrusted text.
+    pub ingests_untrusted: bool,
+    /// The output contains private data.
+    pub reads_private: bool,
+    /// Short source label for an approval card. Empty means the caller picks one.
+    pub label: String,
+}
+
 /// The result of a successful tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolOutput {
@@ -39,6 +54,10 @@ pub struct ToolOutput {
     /// If the full output exceeded the in-memory budget, the remainder was
     /// written to a temporary file and a pointer is returned here.
     pub spill: Option<SpillRef>,
+    /// Trust of this output when it differs from the tool's declared class.
+    /// `None` means "use the spec". Never derived from [`Self::content`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<OutputExposure>,
 }
 
 impl ToolOutput {
@@ -47,7 +66,68 @@ impl ToolOutput {
         Self {
             content: vec![ContentPart::Text { text: text.into() }],
             spill: None,
+            exposure: None,
         }
+    }
+}
+
+/// One running program as the daemon names it for a control grant: image
+/// path, process id and process start time. A reused pid has another start
+/// time and is another program.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ControlIdentity {
+    /// Full path of the executable image.
+    pub image_path: String,
+    /// Process id.
+    pub pid: u32,
+    /// Process start time in OS ticks.
+    pub start_time: u64,
+}
+
+/// Which kind of input a control call sends. Only these three can ever be
+/// covered by a run-scoped control grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlKind {
+    /// `desktop_type`.
+    Type,
+    /// `desktop_set_value`.
+    SetValue,
+    /// `desktop_key`.
+    Key,
+}
+
+/// The program and window a desktop input call would reach, resolved by the
+/// tool before the permission decision (card 243-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlTarget {
+    /// What the call sends.
+    pub kind: ControlKind,
+    /// The program that would receive the input.
+    pub identity: ControlIdentity,
+    /// Window title, for the card.
+    pub window_title: String,
+    /// Why no grant may cover this call or be offered for it (a stable code
+    /// such as `terminal`, `elevated`, `password_field`, `chord`, `dialog`).
+    /// `None` = a grant may cover it.
+    pub refusal: Option<String>,
+}
+
+impl ControlTarget {
+    /// File name of the program, for the card.
+    #[must_use]
+    pub fn program_name(&self) -> String {
+        let p = &self.identity.image_path;
+        p.rsplit(['\\', '/']).next().unwrap_or(p).to_owned()
+    }
+
+    /// A grant may cover this call and may be offered on its card.
+    #[must_use]
+    pub fn eligible(&self) -> bool {
+        self.refusal.is_none()
+            && self.identity.pid != 0
+            && self.identity.start_time != 0
+            && !self.identity.image_path.trim().is_empty()
     }
 }
 
@@ -63,6 +143,14 @@ pub struct ToolContext {
     /// MCP servers with a `bots` allowlist refuse a call whose id is missing
     /// or not listed. `None` here is not "every bot".
     pub bot_id: Option<String>,
+    /// The run has already read untrusted or private content. A skill saved
+    /// from this call is stored as untrusted data, not as a trusted instruction.
+    pub content_tainted: bool,
+    /// Set by the loop only when a run-scoped control grant covers this call:
+    /// the tool must send its input through the backend's guarded path, so the
+    /// window that would receive it is checked against this program right
+    /// before the OS call. `None` for every other call.
+    pub control_guard: Option<ControlIdentity>,
 }
 
 impl Default for ToolContext {
@@ -71,6 +159,8 @@ impl Default for ToolContext {
             run_id: String::new(),
             max_inline_bytes: 1024 * 1024, // 1 MiB
             bot_id: None,
+            content_tainted: false,
+            control_guard: None,
         }
     }
 }
@@ -107,12 +197,6 @@ pub struct StandingGrant {
 pub trait Tool: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
-
-    /// Daemon-owned provenance for a call that actually starts executing.
-    /// This sideband must never be inferred from model-visible result bytes.
-    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
-        None
-    }
 
     /// Host-derived per-bot egress classification, when it differs from a
     /// static tool declaration. `None` keeps the native gate's static/default
@@ -163,6 +247,29 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// The program and window this call would send input to, for a run-scoped
+    /// control grant (card 243-1). Resolved before the permission decision.
+    /// `None` (the default) means the tool has no such target, so no grant is
+    /// offered for it and behaviour is unchanged.
+    async fn control_target(&self, _ctx: &ToolContext, _input: &Value) -> Option<ControlTarget> {
+        None
+    }
+
+    /// Host the call actually contacts when the input does not name one.
+    ///
+    /// `OpenAPI` tools use this so the card footer shows the API host, not the
+    /// operation name. `None` leaves the card's own host text.
+    fn egress_host(&self, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Lines the tool itself adds to the outgoing text: a default browser
+    /// profile, the search backend that will be used, a skill body that is
+    /// not in the arguments. Empty when the input already shows everything.
+    fn egress_extra(&self, _ctx: &ToolContext, _input: &Value) -> Option<String> {
+        None
+    }
+
     /// Like [`Tool::always_ask`] but decided from this call's input: a call
     /// that types an owner-stored secret must be confirmed every time, however
     /// permissive the policy, grants, read shortcuts or presets are. Only an
@@ -190,12 +297,6 @@ pub trait Tool: Send + Sync {
 pub trait ToolWrapper: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
-
-    /// Forward the wrapped tool's provenance when available. Wrapping a tool
-    /// does not itself establish that private or untrusted content was read.
-    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
-        None
-    }
 
     /// Forward the wrapped tool's dynamic egress classification.
     fn egress_for(&self, bot_id: Option<&str>) -> Option<bool>;
@@ -240,10 +341,6 @@ impl<W: ToolWrapper> Tool for W {
         ToolWrapper::spec(self)
     }
 
-    fn output_provenance(&self) -> Option<crate::OutputProvenance> {
-        ToolWrapper::output_provenance(self)
-    }
-
     fn egress_for(&self, bot_id: Option<&str>) -> Option<bool> {
         ToolWrapper::egress_for(self, bot_id)
     }
@@ -285,6 +382,8 @@ impl<W: ToolWrapper> Tool for W {
 mod delegation_guard {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
+
+    use crate::ContentClass;
 
     use syn::visit::{self, Visit};
     use syn::{
@@ -879,6 +978,8 @@ impl Tool for W {
                 effect: Effect::Write,
                 category: PermissionCategory::System,
                 platforms: vec![protocol::Platform::All],
+
+                content: ContentClass::none(),
             },
             closed: Arc::clone(&closed),
         });
@@ -893,10 +994,6 @@ impl Tool for W {
             .await
             .expect("the inner standing grant is forwarded");
         assert_eq!(grant.id, "g1");
-        assert!(
-            wrapped.output_provenance().is_none(),
-            "a wrapper must not invent private-content exposure for an ordinary tool"
-        );
         wrapped.approval_closed(
             &crate::ToolContext::default(),
             &serde_json::json!({}),
