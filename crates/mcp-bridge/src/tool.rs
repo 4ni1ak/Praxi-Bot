@@ -292,16 +292,17 @@ impl Tool for McpAuxAdapter {
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         ensure_bot_allowed(self.server.bots().as_deref(), self.server.id(), ctx)?;
         let failed = |e: crate::McpError| ToolError::Execution(e.to_string());
-        let page = |cursor: Option<String>| Some(PaginatedRequestParams::default().with_cursor(cursor));
+        let page =
+            |cursor: Option<String>| Some(PaginatedRequestParams::default().with_cursor(cursor));
         match self.aux {
             Aux::ResourcesList => {
                 let cursor = optional_str(&input, "cursor")?;
                 if input.get("templates").and_then(Value::as_bool) == Some(true) {
                     let listed = self
                         .server
-                        .request(|peer| async move {
-                            peer.list_resource_templates(page(cursor)).await
-                        })
+                        .request(
+                            |peer| async move { peer.list_resource_templates(page(cursor)).await },
+                        )
                         .await
                         .map_err(failed)?;
                     json_output(&listed)
@@ -319,7 +320,8 @@ impl Tool for McpAuxAdapter {
                 let read = self
                     .server
                     .request(|peer| async move {
-                        peer.read_resource(ReadResourceRequestParams::new(uri)).await
+                        peer.read_resource(ReadResourceRequestParams::new(uri))
+                            .await
                     })
                     .await
                     .map_err(failed)?;

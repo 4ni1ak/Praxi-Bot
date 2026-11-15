@@ -26,6 +26,7 @@ process-wrap = { version = "10.0.1", features = ["tokio1"] }
 # `reqwest` (rustls + aws-lc) feature: it avoids the OpenSSL-licensed aws-lc
 # stack, which `deny.toml` does not allow.
 rmcp = { version = "3.9", default-features = false, features = [
+    "auth",
     "client",
     "transport-child-process",
     "which-command",

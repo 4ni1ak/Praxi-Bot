@@ -1718,7 +1718,10 @@ mod tests {
             ("SESSION_COOKIE", "x"),
             ("SSH_PRIVATE", "x"),
             ("GPG_PASSPHRASE", "x"),
-            ("DATABASE_URL", "postgres://app:hunter2@db.internal:5432/app"),
+            (
+                "DATABASE_URL",
+                "postgres://app:hunter2@db.internal:5432/app",
+            ),
             ("HTTPS_PROXY", "http://user:pw@proxy:3128"),
             ("OPENAI_API_KEY", "x"),
         ] {
@@ -1745,10 +1748,18 @@ mod tests {
         let passed: Vec<String> = cmd
             .as_std()
             .get_envs()
-            .filter_map(|(k, v)| v.map(|v| format!("{}={}", k.to_string_lossy(), v.to_string_lossy())))
+            .filter_map(|(k, v)| {
+                v.map(|v| format!("{}={}", k.to_string_lossy(), v.to_string_lossy()))
+            })
             .collect();
-        assert!(passed.iter().any(|kv| kv == "CODEX_HOME=kept"), "{passed:?}");
-        assert!(!passed.iter().any(|kv| kv.contains("leak-sentinel")), "{passed:?}");
+        assert!(
+            passed.iter().any(|kv| kv == "CODEX_HOME=kept"),
+            "{passed:?}"
+        );
+        assert!(
+            !passed.iter().any(|kv| kv.contains("leak-sentinel")),
+            "{passed:?}"
+        );
     }
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};

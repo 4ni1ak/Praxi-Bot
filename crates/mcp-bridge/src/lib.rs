@@ -49,6 +49,7 @@ mod diagnostics;
 mod discovery;
 mod error;
 mod manager;
+pub mod oauth;
 mod session;
 mod tool;
 mod transport;
