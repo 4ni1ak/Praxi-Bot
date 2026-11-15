@@ -1,7 +1,7 @@
 import { BellDot, ChevronDown, FlaskConical, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
 import { isMockMode } from "./api/mockMode";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -61,7 +61,13 @@ import { usePanelReserve } from "./state/usePanelReserve";
 import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
-import { DaemonProvider, useDaemon } from "./state/DaemonContext";
+import { ComputerPicker } from "./components/ComputerPicker";
+import { HostStateBanner } from "./components/HostStateBanner";
+import {
+  DaemonProvider,
+  LOCAL_COMPUTER,
+  useDaemon
+} from "./state/DaemonContext";
 import { BotFormView } from "./views/BotFormView";
 import { BotHomeView } from "./views/BotHomeView";
 import { ChatView } from "./views/ChatView";
@@ -119,11 +125,20 @@ function AppShell() {
     chats,
     needs,
     refreshBots,
-    retry
+    retry,
+    activeComputerId
   } = useDaemon();
   const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
+  // Chats, bots and runs belong to one computer: switching computers starts at home.
+  const lastComputer = useRef(activeComputerId);
+  useEffect(() => {
+    if (lastComputer.current !== activeComputerId) {
+      lastComputer.current = activeComputerId;
+      setRoute({ kind: "home" });
+    }
+  }, [activeComputerId]);
   const [controlState, setControlState] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
@@ -654,7 +669,7 @@ function AppShell() {
             </button>
           ) : <span />}
           <div className={styles.windowActions} data-tauri-drag-region>
-            <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
+            <ComputerPicker />
             <button className={styles.iconButton} title={t("account.settings")} aria-label={t("account.settings")} onClick={() => setSettingsOpen("general")}><Settings2 /></button>
             {isTauriRuntime() && !settings.windowFrame ? <>
               <button className={styles.iconButton} title={t("window.minimize")} aria-label={t("window.minimize")} onClick={() => void getCurrentWindow().minimize()}><Minus /></button>
@@ -663,7 +678,8 @@ function AppShell() {
             </> : null}
           </div>
         </div>
-        <HealthIndicator />
+        {activeComputerId === LOCAL_COMPUTER ? <HealthIndicator /> : null}
+        <HostStateBanner />
         <ShellBridgeHost
           settings={settings}
           onOpenChat={openChat}
@@ -873,14 +889,28 @@ function AppShell() {
   );
 }
 
+/**
+ * Everything that follows the active computer. The live view is rebuilt per computer
+ * (targets, sessions and takeover belong to one daemon), and the native control bridge
+ * is the control of THIS PC only, so it never runs against a host's events.
+ */
+function ComputerScope({ children }: { children: ReactNode }) {
+  const { activeComputerId } = useDaemon();
+  return (
+    <LiveViewProvider key={activeComputerId}>
+      {activeComputerId === LOCAL_COMPUTER ? <ControlBridgeHost /> : null}
+      {children}
+    </LiveViewProvider>
+  );
+}
+
 export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
-        <LiveViewProvider>
-          <ControlBridgeHost />
+        <ComputerScope>
           <AppShell />
-        </LiveViewProvider>
+        </ComputerScope>
       </DaemonProvider>
     </ToastProvider>
   );

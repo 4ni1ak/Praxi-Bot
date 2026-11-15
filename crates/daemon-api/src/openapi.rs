@@ -9,8 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
-    mcp_routes, routes, skills, sse, web, web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, host, host_links, live_view,
+    mcp, mcp_routes, routes, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -43,7 +43,7 @@ impl Modify for Security {
             except GET /v1/health need `Authorization: Bearer <token>`."
     ),
     paths(
-        host::status, host::invite, host::revoke, host::standby, host::activate, host::update,
+        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
         live_view::create_session,
@@ -149,6 +149,7 @@ impl Modify for Security {
         web::WebSearchConfigDto, web::WebSearchConfigInput, web::WebSearchTestInput,
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
+        host_links::HostLinkState, host_links::HostLinkInfo, host_links::HostLinkList, host_links::PairHostInput, host_links::HostLinkConnection,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
         changes::CheckpointComputerDto, changes::CheckpointLocationDto, changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
         changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,

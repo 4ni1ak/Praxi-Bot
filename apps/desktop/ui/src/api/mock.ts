@@ -499,6 +499,8 @@ export class MockApiClient extends ApiClient {
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
         return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+      case "GET /hosts":
+        return ok({ local_version: "0.1.0-mock", local_api_version: "1", hosts: [] });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":

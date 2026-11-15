@@ -44,6 +44,63 @@ pub const PEER_DENIED_POST_PATHS: &[&str] = &["/v1/providers/cli/enable", "/v1/p
 /// platform, provider set), so peers do not read them either.
 pub const PEER_DENIED_PREFIX_DOCTOR: &str = "/v1/doctor";
 
+/// `/v1/hosts…` manages THIS computer's links to paired hosts (pair, connect,
+/// disconnect). It is an action of the local user at this computer's UI and is
+/// closed to every paired peer role, for every method: a peer must never be
+/// able to make this daemon open a channel to another host or read the
+/// loopback proxy token it hands out.
+pub const PEER_DENIED_PREFIX_HOSTS: &str = "/v1/hosts";
+
+fn is_hosts_path(path: &str) -> bool {
+    path.strip_prefix(PEER_DENIED_PREFIX_HOSTS)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// What a Desktop peer may NOT administer on a daemon that runs as an
+/// always-on host (`mode = host`). On such a host the desktop is an operator
+/// of bots, runs, chats and the screen, not an administrator of credentials,
+/// tool servers, skills or pairing: those stay with the host's own local user
+/// (CLI on the host). Returns the refusal reason for `method path`.
+fn host_mode_desktop_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    let mutating = *method != Method::GET && *method != Method::HEAD;
+    let under = |prefix: &str| {
+        check_path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    };
+    if under("/v1/secrets") && mutating {
+        return Some("secrets are managed on the host itself");
+    }
+    if (under("/v1/mcp") || under("/v1/skills") || is_bot_skills_path(check_path)) && mutating {
+        return Some("tool servers and skills are managed on the host itself");
+    }
+    if (under("/v1/email") || under("/v1/web/search")) && mutating {
+        return Some("account credentials are managed on the host itself");
+    }
+    if *method == Method::POST
+        && (PHONE_DENIED_POST_PATHS.contains(&check_path)
+            || check_path == "/v1/channels/telegram/pair-code")
+    {
+        return Some("host transfer and channel pairing are done on the host itself");
+    }
+    None
+}
+
+/// `POST /v1/chats` and `POST /v1/chats/{id}/messages` start work on this
+/// daemon; a paired peer doing so is attributed in the audit log.
+fn starts_chat_work(method: &Method, check_path: &str) -> bool {
+    if *method != Method::POST {
+        return false;
+    }
+    if check_path == "/v1/chats" {
+        return true;
+    }
+    check_path
+        .strip_prefix("/v1/chats/")
+        .and_then(|rest| rest.strip_suffix("/messages"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
 /// Whether `path` (decoded and slash-normalized) is a diagnostics endpoint.
 fn is_doctor_path(path: &str) -> bool {
     path.strip_prefix(PEER_DENIED_PREFIX_DOCTOR)
@@ -90,6 +147,9 @@ fn normalize_deny_path(path: &str) -> String {
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
+    }
+    if is_hosts_path(check_path) {
+        return Some("host links are managed by the local user only");
     }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
 }
@@ -144,6 +204,12 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
                 && (is_bot_skills_path(&check_path) || check_path == "/v1/skills")));
     if denied || stop_refused(req.method(), &check_path, peer.role) {
         return ApiError::forbidden("peer role does not allow this operation").into_response();
+    }
+    if peer.role == PeerRole::Desktop
+        && state.leader().config().mode == crate::host::HostMode::Host
+        && let Some(why) = host_mode_desktop_denial(req.method(), &check_path)
+    {
+        return ApiError::forbidden(why).into_response();
     }
     if req.method() == Method::POST && answers_overlay_question(&check_path) {
         return ApiError::forbidden("only the local user answers overlay questions")
@@ -217,6 +283,27 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             return ApiError::internal(error).into_response();
         }
         audit_actor = Some(actor);
+    }
+    if starts_chat_work(req.method(), &check_path) {
+        let name = req
+            .extensions()
+            .get::<PeerName>()
+            .map_or(peer.key.as_str(), |n| n.0.as_str());
+        let role = if peer.role == PeerRole::Phone {
+            "phone"
+        } else {
+            "desktop"
+        };
+        // Fail closed: remote work is not started without its attribution row.
+        if let Err(error) = state.storage().append_audit(
+            state.user_id(),
+            None,
+            &format!("{role}:{name}"),
+            "peer.chat_requested",
+            &serde_json::json!({"peer_key":peer.key,"path":check_path}),
+        ) {
+            return ApiError::internal(error).into_response();
+        }
     }
     let response = next.run(req).await;
     if let Some(actor) = audit_actor

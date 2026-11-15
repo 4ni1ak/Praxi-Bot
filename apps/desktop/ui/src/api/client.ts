@@ -18,6 +18,10 @@ import type {
   Grant,
   GrantTarget,
   Health,
+  HostLinkConnection,
+  HostLinkInfo,
+  HostLinkList,
+  StopRunsResponse,
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
@@ -167,6 +171,28 @@ export class ApiClient {
 
   health(): Promise<Health> {
     return this.request("GET", "/health", { auth: false });
+  }
+
+  /** Paired hosts and their channel state (this computer's own daemon). */
+  listHosts(): Promise<HostLinkList> {
+    return this.request("GET", "/hosts");
+  }
+  /** Pair with a host using the ticket from `bot host invite --role desktop`. */
+  pairHost(ticket: string): Promise<HostLinkInfo> {
+    return this.request("POST", "/hosts/pair", { body: { ticket } });
+  }
+  /** Open (or reuse) the guarded channel to a paired host. */
+  connectHost(id: string): Promise<HostLinkConnection> {
+    return this.request("POST", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
+  disconnectHost(id: string): Promise<void> {
+    return this.request("DELETE", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
+  /** Stop exactly these runs (the `listed` scope; never a sweep). */
+  stopListedRuns(stopId: string, runIds: string[]): Promise<StopRunsResponse> {
+    return this.request("POST", "/runs/stop", {
+      body: { stop_id: stopId, run_ids: runIds, scope: "listed" }
+    });
   }
 
   listBots(): Promise<Bot[]> {

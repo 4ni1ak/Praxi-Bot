@@ -1744,7 +1744,9 @@
     "chats": "Chats",
     "noChats": "No chats yet.",
     "untitled": "New chat",
-    "computer": "Computer"
+    "computer": "Computer",
+    "runsOnHost": "Runs on {{name}} (host)",
+    "runsOnLocal": "Runs on this computer"
   },
   "liveView": {
     "title": "Computer live view",
@@ -1849,5 +1851,44 @@
     "openScreen": "Open screen",
     "connectionLost": "Connection to the screen lost. Reconnecting…",
     "clearForeignPause": "Clear {{owner}}'s pause"
+  },
+  "computerPicker": {
+    "label": "Computer: {{name}}",
+    "menu": "Computer",
+    "host": "Host",
+    "localHint": "Runs here, on this PC",
+    "link": {
+      "idle": "Paired, not connected",
+      "connecting": "Connecting…",
+      "connected": "Connected",
+      "offline": "Not answering",
+      "unreachable": "No longer paired"
+    },
+    "add": "Add a host…",
+    "stopHost": "Stop all runs on the host",
+    "stopHostHint": "Stops what is running there now",
+    "stopped": "Stopped {{count}} run(s) on the host.",
+    "stopNone": "Nothing is running on the host.",
+    "stopFailed": "Could not reach the host to stop its runs."
+  },
+  "pairHost": {
+    "title": "Add a host",
+    "lead": "Pair this computer with your always-on host to watch its screen and chat with the bots that run there.",
+    "step1": "On the host, run:",
+    "step3": "Paste the ticket it prints below. It works once and expires in a few minutes.",
+    "ticket": "Pairing ticket",
+    "hint": "The ticket is used once and is not saved.",
+    "pair": "Pair",
+    "pairing": "Pairing…",
+    "failed": "Pairing failed. Check that the host is on and the ticket is new."
+  },
+  "hostState": {
+    "connecting": "Connecting to {{name}}…",
+    "offline": "{{name}} is not answering. Its bots keep running; this app reconnects on its own.",
+    "notPaired": "{{name}} no longer accepts this computer. Pair again with a new ticket.",
+    "versionBlocking": "This app ({{local}}) and {{name}} ({{host}}) are on different versions. Update them to the same version before using the host.",
+    "versionWarning": "This app is {{local}} and {{name}} is {{host}}: a small difference, everything should work.",
+    "noModelKey": "{{name}} has no model key yet. You can watch its screen and manage its bots, but chats cannot be answered until a key is added on the host.",
+    "useThisComputer": "Use this computer"
   }
 }
