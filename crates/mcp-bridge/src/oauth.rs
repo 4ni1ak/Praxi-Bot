@@ -509,7 +509,30 @@ fn internal(ip: std::net::IpAddr) -> bool {
     }
 }
 
-async fn addresses(url: &str) -> Option<Vec<std::net::IpAddr>> {
+/// DNS lookup used for the endpoint policy, independent of the HTTP client
+/// and any configured proxy. Injectable so policy tests never use real DNS.
+#[async_trait::async_trait]
+pub trait EndpointResolver: Send + Sync {
+    /// Resolve all answers; absence or an empty answer fails closed.
+    async fn lookup(&self, host: &str, port: u16) -> Option<Vec<std::net::IpAddr>>;
+}
+
+struct SystemEndpointResolver;
+
+#[async_trait::async_trait]
+impl EndpointResolver for SystemEndpointResolver {
+    async fn lookup(&self, host: &str, port: u16) -> Option<Vec<std::net::IpAddr>> {
+        Some(
+            tokio::net::lookup_host((host, port))
+                .await
+                .ok()?
+                .map(|a| a.ip())
+                .collect(),
+        )
+    }
+}
+
+async fn addresses(url: &str, resolver: &dyn EndpointResolver) -> Option<Vec<std::net::IpAddr>> {
     let uri: http::Uri = url.parse().ok()?;
     let host = uri.host()?.trim_matches(['[', ']']).to_owned();
     if let Ok(ip) = host.parse() {
@@ -522,12 +545,7 @@ async fn addresses(url: &str) -> Option<Vec<std::net::IpAddr>> {
         } else {
             443
         });
-    let found: Vec<_> = tokio::net::lookup_host((host, port))
-        .await
-        .ok()?
-        .map(|a| a.ip())
-        .collect();
-    Some(found)
+    resolver.lookup(&host, port).await
 }
 
 /// Resolve the authorization and token endpoints ourselves and refuse
@@ -544,16 +562,34 @@ pub async fn check_endpoint_addresses(
     server_url: &str,
     metadata: &AuthorizationMetadata,
 ) -> Result<()> {
+    check_endpoint_addresses_with_resolver(server, server_url, metadata, &SystemEndpointResolver)
+        .await
+}
+
+/// [`check_endpoint_addresses`] using a supplied DNS resolver. This controls
+/// the policy lookup only; rmcp's address-filtered HTTP client is unchanged.
+///
+/// # Errors
+/// Unresolvable, reserved or disallowed private endpoint addresses.
+pub async fn check_endpoint_addresses_with_resolver(
+    server: &str,
+    server_url: &str,
+    metadata: &AuthorizationMetadata,
+    resolver: &dyn EndpointResolver,
+) -> Result<()> {
     let refuse = |why: &str| {
         Err(McpError::Config(format!(
             "server `{server}`: authorization server refused: {why}"
         )))
     };
-    let server_internal = addresses(server_url)
+    let server_internal = addresses(server_url, resolver)
         .await
         .is_some_and(|found| !found.is_empty() && found.iter().all(|ip| internal(*ip)));
     for endpoint in [&metadata.authorization_endpoint, &metadata.token_endpoint] {
-        let Some(found) = addresses(endpoint).await.filter(|f| !f.is_empty()) else {
+        let Some(found) = addresses(endpoint, resolver)
+            .await
+            .filter(|f| !f.is_empty())
+        else {
             return refuse("an endpoint host cannot be resolved");
         };
         if found.iter().any(|ip| always_blocked(*ip)) {
@@ -1013,6 +1049,72 @@ mod tests {
             "s",
             "http://127.0.0.1:9/mcp",
             &metadata("http://127.0.0.1:9/authorize", "http://127.0.0.1:9/token"),
+        )
+        .await
+        .unwrap();
+    }
+
+    struct TableResolver;
+
+    #[async_trait::async_trait]
+    impl EndpointResolver for TableResolver {
+        async fn lookup(&self, host: &str, _: u16) -> Option<Vec<std::net::IpAddr>> {
+            let answers: &[&str] = match host {
+                "public.test" => &["93.184.216.34"],
+                "imds.attacker.test" => &["169.254.169.254"],
+                "internal.attacker.test" => &["10.0.0.5"],
+                "mixed.attacker.test" => &["93.184.216.34", "10.0.0.5"],
+                "mixed-reversed.attacker.test" => &["10.0.0.5", "93.184.216.34"],
+                "mapped.attacker.test" => &["::ffff:169.254.169.254"],
+                "empty.test" => &[],
+                _ => return None,
+            };
+            Some(answers.iter().map(|ip| ip.parse().unwrap()).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn resolved_hostnames_and_mixed_dns_answers_are_filtered_without_real_dns() {
+        for host in [
+            "imds.attacker.test",
+            "internal.attacker.test",
+            "mixed.attacker.test",
+            "mixed-reversed.attacker.test",
+            "mapped.attacker.test",
+            "empty.test",
+            "missing.test",
+        ] {
+            for authorization_endpoint in [true, false] {
+                let good = "https://public.test/oauth".to_owned();
+                let bad = format!("https://{host}/oauth");
+                let mut metadata = AuthorizationMetadata::default();
+                metadata.authorization_endpoint = if authorization_endpoint {
+                    bad.clone()
+                } else {
+                    good.clone()
+                };
+                metadata.token_endpoint = if authorization_endpoint { good } else { bad };
+                assert!(
+                    check_endpoint_addresses_with_resolver(
+                        "s",
+                        "https://public.test/mcp",
+                        &metadata,
+                        &TableResolver
+                    )
+                    .await
+                    .is_err(),
+                    "{host}"
+                );
+            }
+        }
+        let mut metadata = AuthorizationMetadata::default();
+        metadata.authorization_endpoint = "https://public.test/authorize".into();
+        metadata.token_endpoint = "https://public.test/token".into();
+        check_endpoint_addresses_with_resolver(
+            "s",
+            "https://public.test/mcp",
+            &metadata,
+            &TableResolver,
         )
         .await
         .unwrap();
