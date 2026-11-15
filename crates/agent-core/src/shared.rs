@@ -530,6 +530,7 @@ impl ChatProvider for RedactingProvider {
 
 /// Mask secrets in every message and tool-call argument of `req`.
 pub(crate) fn redact_request(r: &SharedRedactor, req: &mut provider_catalog::ChatRequest) {
+    let knowledge_budgets = crate::knowledge::request_budgets(req);
     for m in &mut req.messages {
         redact_value(r, &mut m.content);
         for c in &mut m.tool_calls {
@@ -538,6 +539,7 @@ pub(crate) fn redact_request(r: &SharedRedactor, req: &mut provider_catalog::Cha
             }
         }
     }
+    crate::knowledge::rebudget_request(req, &knowledge_budgets);
 }
 
 pub(crate) enum Verdict {

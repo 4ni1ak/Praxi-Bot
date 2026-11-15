@@ -361,12 +361,60 @@ impl Drop for RestoreLock {
     }
 }
 
+/// Collapse `.`/`..` in path TEXT only. No filesystem access of any kind.
+fn lexical_normalize(path: &str) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for part in std::path::Path::new(path).components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Whether two recorded paths can touch the same file, decided on path TEXT
+/// only: normalised components, directory-descendant aware in both directions
+/// (`/a` overlaps `/a/b`, not `/a-b`), case-insensitive on Windows and macOS.
+///
+/// This performs NO filesystem access at all (no `stat`, `canonicalize`,
+/// `read_link`, no open), so comparing against another run's recorded paths can
+/// never follow a link, wake a placeholder or reach a network share.
+///
+/// Not detected, by design: a symlink, junction, Windows 8.3 short name or
+/// mapped/substituted drive that names the same file as another run's path,
+/// hard links, bind mounts and case-insensitive volumes on Linux. The exclusive
+/// file-mutation lock still serialises daemon file tools; effects of shell and
+/// desktop actions are outside this check.
 fn paths_overlap(left: &str, right: &str) -> bool {
-    #[cfg(windows)]
-    let (left, right) = (left.to_lowercase(), right.to_lowercase());
-    let left = std::path::Path::new(&left);
-    let right = std::path::Path::new(&right);
-    left.starts_with(right) || right.starts_with(left)
+    let (left, right) = (lexical_normalize(left), lexical_normalize(right));
+    // Windows and macOS volumes are case-insensitive by default.
+    if cfg!(any(windows, target_os = "macos")) {
+        let (left, right) = (
+            left.to_string_lossy().to_lowercase(),
+            right.to_string_lossy().to_lowercase(),
+        );
+        let (left, right) = (std::path::Path::new(&left), std::path::Path::new(&right));
+        left.starts_with(right) || right.starts_with(left)
+    } else {
+        left.starts_with(&right) || right.starts_with(&left)
+    }
+}
+
+/// First `(selected, recorded)` pair that overlaps.
+fn first_overlap<'a>(selected: &[&'a str], recorded: &[&'a str]) -> Option<(&'a str, &'a str)> {
+    selected.iter().find_map(|sel| {
+        recorded
+            .iter()
+            .find(|rec| paths_overlap(sel, rec))
+            .map(|rec| (*sel, *rec))
+    })
 }
 
 fn ensure_no_overlapping_run(
@@ -385,11 +433,12 @@ fn ensure_no_overlapping_run(
         .filter(|r| r.id != run_id && ensure_run_finished(r).is_err())
     {
         let checkpoints = store.list(&other.id.0.to_string()).map_err(map_store_err)?;
-        if checkpoints
+        let recorded: Vec<&str> = checkpoints
             .iter()
             .flat_map(|cp| &cp.entries)
-            .any(|entry| paths.iter().any(|path| paths_overlap(path, &entry.path)))
-        {
+            .map(|entry| entry.path.as_str())
+            .collect();
+        if let Some((selected, recorded)) = first_overlap(paths, &recorded) {
             let title = other
                 .chat_id
                 .and_then(|id| state.storage().get_chat(id).ok().flatten())
@@ -398,7 +447,7 @@ fn ensure_no_overlapping_run(
                 StatusCode::CONFLICT,
                 "run_files_in_use",
                 format!(
-                    "run {} ({title}, {}) has overlapping file changes; finish or cancel it before restoring",
+                    "run {} ({title}, {}) has overlapping file changes ({selected} overlaps {recorded}); finish or cancel it before restoring",
                     other.id, other.state
                 ),
             ));
@@ -1424,6 +1473,8 @@ mod tests {
             assert_eq!(body["error"]["code"], "run_files_in_use");
             let message = body["error"]["message"].as_str().unwrap();
             assert!(message.contains(&h.other_run_id.to_string()));
+            assert!(message.contains("overlaps"), "{message}");
+            assert!(message.contains("target.txt"), "{message}");
             assert!(message.contains("chat"));
             assert!(message.contains(state.as_str()));
             assert_eq!(fs::read_to_string(path).unwrap(), "before");
@@ -1437,6 +1488,48 @@ mod tests {
         assert!(!paths_overlap("/work/tree", "/work/tree-other"));
         #[cfg(windows)]
         assert!(paths_overlap("C:/Work/Tree", "c:/work/tree/child.txt"));
+        #[cfg(target_os = "macos")]
+        assert!(paths_overlap("/Work/Tree", "/work/tree/child.txt"));
+        #[cfg(not(any(windows, target_os = "macos")))]
+        assert!(!paths_overlap("/Work/Tree", "/work/tree/child.txt"));
+    }
+
+    #[test]
+    fn overlap_check_makes_no_filesystem_call_and_is_purely_textual() {
+        // Paths that do not exist anywhere: a filesystem-resolving check would
+        // have to stat them; the textual rule decides without touching disk.
+        assert!(paths_overlap(
+            "/nonexistent-praxi/a/b",
+            "/nonexistent-praxi/a"
+        ));
+        assert!(!paths_overlap(
+            "/nonexistent-praxi/a",
+            "/nonexistent-praxi/ab"
+        ));
+        assert!(paths_overlap("/x/./y/../z/file", "/x/z"));
+        assert!(!paths_overlap("/x/y/../z", "/x/y"));
+        // A link fixture is only text here: the alias is NOT detected (documented),
+        // and the link is never opened or followed (it dangles to a UNC target).
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("alias");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(r"\praxi-no-such-host\share", &link).unwrap();
+        let alias_child = link.join("child.txt").display().to_string();
+        let real_child = dir
+            .path()
+            .join("real")
+            .join("child.txt")
+            .display()
+            .to_string();
+        assert!(!paths_overlap(&alias_child, &real_child));
+        assert!(paths_overlap(&alias_child, &link.display().to_string()));
+        // The refusal names both paths.
+        let sel = ["/nonexistent-praxi/a/b"];
+        let rec = ["/other/c", "/nonexistent-praxi/a"];
+        assert_eq!(
+            first_overlap(&sel, &rec),
+            Some(("/nonexistent-praxi/a/b", "/nonexistent-praxi/a"))
+        );
     }
 
     #[tokio::test]

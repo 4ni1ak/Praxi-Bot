@@ -41,6 +41,11 @@ pub const EXCLUSIONS: &[&str] = &[
     "logs",
     "backup-*",
     "import-staging",
+    // This standalone knowledge-core stage has no validated bundle adapter.
+    // Never copy a live database/sidecars or accept an unchecked import.
+    "knowledge.db",
+    "knowledge.db-wal",
+    "knowledge.db-shm",
     // Skill scope lock files and publication/write staging (crates/skills).
     ".praxi-*",
 ];
