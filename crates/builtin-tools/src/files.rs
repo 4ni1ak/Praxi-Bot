@@ -161,14 +161,13 @@ pub fn watch_snapshot(
     #[cfg(windows)]
     if root
         .components()
-        .filter_map(|c| {
+        .find_map(|c| {
             if let Component::Normal(n) = c {
                 Some(n.to_string_lossy().to_ascii_lowercase())
             } else {
                 None
             }
         })
-        .next()
         .is_some_and(|n| {
             [
                 "windows",
