@@ -1450,7 +1450,7 @@ mod linux_x11 {
     };
 
     const X11_PROBE_IO_TIMEOUT: Duration = Duration::from_millis(1500);
-    /// Total budget for the connection, XTest query and layout read made when
+    /// Total budget for the connection, `XTest` query and layout read made when
     /// the target is created. A server that accepts connections but stalls
     /// fails the open within this, instead of hanging the caller.
     const X11_START_IO_TIMEOUT: Duration = Duration::from_secs(4);
@@ -1585,7 +1585,7 @@ mod linux_x11 {
     }
 
     impl RealX11Capture<BoundedStream> {
-        /// Whether the XTest extension answers, within this connection's deadline.
+        /// Whether the `XTest` extension answers, within this connection's deadline.
         fn xtest_available(&self) -> bool {
             self.conn
                 .xtest_get_version(2, 1)
@@ -2003,7 +2003,7 @@ mod linux_x11 {
     }
 
     /// [`open_x11_live_view_target`] for an explicit display. Every X11 round
-    /// trip made here (handshake, XTest query, layout) shares one `io_timeout`
+    /// trip made here (handshake, `XTest` query, layout) shares one `io_timeout`
     /// deadline, so a stalled server fails the call instead of hanging it.
     pub(super) fn open_x11_live_view_target_on(
         options: &LiveViewOptions,
@@ -2397,33 +2397,56 @@ mod tests {
         assert_eq!(state.lock().get_image_calls.load(Ordering::SeqCst), 0);
     }
 
-    /// 244-V #5: an X server that accepts the connection but never answers must
-    /// fail the open within the I/O budget; it can never hang daemon start.
+    /// 244-V #5: an X server on a Unix socket that accepts the connection but
+    /// never answers must fail the open within the I/O budget; it can never
+    /// hang daemon start.
+    ///
+    /// This drives `connect_bounded_address` with the socket address directly:
+    /// x11rb rewrites a `DISPLAY` that is a socket path to `/tmp/.X11-unix/X0`,
+    /// so the client would never reach this fake server through
+    /// `open_x11_live_view_target_on`, and a join on a thread blocked in
+    /// `accept` would hang the test binary forever.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_server_that_accepts_but_never_replies_fails_the_open_within_the_budget() {
         use std::os::unix::net::UnixListener;
+        use std::sync::mpsc;
         use std::time::{Duration, Instant};
+        use x11rb::reexports::x11rb_protocol::parse_display::ConnectAddress;
+
         let dir = tempfile::tempdir().unwrap();
         let sock = dir.path().join("X-stalled");
         let listener = UnixListener::bind(&sock).unwrap();
-        let stalled = std::thread::spawn(move || {
-            // Accept and hold the connection open without ever writing a byte.
-            let held = listener.accept().map(|(stream, _)| stream);
-            std::thread::sleep(Duration::from_secs(3));
-            drop(held);
+        let (accepted_tx, accepted_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        // Detached on purpose (never joined): holds the accepted connection
+        // open without writing a byte until the test is done.
+        std::thread::spawn(move || {
+            if let Ok((_stream, _)) = listener.accept() {
+                let _ = accepted_tx.send(());
+                let _ = done_rx.recv_timeout(Duration::from_secs(10));
+            }
         });
-        let dpy = sock.to_str().unwrap().to_owned();
+
         let started = Instant::now();
-        let result = super::linux_x11::open_x11_live_view_target_on(
-            &LiveViewOptions::new("stalled"),
-            dpy,
-            Duration::from_millis(300),
+        let res = super::linux_x11::connect_bounded_address(
+            &ConnectAddress::Socket(sock.to_str().unwrap().to_owned()),
+            0,
+            0,
+            started + Duration::from_millis(300),
         );
         let took = started.elapsed();
-        assert_eq!(result.err(), Some(Reason::Unavailable));
+        let _ = done_tx.send(());
+
+        assert!(
+            accepted_rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+            "the client never reached the fake server"
+        );
+        assert_eq!(
+            res.err(),
+            Some(CaptureFailure::ConnectionLost(Reason::Disconnected))
+        );
         assert!(took < Duration::from_secs(2), "open took {took:?}");
-        stalled.join().unwrap();
     }
 
     /// 244-V #8: building the target (what the real constructor does after its
