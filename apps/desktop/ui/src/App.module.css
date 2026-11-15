@@ -313,8 +313,9 @@
 }
 
 :global(:root[data-chat="clear"]) .mainColumn::before {
-  /* The band never reaches the pane edge, so a narrow pane shows a feathered column, not a box. */
-  --scrim-half: min(calc(50% - var(--scrim-feather)), calc(var(--size-content-max) / 2 + var(--space-10)));
+  /* Geometry mirrored (and tested) in lib/scrimMask.ts: the plateau is the reading column plus its
+     gutter; the mask only fades OUTSIDE it, so no text ever sits on a feather. */
+  --scrim-half: min(50%, calc(var(--size-content-max) / 2 + var(--space-6)));
   --scrim-feather: var(--space-16);
   --scrim-top: calc(var(--space-16) + var(--space-8));
   content: "";
@@ -322,6 +323,7 @@
   inset: var(--space-0);
   z-index: -1;
   pointer-events: none;
+  border-radius: var(--radius-shell);
   background-color: var(--center-scrim);
   mask-image:
     linear-gradient(to bottom, var(--color-text) var(--scrim-top), transparent calc(var(--scrim-top) + var(--scrim-feather))),

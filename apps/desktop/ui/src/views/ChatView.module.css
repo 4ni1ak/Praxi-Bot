@@ -497,11 +497,9 @@
   animation: menuIn var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-:global(:root[data-style="glass"]) .menu,
-:global(:root[data-style="tinted"]) .menu {
-  background-color: var(--float-fill);
-  backdrop-filter: var(--float-filter);
-}
+/* The menu is rendered inside the center pane (not in a body portal), over the conversation: it keeps
+   its opaque fill in every style.  A translucent, blurred fill here would be a second blur layer under
+   the pane's own and would let message text show through the list (card 244-E: one blur per panel). */
 
 .menuHead {
   margin: var(--space-0);
