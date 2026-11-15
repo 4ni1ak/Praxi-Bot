@@ -55,6 +55,8 @@ import {
 } from "./lib/botLanding";
 import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
+import { RunBar } from "./components/RunBar";
+import { runBarModel } from "./lib/runBar";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
 import { requestStop } from "./state/appStop";
@@ -230,6 +232,18 @@ function AppShell() {
         if (screen === "settings") setSettingsOpen((params.get("section") ?? "general") as SettingsSectionId);
         if (screen === "apps") setAppsOpen(true);
         if (params.get("panel") === "1") setPanelOpen(true);
+        // Review state of the run bar: `?control=bot_driving|paused|human_driving`.
+        const ctl = params.get("control");
+        if (ctl === "bot_driving" || ctl === "paused" || ctl === "human_driving") {
+          setControlState({
+            ...INITIAL_CONTROL_SNAPSHOT,
+            mode: ctl,
+            stateRev: 1,
+            stopSeq: 0,
+            bot: { botId: "11111111-1111-4111-8111-111111111111", botName: "Atlas" },
+            currentStep: params.get("lang") === "en" ? "Comparing sources in the browser" : "Kaynakları tarayıcıda karşılaştırıyor"
+          });
+        }
         const railParam = Number(params.get("rail"));
         if (railParam > 0) setLayout((l) => ({ ...l, rail: railParam < 150 ? RAIL_MINI : Math.min(RAIL_MAX, railParam) }));
         // Review states of the other routes (mock mode only).
@@ -535,81 +549,30 @@ function AppShell() {
     setNewChatError(null);
   }, [routeBotId]);
 
-  const isRunActive = controlState.mode !== "idle";
   const isHumanDriving = controlState.mode === "human_driving";
-  const isPaused = controlState.mode === "paused";
-
-  const runBanner = isRunActive ? (
-    <div className={styles.runBannerWrap}>
-      <div className={styles.activeRunBanner} role="status">
-        <div className={styles.activeRunHeader}>
-          <span className={styles.botName}>
-            {controlState.bot?.botName ?? t("dev.runningLabel")}
-          </span>
-          <span
-            className={[
-              styles.activeRunBadge,
-              isHumanDriving ? styles.activeRunBadgeHuman : ""
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            {t(`widget.status.${controlState.mode}`)}
-          </span>
-        </div>
-        <p className={styles.activeRunStep}>
-          {isHumanDriving
-            ? t("widget.humanDrivingStep")
-            : controlState.currentStep || t("widget.idleStep")}
-        </p>
-        <div className={styles.activeRunControls}>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => {
-              requestStop("banner");
-            }}
-          >
-            {t("widget.stop")}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={isHumanDriving}
-            onClick={() => {
-              if (isPaused) {
-                void resumeBotRun().then(setControlState);
-              } else {
-                void pauseBotRun().then(setControlState);
-              }
-            }}
-          >
-            {isPaused ? t("widget.resume") : t("widget.pause")}
-          </Button>
-          <Button
-            variant={isHumanDriving ? "primary" : "secondary"}
-            size="sm"
-            onClick={() => {
-              if (isHumanDriving) {
-                void giveBackControl().then(setControlState);
-              } else {
-                void takeTheWheel().then(setControlState);
-              }
-            }}
-          >
-            {isHumanDriving ? t("widget.giveBack") : t("widget.takeTheWheel")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openViewer()}
-          >
-            {t("liveView.expand")}
-          </Button>
-        </div>
-      </div>
-    </div>
-  ) : null;
+  // The chat carries its own run bar (docked on the composer); every other screen
+  // gets the same bar as a strip so Stop is never out of reach.
+  const runBanner =
+    route.kind === "chat" ? null : (
+      <RunBar
+        variant="strip"
+        model={runBarModel({ chat: "none", native: controlState.mode })}
+        botName={controlState.bot?.botName}
+        detail={controlState.mode === "idle" ? null : controlState.currentStep}
+        humanDriving={isHumanDriving}
+        onStop={() => {
+          requestStop("banner");
+        }}
+        onPause={() => void pauseBotRun().then(setControlState)}
+        onResume={() => void resumeBotRun().then(setControlState)}
+        onWheel={() =>
+          void (isHumanDriving ? giveBackControl() : takeTheWheel()).then(
+            setControlState
+          )
+        }
+        onBigView={() => openViewer()}
+      />
+    );
 
   return (
     <SidebarLayout
@@ -754,7 +717,7 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
-        {panelVisible ? null : <StopStatusNotice variant="main" />}
+        {panelVisible || route.kind === "chat" ? null : <StopStatusNotice variant="main" />}
         <PausedControlBanner />
         {route.kind === "onboarding" ? (
           <OnboardingView
@@ -886,6 +849,8 @@ function AppShell() {
               // There is no bot page to go back to: the chat list lives in the right panel.
               if (backFromChatOpensPanel(panelOpen)) setPanelOpen(true);
             }}
+            control={controlState}
+            onControl={setControlState}
             onSwitchChat={openChat}
             showAgentRoute={settings.showAgentRoute}
             sendWith={settings.sendWith}

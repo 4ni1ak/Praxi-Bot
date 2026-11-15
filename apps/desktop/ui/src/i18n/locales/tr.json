@@ -700,6 +700,16 @@
         "done": "{{name}} çalıştırıldı",
         "failed": "{{name}} tamamlanamadı"
       }
+    },
+    "timelineLabel": "Sohbet",
+    "jumpToLatest": "En sona git",
+    "runBar": {
+      "label": "Çalışma kontrolleri",
+      "waiting": "Onayınızı bekliyor",
+      "paused": "Duraklatıldı",
+      "human": "Kontrol sizde",
+      "elapsed": "{{time}} süredir çalışıyor",
+      "stoppingDetail": "Çalışmanın bitmesi bekleniyor…"
     }
   },
   "botForm": {
@@ -1643,11 +1653,28 @@
       "custom": "Özel renk"
     },
     "style": {
-      "title": "Stil",
-      "description": "Paneller, kartlar ve menüler nasıl boyanır.",
+      "title": "Panel stili",
+      "description": "Kenar çubuğu, sohbet alanı ve sağ panel nasıl boyanır. Düz stil en okunaklı olanı ve ekran kartını en az yoranıdır.",
       "solid": "Düz",
+      "tinted": "Renkli",
       "glass": "Cam",
-      "line": "Çizgi"
+      "line": "Çizgi",
+      "transparency": "Saydamlık",
+      "transparencyHint": "Parlak arka planlarda paneller, yazılar okunur kalacak kadar opak kalır.",
+      "opaque": "Opak",
+      "clear": "Saydam",
+      "blur": "Bulanıklık",
+      "blurSoft": "Hafif",
+      "blurStrong": "Güçlü",
+      "reduced": "Windows saydamlık efektleri kapalı; bu yüzden paneller düz boyanıyor.",
+      "override": "Yine de bu stili kullan",
+      "overridden": "Windows saydamlık efektleri kapalı olsa da gösteriliyor.",
+      "followSystem": "Windows'u izle",
+      "fallback": "Bu sistem pencerelerin arkasını bulanıklaştıramıyor; cam stil renkli olarak gösteriliyor."
+    },
+    "clearChat": {
+      "title": "Saydam sohbet alanı",
+      "description": "Sohbet alanının kendi arka planını kaldırır; arka plan görseli sohbetin arkasında görünür. Mesajlar ve mesaj kutusu okunaklı bir yüzeyde kalır."
     },
     "corners": {
       "title": "Köşeler",

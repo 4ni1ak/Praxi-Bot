@@ -1605,6 +1605,26 @@ impl Shared {
         specs
     }
 
+    /// The discovery-mode prompt block for this bot, or `None` when the model
+    /// was handed its tools directly (no `find_tool` among `specs`) or the bot
+    /// may use none of the advertised families. Built from the permission-
+    /// filtered registry, independent of per-turn router hints. Unchanged
+    /// registry and policy inputs produce identical bytes across turns.
+    pub(crate) fn discovery_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        if !specs.iter().any(|s| s.name == agent_router::FIND_TOOL) {
+            return None;
+        }
+        let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
+        crate::discovery_prompt::block(
+            visible
+                .iter()
+                .filter(|s| {
+                    self.decide(ctx, &s.name, s.effect, s.category, &Value::Null) != Decision::Deny
+                })
+                .map(|s| s.name.as_str()),
+        )
+    }
+
     pub fn audit(&self, ctx: &RunCtx, actor: &str, action: &str, detail: &serde_json::Value) {
         let _ = self
             .storage
