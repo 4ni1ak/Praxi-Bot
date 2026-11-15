@@ -32,6 +32,8 @@ pub(crate) fn augment(env: &mut PathEnv) {
         // npm's user prefix on Windows, even after a GUI was launched.
         env.path_dirs.push(home.join("AppData/Roaming/npm"));
         env.path_dirs.push(home.join(".npm-global"));
+        // Scoop puts one .exe shim per tool here (`scoop install opencode`).
+        env.path_dirs.push(home.join("scoop/shims"));
         if let Some(prefix) = env.env_vars.get("NPM_CONFIG_PREFIX") {
             env.path_dirs.push(PathBuf::from(prefix));
             env.path_dirs.push(PathBuf::from(prefix).join("bin"));
@@ -115,6 +117,13 @@ mod tests {
             std::os::unix::fs::symlink(cwd.join("Cargo.toml"), dir.path().join("hijack")).unwrap();
             assert!(crate::detect::find_candidate("hijack", &env).is_none());
         }
+    }
+    #[test]
+    fn scoop_shims_are_searched_under_home() {
+        let mut env =
+            PathEnv::for_test(std::env::temp_dir()).with_home(std::env::temp_dir().join("h"));
+        augment(&mut env);
+        assert!(env.path_dirs.iter().any(|d| d.ends_with("scoop/shims")));
     }
     #[test]
     fn generic_agent_is_not_cursor() {

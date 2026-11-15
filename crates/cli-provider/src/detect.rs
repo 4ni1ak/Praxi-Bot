@@ -304,7 +304,7 @@ fn resolve_spawn_inner(candidate: &Path, env: &PathEnv) -> Result<ResolvedComman
         if let Some(resolved) = cursor_file_shim(candidate, &text, env) {
             return Ok(resolved);
         }
-        if let Some(decision) = npm_native_exe(candidate, &text) {
+        if let Some(decision) = npm_native_exe(candidate, &text, env) {
             return decision;
         }
         let dir = candidate.parent().unwrap_or_else(|| Path::new("."));
@@ -425,7 +425,11 @@ struct NpmPackageRef {
 /// taken from that package's `package.json` `bin` entry, not from the path
 /// written in the shim. A `.js` bin is refused. The returned exe is canonical
 /// and stays inside the package directory.
-fn npm_native_exe(candidate: &Path, text: &str) -> Option<Result<ResolvedCommand, ShimError>> {
+fn npm_native_exe(
+    candidate: &Path,
+    text: &str,
+    env: &PathEnv,
+) -> Option<Result<ResolvedCommand, ShimError>> {
     let dir = candidate.parent()?;
     let stem = candidate.file_stem()?.to_str()?;
     let mut saw_ref = false;
@@ -440,7 +444,7 @@ fn npm_native_exe(candidate: &Path, text: &str) -> Option<Result<ResolvedCommand
             continue;
         };
         saw_ref = true;
-        if let Some(decision) = package_bin(dir, stem, &package) {
+        if let Some(decision) = package_bin(dir, stem, &package, env) {
             return Some(decision);
         }
     }
@@ -510,6 +514,7 @@ fn package_bin(
     shim_dir: &Path,
     stem: &str,
     package: &NpmPackageRef,
+    env: &PathEnv,
 ) -> Option<Result<ResolvedCommand, ShimError>> {
     let pkg_dir = shim_dir.join(&package.relative);
     let json_path = pkg_dir.join("package.json");
@@ -529,13 +534,24 @@ fn package_bin(
     let Some(bin_rel) = select_bin(&parsed, stem, unscoped) else {
         return Some(Err(ShimError::Refused));
     };
-    match native_exe_inside(&pkg_dir, bin_rel) {
-        Some(path) => Some(Ok(ResolvedCommand {
+    if let Some(path) = native_exe_inside(&pkg_dir, bin_rel) {
+        return Some(Ok(ResolvedCommand {
             program: path,
             args: Vec::new(),
-        })),
-        None => Some(Err(ShimError::Refused)),
+        }));
     }
+    // `opencode-ai` and similar: the package bin is an extensionless launcher with a
+    // `#!/usr/bin/env node` line. Run it with node, never through the `.cmd` / cmd.exe.
+    let Some(script) = node_launcher_inside(&pkg_dir, bin_rel) else {
+        return Some(Err(ShimError::Refused));
+    };
+    let Some(node) = find_node_executable(shim_dir, env) else {
+        return Some(Err(ShimError::Refused));
+    };
+    Some(Ok(ResolvedCommand {
+        program: node,
+        args: vec![script.to_string_lossy().into_owned()],
+    }))
 }
 
 fn select_bin<'a>(pkg: &'a serde_json::Value, stem: &str, unscoped: &str) -> Option<&'a str> {
@@ -553,6 +569,31 @@ fn select_bin<'a>(pkg: &'a serde_json::Value, stem: &str, unscoped: &str) -> Opt
 /// `Some(path)` only for a real `.exe` that canonicalizes inside `package_dir`.
 /// Scripts, missing files, and any `..` or absolute bin are `None` (refused).
 fn native_exe_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
+    let joined = join_inside(package_dir, bin_rel)?;
+    let ext = joined
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    if !ext.eq_ignore_ascii_case("exe") {
+        return None;
+    }
+    existing_inside(package_dir, &joined)
+}
+
+/// An extensionless package bin whose first line is a `node` shebang, inside the package.
+fn node_launcher_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
+    let joined = join_inside(package_dir, bin_rel)?;
+    if joined.extension().is_some() {
+        return None;
+    }
+    let file = existing_inside(package_dir, &joined)?;
+    let mut head = [0u8; 128];
+    let n = std::io::Read::read(&mut std::fs::File::open(&file).ok()?, &mut head).ok()?;
+    let first = std::str::from_utf8(&head[..n]).ok()?.lines().next()?;
+    (first.starts_with("#!") && first.contains("node")).then_some(file)
+}
+
+fn join_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
     if bin_rel.is_empty() || bin_rel.contains(['\0', '%', '\n', '\r']) {
         return None;
     }
@@ -576,18 +617,16 @@ fn native_exe_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
             | std::path::Component::Prefix(_) => return None,
         }
     }
-    let ext = joined
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
-    if !ext.eq_ignore_ascii_case("exe") {
-        return None;
-    }
+    Some(joined)
+}
+
+/// `joined` must be an existing file that canonicalizes inside `package_dir`.
+fn existing_inside(package_dir: &Path, joined: &Path) -> Option<PathBuf> {
     if !joined.is_file() {
         return None;
     }
     let root = std::fs::canonicalize(package_dir).ok()?;
-    let file = std::fs::canonicalize(&joined).ok()?;
+    let file = std::fs::canonicalize(joined).ok()?;
     (file.starts_with(&root) && file != root && crate::search::trusted_candidate(&file))
         .then_some(file)
 }
@@ -2159,6 +2198,45 @@ mod tests {
             Some("node.exe")
         );
         assert!(resolved.args.iter().any(|arg| arg.ends_with("cli.js")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn npm_shim_with_extensionless_node_launcher_runs_through_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let bin = root.join("node_modules").join("opencode-ai").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(
+            root.join("node_modules/opencode-ai/package.json"),
+            r#"{"name":"opencode-ai","bin":{"opencode":"./bin/opencode"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            bin.join("opencode"),
+            "#!/usr/bin/env node\nconsole.log(1)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("opencode.cmd"),
+            r#""%_prog%"  "%dp0%\node_modules\opencode-ai\bin\opencode" %*"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("node.exe"), "").unwrap();
+        let env = PathEnv::for_test(root.to_path_buf());
+        let candidate = find_candidate("opencode", &env).unwrap();
+        let resolved = resolve_spawn(&candidate, &env).unwrap();
+        assert_eq!(
+            resolved.program.file_name().and_then(|n| n.to_str()),
+            Some("node.exe")
+        );
+        assert!(resolved.args[0].ends_with("opencode"));
+        // A launcher that is not a node script is still refused.
+        std::fs::write(bin.join("opencode"), "MZ not a script").unwrap();
+        assert!(matches!(
+            resolve_spawn(&candidate, &env),
+            Err(ShimError::Refused)
+        ));
     }
 
     #[cfg(windows)]

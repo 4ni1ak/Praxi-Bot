@@ -1563,10 +1563,8 @@ pub(crate) async fn list_providers(
         .zip(models)
         .map(|(p, (models, models_error))| {
             let models = if p.cli.is_some() {
-                cli_provider::engine_spec(p.id.strip_prefix("cli:").unwrap_or(""))
-                    .map_or_else(Vec::new, |spec| {
-                        spec.models.iter().map(|m| (*m).to_owned()).collect()
-                    })
+                // Always the registry's list, whatever an older build stored.
+                cli_registry_models(p.id.strip_prefix("cli:").unwrap_or(""))
             } else {
                 models
             };
@@ -1668,6 +1666,14 @@ pub(crate) async fn detect_providers(
     Ok(Json(detected.into_iter().map(Into::into).collect()))
 }
 
+/// Models a coding CLI offers: the registry's short list (the CLI's own listing is
+/// account-specific and never probed).
+fn cli_registry_models(engine_id: &str) -> Vec<String> {
+    cli_provider::engine_spec(engine_id).map_or_else(Vec::new, |spec| {
+        spec.models.iter().map(|m| (*m).to_owned()).collect()
+    })
+}
+
 fn persist_cli_enable(
     s: &AppState,
     spec: &cli_provider::CliEngineSpec,
@@ -1712,6 +1718,8 @@ fn persist_cli_enable(
             &serde_json::json!({ "id": &provider_id, "engine": spec.id }),
         )
         .map_err(ApiError::internal)?;
+    let model_details =
+        crate::provider_models::for_picker(s.agent(), &saved, cli_registry_models(spec.id), true);
     Ok(ConfiguredProviderDto {
         id: provider_id,
         enabled: saved.enabled,
@@ -1720,8 +1728,8 @@ fn persist_cli_enable(
         has_key: false,
         custom: false,
         active: saved.enabled,
-        models: Vec::new(),
-        model_details: Vec::new(),
+        models: model_details.iter().map(|m| m.id.clone()).collect(),
+        model_details,
         models_error: None,
     })
 }

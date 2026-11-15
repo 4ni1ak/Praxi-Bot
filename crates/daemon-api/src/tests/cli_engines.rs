@@ -355,3 +355,39 @@ async fn detected_engines_with_account_label_are_owner_only() {
         }
     }
 }
+
+#[tokio::test]
+async fn enabling_a_cli_returns_and_lists_its_registry_models() {
+    let t = setup();
+    let on = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/enable",
+        Some(json!({"id":"claude"})),
+    )
+    .await;
+    assert_eq!(on.status, StatusCode::OK);
+    let body = on.json();
+    let ids: Vec<&str> = body["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m.as_str())
+        .collect();
+    assert!(ids.contains(&"sonnet") && ids.contains(&"opus"), "{ids:?}");
+    assert!(
+        body["model_details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["display_name"] == "Claude Sonnet")
+    );
+    let list = call(&t, Method::GET, "/v1/providers", None).await.json();
+    let claude = list["configured"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "cli:claude")
+        .unwrap();
+    assert_eq!(claude["models"], body["models"]);
+}

@@ -101,6 +101,7 @@ import { SchedulesView } from "./views/SchedulesView";
 import { AppsModal } from "./views/AppsModal";
 import { NewBotModal } from "./views/NewBotModal";
 import { SettingsModal } from "./views/SettingsModal";
+import { OPEN_AI_SETTINGS_EVENT } from "./state/useCliEngineRows";
 import type { SettingsSectionId } from "./views/settings/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { i18n, type SupportedLanguage } from "./i18n";
@@ -185,6 +186,12 @@ function AppShell() {
     null
   );
   const [appsOpen, setAppsOpen] = useState(false);
+  // The model picker's "Install <CLI>" rows open Settings > AI, where the install flow lives.
+  useEffect(() => {
+    const open = () => setSettingsOpen("ai");
+    window.addEventListener(OPEN_AI_SETTINGS_EVENT, open);
+    return () => window.removeEventListener(OPEN_AI_SETTINGS_EVENT, open);
+  }, []);
   const [newBotOpen, setNewBotOpen] = useState(false);
   // The dialogs of a bot (card 244-C): edit and profile replace the old pages; "add skill" can
   // sit on top of the skills dialog or the edit dialog.
