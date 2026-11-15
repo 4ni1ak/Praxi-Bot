@@ -676,6 +676,8 @@ fn convert(name: &str, input: &Value, cx: &mut Cx) -> Conv {
                 Some(i) => Some(tryc!(desktop_index(i).and_then(|i| cx.desktop_locator(i)))),
                 None => None,
             };
+            // A secret step keeps only the reference to the owner's secret.
+            let secret = str_of(input, "secret").map(str::to_owned);
             let (action, value, method) = match name {
                 "desktop_click" => (
                     DesktopActionKind::Click,
@@ -684,12 +686,20 @@ fn convert(name: &str, input: &Value, cx: &mut Cx) -> Conv {
                 ),
                 "desktop_type" => (
                     DesktopActionKind::Type,
-                    str_of(input, "text").map(|t| cx.lifter.lift("text", t)),
+                    if secret.is_some() {
+                        None
+                    } else {
+                        str_of(input, "text").map(|t| cx.lifter.lift("text", t))
+                    },
                     None,
                 ),
                 "desktop_set_value" => (
                     DesktopActionKind::SetValue,
-                    str_of(input, "value").map(|t| cx.lifter.lift("value", t)),
+                    if secret.is_some() {
+                        None
+                    } else {
+                        str_of(input, "value").map(|t| cx.lifter.lift("value", t))
+                    },
                     None,
                 ),
                 _ => (
@@ -708,6 +718,7 @@ fn convert(name: &str, input: &Value, cx: &mut Cx) -> Conv {
                 action,
                 value,
                 method,
+                secret,
             }))
         }
         "desktop_drag" => Conv::Dropped("drag is not supported in workflows yet".into()),
@@ -725,11 +736,16 @@ fn convert(name: &str, input: &Value, cx: &mut Cx) -> Conv {
                 Some(r) => Some(tryc!(cx.browser_locator(r))),
                 None => None,
             };
+            let secret = str_of(input, "secret").map(str::to_owned);
             let (action, value) = match name {
                 "browser_click" => (BrowserActionKind::Click, None),
                 "browser_fill" => (
                     BrowserActionKind::Fill,
-                    str_of(input, "text").map(|t| cx.lifter.lift("text", t)),
+                    if secret.is_some() {
+                        None
+                    } else {
+                        str_of(input, "text").map(|t| cx.lifter.lift("text", t))
+                    },
                 ),
                 "browser_select" => (
                     BrowserActionKind::Select,
@@ -746,6 +762,12 @@ fn convert(name: &str, input: &Value, cx: &mut Cx) -> Conv {
                 target,
                 action,
                 value,
+                // Only a fill step may carry one; validation rejects the rest.
+                secret: if action == BrowserActionKind::Fill {
+                    secret
+                } else {
+                    None
+                },
             }))
         }
         "shell_run" => {

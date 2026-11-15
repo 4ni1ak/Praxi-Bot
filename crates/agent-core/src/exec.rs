@@ -922,30 +922,49 @@ impl TurnExecutor {
                         continue;
                     }
                 };
-                match self
+                // An owner-created standing grant that covers exactly this
+                // call (verified by the tool against the live facts) stands in
+                // for the card. Nothing else can: policy, presets and grants
+                // were already overridden to Ask for such a call.
+                if self
                     .sh
-                    .request_approval(
-                        &ctx,
-                        call_uuid,
-                        &resolved.name,
-                        effect,
-                        category,
-                        &resolved.input,
-                        details,
-                    )
+                    .standing_grant(&ctx, &resolved.name, &resolved.input)
                     .await
+                    .is_some()
                 {
-                    Ok(permit) => Slot::Run {
+                    Slot::Run {
                         tool,
                         input,
                         call: call_uuid,
                         meta,
-                        permit: Some(permit),
-                    },
-                    Err(reason) => Slot::Done {
-                        text: user_denied(reason),
-                        is_error: true,
-                    },
+                        permit: None,
+                    }
+                } else {
+                    match self
+                        .sh
+                        .request_approval(
+                            &ctx,
+                            call_uuid,
+                            &resolved.name,
+                            effect,
+                            category,
+                            &resolved.input,
+                            details,
+                        )
+                        .await
+                    {
+                        Ok(permit) => Slot::Run {
+                            tool,
+                            input,
+                            call: call_uuid,
+                            meta,
+                            permit: Some(permit),
+                        },
+                        Err(reason) => Slot::Done {
+                            text: user_denied(reason),
+                            is_error: true,
+                        },
+                    }
                 }
             } else {
                 Slot::Run {

@@ -111,6 +111,7 @@ impl AgentLoop {
                 rt: OnceLock::new(),
                 spawn_gate: Mutex::new(()),
                 skills: OnceLock::new(),
+                fill_secrets: OnceLock::new(),
                 skill_hints: RwLock::new(None),
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
@@ -185,6 +186,9 @@ impl AgentLoop {
         }));
         *self.sh.checkpoint_access.write() =
             (cfg.fs_allowed_roots.clone(), cfg.fs_granted_paths.clone());
+        if let Some(secrets) = &cfg.fill_secrets {
+            let _ = self.sh.fill_secrets.set(Arc::clone(secrets));
+        }
         let _ = builtin_tools::register_builtin_tools(&self.sh.tools, cfg);
         self
     }
@@ -344,6 +348,7 @@ impl AgentLoop {
             control: Some(Arc::new(LoopControl {
                 sh: Arc::downgrade(&self.sh),
             })),
+            fill_secrets: self.sh.fill_secrets.get().cloned(),
             ..workflow_replay::ReplayOptions::default()
         };
         let (s2, h2, o2) = (store.clone(), handles.clone(), opts.clone());

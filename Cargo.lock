@@ -10379,6 +10379,7 @@ dependencies = [
  "parking_lot",
  "protocol",
  "script-runtime",
+ "secret-store",
  "serde",
  "serde_json",
  "storage",
