@@ -3584,6 +3584,119 @@ async fn stop_cancels_a_run_waiting_for_approval_through_the_normal_cancel_path(
     );
 }
 
+fn hold_live(t: &T, run: &str) {
+    t.state
+        .stop_seam()
+        .hold_live
+        .lock()
+        .insert(protocol::RunId(run.parse().unwrap()));
+}
+
+fn release_live(t: &T, run: &str) {
+    t.state
+        .stop_seam()
+        .hold_live
+        .lock()
+        .remove(&protocol::RunId(run.parse().unwrap()));
+}
+
+fn state_of_result(body: &Value, run: &str) -> Option<String> {
+    body["results"]
+        .as_array()?
+        .iter()
+        .find(|r| r["run_id"] == run)
+        .and_then(|r| r["state"].as_str().map(str::to_owned))
+}
+
+#[tokio::test]
+async fn a_live_run_is_cancel_requested_until_it_ends_and_a_repeat_settles_it() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "running");
+    hold_live(&t, &run); // the cancel token fires, the run keeps winding down
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&first.json(), &run).as_deref(),
+        Some("cancel_requested"),
+        "{:?}",
+        first.json()
+    );
+    assert_eq!(
+        state_of_result(&first.json(), &run).as_deref(),
+        Some("running")
+    );
+    // Still live: a repeat must not claim it stopped.
+    let mid = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&mid.json(), &run).as_deref(),
+        Some("cancel_requested")
+    );
+    // The run ends (cancelled by its own loop): the repeat settles it.
+    t.state
+        .storage()
+        .update_run_state(protocol::RunId(run.parse().unwrap()), "cancelled", None)
+        .unwrap();
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&again.json(), &run).as_deref(),
+        Some("cancelled")
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_requested_run_that_ends_paused_is_cancelled_by_the_repeat() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let run = put_run(&t, &bot, "running");
+    hold_live(&t, &run);
+    let sid = new_id();
+    let first = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&first.json(), &run).as_deref(),
+        Some("cancel_requested")
+    );
+    // A pause request won the race: the run ends paused, not cancelled.
+    t.state
+        .storage()
+        .update_run_state(protocol::RunId(run.parse().unwrap()), "paused", None)
+        .unwrap();
+    release_live(&t, &run); // the repeat's cancel now takes effect on the paused run
+    let again = stop(&t, &sid, &[], "all_existing").await;
+    assert_eq!(
+        outcome_of(&again.json(), &run).as_deref(),
+        Some("cancelled")
+    );
+    assert_eq!(run_state(&t, &run), "cancelled");
+}
+
+#[tokio::test]
+async fn the_open_run_state_query_matches_the_run_state_enum() {
+    // The SQL in `list_open_run_states` is a literal; a new non-terminal
+    // `RunState` that it misses would drop out of every `all_existing` sweep.
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let mut want = Vec::new();
+    for st in task_runtime::RunState::ALL {
+        let id = put_run(&t, &bot, st.as_str());
+        if !st.is_terminal() {
+            want.push((id, st.as_str().to_owned()));
+        }
+    }
+    let mut got: Vec<(String, String)> = t
+        .state
+        .storage()
+        .list_open_run_states(t.state.user_id())
+        .unwrap()
+        .into_iter()
+        .map(|(id, st)| (id.0.to_string(), st))
+        .collect();
+    got.sort();
+    want.sort();
+    assert!(want.len() > 1, "the enum has open states");
+    assert_eq!(got, want);
+}
+
 async fn peer_stop(t: &T, role: crate::PeerRole, body: Value) -> Resp {
     let mut req = Request::builder()
         .method(Method::POST)

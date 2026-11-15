@@ -3275,7 +3275,12 @@ export interface components {
             /**
              * @description `true` when this `stop_id` was seen before but its target set is no
              *     longer kept (expired or evicted): nothing was cancelled and `results`
-             *     is empty. Send a new `stop_id` to stop again.
+             *     is empty. The original target set is unknown, so the daemon will not
+             *     guess it. To retry, send a NEW `stop_id` with `scope: listed` and the
+             *     run ids the client still holds as stop-held. `all_existing` with a new
+             *     `stop_id` sweeps every run open now, including runs started after the
+             *     original Stop: use it only for a new user decision. The client should
+             *     tell the user that the Stop expired.
              */
             expired?: boolean;
             /** @description `true` when this call fixed the target set, `false` for a repeat. */

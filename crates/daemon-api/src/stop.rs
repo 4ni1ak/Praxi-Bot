@@ -17,6 +17,12 @@
 //!   sent more than that many Stops is its oldest id forgotten; that id would
 //!   then count as a first receipt again.
 //!
+//! Cost of the per-peer seen-id sets: they are keyed by the peer's transport
+//! key and never removed (not on revoke, not on re-pair), so the memory held is
+//! bounded by (distinct authenticated peer keys over the daemon's lifetime) x
+//! [`PEER_MAX_SEEN`] ids x ~50 B. Unauthenticated callers cannot grow it.
+//! Dropping an actor's set when its pairing is revoked is a possible follow-up.
+//!
 //! Nothing is persisted: after a daemon restart a repeat is a first receipt;
 //! the restart pauses every running run (`AgentLoop::recover`), so it stops
 //! the runs that were live before the restart.
@@ -150,6 +156,9 @@ pub(crate) struct Seam {
     pub(crate) trace: parking_lot::Mutex<Vec<String>>,
     pub(crate) fail_audit: std::sync::atomic::AtomicBool,
     pub(crate) fail_cancel: parking_lot::Mutex<HashSet<RunId>>,
+    /// Runs whose cancel "fires the token" (the call succeeds) but which stay
+    /// live: the run is still winding down, nothing reaches its state row.
+    pub(crate) hold_live: parking_lot::Mutex<HashSet<RunId>>,
 }
 
 fn is_open(state: Option<RunState>) -> bool {
@@ -173,6 +182,9 @@ fn attempt_cancel(s: &AppState, run: RunId) -> Result<(), String> {
         s.stop_seam().trace.lock().push(format!("cancel:{}", run.0));
         if s.stop_seam().fail_cancel.lock().contains(&run) {
             return Err("test: cancel failed".into());
+        }
+        if s.stop_seam().hold_live.lock().contains(&run) {
+            return Ok(());
         }
     }
     s.agent().cancel(run).map_err(|e| e.to_string())
