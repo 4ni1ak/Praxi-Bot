@@ -241,7 +241,7 @@ pub(crate) async fn list(
 /// in each bot's `engine` table, written only by `PUT /v1/bots/{id}/engine`). "Seen" is
 /// the `cli:<id>` entry in `providers.toml`: the owner's switch-off writes `enabled = false`
 /// there, so it is never turned on again. Engines whose sign-in cannot be probed
-/// (no `auth_args`, e.g. OpenCode) count as signed in unless detection says signed out.
+/// (no `auth_args`, for example `OpenCode`) count as signed in unless detection says signed out.
 pub(crate) async fn auto_enable_new(
     s: &AppState,
     rows: &[cli_provider::DetectedCli],

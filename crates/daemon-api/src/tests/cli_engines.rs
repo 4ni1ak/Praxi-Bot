@@ -432,6 +432,7 @@ async fn switching_an_engine_off_is_remembered_in_providers_toml() {
 
 #[tokio::test]
 async fn auto_enabling_engines_changes_no_bot_and_respects_a_switch_off() {
+    use cli_provider::AuthState::{SignedIn, SignedOut, Unknown};
     let t = setup();
     let created = call(
         &t,
@@ -454,7 +455,6 @@ async fn auto_enabling_engines_changes_no_bot_and_respects_a_switch_off() {
         detail: None,
         message: None,
     };
-    use cli_provider::AuthState::{SignedIn, SignedOut, Unknown};
     // The owner already switched Codex off: it must stay off.
     call(
         &t,
