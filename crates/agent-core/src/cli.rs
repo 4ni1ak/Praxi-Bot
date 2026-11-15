@@ -258,6 +258,11 @@ impl TurnExecutor {
                 "native CLI sessions are not available to external agents",
             ));
         }
+        if self.sh.ctx(run)?.initiator == protocol::InitiatorKind::ExternalSchedule {
+            return Err(xe(
+                "CLI executors are unavailable for externally supplied schedules",
+            ));
+        }
         let cfg = ProviderConfig::load(&config_path(self.sh.storage.data_dir())).map_err(xe)?;
         let id = req.model.provider().unwrap_or(&req.model.0);
         let settings = cfg

@@ -4374,6 +4374,11 @@ export interface components {
              */
             chat_id?: string | null;
             /**
+             * Format: int32
+             * @description Consecutive precheck/polling failures (ten pauses the schedule).
+             */
+            consecutive_errors?: number;
+            /**
              * Format: int64
              * @description Creation time.
              */
@@ -4418,11 +4423,20 @@ export interface components {
              *     `{"kind": "tool", "name": "...", "input": {}}`.
              */
             payload: unknown;
+            /** @description Read-only deterministic condition, including full script source. */
+            precheck?: unknown;
+            /**
+             * Format: int64
+             * @description Firings skipped before an agent run was created.
+             */
+            skipped_by_precheck?: number;
             /**
              * @description When it fires: `{"cron": "0 9 * * 1-5 Europe/Istanbul"}`,
              *     `{"every": {"seconds": 600}}` or `{"at": {"unix_ms": 1767225600000}}`.
              */
             spec: unknown;
+            /** @description Non-webhook trigger definition; never includes webhook secrets. */
+            trigger?: unknown;
         };
         /** @description Body of `POST /v1/schedules` and `PUT /v1/schedules/{id}`. */
         ScheduleInput: {
@@ -4444,8 +4458,12 @@ export interface components {
             name: string;
             /** @description See [`ScheduleDto::payload`]. */
             payload: unknown;
+            /** @description `HashChanged` or Script precheck. Absent keeps it; null removes it. */
+            precheck?: unknown;
             /** @description See [`ScheduleDto::spec`]. */
             spec: unknown;
+            /** @description File-watch or email trigger. Absent keeps it; null removes it. */
+            trigger?: unknown;
             /**
              * @description HMAC secret of a webhook trigger.  Absent: unchanged (none on create);
              *     the empty string removes the trigger.

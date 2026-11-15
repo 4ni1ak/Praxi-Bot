@@ -807,6 +807,16 @@ pub struct ScheduleDto {
     /// A webhook trigger is configured (`POST /v1/webhooks/{id}`); the secret
     /// is never returned.
     pub has_webhook: bool,
+    /// Non-webhook trigger definition; never includes webhook secrets.
+    pub trigger: Option<Value>,
+    /// Read-only deterministic condition, including full script source.
+    pub precheck: Option<Value>,
+    /// Firings skipped before an agent run was created.
+    #[serde(default)]
+    pub skipped_by_precheck: u64,
+    /// Consecutive precheck/polling failures (ten pauses the schedule).
+    #[serde(default)]
+    pub consecutive_errors: u32,
     /// Who created it: `user`, or `bot` (a bot's schedule tools, after you
     /// approved it). A bot may change only its own `bot` schedules.
     pub origin: String,
@@ -836,6 +846,16 @@ pub struct ScheduleInput {
     /// the empty string removes the trigger.
     #[serde(default)]
     pub webhook_secret: Option<String>,
+    /// File-watch or email trigger. Absent keeps it; null removes it.
+    #[serde(default, deserialize_with = "present_json")]
+    pub trigger: Option<Value>,
+    /// `HashChanged` or Script precheck. Absent keeps it; null removes it.
+    #[serde(default, deserialize_with = "present_json")]
+    pub precheck: Option<Value>,
+}
+
+fn present_json<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 /// Body of `POST /v1/schedules/parse`.

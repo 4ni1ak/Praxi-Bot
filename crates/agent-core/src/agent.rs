@@ -608,6 +608,44 @@ impl AgentLoop {
         )
     }
 
+    /// Start an externally supplied scheduled run in a new, isolated chat.
+    /// The durable initiator survives resume and is inherited by all children.
+    ///
+    /// # Errors
+    /// Existing chat history or normal run-start errors.
+    pub fn run_scheduled_external(
+        &self,
+        chat_id: ChatId,
+        schedule_id: TaskId,
+        work: ScheduleWork,
+        note: Option<&str>,
+    ) -> Result<RunId> {
+        if !self.sh.storage.list_messages(chat_id)?.is_empty() {
+            return Err(LoopError::Profile(
+                "external schedule requires an empty chat".into(),
+            ));
+        }
+        let mut text = match &work {
+            ScheduleWork::Prompt(text) => text.clone(),
+            ScheduleWork::Workflow { name, params } => {
+                format!("Scheduled workflow {name}: {params:?}")
+            }
+            ScheduleWork::Tool { name, input } => format!("Scheduled tool {name}: {input}"),
+        };
+        if let Some(note) = note {
+            text.push_str("\n\n");
+            text.push_str(note);
+        }
+        let directive = (!matches!(work, ScheduleWork::Prompt(_))).then_some(work);
+        self.start_turn(
+            chat_id,
+            &text,
+            &format!("turn:external_schedule:{schedule_id}"),
+            directive,
+            None,
+        )
+    }
+
     /// `handoff`: the just-concluded run that still holds the chat's `active`
     /// slot; the new turn takes the slot over from it without a gap in which
     /// another start could slip in.
@@ -630,6 +668,17 @@ impl AgentLoop {
             .storage
             .get_chat(chat_id)?
             .ok_or_else(|| LoopError::NotFound(format!("chat {chat_id}")))?;
+        if self
+            .sh
+            .storage
+            .list_messages(chat_id)?
+            .iter()
+            .any(|m| m.role == "external_schedule")
+        {
+            return Err(LoopError::Profile(
+                "external schedule chat is isolated; start a new chat".into(),
+            ));
+        }
         self.sh
             .profile_for(chat.bot_id)
             .map_err(LoopError::Profile)?;
@@ -644,12 +693,19 @@ impl AgentLoop {
             // Check under the same lock as turn creation: a fast concurrent
             // human/external turn must not race the history isolation boundary.
             let messages = self.sh.storage.list_messages(chat_id)?;
-            if initiator_of(kind) == InitiatorKind::ExternalAgent && !messages.is_empty() {
+            if matches!(
+                initiator_of(kind),
+                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+            ) && !messages.is_empty()
+            {
                 return Err(LoopError::Profile(
                     "external tasks require a fresh chat".into(),
                 ));
             }
-            if messages.iter().any(|m| m.role == "external_agent") {
+            if messages
+                .iter()
+                .any(|m| m.role == "external_agent" || m.role == "external_schedule")
+            {
                 return Err(LoopError::Profile(
                     "external task chats cannot be reused; start a new chat".into(),
                 ));
@@ -698,7 +754,7 @@ impl AgentLoop {
                 .storage
                 .list_messages(chat_id)?
                 .iter()
-                .any(|m| m.role == "external_agent")
+                .any(|m| m.role == "external_agent" || m.role == "external_schedule")
             {
                 return Err(LoopError::Profile(
                     "external task chats cannot accept follow-up messages; start a new chat".into(),
@@ -1458,15 +1514,15 @@ impl AgentLoop {
             user_id,
             chat_id,
             run_id: Some(run_id),
-            role: if self
+            role: match self
                 .sh
                 .storage
                 .get_run(run_id)?
-                .is_some_and(|run| initiator_of(&run.kind) == InitiatorKind::ExternalAgent)
+                .map(|run| initiator_of(&run.kind))
             {
-                "external_agent"
-            } else {
-                "user"
+                Some(InitiatorKind::ExternalAgent) => "external_agent",
+                Some(InitiatorKind::ExternalSchedule) => "external_schedule",
+                _ => "user",
             }
             .to_owned(),
             content: content.clone(),

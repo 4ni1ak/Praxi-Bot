@@ -516,6 +516,7 @@ impl TurnExecutor {
         if ctx.sub.is_some()
             || ctx.parent_run_id.is_some()
             || ctx.initiator == protocol::InitiatorKind::ExternalAgent
+            || ctx.initiator == protocol::InitiatorKind::ExternalSchedule
         {
             return None;
         }

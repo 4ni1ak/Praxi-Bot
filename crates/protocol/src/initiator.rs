@@ -28,6 +28,8 @@ pub enum InitiatorKind {
     Schedule,
     /// A separately scoped external MCP agent. Never inherits human authority.
     ExternalAgent,
+    /// A schedule supplied external trigger/precheck data; every tool needs once-only approval.
+    ExternalSchedule,
 }
 
 /// The entity that initiated an agent run, including the specific identifier.
