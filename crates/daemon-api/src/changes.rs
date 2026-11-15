@@ -361,12 +361,52 @@ impl Drop for RestoreLock {
     }
 }
 
+/// Resolve `path` through symlinks as far as it exists: the longest existing
+/// ancestor is canonicalised and the missing remainder is appended unchanged.
+fn resolve_existing_prefix(path: &std::path::Path) -> std::path::PathBuf {
+    let mut rest = Vec::new();
+    let mut head = path;
+    loop {
+        if let Ok(real) = head.canonicalize() {
+            return rest.iter().rev().fold(real, |acc, part| acc.join(part));
+        }
+        match (head.parent(), head.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name);
+                head = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+fn lexical_overlap(left: &std::path::Path, right: &std::path::Path) -> bool {
+    // Windows and macOS volumes are case-insensitive by default.
+    if cfg!(any(windows, target_os = "macos")) {
+        let (left, right) = (
+            left.to_string_lossy().to_lowercase(),
+            right.to_string_lossy().to_lowercase(),
+        );
+        let (left, right) = (std::path::Path::new(&left), std::path::Path::new(&right));
+        left.starts_with(right) || right.starts_with(left)
+    } else {
+        left.starts_with(right) || right.starts_with(left)
+    }
+}
+
+/// Whether two recorded paths can touch the same file. Deterministic: the
+/// lexical rule (component-wise prefix either way, case-insensitive on Windows
+/// and macOS) OR the same rule on paths with symlinks resolved as far as they
+/// exist, so a symlinked alias of a directory is seen as the directory. Still
+/// missed: hard links, bind mounts, case-insensitive volumes on Linux, and an
+/// alias whose link is created or retargeted after this check.
 fn paths_overlap(left: &str, right: &str) -> bool {
-    #[cfg(windows)]
-    let (left, right) = (left.to_lowercase(), right.to_lowercase());
-    let left = std::path::Path::new(&left);
-    let right = std::path::Path::new(&right);
-    left.starts_with(right) || right.starts_with(left)
+    let (left, right) = (std::path::Path::new(left), std::path::Path::new(right));
+    lexical_overlap(left, right)
+        || lexical_overlap(
+            &resolve_existing_prefix(left),
+            &resolve_existing_prefix(right),
+        )
 }
 
 fn ensure_no_overlapping_run(
@@ -1437,6 +1477,27 @@ mod tests {
         assert!(!paths_overlap("/work/tree", "/work/tree-other"));
         #[cfg(windows)]
         assert!(paths_overlap("C:/Work/Tree", "c:/work/tree/child.txt"));
+        #[cfg(target_os = "macos")]
+        assert!(paths_overlap("/Work/Tree", "/work/tree/child.txt"));
+        #[cfg(not(any(windows, target_os = "macos")))]
+        assert!(!paths_overlap("/Work/Tree", "/work/tree/child.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_alias_of_a_directory_overlaps_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let alias_child = alias.join("child.txt").display().to_string();
+        let real_child = real.join("child.txt").display().to_string();
+        let sibling = dir.path().join("real-other").display().to_string();
+        // Neither file exists: the directory prefix still resolves.
+        assert!(paths_overlap(&alias_child, &real_child));
+        assert!(paths_overlap(&alias_child, &real.display().to_string()));
+        assert!(!paths_overlap(&alias_child, &sibling));
     }
 
     #[tokio::test]
