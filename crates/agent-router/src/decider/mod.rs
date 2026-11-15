@@ -27,8 +27,11 @@
 //! allowed option, which costs quality but not safety.
 
 pub mod backends;
+mod day;
 #[cfg(test)]
 mod tests;
+
+pub use day::{DayClock, DayCounters, local_day};
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
@@ -295,6 +298,8 @@ impl RateLimits {
     };
 }
 
+/// Day-counter key of all backend requests made today.
+pub const CALLS_KEY: &str = "calls";
 const MINUTE: Duration = Duration::from_secs(60);
 const DAY: Duration = Duration::from_secs(24 * 3600);
 /// How long a backend is skipped after an HTTP 429.
@@ -485,6 +490,11 @@ pub struct Decider {
     cfg: DeciderConfig,
     cache: Mutex<HashMap<u128, Cached>>,
     counters: Counters,
+    /// Persisted per-day counters (requests per day of each backend, calls
+    /// made today); `None` keeps the in-memory sliding day only.
+    day: Option<Arc<DayCounters>>,
+    /// Backend requests allowed per local day (`0` = unlimited).
+    daily_budget: u64,
 }
 
 impl std::fmt::Debug for Decider {
@@ -538,7 +548,37 @@ impl Decider {
             cfg,
             cache: Mutex::new(HashMap::new()),
             counters: Counters::default(),
+            day: None,
+            daily_budget: 0,
         }
+    }
+
+    /// Persist the per-day counters (RPD of each backend, calls made today):
+    /// they survive a restart and reset at the local midnight.
+    #[must_use]
+    pub fn with_day_counters(mut self, day: Arc<DayCounters>) -> Self {
+        self.day = Some(day);
+        self
+    }
+
+    /// Cap the backend requests of a local day (`0` = unlimited). Needs
+    /// [`Self::with_day_counters`] to count across restarts.
+    #[must_use]
+    pub fn with_daily_budget(mut self, calls: u64) -> Self {
+        self.daily_budget = calls;
+        self
+    }
+
+    /// The per-day counters, if installed.
+    #[must_use]
+    pub fn day_counters(&self) -> Option<&Arc<DayCounters>> {
+        self.day.as_ref()
+    }
+
+    /// Backend requests made today (0 without day counters).
+    #[must_use]
+    pub fn calls_today(&self) -> u64 {
+        self.day.as_ref().map_or(0, |d| d.get(CALLS_KEY))
     }
 
     /// Ids of the configured backends, in chain order.
@@ -677,6 +717,10 @@ impl Decider {
             // Nothing this caller may send to: no call, no budget spent.
             return Outcome::default();
         }
+        if self.daily_budget != 0 && self.calls_today() >= self.daily_budget {
+            bump(&self.counters.budget_denied);
+            return Outcome::default();
+        }
         if !budget.take() {
             bump(&self.counters.budget_denied);
             return Outcome::default();
@@ -691,13 +735,30 @@ impl Decider {
                 bump(&self.counters.timeouts);
                 break;
             };
+            // With persisted day counters they are the authority for RPD (the
+            // in-memory window then only does RPM / TPM / cooldown).
+            let rpd_key = format!("rpd:{}", slot.backend.id());
+            let mut limits = slot.limits;
+            if let Some(day) = &self.day
+                && limits.rpd != 0
+            {
+                if day.get(&rpd_key) >= u64::from(limits.rpd) {
+                    bump(&self.counters.rate_limited);
+                    continue;
+                }
+                limits.rpd = 0;
+            }
             if !slot
                 .window
                 .lock()
-                .try_acquire(slot.limits, Instant::now(), tokens)
+                .try_acquire(limits, Instant::now(), tokens)
             {
                 bump(&self.counters.rate_limited);
                 continue;
+            }
+            if let Some(day) = &self.day {
+                day.bump(&rpd_key);
+                day.bump(CALLS_KEY);
             }
             bump(&self.counters.backend_calls);
             sent += 1;
