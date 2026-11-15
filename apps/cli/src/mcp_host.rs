@@ -627,6 +627,7 @@ fn to_config(name: &str, input: McpServerInput) -> Result<McpServerConfig, McpCo
         ),
     };
     let cfg = McpServerConfig {
+        oauth: None,
         id: name.to_owned(),
         transport,
         enabled: input.enabled.unwrap_or(true),

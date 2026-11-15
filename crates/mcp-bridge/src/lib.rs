@@ -55,7 +55,7 @@ mod tool;
 mod transport;
 
 pub use catalog::{CatalogEntry, CatalogInstall, RequiredSecret, builtin_catalog};
-pub use config::{McpConfigStore, McpServerConfig, McpTransport, TomlFileStore};
+pub use config::{McpConfigStore, McpServerConfig, McpTransport, OAuthConfig, TomlFileStore};
 pub use diagnostics::ExternalRedactor;
 pub use error::{McpError, Result};
 pub use manager::{Backoff, McpManager, McpPolicy, McpServerHandle, ServerSnapshot, ServerStatus};

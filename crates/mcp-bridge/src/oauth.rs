@@ -19,7 +19,7 @@ use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 use oauth2::TokenResponse as _;
 use rmcp::transport::auth::{
     AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
-    AuthorizationSession, CredentialStore, StoredCredentials,
+    AuthorizationSession, CredentialStore, OAuthClientConfig, StoredCredentials,
 };
 use secret_store::SecretStore;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -319,12 +319,19 @@ impl SignIn {
             .map_err(|e| auth_error(server, &e))?;
         check_metadata(server, &resolution.metadata, options.allow_loopback_http)?;
         check_endpoint_addresses(server, url, &resolution.metadata).await?;
+        let use_metadata_document = options.client_metadata_url.is_some()
+            && resolution
+                .metadata
+                .additional_fields
+                .get("client_id_metadata_document_supported")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
         manager.set_metadata(resolution.metadata);
 
         let listener = CallbackListener::bind(server).await?;
         let mut request =
             AuthorizationRequest::new(listener.redirect_uri()).with_client_name("Praxi");
-        if let Some(id) = options.client_id {
+        if let Some(id) = options.client_id.filter(|_| !use_metadata_document) {
             request = request.with_preregistered_client(id);
             if let Some(secret) = options.client_secret {
                 request = request.with_client_secret(secret);
@@ -388,18 +395,23 @@ pub async fn stored_bearer(
     store: &Arc<dyn SecretStore>,
     registrar: Option<&SecretRegistrar>,
     force_refresh: bool,
+    options: &SignInOptions,
 ) -> Result<Option<String>> {
     let probe = SecretCredentialStore::new(Arc::clone(store), server, url, registrar.cloned())?;
-    let stored = probe.load().await.map_err(|e| auth_error(server, &e))?;
-    if stored.as_ref().is_none_or(|c| c.token_response.is_none()) {
+    let Some(stored) = probe
+        .load()
+        .await
+        .map_err(|e| auth_error(server, &e))?
+        .filter(|c| c.token_response.is_some())
+    else {
         return Ok(None);
-    }
-    let refresh_due = stored.as_ref().is_some_and(|c| {
-        let expiry = c
+    };
+    let refresh_due = {
+        let expiry = stored
             .token_response
             .as_ref()
             .and_then(oauth2::TokenResponse::expires_in);
-        match (expiry, c.token_received_at) {
+        match (expiry, stored.token_received_at) {
             (Some(expiry), Some(received)) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -412,7 +424,7 @@ pub async fn stored_bearer(
             }
             _ => false,
         }
-    });
+    };
     // rmcp's own HTTP client: its address filter stays in place.
     let mut manager = AuthorizationManager::new(url)
         .await
@@ -423,6 +435,7 @@ pub async fn stored_bearer(
         .resolve_metadata()
         .await
         .map_err(|e| auth_error(server, &e))?;
+    check_metadata(server, &resolution.metadata, options.allow_loopback_http)?;
     check_endpoint_addresses(server, url, &resolution.metadata).await?;
     manager.set_metadata(resolution.metadata);
     match manager.initialize_from_store().await {
@@ -430,6 +443,20 @@ pub async fn stored_bearer(
         Ok(false) => return Err(McpError::AuthRequired(server.to_owned())),
         Err(e) => return Err(auth_error(server, &e)),
     }
+    let stored_id = &stored.client_id;
+    let metadata_client = options.client_metadata_url.as_ref() == Some(stored_id);
+    if !metadata_client && options.client_id.as_ref().is_some_and(|id| id != stored_id) {
+        return Err(McpError::AuthRequired(server.to_owned()));
+    }
+    // Reinstall the confidential identity after initialize_from_store, which
+    // restores only the public client id. Refresh never reads secrets from config.
+    let mut client = OAuthClientConfig::new(stored_id, "http://127.0.0.1/callback");
+    if !metadata_client && let Some(secret) = &options.client_secret {
+        client = client.with_client_secret(secret);
+    }
+    manager
+        .configure_client(client)
+        .map_err(|e| auth_error(server, &e))?;
     let token = if force_refresh || refresh_due {
         manager
             .refresh_token()

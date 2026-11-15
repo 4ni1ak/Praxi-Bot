@@ -196,6 +196,38 @@ impl Server {
         &self.config
     }
 
+    fn oauth_options(
+        &self,
+        mut options: crate::oauth::SignInOptions,
+    ) -> Result<crate::oauth::SignInOptions> {
+        if let Some(config) = &self.config.oauth {
+            options.client_id.clone_from(&config.client_id);
+            options
+                .client_metadata_url
+                .clone_from(&config.client_metadata_url);
+            options.allow_loopback_http = config.allow_loopback_http;
+            options.client_secret = match &config.client_secret_ref {
+                Some(name) => {
+                    let value = self
+                        .secrets
+                        .as_ref()
+                        .ok_or_else(|| {
+                            McpError::Config("OAuth client secret requires a secret store".into())
+                        })?
+                        .get(name)
+                        .map_err(|_| McpError::Store("cannot read OAuth client secret".into()))?
+                        .ok_or_else(|| McpError::Config("OAuth client secret is missing".into()))?;
+                    if let Some(register) = &self.registrar {
+                        register(value.expose());
+                    }
+                    Some(value.expose().to_owned())
+                }
+                None => None,
+            };
+        }
+        Ok(options)
+    }
+
     fn is_alive(s: &Session) -> bool {
         !s.is_closed() && !s.peer().is_transport_closed()
     }
@@ -321,6 +353,7 @@ impl Server {
                 store,
                 self.registrar.as_ref(),
                 self.refresh_required.swap(false, Ordering::AcqRel),
+                &self.oauth_options(crate::oauth::SignInOptions::default())?,
             ))
             .await
             {
@@ -871,6 +904,7 @@ impl McpManager {
                 "server `{id}`: OAuth sign-in needs a secret store to keep the tokens in"
             ))
         })?;
+        let options = server.oauth_options(options)?;
         crate::oauth::SignIn::start(id, url, store, self.registrar.clone(), options).await
     }
 

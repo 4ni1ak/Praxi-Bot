@@ -48,9 +48,27 @@ pub enum McpTransport {
     },
 }
 
+/// Public client identity and secret references for HTTP OAuth.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OAuthConfig {
+    /// Pre-registered public client identifier.
+    pub client_id: Option<String>,
+    /// Name in the secret store; never the secret value.
+    pub client_secret_ref: Option<String>,
+    /// Published HTTPS Client ID Metadata Document (preferred when supported).
+    pub client_metadata_url: Option<String>,
+    /// Permit HTTP authorization endpoints on loopback for development.
+    #[serde(default)]
+    pub allow_loopback_http: bool,
+}
+
 /// One configured MCP server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerConfig {
+    /// OAuth client settings, HTTP only. Tokens are never configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OAuthConfig>,
     /// Stable id; becomes the `<server>` part of `mcp:<server>/<tool>`.
     pub id: String,
     /// Transport.
@@ -110,6 +128,7 @@ impl McpServerConfig {
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self {
+            oauth: None,
             id: id.into(),
             transport: McpTransport::Stdio {
                 command: command.into(),
@@ -132,6 +151,7 @@ impl McpServerConfig {
     #[must_use]
     pub fn http(id: impl Into<String>, url: impl Into<String>) -> Self {
         Self {
+            oauth: None,
             id: id.into(),
             transport: McpTransport::Http {
                 url: url.into(),
@@ -154,6 +174,26 @@ impl McpServerConfig {
     /// [`McpError::Config`] describing the first problem found.
     pub fn validate(&self) -> Result<()> {
         let bad = |m: String| Err(McpError::Config(m));
+        if let Some(oauth) = &self.oauth {
+            if !matches!(self.transport, McpTransport::Http { .. }) {
+                return bad("OAuth settings apply only to HTTP servers".into());
+            }
+            if oauth
+                .client_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty())
+            {
+                return bad("OAuth client id must not be empty".into());
+            }
+            if let Some(reference) = &oauth.client_secret_ref {
+                SecretRef::new(reference.as_str()).map_err(|_| {
+                    McpError::Config("invalid OAuth client secret reference".into())
+                })?;
+                if oauth.client_id.is_none() {
+                    return bad("an OAuth client secret reference requires a client id".into());
+                }
+            }
+        }
         if self.id.is_empty()
             || !self
                 .id
@@ -560,5 +600,28 @@ mod tests {
         let f = c.tool_filter().unwrap();
         assert!(f.permits("read_file") && f.permits("list"));
         assert!(!f.permits("read_secret") && !f.permits("write_file"));
+    }
+
+    #[test]
+    fn oauth_accepts_secret_references_only_and_refuses_stdio() {
+        assert!(
+            serde_json::from_value::<OAuthConfig>(serde_json::json!({
+                "client_id": "client", "client_secret": "literal-secret"
+            }))
+            .is_err()
+        );
+        let mut c = McpServerConfig::stdio("s", "fixture", NO_ARGS);
+        c.oauth = Some(OAuthConfig::default());
+        assert!(c.validate().is_err());
+        c.transport = McpTransport::Http {
+            url: "https://example.com/mcp".into(),
+            headers: BTreeMap::new(),
+        };
+        c.oauth.as_mut().unwrap().client_secret_ref = Some("mcp/client-secret".into());
+        assert!(c.validate().is_err(), "secret needs a client id");
+        c.oauth.as_mut().unwrap().client_id = Some("client".into());
+        assert!(c.validate().is_ok());
+        c.oauth.as_mut().unwrap().client_secret_ref = Some("invalid secret name!".into());
+        assert!(c.validate().is_err());
     }
 }

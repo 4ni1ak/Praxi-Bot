@@ -43,6 +43,8 @@ struct Seen {
     mcp_bearer: Option<String>,
     tool_calls: Vec<Option<String>>,
     reject_tool_calls: bool,
+    client_secret: Option<String>,
+    cimd_supported: bool,
     /// `code_challenge` of the authorization request (set by the test, which
     /// plays the browser).
     challenge: Option<String>,
@@ -214,6 +216,10 @@ async fn fake_authorization_server(
                             metadata["code_challenge_methods_supported"] =
                                 serde_json::json!(["S256"]);
                         }
+                        metadata["client_id_metadata_document_supported"] =
+                            serde_json::json!(seen.lock().cimd_supported);
+                        metadata["token_endpoint_auth_methods_supported"] =
+                            serde_json::json!(["client_secret_post"]);
                         ("200 OK", metadata)
                     } else if path == "/token" {
                         let form = pairs(&body);
@@ -221,12 +227,18 @@ async fn fake_authorization_server(
                         let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
                             .encode(Sha256::digest(verifier.as_bytes()));
                         let expected = seen.lock().challenge.clone();
-                        let valid = form.get("grant_type").map(String::as_str)
-                            == Some("authorization_code")
+                        let secret_valid = seen
+                            .lock()
+                            .client_secret
+                            .as_ref()
+                            .is_none_or(|secret| form.get("client_secret") == Some(secret));
+                        let valid = secret_valid
+                            && form.get("grant_type").map(String::as_str)
+                                == Some("authorization_code")
                             && form.get("code").map(String::as_str) == Some("code-1")
                             && Some(challenge) == expected;
-                        let refreshing = form.get("grant_type").map(String::as_str)
-                            == Some("refresh_token")
+                        let refreshing = secret_valid
+                            && form.get("grant_type").map(String::as_str) == Some("refresh_token")
                             && form.get("refresh_token").map(String::as_str) == Some(REFRESH)
                             && seen.lock().refresh_allowed;
                         let expires_in = seen.lock().expires_in.unwrap_or(3600);
@@ -325,7 +337,7 @@ async fn expiry_and_the_sixty_second_window_refresh_before_sending_a_bearer() {
         .with_secret_store(store);
         assert!(matches!(
             manager
-                .add_server(McpServerConfig::http("expiry", format!("{base}/mcp")))
+                .add_server(http_config("expiry", format!("{base}/mcp")))
                 .await,
             Err(McpError::AuthRequired(_))
         ));
@@ -383,7 +395,7 @@ async fn a_live_unauthorized_request_reconnects_and_retries_only_once_without_fa
         .with_secret_store(Arc::new(MemoryStore::default()));
         assert!(matches!(
             manager
-                .add_server(McpServerConfig::http("live", format!("{base}/mcp")))
+                .add_server(http_config("live", format!("{base}/mcp")))
                 .await,
             Err(McpError::AuthRequired(_))
         ));
@@ -448,7 +460,7 @@ async fn sign_in_discovers_exchanges_with_pkce_and_stores_only_in_the_secret_sto
         .with_secret_registrar(registrar);
     assert!(matches!(
         manager
-            .add_server(McpServerConfig::http("e2e", format!("{base}/mcp")))
+            .add_server(http_config("e2e", format!("{base}/mcp")))
             .await,
         Err(McpError::AuthRequired(_))
     ));
@@ -621,7 +633,7 @@ async fn a_sign_in_is_sent_only_to_its_own_server_and_waiting_for_one_is_not_a_f
     // Both servers answer 401: they wait for the user, unquarantined.
     for (id, base) in [("a", &a), ("b", &b)] {
         let error = manager
-            .add_server(McpServerConfig::http(id, format!("{base}/mcp")))
+            .add_server(http_config(id, format!("{base}/mcp")))
             .await
             .unwrap_err();
         assert!(matches!(error, McpError::AuthRequired(_)), "{error}");
@@ -674,7 +686,7 @@ async fn a_sign_in_is_sent_only_to_its_own_server_and_waiting_for_one_is_not_a_f
     // The same server name pointed at B's URL must not carry A's token there.
     manager.remove_server("a").await.unwrap();
     let _ = manager
-        .add_server(McpServerConfig::http("a", format!("{b}/mcp")))
+        .add_server(http_config("a", format!("{b}/mcp")))
         .await;
     let to_b = seen_b.lock().mcp_authorization.clone();
     assert!(to_b.iter().all(Option::is_none), "{to_b:?}");
@@ -685,4 +697,93 @@ async fn a_sign_in_is_sent_only_to_its_own_server_and_waiting_for_one_is_not_a_f
     manager.shutdown().await;
     server_a.abort();
     server_b.abort();
+}
+
+fn http_config(id: &str, url: String) -> McpServerConfig {
+    let mut config = McpServerConfig::http(id, url);
+    config.oauth = Some(mcp_bridge::OAuthConfig {
+        client_id: Some("praxi-test-client".into()),
+        allow_loopback_http: true,
+        ..mcp_bridge::OAuthConfig::default()
+    });
+    config
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn confidential_refresh_reads_the_secret_reference_on_every_connection() {
+    const CLIENT_SECRET: &str = "confidential-client-sentinel-98fd";
+    const ROTATED_SECRET: &str = "rotated-client-sentinel-62be";
+    let (base, seen, server) = fake_authorization_server(true).await;
+    seen.lock().client_secret = Some(CLIENT_SECRET.into());
+    seen.lock().expires_in = Some(45);
+    seen.lock().refresh_allowed = true;
+    seen.lock().mcp_bearer = Some(REFRESHED.into());
+    let store = Arc::new(MemoryStore::default());
+    store.set("mcp/client-secret", CLIENT_SECRET).unwrap();
+    let registry = tool_registry::ToolRegistry::new();
+    let registered = Arc::new(Mutex::new(Vec::new()));
+    let registrar: SecretRegistrar = {
+        let registered = registered.clone();
+        Arc::new(move |value| registered.lock().push(value.to_owned()))
+    };
+    let manager = McpManager::new(registry.clone())
+        .with_secret_store(store.clone())
+        .with_secret_registrar(registrar);
+    let mut config = http_config("confidential", format!("{base}/mcp"));
+    config.oauth.as_mut().unwrap().client_secret_ref = Some("mcp/client-secret".into());
+    assert!(!toml::to_string(&config).unwrap().contains(CLIENT_SECRET));
+    assert!(!format!("{config:?}").contains(CLIENT_SECRET));
+    assert!(matches!(
+        manager.add_server(config).await,
+        Err(McpError::AuthRequired(_))
+    ));
+    finish_sign_in(
+        manager
+            .start_sign_in("confidential", SignInOptions::default())
+            .await
+            .unwrap(),
+        &base,
+        &seen,
+    )
+    .await;
+    store.set("mcp/client-secret", ROTATED_SECRET).unwrap();
+    seen.lock().client_secret = Some(ROTATED_SECRET.into());
+    assert_eq!(manager.reenable("confidential").await.unwrap(), 1);
+    let requests = seen.lock().token_requests.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].get("client_secret").map(String::as_str),
+        Some(CLIENT_SECRET)
+    );
+    assert_eq!(
+        requests[1].get("client_secret").map(String::as_str),
+        Some(ROTATED_SECRET)
+    );
+    assert_eq!(requests[1]["grant_type"], "refresh_token");
+    assert!(registered.lock().iter().any(|v| v == CLIENT_SECRET));
+    assert!(registered.lock().iter().any(|v| v == ROTATED_SECRET));
+    assert!(registry.get("mcp:confidential/echo").is_some());
+    manager.shutdown().await;
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_document_is_preferred_to_a_preregistered_client_when_supported() {
+    let (base, seen, server) = fake_authorization_server(true).await;
+    seen.lock().cimd_supported = true;
+    let mut opts = options();
+    opts.client_metadata_url = Some("https://client.example/metadata.json".into());
+    let sign_in = SignIn::start(
+        "cimd",
+        &format!("{base}/mcp"),
+        Arc::new(MemoryStore::default()),
+        None,
+        opts,
+    )
+    .await
+    .unwrap();
+    let params = pairs(sign_in.authorization_url().split_once('?').unwrap().1);
+    assert_eq!(params["client_id"], "https://client.example/metadata.json");
+    finish_sign_in(sign_in, &base, &seen).await;
+    server.abort();
 }
