@@ -232,11 +232,13 @@ pub fn set_tray_labels(state: State<'_, TrayState>, labels: TrayLabels) {
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // tauri commands take owned arguments
 pub fn notify_show(
+    window: tauri::Window,
     app: AppHandle,
     title: String,
     body: String,
     chat_id: Option<String>,
 ) -> Result<(), String> {
+    crate::window_gate::require_window(&window, crate::window_gate::MAIN_ONLY)?;
     show_native(&app, &title, &body, chat_id)
 }
 
