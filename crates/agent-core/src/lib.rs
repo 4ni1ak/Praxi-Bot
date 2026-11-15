@@ -44,7 +44,9 @@ pub use config::{
     secret_variants,
 };
 pub use control::{ControlGate, ControlRequest};
-pub use knowledge::{HeuristicKnowledgeDecider, KnowledgeDecider};
+pub use knowledge::{
+    HeuristicKnowledgeDecider, KnowledgeDecider, knowledge_auto_retrieval_available,
+};
 pub use permission_engine::Decision as PolicyDecision;
 pub use profile::{
     BotProfile, ModelsConfig, PermissionsConfig, ProfileError, RouterSettings, ToolFilter,
