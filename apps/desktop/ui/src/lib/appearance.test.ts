@@ -49,6 +49,34 @@ test("old saved preferences keep working", () => {
   assert.equal(upgraded.backdrop, "none");
 });
 
+test("settings saved before the surface system load as solid, opaque chat area, OS preference respected", () => {
+  // A 198-A settings object: style and backdrop, none of the 244-E fields.
+  const old = normalizeAppearance({ themeMode: "obsidian", uiStyle: "solid", backdrop: "aurora", backdropDim: 40 });
+  assert.equal(old.uiStyle, "solid");
+  assert.equal(old.transparentChat, false);
+  assert.equal(old.transparencyOverride, false);
+  assert.equal(old.panelTransparency, DEFAULT_APPEARANCE.panelTransparency);
+  assert.equal(old.panelBlur, DEFAULT_APPEARANCE.panelBlur);
+  // A user who picked glass before keeps glass.
+  assert.equal(normalizeAppearance({ uiStyle: "glass" }).uiStyle, "glass");
+  assert.equal(normalizeAppearance({ uiStyle: "tinted" }).uiStyle, "tinted");
+  // Only a real boolean overrides the OS transparency preference.
+  assert.equal(normalizeAppearance({ transparencyOverride: "true" }).transparencyOverride, false);
+});
+
+test("review query: surface parameters and a flat colour backdrop", () => {
+  const params = new URLSearchParams("style=glass&alpha=90&blur=40&clear=1&bgcolor=4a7bd0&rt=ignore");
+  const q = appearanceFromQuery(params, DEFAULT_APPEARANCE);
+  assert.equal(q.uiStyle, "glass");
+  assert.equal(q.panelTransparency, 90);
+  assert.equal(q.panelBlur, 40);
+  assert.equal(q.transparentChat, true);
+  assert.equal(q.transparencyOverride, true);
+  assert.equal(q.backdrop, "custom");
+  assert.match(q.backgroundUrl ?? "", /^data:image\/svg\+xml,.*4a7bd0/);
+  assert.equal(appearanceFromQuery(new URLSearchParams("bgcolor=red"), DEFAULT_APPEARANCE).backgroundUrl, undefined);
+});
+
 test("valid new values round-trip", () => {
   const stored = {
     themeMode: "custom",
@@ -59,7 +87,11 @@ test("valid new values round-trip", () => {
     bubble: "plain",
     ownBubble: "accent",
     backdrop: "reed2",
-    backdropDim: 33.4
+    backdropDim: 33.4,
+    panelTransparency: 80,
+    panelBlur: 40,
+    transparentChat: true,
+    transparencyOverride: true
   };
   assert.deepEqual(normalizeAppearance(stored), {
     ...stored,
