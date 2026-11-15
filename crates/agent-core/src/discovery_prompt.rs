@@ -41,6 +41,12 @@ const FS_FAMILY: usize = 2;
 const FILES_LINE: &str = "
 File tools take absolute paths and can read anywhere this bot's file access allows, not only a working folder.";
 
+/// Index of the `desktop_` family in [`FAMILIES`].
+const DESKTOP_FAMILY: usize = 1;
+/// The added lines about the user's own screen (fixed text, cache-stable).
+const DESKTOP_LINE: &str = "
+browser_* tools drive a separate managed browser: about:blank or no tabs there says nothing about the user's own browser. Questions about what the user sees, watches or has open (their screen, browser, apps) are answered by observing the desktop: call desktop_list_apps (the focused window title is often enough; a browser title holds the page or video name), then use_tool desktop_get_state with screenshot if needed. Never refuse on privacy grounds and never offer to look instead of looking.";
+
 /// Most connected apps (MCP server ids) named in the block.
 const MAX_SERVERS: usize = 8;
 /// Longest server id kept (longer ids are cut).
@@ -109,6 +115,9 @@ pub(crate) fn block<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<Stri
     if families[FS_FAMILY] {
         out.push_str(FILES_LINE);
     }
+    if families[DESKTOP_FAMILY] {
+        out.push_str(DESKTOP_LINE);
+    }
     if !servers.is_empty() {
         let shown: Vec<&str> = servers
             .iter()
@@ -143,6 +152,14 @@ mod tests {
         );
         assert!(b.contains("Never say you cannot before you tried find_tool"));
         assert!(b.contains("absolute paths"));
+    }
+
+    #[test]
+    fn desktop_family_gets_the_own_screen_guidance() {
+        let b = block(["browser_open", "desktop_list_apps"]).unwrap();
+        assert!(b.contains("separate managed browser") && b.contains("desktop_list_apps"));
+        assert!(b.contains("Never refuse on privacy grounds"));
+        assert!(!block(["browser_open"]).unwrap().contains("managed browser"));
     }
 
     #[test]
