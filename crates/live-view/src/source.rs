@@ -98,6 +98,21 @@ pub trait FrameSource: Send + Sync {
 pub trait InputSink: Send + Sync {
     /// One event, called by the daemon's serialized ownership executor only.
     async fn inject(&self, event: &InputEvent) -> Result<(), ViewError>;
+    /// Inject one event validated against the `(generation, geometry_revision)`
+    /// the client computed it from.
+    ///
+    /// Backends whose coordinate mapping depends on frame-synchronized display
+    /// geometry override this to reject stale revisions fail-closed; targets
+    /// whose input path already delegates to [`Self::inject`] (such as the
+    /// browser target) inherit the default delegation unchanged.
+    async fn inject_at_revision(
+        &self,
+        event: &InputEvent,
+        _generation: u64,
+        _geometry_revision: u64,
+    ) -> Result<(), ViewError> {
+        self.inject(event).await
+    }
     async fn release_pressed_inputs(&self) -> Result<(), ViewError>;
     /// Pin only real takeover; subscribing in watch must never launch or pin.
     async fn set_takeover_active(&self, _active: bool) -> Result<(), ViewError> {

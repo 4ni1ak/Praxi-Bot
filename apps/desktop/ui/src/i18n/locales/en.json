@@ -128,6 +128,8 @@
       "viaGrant": "Allowed because of an “Always allow” rule",
       "grantCategory": "Always allow every {{name}} tool",
       "grantTool": "Always allow {{name}}",
+      "inertGrant": "Inactive: this rule is not tied to a computer and no longer applies.",
+      "scopedAllow": "Allowed on {{scopes}}",
       "revoke": "Revoke",
       "workspace": {
         "title": "Workspace default",
@@ -1085,6 +1087,7 @@
       "ai": "AI",
       "computer": "Computer",
       "usage": "Usage",
+      "diagnostics": "Diagnostics",
       "updates": "Updates",
       "appearance": "Appearance"
     },
@@ -1354,6 +1357,73 @@
         "saved": "Web search settings saved",
         "keyCleared": "API key removed from secret store"
       }
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "description": "Checks why the bot might not be working and fixes common problems.",
+      "running": "Running diagnostics…",
+      "allGood": "Everything looks fine",
+      "problems": "{{count}} item needs attention",
+      "problems_other": "{{count}} items need attention",
+      "checkedAt": "Last checked at {{time}}",
+      "rerun": "Run again",
+      "copyReport": "Copy support report",
+      "reportCopied": "Support report copied. Keys, tokens, e-mail addresses and your user folder are masked.",
+      "reportFailed": "Could not create the support report",
+      "repairDone": "Repair finished",
+      "repairFailed": "The repair did not succeed",
+      "offline": "Not connected to the daemon. Start Praxi to run diagnostics.",
+      "loadError": "Could not run diagnostics",
+      "empty": "No checks were returned",
+      "notOnPlatform": "Not available on this platform.",
+      "privacy": "Diagnostics only read your settings. A repair runs only when you click its button.",
+      "status": {
+        "ok": "OK",
+        "warn": "Check",
+        "fail": "Problem",
+        "neutral": "Not used",
+        "unsupported": "Not available"
+      },
+      "repair": {
+        "create_data_dir": "Create folder",
+        "reload_providers": "Reload providers",
+        "restart_browser": "Restart browser"
+      },
+      "checks": {
+        "daemon": "Daemon",
+        "host_ownership": "Host ownership",
+        "peer_link": "Peer / VPS link",
+        "data_dir": "Data folder",
+        "unicode_path": "Turkish characters in paths",
+        "config": "Provider settings file",
+        "secret_backend": "Secret store",
+        "providers": "AI providers",
+        "providers_loaded": "Loaded providers",
+        "cli_accounts": "Coding CLI accounts",
+        "model_catalog": "Model catalog",
+        "browser": "Browser",
+        "desktop_automation": "Desktop automation",
+        "capabilities": "Capabilities",
+        "schedule_tools": "Schedule tools",
+        "disk_space": "Disk space",
+        "clock": "Clock"
+      },
+      "hints": {
+        "providers": "Add the API key in Settings → AI, or sign in to the coding CLI and turn it on there.",
+        "providers_loaded": "Reload the providers so the bot uses the saved settings.",
+        "cli_accounts": "Open a terminal once and sign in to the CLI (for example `claude` or `codex login`).",
+        "data_dir": "Create the data folder, or check that you have permission to write to it.",
+        "unicode_path": "Move the data folder to a path without special characters, or to a local NTFS disk.",
+        "disk_space": "Free some disk space; conversations and logs cannot be saved when the disk is full.",
+        "clock": "Turn on automatic date and time in the system settings.",
+        "browser": "Install Chrome, Edge or Chromium (not the snap package).",
+        "desktop_automation": "Restart the app; if it stays off, check that desktop automation was not turned off.",
+        "secret_backend": "Restart the app; if the secret store stays locked, set it up again in Settings.",
+        "config": "The provider settings file is damaged; add the provider again in Settings → AI.",
+        "host_ownership": "This installation is idle; activate it from the host settings.",
+        "peer_link": "Pair this device with the host again.",
+        "schedule_tools": "schedule.toml is invalid; fix or delete it."
+      }
     }
   },
   "palette": {
@@ -1580,6 +1650,111 @@
     "profile": "Bot profile",
     "chats": "Chats",
     "noChats": "No chats yet.",
-    "untitled": "New chat"
+    "untitled": "New chat",
+    "computer": "Computer"
+  },
+  "liveView": {
+    "title": "Computer live view",
+    "expand": "Open large viewer",
+    "close": "Close viewer",
+    "refresh": "Refresh targets",
+    "backToChat": "Back",
+    "targetsLabel": "Target screen",
+    "noTargets": "No screen targets reported yet.",
+    "hostLabel": "Host: {{host}}",
+    "viewOnly": "View only",
+    "interactive": "Interactive",
+    "privacyNotice": "Screen pixels cannot be redacted (may show passwords or OTPs); this stream stays in memory only and is never sent to model providers.",
+    "globalPauseNotice": "Taking control or pausing applies globally across all bots.",
+    "focusTrapHint": "Shift+Esc exits screen keyboard focus to the Bitirdim control.",
+    "captureTab": "Capture Tab",
+    "releaseFocus": "Exit keyboard",
+    "emergencyStop": "Stop bots",
+    "watchAction": "Take control",
+    "doneAction": "Bitirdim",
+    "doneLabel": "I'm done",
+    "retryingDone": "Handing back…",
+    "retryDone": "Retry Bitirdim",
+    "outcomeHint": "What did you complete? (optional)",
+    "outcomes": {
+      "none": "Just finished",
+      "login_completed": "Logged in",
+      "application_opened": "Opened app",
+      "other": "Other step"
+    },
+    "recoverAction": "Clear pause (the bot can run again)",
+    "reacquireAction": "Reacquire control",
+    "clearPauseAction": "Clear pause",
+    "otherOwner": "Controlled by {{owner}}",
+    "stageAlt": "Live screen preview for {{target}}",
+    "stageHint": "Interactive screen canvas. Click inside to focus, Shift+Esc to return to toolbar controls.",
+    "kind": {
+      "browser": "Browser",
+      "desktop": "Desktop"
+    },
+    "states": {
+      "watch": "Watching",
+      "acquiring": "Acquiring control…",
+      "active": "You are in control",
+      "finishing": "Handing back…",
+      "paused": "Paused",
+      "unavailable": "Unavailable",
+      "closed": "Closed",
+      "disconnected": "Connection lost",
+      "stale": "No recent frames"
+    },
+    "panelSummary": {
+      "watch": "Awake · Watching live",
+      "acquiring": "Acquiring control…",
+      "active": "You have the wheel",
+      "paused": "Paused · Waiting for you",
+      "unavailable": "Idle · Not active",
+      "empty": "No active screen"
+    },
+    "reasons": {
+      "browser_idle": "Browser is idle. Send a browser task to open a session before viewing.",
+      "remote_node_live_view": "Remote host live view is not available on this connection.",
+      "unsupported": "Screen streaming is not supported for this target.",
+      "unavailable": "Screen target is currently unavailable.",
+      "expired": "The view session expired. Reopen or refresh to watch again.",
+      "revoked": "Screen access for this device was revoked.",
+      "disconnected": "The screen connection dropped and the bot is paused. Reacquire control, or clear the pause so the bot can run again.",
+      "stale": "Frames became stale. Bots stay paused until a fresh frame arrives and you recover.",
+      "geometry_changed": "Screen resolution changed. Waiting for a refreshed frame.",
+      "refresh_pending": "Waiting for the target to publish a fresh frame.",
+      "frame_budget_exceeded": "Quality reduced automatically to fit bandwidth budget.",
+      "drain_timeout": "Timed out waiting for bot screen actions to finish.",
+      "audit_failed": "Action could not be recorded in the audit log; paused safely.",
+      "reset_failed": "Could not verify input key reset cleanly; paused safely.",
+      "partial_injection": "Input could not be applied completely.",
+      "rate_limited": "Input temporarily slowed down due to rate limits.",
+      "restart": "The daemon restarted while you had control. Clear the pause when you want the bot to continue.",
+      "persistence_failed": "Control state could not be saved cleanly; paused safely.",
+      "local_override": "Stopped locally. Clear the pause when ready to continue.",
+      "stream_stale": "No recent stream frames or heartbeats arrived; input locked safely.",
+      "resync_required": "Screen geometry or sequence updated; syncing with latest frame."
+    },
+    "targetLocked": "Finish control (Bitirdim) before switching the screen target.",
+    "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
+    "reviewApprovals": "Back to chat to answer",
+    "errors": {
+      "generic": "The request failed. Check the connection and try again.",
+      "release_failed": "Could not hand control back. The bot stays paused; retry Bitirdim.",
+      "release_unconfirmed": "The daemon still reports your takeover as active. Retry Bitirdim.",
+      "takeover_failed": "Could not take control. Try again.",
+      "recover_failed": "Could not recover control. Try again.",
+      "pause_changed": "The control state changed. Check the screen and try again.",
+      "release_interrupted": "The takeover was interrupted before Bitirdim finished, so the hand-back did not complete. Clear the pause to let the bot continue, or reacquire control."
+    },
+    "reconnecting": "Reconnecting to the screen stream…",
+    "releaseOnClose": "Closing hands control back to the bot first.",
+    "dismissKeepsControl": "Closing only hides the viewer: control stays with you. Use Bitirdim or Retry in the panel.",
+    "pausedBanner": {
+      "title": "Bot paused, waiting for you",
+      "body": "A screen takeover left the bot paused. Clear the pause to let it continue, or open the screen to reacquire control."
+    },
+    "openScreen": "Open screen",
+    "connectionLost": "Connection to the screen lost. Reconnecting…",
+    "clearForeignPause": "Clear {{owner}}'s pause"
   }
 }

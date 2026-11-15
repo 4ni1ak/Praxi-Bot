@@ -9,7 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    dto, email, email_routes, error, host, live_view, mcp, mcp_routes, routes, sse, web, web_routes,
+    doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp, mcp_routes,
+    routes, sse, web, web_routes,
 };
 
 struct Security;
@@ -87,6 +88,9 @@ impl Modify for Security {
         routes::detect_providers,
         routes::enable_cli_provider,
         routes::reload_providers,
+        doctor_routes::get_doctor,
+        doctor_routes::repair,
+        doctor_routes::report,
         routes::list_schedules,
         routes::create_schedule,
         routes::get_schedule,
@@ -118,7 +122,7 @@ impl Modify for Security {
     ),
     components(schemas(
         ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
-        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::ChatDto, dto::CreateChat,
+        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
         dto::MessageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
         dto::DecisionResponse, dto::RunDto, dto::UsageTotals, dto::BotUsage,
@@ -139,6 +143,8 @@ impl Modify for Security {
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
+        doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
+        doctor_routes::RepairResult,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
@@ -146,7 +152,7 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web")
+        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"), (name = "doctor")
     )
 )]
 pub struct ApiDoc;

@@ -128,6 +128,8 @@
       "viaGrant": "“Her zaman izin ver” kuralı sayesinde izinli",
       "grantCategory": "Her {{name}} aracına her zaman izin ver",
       "grantTool": "{{name}} için her zaman izin ver",
+      "inertGrant": "Etkin değil: bu kural bir bilgisayara bağlı değil ve artık uygulanmıyor.",
+      "scopedAllow": "Şu bilgisayarlarda izinli: {{scopes}}",
       "revoke": "Geri al",
       "workspace": {
         "title": "Çalışma alanı varsayılanı",
@@ -1085,6 +1087,7 @@
       "ai": "Yapay zeka",
       "computer": "Bilgisayar",
       "usage": "Kullanım",
+      "diagnostics": "Tanılama",
       "updates": "Güncellemeler",
       "appearance": "Görünüm"
     },
@@ -1354,6 +1357,73 @@
         "saved": "Web araması ayarları kaydedildi",
         "keyCleared": "API anahtarı gizli depodan kaldırıldı"
       }
+    },
+    "diagnostics": {
+      "title": "Tanılama",
+      "description": "Botun neden çalışmadığını kontrol eder ve sık görülen sorunları düzeltir.",
+      "running": "Tanılama çalışıyor…",
+      "allGood": "Her şey yolunda görünüyor",
+      "problems": "{{count}} öğe ilgi bekliyor",
+      "problems_other": "{{count}} öğe ilgi bekliyor",
+      "checkedAt": "Son kontrol: {{time}}",
+      "rerun": "Yeniden çalıştır",
+      "copyReport": "Destek raporunu kopyala",
+      "reportCopied": "Destek raporu kopyalandı. Anahtarlar, belirteçler, e-posta adresleri ve kullanıcı klasörünüz gizlendi.",
+      "reportFailed": "Destek raporu oluşturulamadı",
+      "repairDone": "Onarım tamamlandı",
+      "repairFailed": "Onarım başarılı olmadı",
+      "offline": "Arka plan servisine bağlı değil. Tanılama için Praxi'yi başlatın.",
+      "loadError": "Tanılama çalıştırılamadı",
+      "empty": "Hiç denetim sonucu gelmedi",
+      "notOnPlatform": "Bu platformda kullanılamaz.",
+      "privacy": "Tanılama yalnızca ayarlarınızı okur. Bir onarım yalnızca düğmesine tıkladığınızda çalışır.",
+      "status": {
+        "ok": "Tamam",
+        "warn": "Kontrol et",
+        "fail": "Sorun",
+        "neutral": "Kullanılmıyor",
+        "unsupported": "Kullanılamaz"
+      },
+      "repair": {
+        "create_data_dir": "Klasörü oluştur",
+        "reload_providers": "Sağlayıcıları yeniden yükle",
+        "restart_browser": "Tarayıcıyı yeniden başlat"
+      },
+      "checks": {
+        "daemon": "Arka plan servisi",
+        "host_ownership": "Sunucu sahipliği",
+        "peer_link": "Eş / VPS bağlantısı",
+        "data_dir": "Veri klasörü",
+        "unicode_path": "Yollarda Türkçe karakterler",
+        "config": "Sağlayıcı ayar dosyası",
+        "secret_backend": "Gizli bilgi deposu",
+        "providers": "Yapay zekâ sağlayıcıları",
+        "providers_loaded": "Yüklü sağlayıcılar",
+        "cli_accounts": "Kodlama CLI hesapları",
+        "model_catalog": "Model kataloğu",
+        "browser": "Tarayıcı",
+        "desktop_automation": "Masaüstü otomasyonu",
+        "capabilities": "Yetenekler",
+        "schedule_tools": "Zamanlama araçları",
+        "disk_space": "Disk alanı",
+        "clock": "Saat"
+      },
+      "hints": {
+        "providers": "API anahtarını Ayarlar → Yapay zekâ'dan ekleyin ya da kodlama CLI'ında oturum açıp orada etkinleştirin.",
+        "providers_loaded": "Botun kayıtlı ayarları kullanması için sağlayıcıları yeniden yükleyin.",
+        "cli_accounts": "Bir kez terminal açıp CLI'da oturum açın (örneğin `claude` ya da `codex login`).",
+        "data_dir": "Veri klasörünü oluşturun ya da klasöre yazma izniniz olduğunu kontrol edin.",
+        "unicode_path": "Veri klasörünü özel karakter içermeyen bir yola ya da yerel bir NTFS diske taşıyın.",
+        "disk_space": "Biraz disk alanı açın; disk dolduğunda sohbetler ve kayıtlar kaydedilemez.",
+        "clock": "Sistem ayarlarında otomatik tarih ve saati açın.",
+        "browser": "Chrome, Edge ya da Chromium kurun (snap paketi değil).",
+        "desktop_automation": "Uygulamayı yeniden başlatın; kapalı kalırsa masaüstü otomasyonunun kapatılmadığını kontrol edin.",
+        "secret_backend": "Uygulamayı yeniden başlatın; gizli bilgi deposu kilitli kalırsa Ayarlar'dan yeniden kurun.",
+        "config": "Sağlayıcı ayar dosyası bozuk; sağlayıcıyı Ayarlar → Yapay zekâ'dan yeniden ekleyin.",
+        "host_ownership": "Bu kurulum boşta; sunucu ayarlarından etkinleştirin.",
+        "peer_link": "Bu cihazı sunucuyla yeniden eşleştirin.",
+        "schedule_tools": "schedule.toml geçersiz; düzeltin ya da silin."
+      }
     }
   },
   "palette": {
@@ -1580,6 +1650,111 @@
     "profile": "Bot profili",
     "chats": "Sohbetler",
     "noChats": "Henüz sohbet yok.",
-    "untitled": "Yeni sohbet"
+    "untitled": "Yeni sohbet",
+    "computer": "Bilgisayar"
+  },
+  "liveView": {
+    "title": "Canlı ekran görünümü",
+    "expand": "Büyük görünümü aç",
+    "close": "Görünümü kapat",
+    "refresh": "Hedefleri yenile",
+    "backToChat": "Geri",
+    "targetsLabel": "Hedef ekran",
+    "noTargets": "Henüz bildirilen bir ekran hedefi yok.",
+    "hostLabel": "Ana makine: {{host}}",
+    "viewOnly": "Salt izleme",
+    "interactive": "Etkileşimli",
+    "privacyNotice": "Ekran pikselleri maskelenemez (parola/OTP içerebilir); bu akış yalnızca bellekte tutulur ve model sağlayıcılarına gönderilmez.",
+    "globalPauseNotice": "Devralma veya durdurma işlemi tüm bot çalışmalarını genel olarak duraklatır.",
+    "focusTrapHint": "Shift+Esc ekran klavye odağını Bitirdim düğmesine taşır.",
+    "captureTab": "Tab tuşunu yakala",
+    "releaseFocus": "Klavyeden çık",
+    "emergencyStop": "Botları durdur",
+    "watchAction": "Devral",
+    "doneAction": "Bitirdim",
+    "doneLabel": "Bitirdim",
+    "retryingDone": "Kontrol geri veriliyor…",
+    "retryDone": "Bitirdim’i yeniden dene",
+    "outcomeHint": "Ne tamamladın? (isteğe bağlı)",
+    "outcomes": {
+      "none": "Tamamlandı",
+      "login_completed": "Giriş yapıldı",
+      "application_opened": "Uygulama açıldı",
+      "other": "Diğer adım"
+    },
+    "recoverAction": "Duraklatmayı kaldır (bot yeniden çalışabilir)",
+    "reacquireAction": "Kontrolü yeniden al",
+    "clearPauseAction": "Duraklatmayı kaldır",
+    "otherOwner": "Kontrol {{owner}} tarafında",
+    "stageAlt": "{{target}} için canlı ekran önizlemesi",
+    "stageHint": "Etkileşimli ekran alanı. Odaklamak için tıklayın, denetim çubuğuna dönmek için Shift+Esc kullanın.",
+    "kind": {
+      "browser": "Tarayıcı",
+      "desktop": "Masaüstü"
+    },
+    "states": {
+      "watch": "İzleniyor",
+      "acquiring": "Kontrol alınıyor…",
+      "active": "Kontrol sizde",
+      "finishing": "Geri veriliyor…",
+      "paused": "Duraklatıldı",
+      "unavailable": "Kullanılamıyor",
+      "closed": "Kapalı",
+      "disconnected": "Bağlantı kesildi",
+      "stale": "Yeni kare gelmiyor"
+    },
+    "panelSummary": {
+      "watch": "Açık · Canlı izleniyor",
+      "acquiring": "Kontrol alınıyor…",
+      "active": "Kontrol sizde",
+      "paused": "Duraklatıldı · Sizi bekliyor",
+      "unavailable": "Beklemede · Etkin değil",
+      "empty": "Etkin ekran yok"
+    },
+    "reasons": {
+      "browser_idle": "Tarayıcı şu an boşta. İzlemek için tarayıcı kullanan bir bot adımı başlatın.",
+      "remote_node_live_view": "Uzak makine canlı izlemesi bu bağlantıda desteklenmiyor.",
+      "unsupported": "Bu hedef için ekran akışı desteklenmiyor.",
+      "unavailable": "Ekran hedefi şu anda kullanılamıyor.",
+      "expired": "İzleme oturumunun süresi doldu. Yeniden bağlanın.",
+      "revoked": "Bu aygıtın ekran erişim yetkisi kaldırıldı.",
+      "disconnected": "Ekran bağlantısı koptu ve bot duraklatıldı. Kontrolü yeniden alın veya botun tekrar çalışması için duraklatmayı kaldırın.",
+      "stale": "Kareler güncelliğini yitirdi. Yeni kare gelip kurtarma yapılana kadar botlar duraklatıldı.",
+      "geometry_changed": "Ekran çözünürlüğü değişti. Yeni kare bekleniyor.",
+      "refresh_pending": "Hedeften güncel kare bekleniyor.",
+      "frame_budget_exceeded": "Bant genişliği sınırına uymak için kalite otomatik düşürüldü.",
+      "drain_timeout": "Bot ekran işlemlerinin tamamlanması zaman aşımına uğradı.",
+      "audit_failed": "Denetim kaydı yazılamadı; botlar güvenli şekilde duraklatıldı.",
+      "reset_failed": "Tuş sıfırlaması doğrulanamadı; botlar güvenli şekilde duraklatıldı.",
+      "partial_injection": "Girdi olayı tam olarak uygulanamadı.",
+      "rate_limited": "Hız sınırı nedeniyle girdi geçici olarak yavaşlatıldı.",
+      "restart": "Kontrol sizdeyken daemon yeniden başladı. Botun devam etmesini istediğinizde duraklatmayı kaldırın.",
+      "persistence_failed": "Kontrol durumu diske kaydedilemedi; güvenli duraklatma korunuyor.",
+      "local_override": "Yerel olarak durduruldu. Hazır olduğunuzda duraklatmayı kaldırın.",
+      "stream_stale": "Yakın zamanda yeni kare veya kalp atışı gelmedi; girdi güvenli şekilde kilitlendi.",
+      "resync_required": "Ekran geometrisi veya sıra güncellendi; son kare ile eşzamanlanıyor."
+    },
+    "targetLocked": "Ekran hedefini değiştirmeden önce kontrolü geri verin (Bitirdim).",
+    "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
+    "reviewApprovals": "Yanıtlamak için sohbete dön",
+    "errors": {
+      "generic": "İstek başarısız oldu. Bağlantıyı kontrol edip tekrar deneyin.",
+      "release_failed": "Kontrol geri verilemedi. Bot duraklatılmış kalır; Bitirdim'i yeniden deneyin.",
+      "release_unconfirmed": "Daemon devralmanızı hâlâ etkin gösteriyor. Bitirdim'i yeniden deneyin.",
+      "takeover_failed": "Kontrol devralınamadı. Tekrar deneyin.",
+      "recover_failed": "Kontrol kurtarılamadı. Tekrar deneyin.",
+      "pause_changed": "Kontrol durumu değişti. Ekranı kontrol edip tekrar deneyin.",
+      "release_interrupted": "Bitirdim tamamlanmadan devralma kesildi, bu yüzden geri verme tamamlanmadı. Botun devam etmesi için duraklatmayı kaldırın veya kontrolü yeniden alın."
+    },
+    "reconnecting": "Ekran akışına yeniden bağlanılıyor…",
+    "releaseOnClose": "Kapatmak önce kontrolü bota geri verir.",
+    "dismissKeepsControl": "Kapatmak yalnızca görünümü gizler: kontrol sizde kalır. Panelden Bitirdim veya Yeniden dene'yi kullanın.",
+    "pausedBanner": {
+      "title": "Bot duraklatıldı, sizi bekliyor",
+      "body": "Bir ekran devralma botu duraklatılmış bıraktı. Devam etmesi için duraklatmayı kaldırın veya kontrolü yeniden almak için ekranı açın."
+    },
+    "openScreen": "Ekranı aç",
+    "connectionLost": "Ekran bağlantısı koptu. Yeniden bağlanılıyor…",
+    "clearForeignPause": "{{owner}} duraklatmasını kaldır"
   }
 }

@@ -9,8 +9,11 @@ import type {
   ControlModeName,
   ControlStateDto,
   ControlVerdict,
+  CreateSessionInput,
   Decision,
   DetectedProviderDto,
+  DoctorReport,
+  EffectiveProfile,
   ErrorBody,
   Grant,
   GrantTarget,
@@ -19,6 +22,8 @@ import type {
   EmailAccountInput,
   EmailAccountPatch,
   EmailTestReport,
+  InputBatch,
+  InputResult,
   McpCatalogEntry,
   McpServer,
   McpServerPatch,
@@ -29,19 +34,31 @@ import type {
   PolicyDto,
   PolicyInput,
   ProvidersDto,
+  ReleaseRequest,
   RememberResponse,
+  RepairId,
+  RepairResult,
   Run,
   Schedule,
   ScheduleInput,
   Scope,
+  ScreenPrivilegesInput,
   SendMode,
   SendResponse,
+  SessionInfo,
+  SessionUpdate,
+  TakeoverAccepted,
+  TakeoverRequest,
+  TargetInfo,
   UsageSummary,
+  ViewHeartbeat,
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
   WebSearchTestReport
 } from "./types";
+
+export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 
 /** An error response of the daemon (`{"error": {"code", "message"}}`) or a network failure. */
 export class ApiError extends Error {
@@ -81,6 +98,25 @@ export class ApiClient {
     path: string,
     opts: { body?: unknown; query?: Query; auth?: boolean } = {}
   ): Promise<T> {
+    const res = await this.send(method, path, opts);
+    if (res.status === 204) {
+      return undefined as T;
+    }
+    return (await res.json()) as T;
+  }
+
+  /** Like `request`, for routes that answer with text (Markdown). */
+  protected async requestText(method: string, path: string): Promise<string> {
+    const res = await this.send(method, path);
+    return res.text();
+  }
+
+  /** Perform the request; throws `ApiError` unless the status is 2xx. */
+  private async send(
+    method: string,
+    path: string,
+    opts: { body?: unknown; query?: Query; auth?: boolean } = {}
+  ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== null && v !== undefined) {
@@ -120,10 +156,7 @@ export class ApiClient {
       }
       throw new ApiError(res.status, code, message);
     }
-    if (res.status === 204) {
-      return undefined as T;
-    }
-    return (await res.json()) as T;
+    return res;
   }
 
   health(): Promise<Health> {
@@ -233,6 +266,10 @@ export class ApiClient {
     return this.request("GET", "/usage", { query: { since_ms: sinceMs } });
   }
 
+  /** Daemon's current controller registration & owned takeover status. */
+  getControlState(): Promise<ControlStateDto> {
+    return this.request("GET", "/control/state");
+  }
   /** Heartbeat of the desktop app as controller (see `controlBridge.ts`). */
   putControlState(
     mode: ControlModeName,
@@ -242,6 +279,21 @@ export class ApiClient {
       body: release ? { mode, release: true } : { mode }
     });
   }
+  /** Release an owned screen takeover or clear a legacy latch. */
+  releaseControl(req?: ReleaseRequest): Promise<ControlStateDto> {
+    return this.request("POST", "/control/release", req ? { body: req } : {});
+  }
+  /** Local Stop override: interrupts any active takeover and keeps the pause latch. */
+  overrideControl(): Promise<ControlStateDto> {
+    return this.request("POST", "/control/override");
+  }
+  /** Local user recovery: clears an interrupted/recovered latch after key reset. */
+  recoverControl(): Promise<ControlStateDto> {
+    return this.request("POST", "/control/recover");
+  }
+  requestTakeover(input: TakeoverRequest): Promise<TakeoverAccepted> {
+    return this.request("POST", "/control/takeover", { body: input });
+  }
   decideControl(
     requestId: string,
     decision: ControlVerdict,
@@ -250,6 +302,92 @@ export class ApiClient {
     return this.request("POST", `/control/${requestId}`, {
       body: { decision, reason }
     });
+  }
+
+  listViewTargets(): Promise<TargetInfo[]> {
+    return this.request("GET", "/view/targets");
+  }
+  createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
+    return this.request("POST", "/view/sessions", { body: input });
+  }
+  updateViewSession(
+    id: string,
+    patch: SessionUpdate
+  ): Promise<EffectiveProfile> {
+    return this.request("PATCH", `/view/sessions/${encodeURIComponent(id)}`, {
+      body: patch
+    });
+  }
+  heartbeatViewSession(id: string, input: ViewHeartbeat): Promise<void> {
+    return this.request(
+      "PUT",
+      `/view/sessions/${encodeURIComponent(id)}/heartbeat`,
+      { body: input }
+    );
+  }
+  deleteViewSession(id: string): Promise<void> {
+    return this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+  }
+  sendViewInput(id: string, batch: InputBatch): Promise<InputResult> {
+    return this.request(
+      "POST",
+      `/view/sessions/${encodeURIComponent(id)}/input`,
+      { body: batch }
+    );
+  }
+  setScreenPrivileges(
+    peerKey: string,
+    input: ScreenPrivilegesInput
+  ): Promise<void> {
+    return this.request(
+      "PUT",
+      `/view/privileges/${encodeURIComponent(peerKey)}`,
+      { body: input }
+    );
+  }
+
+  /**
+   * Open the chunked binary frame stream with Bearer auth header and `no-store`.
+   * Throws `ApiError` on non-2xx responses; never sends credentials in URLs.
+   */
+  async openViewFrameStream(
+    sessionId: string,
+    signal?: AbortSignal
+  ): Promise<Response> {
+    const url = new URL(
+      `${this.baseUrl}/v1/view/sessions/${encodeURIComponent(sessionId)}/frames`
+    );
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: {
+          ...this.authHeaders(),
+          Accept: LIVE_VIEW_MEDIA_TYPE
+        },
+        cache: "no-store",
+        signal
+      });
+    } catch (e) {
+      throw new ApiError(
+        0,
+        "network",
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+    if (!res.ok) {
+      let code = "http_error";
+      let message = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as ErrorBody;
+        code = body.error.code;
+        message = body.error.message;
+      } catch {
+        // not JSON
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    return res;
   }
 
   getPolicy(): Promise<PolicyDto> {
@@ -358,6 +496,21 @@ export class ApiClient {
     active: string[];
   }> {
     return this.request("POST", "/providers/reload");
+  }
+
+  // ---- Diagnostics -----------------------------------------------------
+
+  /** Read-only checks (`GET /v1/doctor`, at most ~10 s). */
+  doctor(): Promise<DoctorReport> {
+    return this.request("GET", "/doctor");
+  }
+  /** Run one allow-listed repair; only ever called from a user click. */
+  doctorRepair(id: RepairId): Promise<RepairResult> {
+    return this.request("POST", `/doctor/repair/${encodeURIComponent(id)}`);
+  }
+  /** Redacted Markdown support report. */
+  doctorReport(): Promise<string> {
+    return this.requestText("GET", "/doctor/report");
   }
 
   getWebSearch(): Promise<WebSearchConfig> {

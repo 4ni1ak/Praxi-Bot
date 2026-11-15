@@ -1,23 +1,32 @@
 import { ApiClient, ApiError } from "./client.ts";
 import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
+import { MockLiveViewService } from "./mockLiveView.ts";
 import type {
   Bot,
   Chat,
   ConfiguredProviderDto,
+  ControlModeName,
+  CreateSessionInput,
   DetectedProviderDto,
+  DoctorCheck,
   EmailAccount,
   EmailAccountInput,
+  InputBatch,
   McpServer,
   McpServerConfig,
   McpTool,
   Message,
   PolicyDto,
   ProvidersDto,
+  ReleaseRequest,
+  SessionUpdate,
+  TakeoverRequest,
   UsageSummary,
+  GlobalEnvelope,
+  ViewHeartbeat,
   WebSearchConfig,
   WebSearchConfigInput,
-  WebSearchTestInput,
-  GlobalEnvelope
+  WebSearchTestInput
 } from "./types.ts";
 
 import { isMockMode, MOCK_BASE_URL } from "./mockMode.ts";
@@ -274,6 +283,21 @@ function serverFromConfig(c: McpServerConfig, category = "other"): McpServer {
   };
 }
 
+/** Diagnostics of the mock daemon: one of each status, two fixable. */
+const DOCTOR_CHECKS: DoctorCheck[] = [
+  { id: "daemon", title: "daemon", status: "ok", detail: "running (v0.1.0-mock, API 1.0), up 3600 s", hint: null, repair: null },
+  { id: "data_dir", title: "data dir", status: "ok", detail: "~/AppData/Roaming/praxi (writable)", hint: null, repair: null },
+  { id: "unicode_path", title: "unicode paths", status: "ok", detail: "non-ASCII file names work in the data dir", hint: null, repair: null },
+  { id: "providers", title: "providers", status: "fail", detail: "openai: API key not available; anthropic: configured", hint: "`bot secrets set provider.<id>.api_key` or `bot providers add <id>` to fix the key", repair: null },
+  { id: "providers_loaded", title: "loaded providers", status: "warn", detail: "enabled but not loaded: anthropic", hint: "reload the providers; if that fails, see the providers check", repair: "reload_providers" },
+  { id: "cli_accounts", title: "cli accounts", status: "warn", detail: "ready: Claude Code; signed out: Codex", hint: "open a terminal and sign in to the CLI once (e.g. `claude`, `codex login`)", repair: null },
+  { id: "browser", title: "browser", status: "ok", detail: "C:/Program Files/Google/Chrome/Application/chrome.exe (found; not launched)", hint: null, repair: null },
+  { id: "desktop_automation", title: "desktop automation", status: "ok", detail: "windows: accessibility tree, screenshots, app launch", hint: null, repair: null },
+  { id: "peer_link", title: "peer link", status: "skipped", detail: "no peer or host link configured (optional)", hint: null, repair: null },
+  { id: "disk_space", title: "disk space", status: "ok", detail: "48211 MiB free", hint: null, repair: null },
+  { id: "clock", title: "clock", status: "ok", detail: "plausible (checked locally, not against network time)", hint: null, repair: null }
+];
+
 /**
  * An in-memory daemon: the typed client methods run unchanged against it, so
  * the UI and its tests exercise the real request paths.
@@ -286,6 +310,10 @@ export class MockApiClient extends ApiClient {
   readonly chats: Chat[] = structuredClone([...CHATS, ...BOTS.slice(1).map((b,i) => ({ id: `mock-chat-${i}`, chat_id: `mock-chat-${i}`, bot_id: b.id, title: previews[i+1], created_at_ms: NOW }))]);
   readonly messages = new Map<string, Message[]>();
   readonly secrets = new Map<string, number>();
+  readonly doctorChecks: DoctorCheck[] = structuredClone(DOCTOR_CHECKS);
+  /** Repairs run so far (tests). */
+  readonly repairs: string[] = [];
+  private readonly liveView = new MockLiveViewService();
   private webSearchConfig: WebSearchConfig = {
     order: ["searxng", "brave", "tavily", "duckduckgo", "duckduckgo_lite", "bing"],
     active_backends: ["duckduckgo", "duckduckgo_lite", "bing"],
@@ -372,6 +400,38 @@ export class MockApiClient extends ApiClient {
     ];
   }
 
+  protected override async requestText(method: string, path: string): Promise<string> {
+    await Promise.resolve();
+    if (method === "GET" && path === "/doctor/report") {
+      const rows = this.doctorChecks
+        .map((c) => `| ${c.status} | ${c.title} | ${c.detail} |`)
+        .join("\n");
+      return [
+        "# Praxi diagnostics report",
+        "",
+        "- Version: 0.1.0-mock",
+        "- Platform: windows/x86_64",
+        "- Data dir: `~/AppData/Roaming/praxi`",
+        "- Config files: providers.toml",
+        "",
+        "## Checks",
+        "",
+        "| Status | Check | Detail |",
+        "| --- | --- | --- |",
+        rows,
+        ""
+      ].join("\n");
+    }
+    throw new ApiError(404, "not_found", `mock: no text route ${method} ${path}`);
+  }
+
+  override async openViewFrameStream(
+    sessionId: string,
+    signal?: AbortSignal
+  ): Promise<Response> {
+    return this.liveView.openStream(sessionId, signal);
+  }
+
   protected override async request<T>(
     method: string,
     path: string,
@@ -427,6 +487,26 @@ export class MockApiClient extends ApiClient {
         return ok([]);
       case "GET /usage":
         return ok(USAGE);
+      case "GET /doctor": {
+        const checks = structuredClone(this.doctorChecks);
+        return ok({ ok: checks.every((c) => c.status !== "fail"), checks });
+      }
+      case "POST /doctor": {
+        const id = seg[1] === "repair" ? (seg[2] ?? "") : "";
+        if (!["create_data_dir", "reload_providers", "restart_browser"].includes(id)) {
+          throw new ApiError(404, "not_found", `repair ${id} not found`);
+        }
+        this.repairs.push(id);
+        for (const c of this.doctorChecks) {
+          if (c.repair === id) {
+            c.status = "ok";
+            c.repair = null;
+            c.hint = null;
+            c.detail = "fixed";
+          }
+        }
+        return ok({ repair: id, detail: "done" });
+      }
       case "GET /providers":
         if (seg[1] === "detected") {
           const screen =
@@ -536,6 +616,16 @@ export class MockApiClient extends ApiClient {
       case "PUT /mcp":
       case "DELETE /mcp":
         return ok(this.mcp(method, seg, opts.body));
+      case "GET /view":
+      case "POST /view":
+      case "PATCH /view":
+      case "PUT /view":
+      case "DELETE /view":
+        return ok(await this.view(method, seg, opts.body));
+      case "GET /control":
+      case "PUT /control":
+      case "POST /control":
+        return ok(this.control(method, seg, opts.body));
       case "GET /web":
       case "PUT /web":
       case "POST /web":
@@ -543,6 +633,75 @@ export class MockApiClient extends ApiClient {
       default:
         throw new ApiError(404, "not_found", `mock: ${method} ${path}`);
     }
+  }
+
+  private async view(
+    method: string,
+    seg: string[],
+    body: unknown
+  ): Promise<unknown> {
+    const [, sub, id, action] = seg;
+    if (sub === "targets" && method === "GET") {
+      return this.liveView.listTargets();
+    }
+    if (sub === "privileges" && method === "PUT" && id) {
+      return undefined;
+    }
+    if (sub === "sessions") {
+      if (!id && method === "POST") {
+        return this.liveView.createSession(body as CreateSessionInput);
+      }
+      if (id && !action) {
+        if (method === "PATCH") {
+          return this.liveView.updateSession(id, body as SessionUpdate);
+        }
+        if (method === "DELETE") {
+          this.liveView.deleteSession(id);
+          return undefined;
+        }
+      }
+      if (id && action === "heartbeat" && method === "PUT") {
+        this.liveView.heartbeatSession(id, body as ViewHeartbeat);
+        return undefined;
+      }
+      if (id && action === "input" && method === "POST") {
+        return await this.liveView.sendInput(id, body as InputBatch);
+      }
+    }
+    throw new ApiError(404, "not_found", `mock view: ${method} /${seg.join("/")}`);
+  }
+
+  private control(method: string, seg: string[], body: unknown): unknown {
+    const [, sub] = seg;
+    if (sub === "state") {
+      if (method === "GET") {
+        return this.liveView.getControlState();
+      }
+      if (method === "PUT") {
+        const input = (body ?? {}) as {
+          mode: ControlModeName;
+          release?: boolean;
+        };
+        return this.liveView.putControlState(input.mode, Boolean(input.release));
+      }
+    }
+    if (sub === "takeover" && method === "POST") {
+      return this.liveView.requestTakeover(body as TakeoverRequest);
+    }
+    if (sub === "release" && method === "POST") {
+      return this.liveView.releaseControl(body as ReleaseRequest | undefined);
+    }
+    if (sub === "override" && method === "POST") {
+      return this.liveView.overrideControl();
+    }
+    if (sub === "recover" && method === "POST") {
+      return this.liveView.recoverControl();
+    }
+    if (sub && method === "POST") {
+      const verdict = (body ?? {}) as { decision?: string };
+      return { request_id: sub, decision: verdict.decision ?? "proceed" };
+    }
+    throw new ApiError(404, "not_found", `mock control: ${method} /${seg.join("/")}`);
   }
 
   private email(method: string, seg: string[], body: unknown): unknown {
