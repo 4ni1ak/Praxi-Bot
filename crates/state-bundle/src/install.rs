@@ -166,6 +166,7 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
                 other => database_error(db, other),
             })?;
             let conn = open()?;
+            crate::knowledge::attest_bot_schema(&conn)?;
             validate_run_ancestry(&conn)?;
             neutralise_system_messages(&conn).map_err(|error| database_error(db, error))?;
             drop(conn);
@@ -187,6 +188,11 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
                 }
                 other => database_error(db, other),
             })?;
+        }
+        _ if crate::knowledge::bot_from_path(db).is_some() => {
+            drop(conn);
+            memory_store::knowledge::KnowledgeStore::validate_and_migrate(path)
+                .map_err(|error| database_error(db, error))?;
         }
         _ => return Err(database_error(db, "unsupported database")),
     }
@@ -234,7 +240,9 @@ pub(crate) fn prepare(staging: &Path, manifest: &Manifest, opts: &ImportOptions)
     }
     if let Some(schemas) = &manifest.db_schemas {
         for db in schemas.keys() {
-            if !DATABASES.contains(&db.as_str()) || !staging.join(db).is_file() {
+            if (!DATABASES.contains(&db.as_str()) && crate::knowledge::bot_from_path(db).is_none())
+                || !staging.join(db).is_file()
+            {
                 return Err(database_error(db, "manifest schema entry has no database"));
             }
         }
@@ -245,6 +253,12 @@ pub(crate) fn prepare(staging: &Path, manifest: &Manifest, opts: &ImportOptions)
             prepare_database(&path, db, manifest)?;
         }
     }
+    for record in &manifest.files {
+        if crate::knowledge::bot_from_path(&record.path).is_some() {
+            prepare_database(&staging.join(&record.path), &record.path, manifest)?;
+        }
+    }
+    crate::knowledge::prepare(staging, manifest)?;
     if !matches!(opts.host_mode.as_str(), "standalone" | "host" | "client")
         || !matches!(opts.host_state.as_str(), "fresh" | "standby" | "active")
     {

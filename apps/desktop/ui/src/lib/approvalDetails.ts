@@ -41,6 +41,25 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
+export interface BrainApprovalDetails {
+  path: string;
+  content: string;
+  sha256: string;
+  sources: { id: string; revision: number; label: string }[];
+}
+
+/** Daemon-frozen content, rendered as text and never as HTML/instructions. */
+export function brainDetails(details: unknown): BrainApprovalDetails | null {
+  if (!isObject(details) || details.kind !== "knowledge_brain_write" ||
+      typeof details.path !== "string" || typeof details.content !== "string" ||
+      typeof details.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(details.sha256) ||
+      details.content.length > 65_536 || !Array.isArray(details.sources)) return null;
+  const sources = details.sources.filter((source): source is { id: string; revision: number; label: string } =>
+    isObject(source) && typeof source.id === "string" && typeof source.revision === "number" && typeof source.label === "string");
+  if (sources.length !== details.sources.length || sources.length > 16) return null;
+  return { path: details.path, content: details.content, sha256: details.sha256, sources };
+}
+
 /** Parse `details` of an approval; `null` when it is not a schedule card. */
 export function scheduleDetails(details: unknown): ScheduleApprovalDetails | null {
   if (!isObject(details) || details.kind !== "schedule") return null;

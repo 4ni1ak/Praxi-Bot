@@ -140,6 +140,16 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
     }
+    if !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && check_path
+            .strip_prefix("/v1/bots/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(bot, rest)| {
+                !bot.is_empty() && (rest == "knowledge" || rest.starts_with("knowledge/"))
+            })
+    {
+        return Some("knowledge sources and embedding authority are managed by the local owner");
+    }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
 }
 

@@ -87,7 +87,7 @@ pub(super) fn replace_payload(bytes: &[u8], name: &str, payload: Vec<u8>) -> Vec
 }
 
 #[tokio::test]
-async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
+async fn knowledge_sidecars_are_excluded_and_unchecked_imports_are_rejected() {
     use sha2::{Digest, Sha256};
 
     let source = tempfile::tempdir().unwrap();
@@ -95,7 +95,7 @@ async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
     let bot = "00000000-0000-0000-0000-000000000002";
     let root = source.path().join("bots").join(bot);
     fs::create_dir_all(&root).unwrap();
-    for name in ["knowledge.db", "knowledge.db-wal", "knowledge.db-shm"] {
+    for name in ["knowledge.db-wal", "knowledge.db-shm"] {
         fs::write(root.join(name), b"unchecked knowledge bytes").unwrap();
     }
     let bytes = bundle(source.path()).await;
@@ -126,7 +126,9 @@ async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
             serde_json::to_vec(&manifest).unwrap(),
         ));
         let error = rejected(&pack(&entries), ImportOptions::default()).await;
-        assert!(error.to_string().contains("allowlist"), "{name}: {error}");
+        if name.ends_with("-wal") || name.ends_with("-shm") {
+            assert!(error.to_string().contains("allowlist"), "{name}: {error}");
+        }
     }
 }
 
@@ -371,6 +373,28 @@ async fn skill_lock_and_publication_staging_files_are_not_bundled() {
         paths.iter().all(|path| !path.contains(".praxi-")),
         "{paths:?}"
     );
+}
+
+// Review #81-8's export claim is already prevented by the shared `.praxi-*`
+// exclusion. Keep a brain-specific proof so future root additions preserve it.
+#[tokio::test]
+async fn review_81_brain_staging_is_already_excluded_from_bundles() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    fs::create_dir(dir.path().join("brain")).unwrap();
+    fs::write(dir.path().join("brain/decision.md"), "Published decision.").unwrap();
+    fs::write(
+        dir.path()
+            .join(format!("brain/.praxi-brain-{}.tmp", uuid::Uuid::now_v7())),
+        "Private staging.",
+    )
+    .unwrap();
+    let paths: Vec<_> = unpack(&bundle(dir.path()).await)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert!(paths.iter().any(|path| path == "brain/decision.md"));
+    assert!(paths.iter().all(|path| !path.contains(".praxi-brain-")));
 }
 
 #[tokio::test]

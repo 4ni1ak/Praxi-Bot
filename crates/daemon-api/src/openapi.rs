@@ -10,7 +10,8 @@ use utoipa::{Modify, OpenApi};
 
 use crate::{
     changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
-    host, live_view, mcp, mcp_routes, routes, skills, sse, web, web_routes,
+    host, knowledge, knowledge_settings, live_view, mcp, mcp_routes, routes, skills, sse, web,
+    web_routes,
 };
 
 struct Security;
@@ -56,6 +57,10 @@ impl Modify for Security {
         live_view::set_privileges,
         live_view::input::input,
         live_view::stream::frames,
+        knowledge::list_sources, knowledge::create_source, knowledge::update_source, knowledge::delete_source, knowledge::reindex_source, knowledge::embed_source,
+        knowledge_settings::get_settings, knowledge_settings::put_settings, knowledge::email_captures,
+        knowledge_settings::request_embedding_approval, knowledge_settings::confirm_embedding_approval,
+        knowledge_settings::revoke_embedding_grant, knowledge_settings::reset_embedding_cooldown,
         routes::list_bots,
         routes::create_bot,
         routes::get_bot,

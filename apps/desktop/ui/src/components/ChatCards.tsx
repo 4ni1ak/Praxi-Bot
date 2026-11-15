@@ -17,6 +17,7 @@ import {
 import {
   appActionDetails,
   formatFiring,
+  brainDetails,
   scheduleDetails,
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
@@ -256,7 +257,9 @@ export function ApprovalCard({
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
   const app = appActionDetails(tool.details);
-  const unrenderable = tool.details != null && !schedule && !app;
+  const brain = brainDetails(tool.details);
+  const unrenderable =
+    (tool.details as { kind?: unknown } | null | undefined)?.kind === "app_action" && !app;
 
   const decide = async (
     decision: "approve" | "deny",
@@ -308,6 +311,15 @@ export function ApprovalCard({
             </details>
             <p className={styles.bodyLabel}>{t("chat.approval.app.footer")}</p>
           </div>
+        ) : brain ? (
+          <section className={styles.brainReview}>
+            <strong>{t("knowledge.brainApproval")}</strong>
+            <p className={formStyles.hint}>{t("knowledge.brainApprovalHint")}</p>
+            <code>{brain.path}</code>
+            <label>{t("knowledge.brainHash")}<code>{brain.sha256}</code></label>
+            {brain.sources.length ? <ul aria-label={t("knowledge.brainSources")}>{brain.sources.map((source) => <li key={source.id}>{source.label} · {source.id} · v{source.revision}</li>)}</ul> : null}
+            <pre className={styles.brainContent}>{brain.content}</pre>
+          </section>
         ) : schedule ? (
           <>
             <p className={styles.approvalSummary}>
