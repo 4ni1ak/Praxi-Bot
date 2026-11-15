@@ -437,6 +437,24 @@ impl Page {
 
     // -- public actions -------------------------------------------------------------------------
 
+    /// Whether the field behind a ref holds a secret (password, card number, one-time code).
+    /// `None` when the ref is unknown or the element is gone: callers must treat that as secret.
+    pub async fn ref_is_sensitive(&self, r: &str) -> Option<bool> {
+        let e = self.locate(r).await.ok()?;
+        self.call_on(
+            &e,
+            "function(){ const t = (this.getAttribute && this.getAttribute('type') || '') \
+             .toLowerCase(); const a = (this.getAttribute && \
+             this.getAttribute('autocomplete') || '').toLowerCase(); \
+             return t === 'password' || a.includes('password') || a.includes('cc-') || \
+             a.includes('one-time-code'); }",
+            &[],
+        )
+        .await
+        .ok()?
+        .as_bool()
+    }
+
     /// Click an element with explicit dialog handling options.
     pub async fn click_with(&self, r: &str, opts: &DialogOptions) -> Result<ActionResult> {
         let before = self.baseline_with(opts).await?;

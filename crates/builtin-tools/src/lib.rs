@@ -44,8 +44,8 @@ use desktop_api::DesktopBackend;
 use tool_registry::{Tool, ToolRegistry};
 
 pub use browser::{
-    ActStep, BrowserDriver, BrowserSettings, CdpDriver, MAX_ACT_STEPS, StepOutcome, Wait,
-    check_ref_identity, ref_identity,
+    ActStep, BrowserDriver, BrowserSettings, CdpDriver, HIDDEN_VALUE, MAX_ACT_STEPS, RefFact,
+    StepOutcome, Wait, act_can_egress, check_ref_identity, ref_identity,
 };
 pub use checkpoint::{Checkpoint, CheckpointEntry, CheckpointStore};
 pub use control::{

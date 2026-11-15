@@ -185,6 +185,7 @@ mod tests {
         for n in [
             "browser_click",
             "browser_fill",
+            "browser_act",
             "browser_eval",
             "fs_write_file",
         ] {

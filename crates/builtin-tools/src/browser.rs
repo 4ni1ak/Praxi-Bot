@@ -152,6 +152,94 @@ pub fn check_ref_identity(
     }
 }
 
+/// What the approval card needs to know about the element behind a ref.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefFact {
+    /// Role as shown in the snapshot.
+    pub role: String,
+    /// Accessible name (page content: untrusted).
+    pub name: String,
+    /// The field holds a secret (password, card number, one-time code).
+    pub sensitive: bool,
+}
+
+/// Shown on the approval card instead of a value that must not be displayed.
+pub const HIDDEN_VALUE: &str = "(hidden)";
+
+/// Whether a `browser_act` input can carry bytes out of the machine: `true`
+/// when any step enters text (`fill`, `select`, `press`), `false` for a batch
+/// of only `click` / `scroll` / `wait`. Input that cannot be read counts as
+/// carrying (fail closed). This is the hook for the egress gate: a batch must
+/// be classified at least like `browser_fill` when this returns `true`, and
+/// like `browser_click` otherwise.
+#[must_use]
+pub fn act_can_egress(input: &Value) -> bool {
+    let Some(steps) = input.get("steps").and_then(Value::as_array) else {
+        return true;
+    };
+    steps.iter().any(|st| {
+        !matches!(
+            st.get("action").and_then(Value::as_str),
+            Some("click" | "scroll" | "wait")
+        )
+    })
+}
+
+fn card_text(s: &str, max: usize) -> String {
+    s.chars().filter(|c| !c.is_control()).take(max).collect()
+}
+
+/// One approval-card row per step, in order. A value typed into a sensitive
+/// field, or into a field that cannot be inspected, is never put on the card.
+fn act_card_steps(steps: &[ActStep], facts: &[Option<RefFact>]) -> Vec<Value> {
+    let mut facts = facts.iter();
+    steps
+        .iter()
+        .enumerate()
+        .map(|(k, step)| {
+            let fact = step.target().and_then(|_| facts.next().cloned().flatten());
+            let target = match (step.target(), &fact) {
+                (Some(r), Some(f)) => {
+                    format!(
+                        "{r} {} \"{}\"",
+                        f.role,
+                        card_text(&f.name, 60).replace('"', "'")
+                    )
+                }
+                (Some(r), None) => format!("{r} (not on the current page)"),
+                (None, _) => String::new(),
+            };
+            let (action, value, hidden) = match step {
+                ActStep::Click { .. } => ("click", None, false),
+                ActStep::Fill { text, .. } => {
+                    if fact.as_ref().is_some_and(|f| !f.sensitive) {
+                        ("fill", Some(text.clone()), false)
+                    } else {
+                        ("fill", None, true)
+                    }
+                }
+                ActStep::Select { value, .. } => ("select", Some(value.clone()), false),
+                ActStep::Press { key } => ("press", Some(key.clone()), false),
+                ActStep::Scroll { dx, dy, .. } => {
+                    ("scroll", Some(format!("dx={dx} dy={dy}")), false)
+                }
+                ActStep::Wait { .. } => (
+                    "wait",
+                    Some(step.describe().trim_start_matches("wait ").to_owned()),
+                    false,
+                ),
+            };
+            json!({
+                "n": k + 1,
+                "action": action,
+                "target": target,
+                "value": if hidden { Some(HIDDEN_VALUE.to_owned()) } else { value },
+                "hidden": hidden,
+            })
+        })
+        .collect()
+}
+
 const ACT_UNSUPPORTED: &str = "this browser driver does not support browser_act";
 
 /// Abstraction over a controllable browser. Every mutating call returns a
@@ -233,6 +321,11 @@ pub trait BrowserDriver: Send + Sync {
     /// End the batch: one view of everything that changed since `act_begin`.
     async fn act_end(&self) -> Result<String, String> {
         Err(ACT_UNSUPPORTED.into())
+    }
+    /// Facts about refs for an approval card, read without changing the page.
+    /// `None` for a ref that cannot be inspected (the card then hides values).
+    async fn ref_facts(&self, refs: &[String]) -> Vec<Option<RefFact>> {
+        refs.iter().map(|_| None).collect()
     }
 }
 
@@ -653,6 +746,27 @@ macro_rules! with_session {
     }};
 }
 
+impl CdpDriver {
+    async fn read_ref_facts(&self, refs: &[String]) -> Result<Vec<Option<RefFact>>, String> {
+        with_session!(self, None, false, |sess| {
+            let mut out = Vec::with_capacity(refs.len());
+            for r in refs {
+                let fact = match sess.page.ref_identity(r).await {
+                    Some((role, name)) => Some(RefFact {
+                        role,
+                        name,
+                        // Unknown counts as sensitive.
+                        sensitive: sess.page.ref_is_sensitive(r).await.unwrap_or(true),
+                    }),
+                    None => None,
+                };
+                out.push(fact);
+            }
+            Ok::<_, browser_cdp::Error>(out)
+        })
+    }
+}
+
 #[async_trait]
 impl BrowserDriver for CdpDriver {
     fn on_desktop(&self) -> bool {
@@ -886,6 +1000,12 @@ impl BrowserDriver for CdpDriver {
             url_changed: acted.new_snapshot_diff.url_changed.is_some(),
             dialogs: dialog_lines(&acted),
         })
+    }
+
+    async fn ref_facts(&self, refs: &[String]) -> Vec<Option<RefFact>> {
+        self.read_ref_facts(refs)
+            .await
+            .unwrap_or_else(|_| refs.iter().map(|_| None).collect())
     }
 
     async fn act_end(&self) -> Result<String, String> {
@@ -2021,6 +2141,38 @@ impl Tool for BrowserTool {
         &self.spec
     }
 
+    /// `browser_act` always gets a card that lists every step (so the approval
+    /// is for exactly these steps, and is never a standing grant); a
+    /// `browser_fill` into a sensitive field gets one with the value hidden.
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        let steps = match self.op {
+            Op::Act => parse_act_steps(parse::<ActIn>(input.clone())?.steps)?,
+            Op::Fill => {
+                let i: FillIn = parse(input.clone())?;
+                vec![ActStep::Fill {
+                    r: i.r#ref,
+                    text: i.text,
+                }]
+            }
+            _ => return Ok(None),
+        };
+        let shared = self.shared.for_bot(ctx.bot_id.as_deref())?;
+        let refs: Vec<String> = steps
+            .iter()
+            .filter_map(|st| st.target().map(str::to_owned))
+            .collect();
+        let facts = shared.driver.ref_facts(&refs).await;
+        let rows = act_card_steps(&steps, &facts);
+        if self.op == Op::Fill && rows.iter().all(|r| r["hidden"] != json!(true)) {
+            return Ok(None);
+        }
+        Ok(Some(json!({"kind": "browser_steps", "steps": rows})))
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let selected = BrowserTool {
             spec: self.spec.clone(),
@@ -2180,6 +2332,17 @@ pub(crate) mod fake {
                     Vec::new()
                 },
             })
+        }
+        async fn ref_facts(&self, refs: &[String]) -> Vec<Option<RefFact>> {
+            refs.iter()
+                .map(|r| {
+                    (r != "eGONE").then(|| RefFact {
+                        role: "textbox".into(),
+                        name: format!("Field {r}"),
+                        sensitive: r == "e4",
+                    })
+                })
+                .collect()
         }
         async fn act_end(&self) -> Result<String, String> {
             self.calls.lock().push("act_end".into());
@@ -2579,6 +2742,153 @@ mod tests {
             assert!(matches!(err, ToolError::InvalidInput(_)), "{bad}: {err}");
         }
         assert!(fake.calls.lock().is_empty(), "{:?}", fake.calls.lock());
+    }
+
+    #[tokio::test]
+    async fn approval_card_lists_every_step_and_hides_secret_values() {
+        let (_d, fake, t) = build();
+        let ctx = ToolContext::default();
+        let card = get(&t, "browser_act")
+            .approval_details(&ctx, &fills_and_click("e3"))
+            .await
+            .unwrap()
+            .expect("a batch always has a card");
+        assert_eq!(card["kind"], "browser_steps");
+        let rows = card["steps"].as_array().unwrap();
+        assert_eq!(rows.len(), 6);
+        let shown: Vec<(u64, &str, &str)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r["n"].as_u64().unwrap(),
+                    r["action"].as_str().unwrap(),
+                    r["value"].as_str().unwrap_or(""),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                (1, "fill", "Ada"),
+                (2, "fill", "Lovelace"),
+                (3, "click", ""),
+                (4, "fill", HIDDEN_VALUE),
+                (5, "fill", "x"),
+                (6, "click", ""),
+            ]
+        );
+        assert_eq!(rows[0]["target"], "e1 textbox \"Field e1\"");
+        assert!(!card.to_string().contains("hunter2"), "{card}");
+        // A field that cannot be inspected hides its value as well.
+        let card = get(&t, "browser_act")
+            .approval_details(
+                &ctx,
+                &json!({"steps": [{"action": "fill", "ref": "eGONE", "text": "pw"}]}),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(card["steps"][0]["value"], HIDDEN_VALUE);
+        // browser_fill: a card only when the field is sensitive, value hidden.
+        let fill = get(&t, "browser_fill");
+        let plain = fill
+            .approval_details(&ctx, &json!({"ref": "e1", "text": "Ada"}))
+            .await
+            .unwrap();
+        assert!(plain.is_none());
+        let secret = fill
+            .approval_details(&ctx, &json!({"ref": "e4", "text": "hunter2-secret"}))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!secret.to_string().contains("hunter2"), "{secret}");
+        // An invalid batch is never offered for approval, and nothing ran.
+        assert!(
+            get(&t, "browser_act")
+                .approval_details(&ctx, &json!({"steps": [{"action": "eval"}]}))
+                .await
+                .is_err()
+        );
+        assert!(fake.calls.lock().is_empty());
+    }
+
+    #[test]
+    fn egress_class_follows_the_steps() {
+        let batch = |actions: &[&str]| json!({"steps": actions.iter().map(|a| json!({"action": a})).collect::<Vec<_>>()});
+        assert!(!act_can_egress(&batch(&["click", "scroll", "wait"])));
+        for carrier in ["fill", "select", "press", "something-new"] {
+            assert!(act_can_egress(&batch(&["click", carrier])), "{carrier}");
+        }
+        assert!(act_can_egress(&json!({})), "unreadable input fails closed");
+        assert!(act_can_egress(&json!({"steps": "x"})));
+    }
+
+    /// Admits the first `allow` actions, then refuses (the human took over).
+    struct TakeoverAfter {
+        allow: usize,
+        seen: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl DesktopControlGate for TakeoverAfter {
+        async fn before_action(&self, _req: &ControlRequest) -> Result<(), String> {
+            if self.seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < self.allow {
+                Ok(())
+            } else {
+                Err("the user took control".into())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_takeover_in_the_middle_of_a_batch_refuses_the_remaining_steps() {
+        let d = tempfile::tempdir().unwrap();
+        let fake = Arc::new(FakeBrowser::default());
+        let gate = Arc::new(TakeoverAfter {
+            allow: 2,
+            seen: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let t = tools(fake.clone(), d.path(), Some(gate.clone()));
+        let out = text(
+            &get(&t, "browser_act")
+                .call(&ToolContext::default(), fills_and_click("e3"))
+                .await
+                .unwrap(),
+        );
+        assert!(out.starts_with("done: 2/6\n"), "{out}");
+        assert!(
+            out.contains("stopped: step 3 (click e3):") && out.contains("the user took control"),
+            "{out}"
+        );
+        assert!(
+            out.contains("  3 click e3") && out.contains("  6 click e6"),
+            "{out}"
+        );
+        let acted: Vec<String> = fake
+            .calls
+            .lock()
+            .iter()
+            .filter(|c| c.starts_with("act:"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            acted,
+            vec!["act:fill e1 (3 chars)", "act:fill e2 (8 chars)"]
+        );
+        // The gate was asked once per step it saw, never once for the batch.
+        assert_eq!(gate.seen.load(std::sync::atomic::Ordering::SeqCst), 3);
+        // Refused before the first step: the refusal is the tool error.
+        let gate = Arc::new(TakeoverAfter {
+            allow: 0,
+            seen: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let t = tools(fake.clone(), d.path(), Some(gate));
+        assert!(
+            get(&t, "browser_act")
+                .call(&ToolContext::default(), fills_and_click("e3"))
+                .await
+                .is_err()
+        );
     }
 
     #[test]
