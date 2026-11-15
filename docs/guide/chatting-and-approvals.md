@@ -194,14 +194,17 @@ repaired automatically on startup. The checkpoint manifest is synced to disk, bu
 the copied file contents are not individually synced before the swaps, so a
 power loss can still lose a safety copy; a plain process kill cannot.
 
-Paths of other runs that are still active are compared before a restore. The
-comparison ignores case on Windows and macOS and resolves links with the same
-no-follow, local-only rules the file tools use. A path that cannot be verified
-that way (a link to a network location, a network drive, an unreadable folder,
-or more paths than the daemon will resolve in one check) counts as overlapping
-and the restore is refused until the other run finishes. It can still miss hard
-links, bind mounts and aliases created afterwards, so avoid undoing files that
-another running bot is working on.
+Paths of other runs that are still active are compared before a restore, by
+path text only: the daemon touches no file or folder to do it, so it can never
+follow a link or reach a network share while checking. The comparison ignores
+case on Windows and macOS, collapses `.` and `..`, and treats a folder and
+everything inside it as overlapping. The refusal names the blocking run and the
+two overlapping paths. What it does NOT detect: a symlink, junction, Windows
+8.3 short name or mapped drive that points at the same file under a different
+spelling, hard links and bind mounts. The daemon's own file tools are still
+serialised by an exclusive lock, but shell commands and desktop actions of
+another running bot are outside this check, so avoid undoing files that another
+running bot is working on.
 
 ## Limits per turn
 

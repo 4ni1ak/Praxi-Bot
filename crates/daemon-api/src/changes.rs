@@ -361,7 +361,39 @@ impl Drop for RestoreLock {
     }
 }
 
-fn lexical_overlap(left: &std::path::Path, right: &std::path::Path) -> bool {
+/// Collapse `.`/`..` in path TEXT only. No filesystem access of any kind.
+fn lexical_normalize(path: &str) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for part in std::path::Path::new(path).components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Whether two recorded paths can touch the same file, decided on path TEXT
+/// only: normalised components, directory-descendant aware in both directions
+/// (`/a` overlaps `/a/b`, not `/a-b`), case-insensitive on Windows and macOS.
+///
+/// This performs NO filesystem access at all (no `stat`, `canonicalize`,
+/// `read_link`, no open), so comparing against another run's recorded paths can
+/// never follow a link, wake a placeholder or reach a network share.
+///
+/// Not detected, by design: a symlink, junction, Windows 8.3 short name or
+/// mapped/substituted drive that names the same file as another run's path,
+/// hard links, bind mounts and case-insensitive volumes on Linux. The exclusive
+/// file-mutation lock still serialises daemon file tools; effects of shell and
+/// desktop actions are outside this check.
+fn paths_overlap(left: &str, right: &str) -> bool {
+    let (left, right) = (lexical_normalize(left), lexical_normalize(right));
     // Windows and macOS volumes are case-insensitive by default.
     if cfg!(any(windows, target_os = "macos")) {
         let (left, right) = (
@@ -371,78 +403,18 @@ fn lexical_overlap(left: &std::path::Path, right: &std::path::Path) -> bool {
         let (left, right) = (std::path::Path::new(&left), std::path::Path::new(&right));
         left.starts_with(right) || right.starts_with(left)
     } else {
-        left.starts_with(right) || right.starts_with(left)
+        left.starts_with(&right) || right.starts_with(&left)
     }
 }
 
-/// Upper bound on distinct paths resolved in one admission pass. Reaching it
-/// refuses (treats the paths as overlapping); it never skips the check.
-const OVERLAP_RESOLVE_CAP: usize = 2048;
-
-/// Identities of recorded paths for one admission pass. Each distinct path is
-/// resolved at most once; `None` means "could not be verified" (a link to a
-/// non-local target, a UNC or network drive, an unreadable component, or the
-/// work cap) and is always treated as overlapping, never as disjoint. The
-/// cache lives for one pass only, so aliases are recomputed on the next one.
-struct OverlapIdentities<R> {
-    resolve: R,
-    cache: std::collections::HashMap<String, Option<std::path::PathBuf>>,
-    budget: usize,
-}
-
-impl<R: FnMut(&std::path::Path) -> io::Result<std::path::PathBuf>> OverlapIdentities<R> {
-    fn new(resolve: R, budget: usize) -> Self {
-        Self {
-            resolve,
-            cache: std::collections::HashMap::new(),
-            budget,
-        }
-    }
-
-    fn identity(&mut self, raw: &str) -> Option<std::path::PathBuf> {
-        if let Some(known) = self.cache.get(raw) {
-            return known.clone();
-        }
-        if self.budget == 0 {
-            return None;
-        }
-        self.budget -= 1;
-        let found = (self.resolve)(std::path::Path::new(raw)).ok();
-        self.cache.insert(raw.to_string(), found.clone());
-        found
-    }
-
-    /// Whether any selected path can touch any recorded path. Deterministic:
-    /// the lexical rule (component-wise prefix either way, case-insensitive on
-    /// Windows and macOS) OR the same rule on identities named by the guarded
-    /// no-follow resolver, so a symlinked alias of a directory is seen as the
-    /// directory. Unverifiable resolution counts as overlap. Still missed: hard
-    /// links, bind mounts, case-insensitive volumes on Linux, and an alias
-    /// created or retargeted after this check.
-    fn any_overlap(&mut self, selected: &[&str], recorded: &[&str]) -> bool {
-        let lexical =
-            |l: &str, r: &str| lexical_overlap(std::path::Path::new(l), std::path::Path::new(r));
-        if selected
+/// First `(selected, recorded)` pair that overlaps.
+fn first_overlap<'a>(selected: &[&'a str], recorded: &[&'a str]) -> Option<(&'a str, &'a str)> {
+    selected.iter().find_map(|sel| {
+        recorded
             .iter()
-            .any(|s| recorded.iter().any(|r| lexical(s, r)))
-        {
-            return true;
-        }
-        for rec in recorded {
-            let Some(rec_id) = self.identity(rec) else {
-                return true;
-            };
-            for sel in selected {
-                let Some(sel_id) = self.identity(sel) else {
-                    return true;
-                };
-                if lexical_overlap(&sel_id, &rec_id) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
+            .find(|rec| paths_overlap(sel, rec))
+            .map(|rec| (*sel, *rec))
+    })
 }
 
 fn ensure_no_overlapping_run(
@@ -456,8 +428,6 @@ fn ensure_no_overlapping_run(
         .storage()
         .list_runs(state.user_id())
         .map_err(ApiError::internal)?;
-    let mut ids =
-        OverlapIdentities::new(builtin_tools::resolve_local_identity, OVERLAP_RESOLVE_CAP);
     for other in runs
         .iter()
         .filter(|r| r.id != run_id && ensure_run_finished(r).is_err())
@@ -468,7 +438,7 @@ fn ensure_no_overlapping_run(
             .flat_map(|cp| &cp.entries)
             .map(|entry| entry.path.as_str())
             .collect();
-        if ids.any_overlap(paths, &recorded) {
+        if let Some((selected, recorded)) = first_overlap(paths, &recorded) {
             let title = other
                 .chat_id
                 .and_then(|id| state.storage().get_chat(id).ok().flatten())
@@ -477,7 +447,7 @@ fn ensure_no_overlapping_run(
                 StatusCode::CONFLICT,
                 "run_files_in_use",
                 format!(
-                    "run {} ({title}, {}) has overlapping file changes; finish or cancel it before restoring",
+                    "run {} ({title}, {}) has overlapping file changes ({selected} overlaps {recorded}); finish or cancel it before restoring",
                     other.id, other.state
                 ),
             ));
@@ -1503,76 +1473,12 @@ mod tests {
             assert_eq!(body["error"]["code"], "run_files_in_use");
             let message = body["error"]["message"].as_str().unwrap();
             assert!(message.contains(&h.other_run_id.to_string()));
+            assert!(message.contains("overlaps"), "{message}");
+            assert!(message.contains("target.txt"), "{message}");
             assert!(message.contains("chat"));
             assert!(message.contains(state.as_str()));
             assert_eq!(fs::read_to_string(path).unwrap(), "before");
         }
-    }
-
-    fn paths_overlap(left: &str, right: &str) -> bool {
-        OverlapIdentities::new(builtin_tools::resolve_local_identity, 16)
-            .any_overlap(&[left], &[right])
-    }
-
-    #[test]
-    fn unverifiable_resolution_is_overlap_and_a_remote_link_target_is_never_followed() {
-        use std::cell::RefCell;
-        use std::path::{Path, PathBuf};
-        let seen = RefCell::new(Vec::<PathBuf>::new());
-        // Fake guarded resolver: `/links/remote` is a link whose target is
-        // non-local, so the resolver refuses. It must be asked, never bypassed.
-        let resolve = |p: &Path| -> io::Result<PathBuf> {
-            seen.borrow_mut().push(p.to_path_buf());
-            if p.starts_with("/links/remote") {
-                Err(io::Error::new(io::ErrorKind::PermissionDenied, "non-local"))
-            } else {
-                Ok(p.to_path_buf())
-            }
-        };
-        let mut ids = OverlapIdentities::new(resolve, 16);
-        // Disjoint lexically, but one side cannot be verified: refuse.
-        assert!(ids.any_overlap(&["/links/remote/x"], &["/work/a"]));
-        assert!(ids.any_overlap(&["/work/b"], &["/links/remote/y"]));
-        // Verifiable and disjoint: allowed.
-        assert!(!ids.any_overlap(&["/work/b"], &["/work/a"]));
-        assert!(seen.borrow().iter().all(|p| !p.starts_with("/nonexistent")));
-        // Nothing else touched the filesystem: only the resolver saw paths.
-        assert!(
-            seen.borrow()
-                .iter()
-                .all(|p| p.starts_with("/links") || p.starts_with("/work"))
-        );
-    }
-
-    #[test]
-    fn each_distinct_path_resolves_once_and_the_work_cap_refuses() {
-        use std::cell::Cell;
-        let calls = Cell::new(0usize);
-        let resolve = |p: &std::path::Path| -> io::Result<std::path::PathBuf> {
-            calls.set(calls.get() + 1);
-            Ok(p.to_path_buf())
-        };
-        let selected: Vec<String> = (0..30).map(|i| format!("/sel/{i}")).collect();
-        let recorded: Vec<String> = (0..30).map(|i| format!("/rec/{i}")).collect();
-        let sel: Vec<&str> = selected.iter().map(String::as_str).collect();
-        let rec: Vec<&str> = recorded.iter().map(String::as_str).collect();
-        let mut ids = OverlapIdentities::new(resolve, 1000);
-        assert!(!ids.any_overlap(&sel, &rec));
-        assert_eq!(calls.get(), 60, "900 pairs, 60 distinct paths");
-        // Same pass, same paths: cached, no new work.
-        assert!(!ids.any_overlap(&sel, &rec));
-        assert_eq!(calls.get(), 60);
-        // A new pass starts from an empty cache.
-        let calls2 = Cell::new(0usize);
-        let mut capped = OverlapIdentities::new(
-            |p: &std::path::Path| {
-                calls2.set(calls2.get() + 1);
-                Ok(p.to_path_buf())
-            },
-            10,
-        );
-        assert!(capped.any_overlap(&sel, &rec), "cap reached must refuse");
-        assert!(calls2.get() <= 10);
     }
 
     #[test]
@@ -1588,21 +1494,42 @@ mod tests {
         assert!(!paths_overlap("/Work/Tree", "/work/tree/child.txt"));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn symlinked_alias_of_a_directory_overlaps_its_target() {
+    fn overlap_check_makes_no_filesystem_call_and_is_purely_textual() {
+        // Paths that do not exist anywhere: a filesystem-resolving check would
+        // have to stat them; the textual rule decides without touching disk.
+        assert!(paths_overlap(
+            "/nonexistent-praxi/a/b",
+            "/nonexistent-praxi/a"
+        ));
+        assert!(!paths_overlap(
+            "/nonexistent-praxi/a",
+            "/nonexistent-praxi/ab"
+        ));
+        assert!(paths_overlap("/x/./y/../z/file", "/x/z"));
+        assert!(!paths_overlap("/x/y/../z", "/x/y"));
+        // A link fixture is only text here: the alias is NOT detected (documented),
+        // and the link is never opened or followed (it dangles to a UNC target).
         let dir = tempfile::tempdir().unwrap();
-        let real = dir.path().join("real");
-        fs::create_dir(&real).unwrap();
-        let alias = dir.path().join("alias");
-        std::os::unix::fs::symlink(&real, &alias).unwrap();
-        let alias_child = alias.join("child.txt").display().to_string();
-        let real_child = real.join("child.txt").display().to_string();
-        let sibling = dir.path().join("real-other").display().to_string();
-        // Neither file exists: the directory prefix still resolves.
-        assert!(paths_overlap(&alias_child, &real_child));
-        assert!(paths_overlap(&alias_child, &real.display().to_string()));
-        assert!(!paths_overlap(&alias_child, &sibling));
+        let link = dir.path().join("alias");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(r"\praxi-no-such-host\share", &link).unwrap();
+        let alias_child = link.join("child.txt").display().to_string();
+        let real_child = dir
+            .path()
+            .join("real")
+            .join("child.txt")
+            .display()
+            .to_string();
+        assert!(!paths_overlap(&alias_child, &real_child));
+        assert!(paths_overlap(&alias_child, &link.display().to_string()));
+        // The refusal names both paths.
+        let sel = ["/nonexistent-praxi/a/b"];
+        let rec = ["/other/c", "/nonexistent-praxi/a"];
+        assert_eq!(
+            first_overlap(&sel, &rec),
+            Some(("/nonexistent-praxi/a/b", "/nonexistent-praxi/a"))
+        );
     }
 
     #[tokio::test]
