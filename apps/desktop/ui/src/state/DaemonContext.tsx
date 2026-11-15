@@ -14,6 +14,8 @@ import { type Connection, connectDaemon } from "../api/connection";
 import { subscribeEvents } from "../api/events";
 import { MOCK_BASE_URL } from "../api/mockMode";
 import type { Bot, Chat, GlobalEnvelope, Health, Run } from "../api/types";
+import { orderBots } from "../lib/botOrder";
+import { useBotOrder } from "../store/botOrderStore";
 import {
   applyEvent,
   EMPTY_EVENTS,
@@ -89,7 +91,9 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   const [conn, setConn] = useState<Connection | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [eventsConnected, setEventsConnected] = useState(false);
-  const [bots, setBots] = useState<Bot[]>([]);
+  const [rawBots, setBots] = useState<Bot[]>([]);
+  const botOrder = useBotOrder();
+  const bots = useMemo(() => orderBots(rawBots, botOrder), [rawBots, botOrder]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [events, dispatch] = useReducer(reducer, EMPTY_EVENTS);
