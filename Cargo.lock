@@ -5131,6 +5131,7 @@ dependencies = [
  "desktop-api",
  "desktop-linux",
  "desktop-windows",
+ "live-view",
  "peer-network",
  "storage",
  "tokio",

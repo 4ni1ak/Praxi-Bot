@@ -33,8 +33,8 @@ use crate::history::{
 };
 use crate::router::{RoutePlan, route_hints};
 use crate::shared::{
-    CallRec, ModelOut, ResultRec, RunCtx, STEP_COMMAND, STEP_MODEL, STEP_TOOLS, STEP_USER,
-    STEP_WORKFLOW, Shared, xe,
+    CallRec, ModelOut, ResultRec, RunCtx, STEP_COMMAND, STEP_MODEL, STEP_NUDGE, STEP_TOOLS,
+    STEP_USER, STEP_WORKFLOW, Shared, xe,
 };
 
 pub(crate) struct TurnExecutor {
@@ -133,6 +133,25 @@ fn call_key(name: &str, args: &str) -> (String, Value) {
     (name.to_owned(), v)
 }
 
+/// True when the turn's last model step ended with no text after tool calls
+/// and no nudge was sent yet (one nudge per turn).
+fn silent_end(history: &[RunStep]) -> bool {
+    let Some(last) = history.last() else {
+        return false;
+    };
+    let blank = step_output::<ModelOut>(last)
+        .is_some_and(|m| m.text.trim().is_empty() && !m.stopped_by_guard);
+    let turn_start = history
+        .iter()
+        .rposition(|s| s.name == STEP_USER)
+        .unwrap_or(0);
+    let turn = &history[turn_start..];
+    blank && turn.iter().any(|s| s.name == STEP_TOOLS) && !turn.iter().any(|s| s.name == STEP_NUDGE)
+}
+
+/// Shown when the model is still silent after the nudge (never end empty).
+const SILENT_FALLBACK: &str = "The model returned no answer after using tools, so I could not finish this. Try again or pick a stronger model. / Model araçları kullandıktan sonra yanıt vermedi; tekrar dene ya da daha güçlü bir model seç.";
+
 fn user_step(text: &str) -> StepSpec {
     StepSpec {
         name: STEP_USER.to_owned(),
@@ -173,6 +192,7 @@ impl StepExecutor for TurnExecutor {
     ) -> Result<Value, ExecError> {
         match step.name.as_str() {
             STEP_USER => Ok(json!({ "text": step.input["text"] })),
+            STEP_NUDGE => Ok(json!({})),
             STEP_MODEL => self.exec_model(run, step, cancel).await,
             STEP_TOOLS => self.exec_tools(run, step).await,
             STEP_WORKFLOW => self.exec_workflow(run, step).await,
@@ -215,22 +235,20 @@ impl TurnExecutor {
 
     fn first_user_text(&self, ctx: &RunCtx, run: &Run) -> Result<String, ExecError> {
         let messages = self.sh.storage.list_messages(ctx.chat_id).map_err(xe)?;
+        // A mention run (first or later bot, owner bot included) is bound to the
+        // exact user message that carried the mentions.
+        if let Some(id) = crate::shared::mention_message_id(&run.kind) {
+            return messages
+                .iter()
+                .find(|m| m.id == id && m.role == "user")
+                .map(|m| m.content.clone())
+                .ok_or_else(|| xe("turn has no user message"));
+        }
         if let Some(own) = messages
             .iter()
             .find(|m| m.run_id == Some(run.id) && m.role == "user")
         {
             return Ok(own.content.clone());
-        }
-        // A later bot of a multi-mention message (`@A @B`) answers the same
-        // user message: the run has no row of its own, so use the latest one.
-        let chat = self.sh.storage.get_chat(ctx.chat_id).map_err(xe)?;
-        if chat.is_some_and(|c| c.bot_id != run.bot_id) {
-            return messages
-                .iter()
-                .rev()
-                .find(|m| m.role == "user")
-                .map(|m| m.content.clone())
-                .ok_or_else(|| xe("turn has no user message"));
         }
         Err(xe("turn has no user message"))
     }
@@ -293,6 +311,9 @@ impl TurnExecutor {
                 return Ok(Some(user_step(&text)));
             }
             if finished {
+                if let Some(step) = self.nudge_step(&ctx, history, model_steps) {
+                    return Ok(Some(step));
+                }
                 st.closed = true;
                 return Ok(None);
             }
@@ -324,6 +345,9 @@ impl TurnExecutor {
             .chain(&ctx.profile.models.fallback)
             .any(|m| m.starts_with("cli:"));
         let mut input = json!({ "model": ctx.profile.models.executor, "n": model_steps });
+        if history.iter().any(|s| s.name == STEP_NUDGE) {
+            input["nudged"] = json!(true);
+        }
         if cli_session {
             input["cli_session"] = json!(true);
         }
@@ -335,6 +359,23 @@ impl TurnExecutor {
             // which provider errors are worth retrying.
             retry: None,
         }))
+    }
+
+    /// The one-per-turn nudge when the model went silent after tool calls.
+    fn nudge_step(
+        &self,
+        ctx: &RunCtx,
+        history: &[RunStep],
+        model_steps: usize,
+    ) -> Option<StepSpec> {
+        let g = &self.sh.cfg.guards;
+        let limit = ctx.sub.as_ref().map_or(g.max_steps, |s| s.max_steps);
+        (silent_end(history) && model_steps < limit as usize).then(|| StepSpec {
+            name: STEP_NUDGE.to_owned(),
+            input: json!({}),
+            idempotent: true,
+            retry: None,
+        })
     }
 
     /// The closing, tool-less model call that replaces a hard failure when a
@@ -589,6 +630,20 @@ impl TurnExecutor {
             };
             return Err(xe(message));
         };
+        if guard_reason.is_none()
+            && step.input["nudged"] == true
+            && out.text.trim().is_empty()
+            && out.tool_calls.is_empty()
+        {
+            self.sh.emit(
+                &ctx,
+                Event::MessageDelta(MessageDelta {
+                    run_id: run.id,
+                    text: SILENT_FALLBACK.to_owned(),
+                }),
+            );
+            SILENT_FALLBACK.clone_into(&mut out.text);
+        }
         if let Some(reason) = guard_reason {
             // Tools were disabled: ignore anything the model still tried to call.
             out.tool_calls.clear();

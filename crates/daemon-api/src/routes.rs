@@ -320,6 +320,12 @@ pub(crate) async fn create_bot(
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, mut config) = resolve_bot(input)?;
     crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
+    crate::peer::protect_execution_config(
+        peer.as_ref().map(|peer| &peer.0),
+        s.leader().config().mode == crate::host::HostMode::Host,
+        None,
+        &mut config,
+    )?;
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -416,6 +422,12 @@ pub(crate) async fn update_bot(
         bot.config.get("knowledge"),
         &mut config,
     )?;
+    crate::peer::protect_execution_config(
+        peer.as_ref().map(|peer| &peer.0),
+        s.leader().config().mode == crate::host::HostMode::Host,
+        Some(&bot.config),
+        &mut config,
+    )?;
     if preserve_runtime
         && config.get("runtime").is_none()
         && let Some(runtime) = bot.config.get("runtime")
@@ -484,6 +496,9 @@ pub(crate) async fn delete_bot(
         Ok(())
     })
     .await?;
+    // The bot's browser slot, driver and screen target go with it; nothing
+    // selectable or resident stays behind for a bot that no longer exists.
+    s.live_view().registry.retire_bot(bot.id.0);
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.

@@ -1,7 +1,7 @@
 /* Calmer chat (244-D): header -> timeline (+ jump button) -> run bar -> composer.
    Nothing here changes size when a run starts or ends; the run bar animates its own row. */
 .root {
-  --lane: calc(var(--size-avatar-sm) + var(--space-3));
+  --lane: var(--space-0); /* v6: no avatar column */
 
   flex: 1;
   display: flex;
@@ -559,11 +559,9 @@
   flex: none;
 }
 
-.composerHint {
-  margin: var(--space-0);
-  text-align: center;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-faint);
+.plus {
+  flex: none;
+  color: var(--color-text-muted);
 }
 
 /* "/" command and "@" bot menu */

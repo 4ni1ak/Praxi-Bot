@@ -141,6 +141,14 @@ function canOfferRemember(run: RunState): boolean {
   );
 }
 
+/** "Bugün 13:34" / "15 Kasım 13:34" (v6 date separator). */
+function dayLabel(ts: number, today: string, mock: boolean): string {
+  const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(ts);
+  const isToday = mock || new Date(ts).toDateString() === new Date().toDateString();
+  const day = isToday ? today : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long" }).format(ts);
+  return `${day} ${time}`;
+}
+
 export function ChatView({
   chatId,
   onBack,
@@ -691,7 +699,7 @@ export function ChatView({
   const guestBot = (botId: string | null | undefined) =>
     botId && botId !== chat?.bot_id ? bots.find((b) => b.id === botId) : undefined;
   const runGuest = (runId: string) => guestBot(runs.find((r) => r.id === runId)?.bot_id);
-  const botAvatarFor = (decorative: boolean, guest?: Bot) => <BotAvatar bot={guest ? botView(guest) : (view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" })} size="sm" state={guest ? undefined : avatarState} decorative={decorative} />;
+  const botAvatarFor = (decorative: boolean, size: "xs" | "sm" = "sm", guest?: Bot) => <BotAvatar bot={guest ? botView(guest) : (view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" })} size={size} state={guest ? undefined : avatarState} decorative={decorative} />;
   const guestName = (guest?: Bot) => guest ? <span className={styles.authorName}>{botView(guest).name}</span> : null;
 
   const rememberRun = async (runId: string) => {
@@ -730,8 +738,7 @@ export function ChatView({
 
   const renderItem = (
     item: TimelineItem,
-    runId: string,
-    lead = true
+    runId: string
   ): ReactNode => {
     const run = events.runs[runId];
     const nested = run?.parentRunId !== undefined;
@@ -742,9 +749,8 @@ export function ChatView({
         }
         return (
           <div className={styles.assistantRow}>
-            {lead ? botAvatarFor(false, runGuest(runId)) : <span className={styles.lane} aria-hidden="true" />}
             <div className={styles.assistantBubble}>
-              {lead ? guestName(runGuest(runId)) : null}
+              {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
           </div>
@@ -817,14 +823,14 @@ export function ChatView({
 
   return (
     <div className={styles.root}>
-      <header className={styles.header}>
-        {onBack ? (
+      {/* v6: no title row (the chat is named in the sidebar); a back button only while a page to go back to exists. */}
+      {onBack ? (
+        <header className={styles.header}>
           <Button size="sm" variant="ghost" title={t("common.back")} aria-label={t("common.back")} onClick={onBack}>
             <ArrowLeft />
           </Button>
-        ) : null}
-        <h1 className={styles.title}>{chat.title}</h1>
-      </header>
+        </header>
+      ) : null}
 
       <div className={styles.scrollWrap}>
       <div
@@ -876,7 +882,7 @@ export function ChatView({
               !prev || prev.kind === "user" || prev.kind === "day";
             switch (e.kind) {
               case "day":
-                return <div key={e.key} className={styles.conversationLabel}>{isMockMode() || new Date(e.ts).toDateString() === new Date().toDateString() ? t("chat.conversationLabel") : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long" }).format(e.ts)}</div>;
+                return <div key={e.key} className={styles.conversationLabel}>{dayLabel(e.ts, t("chat.conversationLabel"), isMockMode())}</div>;
               case "user":
                 return (
                   <div key={e.key} className={styles.userRow}>
@@ -886,7 +892,6 @@ export function ChatView({
               case "assistant":
                 return (
                   <div key={e.key} className={styles.assistantRow}>
-                    {lead ? botAvatarFor(false, guestBot(e.botId)) : <span className={styles.lane} aria-hidden="true" />}
                     <div className={styles.assistantBubble}>
                       {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
@@ -972,8 +977,7 @@ export function ChatView({
               case "chain":
                 return (
                   <div key={e.key} className={styles.chainRow}>
-                    {lead ? botAvatarFor(true, runGuest(e.runId)) : <span className={styles.lane} aria-hidden="true" />}
-                    <ThinkingChain chain={e.chain} />
+                    <ThinkingChain chain={e.chain} avatar={lead ? botAvatarFor(true, "xs", runGuest(e.runId)) : undefined} />
                   </div>
                 );
               case "item":
@@ -987,7 +991,7 @@ export function ChatView({
                       .filter(Boolean)
                       .join(" ")}
                   >
-                    {renderItem(e.item, e.runId, lead)}
+                    {renderItem(e.item, e.runId)}
                   </div>
                 );
             }
@@ -1140,6 +1144,22 @@ export function ChatView({
             }}
           />
           <div className={styles.tools}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.plus}
+              title={t("chat.addCommand")}
+              aria-label={t("chat.addCommand")}
+              onClick={() => {
+                if (text === "") {
+                  setText("/");
+                  setCaret(1);
+                }
+                inputRef.current?.focus();
+              }}
+            >
+              <Plus />
+            </Button>
             {bot ? (
               <div>
                 <ModelPicker
@@ -1197,7 +1217,6 @@ export function ChatView({
           </div>
           </div>
         </div>
-        <p className={styles.composerHint}>{t("chat.composerHint")}</p>
       </footer>
     </div>
   );

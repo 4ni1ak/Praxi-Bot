@@ -922,6 +922,19 @@ pub fn serve(
     });
     let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
     let views = Arc::new(live_view::TargetRegistry::default());
+    // This computer's screen becomes a (lazy) view target. Opening it can touch
+    // the OS, so it is probed on a worker thread with a deadline: the API starts
+    // regardless, and the panel is told why while there is no screen. The raw
+    // reason goes only to this log, redacted.
+    let _desktop_view = crate::view_targets::DesktopRegistrar::start(
+        Arc::clone(&views),
+        crate::view_targets::local_opener(desktop.clone()),
+        {
+            let redactor = redactor.clone();
+            Arc::new(move |line: &str| eprintln!("warning: {}", redactor.redact(line)))
+        },
+        crate::view_targets::Timing::default(),
+    );
     let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
     let effective_peer_enabled =
         peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
@@ -1012,6 +1025,15 @@ pub fn serve(
         .await?;
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
+        }
+        // Screen grants of paired devices survive a restart: a headless host
+        // has nobody at its screen to grant them again. Pairing
+        // reconciliation below still revokes devices that are gone.
+        state.load_screen_privileges().await;
+        if !host_is_host {
+            // This computer's links to paired hosts (`/v1/hosts`); the peer
+            // endpoint starts lazily unless `--peer` already started one.
+            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone());
         }
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
         let computer = Arc::new(crate::computer::CliComputerProvider::new(

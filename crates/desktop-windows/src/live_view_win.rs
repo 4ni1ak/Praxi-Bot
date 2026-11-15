@@ -3086,6 +3086,87 @@ mod tests {
         assert_eq!(flags, KEYEVENTF_UNICODE.0);
     }
 
+    /// 244-V #8: building the target (what the real constructor does after its OS
+    /// probe) starts no capture and no input work; only a viewer's subscribe
+    /// creates a capture driver, and watching never creates an input driver.
+    #[tokio::test]
+    async fn building_the_target_starts_no_capture_or_input_until_a_viewer_subscribes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let cap_state = Arc::new(StdMutex::new(MockWinCaptureState {
+            layout: mixed_dpi_layout(),
+            fill_rgb: [1, 2, 3],
+            bitblt_calls: 0,
+            fail_bitblt: false,
+        }));
+        let in_state = Arc::new(StdMutex::new(MockWinInputState {
+            virtual_rect: mixed_dpi_layout().virtual_rect,
+            desktop_ready: true,
+            sent: Vec::new(),
+            next_send_limit: None,
+            force_send_error: false,
+        }));
+        let capture_made = Arc::new(AtomicUsize::new(0));
+        let input_made = Arc::new(AtomicUsize::new(0));
+        let target = build_win_view_target(
+            LiveViewOptions::new("counting"),
+            MockWinCapture {
+                state: Arc::clone(&cap_state),
+            },
+            {
+                let (state, made) = (Arc::clone(&cap_state), Arc::clone(&capture_made));
+                Arc::new(move || {
+                    made.fetch_add(1, Ordering::SeqCst);
+                    Ok(MockWinCapture {
+                        state: Arc::clone(&state),
+                    })
+                })
+            },
+            Arc::new(|_| Ok(())),
+            Some({
+                let (state, made) = (Arc::clone(&in_state), Arc::clone(&input_made));
+                Arc::new(move || {
+                    made.fetch_add(1, Ordering::SeqCst);
+                    Ok(MockWinInput {
+                        state: Arc::clone(&state),
+                    })
+                })
+            }),
+            None,
+        )
+        .expect("target");
+        // Constructed, described and its sources taken: still nothing running.
+        let _ = target.info();
+        let source = target.frame_source();
+        let _ = target.input_sink();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            capture_made.load(Ordering::SeqCst),
+            0,
+            "capture before a viewer"
+        );
+        assert_eq!(
+            input_made.load(Ordering::SeqCst),
+            0,
+            "input before a viewer"
+        );
+        assert_eq!(cap_state.lock().expect("lock").bitblt_calls, 0);
+        // A viewer subscribes: capture starts, input still does not.
+        let mut sub = source
+            .subscribe(EffectiveProfile::watch())
+            .await
+            .expect("subscribe");
+        sub.frames.changed().await.expect("frame");
+        assert!(capture_made.load(Ordering::SeqCst) >= 1);
+        assert_eq!(
+            input_made.load(Ordering::SeqCst),
+            0,
+            "watching never drives input"
+        );
+        // Last viewer gone: capture stops.
+        drop(sub);
+        let _ = source.stop().await;
+    }
+
     /// Explicit interactive Windows desktop capture smoke test (calls real GDI `BitBlt`).
     #[cfg(windows)]
     #[ignore = "requires an active interactive Windows desktop session for real GDI BitBlt capture"]

@@ -30,7 +30,8 @@ use crate::shared::{
     ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
     CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
     MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork, Shared,
-    StreamItem, Verdict, initiator_of, kind_for, kind_for_schedule,
+    StreamItem, Verdict, initiator_of, kind_for, kind_for_mention, kind_for_schedule,
+    mention_message_id,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -578,22 +579,21 @@ impl AgentLoop {
             && let Some((first, rest)) = self.mention_targets(chat_id, user_message)
         {
             self.sh.mention_chain.lock().remove(&chat_id);
+            let msg_id = Uuid::now_v7();
             let run = self.start_turn_as_bot(
                 chat_id,
                 user_message,
-                kind,
+                &kind_for_mention(msg_id),
                 None,
                 handoff,
                 Some(first),
                 false,
             )?;
             if !rest.is_empty() {
-                self.sh.mention_chain.lock().insert(
-                    chat_id,
-                    rest.into_iter()
-                        .map(|b| (b, user_message.to_owned()))
-                        .collect(),
-                );
+                self.sh
+                    .mention_chain
+                    .lock()
+                    .insert(chat_id, rest.into_iter().map(|b| (b, msg_id)).collect());
             }
             return Ok(run);
         }
@@ -658,7 +658,13 @@ impl AgentLoop {
                 .rt
                 .create_run(chat.user_id, run_bot, Some(chat_id), kind)?;
             if !reuse_user_message {
-                self.insert_user_message(chat.user_id, chat_id, run_id, user_message)?;
+                self.insert_user_message(
+                    chat.user_id,
+                    chat_id,
+                    run_id,
+                    user_message,
+                    mention_message_id(kind),
+                )?;
             }
             if let Some(d) = directive {
                 self.sh.directives.lock().insert(run_id, d);
@@ -706,6 +712,7 @@ impl AgentLoop {
                                 chat_id,
                                 run_id,
                                 content,
+                                None,
                             )?;
                             st.steer.push_back(stored);
                             return Ok(Delivery::Steered(run_id));
@@ -1426,12 +1433,13 @@ impl AgentLoop {
         chat_id: ChatId,
         run_id: RunId,
         text: &str,
+        id: Option<Uuid>,
     ) -> Result<String> {
         // A key pasted into the chat is stored (and replayed into every later
         // provider request) masked.
         self.sh.refresh_redactor();
         let content = self.sh.redact(text.to_owned());
-        self.insert_redacted_user_message(user_id, chat_id, run_id, content)
+        self.insert_redacted_user_message(user_id, chat_id, run_id, content, id)
     }
 
     fn insert_redacted_user_message(
@@ -1440,9 +1448,10 @@ impl AgentLoop {
         chat_id: ChatId,
         run_id: RunId,
         content: String,
+        id: Option<Uuid>,
     ) -> Result<String> {
         self.sh.storage.insert_message(&DbMessage {
-            id: Uuid::now_v7(),
+            id: id.unwrap_or_else(Uuid::now_v7),
             user_id,
             chat_id,
             run_id: Some(run_id),
@@ -1830,11 +1839,11 @@ impl AgentLoop {
             drop(active);
             (chained, next)
         };
-        if let Some((bot, text)) = chained {
+        if let Some((bot, msg_id)) = chained {
             let started = self.start_turn_as_bot(
                 chat_id,
-                &text,
-                &kind_for(initiator_of(&run.kind)),
+                "",
+                &kind_for_mention(msg_id),
                 None,
                 Some(run_id),
                 Some(bot),

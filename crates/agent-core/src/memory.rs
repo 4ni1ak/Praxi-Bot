@@ -145,13 +145,22 @@ impl Exchange {
             .list_messages(chat_id)
             .ok()?
             .into_iter()
-            .filter(|m| m.run_id == Some(run.id) && m.role == "user")
+            .filter(|m| {
+                m.role == "user"
+                    && match crate::shared::mention_message_id(&run.kind) {
+                        Some(id) => m.id == id,
+                        None => m.run_id == Some(run.id),
+                    }
+            })
             .map(|m| m.content)
             .collect();
         if users.is_empty() {
             return None;
         }
+        // Other bots' replies in the chat are untrusted data for this bot, so
+        // what it concludes from them is not trusted knowledge either.
         let untrusted = initiator_of(&run.kind) != InitiatorKind::Human
+            || crate::history::has_foreign_replies(&sh.storage, run)
             || sh.storage.list_steps(run.id).map_or(true, |steps| {
                 steps_touch_outside_content(&steps, |name| {
                     sh.tools

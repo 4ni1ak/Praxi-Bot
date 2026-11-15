@@ -557,7 +557,9 @@ pub(crate) struct Pending {
 
 #[derive(Default)]
 pub(crate) struct Grants {
-    pub this_chat: HashSet<(ChatId, String, Option<String>)>,
+    /// `(chat, bot, tool, computer)`: a grant given to one bot never covers another
+    /// bot answering in the same chat (`@mention`).
+    pub this_chat: HashSet<(ChatId, BotId, String, Option<String>)>,
     /// Persisted rules, in creation order.
     pub always: Vec<Grant>,
 }
@@ -737,7 +739,7 @@ pub(crate) struct Shared {
     pub queued: Mutex<HashMap<ChatId, VecDeque<String>>>,
     /// Bots still to answer one user message that mentioned several bots
     /// (`@A @B`), with that message's text. Only the user's own text fills it.
-    pub mention_chain: Mutex<HashMap<ChatId, VecDeque<(BotId, String)>>>,
+    pub mention_chain: Mutex<HashMap<ChatId, VecDeque<(BotId, Uuid)>>>,
     pub tasks: Mutex<HashMap<RunId, JoinHandle<()>>>,
     /// Background work (memory extraction).
     pub bg: Mutex<Vec<JoinHandle<()>>>,
@@ -872,6 +874,17 @@ pub(crate) fn kind_for(i: InitiatorKind) -> String {
         InitiatorKind::Subagent => format!("{KIND_PREFIX}:subagent"),
         InitiatorKind::Schedule => format!("{KIND_PREFIX}:schedule"),
     }
+}
+
+/// Run kind of a turn that answers the user message `msg` for a bot mentioned
+/// in it. The id binds the run to that exact message (first or later bot).
+pub(crate) fn kind_for_mention(msg: Uuid) -> String {
+    format!("{KIND_PREFIX}:mention:{msg}")
+}
+
+/// The user message a mention run (see [`kind_for_mention`]) answers.
+pub(crate) fn mention_message_id(kind: &str) -> Option<Uuid> {
+    kind.strip_prefix("turn:mention:")?.parse().ok()
 }
 
 /// Run kind of a turn started by schedule `id` (the id survives a restart).
@@ -1766,3 +1779,5 @@ pub(crate) const STEP_TOOLS: &str = "tools";
 pub(crate) const STEP_WORKFLOW: &str = "workflow";
 /// A built-in command run by the router (`/new`).
 pub(crate) const STEP_COMMAND: &str = "command";
+/// One system nudge after a model turn ended with no text after tool calls.
+pub(crate) const STEP_NUDGE: &str = "nudge";
