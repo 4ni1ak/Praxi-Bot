@@ -14,6 +14,6 @@ pub use registry::ToolRegistry;
 // for convenience.
 pub use spec::{ContentClass, Effect, ObservationScope, PermissionCategory, Platform, ToolSpec};
 pub use tool::{
-    ContentPart, OutputExposure, SpillRef, StandingGrant, Tool, ToolContext, ToolOutput,
-    ToolWrapper,
+    ContentPart, ControlIdentity, ControlKind, ControlTarget, OutputExposure, SpillRef,
+    StandingGrant, Tool, ToolContext, ToolOutput, ToolWrapper,
 };

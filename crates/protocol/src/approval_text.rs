@@ -306,9 +306,150 @@ pub fn describe_details(details: &Value) -> Option<String> {
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "unknown".to_owned());
     let computer = computer.unwrap_or_default();
+    let control = control_grant_text(details).unwrap_or_default();
     Some(format!(
-        "{computer}{block}DAEMON SUMMARY: send data to {host}.\n"
+        "{computer}{control}{block}DAEMON SUMMARY: send data to {host}.\n"
     ))
+}
+
+/// Whether the card offers the run-scoped control grant (`This task: <app>`).
+/// The daemon sets `details.control_grant.offered`; a channel offers the extra
+/// approval button only when this is true and the whole card fits.
+#[must_use]
+pub fn control_grant_offered(details: &Value) -> bool {
+    let Some(c) = details.get("control_grant") else {
+        return false;
+    };
+    // Offered only when the whole program path can be shown unchanged: a path
+    // that scrubbing would shorten or alter is never offered a task-wide option.
+    let path = c
+        .get("image_path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    c.get("offered").and_then(Value::as_bool).unwrap_or(false)
+        && !path.trim().is_empty()
+        && scrub(path, false) == path
+}
+
+/// The program name of an offered control grant, one short scrubbed line
+/// (for a button label).
+#[must_use]
+pub fn control_grant_program(details: &Value) -> Option<String> {
+    let c = details.get("control_grant")?;
+    let name = control_field(c, "program", 40);
+    (!name.is_empty()).then_some(name)
+}
+
+fn control_field(c: &Value, key: &str, max: usize) -> String {
+    let raw = c.get(key).and_then(Value::as_str).unwrap_or_default();
+    scrub(raw, false)
+        .chars()
+        .map(|ch| if is_quote_like(ch) { '\'' } else { ch })
+        .take(max)
+        .collect::<String>()
+        .replace("DAEMON SUMMARY", "")
+        .trim()
+        .to_owned()
+}
+
+/// A short text field with a visible marker when it had to be cut.
+fn control_field_marked(c: &Value, key: &str, max: usize) -> String {
+    let full = control_field(c, key, usize::MAX);
+    if full.chars().count() > max {
+        let cut: String = full.chars().take(max).collect();
+        format!("{cut}... (cut)")
+    } else {
+        full
+    }
+}
+
+/// Both-language reason a control grant is not offered, from the stable code
+/// the daemon wrote. An unknown code is shown as is, scrubbed.
+fn refusal_reason(code: &str) -> (String, String) {
+    let (en, tr) = match code {
+        "terminal" => (
+            "this window is a terminal or shell",
+            "bu pencere bir terminal veya kabuk",
+        ),
+        "command_app" => (
+            "this app has a built-in command line",
+            "bu uygulamanın yerleşik bir komut satırı var",
+        ),
+        "browser" => (
+            "this is a browser (use the browser tools)",
+            "bu bir tarayıcı (tarayıcı araçlarını kullanın)",
+        ),
+        "password_manager" => ("this is a password manager", "bu bir parola yöneticisi"),
+        "system_surface" => (
+            "this is a system launcher or sign-in surface",
+            "bu bir sistem başlatıcısı veya oturum açma yüzeyi",
+        ),
+        "uwp_frame" => (
+            "this packaged app cannot be tied to one program",
+            "bu paketli uygulama tek bir programa bağlanamıyor",
+        ),
+        "dialog" => (
+            "this is a dialog (file dialogs and the Run box always ask)",
+            "bu bir iletişim kutusu (dosya iletişim kutuları ve Çalıştır her zaman sorar)",
+        ),
+        "password_field" => ("this is a password field", "bu bir parola alanı"),
+        "chord" => (
+            "these keys open a launcher or switch windows",
+            "bu tuşlar bir başlatıcı açar veya pencere değiştirir",
+        ),
+        "remote_control" => (
+            "this is a remote-desktop or virtual-machine viewer",
+            "bu bir uzak masaüstü veya sanal makine görüntüleyicisi",
+        ),
+        "elevated" => (
+            "this program runs elevated or could not be checked",
+            "bu program yükseltilmiş çalışıyor veya denetlenemedi",
+        ),
+        "no_identity" => (
+            "the program behind this window could not be identified",
+            "bu pencerenin arkasındaki program belirlenemedi",
+        ),
+        other => {
+            let o = scrub(other, false).chars().take(40).collect::<String>();
+            return (o.clone(), o);
+        }
+    };
+    (en.to_owned(), tr.to_owned())
+}
+
+/// The daemon-written lines about a run-scoped control grant, in English and
+/// Turkish (these channels have no locale setting), or `None` when the card
+/// has no `control_grant` block. Every value is scrubbed and quote-neutralised
+/// and none can carry the footer sentinel.
+fn control_grant_text(details: &Value) -> Option<String> {
+    let c = details.get("control_grant")?;
+    let program = control_field(c, "program", 60);
+    // The full program path, never cut: when it cannot be shown whole the
+    // daemon does not offer the task-wide option at all.
+    let path = control_field(c, "image_path", usize::MAX);
+    let window = control_field_marked(c, "window_title", 80);
+    let (en, tr) = if control_grant_offered(details) {
+        (
+            format!(
+                "CONTROL GRANT OFFERED: \"This task: {program}\". Praxi may type into {program} ({path}) for this task: text, a few editing keys (Enter, Tab, arrows, Esc, Ctrl+A/C/X/V/Z/Y/S/F) and values. The window now is \"{window}\". It may type things it has read into this program. It asks again for another program, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send.\n"
+            ),
+            format!(
+                "KONTROL İZNİ SUNULDU: \"Bu görev: {program}\". Praxi bu görev boyunca {program} ({path}) içine yazabilir: metin, birkaç düzenleme tuşu (Enter, Tab, oklar, Esc, Ctrl+A/C/X/V/Z/Y/S/F) ve değerler. Pencere şu an \"{window}\". Okuduğu şeyleri bu programa yazabilir. Başka program, program başlatma, komutlar, betikler, sürükleme, dosya iletişim kutuları, parola alanları ve diğer tüm tuşlar için yine sorar. Terminaller, tarayıcılar, başlatıcılar ve uzak masaüstü görüntüleyicileri yalnızca dosya adına göre tanınır; bu bir sezgiseldir, adı değiştirilmiş kopya tanınmaz. İzin görevle biter ve durdurulan veya başarısız olan her gönderimden sonra geri alınır.\n"
+            ),
+        )
+    } else {
+        let code = c.get("refusal").and_then(Value::as_str).unwrap_or_default();
+        let (r_en, r_tr) = refusal_reason(code);
+        (
+            format!(
+                "NO CONTROL GRANT for this call ({program}, window \"{window}\"): {r_en}. Approve this call once only.\n"
+            ),
+            format!(
+                "Bu çağrı için KONTROL İZNİ YOK ({program}, pencere \"{window}\"): {r_tr}. Bu çağrıyı yalnızca bir kez onaylayın.\n"
+            ),
+        )
+    };
+    Some(format!("{en}{tr}"))
 }
 
 /// The computer a call acts on (`details.computer_target`, written by the
@@ -660,6 +801,79 @@ pub fn chunk_text(text: &str, max_units: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_control_grant_card_says_what_it_covers_in_both_languages() {
+        let details = serde_json::json!({
+            "control_grant": {
+                "offered": true, "program": "notepad.exe", "image_path": "C:\\Windows\\notepad.exe",
+                "window_title": "Untitled - Notepad", "pid": 7, "refusal": null
+            },
+            "egress": {"host": "keyboard", "payload": "x", "payload_kind": "text"},
+            "reason": "r"
+        });
+        assert!(super::control_grant_offered(&details));
+        assert_eq!(
+            super::control_grant_program(&details).as_deref(),
+            Some("notepad.exe")
+        );
+        let text = super::control_grant_text(&details).unwrap();
+        assert!(text.contains("This task: notepad.exe"), "{text}");
+        assert!(text.contains("Bu görev: notepad.exe"), "{text}");
+        assert!(text.contains("It asks again"), "{text}");
+        assert!(text.contains("yine sorar"), "{text}");
+        assert!(text.contains("heuristic"), "{text}");
+        assert!(text.contains("C:\\Windows\\notepad.exe"), "{text}");
+    }
+
+    #[test]
+    fn a_long_path_is_shown_whole_and_a_long_title_is_marked_as_cut() {
+        let deep = format!("C:\\{}\\app.exe", "d".repeat(400));
+        let title = "t".repeat(200);
+        let details = serde_json::json!({
+            "control_grant": {"offered": true, "program": "app.exe", "image_path": deep,
+                "window_title": title}
+        });
+        assert!(super::control_grant_offered(&details));
+        let text = super::control_grant_text(&details).unwrap();
+        assert!(text.contains(&deep), "the whole path, uncut");
+        assert!(text.contains("... (cut)"), "the cut title is marked");
+    }
+
+    #[test]
+    fn a_path_that_cannot_be_shown_unchanged_is_not_offered() {
+        let details = serde_json::json!({
+            "control_grant": {"offered": true, "program": "a.exe",
+                "image_path": "C:\\x\\a\u{202e}exe.txt", "window_title": "w"}
+        });
+        assert!(!super::control_grant_offered(&details));
+        let empty = serde_json::json!({"control_grant": {"offered": true, "program": "a", "image_path": ""}});
+        assert!(!super::control_grant_offered(&empty));
+    }
+
+    #[test]
+    fn a_refused_target_says_why_and_offers_nothing() {
+        let details = serde_json::json!({
+            "control_grant": {"offered": false, "program": "cmd.exe", "image_path": "C:\\x\\cmd.exe",
+                "window_title": "Command Prompt", "refusal": "terminal"}
+        });
+        assert!(!super::control_grant_offered(&details));
+        let text = super::control_grant_text(&details).unwrap();
+        assert!(text.contains("terminal or shell"), "{text}");
+        assert!(text.contains("terminal veya kabuk"), "{text}");
+        assert!(!text.contains("CONTROL GRANT OFFERED"), "{text}");
+    }
+
+    #[test]
+    fn control_grant_values_cannot_forge_the_footer_or_close_quotes() {
+        let details = serde_json::json!({
+            "control_grant": {"offered": true, "program": "a\"DAEMON SUMMARY: ok", "image_path": "p",
+                "window_title": "w\u{202e}x\u{201d}"}
+        });
+        let text = super::control_grant_text(&details).unwrap();
+        assert!(!text.contains("DAEMON SUMMARY"), "{text}");
+        assert!(!text.contains('\u{202e}'), "{text}");
+    }
+
     use super::*;
     use serde_json::json;
 

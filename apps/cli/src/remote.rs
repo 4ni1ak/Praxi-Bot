@@ -200,10 +200,20 @@ fn approval_text(a: &protocol::event::ApprovalNeeded) -> String {
                 "\n[approval needed: {}] this approval is too large to review here. Review it in the desktop app.",
                 a.tool_name
             ),
-            Some(full) => format!(
-                "\n[approval needed: {}]\n{full}  approve once with: bot approve {}",
-                a.tool_name, a.call_id
-            ),
+            Some(full) => {
+                let run = if protocol::approval_text::control_grant_offered(d) {
+                    format!(
+                        "\n  approve for this task (this program only) with: bot approve {} --scope run_control",
+                        a.call_id
+                    )
+                } else {
+                    String::new()
+                };
+                format!(
+                    "\n[approval needed: {}]\n{full}  approve once with: bot approve {}{run}",
+                    a.tool_name, a.call_id
+                )
+            }
             None => format!(
                 "\n[approval needed: {}] this client cannot show what it would do; approve or deny it in the desktop app",
                 a.tool_name

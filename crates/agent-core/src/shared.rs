@@ -94,6 +94,11 @@ pub enum ApprovalScope {
     /// The tool's whole permission category for this bot: a persisted grant
     /// rule.  Absolute floors (money, never-list) still win.
     AlwaysCategory,
+    /// Typing, keys, value setting and dragging into the one program the card
+    /// names, for the rest of this run only (card 243-1). Never persisted, not
+    /// inherited by sub-agents. Accepted only on a card for which the daemon
+    /// resolved an eligible control target.
+    RunControl,
 }
 
 /// What a persisted "always allow" grant covers.
@@ -556,6 +561,9 @@ pub(crate) struct Pending {
     /// The card carries tool details or the tool is always-ask: only a
     /// one-time approval may be given for it, on every channel.
     pub once_only: bool,
+    /// The card offers [`ApprovalScope::RunControl`]: the daemon resolved an
+    /// eligible control target for this call.
+    pub grantable: bool,
 }
 
 #[derive(Default)]
@@ -658,9 +666,59 @@ pub(crate) struct RunCtx {
     /// Never cleared. Copied from the parent when a subagent starts, and
     /// rebuilt from stored steps when the process resumes a run.
     pub taint: Mutex<ContentTaint>,
+    /// Run-scoped control grants (card 243-1). In memory, per run: gone when
+    /// the run ends and not copied to a sub-agent's own context.
+    pub control_grants: Mutex<Vec<ControlGrant>>,
+}
+
+/// "Let this run type into this program" on one computer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ControlGrant {
+    /// `tool_grant_scope` of the computer it was given on.
+    pub computer: String,
+    /// The one program it covers.
+    pub identity: tool_registry::ControlIdentity,
+}
+
+/// The control kind a built-in tool sends, for the three tools a run-scoped
+/// grant can ever cover. `desktop_launch`, `shell_run`, `script_run` and every
+/// other tool return `None`: nothing covers them.
+pub(crate) fn control_kind_of(name: &str) -> Option<tool_registry::ControlKind> {
+    use tool_registry::ControlKind as K;
+    match name {
+        "desktop_type" => Some(K::Type),
+        "desktop_set_value" => Some(K::SetValue),
+        "desktop_key" => Some(K::Key),
+        _ => None,
+    }
 }
 
 impl RunCtx {
+    /// A run-scoped control grant covers this call: same computer, same
+    /// running program (path, pid and start time), a covered kind, and a target
+    /// the deny rules did not refuse.
+    pub(crate) fn control_covers(
+        &self,
+        name: &str,
+        category: PermissionCategory,
+        target: &tool_registry::ControlTarget,
+    ) -> bool {
+        if control_kind_of(name) != Some(target.kind) || !target.eligible() {
+            return false;
+        }
+        let Some(scope) = self.tool_grant_scope(name, category) else {
+            return false;
+        };
+        self.control_grants.lock().iter().any(|g| {
+            g.computer == scope
+                && g.identity.pid == target.identity.pid
+                && g.identity.start_time == target.identity.start_time
+                && g.identity
+                    .image_path
+                    .eq_ignore_ascii_case(&target.identity.image_path)
+        })
+    }
+
     pub(crate) fn grant_scope(&self, category: PermissionCategory) -> Option<String> {
         self.tool_grant_scope("", category)
     }
@@ -1489,6 +1547,7 @@ impl Shared {
                 todos: Vec::new(),
             }),
             taint: Mutex::new(taint),
+            control_grants: Mutex::new(Vec::new()),
         });
         Ok(Arc::clone(self.runs.lock().entry(run.id).or_insert(ctx)))
     }

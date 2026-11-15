@@ -66,6 +66,7 @@ else.
 | `this_chat` | This tool, for the rest of this chat |
 | `always` | This tool, for this bot, remembered permanently |
 | `always_category` | The tool's whole category (for example every `fs` tool) for this bot, remembered permanently |
+| `run_control` | Only on a desktop input card that offers "This task: <program>": typing, keys, values and dragging in that one program until the run ends (see [security](security.md)) |
 
 "Always" choices are stored as **grants**. Review and remove them:
 

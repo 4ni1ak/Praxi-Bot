@@ -130,6 +130,7 @@ impl TurnHost for Host {
                         spec.category,
                         &r.input,
                         details,
+                        None,
                     )
                     .await
                 else {
@@ -180,6 +181,7 @@ impl Host {
                 protocol::PermissionCategory::Meta,
                 &json!({"summary": request.summary, "input": request.input}),
                 Some(details),
+                None,
             )
             .await
             .is_ok()

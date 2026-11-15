@@ -260,6 +260,7 @@ async fn poll_trigger(
                     input,
                     content: builtin_tools::classify("fs_list")
                         .unwrap_or_else(tool_registry::ContentClass::unspecified),
+                    control: None,
                 })
                 .await
                 .map_err(exec_err)?;

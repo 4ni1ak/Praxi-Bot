@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { CalendarClock, Clock, ShieldAlert } from "lucide-react";
+import { AppWindow, CalendarClock, Clock, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { Scope } from "../api/types";
@@ -16,12 +16,14 @@ import {
 } from "../state/timeline";
 import {
   computerDetails,
+  controlGrantDetails,
   egressDetails,
   payloadReviewComplete,
   appActionDetails,
   formatFiring,
   brainDetails,
   scheduleDetails,
+  type ControlGrantDetails,
   type EgressApprovalDetails,
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
@@ -302,6 +304,50 @@ function EgressApprovalBody({ d, onReviewed }: {
   );
 }
 
+/** What a run-scoped control grant covers, or why this call cannot get one. */
+function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
+  const { t } = useTranslation();
+  return (
+    <div className={styles.controlGrant} data-testid="approval-control-grant">
+      <p className={styles.controlHead}>
+        {d.offered ? (
+          <ShieldCheck size={16} aria-hidden="true" />
+        ) : (
+          <ShieldAlert size={16} aria-hidden="true" />
+        )}
+        <span>
+          {d.offered
+            ? t("chat.approval.control.offered", { program: d.program })
+            : t("chat.approval.control.refused", { program: d.program })}
+        </span>
+      </p>
+      <p className={styles.controlLine}>
+        <AppWindow size={14} aria-hidden="true" />
+        <span>
+          {d.program}
+          {d.windowTitle ? ` · ${d.windowTitle}` : ""}
+        </span>
+      </p>
+      {d.imagePath ? <p className={styles.controlPath}>{d.imagePath}</p> : null}
+      {d.offered ? (
+        <>
+          <p className={styles.bodyText}>
+            {t("chat.approval.control.covers", { program: d.program, path: d.imagePath })}
+          </p>
+          <p className={styles.bodyText}>{t("chat.approval.control.risk")}</p>
+          <p className={styles.bodyText}>{t("chat.approval.control.stillAsks")}</p>
+        </>
+      ) : (
+        <p className={styles.bodyText}>
+          {t(`chat.approval.control.reason.${d.refusal}`, {
+            defaultValue: t("chat.approval.control.reason.unknown")
+          })}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ApprovalCard({
   tool,
   onDecide,
@@ -316,6 +362,7 @@ export function ApprovalCard({
   const schedule = scheduleDetails(tool.details);
   const egress = egressDetails(tool.details);
   const computer = computerDetails(tool.details);
+  const control = controlGrantDetails(tool.details);
   const [reviewedPayload, setReviewedPayload] = useState<string | null>(null);
   const reviewPending = egress?.reviewFullPayload && reviewedPayload !== egress.payload;
   const app = appActionDetails(tool.details);
@@ -414,6 +461,7 @@ export function ApprovalCard({
             })}
           </p>
         ) : null}
+        {control ? <ControlGrantBody d={control} /> : null}
         {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
         <div className={styles.actions}>
           <Button
@@ -426,6 +474,17 @@ export function ApprovalCard({
               ? t("chat.approval.sendOnce")
               : t("chat.approval.once")}
           </Button>
+          {/* One program, until this task ends: only when the daemon offered it. */}
+          {control?.offered ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={disabled || reviewPending}
+              onClick={() => void decide("approve", "run_control")}
+            >
+              {t("chat.approval.control.button", { program: control.program })}
+            </Button>
+          ) : null}
           {/* The daemon refuses a standing grant for any card with details. */}
           {tool.details != null ? null : (
             <>

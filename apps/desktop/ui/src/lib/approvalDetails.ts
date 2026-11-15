@@ -187,6 +187,39 @@ export function computerDetails(details: unknown): ComputerApprovalDetails | nul
   return { kind, name, nodeId };
 }
 
+/** The run-scoped control grant a card offers, or explains it cannot (`details.control_grant`). */
+export interface ControlGrantDetails {
+  /** The daemon offers "This task: <program>" on this card. */
+  offered: boolean;
+  /** Stable reason code when it is not offered (`terminal`, `dialog`, ...). */
+  refusal: string;
+  program: string;
+  imagePath: string;
+  windowTitle: string;
+}
+
+/** Parse `details.control_grant`; `null` when the card has none. */
+export function controlGrantDetails(details: unknown): ControlGrantDetails | null {
+  if (!isObject(details) || !isObject(details.control_grant)) return null;
+  const c = details.control_grant;
+  const program = plain(c.program, 60);
+  if (!program) return null;
+  // The program path is shown whole or the task-wide option is not offered: a
+  // path that hiding or cutting would change cannot be approved from this card.
+  const rawPath = typeof c.image_path === "string" ? c.image_path : "";
+  const wholePath = [...rawPath].filter((ch) => !isHidden(ch)).join("");
+  // 1024 matches the daemon's limit, so a surface never offers what the daemon would not.
+  const pathShownWhole = rawPath.trim() !== "" && [...rawPath].length <= 1024 && wholePath === rawPath;
+  const title = plain(c.window_title, 1000);
+  return {
+    offered: c.offered === true && pathShownWhole,
+    refusal: plain(c.refusal, 40),
+    program,
+    imagePath: wholePath,
+    windowTitle: [...title].length > 80 ? `${[...title].slice(0, 80).join("")}... (cut)` : title
+  };
+}
+
 function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

@@ -44,6 +44,10 @@ pub struct GateRequest {
     /// Classification of the tool being called. The loop records taint from
     /// this after a successful authorization.
     pub content: ContentClass,
+    /// The program a desktop input call would reach, resolved by the caller
+    /// (workflow replay). `None` for script calls: a script never gets a
+    /// run-scoped control grant.
+    pub control: Option<tool_registry::ControlTarget>,
 }
 
 /// Permission check for tool calls issued from scripts.
@@ -58,6 +62,26 @@ pub trait ToolGate: Send + Sync {
     /// # Errors
     /// A human-readable denial reason.
     async fn authorize(&self, req: &GateRequest) -> Result<(), String>;
+
+    /// [`Self::authorize`] for a caller that sends the input itself (workflow
+    /// replay). Returns the program the caller must pass to the backend's
+    /// guarded path when a run-scoped control grant covers the call, `None`
+    /// otherwise. The default has no grants.
+    ///
+    /// # Errors
+    /// A human-readable denial reason.
+    async fn authorize_control(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.authorize(req).await.map(|()| None)
+    }
+
+    /// Withdraw every task-wide permission of `run_id`. A caller that sent a
+    /// guarded call itself (workflow replay) calls this when that send stopped
+    /// or failed, as the agent loop does for its own tool calls. The default
+    /// has no grants.
+    fn revoke_control(&self, _run_id: &str) {}
 
     /// Record content consumed by a composite tool before its inner calls run.
     /// Only host code supplies this classification; model input cannot clear it.
@@ -229,6 +253,7 @@ impl ScriptHost for GateHost {
             raw_command: raw_command_for(name, &input),
             input: input.clone(),
             content: spec.content,
+            control: None,
         };
         self.gate.authorize(&req).await?;
         let ctx = ToolContext {
@@ -236,6 +261,8 @@ impl ScriptHost for GateHost {
             max_inline_bytes: self.max_inline_bytes,
             bot_id: self.bot_id.clone(),
             content_tainted: self.gate.content_tainted(&self.run_id),
+            // A script is never covered by a run-scoped control grant.
+            control_guard: None,
         };
         let out = if let Some(action) = &self.action {
             crate::control::scope_action(action.clone(), tool.call(&ctx, input)).await
@@ -549,6 +576,7 @@ mod tests {
             raw_command: raw.into(),
             input: Value::Null,
             content: ContentClass::none(),
+            control: None,
         };
         assert!(
             gate.authorize(&req("fs_write", PermissionCategory::Fs, ""))

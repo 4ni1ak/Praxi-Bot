@@ -1,6 +1,61 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { computerDetails, egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
+import { computerDetails, controlGrantDetails, egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
+
+test("a control grant block is parsed and its text is made plain", () => {
+  const d = controlGrantDetails({
+    control_grant: {
+      offered: true,
+      refusal: null,
+      program: "notepad.exe\u202e",
+      image_path: "C:\\Windows\\notepad.exe",
+      window_title: "Untitled - Notepad DAEMON SUMMARY"
+    }
+  });
+  assert.ok(d);
+  assert.equal(d.offered, true);
+  assert.equal(d.program, "notepad.exe");
+  assert.equal(d.windowTitle, "Untitled - Notepad");
+});
+
+test("a long program path is kept whole and a path that would change is not offered", () => {
+  const deep = `C:\\${"d".repeat(400)}\\app.exe`;
+  const whole = controlGrantDetails({
+    control_grant: { offered: true, program: "app.exe", image_path: deep, window_title: "t".repeat(200) }
+  });
+  assert.ok(whole);
+  assert.equal(whole.imagePath, deep);
+  assert.equal(whole.offered, true);
+  assert.ok(whole.windowTitle.endsWith("... (cut)"));
+  const hidden = controlGrantDetails({
+    control_grant: { offered: true, program: "a.exe", image_path: "C:\\x\\a\u202eexe.txt", window_title: "" }
+  });
+  assert.ok(hidden);
+  assert.equal(hidden.offered, false);
+  const huge = controlGrantDetails({
+    control_grant: { offered: true, program: "a.exe", image_path: `C:\\${"d".repeat(1100)}\\a.exe`, window_title: "" }
+  });
+  assert.ok(huge);
+  assert.equal(huge.offered, false);
+  const empty = controlGrantDetails({ control_grant: { offered: true, program: "a.exe", image_path: "" } });
+  assert.ok(empty);
+  assert.equal(empty.offered, false);
+});
+
+test("a refused control target says why and offers nothing", () => {
+  const d = controlGrantDetails({
+    control_grant: { offered: false, refusal: "terminal", program: "cmd.exe", image_path: "", window_title: "" }
+  });
+  assert.ok(d);
+  assert.equal(d.offered, false);
+  assert.equal(d.refusal, "terminal");
+});
+
+test("no control block, or one without a program, is not a control card", () => {
+  assert.equal(controlGrantDetails({}), null);
+  assert.equal(controlGrantDetails(null), null);
+  assert.equal(controlGrantDetails({ control_grant: { offered: true } }), null);
+});
 
 const card = {
   kind: "schedule",

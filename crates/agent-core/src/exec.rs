@@ -70,6 +70,9 @@ enum Slot {
         /// the policy mutex immediately before the tool is invoked.
         permit: Option<ExecPermit>,
         class: PlannedClass,
+        /// The program a desktop input call would reach, resolved before the
+        /// decision. The run-control guard is derived from it after commit.
+        target: Option<tool_registry::ControlTarget>,
     },
     /// A `spawn_subagent` call, executed by the loop itself.
     Spawn {
@@ -1012,6 +1015,23 @@ impl TurnExecutor {
                 .spec
                 .as_ref()
                 .is_some_and(|s| s.category == PermissionCategory::Meta);
+            // Which program would a desktop input call reach? Resolved here,
+            // before the synchronous decision, and only once the run has read
+            // something (before that nothing asks, so nothing needs a target).
+            let target = match (&resolved.tool, &resolved.spec) {
+                (tool, Some(_))
+                    if crate::shared::control_kind_of(&resolved.name).is_some()
+                        && ctx.taint.lock().exposure.is_tainted() =>
+                {
+                    let tctx = ToolContext {
+                        run_id: ctx.run_id.to_string(),
+                        bot_id: Some(ctx.bot_id.to_string()),
+                        ..ToolContext::default()
+                    };
+                    tool.control_target(&tctx, &resolved.input).await
+                }
+                _ => None,
+            };
             if resolved.name == builtin_tools::knowledge::KNOWLEDGE_SEARCH
                 && let Ok(mut request) = serde_json::from_value::<
                     memory_store::knowledge::SearchRequest,
@@ -1023,12 +1043,13 @@ impl TurnExecutor {
                 knowledge_requests.insert(call_uuid, request);
             }
             let decision = match &resolved.spec {
-                Some(spec) => self.sh.decide(
+                Some(spec) => self.sh.decide_with_target(
                     &ctx,
                     &resolved.name,
                     spec.effect,
                     spec.category,
                     &resolved.input,
+                    target.as_ref(),
                 ),
                 // Malformed `use_tool`: executes nothing, only reports the error.
                 None => Decision::Allow,
@@ -1130,6 +1151,7 @@ impl TurnExecutor {
                         meta,
                         permit: None,
                         class,
+                        target,
                     }
                 } else {
                     match self
@@ -1142,6 +1164,7 @@ impl TurnExecutor {
                             category,
                             &resolved.input,
                             details,
+                            target.clone(),
                         )
                         .await
                     {
@@ -1152,6 +1175,7 @@ impl TurnExecutor {
                             meta,
                             permit: Some(permit),
                             class,
+                            target,
                         },
                         Err(reason) => Slot::Done {
                             text: user_denied(reason),
@@ -1178,6 +1202,7 @@ impl TurnExecutor {
                     meta,
                     permit: carried,
                     class,
+                    target,
                 }
             };
             let slot = match slot {
@@ -1223,6 +1248,7 @@ impl TurnExecutor {
                     meta,
                     permit,
                     class,
+                    target,
                 } => {
                     // Re-check under the policy mutex immediately before the
                     // call. A deny that landed after approval does not run the
@@ -1231,7 +1257,7 @@ impl TurnExecutor {
                         return (user_denied(reason), true, None, None, not_run);
                     }
                     let (text, is_error, duration_ms, own_spill, exposure) = self
-                        .run_tool(run, ctx_ref, call_id, &tool, input, meta)
+                        .run_tool(run, ctx_ref, call_id, &tool, input, meta, target)
                         .await;
                     // The result is in the model context even when the tool
                     // returned an error. A denial before this point is not.
@@ -1308,6 +1334,7 @@ impl TurnExecutor {
         Ok(json!({ "results": results }))
     }
 
+    #[allow(clippy::too_many_arguments)] // the resolved control target joined an already wide call
     async fn run_tool(
         &self,
         run: &Run,
@@ -1316,6 +1343,7 @@ impl TurnExecutor {
         tool: &Arc<dyn Tool>,
         input: Value,
         meta: bool,
+        target: Option<tool_registry::ControlTarget>,
     ) -> (
         String,
         bool,
@@ -1324,12 +1352,19 @@ impl TurnExecutor {
         Option<tool_registry::OutputExposure>,
     ) {
         let g = &self.sh.cfg.guards;
-        let tctx = ToolContext {
-            run_id: run.id.to_string(),
-            max_inline_bytes: g.spill_threshold_bytes,
-            bot_id: Some(run.bot_id.to_string()),
-            content_tainted: ctx.taint.lock().exposure.is_tainted(),
+        // A run-scoped control grant that covers this call (looked up after the
+        // permit was committed, so a grant minted by this very card counts)
+        // makes the tool send through the backend's guarded path. Any other
+        // call carries no guard.
+        let covers = |t: &tool_registry::ControlTarget| {
+            let spec = tool.spec();
+            ctx.control_covers(&spec.name, spec.category, t)
         };
+        // Whether the permit rests on a task-wide grant. Re-read after the
+        // computer slot is held (see below): a call queued behind a failed
+        // guarded call must not keep a grant that call withdrew.
+        let rests_on_grant = target.as_ref().is_some_and(covers);
+        let guarded = std::sync::atomic::AtomicBool::new(false);
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.
         let started = std::time::Instant::now();
@@ -1347,10 +1382,39 @@ impl TurnExecutor {
                         .await
                         .map_err(tool_registry::ToolError::Execution)?;
                 }
+                // Decided with the slot held, so an earlier call's failure has
+                // already cleared the grants. A call that was covered when it was
+                // permitted but no longer is is refused, never sent unguarded.
+                let control_guard = target
+                    .as_ref()
+                    .and_then(|t| covers(t).then(|| t.identity.clone()));
+                if rests_on_grant && control_guard.is_none() {
+                    return Err(tool_registry::ToolError::Execution(
+                        "not sent: the task-wide permission was withdrawn by an earlier stopped or failed send in this run; ask again"
+                            .into(),
+                    ));
+                }
+                guarded.store(control_guard.is_some(), std::sync::atomic::Ordering::SeqCst);
+                let tctx = ToolContext {
+                    run_id: run.id.to_string(),
+                    max_inline_bytes: g.spill_threshold_bytes,
+                    bot_id: Some(run.bot_id.to_string()),
+                    content_tainted: ctx.taint.lock().exposure.is_tainted(),
+                    control_guard,
+                };
                 tool.call(&tctx, input).await
             },
         )
         .await;
+        // A guarded call that did not complete cleanly (the guard refused, a
+        // send failed part-way, a key could not be confirmed released, a
+        // timeout) withdraws every task-wide permission of this run: the next
+        // call asks again, and nothing is assumed about what was delivered.
+        if (guarded.load(std::sync::atomic::Ordering::SeqCst) || rests_on_grant)
+            && !matches!(outcome, Ok(Ok(_)))
+        {
+            ctx.control_grants.lock().clear();
+        }
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let mut own_spill: Option<String> = None;
         let exposure = match &outcome {

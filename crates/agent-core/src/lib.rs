@@ -32,6 +32,8 @@ mod taint;
 pub mod usage;
 
 #[cfg(test)]
+mod control_grant_tests;
+#[cfg(test)]
 mod egress_tests;
 #[cfg(test)]
 mod router_tests;

@@ -340,6 +340,29 @@
       "always": "Always",
       "deny": "Deny",
       "reasonPlaceholder": "Reason for denying (optional)",
+      "control": {
+        "button": "This task: {{program}}",
+        "offered": "Allow typing into {{program}} for this task only?",
+        "refused": "No task-wide permission for {{program}}: approve this call once.",
+        "covers": "Praxi may type into {{program}} ({{path}}) for this task: text, a few editing keys (Enter, Tab, arrows, Esc, Ctrl+A/C/X/V/Z/Y/S/F) and values. Nothing else.",
+        "risk": "Praxi may type things it has read into this app.",
+        "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send.",
+        "reason": {
+          "terminal": "This window is a terminal or shell.",
+          "command_app": "This app has a built-in command line.",
+          "browser": "This is a browser. Use the browser tools instead.",
+          "password_manager": "This is a password manager.",
+          "system_surface": "This is a system launcher or sign-in surface.",
+          "uwp_frame": "This packaged app cannot be tied to one program.",
+          "dialog": "This is a dialog. File dialogs and the Run box always ask.",
+          "password_field": "This is a password field.",
+          "chord": "These keys open a launcher or switch windows.",
+          "elevated": "This program runs elevated or could not be checked.",
+          "no_identity": "The program behind this window could not be identified.",
+          "unknown": "This call cannot be covered by a task-wide permission.",
+          "remote_control": "This is a remote-desktop or virtual-machine viewer."
+        }
+      },
       "schedule": {
         "title": {
           "create": "Create a recurring task?",

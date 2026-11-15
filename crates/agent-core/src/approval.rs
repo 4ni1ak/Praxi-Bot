@@ -14,12 +14,15 @@ use serde_json::{Value, json};
 use storage::{Approval, now_ms};
 use task_runtime::{RunState, can_transition};
 use tokio::sync::oneshot;
-use tool_registry::{ContentClass, Effect};
+use tool_registry::{ContentClass, ControlTarget, Effect};
 use uuid::Uuid;
 
 use crate::AUDIT_GRANT_ALWAYS;
 use crate::history::truncate_utf8;
-use crate::shared::{ApprovalScope, Grant, GrantTarget, Pending, RunCtx, Shared, Verdict};
+use crate::shared::{
+    ApprovalScope, ControlGrant, Grant, GrantTarget, Pending, RunCtx, Shared, Verdict,
+    control_kind_of,
+};
 use crate::taint;
 
 /// The `approval_ref` token a tool put in its details, if any.
@@ -99,6 +102,36 @@ impl Drop for PendingGuard {
     }
 }
 
+/// The full image path can be shown unchanged on every renderer.
+fn path_fits_card(path: &str) -> bool {
+    !path.trim().is_empty()
+        && path.chars().count() <= 1024
+        && !protocol::approval_text::hides_characters(path)
+        && !path.chars().any(char::is_control)
+}
+
+/// What the card says about a run-scoped control grant: which program it
+/// would cover, what it covers and what still asks. Daemon-authored.
+fn attach_control_card(details: &mut Option<Value>, t: &ControlTarget, offered: bool) {
+    let Some(obj) = details.as_mut().and_then(Value::as_object_mut) else {
+        return;
+    };
+    obj.insert(
+        "control_grant".into(),
+        json!({
+            "offered": offered,
+            "refusal": t.refusal,
+            "program": t.program_name(),
+            "image_path": t.identity.image_path,
+            "pid": t.identity.pid,
+            "window_title": t.window_title,
+            "covers": ["type", "set_value", "key"],
+            // The program deny list is a heuristic by file name; the card says so.
+            "heuristic": true,
+        }),
+    );
+}
+
 /// Serialised detail of a grant audit entry.
 pub(crate) fn grant_detail(g: &Grant) -> Value {
     let mut detail = match &g.target {
@@ -150,7 +183,6 @@ fn computer_approval(
 
 impl Shared {
     /// Resolve policy + grants for one call.
-    #[allow(clippy::too_many_lines)] // One decision pipeline: deny floors, policy, gate, grants.
     pub(crate) fn decide(
         &self,
         ctx: &RunCtx,
@@ -158,6 +190,26 @@ impl Shared {
         effect: Effect,
         category: PermissionCategory,
         input: &Value,
+    ) -> Decision {
+        self.decide_with_target(ctx, name, effect, category, input, None)
+    }
+
+    /// [`Self::decide`] with the program a desktop input call would reach.
+    ///
+    /// A run-scoped control grant that covers this call (card 243-1) satisfies
+    /// the egress and executor terms and a plain policy-level ask, exactly like
+    /// a this-chat grant satisfies a plain ask, and nothing more: a deny,
+    /// `always_ask`, unsupported limits and the absolute floors are all decided
+    /// before the grant is looked at, in the same order as without it.
+    #[allow(clippy::too_many_lines)] // One decision pipeline: deny floors, policy, gate, grants.
+    pub(crate) fn decide_with_target(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        effect: Effect,
+        category: PermissionCategory,
+        input: &Value,
+        target: Option<&ControlTarget>,
     ) -> Decision {
         // Scoped admission allows only two active runs per credential. Until
         // child admission shares that counter, external agents cannot fan out.
@@ -231,6 +283,11 @@ impl Shared {
             }
         }
         let must_ask = self.gate_must_ask(ctx, name, input);
+        // Only a call that already has to ask can be covered, so the lookup is
+        // skipped for every other call.
+        let control_covered =
+            must_ask && target.is_some_and(|t| ctx.control_covers(name, category, t));
+        let must_ask = must_ask && !control_covered;
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
         // The same holds for a call that types an owner-stored secret
@@ -275,7 +332,7 @@ impl Shared {
         if must_ask {
             return d;
         }
-        let granted = {
+        let granted = control_covered || {
             let g = self.grants.lock();
             g.this_chat.contains(&(
                 ctx.chat_id,
@@ -627,11 +684,17 @@ impl Shared {
         call_id: ToolCallId,
         summary: &str,
         once_only: bool,
+        grantable: bool,
     ) -> (Uuid, PendingGuard, oneshot::Receiver<Verdict>) {
         let (tx, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .insert(call_id, Pending { tx, once_only });
+        self.pending.lock().insert(
+            call_id,
+            Pending {
+                tx,
+                once_only,
+                grantable,
+            },
+        );
         *self.parked.lock().entry(ctx.run_id).or_insert(0) += 1;
         let guard = PendingGuard {
             sh: Arc::clone(self),
@@ -776,6 +839,39 @@ impl Shared {
         Err(message)
     }
 
+    /// Whether the card for this call offers a run-scoped control grant, and
+    /// the card text for it. Offered only on a once-only card, for a tool that
+    /// is not always-ask, on a computer that has an identity, and only when the
+    /// daemon resolved an eligible target for this very call. Returns the
+    /// target (when the card carries a control block) and whether it is
+    /// grantable.
+    fn control_offer(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+        details: &mut Option<Value>,
+        target: Option<ControlTarget>,
+    ) -> (Option<ControlTarget>, bool) {
+        let target = target.filter(|t| {
+            control_kind_of(name) == Some(t.kind)
+                && details.is_some()
+                && !self.must_ask(name, input)
+                && ctx.tool_grant_scope(name, category).is_some()
+        });
+        // The task-wide option exists only when the card can show the whole
+        // program path: a path with hidden or control characters, or an absurd
+        // length, is not offered (the call then asks once, as in #89).
+        let grantable = target
+            .as_ref()
+            .is_some_and(|t| t.eligible() && path_fits_card(&t.identity.image_path));
+        if let Some(t) = &target {
+            attach_control_card(details, t, grantable);
+        }
+        (target, grantable)
+    }
+
     /// Park the run in `WaitingApproval` until `approve` / `deny` is called.
     ///
     /// `Ok(permit)` means the user approved and the post-approve recheck did
@@ -783,8 +879,7 @@ impl Shared {
     /// immediately before invoking the tool: that recheck runs under
     /// [`Shared::exec_gate`] and is what creates a grant. `Err` means the
     /// call is denied (no grant, tool must not run).
-    #[allow(clippy::too_many_arguments)] // `details` joined an already wide call
-    #[allow(clippy::too_many_lines)] // Card assembly, park, emit and wait stay together.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // `details` and the control target joined an already wide call
     pub(crate) async fn request_approval(
         self: &Arc<Self>,
         ctx: &Arc<RunCtx>,
@@ -794,6 +889,7 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
         mut details: Option<Value>,
+        target: Option<ControlTarget>,
     ) -> Result<ExecPermit, Option<String>> {
         // The tool's token for this approval: kept for the close guard, never shown.
         let token = details.as_ref().and_then(approval_ref);
@@ -827,6 +923,8 @@ impl Shared {
                 ctx.initiator,
                 InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
             );
+        let (target, grantable) =
+            self.control_offer(ctx, name, category, input, &mut details, target);
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
         let mut prefix = computer_approval(ctx, name, category, &mut details);
@@ -834,7 +932,7 @@ impl Shared {
             prefix.push_str("[External agent: approve once only] ");
         }
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only);
+        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only, grantable);
         let parked_at = policy_revision(self);
         self.remember_parked(call_id, ctx, name, effect, category, input);
         self.emit(
@@ -866,7 +964,14 @@ impl Shared {
                 {
                     let _gate = self.exec_gate.lock();
                     if matches!(
-                        self.decide(ctx, name, effect, category, input),
+                        self.decide_with_target(
+                            ctx,
+                            name,
+                            effect,
+                            category,
+                            input,
+                            target.as_ref()
+                        ),
                         Decision::Deny
                     ) {
                         self.record_policy_denial(ctx, approval_id, call_id, name, by);
@@ -887,6 +992,7 @@ impl Shared {
                     by,
                     parked_at,
                     showed_disclosure,
+                    target: target.filter(|_| grantable),
                 })
             }
             Ok(Verdict::Denied { by, reason }) => {
@@ -1002,7 +1108,7 @@ impl Shared {
     ) -> Result<String, Option<String>> {
         let question = self.redact(question.to_owned());
         let summary = format!("question: {}", truncate_utf8(&question, 300));
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, false);
+        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, false, false);
         self.emit(
             ctx,
             Event::QuestionAsked(QuestionAsked {
@@ -1060,6 +1166,9 @@ pub(crate) struct ExecPermit {
     /// disclosure. Captured then, not recomputed after the user answers:
     /// another call can taint the run while this card is open.
     pub(crate) showed_disclosure: bool,
+    /// The eligible control target the card offered a grant for. `Some` only
+    /// when the card offered [`ApprovalScope::RunControl`].
+    target: Option<ControlTarget>,
 }
 
 impl ExecPermit {
@@ -1068,6 +1177,7 @@ impl ExecPermit {
     /// `decide` and the caller's decision to invoke the tool.
     ///
     /// `Err` — do not call the tool; no grant is stored.
+    #[allow(clippy::too_many_lines)] // Recheck, grant record and audit under one gate.
     pub(crate) fn commit(mut self) -> Result<(), Option<String>> {
         let _gate = self.sh.exec_gate.lock();
         #[cfg(test)]
@@ -1078,12 +1188,13 @@ impl ExecPermit {
             }
         }
         if matches!(
-            self.sh.decide(
+            self.sh.decide_with_target(
                 &self.ctx,
                 &self.name,
                 self.effect,
                 self.category,
-                &self.input
+                &self.input,
+                self.target.as_ref(),
             ),
             Decision::Deny
         ) {
@@ -1135,6 +1246,23 @@ impl ExecPermit {
                     self.category,
                     &self.name,
                 );
+            }
+            ApprovalScope::RunControl => {
+                // `approve` refuses this scope unless the card offered it, so a
+                // target is present; without one nothing is granted.
+                if let (Some(target), Some(computer)) = (
+                    &self.target,
+                    self.ctx.tool_grant_scope(&self.name, self.category),
+                ) {
+                    let mut grants = self.ctx.control_grants.lock();
+                    let grant = ControlGrant {
+                        computer,
+                        identity: target.identity.clone(),
+                    };
+                    if !grants.contains(&grant) {
+                        grants.push(grant);
+                    }
+                }
             }
         }
         self.sh.audit(
@@ -1299,6 +1427,39 @@ impl ToolGate for LoopGate {
     }
 
     async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
+        self.authorize_inner(req).await.map(|_| ())
+    }
+
+    fn revoke_control(&self, run_id: &str) {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return;
+        };
+        let Some(sh) = self.sh.upgrade() else {
+            return;
+        };
+        if let Some(ctx) = sh.runs.lock().get(&protocol::RunId(id)) {
+            ctx.control_grants.lock().clear();
+        }
+    }
+
+    async fn authorize_control(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.authorize_inner(req).await
+    }
+}
+
+impl LoopGate {
+    /// The shared body of [`ToolGate::authorize`] and
+    /// [`ToolGate::authorize_control`]. The returned program is the one the
+    /// caller must pass to the backend's guarded path: `Some` only when a
+    /// run-scoped control grant covers this call. A script call carries no
+    /// target, so it is never covered.
+    async fn authorize_inner(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
         let sh = self.sh.upgrade().ok_or("agent loop is gone")?;
         let run_id = req
             .run_id
@@ -1314,7 +1475,15 @@ impl ToolGate for LoopGate {
         if !ctx.profile.tool_visible(&req.tool) || !ctx.profile.category_visible(req.category) {
             return Err(format!("unknown tool: {}", req.tool));
         }
-        let result = match sh.decide(&ctx, &req.tool, req.effect, req.category, &req.input) {
+        let target = req.control.as_ref();
+        let result = match sh.decide_with_target(
+            &ctx,
+            &req.tool,
+            req.effect,
+            req.category,
+            &req.input,
+            target,
+        ) {
             Decision::Allow => {
                 sh.refuse_unshowable_egress(&ctx, &req.tool, &req.input, None, false)
             }
@@ -1342,6 +1511,7 @@ impl ToolGate for LoopGate {
                         req.category,
                         &req.input,
                         details,
+                        target.cloned(),
                     )
                     .await
                     .and_then(ExecPermit::commit)
@@ -1365,7 +1535,9 @@ impl ToolGate for LoopGate {
             crate::control::acquire_computer_slot(&sh, &ctx).await?;
         }
         note_gate(&ctx, req);
-        Ok(())
+        Ok(target
+            .filter(|t| ctx.control_covers(&req.tool, req.category, t))
+            .map(|t| t.identity.clone()))
     }
 }
 

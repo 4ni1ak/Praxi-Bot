@@ -4691,7 +4691,7 @@ export interface components {
          * @description How far an approval reaches.
          * @enum {string}
          */
-        Scope: "once" | "this_chat" | "always" | "always_category";
+        Scope: "once" | "this_chat" | "always" | "always_category" | "run_control";
         /** @description Body of `PUT /v1/view/privileges/{peer_key}` (local user only). */
         ScreenPrivilegesInput: {
             /** @description May take over and drive input (`screen:input`); requires `view`. */

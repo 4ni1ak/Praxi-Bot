@@ -989,14 +989,17 @@ impl AgentLoop {
     pub fn approve(&self, call_id: ToolCallId, scope: ApprovalScope, by: UserId) -> Result<()> {
         // Server-side, for every channel: an approval that carries details (a
         // schedule) or whose tool is always-ask is given once, never as a grant.
-        if scope != ApprovalScope::Once
-            && self
-                .sh
-                .pending
-                .lock()
-                .get(&call_id)
-                .is_some_and(|p| p.once_only)
-        {
+        // The run-scoped control scope is the one non-Once scope a once-only
+        // card may carry, and only when the daemon built it with an eligible
+        // control target. It is refused everywhere else, for every client.
+        let refused = self.sh.pending.lock().get(&call_id).is_some_and(|p| {
+            if scope == ApprovalScope::RunControl {
+                !p.grantable
+            } else {
+                scope != ApprovalScope::Once && p.once_only
+            }
+        });
+        if refused {
             return Err(LoopError::OnceOnly(call_id));
         }
         self.take_pending(call_id)?

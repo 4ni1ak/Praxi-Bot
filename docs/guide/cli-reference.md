@@ -98,7 +98,7 @@ Approve or deny a pending tool call.
 
 | Option | Meaning |
 | --- | --- |
-| `--scope <once\|this_chat\|always\|always_category>` | How far the approval reaches (default `once`) |
+| `--scope <once\|this_chat\|always\|always_category\|run_control>` | How far the approval reaches (default `once`); `run_control` only where the card offers it |
 | `--deny` | Deny instead of approving |
 | `--reason <TEXT>` | Reason given to the model; only with `--deny` |
 
