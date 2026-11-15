@@ -1033,18 +1033,25 @@ fn cli_relocated_config_dirs() -> Vec<PathBuf> {
     out
 }
 
-fn cli_location(path: &Path) -> bool {
-    let parts = norm_parts(&widen_for_compare(path));
+fn cli_location(parts: &[String]) -> bool {
+    // The directory set only depends on the process environment, which is fixed
+    // at startup; building it per call made directory walks quadratic.
+    static DIRS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
     if CLI_CONFIG_SEQUENCES
         .iter()
-        .any(|seq| sequence_in(&parts, seq))
+        .any(|seq| sequence_in(parts, seq))
     {
         return true;
     }
-    cli_executable_dirs()
-        .into_iter()
-        .chain(cli_relocated_config_dirs())
-        .any(|dir| parts.starts_with(&norm_parts(&widen_for_compare(&dir))))
+    DIRS.get_or_init(|| {
+        cli_executable_dirs()
+            .into_iter()
+            .chain(cli_relocated_config_dirs())
+            .map(|dir| norm_parts(&widen_for_compare(&dir)))
+            .collect()
+    })
+    .iter()
+    .any(|dir| parts.starts_with(dir))
 }
 
 /// Hard link to a credential file under another name (`notes.txt` → `.env`)
@@ -1059,8 +1066,7 @@ fn name_is_credential(name: &str) -> bool {
         || CREDENTIAL_NAMES.contains(&n.as_str())
 }
 
-fn cli_home_override(path: &Path) -> bool {
-    let path = norm_parts(&widen_for_compare(path));
+fn cli_home_override(path: &[String]) -> bool {
     [
         "CODEX_HOME",
         "CLAUDE_CONFIG_DIR",
@@ -1088,7 +1094,10 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
             false
         }
     });
-    named || cli_home_override(path) || cli_location(path) || under_data_sensitive(path, data_dir)
+    named || {
+        let parts = norm_parts(&widen_for_compare(path));
+        cli_home_override(&parts) || cli_location(&parts) || under_data_sensitive(path, data_dir)
+    }
 }
 
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
