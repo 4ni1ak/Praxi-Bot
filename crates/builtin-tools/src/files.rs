@@ -949,6 +949,48 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
     named || under_data_sensitive(path, data_dir)
 }
 
+/// Whether `root` must not be handed out as a whole folder (for example to a
+/// filesystem MCP server): it is, contains or lies inside the daemon's data
+/// directory, or it is or contains a credential-named entry on its own path.
+/// Same rules as the bot's file tools (`is_protected`), plus the containment
+/// test the file tools do not need for single files.
+#[must_use]
+pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
+    if is_protected(root, data_dir) {
+        return true;
+    }
+    let r = norm_parts(&widen_for_compare(root));
+    let d = norm_parts(&widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf()));
+    let n = r.len().min(d.len());
+    r[..n] == d[..n]
+}
+
+/// Resolve an existing local folder using the file tools' reparse-safe walk.
+/// Network/device syntax and drive mappings are classified before metadata;
+/// ambiguous parent traversal is refused rather than normalized across links.
+///
+/// # Errors
+/// The folder is relative, missing, remote, or cannot be safely resolved.
+pub fn resolve_local_folder(path: &Path) -> Result<PathBuf, ToolError> {
+    reject_syntax(&path.to_string_lossy())?;
+    if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
+        return Err(denied("choose an absolute folder without parent traversal"));
+    }
+    let lexical = lexical_absolute(&path.to_string_lossy())?;
+    let ctx = ResolveCtx {
+        follow: Follow::Content,
+        roots: &[],
+        drives: &DriveCache::new(),
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = final_identity(&resolve_local(&lexical, &ctx)?)?;
+    if !resolved.is_dir() {
+        return Err(denied("choose an existing folder"));
+    }
+    Ok(resolved)
+}
+
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
 /// device path) still gets its directory widened: the final name is appended
 /// unchanged. Comparing the raw spelling (`x\..ot.db::$DATA`, an 8.3
@@ -1024,6 +1066,8 @@ const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
 ///   redirect a stored password) and `email-secret-cleanup.json` (pending
 ///   secret deletions after an account change).
 /// - `schedule.toml` (limits for bot-created schedules).
+/// - `fill-secrets.json` (the allowed origins / programs and standing grants of
+///   the owner's fill secrets: editing it would widen where a secret is typed).
 /// - `knowledge-host.json` (pins the native embedding library path and SHA),
 ///   `knowledge-authority.db` (owner egress grants) and `knowledge-runtime.db`
 ///   (embedding quota/cooldown ledger), with the same sidecars.
@@ -1039,7 +1083,7 @@ fn daemon_state_name(base: &str) -> bool {
         "knowledge-authority.db",
         "knowledge-runtime.db",
     ];
-    const FILES: [&str; 14] = [
+    const FILES: [&str; 15] = [
         "control-latch.json",
         "view-privileges.json",
         "policy.json",
@@ -1053,6 +1097,7 @@ fn daemon_state_name(base: &str) -> bool {
         "email.toml",
         "email-secret-cleanup.json",
         "schedule.toml",
+        "fill-secrets.json",
         "knowledge-host.json",
     ];
     DATABASES.iter().any(|s| {
@@ -3949,6 +3994,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mcp_folder_resolver_classifies_links_before_following() {
+        let base = tempfile::tempdir().unwrap();
+        let link = base.path().join("remote-link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("//192.0.2.1/share/dir", &link).unwrap();
+        #[cfg(unix)]
+        assert!(resolve_local_folder(&link).is_err());
+        #[cfg(windows)]
+        {
+            let target = base.path().ancestors().last().unwrap();
+            link_dir(target, &link).unwrap();
+            assert_eq!(
+                resolve_local_folder(&link).unwrap(),
+                resolve_local_folder(target).unwrap()
+            );
+        }
+        assert!(resolve_local_folder(Path::new(r"\\192.0.2.1\share\dir")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mcp_folder_resolver_expands_case_and_short_credential_data_install_aliases() {
+        let base = tempfile::tempdir().unwrap();
+        let data = base.path().join("daemon-data-directory");
+        let install = base.path().join("application-install-directory");
+        for name in [
+            ".ssh",
+            ".docker",
+            "daemon-data-directory",
+            "application-install-directory",
+        ] {
+            let path = base.path().join(name);
+            fs::create_dir(&path).unwrap();
+        }
+        for path in [
+            &data,
+            &install,
+            &base.path().join(".ssh"),
+            &base.path().join(".docker"),
+        ] {
+            let short = win_fs::short_path(path).unwrap();
+            let canonical = resolve_local_folder(&short).unwrap();
+            assert_eq!(
+                norm_parts(&canonical),
+                norm_parts(&resolve_local_folder(path).unwrap())
+            );
+            if path == &data || path == &install {
+                assert!(is_protected_root(
+                    &canonical,
+                    &resolve_local_folder(path).unwrap()
+                ));
+            } else {
+                assert_eq!(canonical.file_name(), path.file_name());
+            }
+            let upper = PathBuf::from(path.display().to_string().to_ascii_uppercase());
+            assert_eq!(
+                norm_parts(&resolve_local_folder(&upper).unwrap()),
+                norm_parts(&canonical)
+            );
+        }
+    }
+
     /// Directory symlink, or a junction on Windows (no extra privilege).
     fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
         #[cfg(unix)]
@@ -4059,6 +4167,8 @@ mod tests {
             "email.toml.tmp",
             "email.toml.bak",
             "email-secret-cleanup.json",
+            "fill-secrets.json",
+            "fill-secrets.json.tmp",
             "email-secret-cleanup.json.tmp",
             "schedule.toml",
             "schedule.toml.bak",

@@ -1168,12 +1168,16 @@ async fn models_of(
 /// provider offers (fetched live, with a short timeout; failures are reported
 /// per provider and never fail the route).
 #[utoipa::path(get, path = "/v1/providers", tag = "providers", security(("bearer" = [])),
+    params(crate::provider_models::ProvidersQuery),
     responses((status = 200, body = ProvidersDto)))]
 pub(crate) async fn list_providers(
     State(s): State<AppState>,
+    Query(query): Query<crate::provider_models::ProvidersQuery>,
 ) -> Result<Json<ProvidersDto>, ApiError> {
     let cfg = provider_catalog::ProviderConfig::load(&provider_catalog::config_path(&s.data_dir()))
-        .map_err(|e| ApiError::internal(format!("providers.toml: {e}")))?;
+        .map_err(|e| {
+            ApiError::internal(s.agent().redact_host_text(format!("providers.toml: {e}")))
+        })?;
     let live = s.agent().providers();
     let mut active = live.ids();
     active.extend(
@@ -1191,16 +1195,25 @@ pub(crate) async fn list_providers(
         .providers
         .iter()
         .zip(models)
-        .map(|(p, (models, models_error))| ConfiguredProviderDto {
-            id: p.id.clone(),
-            enabled: p.enabled,
-            is_default: default_id.as_deref() == Some(p.id.as_str()),
-            default_model: p.default_model.clone(),
-            has_key: p.key.is_some(),
-            custom: p.custom.is_some(),
-            active: active.contains(&p.id),
-            models,
-            models_error,
+        .map(|(p, (models, models_error))| {
+            let model_details = crate::provider_models::for_picker(
+                s.agent(),
+                p,
+                models,
+                query.chat_only.unwrap_or(true),
+            );
+            ConfiguredProviderDto {
+                id: p.id.clone(),
+                enabled: p.enabled,
+                is_default: default_id.as_deref() == Some(p.id.as_str()),
+                default_model: p.default_model.clone(),
+                has_key: p.key.is_some(),
+                custom: p.custom.is_some(),
+                active: active.contains(&p.id),
+                models: model_details.iter().map(|m| m.id.clone()).collect(),
+                model_details,
+                models_error: models_error.map(|e| s.agent().redact_host_text(e)),
+            }
         })
         .collect();
     let mut catalog: Vec<CatalogProviderDto> = s
@@ -1326,6 +1339,7 @@ fn persist_cli_enable(
         custom: false,
         active: saved.enabled,
         models: Vec::new(),
+        model_details: Vec::new(),
         models_error: None,
     })
 }

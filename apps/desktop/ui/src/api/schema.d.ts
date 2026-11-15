@@ -747,6 +747,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/fill-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the standing grants. */
+        get: operations["list_fill_grants"];
+        put?: never;
+        /** Create a standing grant: "this secret on this exact origin without asking". */
+        post: operations["create_fill_grant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-grants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a standing grant. */
+        delete: operations["revoke_fill_grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the fill secrets: names and allow-lists, never values. */
+        get: operations["list_fill_secrets"];
+        put?: never;
+        /** Create a fill secret with its allow-lists. The value is write-only. */
+        post: operations["create_fill_secret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Change a fill secret's value and/or allow-lists. */
+        put: operations["update_fill_secret"];
+        post?: never;
+        /** Delete a fill secret, its value and its standing grants. */
+        delete: operations["delete_fill_secret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/health": {
         parameters: {
             query?: never;
@@ -1999,7 +2070,16 @@ export interface components {
             id: string;
             /** @description Is the configured default. */
             is_default: boolean;
-            /** @description Model ids the provider reports (empty without a listing). */
+            /**
+             * @description Presentation metadata: recommended models first by rank, then the rest
+             *     by display name. Split on `recommended` for an "All models" expander.
+             *     No model is added just because it appears in the curated table.
+             */
+            model_details?: components["schemas"]["ModelMetadataDto"][];
+            /**
+             * @description Model ids in the same order as `model_details`. By default only current
+             *     chat candidates are shown; `?chat_only=false` includes everything.
+             */
             models: string[];
             /** @description Why the model list could not be fetched. */
             models_error?: string | null;
@@ -2089,6 +2169,24 @@ export interface components {
             bot_id: string;
             /** @description Title (default `New chat`). */
             title?: string | null;
+        };
+        /** @description Body of `POST /v1/fill-grants`. */
+        CreateFillGrant: {
+            /** @description The exact origin; it must already be on the secret's allowed list. */
+            origin: string;
+            /** @description The secret. */
+            secret: string;
+        };
+        /** @description Body of `POST /v1/fill-secrets`. */
+        CreateFillSecret: {
+            /** @description Name, letters/digits/`.`/`_`/`-` with `/` separators, at most 64 bytes. */
+            name: string;
+            /** @description Exact origins like `https://github.com` (scheme, host, port; no wildcard). */
+            origins?: string[];
+            /** @description Verified desktop program identities. */
+            programs?: string[];
+            /** @description The value. Write-only: no route returns it. */
+            value: string;
         };
         CreateSession: {
             /** Format: uuid */
@@ -2417,6 +2515,36 @@ export interface components {
             text?: null | components["schemas"]["UnifiedDiffDto"];
             verification: components["schemas"]["VerificationDto"];
             via_link_of?: string | null;
+        };
+        /** @description A standing grant: this secret on this exact origin without asking. */
+        FillGrantDto: {
+            /**
+             * Format: int64
+             * @description Creation time, milliseconds since the epoch.
+             */
+            created_at_ms: number;
+            /** @description Id used to revoke it. */
+            id: string;
+            /** @description The exact origin. */
+            origin: string;
+            /** @description The secret. */
+            secret: string;
+        };
+        /** @description One fill secret as the owner sees it. Never the value. */
+        FillSecretDto: {
+            /** @description Whether a value is stored. */
+            has_value: boolean;
+            /** @description Name the assistant writes in `secret` (for example `login/github`). */
+            name: string;
+            /** @description Exact web origins the secret may be typed on. */
+            origins: string[];
+            /** @description Verified desktop program identities the secret may be typed into. */
+            programs: string[];
+            /**
+             * Format: int64
+             * @description Last change, milliseconds since the epoch.
+             */
+            updated_at_ms: number;
         };
         FrameMetadata: {
             /** Format: int64 */
@@ -2923,6 +3051,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            folder?: null | components["schemas"]["McpFolderDto"];
             /** @description Secrets to collect first. */
             required_secrets: components["schemas"]["McpRequiredSecretDto"][];
             /** @description Environment variable -> secret name (stdio). */
@@ -2937,6 +3066,22 @@ export interface components {
             transport: components["schemas"]["McpTransportKind"];
             /** @description Endpoint (http). */
             url?: string | null;
+        };
+        /**
+         * @description Class of the last connect error of an MCP server, so a UI can show a
+         *     localized "what to do" next to the raw `error` text.
+         * @enum {string}
+         */
+        McpErrorKind: "runtime_missing" | "spawn" | "closed" | "timeout" | "config" | "needs_folder" | "other";
+        /**
+         * @description A folder the user must choose when adding a catalog entry; the app appends
+         *     it as the last argument.
+         */
+        McpFolderDto: {
+            /** @description Label of the folder field. */
+            label: string;
+            /** @description A safe default offered to the user (their Documents folder), if there is one. */
+            suggestion?: string | null;
         };
         /** @description OAuth configuration contains no credential values. */
         McpOAuthConfig: {
@@ -2996,6 +3141,7 @@ export interface components {
             };
             /** @description Most recent error, if any. */
             error?: string | null;
+            error_kind?: null | components["schemas"]["McpErrorKind"];
             /** @description Plain request headers (http). Not secrets. */
             headers?: {
                 [key: string]: string;
@@ -3013,6 +3159,11 @@ export interface components {
             };
             /** @description Connection state. */
             status: components["schemas"]["McpStatus"];
+            /**
+             * @description Last lines the server wrote to stderr (secret-redacted, bounded) while
+             *     it is in an error state; empty otherwise.
+             */
+            stderr_tail?: string[];
             /** @description Glob allow list over server-side tool names; empty = all. */
             tool_allow?: string[];
             /**
@@ -3222,6 +3373,22 @@ export interface components {
          * @enum {string}
          */
         Mode: "steer" | "queue";
+        /** @description Presentation only: never changes execution capabilities or configured ids. */
+        ModelMetadataDto: {
+            deprecated: boolean;
+            display_name: string;
+            id: string;
+            /**
+             * @description `chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,
+             *     `video`, or `other`. Kind describes primary use, not input modalities.
+             */
+            kind: string;
+            /** @description A short annotation such as `preview` or a live `OpenRouter` `free` id. */
+            note?: string | null;
+            recommended: boolean;
+            /** Format: int32 */
+            recommended_rank?: number | null;
+        };
         /** @enum {string} */
         Modifier: "alt" | "ctrl" | "meta" | "shift";
         /** @enum {string} */
@@ -3922,6 +4089,18 @@ export interface components {
         };
         /** @enum {string} */
         Units: "physical_px" | "css_px";
+        /**
+         * @description Body of `PUT /v1/fill-secrets/{name}`. Every field is optional; a value,
+         *     when given, replaces the stored one.
+         */
+        UpdateFillSecret: {
+            /** @description Replaces the allowed origins. */
+            origins?: string[] | null;
+            /** @description Replaces the allowed programs. */
+            programs?: string[] | null;
+            /** @description New value (write-only). */
+            value?: string | null;
+        };
         /** @description `GET /v1/usage`. */
         UsageSummary: {
             /** @description Per bot. */
@@ -5874,6 +6053,295 @@ export interface operations {
             };
         };
     };
+    list_fill_grants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillGrantDto"][];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_fill_grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFillGrant"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillGrantDto"];
+                };
+            };
+            /** @description the origin is not on the secret's allowed list */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_fill_grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Grant id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_fill_secrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillSecretDto"][];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description no fill secrets in this daemon */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_fill_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFillSecret"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillSecretDto"];
+                };
+            };
+            /** @description bad name, value or allow-list entry */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the name exists; use PUT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_fill_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret name, may contain `/` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFillSecret"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillSecretDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_fill_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret name, may contain `/` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     health: {
         parameters: {
             query?: never;
@@ -6601,7 +7069,13 @@ export interface operations {
     };
     list_providers: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Default true: omit deprecated and non-chat models. False exposes all
+                 *     kinds for advanced clients; it does not change bot execution.
+                 */
+                chat_only?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;

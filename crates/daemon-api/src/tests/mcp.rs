@@ -55,6 +55,8 @@ impl FakeMcp {
             enabled: input.enabled.unwrap_or(true),
             status: McpStatus::Connected,
             error: None,
+            error_kind: None,
+            stderr_tail: Vec::new(),
             tool_count: 2,
             category: input.category.clone().unwrap_or_else(|| "accounts".into()),
             trust_hints: input.trust_hints,
@@ -216,6 +218,7 @@ impl McpControl for FakeMcp {
                 secret_env: BTreeMap::new(),
                 secret_headers: BTreeMap::new(),
                 required_secrets: Vec::new(),
+                folder: None,
             },
         }]
     }
@@ -919,4 +922,100 @@ async fn every_mcp_mutation_is_audited_without_values() {
     for value in ["plain-env-value-31f", "code-value-9e", "secret-value-77d"] {
         assert!(!all.contains(value), "{value} in audit");
     }
+}
+
+/// 244-A review finding 1: MCP management starts programs and names host
+/// secrets, so every mutation is refused to every paired peer role (also under
+/// encoded, double-slash and trailing-slash spellings); GET stays open.
+#[tokio::test]
+async fn peer_router_refuses_every_mcp_mutation_to_every_role() {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt as _;
+    let (t, fake) = with_mcp();
+    let body = stdio_body("files").to_string();
+    let routes: Vec<(Method, String)> = vec![
+        (Method::POST, "/v1/mcp/servers".into()),
+        (Method::POST, "/v1/mcp/servers/".into()),
+        (Method::POST, "//v1//mcp//servers".into()),
+        (Method::POST, "/v1/mcp%2Fservers".into()),
+        (Method::PUT, "/v1/mcp/servers/files".into()),
+        (Method::PUT, "/v1/mcp/servers/files/".into()),
+        (Method::PUT, "/v1/mcp/servers%2Ffiles".into()),
+        (Method::PATCH, "/v1/mcp/servers/files".into()),
+        (Method::DELETE, "/v1/mcp/servers/files".into()),
+        (Method::DELETE, "/v1/mcp//servers/files".into()),
+        (Method::POST, "/v1/mcp/servers/files/reconnect".into()),
+        (Method::POST, "/v1/mcp/servers/files/reconnect/".into()),
+        (Method::POST, "/v1/mcp/servers//files/reconnect".into()),
+        (Method::POST, "/v1/mcp%2Fservers%2Ffiles%2Freconnect".into()),
+        (Method::POST, "/v1/mcp/anything-new".into()),
+    ];
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in &routes {
+            let mut req = Request::builder()
+                .method(method.clone())
+                .uri(path.as_str())
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role,
+            });
+            let resp = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "role={role:?} {method} {path} should be 403"
+            );
+        }
+        // Reading stays as it is today.
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/mcp/servers")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(crate::PeerIdentity {
+            key: "peer-key".into(),
+            role,
+        });
+        let resp = crate::peer_router(t.state.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        // Unchanged by this rule: desktop and phone peers read, node and host
+        // peers were already refused every non-desktop/phone route.
+        let want = if matches!(role, crate::PeerRole::Desktop | crate::PeerRole::Phone) {
+            StatusCode::OK
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        assert_eq!(resp.status(), want, "GET for {role:?}");
+    }
+    // An encoded `/` in a server-name segment is refused even for GET.
+    for role in [crate::PeerRole::Desktop, crate::PeerRole::Phone] {
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/mcp/servers/a%2Fb/tools")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(crate::PeerIdentity {
+            key: "peer-key".into(),
+            role,
+        });
+        let resp = crate::peer_router(t.state.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "%2F for {role:?}");
+    }
+    assert!(fake.list().is_empty(), "a peer must not add a server");
 }

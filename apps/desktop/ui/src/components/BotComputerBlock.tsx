@@ -7,6 +7,11 @@ import {
   visibleActions
 } from "../lib/liveViewState";
 import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
+import {
+  COMPUTER_FOOTER_KEY,
+  computerFooter,
+  computerPlaceholderKey
+} from "../lib/computerLabel";
 import { useLiveView } from "../state/LiveViewContext";
 import styles from "./BotComputerBlock.module.css";
 
@@ -36,6 +41,7 @@ export function BotComputerBlock() {
   const onHost = activeComputerId !== LOCAL_COMPUTER;
   const {
     selectedTarget,
+    targetsStatus,
     state,
     frameUrl,
     panelAction,
@@ -143,7 +149,7 @@ export function BotComputerBlock() {
                   ? t(`liveView.reasons.${summary.reason}`, {
                       defaultValue: t("liveView.reasons.unavailable")
                     })
-                  : t("liveView.noTargets")}
+                  : t(computerPlaceholderKey(targetsStatus))}
               </span>
             </div>
           )}
@@ -169,11 +175,7 @@ export function BotComputerBlock() {
             </span>
           </span>
           <span className={styles.cap}>
-            {summary?.available
-              ? summary.canInput
-                ? t("liveView.interactive")
-                : t("liveView.viewOnly")
-              : t("liveView.states.unavailable")}
+            {t(COMPUTER_FOOTER_KEY[computerFooter(summary, targetsStatus)])}
           </span>
         </div>
       </button>
