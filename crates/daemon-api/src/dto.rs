@@ -894,3 +894,98 @@ pub struct ReleaseResult {
     pub request_id: Uuid,
     pub state: String,
 }
+
+/// Which runs a Stop targets (`POST /v1/runs/stop`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopScope {
+    /// Every non-terminal run of the user that exists when the daemon first
+    /// receives the `stop_id`, plus the listed ids. Local user only.
+    AllExisting,
+    /// Exactly the listed ids that exist and are cancellable.
+    Listed,
+}
+
+/// Body of `POST /v1/runs/stop`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StopRunsInput {
+    /// One user decision to stop, minted by the caller. The daemon fixes the
+    /// target set the first time it sees this id; a repeat never changes it.
+    pub stop_id: Uuid,
+    /// Runs the caller knew about (at most 1024). Only the first receipt reads them.
+    #[serde(default)]
+    pub run_ids: Vec<Uuid>,
+    /// Which runs the Stop targets besides `run_ids`.
+    pub scope: StopScope,
+}
+
+/// What happened to one run of a Stop's target set.
+///
+/// `cancelled` is the only outcome that means the run has stopped. For a live
+/// run the daemon can only fire the run's cancel token: `cancel_requested`
+/// says it did so, and the run's effects (a tool call, a shell child, a
+/// browser or desktop action) have ceased only once its `state` is terminal or
+/// `run_finished` arrives. A human takeover is not touched by this route
+/// (`/v1/control/override` handles it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopOutcome {
+    /// The run is cancelled (terminal) because of this Stop.
+    Cancelled,
+    /// The cancel was issued but the run is not terminal yet. A repeat of the
+    /// same `stop_id` re-issues it and updates this outcome once the run ended.
+    CancelRequested,
+    /// The run was already finished when the Stop reached the daemon (or ended
+    /// by itself before the cancel took effect).
+    AlreadyTerminal,
+    /// The id is not a run of this user. Never cancelled later, even if a run
+    /// with that id appears.
+    NotFound,
+    /// The cancel failed; a repeat of the same `stop_id` retries it.
+    Failed,
+}
+
+/// One member of a Stop's target set.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunResult {
+    /// Run id.
+    pub run_id: Uuid,
+    /// Cancel outcome.
+    pub outcome: StopOutcome,
+    /// Current run state, if the run exists.
+    pub state: Option<String>,
+    /// Why the cancel failed.
+    pub error: Option<String>,
+}
+
+/// Response of `POST /v1/runs/stop`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunsResponse {
+    /// Echo of the request's `stop_id`.
+    pub stop_id: Uuid,
+    /// `true` when this call fixed the target set, `false` for a repeat.
+    pub first_seen: bool,
+    /// `true` when this `stop_id` was seen before but its target set is no
+    /// longer kept (expired or evicted): nothing was cancelled and `results`
+    /// is empty. The original target set is unknown, so the daemon will not
+    /// guess it. To retry, send a NEW `stop_id` with `scope: listed` and the
+    /// run ids the client still holds as stop-held. `all_existing` with a new
+    /// `stop_id` sweeps every run open now, including runs started after the
+    /// original Stop: use it only for a new user decision. The client should
+    /// tell the user that the Stop expired.
+    #[serde(default)]
+    pub expired: bool,
+    /// `false` when the audit row of this call could not be written. Only the
+    /// local user's Stop proceeds without it (peers fail with 500).
+    #[serde(default = "audited_default")]
+    pub audited: bool,
+    /// Every member of the target set. A run that is not listed was not
+    /// targeted (it was created after the first receipt). A repeat retries
+    /// `failed` members and re-issues the cancel of `cancel_requested` ones;
+    /// terminal and unknown members are never touched again.
+    pub results: Vec<StopRunResult>,
+}
+
+fn audited_default() -> bool {
+    true
+}

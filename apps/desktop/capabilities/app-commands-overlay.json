@@ -1,0 +1,10 @@
+{
+  "identifier": "app-commands-overlay",
+  "description": "Custom app commands the per-monitor overlay windows may call: read the control state only",
+  "windows": [
+    "overlay-*"
+  ],
+  "permissions": [
+    "allow-get-control-state"
+  ]
+}

@@ -36,6 +36,7 @@ mod schedule;
 mod schedule_tools;
 pub mod skills;
 mod sse;
+mod stop;
 pub mod web;
 mod web_routes;
 
@@ -193,6 +194,10 @@ struct Inner {
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
     policy_lock: parking_lot::Mutex<()>,
+    /// Target sets of `POST /v1/runs/stop` (see `stop`).
+    stops: parking_lot::Mutex<stop::StopBook>,
+    #[cfg(test)]
+    stop_seam: stop::Seam,
     restore_locks: parking_lot::Mutex<std::collections::HashSet<RunId>>,
     #[cfg(test)]
     restore_fail_at: parking_lot::Mutex<Option<usize>>,
@@ -339,6 +344,9 @@ impl AppState {
             secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
+            stops: parking_lot::Mutex::new(stop::StopBook::default()),
+            #[cfg(test)]
+            stop_seam: stop::Seam::default(),
             restore_locks: parking_lot::Mutex::new(std::collections::HashSet::new()),
             #[cfg(test)]
             restore_fail_at: parking_lot::Mutex::new(None),
@@ -729,6 +737,13 @@ impl AppState {
     pub(crate) fn set_policy_load_error(&self, e: Option<String>) {
         *self.0.policy_load_error.lock() = e;
     }
+    #[cfg(test)]
+    pub(crate) fn stop_seam(&self) -> &stop::Seam {
+        &self.0.stop_seam
+    }
+    pub(crate) fn stops(&self) -> &parking_lot::Mutex<stop::StopBook> {
+        &self.0.stops
+    }
     pub(crate) fn policy_lock(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.0.policy_lock.lock()
     }
@@ -864,6 +879,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/approvals/{call_id}", post(r::decide_approval))
         .route("/v1/questions/{call_id}", post(r::answer_question))
         .route("/v1/runs", get(r::list_runs))
+        .route(
+            "/v1/runs/stop",
+            post(stop::stop_runs).layer(axum::extract::DefaultBodyLimit::max(stop::MAX_BODY_BYTES)),
+        )
         .route("/v1/runs/{id}", get(r::get_run))
         .route("/v1/runs/{id}/cancel", post(r::cancel_run))
         .route("/v1/runs/{id}/resume", post(r::resume_run))
