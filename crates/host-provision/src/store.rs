@@ -30,6 +30,30 @@ pub struct HostRecord {
     pub installed_version: Option<String>,
 }
 
+impl HostRecord {
+    /// A record read from disk is untrusted (the file could have been edited):
+    /// every field that reaches `ssh` is validated again, and the record must
+    /// belong to the directory it was found in.
+    pub fn is_sound(&self, dir_name: &str) -> bool {
+        crate::validate::name(&self.name).is_ok_and(|n| n == self.name && n == dir_name)
+            && crate::validate::host(&self.host).is_ok_and(|h| h == self.host)
+            && crate::validate::user(&self.user).is_ok_and(|u| u == self.user)
+            && self.port != 0
+            && self.key_path.as_ref().is_none_or(|p| {
+                let t = p.to_string_lossy();
+                !t.chars().any(|c| c.is_control() || c == '"')
+            })
+            && self
+                .desktop_key
+                .as_ref()
+                .is_none_or(|k| crate::validate::device_key(k).is_ok())
+            && self
+                .paired_host_id
+                .as_ref()
+                .is_none_or(|k| crate::validate::device_key(k).is_ok())
+    }
+}
+
 pub struct Store {
     root: PathBuf,
 }
@@ -66,7 +90,8 @@ impl Store {
 
     pub fn load(&self, name: &str) -> Option<HostRecord> {
         let text = fs::read_to_string(self.dir(name).join("host.json")).ok()?;
-        serde_json::from_str(&text).ok()
+        let rec: HostRecord = serde_json::from_str(&text).ok()?;
+        rec.is_sound(name).then_some(rec)
     }
 
     pub fn save(&self, rec: &HostRecord) -> Result<(), Error> {

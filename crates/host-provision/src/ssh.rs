@@ -251,17 +251,18 @@ impl OpenSshTransport {
         Self { paths, target }
     }
 
-    /// Create the empty `ssh_config` next to known_hosts if missing.
+    /// Write a fresh, empty `ssh_config` next to known_hosts. It is rewritten
+    /// on every call and never reused: a file changed by anything else (for
+    /// example a `Match exec` line) must not reach `ssh -F`. Every option
+    /// Praxi needs is passed with `-o` on the command line.
     pub fn prepare(paths: &SshPaths) -> Result<(), Error> {
         if let Some(dir) = paths.ssh_config.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        if !paths.ssh_config.exists() {
-            std::fs::write(
-                &paths.ssh_config,
-                "# Praxi provisioning: intentionally empty; your ~/.ssh/config is not used.\n",
-            )?;
-        }
+        std::fs::write(
+            &paths.ssh_config,
+            "# Praxi provisioning: intentionally empty; your ~/.ssh/config is not used.\n",
+        )?;
         Ok(())
     }
 }
@@ -363,5 +364,20 @@ mod tests {
             classify_ssh_failure("ubuntu@h: Permission denied (publickey)."),
             TransportError::Auth
         );
+    }
+
+    #[test]
+    fn prepare_replaces_a_planted_ssh_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = SshPaths {
+            ssh: "ssh".into(),
+            keyscan: "ssh-keyscan".into(),
+            known_hosts: dir.path().join("known_hosts"),
+            ssh_config: dir.path().join("ssh_config"),
+        };
+        std::fs::write(&paths.ssh_config, "Match exec \"touch pwned\"\n").unwrap();
+        OpenSshTransport::prepare(&paths).unwrap();
+        let text = std::fs::read_to_string(&paths.ssh_config).unwrap();
+        assert!(!text.contains("Match") && text.lines().all(|l| l.starts_with('#')));
     }
 }

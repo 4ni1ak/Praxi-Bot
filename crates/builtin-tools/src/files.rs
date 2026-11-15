@@ -1485,11 +1485,14 @@ fn canonical_name(part: &str) -> String {
 /// Directories under the data dir whose contents grant authority or are the
 /// daemon's own records, so the bot's file tools never touch them:
 /// `peer` (pairing keys and device list), `bots` and `profiles` (bot profiles
-/// and their policies), `runs` (the event logs the UI and replay trust).
+/// and their policies), `runs` (the event logs the UI and replay trust),
+/// `hosts` (server provisioning state: the pinned SSH `known_hosts`, the
+/// `ssh_config` handed to `ssh -F` and the saved server records; a planted
+/// `Match exec` line would run as the daemon user).
 /// Deliberately NOT protected, with the reason: `skills` and `workflows`
 /// (the bot authors them on purpose), `checkpoints` (the file tools' own undo
 /// store), `files`, `spill` and `screenshots` (bot output), logs (no authority).
-const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
+const DAEMON_STATE_DIRS: [&str; 5] = ["peer", "bots", "profiles", "runs", "hosts"];
 
 /// The daemon's own state files directly under the data dir, each one a file
 /// that grants authority or forges history if tampered with:
@@ -3809,6 +3812,24 @@ mod tests {
         do_cp_restore(&sh, &cp.id).unwrap();
         assert_eq!(fs::read_link(&dangling).unwrap(), missing);
         assert!(!missing.exists());
+    }
+
+    #[test]
+    fn server_provisioning_state_is_protected_for_every_spelling() {
+        // `hosts/ssh_config` goes to `ssh -F` and `hosts/known_hosts` pins server
+        // identities: a bot must not write, move, delete or restore them.
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            "hosts/ssh_config",
+            "hosts/known_hosts",
+            "hosts/oracle/host.json",
+            "HOSTS/ssh_config",
+            "hosts./ssh_config",
+            "hosts/ssh_config::$DATA",
+        ] {
+            assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
+        }
+        assert!(!is_protected(&dir.path().join("hostsfile.txt"), dir.path()));
     }
 
     #[test]
