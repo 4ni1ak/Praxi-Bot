@@ -831,7 +831,7 @@ export class MockApiClient extends ApiClient {
       case "GET /providers":
         if (seg[1] === "cli") {
           return ok(this.detectedProvidersList.map((detected) => {
-            const native = ["codex", "opencode", "gemini"].includes(detected.id);
+            const native = ["codex", "opencode", "gemini", "agy"].includes(detected.id);
             const entry = this.providersDto.configured.find((p) => p.id === `cli:${detected.id}`);
             const pkg = MOCK_NPM[detected.id];
             return {
@@ -884,7 +884,7 @@ export class MockApiClient extends ApiClient {
         if (seg[1] === "cli" && seg[2] === "enable") {
           const body = (opts.body ?? {}) as { id?: string };
           const id = body.id ?? "";
-          if (!["claude", "codex", "opencode", "gemini"].includes(id)) {
+          if (!["claude", "codex", "opencode", "gemini", "agy"].includes(id)) {
             throw new ApiError(
               400,
               "bad_request",
