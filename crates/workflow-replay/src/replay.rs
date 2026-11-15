@@ -583,6 +583,42 @@ impl Replayer {
         gate.authorize(&req).await.map_err(Stop::Denied)
     }
 
+    /// [`Self::authorize`] for a desktop input step the replayer sends itself.
+    /// `control` is the program the step would reach. When a run-scoped control
+    /// grant covers the step the returned guard must go with every dispatch of
+    /// it, so the backend checks the window right before it sends.
+    async fn authorize_input(
+        &self,
+        gate: &dyn ToolGate,
+        tool: &str,
+        input: Value,
+        control: Option<tool_registry::ControlTarget>,
+    ) -> Result<Option<desktop_api::ActGuard>, Stop> {
+        let content = self
+            .handles
+            .tools
+            .get(tool)
+            .map_or_else(|| content_for_unnamed(tool), |t| t.spec().content);
+        let req = GateRequest {
+            run_id: self.opts.run_id.clone(),
+            tool: tool.to_owned(),
+            category: PermissionCategory::Desktop,
+            effect: Effect::Write,
+            raw_command: raw_command_for(tool, &input),
+            input,
+            content,
+            control,
+        };
+        let identity = gate.authorize_control(&req).await.map_err(Stop::Denied)?;
+        Ok(identity.map(|id| desktop_api::ActGuard {
+            expect: desktop_api::ProcessIdentity {
+                image_path: id.image_path,
+                pid: id.pid,
+                start_time: id.start_time,
+            },
+        }))
+    }
+
     /// Ask the desktop control gate (if any) before a mutating action.
     async fn control_gate(
         &self,
@@ -919,19 +955,48 @@ impl Replayer {
             ),
             DesktopActionKind::Key => ("desktop_key", json!({"keys": value, "index": index_json})),
         };
-        self.authorize(
-            gate,
-            tool,
-            PermissionCategory::Desktop,
-            Effect::Write,
-            input,
-        )
-        .await?;
+        // Typing, keys and value setting are the calls a run-scoped control
+        // grant can cover. A click is not input in that sense and never has a
+        // target, so it takes the plain path.
+        let kind = match d.action {
+            DesktopActionKind::Click => None,
+            DesktopActionKind::Type => Some(tool_registry::ControlKind::Type),
+            DesktopActionKind::SetValue => Some(tool_registry::ControlKind::SetValue),
+            DesktopActionKind::Key => Some(tool_registry::ControlKind::Key),
+        };
+        let secure_element = match (&snap, &found) {
+            (Some(s), Some(f)) => s.nodes[f.node].states.iter().any(|st| st == "secure"),
+            _ => false,
+        };
+        let chord: Option<Vec<String>> = (d.action == DesktopActionKind::Key).then(|| {
+            value
+                .clone()
+                .unwrap_or_default()
+                .split('+')
+                .map(|k| k.trim().to_owned())
+                .filter(|k| !k.is_empty())
+                .collect()
+        });
+        let control = match kind {
+            Some(kind) => {
+                builtin_tools::resolve_input_target(
+                    backend.as_ref(),
+                    kind,
+                    chord.as_deref(),
+                    secure_element,
+                    d.action == DesktopActionKind::Key && target.is_none(),
+                )
+                .await
+            }
+            None => None,
+        };
+        let guard = self.authorize_input(gate, tool, input, control).await?;
+        let guard = guard.as_ref();
 
         match d.action {
             DesktopActionKind::Click => {
                 let t = target.ok_or_else(|| Stop::Failed("click without target".into()))?;
-                dispatch(backend, Action::Click { target: t, method }, permit).await?;
+                dispatch(backend, Action::Click { target: t, method }, permit, None).await?;
             }
             DesktopActionKind::Type => {
                 let t = target.ok_or_else(|| Stop::Failed("type without target".into()))?;
@@ -943,6 +1008,7 @@ impl Replayer {
                         method: ClickMethod::Global,
                     },
                     permit,
+                    guard,
                 )
                 .await?;
                 dispatch(
@@ -951,6 +1017,7 @@ impl Replayer {
                         text: value.unwrap_or_default(),
                     },
                     permit,
+                    guard,
                 )
                 .await?;
             }
@@ -963,6 +1030,7 @@ impl Replayer {
                         value: value.unwrap_or_default(),
                     },
                     permit,
+                    guard,
                 )
                 .await?;
             }
@@ -975,6 +1043,7 @@ impl Replayer {
                             method: ClickMethod::Global,
                         },
                         permit,
+                        guard,
                     )
                     .await?;
                 }
@@ -987,7 +1056,7 @@ impl Replayer {
                 if keys.is_empty() {
                     return Err(Stop::Failed("empty key chord".into()));
                 }
-                dispatch(backend, Action::KeyPress { keys }, permit).await?;
+                dispatch(backend, Action::KeyPress { keys }, permit, guard).await?;
             }
         }
         sleep(self.opts.action_settle).await;
@@ -1276,10 +1345,19 @@ async fn dispatch(
     backend: &Arc<dyn DesktopBackend>,
     action: Action,
     permit: &ActionPermit,
+    guard: Option<&desktop_api::ActGuard>,
 ) -> Result<(), Stop> {
     let backend = Arc::clone(backend);
+    let guard = guard.cloned();
     let r = permit
-        .protect(async move { backend.act(action).await })
+        .protect(async move {
+            match guard {
+                // Covered by a run-scoped control grant: the backend checks the
+                // window right before it sends, replay included.
+                Some(g) => backend.act_guarded(action, g).await,
+                None => backend.act(action).await,
+            }
+        })
         .await
         .map_err(Stop::Failed)?
         .map_err(|e| Stop::Failed(e.to_string()))?;

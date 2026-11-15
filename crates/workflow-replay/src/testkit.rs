@@ -56,6 +56,10 @@ pub struct FakeDesktop {
     pub launched: Mutex<Vec<String>>,
     /// Window that appears when something is launched.
     pub on_launch: Mutex<Option<WindowInfo>>,
+    /// The program input would reach now; `None` = cannot be named.
+    pub input: Mutex<Option<desktop_api::InputTarget>>,
+    /// Actions that passed `act_guarded` and ran.
+    pub guarded: Mutex<Vec<Action>>,
     generation: Mutex<u64>,
 }
 
@@ -67,13 +71,60 @@ impl FakeDesktop {
             actions: Mutex::new(Vec::new()),
             launched: Mutex::new(Vec::new()),
             on_launch: Mutex::new(None),
+            input: Mutex::new(None),
+            guarded: Mutex::new(Vec::new()),
             generation: Mutex::new(0),
         })
+    }
+
+    /// A program with a complete identity, for the run-control tests.
+    pub fn notepad_target() -> desktop_api::InputTarget {
+        desktop_api::InputTarget {
+            window_id: 1,
+            title: "A - App".into(),
+            class: "Notepad".into(),
+            identity: desktop_api::ProcessIdentity {
+                image_path: "C:\\Windows\\notepad.exe".into(),
+                pid: 101,
+                start_time: 77,
+            },
+            elevated: Some(false),
+            password_focus: false,
+        }
     }
 }
 
 #[async_trait]
 impl DesktopBackend for FakeDesktop {
+    async fn input_target(&self) -> Result<Option<desktop_api::InputTarget>, DesktopError> {
+        Ok(self.input.lock().clone())
+    }
+
+    async fn act_guarded(
+        &self,
+        action: Action,
+        guard: desktop_api::ActGuard,
+    ) -> Result<ActionResult, DesktopError> {
+        let now = self.input.lock().clone().ok_or_else(|| {
+            DesktopError::GuardRefused(desktop_api::Refusal::NoIdentity.code().into())
+        })?;
+        desktop_api::guard::check_guard(&guard, &now)
+            .map_err(|r| DesktopError::GuardRefused(r.code().into()))?;
+        self.guarded.lock().push(action.clone());
+        self.act(action).await
+    }
+
+    fn key_chord_refusal(&self, keys: &[String]) -> Option<desktop_api::Refusal> {
+        keys.iter()
+            .any(|k| {
+                matches!(
+                    k.trim().to_lowercase().as_str(),
+                    "win" | "super" | "cmd" | "meta"
+                )
+            })
+            .then_some(desktop_api::Refusal::Chord)
+    }
+
     async fn snapshot(&self, scope: Option<u64>) -> Result<Snapshot, DesktopError> {
         let mut g = self.generation.lock();
         *g += 1;
@@ -242,6 +293,33 @@ impl ToolGate for RecordingGate {
             return Err(format!("permission denied: {} was refused", req.tool));
         }
         Ok(())
+    }
+}
+
+/// A gate that behaves as if a run-scoped control grant covered every eligible
+/// target it is shown, and records what it was shown.
+#[derive(Default)]
+pub struct CoveringGate {
+    pub requests: Mutex<Vec<GateRequest>>,
+}
+
+#[async_trait]
+impl ToolGate for CoveringGate {
+    async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
+        self.requests.lock().push(req.clone());
+        Ok(())
+    }
+
+    async fn authorize_control(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.authorize(req).await?;
+        Ok(req
+            .control
+            .as_ref()
+            .filter(|t| t.eligible())
+            .map(|t| t.identity.clone()))
     }
 }
 
