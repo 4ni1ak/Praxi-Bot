@@ -12,6 +12,34 @@ use secret_store::{MemoryStore, SecretError, SecretValue};
 
 use super::*;
 
+// Portable Windows-like credential lookup, including case-variant enumeration.
+// No OS keychain is accessed by this fixture.
+#[derive(Default)]
+struct CaseInsensitiveStore(secret_store::MemoryStore);
+
+impl secret_store::SecretStore for CaseInsensitiveStore {
+    fn get(
+        &self,
+        name: &str,
+    ) -> std::result::Result<Option<secret_store::SecretValue>, secret_store::SecretError> {
+        secret_store::SecretStore::get(&self.0, &name.to_ascii_lowercase())
+    }
+    fn set(&self, name: &str, value: &str) -> std::result::Result<(), secret_store::SecretError> {
+        secret_store::SecretStore::set(&self.0, &name.to_ascii_lowercase(), value)
+    }
+    fn delete(&self, name: &str) -> std::result::Result<bool, secret_store::SecretError> {
+        secret_store::SecretStore::delete(&self.0, &name.to_ascii_lowercase())
+    }
+    fn list_names(&self) -> std::result::Result<Vec<String>, secret_store::SecretError> {
+        secret_store::SecretStore::list_names(&self.0).map(|names| {
+            names
+                .into_iter()
+                .map(|name| name.to_ascii_uppercase())
+                .collect()
+        })
+    }
+}
+
 pub(super) fn database(dir: &Path, populated: bool) {
     drop(storage::Storage::open(dir).unwrap());
     if populated {
@@ -1151,11 +1179,47 @@ async fn all_does_not_carry_mailbox_passwords_unless_named() {
     assert_eq!(manifest.secret_names, ["email/work/password"]);
 }
 
+async fn rejected_host_alias_import(bytes: &[u8], name: &str) {
+    let forged = replace_payload(
+        bytes,
+        "secrets.json",
+        serde_json::to_vec(&serde_json::json!({(name):"forged"})).unwrap(),
+    );
+    let forged = alter_manifest(&forged, |m| {
+        m.secret_names = vec![name.into()];
+    });
+    let target = tempfile::tempdir().unwrap();
+    let store = CaseInsensitiveStore::default();
+    store.set(name, "unchanged host value").unwrap();
+    let error = import(
+        target.path(),
+        &store,
+        forged.as_slice(),
+        ImportOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("host credentials cannot be imported")
+    );
+    assert_eq!(
+        store
+            .get(&name.to_ascii_lowercase())
+            .unwrap()
+            .unwrap()
+            .expose(),
+        "unchanged host value"
+    );
+    assert!(!target.path().join("bot.db").exists());
+}
+
 #[tokio::test]
 async fn mcp_host_credentials_never_export_even_by_name_and_cannot_import() {
     let dir = tempfile::tempdir().unwrap();
     database(dir.path(), false);
-    let store = MemoryStore::new();
+    let store = CaseInsensitiveStore::default();
     store.set("provider/key", "ordinary").unwrap();
     store
         .set("mcp-server/token/id", "scoped-secret-that-must-not-travel")
@@ -1173,10 +1237,18 @@ async fn mcp_host_credentials_never_export_even_by_name_and_cannot_import() {
     )
     .await
     .unwrap();
-    assert_eq!(manifest.secret_names, ["provider/key"]);
+    assert_eq!(manifest.secret_names, ["PROVIDER/KEY"]);
     let secret = b"scoped-secret-that-must-not-travel";
     assert!(!bytes.windows(secret.len()).any(|w| w == secret));
-    for name in ["mcp-server/token/id", "mcp-server/meta/id"] {
+    for name in [
+        "mcp-server/token/id",
+        "mcp-server/meta/id",
+        "MCP-SERVER/TOKEN/ID",
+        "MCP-SERVER/META/ID",
+        "McP-SeRvEr/ToKeN/Id",
+        "McP-SeRvEr/MeTa/Id",
+    ] {
+        assert!(store.get(name).unwrap().is_some());
         let error = export(
             dir.path(),
             &store,
@@ -1193,20 +1265,21 @@ async fn mcp_host_credentials_never_export_even_by_name_and_cannot_import() {
                 .to_string()
                 .contains("host credentials cannot be exported")
         );
+        rejected_host_alias_import(&bytes, name).await;
     }
-    let forged = replace_payload(
-        &bytes,
-        "secrets.json",
-        serde_json::to_vec(&serde_json::json!({"mcp-server/token/id":"forged"})).unwrap(),
-    );
-    let forged = alter_manifest(&forged, |m| {
-        m.secret_names = vec!["mcp-server/token/id".into()];
-    });
-    let error = rejected(&forged, ImportOptions::default()).await;
-    assert!(
-        error
-            .to_string()
-            .contains("host credentials cannot be imported")
+    let target = tempfile::tempdir().unwrap();
+    let imported = CaseInsensitiveStore::default();
+    import(
+        target.path(),
+        &imported,
+        bytes.as_slice(),
+        ImportOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        imported.get("provider/key").unwrap().unwrap().expose(),
+        "ordinary"
     );
 }
 

@@ -21,6 +21,34 @@ use tool_registry::{
 use tower::ServiceExt;
 
 use super::*;
+
+// Portable Windows-like credential lookup, including case-variant enumeration.
+// No OS keychain is accessed by this fixture.
+#[derive(Default)]
+struct CaseInsensitiveStore(secret_store::MemoryStore);
+
+impl secret_store::SecretStore for CaseInsensitiveStore {
+    fn get(
+        &self,
+        name: &str,
+    ) -> std::result::Result<Option<secret_store::SecretValue>, secret_store::SecretError> {
+        secret_store::SecretStore::get(&self.0, &name.to_ascii_lowercase())
+    }
+    fn set(&self, name: &str, value: &str) -> std::result::Result<(), secret_store::SecretError> {
+        secret_store::SecretStore::set(&self.0, &name.to_ascii_lowercase(), value)
+    }
+    fn delete(&self, name: &str) -> std::result::Result<bool, secret_store::SecretError> {
+        secret_store::SecretStore::delete(&self.0, &name.to_ascii_lowercase())
+    }
+    fn list_names(&self) -> std::result::Result<Vec<String>, secret_store::SecretError> {
+        secret_store::SecretStore::list_names(&self.0).map(|names| {
+            names
+                .into_iter()
+                .map(|name| name.to_ascii_uppercase())
+                .collect()
+        })
+    }
+}
 use crate::{DaemonConfig, PeerRole};
 
 const OWNER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -72,7 +100,7 @@ struct Fixture {
     _dir: tempfile::TempDir,
     state: AppState,
     app: Router,
-    store: Arc<secret_store::MemoryStore>,
+    store: Arc<dyn SecretStore>,
     provider: Arc<RecordingProvider>,
     hits: Arc<AtomicUsize>,
     bot: Uuid,
@@ -104,6 +132,10 @@ async fn request(
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_store(Arc::new(secret_store::MemoryStore::new())).await
+    }
+
+    async fn with_store(store: Arc<dyn SecretStore>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
         let registry = ToolRegistry::new();
@@ -142,7 +174,6 @@ impl Fixture {
             config,
         );
         let state = AppState::new(agent, storage, DaemonConfig::new(OWNER)).unwrap();
-        let store = Arc::new(secret_store::MemoryStore::new());
         state.set_secret_store(store.clone());
         let app = crate::router(state.clone());
         let (status, body) = request(
@@ -192,6 +223,52 @@ impl Fixture {
         )
         .await
     }
+}
+
+#[tokio::test]
+async fn generic_secret_api_rejects_case_aliases_on_a_case_insensitive_store() {
+    let store = Arc::new(CaseInsensitiveStore::default());
+    store.set("mcp-server/token/id", "host value").unwrap();
+    store.set("mcp-server/meta/id", "host value").unwrap();
+    let f = Fixture::with_store(store.clone()).await;
+    for name in [
+        "mcp-server/token/id",
+        "mcp-server/meta/id",
+        "MCP-SERVER/TOKEN/ID",
+        "MCP-SERVER/META/ID",
+        "McP-SeRvEr/ToKeN/Id",
+        "McP-SeRvEr/MeTa/Id",
+    ] {
+        assert_eq!(store.get(name).unwrap().unwrap().expose(), "host value");
+        for path in [
+            format!("/v1/secrets/{name}"),
+            format!("/v1/secrets/{}", name.replace('/', "%2F")),
+        ] {
+            let (status, _) = request(
+                &f.app,
+                OWNER,
+                Method::POST,
+                &path,
+                Some(json!({"value":"replacement"})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+            assert_eq!(store.get(name).unwrap().unwrap().expose(), "host value");
+        }
+    }
+    let (status, _) = request(
+        &f.app,
+        OWNER,
+        Method::POST,
+        "/v1/secrets/provider/key",
+        Some(json!({"value":"ordinary value"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        store.get("PROVIDER/KEY").unwrap().unwrap().expose(),
+        "ordinary value"
+    );
 }
 
 #[tokio::test]

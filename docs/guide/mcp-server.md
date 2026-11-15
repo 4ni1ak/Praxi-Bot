@@ -141,6 +141,8 @@ approval endpoints reject them. Every paired peer role is refused on all four
 MCP facade and credential-management routes.
 
 The reserved `mcp-server/` secret-store namespace contains the bearer and grant.
+Every ASCII case spelling is reserved on all platforms, including the aliases
+that Windows credential storage treats as the same name.
 It cannot be selected as a provider or connector secret, modified through generic
 secret commands, exported in a state bundle, or imported from one. A moved
 installation needs newly issued MCP credentials. Audit entries contain operation

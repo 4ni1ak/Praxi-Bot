@@ -309,6 +309,8 @@ fn invalid_secret_name_is_a_config_error() {
         "__reserved",
         "mcp-server/token/test",
         "mcp-server/meta/test",
+        "MCP-SERVER/TOKEN/test",
+        "McP-SeRvEr/MeTa/test",
     ] {
         // Invalid references are rejected before an Auth configuration or a
         // tool can use them; deserialization must preserve SecretRef checks.

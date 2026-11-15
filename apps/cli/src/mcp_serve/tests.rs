@@ -7,6 +7,34 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
 
+// Portable Windows-like credential lookup, including case-variant enumeration.
+// No OS keychain is accessed by this fixture.
+#[derive(Default)]
+struct CaseInsensitiveStore(secret_store::MemoryStore);
+
+impl secret_store::SecretStore for CaseInsensitiveStore {
+    fn get(
+        &self,
+        name: &str,
+    ) -> std::result::Result<Option<secret_store::SecretValue>, secret_store::SecretError> {
+        secret_store::SecretStore::get(&self.0, &name.to_ascii_lowercase())
+    }
+    fn set(&self, name: &str, value: &str) -> std::result::Result<(), secret_store::SecretError> {
+        secret_store::SecretStore::set(&self.0, &name.to_ascii_lowercase(), value)
+    }
+    fn delete(&self, name: &str) -> std::result::Result<bool, secret_store::SecretError> {
+        secret_store::SecretStore::delete(&self.0, &name.to_ascii_lowercase())
+    }
+    fn list_names(&self) -> std::result::Result<Vec<String>, secret_store::SecretError> {
+        secret_store::SecretStore::list_names(&self.0).map(|names| {
+            names
+                .into_iter()
+                .map(|name| name.to_ascii_uppercase())
+                .collect()
+        })
+    }
+}
+
 const TOKEN: &str = "praxi-mcp.00000000-0000-0000-0000-000000000001.scoped-test-credential";
 
 fn catalog(name: &str) -> Value {
@@ -224,21 +252,39 @@ fn clap_defaults_to_tasks_and_only_accepts_explicit_layers_and_safe_ttl() {
 #[test]
 fn general_secret_cli_cannot_read_or_replace_scoped_credentials() {
     use secret_store::SecretStore;
-    let store = secret_store::MemoryStore::new();
-    let name = "mcp-server/token/test";
-    store.set(name, TOKEN).unwrap();
+    let store = CaseInsensitiveStore::default();
+    store.set("mcp-server/token/id", TOKEN).unwrap();
+    store.set("mcp-server/meta/id", TOKEN).unwrap();
     let ordinary = "provider/test";
     store.set(ordinary, "original").unwrap();
     let mut names = Vec::new();
     crate::commands::secrets_list(&store, &mut |v| names.push(v.to_owned())).unwrap();
-    assert!(!names.join(" ").contains("mcp-server"));
-    assert!(names.iter().any(|name| name == ordinary));
     assert!(
-        crate::commands::secrets_set(&store, name, &secret_store::SecretValue::new("replacement"))
-            .is_err()
+        !names
+            .iter()
+            .any(|name| name.to_ascii_lowercase().starts_with("mcp-server/"))
     );
-    assert!(crate::commands::secrets_delete(&store, name).is_err());
-    assert_eq!(store.get(name).unwrap().unwrap().expose(), TOKEN);
+    assert!(names.iter().any(|name| name.eq_ignore_ascii_case(ordinary)));
+    for name in [
+        "mcp-server/token/id",
+        "mcp-server/meta/id",
+        "MCP-SERVER/TOKEN/ID",
+        "MCP-SERVER/META/ID",
+        "McP-SeRvEr/ToKeN/Id",
+        "McP-SeRvEr/MeTa/Id",
+    ] {
+        assert_eq!(store.get(name).unwrap().unwrap().expose(), TOKEN);
+        assert!(
+            crate::commands::secrets_set(
+                &store,
+                name,
+                &secret_store::SecretValue::new("replacement")
+            )
+            .is_err()
+        );
+        assert!(crate::commands::secrets_delete(&store, name).is_err());
+        assert_eq!(store.get(name).unwrap().unwrap().expose(), TOKEN);
+    }
     crate::commands::secrets_set(&store, ordinary, &secret_store::SecretValue::new("updated"))
         .unwrap();
     assert_eq!(store.get(ordinary).unwrap().unwrap().expose(), "updated");
