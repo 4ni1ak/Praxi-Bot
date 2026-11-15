@@ -243,7 +243,7 @@ pub async fn export(
         SecretSelection::All => store
             .list_names()?
             .into_iter()
-            .filter(|n| !is_mailbox_password(n))
+            .filter(|n| !is_mailbox_password(n) && !secret_store::is_reserved_name(n))
             .collect(),
         SecretSelection::Names(names) => names,
     };
@@ -253,6 +253,9 @@ pub async fn export(
         let mut values = BTreeMap::new();
         for name in &names {
             secret_store::validate_name(name)?;
+            if secret_store::is_reserved_name(name) {
+                return Err(secret_store::SecretError::InvalidName(name.clone()).into());
+            }
             let value = store
                 .get(name)?
                 .ok_or_else(|| secret_store::SecretError::NotFound(name.clone()))?;

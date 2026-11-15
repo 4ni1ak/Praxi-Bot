@@ -1108,6 +1108,44 @@ async fn all_does_not_carry_mailbox_passwords_unless_named() {
 }
 
 #[tokio::test]
+async fn the_composio_key_never_rides_in_a_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    let store = MemoryStore::new();
+    store.set("provider/key", "k").unwrap();
+    store
+        .set("composio/api-key", "ck_test_SECRETKEY_0123456789")
+        .unwrap();
+    let mut bytes = Vec::new();
+    let manifest = export(
+        dir.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::All,
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    assert_eq!(manifest.secret_names, ["provider/key"]);
+    assert!(!bytes.windows(10).any(|w| w == b"ck_test_SE"));
+    // Naming it explicitly is refused too.
+    let mut bytes = Vec::new();
+    let named = export(
+        dir.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::Names(vec!["composio/api-key".into()]),
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await;
+    assert!(named.is_err());
+}
+
+#[tokio::test]
 async fn all_none_and_missing_secret_selection() {
     let dir = tempfile::tempdir().unwrap();
     database(dir.path(), false);

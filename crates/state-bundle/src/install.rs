@@ -313,6 +313,10 @@ pub(crate) fn commit(
     incoming_policy: &Policy,
     allow_policy_relaxation: bool,
 ) -> Result<Option<PathBuf>> {
+    // A bundle can never write a reserved integration secret (the Composio key).
+    if let Some(name) = secrets.keys().find(|n| secret_store::is_reserved_name(n)) {
+        return Err(secret_store::SecretError::InvalidName(name.clone()).into());
+    }
     let roots = roots();
     let mut old_roots = Vec::new();
     for root in &roots {

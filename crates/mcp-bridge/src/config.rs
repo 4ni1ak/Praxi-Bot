@@ -543,6 +543,31 @@ mod tests {
     }
 
     #[test]
+    fn a_server_can_never_reference_the_composio_key() {
+        for name in ["composio/api-key", "Composio/API-KEY", "/composio/x"] {
+            let mut c = McpServerConfig::stdio("a", "x", NO_ARGS);
+            c.secret_env.insert("K".into(), name.into());
+            assert!(c.validate().is_err(), "secret_env {name}");
+            let mut h = McpServerConfig::http("h", "https://example.com/mcp");
+            h.secret_headers.insert("Authorization".into(), name.into());
+            assert!(h.validate().is_err(), "secret_headers {name}");
+        }
+        // The same names in a hand-edited mcp.toml fail to load as well.
+        let toml = "[[server]]
+id = \"a\"
+[server.transport]
+type = \"stdio\"
+command = \"x\"
+[server.secret_env]
+K = \"composio/api-key\"
+";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.toml");
+        std::fs::write(&path, toml).unwrap();
+        assert!(TomlFileStore::new(&path).load().is_err());
+    }
+
+    #[test]
     fn duplicate_ids_are_rejected_on_load() {
         let dir = tempfile::tempdir().unwrap();
         let store = TomlFileStore::new(dir.path().join("m.toml"));
