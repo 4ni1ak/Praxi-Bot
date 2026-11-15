@@ -24,6 +24,7 @@ import {
   filterCatalog,
   filterServers,
   isConnected,
+  McpBrowserOpenError,
   MissingSecretError,
   signInMcpServer,
   statusTone
@@ -554,7 +555,10 @@ export function AppsModal({
         toast.show(t("apps.auth.failedToast", { name }), "danger");
       }
     } catch (e) {
-      toast.show(errorText(e), "danger");
+      toast.show(
+        e instanceof McpBrowserOpenError ? t("apps.auth.openFailed", { name }) : errorText(e),
+        "danger"
+      );
     } finally {
       setSigning((m) => {
         const next = { ...m };

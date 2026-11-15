@@ -518,6 +518,17 @@ export function applyServerEvent(
   );
 }
 
+/**
+ * The system browser could not be opened for a sign-in.  Typed so the UI shows
+ * its own translated text (review finding 14), never an English message.
+ */
+export class McpBrowserOpenError extends Error {
+  constructor() {
+    super("browser_open_failed");
+    this.name = "McpBrowserOpenError";
+  }
+}
+
 /** The daemon routes of a user-started OAuth sign-in (never reachable by peers). */
 export type McpAuthApi = Pick<ApiClient, "startMcpAuth" | "mcpAuthStatus" | "cancelMcpAuth">;
 
@@ -542,7 +553,7 @@ export async function signInMcpServer(
   const started = await api.startMcpAuth(name);
   if (!open(started.authorization_url)) {
     await api.cancelMcpAuth(name);
-    throw new Error("cannot open the sign-in page");
+    throw new McpBrowserOpenError();
   }
   const deadline = Date.now() + started.expires_in * 1000;
   for (;;) {

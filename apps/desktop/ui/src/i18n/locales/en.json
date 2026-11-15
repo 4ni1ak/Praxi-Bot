@@ -1106,7 +1106,8 @@
       "waiting": "Waiting for the browser sign-in…",
       "signedInToast": "{{name}}: signed in",
       "signedOutToast": "{{name}}: signed out",
-      "failedToast": "{{name}}: sign-in did not finish"
+      "failedToast": "{{name}}: sign-in did not finish",
+      "openFailed": "{{name}}: the sign-in page could not be opened in the browser"
     },
     "toolCount": "{{count}} tools",
     "toolCount_one": "{{count}} tool",

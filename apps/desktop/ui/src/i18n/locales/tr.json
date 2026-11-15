@@ -1106,7 +1106,8 @@
       "waiting": "Tarayıcıda oturum açılması bekleniyor…",
       "signedInToast": "{{name}}: oturum açıldı",
       "signedOutToast": "{{name}}: oturum kapatıldı",
-      "failedToast": "{{name}}: oturum açma tamamlanmadı"
+      "failedToast": "{{name}}: oturum açma tamamlanmadı",
+      "openFailed": "{{name}}: oturum açma sayfası tarayıcıda açılamadı"
     },
     "toolCount": "{{count}} araç",
     "toolCount_one": "{{count}} araç",

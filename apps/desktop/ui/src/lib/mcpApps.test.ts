@@ -27,6 +27,7 @@ import {
   filterServers,
   isConnected,
   MissingSecretError,
+  McpBrowserOpenError,
   secretStoreName,
   signInMcpServer,
   splitArgs,
@@ -486,7 +487,10 @@ test("sign-in cancels the daemon flow when the browser cannot open or the user s
       return "auth_required" as const;
     }
   };
-  await assert.rejects(signInMcpServer(api, "x", () => false, { sleep: async () => {} }));
+  await assert.rejects(
+    signInMcpServer(api, "x", () => false, { sleep: async () => {} }),
+    (e: unknown) => e instanceof McpBrowserOpenError
+  );
   assert.deepEqual(calls, ["cancel"]);
   const signal = { aborted: false };
   let polls = 0;
