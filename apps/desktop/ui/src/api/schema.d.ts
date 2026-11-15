@@ -56,6 +56,179 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{bot}/knowledge/email-captures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent successful, explicitly scoped mailbox reads available to this bot. */
+        get: operations["email_captures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask policy for an owner-reviewable destination and source snapshot. Merely
+         *     opening the card grants no authority and starts no provider request.
+         */
+        post: operations["request_embedding_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm exactly the server snapshot the local owner reviewed. A changed
+         *     profile/source, expired card or replay requires a fresh owner decision.
+         */
+        post: operations["confirm_embedding_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-cooldown/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explicit owner recovery for a provider's shared retry delay; quota usage and
+         *     per-source failure records remain intact.
+         */
+        post: operations["reset_embedding_cooldown"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["revoke_embedding_grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_settings"];
+        put: operations["put_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_sources"];
+        put?: never;
+        post: operations["create_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_source"];
+        post?: never;
+        delete: operations["delete_source"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["embed_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reindex_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}": {
         parameters: {
             query?: never;
@@ -749,6 +922,91 @@ export interface paths {
         post?: never;
         /** Disconnect and remove a server (its tools disappear) and save `mcp.toml`. */
         delete: operations["delete_mcp_server"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish a pending sign-in with a pasted redirect URL (host without a browser). */
+        post: operations["complete_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close the one-shot listener and cancel a pending token exchange. */
+        post: operations["cancel_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel sign-in and forget stored tokens before disconnecting. */
+        post: operations["logout_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a sign-in from an authenticated local user's explicit action. */
+        post: operations["start_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read authentication state, never credentials. */
+        get: operations["mcp_auth_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2050,6 +2308,28 @@ export interface components {
             /** @description SMTP (sending mail); authentication only, nothing is sent. */
             smtp: components["schemas"]["EmailProbeStatus"];
         };
+        EmbeddingApprovalChallenge: {
+            endpoint_identity: string;
+            /** Format: int64 */
+            expires_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            model: string;
+            policy_decision: string;
+            profile_fingerprint: string;
+            provider_id: string;
+            source_label?: string | null;
+            target: components["schemas"]["EmbeddingGrantTarget"];
+        };
+        EmbeddingGrantTarget: {
+            /** @enum {string} */
+            kind: "queries";
+        } | {
+            /** @enum {string} */
+            kind: "documents";
+            /** Format: uuid */
+            source_id: string;
+        };
         /** @description Request body for `POST /v1/providers/cli/enable`. */
         EnableCliProviderInput: {
             /** @description Engine id (`claude` is currently runnable). */
@@ -2343,6 +2623,169 @@ export interface components {
         InviteRole: "desktop" | "phone" | "node" | "host";
         /** @enum {string} */
         KeyPhase: "down" | "up";
+        KnowledgeEmailCapture: {
+            account: string;
+            /** Format: int64 */
+            created_ms: number;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            tool_call_id: string;
+        };
+        KnowledgeEmbed: {
+            /** Format: int64 */
+            expected_revision: number;
+            /**
+             * @description True only for an explicit user retry. Continuation batches keep retries,
+             *     provider cooldowns and the shared quota ledger intact.
+             */
+            reset_retry?: boolean;
+        };
+        KnowledgeEmbeddingDto: {
+            dimensions: number;
+            endpoint: string;
+            local_profile_id?: string | null;
+            model: string;
+            profile_fingerprint: string;
+            provider_id: string;
+            query_remote: boolean;
+            request_dimensions: boolean;
+            /** Format: int32 */
+            requests_per_day: number;
+            /** Format: int32 */
+            requests_per_minute: number;
+        };
+        KnowledgeEmbeddingInput: {
+            dimensions: number;
+            /** @description Select an already installed host profile; cannot choose native files. */
+            local_profile_id?: string | null;
+            model: string;
+            provider_id: string;
+            request_dimensions?: boolean;
+            /** Format: int32 */
+            requests_per_day: number;
+            /** Format: int32 */
+            requests_per_minute: number;
+        };
+        /**
+         * @description Progress of one bounded embedding batch. The queue resumes from hashes and
+         *     source revisions already committed; no provider response body is exposed.
+         */
+        KnowledgeEmbeddingProgress: {
+            cache_hits: number;
+            embedded_chunks: number;
+            failure_code?: string | null;
+            /** Format: int64 */
+            next_attempt_ms?: number | null;
+            remaining_chunks: number;
+            skipped_chunks: number;
+            status: components["schemas"]["KnowledgeEmbeddingStatus"];
+        };
+        /** @enum {string} */
+        KnowledgeEmbeddingStatus: "progress" | "complete" | "awaiting_consent" | "deferred" | "cancelled" | "failed";
+        /** @description A skipped file never prevents the page cursor from advancing. */
+        KnowledgeFileFailure: {
+            code: string;
+            locator: string;
+        };
+        /** @description A bounded indexing page. Replay starts from hashes already committed. */
+        KnowledgeIndexStatus: {
+            failures: components["schemas"]["KnowledgeFileFailure"][];
+            next_cursor?: string | null;
+            processed: number;
+            removed: number;
+            unchanged: number;
+        };
+        /** @description A host-installed local model. Native file locations are never API inputs. */
+        KnowledgeLocalProfileDto: {
+            dimensions: number;
+            id: string;
+            label: string;
+            model: string;
+        };
+        KnowledgeMutation: {
+            indexing: components["schemas"]["KnowledgeIndexStatus"];
+            source: components["schemas"]["KnowledgeSourceDto"];
+        };
+        KnowledgeReindex: {
+            /** @description Last relative file from the previous page; omitted starts a new scan. */
+            cursor?: string | null;
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        KnowledgeRevision: {
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        KnowledgeSettingsDto: {
+            auto_retrieval_available: boolean;
+            auto_retrieve: boolean;
+            embedding?: null | components["schemas"]["KnowledgeEmbeddingDto"];
+            local_embeddings_available: boolean;
+            local_profiles: components["schemas"]["KnowledgeLocalProfileDto"][];
+        };
+        KnowledgeSettingsInput: {
+            auto_retrieve: boolean;
+            embedding?: null | components["schemas"]["KnowledgeEmbeddingInput"];
+        };
+        /** @enum {string} */
+        KnowledgeSourceAction: "enable" | "disable" | "revoke_remote" | "rename" | "rebind";
+        KnowledgeSourceChange: {
+            action: components["schemas"]["KnowledgeSourceAction"];
+            /** Format: int64 */
+            expected_revision: number;
+            label?: string | null;
+            /** @description An owner-selected replacement path, required to rebind imported files. */
+            path?: string | null;
+        };
+        /** @description Source metadata; source bodies and credentials are never listed. */
+        KnowledgeSourceDto: {
+            chunks: number;
+            documents: number;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["KnowledgeSourceKind"];
+            label: string;
+            locator: string;
+            remote_profile_fingerprint?: string | null;
+            requires_path_selection: boolean;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            updated_ms: number;
+        };
+        /** @description A user-selected source. Body fields cannot choose an owner, trust or consent. */
+        KnowledgeSourceInput: {
+            /** @description Must equal the explicit account in the recorded `email_read` arguments. */
+            account?: string | null;
+            /** Format: uuid */
+            chat_id?: string | null;
+            /**
+             * @description Saved text/HTML or a note; never interpreted as a source URL to fetch.
+             *     At most 4 MiB decoded UTF-8 input and 1 MiB extracted/indexed text.
+             *     The JSON envelope permits up to 24 MiB + 64 KiB for escaped input.
+             */
+            content?: string | null;
+            html?: boolean;
+            kind: components["schemas"]["KnowledgeSourceKind"];
+            label?: string;
+            /** @description Absolute path on the daemon host, for a file or folder only. */
+            path?: string | null;
+            /**
+             * Format: uuid
+             * @description Email sources use a successful recorded `email_read` in this bot's run.
+             */
+            run_id?: string | null;
+            /** Format: uuid */
+            tool_call_id?: string | null;
+            url?: string | null;
+        };
+        /**
+         * @description Source kinds accepted by user management; every kind remains untrusted data.
+         * @enum {string}
+         */
+        KnowledgeSourceKind: "file" | "folder" | "saved_web" | "conversation" | "email" | "note" | "shared_brain";
         /** @description `GET /v1/events/latest`. */
         LatestCursor: {
             /**
@@ -2351,6 +2794,22 @@ export interface components {
              */
             gseq: number;
         };
+        /** @description Body of `POST /v1/mcp/servers/{name}/auth/callback`. */
+        McpAuthCallback: {
+            /** @description The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`). */
+            redirect_url: string;
+        };
+        /** @description Browser destination for a user-started, five-minute sign-in. */
+        McpAuthStart: {
+            authorization_url: string;
+            /** Format: int64 */
+            expires_in: number;
+        };
+        /**
+         * @description Authentication state, independent of transport errors.
+         * @enum {string}
+         */
+        McpAuthState: "signed_out" | "signing_in" | "signed_in" | "auth_required";
         /** @description An entry of the curated MCP catalog (`GET /v1/mcp/catalog`). */
         McpCatalogEntryDto: {
             /** @description Permission category of its tools. */
@@ -2395,6 +2854,18 @@ export interface components {
             transport: components["schemas"]["McpTransportKind"];
             /** @description Endpoint (http). */
             url?: string | null;
+        };
+        /** @description OAuth configuration contains no credential values. */
+        McpOAuthConfig: {
+            allow_loopback_http?: boolean;
+            client_id?: string | null;
+            client_metadata_url?: string | null;
+            client_secret_ref?: string | null;
+            /**
+             * @description The authorization server a pre-registered client is bound to;
+             *     required with `client_id` / `client_secret_ref`.
+             */
+            issuer?: string | null;
         };
         /** @description A secret the user must provide to install a catalog entry. */
         McpRequiredSecretDto: {
@@ -2448,6 +2919,7 @@ export interface components {
             };
             /** @description Server name (the `<server>` of `mcp:<server>/<tool>`). */
             name: string;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
             /** @description Environment variable -> secret name (stdio). */
             secret_env?: {
                 [key: string]: string;
@@ -2505,6 +2977,7 @@ export interface components {
              *     path wins (a different name in the body is rejected).
              */
             name?: string | null;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
             /** @description Environment variable -> secret name. */
             secret_env?: {
                 [key: string]: string;
@@ -2566,6 +3039,7 @@ export interface components {
              *     name in the body is rejected).
              */
             name?: string | null;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
             /** @description Environment variable -> secret name.  Present object replaces the map. */
             secret_env?: {
                 [key: string]: string;
@@ -2588,7 +3062,7 @@ export interface components {
          * @description Connection state of an MCP server.
          * @enum {string}
          */
-        McpStatus: "connected" | "connecting" | "disconnected" | "error" | "quarantined";
+        McpStatus: "auth_required" | "connected" | "connecting" | "disconnected" | "error" | "quarantined";
         /** @description A tool of an MCP server (`GET /v1/mcp/servers/{name}/tools`). */
         McpToolDto: {
             /** @description Description given by the server. */
@@ -3626,6 +4100,428 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    email_captures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEmailCapture"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    request_embedding_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingGrantTarget"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingApprovalChallenge"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    confirm_embedding_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                approval: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reset_embedding_cooldown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_embedding_grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingGrantTarget"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettingsDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSettingsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettingsDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_sources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourceDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSourceInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeMutation"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSourceChange"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourceDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeRevision"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    embed_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeEmbed"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEmbeddingProgress"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reindex_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeReindex"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeMutation"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5231,6 +6127,171 @@ export interface operations {
             };
             /** @description MCP management is not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    complete_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpAuthCallback"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    cancel_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    logout_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    start_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthStart"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    mcp_auth_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

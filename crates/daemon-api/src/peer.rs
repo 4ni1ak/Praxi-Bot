@@ -113,10 +113,40 @@ fn normalize_deny_path(path: &str) -> String {
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if check_path
+        .strip_prefix("/v1/mcp/servers/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(_, rest)| rest == "auth" || rest.starts_with("auth/"))
+    {
+        return Some("MCP sign-in is a host-local user action, forbidden to peers");
+    }
+    // MCP configuration decides which secrets are sent where and which
+    // commands run on this host: create / update / delete / reconnect are
+    // host-local user actions for every peer role (no card or ADR grants a
+    // peer role MCP management).  Reading the list and tools stays allowed.
+    if *method != Method::GET && is_mcp_servers_path(check_path) {
+        return Some("MCP server management is a host-local user action, forbidden to peers");
+    }
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
     }
+    if !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && check_path
+            .strip_prefix("/v1/bots/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(bot, rest)| {
+                !bot.is_empty() && (rest == "knowledge" || rest.starts_with("knowledge/"))
+            })
+    {
+        return Some("knowledge sources and embedding authority are managed by the local owner");
+    }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
+}
+
+/// `/v1/mcp/servers` or anything below it (decoded and slash-normalized).
+fn is_mcp_servers_path(path: &str) -> bool {
+    path.strip_prefix("/v1/mcp/servers")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// `POST /v1/control/{request_id}` answers an overlay question: local only.

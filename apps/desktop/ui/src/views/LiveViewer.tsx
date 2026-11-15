@@ -40,6 +40,7 @@ import { viewerKeyAction } from "../lib/liveViewLayers";
 import { layerStack } from "../lib/modalStack";
 import { useDaemon } from "../state/DaemonContext";
 import { useLiveView } from "../state/LiveViewContext";
+import { requestStop } from "../state/appStop";
 import styles from "./LiveViewer.module.css";
 
 const FOCUSABLE =
@@ -86,7 +87,6 @@ export function LiveViewer() {
     recoverTakeover,
     clearPause,
     isLocalClient,
-    overrideStop,
     enqueueInput,
     resetInputState,
     setComposing
@@ -433,7 +433,9 @@ export function LiveViewer() {
           <Button
             variant="danger"
             size="sm"
-            onClick={() => void overrideStop()}
+            onClick={() => {
+              requestStop("viewer");
+            }}
             data-testid="live-viewer-stop"
           >
             <OctagonX />

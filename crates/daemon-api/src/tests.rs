@@ -25,6 +25,8 @@ use crate::{AppState, DaemonConfig, router};
 mod doctor;
 mod email;
 mod host;
+mod knowledge;
+mod knowledge_brain;
 mod mcp;
 mod peer_knowledge;
 mod schedules;

@@ -60,8 +60,7 @@ async fn test_claude_signed_in_and_signed_out() {
     assert!(claude.detail.is_none());
 
     // Signed out
-    let env =
-        PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_AUTH_SIGNED_OUT", "1");
+    let env = PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_SIGNED_OUT", "1");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let claude = detected.iter().find(|c| c.id == "claude").unwrap();
@@ -121,8 +120,7 @@ async fn test_codex_status_variants() {
     assert_eq!(chatgpt.version.as_deref(), Some("fake 1.2.3"));
 
     // Signed out: "Not logged in"
-    let env =
-        PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_AUTH_SIGNED_OUT", "1");
+    let env = PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_SIGNED_OUT", "1");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let codex = detected.iter().find(|c| c.id == "codex").unwrap();
@@ -152,8 +150,7 @@ async fn test_cursor_status_variants() {
     assert_eq!(cursor.auth, AuthState::SignedIn);
 
     // JSON unauthenticated
-    let env =
-        PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_AUTH_SIGNED_OUT", "1");
+    let env = PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_SIGNED_OUT", "1");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let cursor = detected.iter().find(|c| c.id == "cursor").unwrap();
