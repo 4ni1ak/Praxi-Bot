@@ -4218,12 +4218,36 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
         GeometrySnapshot, InputDriver, LiveViewOptions, PixelFormat, PixelRect,
     };
 
+    // Deterministic freeze of the display worker: the first capture of the new geometry passes
+    // (it publishes revision 2), every later one parks until released, so no further frame
+    // publication can reach the daemon's frame task while the stale batch is exercised.
+    struct CaptureGate {
+        new_geometry_captures: AtomicUsize,
+        parked: AtomicBool,
+        release: AtomicBool,
+    }
+    struct ReleaseGateOnDrop(Arc<CaptureGate>);
+    impl Drop for ReleaseGateOnDrop {
+        fn drop(&mut self) {
+            self.0.release.store(true, Ordering::SeqCst);
+        }
+    }
     struct MockDesktopCapture {
         geom: Arc<Mutex<GeometrySnapshot>>,
+        gate: Arc<CaptureGate>,
     }
     impl CaptureDriver for MockDesktopCapture {
         fn capture(&mut self, raw_buf: &mut Vec<u8>) -> Result<CapturedRawInfo, CaptureFailure> {
             let geom = *self.geom.lock();
+            if geom.display_token == 2
+                && self.gate.new_geometry_captures.fetch_add(1, Ordering::SeqCst) >= 1
+            {
+                self.gate.parked.store(true, Ordering::SeqCst);
+                while !self.gate.release.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                self.gate.parked.store(false, Ordering::SeqCst);
+            }
             let stride = usize::try_from(geom.rect.width).unwrap() * 4;
             raw_buf.resize(stride * usize::try_from(geom.rect.height).unwrap(), 0x7f);
             Ok(CapturedRawInfo {
@@ -4287,14 +4311,22 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
 
     let current_geom = Arc::new(Mutex::new(geom_1));
     let injected_calls = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(CaptureGate {
+        new_geometry_captures: AtomicUsize::new(0),
+        parked: AtomicBool::new(false),
+        release: AtomicBool::new(false),
+    });
+    let _release_gate = ReleaseGateOnDrop(Arc::clone(&gate));
     let desktop_target = Arc::new(DesktopViewTarget::new(DesktopViewTargetConfig {
         options: LiveViewOptions::new("hermetic-desktop"),
         initial_geometry: geom_1,
         capture_factory: {
             let geom = Arc::clone(&current_geom);
+            let gate = Arc::clone(&gate);
             Arc::new(move |_| {
                 Ok(Box::new(MockDesktopCapture {
                     geom: Arc::clone(&geom),
+                    gate: Arc::clone(&gate),
                 }))
             })
         },
@@ -4355,29 +4387,36 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
         )
         .await;
     assert_eq!(response.status(), StatusCode::OK);
+    // A background consumer keeps the frame stream alive (the producer gives up on a body nobody
+    // reads for 2s) and every wait below is a bounded poll on state, never a fixed sleep.
     let mut body = response.into_body();
-    for _ in 0..8 {
-        if t.state
-            .live_view()
-            .sessions
-            .lock()
-            .get(&session_id)
-            .is_some_and(|s| s.geometry.is_some())
-        {
-            break;
+    let drainer = tokio::spawn(async move { while body.frame().await.is_some() {} });
+    struct AbortOnDrop(tokio::task::JoinHandle<()>);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
         }
-        let _ = tokio::time::timeout(Duration::from_millis(250), body.frame()).await;
     }
-    assert_eq!(
+    let _drainer = AbortOnDrop(drainer);
+    let geometry_of = |t: &Test| {
         t.state
             .live_view()
             .sessions
             .lock()
             .get(&session_id)
             .and_then(|s| s.geometry)
-            .map(|(r, _, _)| r),
-        Some(1)
-    );
+    };
+    async fn wait_for(what: &'static str, cond: &dyn Fn() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !cond() {
+            assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+    wait_for("first frame stored", &|| {
+        geometry_of(&t).is_some_and(|(r, _, _)| r == 1)
+    })
+    .await;
 
     let (status, v) = t
         .call(
@@ -4418,15 +4457,31 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
         Err(ViewError::Unavailable)
     );
 
-    // Advance display geometry to revision 2 while NOT draining `body`, so `session.geometry` in
-    // the daemon remains at revision 1 while the backend has already moved to revision 2.
+    // Advance the display to revision 2 and let the frame task store it, then park the display
+    // worker inside its next capture: from here on no frame can be published, so the frame task
+    // can never refresh the daemon's session geometry again.
     *current_geom.lock() = geom_2;
     desktop_target.notify_desktop_action();
-    for _ in 0..100 {
-        if desktop_target.geometry_revision() == 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    wait_for("backend at revision 2", &|| {
+        desktop_target.geometry_revision() == 2
+    })
+    .await;
+    wait_for("frame task stored revision 2", &|| {
+        geometry_of(&t).is_some_and(|(r, _, _)| r == 2)
+    })
+    .await;
+    desktop_target.notify_desktop_action();
+    wait_for("display worker parked", &|| {
+        gate.parked.load(Ordering::SeqCst)
+    })
+    .await;
+    // Make the daemon's per-session snapshot the stale revision-1 frame the client still shows.
+    // It is fresh in time (so the daemon's own freshness check passes) but stale in value, which
+    // is exactly the window in which only the backend's revision check can stop the click.
+    {
+        let mut sessions = t.state.live_view().sessions.lock();
+        let session = sessions.get_mut(&session_id).unwrap();
+        session.geometry = Some((1, 1, tokio::time::Instant::now()));
     }
     assert_eq!(desktop_target.geometry_revision(), 2);
 
@@ -4464,31 +4519,15 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
         "stale revision 1 click must not be injected after display changed to revision 2"
     );
 
-    // Now reacquire, drain frames so the client/daemon see revision 2, and verify a batch
-    // computed against revision 2 succeeds through the same daemon path.
-    for _ in 0..8 {
-        if t.state
-            .live_view()
-            .sessions
-            .lock()
-            .get(&session_id)
-            .and_then(|s| s.geometry)
-            .is_some_and(|(r, _, _)| r == 2)
-        {
-            break;
-        }
-        let _ = tokio::time::timeout(Duration::from_millis(250), body.frame()).await;
-    }
-    assert_eq!(
-        t.state
-            .live_view()
-            .sessions
-            .lock()
-            .get(&session_id)
-            .and_then(|s| s.geometry)
-            .map(|(r, _, _)| r),
-        Some(2)
-    );
+    // Now let the display worker run again so the frame task refreshes the session to revision 2,
+    // and verify a batch computed against revision 2 succeeds through the same daemon path.
+    let before_release = tokio::time::Instant::now();
+    gate.release.store(true, Ordering::SeqCst);
+    desktop_target.notify_desktop_action();
+    wait_for("session refreshed to revision 2", &|| {
+        geometry_of(&t).is_some_and(|(r, _, at)| r == 2 && at >= before_release)
+    })
+    .await;
     let (status, v) = t
         .call(
             None,
