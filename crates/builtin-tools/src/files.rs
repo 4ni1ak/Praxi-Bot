@@ -658,6 +658,83 @@ fn validate_path(sh: &Shared, raw: &str, follow: Follow) -> Result<PathBuf, Tool
     Ok(opened)
 }
 
+/// Pure, text-only `path` inside `dir` test: no filesystem access at all.
+fn lexical_under(path: &Path, dir: &Path) -> bool {
+    let (p, d) = (norm_parts(path), norm_parts(dir));
+    !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+}
+
+/// Windows only: the same spill directory spelled with 8.3 short names
+/// (`RUNNER~1`) does not match by text. Only when the path is on the very
+/// drive of the data dir (a text comparison, so never a remote letter) the
+/// widened, on-disk comparison is allowed to decide.
+fn short_name_alias_under(path: &Path, dir: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let first = |p: &Path| {
+            p.components()
+                .next()
+                .map(|c| fold_part(&c.as_os_str().to_string_lossy()))
+        };
+        first(path).is_some() && first(path) == first(dir) && under_dir(path, dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, dir);
+        false
+    }
+}
+
+/// True when `path` is inside `dir` (component-wise, widened like
+/// `in_checkpoint_store`).
+fn under_dir(path: &Path, dir: &Path) -> bool {
+    let (Ok(path), Ok(dir)) = (widen_path(path), widen_path(dir)) else {
+        return false;
+    };
+    let (p, d) = (norm_parts(&path), norm_parts(&dir));
+    !d.is_empty() && p.len() >= d.len() && p[..d.len()] == d[..]
+}
+
+/// Like [`validate_path`] for reads, plus one read-only exemption from the
+/// allowed roots: the spill files of the CURRENT run
+/// (`<data_dir>/spill/<run>`), which the loop itself points the model at.
+/// Links must stay inside that directory and the credential/protected-file
+/// rules still apply.
+fn validate_read_path(sh: &Shared, raw: &str, run: &str) -> Result<PathBuf, ToolError> {
+    // Every cheap refusal of `validate_path` (drive confinement, roots,
+    // credentials) must run before any filesystem metadata call, so the
+    // exemption is decided on the text of the path alone first.
+    if sh.allowed_roots.is_empty() || run.is_empty() || run.contains(['/', '\\', '.']) {
+        return validate_path(sh, raw, Follow::Content);
+    }
+    let run_dir = sh.spill_dir.join(run);
+    let syntactically_in_run = lexical_absolute(raw)
+        .is_ok_and(|l| lexical_under(&l, &run_dir) || short_name_alias_under(&l, &run_dir));
+    if !syntactically_in_run {
+        return validate_path(sh, raw, Follow::Content);
+    }
+    if sh.roots_unresolved {
+        return Err(denied(ROOT_UNRESOLVED_MSG));
+    }
+    let lexical = confine_drive(&lexical_absolute(raw)?)?;
+    let ctx = ResolveCtx {
+        follow: Follow::Content,
+        roots: &[],
+        drives: &sh.drives,
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = resolve_local(&lexical, &ctx)?;
+    let opened = final_identity(&resolved)?;
+    if !under_dir(&opened, &run_dir) {
+        return Err(denied(ROOT_MSG));
+    }
+    if credential_blocked(sh, &lexical, &resolved) || credential_blocked(sh, &lexical, &opened) {
+        return Err(denied(GRANT_MSG));
+    }
+    Ok(opened)
+}
+
 fn resolve_local(path: &Path, ctx: &ResolveCtx<'_>) -> Result<PathBuf, ToolError> {
     if ctx.depth > MAX_LINK_DEPTH {
         return Err(denied(LINK_MSG));
@@ -2191,8 +2268,8 @@ fn read_line_range(
     Ok((kept, total))
 }
 
-fn do_read(sh: &Shared, i: &ReadIn) -> Result<String, ToolError> {
-    let path = validate_path(sh, &i.path, Follow::Content)?;
+fn do_read(sh: &Shared, run: &str, i: &ReadIn) -> Result<String, ToolError> {
+    let path = validate_read_path(sh, &i.path, run)?;
     let Some(r) = &i.range else {
         return read_text(&path);
     };
@@ -2630,7 +2707,7 @@ impl Tool for FsTool {
         let text = match self.op {
             Op::Read => {
                 let i: ReadIn = parse(input)?;
-                blocking(move || do_read(&sh, &i)).await?
+                blocking(move || do_read(&sh, &run, &i)).await?
             }
             Op::List => {
                 let i: ListIn = parse(input)?;
@@ -4113,6 +4190,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_spill_exemption_is_decided_without_touching_the_filesystem() {
+        // Neither path exists anywhere: a pure text test must still answer.
+        let dir = Path::new("Z:/no/such/data/spill/run-1");
+        assert!(lexical_under(
+            Path::new("Z:/no/such/data/spill/run-1/c.txt"),
+            dir
+        ));
+        assert!(!lexical_under(
+            Path::new("Z:/no/such/data/spill/run-2/c.txt"),
+            dir
+        ));
+        assert!(!lexical_under(Path::new("Q:/other/file.txt"), dir));
+        assert!(!lexical_under(Path::new("Z:/no/such/data/spill"), dir));
+    }
+
+    #[tokio::test]
+    async fn confined_reads_may_open_only_this_runs_spill_files() {
+        let (d, w, _t) = setup();
+        let root = w.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let t = tools_bounded(d.path(), std::slice::from_ref(&root), &[]);
+        let c = ctx(); // run-1
+        let mine = d.path().join("spill").join("run-1");
+        let other = d.path().join("spill").join("run-2");
+        fs::create_dir_all(&mine).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(mine.join("c.txt"), "spilled-data").unwrap();
+        fs::write(other.join("c.txt"), "other-run").unwrap();
+        fs::write(mine.join(".env"), "SECRET=1").unwrap();
+        let reader = get(&t, "fs_read");
+        let read = |p: PathBuf| {
+            let reader = reader.clone();
+            let c = ToolContext {
+                run_id: "run-1".into(),
+                max_inline_bytes: 1 << 20,
+                bot_id: None,
+            };
+            async move { reader.call(&c, json!({"path": p})).await }
+        };
+        let ok = text(&read(mine.join("c.txt")).await.unwrap());
+        assert!(ok.contains("spilled-data"), "{ok}");
+        for denied in [
+            other.join("c.txt"),
+            mine.join("..").join("run-2").join("c.txt"),
+            mine.join(".env"),
+        ] {
+            let err = read(denied.clone()).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{}: {err}",
+                denied.display()
+            );
+        }
+        // Read-only: writing there is still outside the roots.
+        let werr = get(&t, "fs_write")
+            .call(&c, json!({"path": mine.join("n.txt"), "content": "x"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(werr, ToolError::PermissionDenied(_)), "{werr}");
+    }
+
     #[tokio::test]
     async fn allowed_roots_block_dotdot_and_symlink_escape() {
         let (d, w, _t) = setup();
@@ -4871,6 +5010,56 @@ mod tests {
         assert!(ok.contains("ordinary"), "{ok}");
     }
 
+    /// A daemon whose data dir is reached through an 8.3 alias (GitHub
+    /// runners: `C:\Users\RUNNER~1\...`) must still read its own spill files,
+    /// whichever spelling the model is given.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn spill_files_are_readable_through_a_short_name_data_dir() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("workspace-root");
+        let data = base.path().join("praxi-bot-data-dir");
+        let mine = data.join("spill").join("run-1");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&mine).unwrap();
+        fs::write(mine.join("c.txt"), "spilled-data").unwrap();
+        let short = win_fs::short_path(&data).unwrap();
+        if short
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("praxi-bot-data-dir")
+        {
+            eprintln!("skipped: this volume does not generate 8.3 names");
+            return;
+        }
+        let c = ctx(); // run-1
+        for (tool_dir, read_dir) in [
+            (&short, &data),
+            (&short, &short),
+            (&data, &short),
+            (&data, &data),
+        ] {
+            let t = tools_bounded(tool_dir, std::slice::from_ref(&root), &[]);
+            let p = read_dir.join("spill").join("run-1").join("c.txt");
+            let ok = text(
+                &get(&t, "fs_read")
+                    .call(&c, json!({"path": &p}))
+                    .await
+                    .unwrap_or_else(|e| panic!("{}: {e}", p.display())),
+            );
+            assert!(ok.contains("spilled-data"), "{ok}");
+            // Another run's directory stays closed in every spelling.
+            let other = read_dir.join("spill").join("run-2").join("c.txt");
+            assert!(
+                get(&t, "fs_read")
+                    .call(&c, json!({"path": &other}))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn short_data_dir_still_protects_sensitive_files() {
@@ -5009,6 +5198,36 @@ mod tests {
                 .args([format!("{}:", self.0), "/d".into()])
                 .status();
         }
+    }
+
+    /// Same as the test below, but with allowed roots and a run id: the
+    /// confined spill-exemption branch must not touch the filesystem before
+    /// the text and drive checks either.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn confined_live_remote_drive_letter_is_refused_without_network_io() {
+        let _serial = crate::test_serial::WINDOWS_SHELL_TESTS.lock().await;
+        let letter = win_fs::unused_drive_letter().expect("an unused drive letter");
+        let target = r"\Device\Mup\192.0.2.1\share";
+        win_fs::define_dos_device(letter, target, false).unwrap();
+        let _guard = RemoveDos(letter, target);
+        let (d, w, _t) = setup();
+        let root = w.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let t = tools_bounded(d.path(), std::slice::from_ref(&root), &[]);
+        let c = ctx();
+        let path = format!(r"{letter}:\file.txt");
+        let started = std::time::Instant::now();
+        let err = get(&t, "fs_read")
+            .call(&c, json!({"path": path}))
+            .await
+            .unwrap_err();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
     }
 
     #[cfg(windows)]

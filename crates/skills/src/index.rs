@@ -701,9 +701,11 @@ impl SkillIndex {
             .partition(|s| s.matches(ctx) || suggested.contains(&s.name));
         let n_suggested = ordered.len();
         ordered.extend(rest);
-        let mut out = String::from(
-            "Skills (load one with skill_read when relevant; [suggested] = matches the current page/app):\n",
-        );
+        let mut out = String::from(if n_suggested > 0 {
+            "Skills (load one with skill_read when relevant; [suggested] = matches the current page/app):\n"
+        } else {
+            "Skills (load one with skill_read when relevant):\n"
+        });
         let total = ordered.len();
         let mut shown = 0;
         for (i, s) in ordered.iter().enumerate() {
