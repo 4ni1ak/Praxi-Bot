@@ -57,12 +57,17 @@ export function Modal({
         // Only real Tab stops: not hidden controls (a `display: none` file input) and not
         // roving-tabindex members that are currently out of the order (inactive tabs).
         const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) =>
-          isTabStop({ tabIndex: el.tabIndex, rects: el.getClientRects().length })
+          isTabStop({
+            tabIndex: el.tabIndex,
+            rects: el.getClientRects().length,
+            inert: el.closest("[inert]") !== null
+          })
         );
         const active = document.activeElement as HTMLElement | null;
         const target = trapTarget(items, active, node, e.shiftKey);
         if (target === "none") {
           e.preventDefault();
+          node.focus();
         } else if (target) {
           e.preventDefault();
           target.focus();

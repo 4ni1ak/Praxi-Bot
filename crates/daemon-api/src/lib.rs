@@ -868,7 +868,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/skills", get(skills::list_skills))
         .route(
             "/v1/bots/{id}",
-            get(r::get_bot).put(r::update_bot).delete(r::delete_bot),
+            get(r::get_bot)
+                .put(r::update_bot)
+                .patch(r::patch_bot)
+                .delete(r::delete_bot),
         )
         .route("/v1/chats", get(r::list_chats).post(r::create_chat))
         .route(

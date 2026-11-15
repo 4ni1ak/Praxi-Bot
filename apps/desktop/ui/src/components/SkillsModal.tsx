@@ -9,6 +9,7 @@ import {
   exceedsSkillLimit,
   isBotSkillsDirty
 } from "../lib/botSkills";
+import { useLeaveGuard } from "../state/LeaveGuard";
 import { type BotSkillsState, useSkillsDraft } from "../state/useBotSkills";
 import { Callout, ConfirmDialog, DialogFooter, DialogHeader, dialogStyles } from "./DialogParts";
 import { Modal } from "./Modal";
@@ -70,11 +71,23 @@ function SkillsDialog({
 
   const dirty = Boolean(data && draft && isBotSkillsDirty(draft, data));
 
+  const pendingLeave = useRef<(() => void) | null>(null);
   const requestClose = () => {
     const action = closeAction(dirty, saving);
     if (action === "close") onClose();
-    else if (action === "confirm") setConfirmClose(true);
+    else if (action === "confirm") {
+      pendingLeave.current = null;
+      setConfirmClose(true);
+    }
   };
+  // Route changes (another bot, a chat, the palette) ask the same question as Cancel.
+  useLeaveGuard({
+    state: () => ({ dirty, busy: saving }),
+    confirm: (proceed) => {
+      pendingLeave.current = proceed;
+      setConfirmClose(true);
+    }
+  });
 
   // Esc and the backdrop go through the same guard as Cancel and the X.
   useEffect(() => {
@@ -121,7 +134,7 @@ function SkillsDialog({
           </Button>
         }
       />
-      <div className={dialogStyles.body}>
+      <div className={dialogStyles.body} inert={saving}>
         {skills.error && !data ? (
           <Callout tone="danger" title={t("bots.skills.loadFailed")} role="alert">
             {skills.error}
@@ -171,10 +184,16 @@ function SkillsDialog({
         confirmLabel={t("botEdit.discard")}
         cancelLabel={t("botEdit.keepEditing")}
         tone="danger"
-        onCancel={() => setConfirmClose(false)}
+        onCancel={() => {
+          pendingLeave.current = null;
+          setConfirmClose(false);
+        }}
         onConfirm={() => {
+          const proceed = pendingLeave.current;
+          pendingLeave.current = null;
           setConfirmClose(false);
           onClose();
+          proceed?.();
         }}
       />
     </div>

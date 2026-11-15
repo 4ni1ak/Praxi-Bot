@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { ApiClient } from "../api/client";
 import { closeAction } from "../lib/botEditor";
-import { skillDraftDirty } from "../lib/skillDraft";
 import { payloadWithSkill } from "../lib/botSkills";
 import {
   buildSkillMd,
@@ -16,9 +15,13 @@ import {
   SKILL_DESCRIPTION_MAX,
   SKILL_MAX_BYTES,
   SKILL_NAME_MAX,
-  type CatalogSkill,
-  type SkillCheck,
+  type AddFlow,
+  flowAfterCheck,
+  flowAfterEdit,
+  flowDirty,
+  INITIAL_ADD_FLOW,
   type SkillDraft,
+  skillBodyHash,
   skillInstallPath,
   suggestSkillName,
   validateSkillDraft
@@ -131,24 +134,19 @@ function AddSkillDialog({
         }
       : emptySkillDraft()
   );
-  const [touched, setTouched] = useState(false);
+  const [flow, setFlow] = useState<AddFlow>(INITIAL_ADD_FLOW);
+  const { touched, check, assigned } = flow;
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [triggersOpen, setTriggersOpen] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
-  const [check, setCheck] = useState<{
-    state: SkillCheck | "failed";
-    message?: string;
-    existing?: CatalogSkill;
-  } | null>(null);
   const [assigning, setAssigning] = useState(false);
-  const [assigned, setAssigned] = useState(false);
   const [copied, copy] = useCopied();
 
   const patch = (p: Partial<SkillDraft>) => {
-    setTouched(true);
+    setFlow(flowAfterEdit);
     setDraft((d) => ({ ...d, ...p }));
   };
 
@@ -162,7 +160,7 @@ function AddSkillDialog({
   const skillName = draft.name.trim();
   // Unsaved until the daemon's catalog lists this very file: moving on to the install step stores
   // nothing, so leaving it still asks.
-  const dirty = skillDraftDirty({ touched, installed: check?.state === "installed" });
+  const dirty = flowDirty(flow);
   const pendingLeave = useRef<(() => void) | null>(null);
 
   const requestClose = () => {
@@ -216,7 +214,7 @@ function AddSkillDialog({
         return;
       }
       setDraft(parsed.draft);
-      setTouched(true);
+      setFlow(flowAfterEdit);
       setTriggersOpen(
         Boolean(parsed.draft.domains || parsed.draft.apps || parsed.draft.keywords)
       );
@@ -230,14 +228,16 @@ function AddSkillDialog({
     setChecking(true);
     try {
       const catalog = await client.listSkills();
-      const result = checkSkillInstalled(draft, catalog);
-      setCheck(result);
+      const result = checkSkillInstalled(draft, catalog, await skillBodyHash(draft.body));
+      setFlow((f) => flowAfterCheck(f, result));
       if (result.state === "installed") {
         // The bot's own view (and "all shared skills" bots) picks it up from the same scan.
         void skills.reload();
       }
     } catch (e) {
-      setCheck({ state: "failed", message: e instanceof Error ? e.message : String(e) });
+      setFlow((f) =>
+        flowAfterCheck(f, { state: "failed", message: e instanceof Error ? e.message : String(e) })
+      );
     } finally {
       setChecking(false);
     }
@@ -250,7 +250,7 @@ function AddSkillDialog({
     const result = await skills.save(assignPayload);
     setAssigning(false);
     if (result.ok) {
-      setAssigned(true);
+      setFlow((f) => ({ ...f, assigned: true }));
     } else {
       toast.show(
         result.failure === "conflict" ? t("bots.skills.conflict") : result.message,
@@ -503,6 +503,7 @@ function AddSkillDialog({
                 </div>
                 {check?.state === "installed" ? (
                   <Callout tone="success" title={t("addSkill.found", { name: skillName })} role="status">
+                    {check.verified ? null : <p>{t("addSkill.unverified")}</p>}
                     {assigned
                       ? t("addSkill.assigned", { bot: botName })
                       : assignPayload
@@ -531,7 +532,9 @@ function AddSkillDialog({
                     {t("addSkill.differentBody", {
                       name: skillName,
                       version: check.existing?.version ?? "?",
-                      scope: check.existing?.scope ?? "shared"
+                      scope: t(`bots.skills.scope.${check.existing?.scope ?? "shared"}`, {
+                        defaultValue: check.existing?.scope ?? ""
+                      })
                     })}
                   </Callout>
                 ) : check?.state === "notFound" ? (
@@ -560,7 +563,7 @@ function AddSkillDialog({
               disabled={issues.length > 0}
               data-testid="add-skill-continue"
               onClick={() => {
-                setCheck(null);
+                setFlow((f) => ({ ...f, check: null }));
                 setStep("install");
               }}
             >

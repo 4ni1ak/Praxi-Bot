@@ -9,10 +9,12 @@ export interface TabStopInfo {
   tabIndex: number;
   /** `el.getClientRects().length`: 0 for hidden controls (a `display: none` file input). */
   rects: number;
+  /** Inside an `inert` subtree (the body of a dialog that is saving): the browser cannot focus it. */
+  inert?: boolean;
 }
 
 export function isTabStop(info: TabStopInfo): boolean {
-  return info.tabIndex >= 0 && info.rects > 0;
+  return info.tabIndex >= 0 && info.rects > 0 && !info.inert;
 }
 
 /**
@@ -28,7 +30,8 @@ export function trapTarget<T>(
 ): T | null | "none" {
   const first = items[0];
   const last = items[items.length - 1];
-  if (first === undefined || last === undefined) return "none"; // nothing to focus: swallow Tab
+  // Nothing usable (everything inert or hidden): the caller keeps focus on the dialog itself.
+  if (first === undefined || last === undefined) return "none";
   const inCycle = active !== null && items.includes(active);
   if (shift) {
     return active === first || active === node || !inCycle ? last : null;

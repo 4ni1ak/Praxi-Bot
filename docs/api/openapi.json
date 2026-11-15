@@ -363,6 +363,82 @@
             "bearer": []
           }
         ]
+      },
+      "patch": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Change only the listed fields of a bot, atomically, if `expected_version` is current.",
+        "operationId": "patch_bot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotPatchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the bot changed since `expected_version`; `current` is its state now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/v1/bots/{id}/grants": {
@@ -4638,6 +4714,24 @@
           }
         }
       },
+      "BotConflictBody": {
+        "type": "object",
+        "description": "`409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now.",
+        "required": [
+          "error",
+          "current"
+        ],
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/BotDto",
+            "description": "The current bot, with its current version."
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail",
+            "description": "`version_conflict`."
+          }
+        }
+      },
       "BotDto": {
         "type": "object",
         "description": "Public bot representation.",
@@ -4645,7 +4739,8 @@
           "id",
           "name",
           "config",
-          "created_at_ms"
+          "created_at_ms",
+          "version"
         ],
         "properties": {
           "config": {
@@ -4686,6 +4781,11 @@
                 "description": "Parsed `[runtime]` computer target settings (`auto` when omitted in profile)."
               }
             ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Profile version: starts at 1 and is bumped by every write to the name or\nprofile (`PUT` or `PATCH`).  Send it back as `expected_version` to `PATCH`."
           }
         }
       },
@@ -4720,6 +4820,63 @@
                 "description": "Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`\nwhen both are supplied. Omission on update preserves the stored target."
               }
             ]
+          }
+        }
+      },
+      "BotPatchInput": {
+        "type": "object",
+        "description": "`PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.\nEvery field not named - including unknown keys - stays exactly as stored.",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version the client loaded (`BotDto::version`).  A different current\nversion refuses the whole patch with `409` and returns the current bot."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New display name."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BotPatchOp"
+            },
+            "description": "Profile changes, applied in order."
+          }
+        }
+      },
+      "BotPatchKind": {
+        "type": "string",
+        "description": "How one [`BotPatchOp`] changes the profile.",
+        "enum": [
+          "set",
+          "unset"
+        ]
+      },
+      "BotPatchOp": {
+        "type": "object",
+        "description": "One field-level change of a bot profile.",
+        "required": [
+          "op",
+          "path"
+        ],
+        "properties": {
+          "op": {
+            "$ref": "#/components/schemas/BotPatchKind",
+            "description": "`set` or `unset`."
+          },
+          "path": {
+            "type": "string",
+            "description": "RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,\n`/permissions/categories/fs/level`, `/runtime/computer`.  Object keys\nonly: a path through an array or a scalar is refused."
+          },
+          "value": {
+            "description": "The new value (`set` only)."
           }
         }
       },
@@ -4886,9 +5043,14 @@
           "name",
           "description",
           "version",
+          "body_sha256",
           "scope"
         ],
         "properties": {
+          "body_sha256": {
+            "type": "string",
+            "description": "Hex SHA-256 of the Markdown body (the part after the frontmatter, trimmed): lets a\nclient tell whether the catalog lists the file it just wrote or an older one."
+          },
           "description": {
             "type": "string",
             "description": "One-line description from frontmatter."

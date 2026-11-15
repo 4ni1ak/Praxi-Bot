@@ -64,6 +64,8 @@ export interface EditorSnapshot {
   skillsDirty: boolean;
   /** Hand-typed model ids that are not valid yet (kept as typed, see `invalidCustomRoles`). */
   customText?: CustomText;
+  /** Text typed in the "Other model id" fallback field that was not added yet. */
+  pendingFallback?: string;
 }
 
 function appsChanged(a: Record<string, boolean>, b: Record<string, boolean>): boolean {
@@ -91,7 +93,8 @@ export function dirtySections(s: EditorSnapshot): BotEditorSection[] {
     !sameRef(d.executor, i.executor) ||
     !sameRef(d.planner, i.planner) ||
     !sameRef(d.classifier, i.classifier) ||
-    fallbackList(d.fallback).join(",") !== fallbackList(i.fallback).join(",")
+    fallbackList(d.fallback).join(",") !== fallbackList(i.fallback).join(",") ||
+    (s.pendingFallback ?? "").trim() !== ""
   ) {
     out.push("models");
   }
@@ -104,12 +107,17 @@ export function dirtySections(s: EditorSnapshot): BotEditorSection[] {
   return out;
 }
 
-export type EditorProblem = "nameMissing" | "executorMissing" | "customInvalid";
+export type EditorProblem =
+  | "nameMissing"
+  | "executorMissing"
+  | "customInvalid"
+  | "fallbackPending";
 
 /** What blocks Save, and the section that fixes it. */
 export function editorProblems(
   draft: BotDraft,
-  customText: CustomText = {}
+  customText: CustomText = {},
+  pendingFallback = ""
 ): Array<{ problem: EditorProblem; section: BotEditorSection }> {
   const out: Array<{ problem: EditorProblem; section: BotEditorSection }> = [];
   if (draft.name.trim() === "") out.push({ problem: "nameMissing", section: "identity" });
@@ -118,6 +126,10 @@ export function editorProblems(
   }
   if (invalidCustomRoles(customText).length > 0) {
     out.push({ problem: "customInvalid", section: "advanced" });
+  }
+  // Typed but not added (valid or not): Save would silently leave it out.
+  if (pendingFallback.trim() !== "") {
+    out.push({ problem: "fallbackPending", section: "models" });
   }
   return out;
 }
@@ -129,6 +141,21 @@ export function editorProblems(
 export function closeAction(dirty: boolean, saving: boolean): "close" | "confirm" | "wait" {
   if (saving) return "wait";
   return dirty ? "confirm" : "close";
+}
+
+// --- deleting a bot --------------------------------------------------------
+
+export type DeleteBlock = "chats" | "runs" | null;
+
+/**
+ * Why Delete is unavailable: the daemon refuses a bot that still has chats or ANY retained run
+ * (finished and scheduled runs included).  `runs` is `null` while the run list has not loaded:
+ * Delete stays available then and the daemon's own `409` is shown.
+ */
+export function deleteBlock(chatCount: number, runCount: number | null): DeleteBlock {
+  if (chatCount > 0) return "chats";
+  if (runCount !== null && runCount > 0) return "runs";
+  return null;
 }
 
 // --- fallback models -------------------------------------------------------

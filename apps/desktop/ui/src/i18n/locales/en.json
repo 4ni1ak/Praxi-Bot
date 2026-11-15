@@ -1908,7 +1908,8 @@
     "problem": {
       "nameMissing": "Give the bot a name to save.",
       "executorMissing": "Choose a main model to save.",
-      "customInvalid": "A custom model id is not valid yet (Advanced)."
+      "customInvalid": "A custom model id is not valid yet (Advanced).",
+      "fallbackPending": "Add or clear the model id you typed under Fallback models."
     },
     "saving": "Saving…",
     "saved": "{{name}} was saved.",
@@ -1939,7 +1940,8 @@
       "browser": "Browser",
       "off": "Off"
     },
-    "deleteBlocked": "This bot still has chats ({{count}}), so it cannot be deleted. Only a bot without chats or runs can be removed."
+    "deleteBlocked": "This bot still has chats ({{count}}), so it cannot be deleted. Only a bot without chats or runs can be removed.",
+    "deleteBlockedRuns": "This bot still has {{count}} retained run(s), so it cannot be deleted. Only a bot without chats or runs can be removed."
   },
   "addSkill": {
     "open": "Add skill",
@@ -2023,6 +2025,7 @@
     "appsPlaceholder": "Excel, SystemSettings",
     "different": "A different skill has this name",
     "differentBody": "The catalog lists “{{name}}” (version {{version}}, {{scope}}), but it is not the file you prepared. Change the name or version, or replace the old file, then check again.",
-    "discardInstallBody": "The skill file has not been found in the skills folder yet. If you close now, what you wrote is lost."
+    "discardInstallBody": "The skill file has not been found in the skills folder yet. If you close now, what you wrote is lost.",
+    "unverified": "This daemon does not report a fingerprint of the instructions, so an older file with the same name, version and description cannot be ruled out. Closing still asks before discarding what you wrote."
   }
 }

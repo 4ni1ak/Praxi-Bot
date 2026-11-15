@@ -125,6 +125,7 @@ interface (`find_tool`, `get_tool_details`, `use_tool`) instead of the whole lis
 | List bots | `bot bots list` |
 | Inspect one, including its effective policy | `GET /v1/bots/{id}` (API; desktop app) |
 | Replace a profile | `PUT /v1/bots/{id}` (API; desktop app) |
+| Change single fields safely | `PATCH /v1/bots/{id}` with `expected_version` and `ops` (`set` / `unset` on JSON Pointer paths such as `/models/planner` or `/permissions/categories/fs/level`); a stale version is a `409` that returns the current bot. `GET` shows `version`; every `PUT` or `PATCH` bumps it. The desktop app saves with this |
 | Delete a bot | `DELETE /v1/bots/{id}`; only possible while it has no chats or runs |
 | See or revoke its "always allow" grants | `bot grants list <bot-id>`, `bot grants revoke ...` |
 

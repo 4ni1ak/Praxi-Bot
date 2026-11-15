@@ -308,6 +308,50 @@ export function skillDraftDirty(s: { touched: boolean; installed: boolean }): bo
   return s.touched && !s.installed;
 }
 
+/** Hex SHA-256 of the instructions as the daemon stores them (the trimmed body). */
+export async function skillBodyHash(body: string): Promise<string> {
+  const bytes = new TextEncoder().encode(body.replace(/\r\n/g, "\n").trim());
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** What the add-skill dialog remembers about the daemon check of its current draft. */
+export interface CheckResult {
+  state: SkillCheck | "failed";
+  message?: string;
+  existing?: CatalogSkill;
+  verified?: boolean;
+}
+
+/** The add-skill dialog's transient state: edits, the check of the current draft, the assignment. */
+export interface AddFlow {
+  touched: boolean;
+  check: CheckResult | null;
+  assigned: boolean;
+}
+
+export const INITIAL_ADD_FLOW: AddFlow = { touched: false, check: null, assigned: false };
+
+/**
+ * Any change to the draft (typing, importing another file) discards the check and the assignment
+ * result: they belong to the exact draft they were made for.
+ */
+export function flowAfterEdit(): AddFlow {
+  return { touched: true, check: null, assigned: false };
+}
+
+export function flowAfterCheck(f: AddFlow, check: CheckResult): AddFlow {
+  return { ...f, check };
+}
+
+/** Closing loses the draft unless the daemon's catalog verifiably lists this very file. */
+export function flowDirty(f: AddFlow): boolean {
+  return skillDraftDirty({
+    touched: f.touched,
+    installed: f.check?.state === "installed" && f.check.verified === true
+  });
+}
+
 /** Path of the skill inside the daemon's data directory (shared scope). */
 export function skillRelativePath(name: string): string {
   return `skills/${name}/SKILL.md`;
@@ -342,6 +386,8 @@ export interface CatalogSkill {
   name: string;
   description?: string;
   version?: string;
+  /** Hex SHA-256 of the body the daemon loaded (`GET /v1/skills`); absent on an older daemon. */
+  body_sha256?: string;
   scope?: string;
   requires?: {
     domains?: readonly string[];
@@ -359,9 +405,17 @@ const lowerSorted = (items: readonly string[] | undefined): string =>
 /**
  * Whether a catalog entry is the file the user supplied: the API has no content hash, so the
  * identity is the name plus everything the catalog carries from the file - version, description
- * and the `when` triggers - in the shared scope (a bundled skill of the same name is not it).
+ * and the `when` triggers - in the shared scope (a bundled skill of the same name is not it) -
+ * and, when the daemon reports it, the SHA-256 of the instructions.
  */
-export function catalogEntryMatches(entry: CatalogSkill, draft: SkillDraft): boolean {
+export function catalogEntryMatches(
+  entry: CatalogSkill,
+  draft: SkillDraft,
+  bodyHash?: string
+): boolean {
+  if (entry.body_sha256 !== undefined && bodyHash !== undefined && entry.body_sha256 !== bodyHash) {
+    return false;
+  }
   return (
     entry.name === draft.name.trim() &&
     (entry.scope ?? "shared") === "shared" &&
@@ -387,8 +441,9 @@ export function checkSkillInstalled(
   catalog: {
     skills: ReadonlyArray<CatalogSkill>;
     issues: ReadonlyArray<{ path: string; message: string; scope?: string }>;
-  }
-): { state: SkillCheck; message?: string; existing?: CatalogSkill } {
+  },
+  bodyHash?: string
+): { state: SkillCheck; message?: string; existing?: CatalogSkill; verified?: boolean } {
   const name = draft.name.trim();
   const issue = catalog.issues.find((i) => {
     if (i.scope === "bundled") return false;
@@ -399,7 +454,12 @@ export function checkSkillInstalled(
   if (issue) return { state: "rejected", message: issue.message };
   const existing = catalog.skills.find((s) => s.name === name);
   if (!existing) return { state: "notFound" };
-  return catalogEntryMatches(existing, draft)
-    ? { state: "installed", existing }
-    : { state: "different", existing };
+  if (!catalogEntryMatches(existing, draft, bodyHash)) return { state: "different", existing };
+  // Without the daemon's body hash (an older daemon) a same-metadata older file cannot be told
+  // apart from this one: the result stands, but it is not "verified" and the guard stays on.
+  return {
+    state: "installed",
+    existing,
+    verified: existing.body_sha256 !== undefined && bodyHash !== undefined
+  };
 }

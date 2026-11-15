@@ -107,7 +107,9 @@ function NewBotDialogContent({
   const nameMissing = draft.name.trim() === "";
   const executorMissing = effectiveExecutor.model.trim() === "";
   // An unusable hand-typed id blocks creating the bot, as it blocks saving an edit.
-  const customInvalid = invalidCustomRoles(customText).length > 0;
+  const [pendingFallback, setPendingFallback] = useState("");
+  const customInvalid =
+    invalidCustomRoles(customText).length > 0 || pendingFallback.trim() !== "";
 
   const save = async () => {
     if (!client || nameMissing || executorMissing || customInvalid || saving) {
@@ -362,6 +364,8 @@ function NewBotDialogContent({
                 draft={effectiveDraft}
                 providersDto={providersDto}
                 executorMissing={executorMissing}
+                pendingFallback={pendingFallback}
+                onPendingFallback={setPendingFallback}
                 patch={(next) => {
                   if (next.executor) {
                     setBrainMode("manual");
@@ -396,7 +400,9 @@ function NewBotDialogContent({
               }}
               computerTarget="local"
               browserTarget="local"
+              deleteBlocked={null}
               chatCount={0}
+              runCount={0}
             />
           </div>
         ) : null}

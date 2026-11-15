@@ -8,7 +8,7 @@ import {
   X,
   Zap
 } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, Button } from "ui";
 import {
@@ -22,6 +22,7 @@ import {
   type CustomRole,
   type CustomText,
   customRefIssue,
+  type DeleteBlock,
   fallbackList,
   parseFallbackInput,
   removeFallback
@@ -142,12 +143,17 @@ export function ModelFields({
   draft,
   patch,
   providersDto,
-  executorMissing
+  executorMissing,
+  pendingFallback,
+  onPendingFallback
 }: {
   draft: BotDraft;
   patch: Patch;
   providersDto: ProvidersDto | null;
   executorMissing: boolean;
+  /** The "Other model id" text, owned by the dialog (so it survives a section change). */
+  pendingFallback: string;
+  onPendingFallback: (text: string) => void;
 }) {
   const { t } = useTranslation();
   const executorRef = formatModelRef(draft.executor);
@@ -262,7 +268,11 @@ export function ModelFields({
             onPick={(next) => patch({ fallback: addFallback(draft.fallback, next) })}
           />
         </div>
-        <CustomFallbackEntry onAdd={(refs) => patch({ fallback: refs.reduce(addFallback, draft.fallback) })} />
+        <CustomFallbackEntry
+          text={pendingFallback}
+          onText={onPendingFallback}
+          onAdd={(refs) => patch({ fallback: refs.reduce(addFallback, draft.fallback) })}
+        />
       </section>
     </>
   );
@@ -381,20 +391,23 @@ export function AppFields({
  * Any model id as free text - a fallback that is not in the catalog, a default-provider id, a
  * provider that is not configured here.  Several refs may be added at once, comma separated.
  */
-function CustomFallbackEntry({ onAdd }: { onAdd: (refs: string[]) => void }) {
+function CustomFallbackEntry({
+  text,
+  onText,
+  onAdd
+}: {
+  text: string;
+  onText: (text: string) => void;
+  onAdd: (refs: string[]) => void;
+}) {
   const { t } = useTranslation();
   const uid = useId();
-  const [text, setText] = useState("");
-  const [issue, setIssue] = useState<string | null>(null);
+  const parsed = text.trim() === "" ? null : parseFallbackInput(text);
+  const issue = parsed && "issue" in parsed ? parsed.issue : null;
   const add = () => {
-    const parsed = parseFallbackInput(text);
-    if ("issue" in parsed) {
-      setIssue(parsed.issue);
-      return;
-    }
+    if (!parsed || "issue" in parsed) return;
     onAdd(parsed.refs);
-    setText("");
-    setIssue(null);
+    onText("");
   };
   return (
     <Field
@@ -413,10 +426,7 @@ function CustomFallbackEntry({ onAdd }: { onAdd: (refs: string[]) => void }) {
           autoCapitalize="off"
           data-testid="bot-edit-fallback-custom"
           aria-invalid={issue ? true : undefined}
-          onChange={(e) => {
-            setText(e.target.value);
-            setIssue(null);
-          }}
+          onChange={(e) => onText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
@@ -426,7 +436,7 @@ function CustomFallbackEntry({ onAdd }: { onAdd: (refs: string[]) => void }) {
         />
         <Button
           variant="secondary"
-          disabled={text.trim() === ""}
+          disabled={parsed === null || issue !== null}
           data-testid="bot-edit-fallback-custom-add"
           onClick={add}
         >
@@ -492,7 +502,9 @@ export function AdvancedFields({
   onCustomText,
   computerTarget,
   browserTarget,
+  deleteBlocked,
   chatCount,
+  runCount,
   onDelete
 }: {
   draft: BotDraft;
@@ -501,8 +513,10 @@ export function AdvancedFields({
   /** Where the bot runs, as stored (read-only here: this form never changes it). */
   computerTarget: string;
   browserTarget: string;
-  /** Chats of the bot: the daemon deletes only a bot without chats or runs. */
+  /** Why the daemon would refuse to delete the bot (it needs no chats and no runs), or `null`. */
+  deleteBlocked: DeleteBlock;
   chatCount: number;
+  runCount: number;
   /** Absent for a bot that does not exist yet. */
   onDelete?: () => void;
 }) {
@@ -569,14 +583,16 @@ export function AdvancedFields({
             <div className={styles.dangerText}>
               <p className={styles.dangerTitle}>{t("botEdit.deleteTitle")}</p>
               <p className={dialogStyles.hint}>
-                {chatCount > 0
+                {deleteBlocked === "chats"
                   ? t("botEdit.deleteBlocked", { count: chatCount })
-                  : t("botEdit.deleteHint")}
+                  : deleteBlocked === "runs"
+                    ? t("botEdit.deleteBlockedRuns", { count: runCount })
+                    : t("botEdit.deleteHint")}
               </p>
             </div>
             <Button
               variant="secondary"
-              disabled={chatCount > 0}
+              disabled={deleteBlocked !== null}
               data-testid="bot-edit-delete"
               onClick={onDelete}
             >

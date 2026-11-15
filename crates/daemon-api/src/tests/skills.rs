@@ -107,6 +107,12 @@ async fn catalog_returns_metadata_without_body_and_surfaces_issues_and_hub() {
     assert_eq!(alpha["scope"], "shared");
     assert_eq!(alpha["description"], "Alpha description");
     assert_eq!(alpha["version"], "1.2.3");
+    // The catalog carries a body fingerprint (never the body): a client can tell its file from an older one.
+    let digest = {
+        use sha2::Digest;
+        format!("{:x}", sha2::Sha256::digest(b"SECRET_BODY_DO_NOT_LEAK"))
+    };
+    assert_eq!(alpha["body_sha256"], digest);
     assert_eq!(alpha["requires"]["domains"], json!(["example.com"]));
     assert!(alpha["hub"].is_null());
 

@@ -27,6 +27,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0006_bot_skill_assignment",
         include_str!("../migrations/0006_bot_skill_assignment.sql"),
     ),
+    (
+        "0007_bot_version",
+        include_str!("../migrations/0007_bot_version.sql"),
+    ),
 ];
 
 /// Highest schema version this build supports.
@@ -87,9 +91,9 @@ mod tests {
     fn migrates_empty_db_and_is_idempotent() {
         let mut conn = Connection::open_in_memory().unwrap();
         assert_eq!(current_version(&conn).unwrap(), 0);
-        assert_eq!(latest_version(), 6);
-        assert_eq!(migrate(&mut conn).unwrap(), 6);
-        assert_eq!(current_version(&conn).unwrap(), 6);
+        assert_eq!(latest_version(), 7);
+        assert_eq!(migrate(&mut conn).unwrap(), 7);
+        assert_eq!(current_version(&conn).unwrap(), 7);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         assert_eq!(
             tables(&conn),
@@ -135,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn main_v5_upgrades_by_only_the_skill_assignment_migration() {
+    fn main_v5_upgrades_by_the_skill_assignment_and_bot_version_migrations() {
         let mut conn = Connection::open_in_memory().unwrap();
         for (_, sql) in &MIGRATIONS[..5] {
             conn.execute_batch(sql).unwrap();
@@ -150,8 +154,13 @@ mod tests {
                 .iter()
                 .any(|t| t.starts_with("bot_skill_assignment"))
         );
-        assert_eq!(migrate(&mut conn).unwrap(), 1);
-        assert_eq!(current_version(&conn).unwrap(), 6);
+        assert_eq!(migrate(&mut conn).unwrap(), 2);
+        assert_eq!(current_version(&conn).unwrap(), 7);
+        // An existing bot starts at version 1.
+        let v: i64 = conn
+            .query_row("SELECT version FROM bots WHERE id='bot'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 1);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         for table in ["bot_skill_assignment", "bot_skill_assignment_state"] {
             assert!(tables(&conn).contains(&table.to_owned()));

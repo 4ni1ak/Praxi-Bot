@@ -1908,7 +1908,8 @@
     "problem": {
       "nameMissing": "Kaydetmek için bota bir ad ver.",
       "executorMissing": "Kaydetmek için bir ana model seç.",
-      "customInvalid": "Özel bir model kimliği henüz geçerli değil (Gelişmiş)."
+      "customInvalid": "Özel bir model kimliği henüz geçerli değil (Gelişmiş).",
+      "fallbackPending": "Yedek modeller altında yazdığınız model kimliğini ekleyin ya da silin."
     },
     "saving": "Kaydediliyor…",
     "saved": "{{name}} kaydedildi.",
@@ -1939,7 +1940,8 @@
       "browser": "Tarayıcı",
       "off": "Kapalı"
     },
-    "deleteBlocked": "Bu botun sohbetleri var ({{count}}); bu yüzden silinemez. Yalnızca sohbeti ve çalıştırması olmayan bot silinebilir."
+    "deleteBlocked": "Bu botun sohbetleri var ({{count}}); bu yüzden silinemez. Yalnızca sohbeti ve çalıştırması olmayan bot silinebilir.",
+    "deleteBlockedRuns": "Bu botun saklanan {{count}} çalıştırması var; bu yüzden silinemez. Yalnızca sohbeti ve çalıştırması olmayan bot silinebilir."
   },
   "addSkill": {
     "open": "Beceri ekle",
@@ -2023,6 +2025,7 @@
     "appsPlaceholder": "Excel, SystemSettings",
     "different": "Bu adı başka bir beceri taşıyor",
     "differentBody": "Katalogda “{{name}}” var (sürüm {{version}}, {{scope}}) ama hazırladığınız dosya bu değil. Adı ya da sürümü değiştirin veya eski dosyayı değiştirin, sonra yeniden kontrol edin.",
-    "discardInstallBody": "Beceri dosyası beceri klasöründe henüz bulunamadı. Şimdi kapatırsanız yazdıklarınız kaybolur."
+    "discardInstallBody": "Beceri dosyası beceri klasöründe henüz bulunamadı. Şimdi kapatırsanız yazdıklarınız kaybolur.",
+    "unverified": "Bu arka plan hizmeti talimatların parmak izini bildirmiyor; aynı ad, sürüm ve açıklamaya sahip eski bir dosya elenemiyor. Kapatırken yazdıklarınız yine de sorulur."
   }
 }

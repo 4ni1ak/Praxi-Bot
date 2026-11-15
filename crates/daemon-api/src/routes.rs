@@ -23,8 +23,9 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::dto::{
-    AcceptedResponse, AnswerQuestion, AnswerResponse, ApprovalDto, BotDto, BotInput, BotUsage,
-    CatalogProviderDto, CategoryDecisionDto, ChatDto, ConfiguredProviderDto, ControlDecisionInput,
+    AcceptedResponse, AnswerQuestion, AnswerResponse, ApprovalDto, BotConflictBody, BotDto,
+    BotInput, BotPatchInput, BotPatchKind, BotPatchOp, BotUsage, CatalogProviderDto,
+    CategoryDecisionDto, ChatDto, ConfiguredProviderDto, ControlDecisionInput,
     ControlDecisionResponse, ControlStateDto, ControlStateInput, CreateChat, DecideApproval,
     Decision, DecisionResponse, DeliveryKind, DetectedProviderDto, EffectivePolicyDto,
     EnableCliProviderInput, GrantDto, GrantTargetDto, Health, LatestCursor, MessageDto, Mode,
@@ -57,7 +58,7 @@ pub(crate) fn id(s: &str) -> Result<Uuid, ApiError> {
     s.parse().map_err(|_| ApiError::bad_request("malformed id"))
 }
 
-fn bot_dto(b: Bot) -> BotDto {
+fn bot_dto(b: Bot, version: i64) -> BotDto {
     let runtime = serde_json::from_value::<BotProfile>(b.config.clone())
         .ok()
         .map(|p| RuntimeConfigDto {
@@ -68,6 +69,7 @@ fn bot_dto(b: Bot) -> BotDto {
         name: b.name,
         config: b.config,
         created_at_ms: b.created_at_ms,
+        version,
         effective_policy: None,
         runtime,
     }
@@ -299,11 +301,15 @@ pub(crate) async fn health(State(s): State<AppState>) -> Json<Health> {
 #[utoipa::path(get, path = "/v1/bots", tag = "bots", security(("bearer" = [])),
     responses((status = 200, body = Vec<BotDto>), (status = 401, body = ErrorBody)))]
 pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotDto>>, ApiError> {
+    let versions = s.storage().bot_versions(s.user_id())?;
     Ok(Json(
         s.storage()
             .list_bots(s.user_id())?
             .into_iter()
-            .map(bot_dto)
+            .map(|b| {
+                let v = versions.get(&b.id).copied().unwrap_or(1);
+                bot_dto(b, v)
+            })
             .collect(),
     ))
 }
@@ -327,7 +333,7 @@ pub(crate) async fn create_bot(
     };
     s.storage().insert_bot(&bot)?;
     s.refresh_profile(&bot);
-    Ok((StatusCode::CREATED, Json(bot_dto(bot))))
+    Ok((StatusCode::CREATED, Json(bot_dto(bot, 1))))
 }
 
 /// Get one bot, including its `effective_policy` (stored policy merged with
@@ -341,7 +347,8 @@ pub(crate) async fn get_bot(
 ) -> Result<Json<BotDto>, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
     let effective = s.agent().effective_policy(bot.id).ok();
-    let mut dto = bot_dto(bot);
+    let version = s.storage().bot_version(bot.id)?.unwrap_or(1);
+    let mut dto = bot_dto(bot, version);
     dto.effective_policy = effective.map(effective_policy_dto);
     Ok(Json(dto))
 }
@@ -412,7 +419,156 @@ pub(crate) async fn update_bot(
     bot.name = name;
     bot.config = config;
     s.refresh_profile(&bot);
-    Ok(Json(bot_dto(bot)))
+    let version = s.storage().bot_version(bot.id)?.unwrap_or(1);
+    Ok(Json(bot_dto(bot, version)))
+}
+
+/// Why a patch cannot be applied.
+pub(crate) enum BotPatchError {
+    Api(ApiError),
+    /// The stored version is not `expected_version`.
+    Stale(Box<BotDto>),
+}
+
+impl From<ApiError> for BotPatchError {
+    fn from(e: ApiError) -> Self {
+        Self::Api(e)
+    }
+}
+
+impl From<storage::StorageError> for BotPatchError {
+    fn from(e: storage::StorageError) -> Self {
+        Self::Api(e.into())
+    }
+}
+
+impl axum::response::IntoResponse for BotPatchError {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            Self::Api(e) => e.into_response(),
+            Self::Stale(current) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": {
+                        "code": "version_conflict",
+                        "message": "the bot changed since `expected_version`",
+                    },
+                    "current": *current,
+                })),
+            )
+                .into_response(),
+        }
+    }
+}
+
+/// Split a JSON Pointer into object keys (RFC 6901 escapes).
+fn pointer_keys(path: &str) -> Result<Vec<String>, String> {
+    let rest = path
+        .strip_prefix('/')
+        .ok_or_else(|| format!("path `{path}` must start with `/`"))?;
+    let keys: Vec<String> = rest
+        .split('/')
+        .map(|k| k.replace("~1", "/").replace("~0", "~"))
+        .collect();
+    if keys.iter().any(String::is_empty) {
+        return Err(format!("path `{path}` has an empty segment"));
+    }
+    Ok(keys)
+}
+
+/// Set (`value` is `Some`) or remove (`None`) the key path `keys` below `node`.
+fn patch_at(
+    node: &mut Value,
+    keys: &[String],
+    value: Option<&Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some((first, rest)) = keys.split_first() else {
+        return Ok(());
+    };
+    let obj = node
+        .as_object_mut()
+        .ok_or_else(|| format!("path `{path}` crosses a non-object"))?;
+    if rest.is_empty() {
+        match value {
+            Some(v) => {
+                obj.insert(first.clone(), v.clone());
+            }
+            None => {
+                obj.remove(first);
+            }
+        }
+        return Ok(());
+    }
+    match (obj.get_mut(first), value) {
+        (Some(child), _) => patch_at(child, rest, value, path),
+        (None, Some(_)) => {
+            let mut child = Value::Object(serde_json::Map::new());
+            patch_at(&mut child, rest, value, path)?;
+            obj.insert(first.clone(), child);
+            Ok(())
+        }
+        (None, None) => Ok(()),
+    }
+}
+
+/// Apply field-level ops to a profile.  Only the named keys change.
+fn apply_patch_ops(config: &mut Value, ops: &[BotPatchOp]) -> Result<(), String> {
+    for op in ops {
+        let keys = pointer_keys(&op.path)?;
+        let value = (op.op == BotPatchKind::Set).then_some(&op.value);
+        patch_at(config, &keys, value, &op.path)?;
+    }
+    Ok(())
+}
+
+/// Change only the listed fields of a bot, atomically, if `expected_version` is current.
+#[utoipa::path(patch, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Bot id")),
+    request_body = BotPatchInput,
+    responses((status = 200, body = BotDto), (status = 404, body = ErrorBody),
+              (status = 409, body = BotConflictBody,
+               description = "the bot changed since `expected_version`; `current` is its state now"),
+              (status = 422, body = ErrorBody)))]
+pub(crate) async fn patch_bot(
+    State(s): State<AppState>,
+    Path(bid): Path<String>,
+    ApiJson(input): ApiJson<BotPatchInput>,
+) -> Result<Json<BotDto>, BotPatchError> {
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let new_name = input.name.map(|n| n.trim().to_owned());
+    if new_name.as_deref() == Some("") {
+        return Err(ApiError::bad_request("bot name must not be empty").into());
+    }
+    let ops = input.ops;
+    let outcome = s
+        .storage()
+        .patch_bot(bot.id, input.expected_version, |name, config| {
+            let mut next = config.clone();
+            apply_patch_ops(&mut next, &ops).map_err(|e| format!("bad_patch:{e}"))?;
+            serde_json::from_value::<BotProfile>(next.clone())
+                .map_err(|e| format!("bad_profile:invalid bot profile: {e}"))?;
+            Ok((new_name.unwrap_or_else(|| name.to_owned()), next))
+        })?;
+    match outcome {
+        storage::BotPatch::Applied { bot, version } => {
+            s.refresh_profile(&bot);
+            Ok(Json(bot_dto(bot, version)))
+        }
+        storage::BotPatch::Stale { bot, version } => {
+            Err(BotPatchError::Stale(Box::new(bot_dto(bot, version))))
+        }
+        storage::BotPatch::Missing => Err(ApiError::not_found("bot").into()),
+        storage::BotPatch::Rejected(why) => {
+            let (code, msg) = why.split_once(':').unwrap_or(("bad_patch", &why));
+            let code = if code == "bad_profile" {
+                "bad_profile"
+            } else {
+                "bad_patch"
+            };
+            Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, code, msg.to_owned()).into())
+        }
+    }
 }
 
 /// Delete a bot that has no chats or runs.

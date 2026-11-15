@@ -60,6 +60,7 @@ import type {
   RestorePreview,
   RestoreResponse,
   BotSkills,
+  BotPatchInput,
   PutBotSkillsInput,
   SkillsCatalog
 } from "./types";
@@ -70,12 +71,15 @@ export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** The parsed JSON body of the error response, when it had one (a `409` carries `current`). */
+  readonly body?: unknown;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -153,14 +157,16 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
   }
@@ -180,6 +186,13 @@ export class ApiClient {
   }
   updateBot(id: string, input: BotInput): Promise<Bot> {
     return this.request("PUT", `/bots/${id}`, { body: input });
+  }
+  /**
+   * Change only the listed fields of a bot, atomically, if `expected_version` is still current;
+   * a stale version is a `409` whose body carries the current bot (`conflictBot`).
+   */
+  patchBot(id: string, input: BotPatchInput): Promise<Bot> {
+    return this.request("PATCH", `/bots/${id}`, { body: input });
   }
   deleteBot(id: string): Promise<void> {
     return this.request("DELETE", `/bots/${id}`);
@@ -421,14 +434,16 @@ export class ApiClient {
     if (!res.ok) {
       let code = "http_error";
       let message = `HTTP ${res.status}`;
+      let parsed: unknown;
       try {
         const body = (await res.json()) as ErrorBody;
+        parsed = body;
         code = body.error.code;
         message = body.error.message;
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, parsed);
     }
     return res;
   }

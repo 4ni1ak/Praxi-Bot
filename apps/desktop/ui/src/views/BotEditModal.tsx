@@ -40,20 +40,15 @@ import {
   BOT_EDITOR_SECTIONS,
   type BotEditorSection,
   closeAction,
+  deleteBlock,
   dirtySections,
   editorProblems,
   stepSection
 } from "../lib/botEditor";
 import { botChats } from "../lib/botLanding";
 import { type BotDraft, draftFromBot, runtimeTargetLabel } from "../lib/botProfile";
-import { type ProfilePart, saveEditor } from "../lib/botSave";
-import {
-  MAX_ASSIGNED_SKILLS,
-  buildPutSkillsPayload,
-  exceedsSkillLimit,
-  isBotSkillsDirty
-} from "../lib/botSkills";
-import { botHasAccess, changedApps } from "../lib/mcpApps";
+import { performEditorSave, type ProfilePart } from "../lib/botSave";
+import { buildPutSkillsPayload, isBotSkillsDirty } from "../lib/botSkills";
 import { useDaemon } from "../state/DaemonContext";
 import { useLeaveGuard } from "../state/LeaveGuard";
 import { type BotSkillsState, useSkillsDraft } from "../state/useBotSkills";
@@ -162,6 +157,22 @@ function BotEditDialog({
   const [baseline, setBaseline] = useState<Bot>(bot);
   // Hand-typed model ids as typed (Advanced); kept here so they survive a section change.
   const { customText, setCustom, forgetFor, reset: resetCustom } = useCustomText(setDraft);
+  const [pendingFallback, setPendingFallback] = useState("");
+  // Runs of this bot the daemon still holds (it refuses to delete a bot with any); `null` until known.
+  const [runCount, setRunCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!client) return undefined;
+    let cancelled = false;
+    client
+      .listRuns()
+      .then((runs) => {
+        if (!cancelled) setRunCount(runs.filter((r) => r.bot_id === bot.id).length);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [client, bot.id]);
   const [conflict, setConflict] = useState<{ parts: ProfilePart[]; fresh: Bot } | null>(null);
   const pendingLeave = useRef<(() => void) | null>(null);
   const [section, setSection] = useState<BotEditorSection>(initialSection ?? "identity");
@@ -189,11 +200,11 @@ function BotEditDialog({
     apps: allowed,
     initialApps,
     skillsDirty,
-    customText
+    customText,
+    pendingFallback
   });
   const dirty = dirtyIn.length > 0;
-  const profileDirty = dirtyIn.some((s) => s === "identity" || s === "models" || s === "permissions");
-  const problems = editorProblems(draft, customText);
+  const problems = editorProblems(draft, customText, pendingFallback);
   const nameMissing = problems.some((p) => p.problem === "nameMissing");
   const executorMissing = problems.some((p) => p.problem === "executorMissing");
 
@@ -230,111 +241,61 @@ function BotEditDialog({
     tabRefs.current[next]?.focus();
   };
 
-  const save = async (overwrite = false) => {
+  /** All of Save lives in `performEditorSave`; this only collects state and shows the outcome. */
+  const save = async (expectedVersion?: number) => {
     if (!client || saving) return;
-    const first = problems[0];
-    if (first) {
-      // Show the reason instead of a dead button.
-      goTo(first.section);
-      return;
-    }
-    const skillsPayload =
-      skillsDirty && skills.data && skillsDraft
-        ? buildPutSkillsPayload(skillsDraft, skills.data.available)
-        : null;
-    if (skillsPayload && exceedsSkillLimit(skillsPayload)) {
-      goTo("skills");
-      setError(t("bots.skills.tooMany", { max: MAX_ASSIGNED_SKILLS }));
-      return;
-    }
     setSaving(true);
     setError(null);
+    const out = await performEditorSave({
+      client,
+      baseline,
+      draft,
+      openedDraft: savedDraft,
+      problems,
+      initialApps,
+      allowed,
+      allBotIds: bots.map((b) => b.id),
+      skills: {
+        payload:
+          skillsDirty && skills.data && skillsDraft
+            ? buildPutSkillsPayload(skillsDraft, skills.data.available)
+            : null,
+        save: async (payload) => {
+          const r = await skills.save(payload);
+          return r.ok ? { ok: true } : { ok: false, failure: r.failure, message: r.message };
+        }
+      },
+      expectedVersion
+    });
     try {
-      const result = await saveEditor(client, {
-        baseline,
-        draft,
-        openedDraft: savedDraft,
-        profileDirty,
-        initialApps,
-        allowed,
-        allBotIds: bots.map((b) => b.id),
-        overwrite,
-        saveSkills: skillsPayload
-          ? async () => {
-              const r = await skills.save(skillsPayload);
-              return r.ok ? { ok: true } : { ok: false, failure: r.failure, message: r.message };
-            }
-          : null
-      });
-      if (result.kind === "conflict") {
-        setConflict({ parts: result.changed, fresh: result.fresh });
-        return;
-      }
-      setConflict(null);
-      const { bot: saved, failed, notApplied } = result;
-      if (result.profileWritten) {
-        const next = draftFromBot(saved);
-        setBaseline(saved);
-        setSavedDraft(next);
-        setDraft(next);
-        resetCustom();
-        await refreshBots().catch(() => {});
-      }
-
-      const messages: string[] = [];
-      if (failed.length > 0 || notApplied.length > 0) {
-        const fresh = await client.listMcpServers().catch(() => null);
-        const problem = new Set([...failed, ...notApplied]);
-        const actual = (name: string): boolean | undefined => {
-          const srv = fresh?.find((x) => x.name === name);
-          return srv ? botHasAccess(srv, saved.id) : undefined;
-        };
-        if (fresh) setServers(fresh);
-        setAllowed((prev) => {
-          const next = { ...prev };
-          for (const name of notApplied) next[name] = actual(name) ?? prev[name] ?? false;
-          return next;
-        });
-        setInitialApps((prev) => {
-          const next = { ...prev };
-          for (const name of changedApps(prev, allowed)) {
-            if (notApplied.includes(name)) {
-              next[name] = actual(name) ?? prev[name] ?? false;
-            } else if (!problem.has(name)) {
-              next[name] = allowed[name] ?? false;
-            }
-          }
-          return next;
-        });
-        if (failed.length > 0) {
-          messages.push(t("botForm.apps.partialFail", { names: failed.join(", ") }));
-        }
-        if (notApplied.length > 0) {
-          messages.push(t("botForm.apps.notApplied", { names: notApplied.join(", ") }));
-        }
+      if (out.kind === "blocked") {
+        goTo(out.section);
+        if (out.message) setError(t(out.message.key, out.message.params));
+      } else if (out.kind === "conflict") {
+        setConflict({ parts: out.parts, fresh: out.fresh });
+      } else if (out.kind === "failed") {
+        setError(out.message);
       } else {
-        setInitialApps(allowed);
+        setConflict(null);
+        if (out.profileWritten) {
+          const next = draftFromBot(out.bot);
+          setBaseline(out.bot);
+          setSavedDraft(next);
+          setDraft(next);
+          resetCustom();
+          setPendingFallback("");
+          await refreshBots().catch(() => {});
+        }
+        if (out.servers) setServers(out.servers);
+        setAllowed(out.allowed);
+        setInitialApps(out.initialApps);
+        if (out.close) {
+          toast.show(t("botEdit.saved", { name: out.bot.name }), "success");
+          onClose();
+        } else {
+          setError(out.messages.map((m) => t(m.key, m.params)).join(" "));
+        }
       }
-
-      const sk = result.skills;
-      if (sk && !sk.ok) {
-        messages.push(
-          sk.failure === "conflict"
-            ? t("bots.skills.conflict")
-            : sk.failure === "invalid"
-              ? t("bots.skills.invalid", { detail: sk.message })
-              : t("botEdit.skillsFailed", { detail: sk.message })
-        );
-      }
-
-      if (messages.length > 0) {
-        setError(messages.join(" "));
-        return;
-      }
-      toast.show(t("botEdit.saved", { name: saved.name }), "success");
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -348,6 +309,7 @@ function BotEditDialog({
     setSavedDraft(next);
     setDraft(next);
     resetCustom();
+    setPendingFallback("");
     setConflict(null);
   };
 
@@ -368,6 +330,7 @@ function BotEditDialog({
 
   const horizontalTabs = useHorizontalTabs();
   const chatCount = botChats(chats, bot.id).length;
+  const deleteBlocked = deleteBlock(chatCount, runCount);
   const panelId = `${uid}-panel`;
   const tabId = (s: BotEditorSection) => `${uid}-tab-${s}`;
 
@@ -467,6 +430,8 @@ function BotEditDialog({
               patch={patch}
               providersDto={providersDto}
               executorMissing={executorMissing}
+              pendingFallback={pendingFallback}
+              onPendingFallback={setPendingFallback}
             />
           ) : null}
           {section === "permissions" ? <PermissionFields draft={draft} patch={patch} /> : null}
@@ -495,7 +460,9 @@ function BotEditDialog({
               onCustomText={setCustom}
               computerTarget={runtimeTargetLabel(baseline.config, "computer")}
               browserTarget={runtimeTargetLabel(baseline.config, "browser")}
+              deleteBlocked={deleteBlocked}
               chatCount={chatCount}
+              runCount={runCount ?? 0}
               onDelete={() => {
                 setDeleteError(null);
                 setConfirmDelete(true);
@@ -518,7 +485,7 @@ function BotEditDialog({
                   variant="secondary"
                   data-testid="bot-edit-overwrite"
                   disabled={saving}
-                  onClick={() => void save(true)}
+                  onClick={() => void save(conflict.fresh.version)}
                 >
                   {t("botEdit.conflict.overwrite")}
                 </Button>

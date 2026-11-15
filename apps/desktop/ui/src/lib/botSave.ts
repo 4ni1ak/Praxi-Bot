@@ -1,21 +1,22 @@
 import type { ApiClient } from "../api/client.ts";
-import type { Bot } from "../api/types.ts";
-import { type BotDraft, configFromDraft, draftFromBot } from "./botProfile.ts";
-import { type AppsResult, applyAppsSelection } from "./mcpApps.ts";
+import type { Bot, McpServer, PutBotSkillsInput } from "../api/types.ts";
+import type { BotEditorSection } from "./botEditor.ts";
+import { isEmptyPatch, conflictBot, profilePatch } from "./botPatch.ts";
+import type { BotDraft } from "./botProfile.ts";
+import { MAX_ASSIGNED_SKILLS, exceedsSkillLimit } from "./botSkills.ts";
+import { applyAppsSelection, botHasAccess, changedApps } from "./mcpApps.ts";
 
 /**
- * The combined Save of the "Edit bot" dialog (profile, app ticks, skills) as one controller, so
- * the component only renders its outcome.  Rules (review of PR #95, findings 1 and 2):
+ * The combined Save of the "Edit bot" dialog (profile, app ticks, skills) as ONE controller: the
+ * component only collects its state, calls `performEditorSave` and renders the outcome.
  *
- * - the profile is written only when a profile field was edited - a skills-only or apps-only Save
- *   never PUTs the bot;
- * - what is written is the *fresh* stored profile with only the fields the user changed laid over
- *   it, so unedited fields (including `runtime`, i.e. the computer target, and unknown keys)
- *   round-trip untouched;
- * - the daemon has no profile revision or ETag (`PUT /v1/bots/{id}` replaces unconditionally), so
- *   the conflict check compares the stored profile with the one the dialog was opened on, right
- *   before writing.  It cannot be atomic - the window is one request - which is the best the
- *   current API allows.
+ * - The profile is written with `PATCH /v1/bots/{id}`: only the fields the user edited (the draft
+ *   against the draft the dialog opened with), against the profile `version` it loaded.  The daemon
+ *   applies the ops atomically and refuses a stale version with `409` + the current bot, so a
+ *   concurrent change by another client can neither be lost nor overwritten behind its back.
+ * - "Overwrite" repeats the same ops (still only the user's) against the version the conflict
+ *   returned - it cannot touch a field the user did not edit.
+ * - A skills-only or apps-only Save sends no profile request.
  */
 
 type Json = Record<string, unknown>;
@@ -31,11 +32,6 @@ export function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
-}
-
-/** Whether two stored bots hold the same name and profile. */
-export function sameProfile(a: Pick<Bot, "name" | "config">, b: Pick<Bot, "name" | "config">): boolean {
-  return a.name === b.name && stableJson(a.config ?? {}) === stableJson(b.config ?? {});
 }
 
 export type ProfilePart = "identity" | "models" | "permissions" | "runtime" | "other";
@@ -59,84 +55,148 @@ export function changedProfileParts(
   return out;
 }
 
-const DRAFT_KEYS: ReadonlyArray<ReadonlyArray<keyof BotDraft>> = [
-  ["name"],
-  ["persona"],
-  ["shape"],
-  ["color"],
-  ["avatar"],
-  ["executor"],
-  ["planner"],
-  ["classifier"],
-  ["fallback"],
-  // The preset and the per-category levels are one setting.
-  ["preset", "categories"]
-];
-
-/**
- * The draft to save: the stored (fresh) values, with every field the user edited (`mine` against
- * `opened`) taken from `mine`.
- */
-export function mergeDraft(fresh: BotDraft, mine: BotDraft, opened: BotDraft): BotDraft {
-  const out: BotDraft = { ...fresh };
-  for (const group of DRAFT_KEYS) {
-    const edited = group.some((k) => stableJson(mine[k]) !== stableJson(opened[k]));
-    if (!edited) continue;
-    for (const k of group) (out as unknown as Json)[k] = mine[k];
-  }
-  return out;
-}
-
-export interface EditorSaveArgs {
-  /** The stored bot the dialog was opened on (or last saved). */
-  baseline: Bot;
-  draft: BotDraft;
-  /** The draft the dialog was opened on (or last saved). */
-  openedDraft: BotDraft;
-  /** Whether any identity / model / permission field was edited. */
-  profileDirty: boolean;
-  initialApps: Record<string, boolean>;
-  allowed: Record<string, boolean>;
-  allBotIds: string[];
-  /** The user chose "Overwrite" after a conflict: write over whatever is stored now. */
-  overwrite?: boolean;
-  /** Saves the skills assignment (already validated), when it was edited. */
-  saveSkills?: (() => Promise<SkillsOutcome>) | null;
-}
-
 export type SkillsOutcome =
   | { ok: true }
   | { ok: false; failure: "conflict" | "invalid" | "error"; message: string };
 
-export type EditorSaveResult =
-  | { kind: "conflict"; fresh: Bot; changed: ProfilePart[] }
-  | ({
+/** A message for the user as a translation key + values (the component translates it). */
+export interface Msg {
+  key: string;
+  params?: Record<string, string | number>;
+}
+
+export interface EditorSaveInput {
+  client: Pick<ApiClient, "patchBot" | "listMcpServers" | "updateMcpServer">;
+  /** The stored bot the dialog was opened on (or last saved); carries the `version` it loaded. */
+  baseline: Bot;
+  draft: BotDraft;
+  /** The draft the dialog was opened on (or last saved). */
+  openedDraft: BotDraft;
+  /** What blocks Save (`editorProblems`), with the section that fixes it. */
+  problems: ReadonlyArray<{ problem: string; section: BotEditorSection }>;
+  initialApps: Record<string, boolean>;
+  allowed: Record<string, boolean>;
+  allBotIds: string[];
+  /** The assignment to save when the skills were edited, and how. */
+  skills: {
+    payload: PutBotSkillsInput | null;
+    save: (payload: PutBotSkillsInput) => Promise<SkillsOutcome>;
+  };
+  /** "Overwrite": the version the conflict returned. */
+  expectedVersion?: number;
+}
+
+export type EditorSaveOutcome =
+  | { kind: "blocked"; section: BotEditorSection; message?: Msg }
+  | { kind: "conflict"; fresh: Bot; parts: ProfilePart[] }
+  | { kind: "failed"; message: string }
+  | {
       kind: "saved";
       /** The stored bot afterwards (the written one, or the untouched baseline). */
       bot: Bot;
       profileWritten: boolean;
-      skills: SkillsOutcome | null;
-    } & AppsResult);
+      messages: Msg[];
+      /** A fresh server list after an app step that did not fully apply. */
+      servers: McpServer[] | null;
+      /** The ticks to show / treat as saved afterwards. */
+      allowed: Record<string, boolean>;
+      initialApps: Record<string, boolean>;
+      /** Close the dialog: everything was saved. */
+      close: boolean;
+    };
 
-export async function saveEditor(
-  api: Pick<ApiClient, "getBot" | "updateBot" | "listMcpServers" | "updateMcpServer">,
-  a: EditorSaveArgs
-): Promise<EditorSaveResult> {
-  let bot = a.baseline;
-  let profileWritten = false;
-  if (a.profileDirty) {
-    const fresh = await api.getBot(a.baseline.id);
-    if (!a.overwrite && !sameProfile(fresh, a.baseline)) {
-      return { kind: "conflict", fresh, changed: changedProfileParts(a.baseline, fresh) };
-    }
-    const merged = mergeDraft(draftFromBot(fresh), a.draft, a.openedDraft);
-    bot = await api.updateBot(fresh.id, {
-      name: merged.name.trim(),
-      config: configFromDraft(merged, fresh)
-    });
-    profileWritten = true;
+export async function performEditorSave(i: EditorSaveInput): Promise<EditorSaveOutcome> {
+  const first = i.problems[0];
+  if (first) return { kind: "blocked", section: first.section };
+  if (i.skills.payload && exceedsSkillLimit(i.skills.payload)) {
+    return {
+      kind: "blocked",
+      section: "skills",
+      message: { key: "bots.skills.tooMany", params: { max: MAX_ASSIGNED_SKILLS } }
+    };
   }
-  const apps = await applyAppsSelection(api, bot.id, a.initialApps, a.allowed, a.allBotIds);
-  const skills = a.saveSkills ? await a.saveSkills() : null;
-  return { kind: "saved", bot, profileWritten, skills, ...apps };
+  try {
+    let bot = i.baseline;
+    let profileWritten = false;
+    const patch = profilePatch(i.openedDraft, i.draft);
+    if (!isEmptyPatch(patch)) {
+      try {
+        bot = await i.client.patchBot(i.baseline.id, {
+          expected_version: i.expectedVersion ?? i.baseline.version,
+          ...(patch.name === undefined ? {} : { name: patch.name }),
+          ops: patch.ops
+        });
+        profileWritten = true;
+      } catch (e) {
+        const current = conflictBot(e);
+        if (current) {
+          return { kind: "conflict", fresh: current, parts: changedProfileParts(i.baseline, current) };
+        }
+        throw e;
+      }
+    }
+
+    const messages: Msg[] = [];
+    const apps = await applyAppsSelection(
+      i.client,
+      bot.id,
+      i.initialApps,
+      i.allowed,
+      i.allBotIds
+    );
+    let servers: McpServer[] | null = null;
+    let allowed = i.allowed;
+    let initialApps = i.allowed;
+    if (apps.failed.length > 0 || apps.notApplied.length > 0) {
+      servers = await i.client.listMcpServers().catch(() => null);
+      const problem = new Set([...apps.failed, ...apps.notApplied]);
+      const actual = (name: string): boolean | undefined => {
+        const srv = servers?.find((x) => x.name === name);
+        return srv ? botHasAccess(srv, bot.id) : undefined;
+      };
+      allowed = { ...i.allowed };
+      for (const name of apps.notApplied) {
+        allowed[name] = actual(name) ?? i.allowed[name] ?? false;
+      }
+      initialApps = { ...i.initialApps };
+      for (const name of changedApps(i.initialApps, i.allowed)) {
+        if (apps.notApplied.includes(name)) {
+          initialApps[name] = actual(name) ?? i.initialApps[name] ?? false;
+        } else if (!problem.has(name)) {
+          initialApps[name] = i.allowed[name] ?? false;
+        }
+      }
+      if (apps.failed.length > 0) {
+        messages.push({ key: "botForm.apps.partialFail", params: { names: apps.failed.join(", ") } });
+      }
+      if (apps.notApplied.length > 0) {
+        messages.push({ key: "botForm.apps.notApplied", params: { names: apps.notApplied.join(", ") } });
+      }
+    }
+
+    if (i.skills.payload) {
+      const sk = await i.skills.save(i.skills.payload);
+      if (!sk.ok) {
+        messages.push(
+          sk.failure === "conflict"
+            ? { key: "bots.skills.conflict" }
+            : sk.failure === "invalid"
+              ? { key: "bots.skills.invalid", params: { detail: sk.message } }
+              : { key: "botEdit.skillsFailed", params: { detail: sk.message } }
+        );
+      }
+    }
+    return {
+      kind: "saved",
+      bot,
+      profileWritten,
+      messages,
+      servers,
+      allowed,
+      initialApps,
+      close: messages.length === 0
+    };
+  } catch (e) {
+    return { kind: "failed", message: e instanceof Error ? e.message : String(e) };
+  }
 }

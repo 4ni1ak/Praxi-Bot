@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::error::{Result, StorageError};
 use crate::migrate;
 use crate::records::{
-    Approval, AuditEntry, Bot, BotSkillAssignment, Chat, EventIndexRow, Message, Run, RunStep,
-    SkillAssignmentMode, User,
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, EventIndexRow, Message, Run,
+    RunStep, SkillAssignmentMode, User,
 };
 
 /// Current Unix time in milliseconds.
@@ -264,10 +264,84 @@ impl Storage {
     /// Fails on SQLite/JSON errors.
     pub fn update_bot(&self, id: BotId, name: &str, config: &Value) -> Result<bool> {
         let n = self.conn().execute(
-            "UPDATE bots SET name = ?2, config_json = ?3 WHERE id = ?1",
+            "UPDATE bots SET name = ?2, config_json = ?3, version = version + 1 WHERE id = ?1",
             params![id.to_string(), name, serde_json::to_string(config)?],
         )?;
         Ok(n > 0)
+    }
+
+    /// The profile version of a bot (bumped by every write), `None` if it does not exist.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_version(&self, id: BotId) -> Result<Option<i64>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The profile versions of all of a user's bots.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_versions(&self, user_id: UserId) -> Result<std::collections::HashMap<BotId, i64>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, version FROM bots WHERE user_id = ?1")?;
+        let rows = st.query_map([user_id.to_string()], |r| {
+            Ok((BotId(uuid_at(r, 0)?), r.get::<_, i64>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Change a bot's name and profile atomically if its version is still
+    /// `expected_version`.  `apply` receives the stored name and profile and
+    /// returns the new ones (or a refusal); it runs inside the transaction, so
+    /// no other write can land between the read and the write.  The version is
+    /// bumped on success.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn patch_bot<F>(&self, id: BotId, expected_version: i64, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let stored = tx
+            .query_row(
+                "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| Ok((bot_row(r)?, r.get::<_, i64>(5)?)),
+            )
+            .optional()?;
+        let Some((bot, version)) = stored else {
+            return Ok(BotPatch::Missing);
+        };
+        if version != expected_version {
+            return Ok(BotPatch::Stale { bot, version });
+        }
+        let (name, config) = match apply(&bot.name, &bot.config) {
+            Ok(next) => next,
+            Err(why) => return Ok(BotPatch::Rejected(why)),
+        };
+        tx.execute(
+            "UPDATE bots SET name = ?2, config_json = ?3, version = version + 1 WHERE id = ?1",
+            params![id.to_string(), name, serde_json::to_string(&config)?],
+        )?;
+        tx.commit()?;
+        Ok(BotPatch::Applied {
+            bot: Bot {
+                name,
+                config,
+                ..bot
+            },
+            version: version + 1,
+        })
     }
 
     /// Delete a bot and its skill assignment row in the same transaction.
@@ -1545,6 +1619,59 @@ mod tests {
             created_at_ms: 0,
         };
         assert!(f.st.insert_bot(&bad).is_err());
+    }
+
+    #[test]
+    fn patch_bot_is_atomic_and_versioned() {
+        let f = fx();
+        let v0 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        // A plain replace bumps the version too, so a patch built on the old one is stale.
+        assert!(f.st.update_bot(f.bot.id, "n", &json!({"a": 1})).unwrap());
+        let v1 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        assert_eq!(v1, v0 + 1);
+        match f
+            .st
+            .patch_bot(f.bot.id, v0, |_, _| Ok(("x".into(), json!({}))))
+            .unwrap()
+        {
+            BotPatch::Stale { bot, version } => {
+                assert_eq!(version, v1);
+                assert_eq!(bot.name, "n");
+            }
+            other => panic!("expected stale, got {other:?}"),
+        }
+        assert_eq!(f.st.get_bot(f.bot.id).unwrap().unwrap().name, "n");
+        match f
+            .st
+            .patch_bot(f.bot.id, v1, |name, cfg| {
+                let mut c = cfg.clone();
+                c["b"] = json!(2);
+                Ok((format!("{name}!"), c))
+            })
+            .unwrap()
+        {
+            BotPatch::Applied { bot, version } => {
+                assert_eq!(version, v1 + 1);
+                assert_eq!(
+                    (bot.name.as_str(), bot.config),
+                    ("n!", json!({"a": 1, "b": 2}))
+                );
+            }
+            other => panic!("expected applied, got {other:?}"),
+        }
+        // A refusal writes nothing and keeps the version.
+        assert_eq!(
+            f.st.patch_bot(f.bot.id, v1 + 1, |_, _| Err("no".into()))
+                .unwrap(),
+            BotPatch::Rejected("no".into())
+        );
+        assert_eq!(f.st.bot_version(f.bot.id).unwrap(), Some(v1 + 1));
+        assert_eq!(
+            f.st.patch_bot(BotId::new(), 1, |_, _| Err("x".into()))
+                .unwrap(),
+            BotPatch::Missing
+        );
+        assert_eq!(f.st.bot_versions(f.user.id).unwrap()[&f.bot.id], v1 + 1);
     }
 
     #[test]
