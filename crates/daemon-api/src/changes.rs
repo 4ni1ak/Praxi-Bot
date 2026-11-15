@@ -1230,7 +1230,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body["restored"].as_array().unwrap().is_empty());
+        assert_eq!(body["restored"], json!([]));
         assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
         assert!(
             fs::symlink_metadata(&path)
