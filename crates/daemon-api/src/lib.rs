@@ -201,6 +201,10 @@ struct Inner {
     doctor_host: OnceLock<Arc<dyn DoctorHost>>,
     /// One diagnostics run at a time (`/v1/doctor*`).
     doctor_runs: Arc<tokio::sync::Semaphore>,
+    /// Runs inside the `/v1/doctor` CLI detection future before detecting
+    /// (tests: simulate synchronous file-system I/O that blocks).
+    #[cfg(test)]
+    pub(crate) doctor_detect_hook: parking_lot::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     scheduler_clock: parking_lot::Mutex<Option<Arc<dyn scheduler::Clock>>>,
     /// Shutdown steps in the order they ran (tests only).
@@ -332,6 +336,8 @@ impl AppState {
             doctor_host: OnceLock::new(),
             doctor_runs: Arc::new(tokio::sync::Semaphore::new(1)),
             #[cfg(test)]
+            doctor_detect_hook: parking_lot::Mutex::new(None),
+            #[cfg(test)]
             scheduler_clock: parking_lot::Mutex::new(None),
             #[cfg(test)]
             order: parking_lot::Mutex::new(Vec::new()),
@@ -378,6 +384,11 @@ impl AppState {
     /// a second call is ignored).
     pub fn set_doctor_host(&self, host: Arc<dyn DoctorHost>) {
         let _ = self.0.doctor_host.set(host);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_doctor_detect_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+        *self.0.doctor_detect_hook.lock() = Some(hook);
     }
 
     pub(crate) fn doctor_host(&self) -> Option<Arc<dyn DoctorHost>> {

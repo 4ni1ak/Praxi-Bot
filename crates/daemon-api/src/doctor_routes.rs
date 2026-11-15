@@ -215,8 +215,16 @@ pub(crate) async fn run_checks(s: &AppState, deadline: Instant, permit: &RunPerm
     let start = Instant::now();
     // One CLI detection per request (the detector caches it for 60 s).
     let detector = s.detector();
+    #[cfg(test)]
+    let hook = s.0.doctor_detect_hook.lock().clone();
     let detected = on_blocking_pool(
-        move || async move { detector.detect(false).await },
+        move || async move {
+            #[cfg(test)]
+            if let Some(hook) = hook {
+                hook();
+            }
+            detector.detect(false).await
+        },
         (start + CHECK_TIMEOUT).min(deadline),
         permit,
     )
@@ -527,6 +535,7 @@ pub(crate) async fn build_report(
     let production = s.doctor_host().and_then(|h| h.redactor());
     let store = s.secret_store();
     let token = s.token().to_owned();
+    let app = s.clone();
     let hold = Arc::clone(permit);
     let task = tokio::task::spawn_blocking(move || {
         let _hold = hold;
@@ -550,6 +559,7 @@ pub(crate) async fn build_report(
             secrets: Some(&redact),
             home: home.as_deref(),
             identities: doctor::machine_identities(),
+            known: doctor::KnownIds::collect(&dir, app.provider_host().map(|h| &h.catalog)),
         };
         let info = doctor::ReportInfo {
             version: env!("CARGO_PKG_VERSION").into(),

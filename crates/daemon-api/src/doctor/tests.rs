@@ -476,6 +476,7 @@ fn scrub_with<'a>(secrets: &'a dyn Fn(&str) -> String, home: Option<&'a str>) ->
         secrets: Some(secrets),
         home,
         identities: vec![],
+        known: KnownIds::default(),
     }
 }
 
@@ -546,6 +547,103 @@ fn encoded_forms_of_a_known_secret_are_masked() {
 }
 
 #[test]
+fn lowercase_percent_encoding_of_short_or_dotted_secrets_is_masked() {
+    // Short segments (< 12 characters) that the token heuristic leaves
+    // alone; only the registered encodings can catch them.
+    let r = agent_core::SharedRedactor::default();
+    r.register("pass/wd");
+    r.register("my.pass/word");
+    let redact = |t: &str| r.redact(t);
+    let scrub = scrub_with(&redact, None);
+    for text in [
+        "pass%2fwd: configured",
+        "https://api.example.com/pass%2fwd",
+        r"data dir D:\my.pass%2fword\data",
+        "https://h/my.pass%2Fword and my%2epass%2fword",
+    ] {
+        let out = scrub.text(text);
+        for piece in ["pass%2", "pass/", "%2fwd", "%2Fword", "%2fword"] {
+            assert!(!out.contains(piece), "{piece} leaked from {text:?}: {out}");
+        }
+    }
+    // Without the secret list the same text stays (this is what the
+    // registered variants are for).
+    assert!(
+        Scrub::default()
+            .text("pass%2fwd: configured")
+            .contains("pass%2fwd")
+    );
+}
+
+/// A dated model id longer than the 24-character token heuristic.
+const DATED_MODEL: &str = "claude-sonnet-4-5-20250929";
+
+fn anthropic_catalog() -> Catalog {
+    let entry: ProviderEntry =
+        toml::from_str(include_str!("../../../../providers/catalog/anthropic.toml")).unwrap();
+    Catalog::from_entries([entry])
+}
+
+#[test]
+fn model_and_provider_ids_from_trusted_fields_stay_readable() {
+    let d = tempfile::tempdir().unwrap();
+    let mut def = ProviderSettings::new("anthropic", 1);
+    def.default_model = Some(DATED_MODEL.into());
+    let mut custom_entry = anthropic_catalog().get("anthropic").unwrap().clone();
+    custom_entry.id = "my-vps-llm".into();
+    custom_entry.base_url = "https://llm.private-vps.example/v1".into();
+    let mut custom = ProviderSettings::new("my-vps-llm", 2);
+    custom.custom = Some(custom_entry);
+    write_providers(d.path(), vec![def, custom]);
+    let cat = anthropic_catalog();
+    // The check the review quoted.
+    let c = check_catalog(d.path(), &Ok(&cat));
+    assert_eq!(c.status, Status::Warn);
+    assert!(c.detail.contains(DATED_MODEL), "{}", c.detail);
+    let scrub = Scrub {
+        known: KnownIds::collect(d.path(), Some(&cat)),
+        ..Scrub::default()
+    };
+    let info = ReportInfo {
+        version: "1".into(),
+        api_version: "1".into(),
+        platform: "x".into(),
+        data_dir: PathBuf::from("/data"),
+        config_files: vec![],
+    };
+    let md = report_markdown(&info, std::slice::from_ref(&c), &scrub);
+    let md = redact_report_text(&md, &scrub);
+    assert!(
+        md.contains(&format!(
+            "default model {DATED_MODEL} is not in the catalog"
+        )),
+        "{md}"
+    );
+    // Catalog hosts stay; the user's own custom host does not.
+    let out = scrub.text(
+        "anthropic: https://api.anthropic.com/v1/messages failed; my-vps-llm: https://llm.private-vps.example/v1 failed",
+    );
+    assert!(
+        out.contains("https://api.anthropic.com/v1/messages"),
+        "{out}"
+    );
+    assert!(!out.contains("private-vps"), "{out}");
+    // Unknown long runs of the same shape are still masked, and a secret equal
+    // to a known id is still masked by the exact-value redactor.
+    let out = scrub.text("value claude-sonnet-4-5-99999999 here");
+    assert!(out.contains("[redacted]"), "{out}");
+    let r = agent_core::SharedRedactor::default();
+    r.register(DATED_MODEL);
+    let redact = |t: &str| r.redact(t);
+    let with_secret = Scrub {
+        secrets: Some(&redact),
+        known: KnownIds::collect(d.path(), Some(&cat)),
+        ..Scrub::default()
+    };
+    assert!(!with_secret.text(&c.detail).contains(DATED_MODEL));
+}
+
+#[test]
 fn unknown_secrets_are_masked_by_pattern() {
     // No known secrets at all: the patterns alone must catch these.
     let scrub = Scrub::default();
@@ -606,6 +704,7 @@ fn user_host_names_and_peer_keys_are_masked() {
         secrets: None,
         home: None,
         identities: vec![("alice".into(), "[user]"), ("DESKTOP-K7Q".into(), "[host]")],
+        known: KnownIds::default(),
     };
     let out =
         scrub.text(r"data D:\alice\bot on desktop-k7q; malice stays; client of host abcdef01… ok");

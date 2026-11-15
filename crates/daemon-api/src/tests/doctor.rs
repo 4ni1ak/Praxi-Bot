@@ -283,6 +283,40 @@ async fn blocking_cli_discovery_cannot_stall_the_async_worker() {
 }
 
 #[tokio::test]
+async fn run_checks_keeps_blocking_cli_detection_off_the_async_worker() {
+    // `#[tokio::test]` is single-threaded.  The hook blocks synchronously
+    // inside the detection future, as file-system calls on a dead UNC path
+    // or mount do; if `run_checks` polled detection on the async worker, the
+    // whole runtime (and its deadline timer) would stall with it.
+    let t = setup();
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let rx = parking_lot::Mutex::new(rx);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let c = calls.clone();
+    t.state.set_doctor_detect_hook(Arc::new(move || {
+        c.fetch_add(1, Ordering::SeqCst);
+        let _ = rx.lock().recv_timeout(Duration::from_secs(5));
+    }));
+    let start = tokio::time::Instant::now();
+    let checks = crate::doctor_routes::run_checks(
+        &t.state,
+        start + Duration::from_millis(500),
+        &free_permit(),
+    )
+    .await;
+    let took = start.elapsed();
+    tx.send(()).ok();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "detection did not run");
+    assert!(
+        took < Duration::from_secs(3),
+        "run_checks stalled: {took:?}"
+    );
+    let cli = checks.iter().find(|c| c.id == "cli_accounts").unwrap();
+    assert_eq!(cli.status, Status::Warn, "{}", cli.detail);
+    assert!(cli.detail.contains("did not answer"), "{}", cli.detail);
+}
+
+#[tokio::test]
 async fn unknown_repairs_are_rejected_and_never_run() {
     let t = setup();
     for id in [

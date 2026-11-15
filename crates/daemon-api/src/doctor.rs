@@ -1258,10 +1258,19 @@ fn has_percent_escape(run: &str) -> bool {
 /// (a URL-encoded value).
 #[must_use]
 pub fn mask_long_tokens(s: &str) -> String {
+    mask_long_tokens_keeping(s, &KnownIds::default())
+}
+
+/// [`mask_long_tokens`], but runs that are (part of) an identifier in
+/// `known` stay: model and provider ids from the catalog and the config.
+#[must_use]
+pub fn mask_long_tokens_keeping(s: &str, known: &KnownIds) -> String {
     let mut out = String::with_capacity(s.len());
     let mut run = String::new();
     let flush = |run: &mut String, out: &mut String| {
-        if run.len() >= 24 || (run.len() >= 12 && has_percent_escape(run)) {
+        if known.tokens.contains(run.as_str()) {
+            out.push_str(run);
+        } else if run.len() >= 24 || (run.len() >= 12 && has_percent_escape(run)) {
             out.push_str("[redacted]");
         } else {
             out.push_str(run);
@@ -1391,6 +1400,13 @@ fn loopback_host(host: &str) -> bool {
 /// stay, so the report still says which kind of endpoint failed.
 #[must_use]
 pub fn mask_urls(s: &str) -> String {
+    mask_urls_keeping(s, &KnownIds::default())
+}
+
+/// [`mask_urls`], but hosts of the built-in provider catalog stay
+/// (`api.anthropic.com` identifies no one).
+#[must_use]
+pub fn mask_urls_keeping(s: &str, known: &KnownIds) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(pos) = rest.find("://") {
@@ -1425,7 +1441,7 @@ pub fn mask_urls(s: &str) -> String {
         if had_userinfo {
             out.push_str("[redacted]@");
         }
-        if loopback_host(host) {
+        if loopback_host(host) || known.hosts.contains(&host.to_ascii_lowercase()) {
             out.push_str(host_port);
         } else {
             out.push_str("[host]");
@@ -1504,6 +1520,76 @@ pub fn machine_identities() -> Vec<(String, &'static str)> {
     v
 }
 
+/// Identifiers the daemon itself knows from trusted fields (catalog and
+/// config): the token mask and the URL host mask keep them.  Real secrets
+/// equal to one are still masked by the exact-value redactor, which runs
+/// first.
+#[derive(Debug, Default, Clone)]
+pub struct KnownIds {
+    /// Each identifier and each token run inside it.
+    tokens: std::collections::HashSet<String>,
+    /// Lower-case host names of the built-in catalog.
+    hosts: std::collections::HashSet<String>,
+}
+
+impl KnownIds {
+    /// Add an identifier (model id, provider id, ...).
+    pub fn add_id(&mut self, id: &str) {
+        self.tokens.insert(id.to_owned());
+        for run in id.split(|c: char| !token_char(c)).filter(|r| !r.is_empty()) {
+            self.tokens.insert(run.to_owned());
+        }
+    }
+
+    /// Add the host of `url`.
+    pub fn add_host_of(&mut self, url: &str) {
+        let rest = url.split_once("://").map_or(url, |(_, r)| r);
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        let host = host_port.rsplit_once(':').map_or(host_port, |(h, _)| h);
+        if !host.is_empty() {
+            self.hosts.insert(host.to_ascii_lowercase());
+        }
+    }
+
+    /// Model and provider ids of the catalog and of `providers.toml` in
+    /// `data_dir`, and the hosts of catalog providers that are not the
+    /// user's own custom providers.
+    #[must_use]
+    pub fn collect(data_dir: &Path, catalog: Option<&Catalog>) -> Self {
+        let mut k = Self::default();
+        let cfg = ProviderConfig::load(&config_path(data_dir)).ok();
+        let custom: std::collections::HashSet<&str> = cfg
+            .iter()
+            .flat_map(|c| c.providers.iter())
+            .filter(|p| p.custom.is_some())
+            .map(|p| p.id.as_str())
+            .collect();
+        for e in catalog.iter().flat_map(|c| c.all()) {
+            k.add_id(&e.id);
+            for m in &e.models {
+                k.add_id(&m.id);
+            }
+            if !custom.contains(e.id.as_str()) {
+                k.add_host_of(&e.base_url);
+            }
+        }
+        for p in cfg.iter().flat_map(|c| c.providers.iter()) {
+            k.add_id(&p.id);
+            if let Some(m) = &p.default_model {
+                k.add_id(m);
+            }
+            for m in p.model_caps.keys() {
+                k.add_id(m);
+            }
+            for m in p.custom.iter().flat_map(|e| e.models.iter()) {
+                k.add_id(&m.id);
+            }
+        }
+        k
+    }
+}
+
 /// How text is scrubbed before it leaves the machine (see [`redact_report`]).
 #[derive(Default)]
 pub struct Scrub<'a> {
@@ -1514,6 +1600,8 @@ pub struct Scrub<'a> {
     pub home: Option<&'a str>,
     /// User / host names and their placeholders (see [`machine_identities`]).
     pub identities: Vec<(String, &'static str)>,
+    /// Identifiers from trusted fields that the pattern masks keep.
+    pub known: KnownIds,
 }
 
 impl Scrub<'_> {
@@ -1533,14 +1621,14 @@ impl Scrub<'_> {
             s = replace_ci(&s, &home.replace('\\', "/"), "~");
             s = replace_ci(&s, &home.replace('/', "\\"), "~");
         }
-        s = mask_urls(&s);
+        s = mask_urls_keeping(&s, &self.known);
         s = mask_secret_assignments(&s);
         s = mask_emails(&s);
         for (name, label) in &self.identities {
             s = replace_ci_word(&s, name, label);
         }
         s = mask_short_keys(&s);
-        let s = mask_long_tokens(&s);
+        let s = mask_long_tokens_keeping(&s, &self.known);
         match self.secrets {
             Some(r) => r(&s),
             None => s,
@@ -1569,7 +1657,7 @@ pub fn redact_report_text(markdown: &str, scrub: &Scrub<'_>) -> String {
         Some(r) => r(markdown),
         None => markdown.to_owned(),
     };
-    let s = mask_long_tokens(&mask_emails(&s));
+    let s = mask_long_tokens_keeping(&mask_emails(&s), &scrub.known);
     match scrub.secrets {
         Some(r) => r(&s),
         None => s,
