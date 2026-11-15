@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::{Extension, Json};
 
 use crate::AppState;
 use crate::error::{ApiError, ErrorBody};
@@ -33,6 +33,82 @@ impl From<McpControlError> for ApiError {
 fn mcp(s: &AppState) -> Result<Arc<dyn McpControl>, ApiError> {
     s.mcp()
         .ok_or_else(|| ApiError::unavailable("MCP management is not available in this daemon"))
+}
+
+type MaybeActor = Option<Extension<crate::live_view::Actor>>;
+
+/// Longest server or secret name copied into an audit row.
+const MAX_AUDIT_NAME: usize = 128;
+
+/// The redacted, bounded `name` and actor of an audit row.  Only names go in:
+/// never a config body, URL, header, environment value or secret value.
+fn audit_fields(s: &AppState, actor: &MaybeActor, name: &str) -> (String, String) {
+    let redact = |text: &str| s.mcp().map_or_else(|| text.to_owned(), |m| m.redact(text));
+    let who = actor
+        .as_ref()
+        .map_or_else(|| "user".to_owned(), |Extension(a)| a.key.clone());
+    let name: String = name.chars().take(MAX_AUDIT_NAME).collect();
+    (redact(&who), redact(&name))
+}
+
+/// Record an MCP or secret mutation in the audit log **before** it runs.
+/// Fails closed: nothing happens when the row cannot be written.
+fn audit_before(
+    s: &AppState,
+    actor: &MaybeActor,
+    action: &str,
+    name: &str,
+) -> Result<(), ApiError> {
+    let (who, name) = audit_fields(s, actor, name);
+    s.storage()
+        .append_audit(
+            s.user_id(),
+            None,
+            &who,
+            action,
+            &serde_json::json!({ "name": name, "phase": "requested" }),
+        )
+        .map(|_| ())
+        .map_err(|_| ApiError::internal("cannot write the audit log"))
+}
+
+/// Record how a mutation ended (status only, no error text).
+fn audit_after<T>(
+    s: &AppState,
+    actor: &MaybeActor,
+    action: &str,
+    name: &str,
+    result: &Result<T, ApiError>,
+) {
+    let (who, name) = audit_fields(s, actor, name);
+    let status = result
+        .as_ref()
+        .map_or_else(|e| e.status().as_u16(), |_| 200);
+    // Best effort: the action already ran and its request row exists.
+    let _ = s.storage().append_audit(
+        s.user_id(),
+        None,
+        &who,
+        action,
+        &serde_json::json!({ "name": name, "phase": "completed", "status": status }),
+    );
+}
+
+/// Audit around `op`: a row before (fail closed) and one after.
+async fn audited<T, F>(
+    s: &AppState,
+    actor: &MaybeActor,
+    action: &str,
+    name: &str,
+    op: F,
+) -> Result<T, ApiError>
+where
+    F: std::future::Future<Output = Result<T, ApiError>>,
+{
+    audit_before(s, actor, action, name)?;
+    let result = op.await;
+    audit_after(s, actor, action, name, &result);
+    result
 }
 
 /// All configured MCP servers with their live status and full config.
@@ -82,12 +158,18 @@ pub(crate) fn check_bot_ids(field: &str, ids: &[String]) -> Result<(), ApiError>
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn create_mcp_server(
     State(s): State<AppState>,
+    actor: MaybeActor,
     ApiJson(input): ApiJson<McpServerInput>,
 ) -> Result<(StatusCode, Json<McpServerDto>), ApiError> {
     if let Some(bots) = &input.bots {
         check_bot_ids("bots", bots)?;
     }
-    let server = mcp(&s)?.add(input).await?;
+    let host = mcp(&s)?;
+    let name = input.name.clone().unwrap_or_default();
+    let server = audited(&s, &actor, "mcp.server_create", &name, async {
+        Ok(host.add(input).await?)
+    })
+    .await?;
     Ok((StatusCode::CREATED, Json(server)))
 }
 
@@ -103,6 +185,7 @@ pub(crate) async fn create_mcp_server(
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn update_mcp_server(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
     ApiJson(patch): ApiJson<serde_json::Value>,
 ) -> Result<Json<McpServerDto>, ApiError> {
@@ -115,7 +198,11 @@ pub(crate) async fn update_mcp_server(
             check_bot_ids(field, &ids)?;
         }
     }
-    Ok(Json(mcp(&s)?.update(&name, patch).await?))
+    let host = mcp(&s)?;
+    audited(&s, &actor, "mcp.server_update", &name, async {
+        Ok(Json(host.update(&name, patch).await?))
+    })
+    .await
 }
 
 /// Disconnect and remove a server (its tools disappear) and save `mcp.toml`.
@@ -125,10 +212,15 @@ pub(crate) async fn update_mcp_server(
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn delete_mcp_server(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    mcp(&s)?.remove(&name).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let host = mcp(&s)?;
+    audited(&s, &actor, "mcp.server_delete", &name, async {
+        host.remove(&name).await?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
 }
 
 /// Reconnect a server (also lifts a quarantine) and refresh its tools.  A
@@ -140,9 +232,14 @@ pub(crate) async fn delete_mcp_server(
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn reconnect_mcp_server(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
 ) -> Result<Json<McpServerDto>, ApiError> {
-    Ok(Json(mcp(&s)?.reconnect(&name).await?))
+    let host = mcp(&s)?;
+    audited(&s, &actor, "mcp.server_reconnect", &name, async {
+        Ok(Json(host.reconnect(&name).await?))
+    })
+    .await
 }
 
 /// The tools a server currently exposes (after its allow / exclude filters).
@@ -177,6 +274,7 @@ pub(crate) async fn mcp_catalog(
               (status = 503, body = ErrorBody, description = "no secret store")))]
 pub(crate) async fn set_secret(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
     ApiJson(input): ApiJson<SetSecret>,
 ) -> Result<StatusCode, ApiError> {
@@ -184,17 +282,27 @@ pub(crate) async fn set_secret(
         .secret_store()
         .ok_or_else(|| ApiError::unavailable("this daemon has no secret store"))?;
     secret_store::validate_name(&name).map_err(|_| ApiError::bad_request("invalid secret name"))?;
+    // OAuth records are written by the MCP bridge's credential store only;
+    // a planted record would be presented as this server's sign-in.
+    if secret_store::is_managed_oauth_name(&name) {
+        return Err(ApiError::bad_request(
+            "this name is reserved for MCP sign-ins and cannot be set",
+        ));
+    }
     if input.value.is_empty() || input.value.len() > MAX_SECRET_BYTES {
         return Err(ApiError::bad_request(
             "the value must be between 1 byte and 64 KiB",
         ));
     }
-    // A backend error is not echoed in full, so a value can never leak into a response.
-    tokio::task::spawn_blocking(move || store.set(&name, &input.value))
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(|_| ApiError::internal("cannot store the secret"))?;
-    Ok(StatusCode::NO_CONTENT)
+    audited(&s, &actor, "secret.set", &name.clone(), async move {
+        // A backend error is not echoed in full, so a value can never leak into a response.
+        tokio::task::spawn_blocking(move || store.set(&name, &input.value))
+            .await
+            .map_err(ApiError::internal)?
+            .map_err(|_| ApiError::internal("cannot store the secret"))?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
 }
 
 /// Start a sign-in from an authenticated local user's explicit action.
@@ -202,9 +310,14 @@ pub(crate) async fn set_secret(
     params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthStart), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
 pub(crate) async fn start_mcp_auth(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
 ) -> Result<Json<crate::mcp::McpAuthStart>, ApiError> {
-    Ok(Json(mcp(&s)?.auth_start(&name).await?))
+    let host = mcp(&s)?;
+    audited(&s, &actor, "mcp.auth_start", &name, async {
+        Ok(Json(host.auth_start(&name).await?))
+    })
+    .await
 }
 
 /// Finish a pending sign-in with a pasted redirect URL (host without a browser).
@@ -213,12 +326,16 @@ pub(crate) async fn start_mcp_auth(
     responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
 pub(crate) async fn complete_mcp_auth(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
     Json(body): Json<crate::mcp::McpAuthCallback>,
 ) -> Result<Json<crate::mcp::McpAuthState>, ApiError> {
-    Ok(Json(
-        mcp(&s)?.auth_callback(&name, &body.redirect_url).await?,
-    ))
+    let host = mcp(&s)?;
+    // The redirect URL carries the authorization code: never in the audit row.
+    audited(&s, &actor, "mcp.auth_callback", &name, async {
+        Ok(Json(host.auth_callback(&name, &body.redirect_url).await?))
+    })
+    .await
 }
 
 /// Close the one-shot listener and cancel a pending token exchange.
@@ -226,9 +343,14 @@ pub(crate) async fn complete_mcp_auth(
     params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody)))]
 pub(crate) async fn cancel_mcp_auth(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
 ) -> Result<Json<crate::mcp::McpAuthState>, ApiError> {
-    Ok(Json(mcp(&s)?.auth_cancel(&name).await?))
+    let host = mcp(&s)?;
+    audited(&s, &actor, "mcp.auth_cancel", &name, async {
+        Ok(Json(host.auth_cancel(&name).await?))
+    })
+    .await
 }
 
 /// Read authentication state, never credentials.
@@ -246,7 +368,12 @@ pub(crate) async fn mcp_auth_status(
     params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody)))]
 pub(crate) async fn logout_mcp_auth(
     State(s): State<AppState>,
+    actor: MaybeActor,
     Path(name): Path<String>,
 ) -> Result<Json<crate::mcp::McpAuthState>, ApiError> {
-    Ok(Json(mcp(&s)?.auth_logout(&name).await?))
+    let host = mcp(&s)?;
+    audited(&s, &actor, "mcp.auth_logout", &name, async {
+        Ok(Json(host.auth_logout(&name).await?))
+    })
+    .await
 }
