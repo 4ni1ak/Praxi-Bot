@@ -39,19 +39,22 @@ fn seed_credential(data: &Path, bot: Uuid, id: Uuid, token: &str) {
         .unwrap();
 }
 
-async fn fake_daemon(bot: Uuid, token: &str) -> MockServer {
+fn catalog() -> serde_json::Value {
+    json!([{
+        "name":"task_start","description":"Fake enabled task", "read_only":false,
+        "untrusted_output":true,"input_schema":{"type":"object"}
+    }])
+}
+
+async fn fake_daemon(bot: Uuid, token: &str, check_calls: bool) -> MockServer {
     let daemon = MockServer::start().await;
-    Mock::given(method("GET"))
+    let get = Mock::given(method("GET"))
         .and(path("/v1/mcp-server/tools"))
         .and(header("authorization", format!("Bearer {token}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "name":"task_start","description":"Fake enabled task", "read_only":false,
-            "untrusted_output":true,"input_schema":{"type":"object"}
-        }])))
-        .expect(1)
-        .mount(&daemon)
-        .await;
-    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(catalog()));
+    let get = if check_calls { get.expect(1) } else { get };
+    get.mount(&daemon).await;
+    let post = Mock::given(method("POST"))
         .and(path("/v1/mcp-server/call"))
         .and(header("authorization", format!("Bearer {token}")))
         .and(body_json(
@@ -59,32 +62,22 @@ async fn fake_daemon(bot: Uuid, token: &str) -> MockServer {
         ))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({"run":"fake-run","echo":token})),
-        )
-        .expect(1)
-        .mount(&daemon)
-        .await;
+        );
+    let post = if check_calls { post.expect(1) } else { post };
+    post.mount(&daemon).await;
     daemon
 }
 
-#[tokio::test]
-async fn actual_mcp_stdio_process_uses_scoped_store_credential_without_owner_token() {
-    let data = tempfile::tempdir().unwrap();
-    let bot = Uuid::now_v7();
-    let id = Uuid::now_v7();
-    let token = format!("praxi-mcp.{id}.{}", "a".repeat(64));
-    seed_credential(data.path(), bot, id, &token);
-    let poison = "OWNER_TOKEN_MUST_NOT_BE_READ";
-    std::fs::write(data.path().join("api-token"), poison).unwrap();
-    let daemon = fake_daemon(bot, &token).await;
-
-    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_bot"))
+fn mcp_command(data: &Path, origin: &str, bot: Uuid, id: Uuid) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_bot"));
+    command
         .arg("--data-dir")
-        .arg(data.path())
+        .arg(data)
         .args([
             "--secrets-backend",
             "file",
             "--url",
-            &daemon.uri(),
+            origin,
             "mcp",
             "serve",
             "--bot",
@@ -97,9 +90,36 @@ async fn actual_mcp_stdio_process_uses_scoped_store_credential_without_owner_tok
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
+        .kill_on_drop(true);
+    command
+}
+
+#[tokio::test]
+async fn actual_mcp_stdio_process_uses_scoped_store_credential_without_owner_token() {
+    let data = tempfile::tempdir().unwrap();
+    let bot = Uuid::now_v7();
+    let id = Uuid::now_v7();
+    let token = format!("praxi-mcp.{id}.{}", "a".repeat(64));
+    seed_credential(data.path(), bot, id, &token);
+    let poison = "OWNER_TOKEN_MUST_NOT_BE_READ";
+    std::fs::write(data.path().join("api-token"), poison).unwrap();
+    let daemon = fake_daemon(bot, &token, true).await;
+    // The proxy is fully functional, so removing no_proxy must be detected by
+    // observed traffic rather than an unrelated connection or parsing failure.
+    let proxy = fake_daemon(bot, &token, false).await;
+    let mut command = mcp_command(data.path(), &daemon.uri(), bot, id);
+    for name in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        command.env(name, proxy.uri());
+    }
+    command.env("NO_PROXY", "").env("no_proxy", "");
+    let mut child = command.spawn().unwrap();
     let client = tokio::time::timeout(
         Duration::from_secs(10),
         ().serve((child.stdout.take().unwrap(), child.stdin.take().unwrap())),
@@ -144,5 +164,50 @@ async fn actual_mcp_stdio_process_uses_scoped_store_credential_without_owner_tok
         std::fs::read_to_string(data.path().join("api-token")).unwrap(),
         poison
     );
+    assert!(
+        proxy.received_requests().await.unwrap().is_empty(),
+        "ambient proxy received a scoped MCP request"
+    );
     daemon.verify().await;
+}
+
+#[tokio::test]
+async fn actual_mcp_stdio_process_refuses_redirects_without_contacting_destination() {
+    let data = tempfile::tempdir().unwrap();
+    let bot = Uuid::now_v7();
+    let id = Uuid::now_v7();
+    let token = format!("praxi-mcp.{id}.{}", "b".repeat(64));
+    seed_credential(data.path(), bot, id, &token);
+    let destination = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(catalog()))
+        .mount(&destination)
+        .await;
+    let origin = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/mcp-server/tools"))
+        .and(header("authorization", format!("Bearer {token}")))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/redirected", destination.uri())),
+        )
+        .expect(1)
+        .mount(&origin)
+        .await;
+    let mut command = mcp_command(data.path(), &origin.uri(), bot, id);
+    command.stdin(Stdio::null());
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output())
+        .await
+        .expect("redirect refusal must finish without waiting for MCP input")
+        .unwrap();
+    assert!(
+        destination.received_requests().await.unwrap().is_empty(),
+        "redirect destination received a scoped MCP request"
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("302"));
+    assert!(!stderr.contains(&token));
+    assert_eq!(output.stdout, [] as [u8; 0]);
+    origin.verify().await;
 }

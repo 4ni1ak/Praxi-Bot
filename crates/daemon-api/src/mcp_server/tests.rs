@@ -446,6 +446,48 @@ async fn task_layer_lists_only_tasks_and_binding_prevents_other_bot_calls() {
 }
 
 #[tokio::test]
+async fn serialized_argument_budget_refuses_oversized_extra_fields_before_creating_runs() {
+    let f = Fixture::new().await;
+    let (_, token) = f.credential(&["mcp:tasks"]).await;
+    let (status, value) = f
+        .call(&token, "task_start", json!({"text":"short task"}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let run = RunId(value["run"].as_str().unwrap().parse().unwrap());
+    assert_eq!(
+        f.state.agent().wait(run).await.unwrap(),
+        task_runtime::RunState::Succeeded
+    );
+    assert_eq!(
+        f.state
+            .storage()
+            .list_runs(f.state.user_id())
+            .unwrap()
+            .len(),
+        1
+    );
+    // Keep the task text short: only the serialized-arguments envelope limit
+    // can reject this otherwise valid task, not the separate text-length cap.
+    let (status, _) = f
+        .call(
+            &token,
+            "task_start",
+            json!({"text":"short task", "padding":"x".repeat(32 * 1024)}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        f.state
+            .storage()
+            .list_runs(f.state.user_id())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(f.provider.requests.lock().len(), 1);
+}
+
+#[tokio::test]
 async fn external_task_input_is_persisted_and_presented_as_untrusted_and_chat_cannot_be_reused() {
     let f = Fixture::new().await;
     let (grant, token) = f.credential(&["mcp:tasks"]).await;
