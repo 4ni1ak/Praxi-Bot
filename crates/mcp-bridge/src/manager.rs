@@ -14,10 +14,10 @@ use tool_registry::{Tool, ToolRegistry};
 
 use crate::{
     config::{McpServerConfig, McpTransport, ToolFilter},
-    roots::{PathGuard, filesystem_roots, root_problem},
     diagnostics::StderrLog,
     discovery::discover,
     error::{McpError, McpErrorKind, Result},
+    roots::{PathGuard, filesystem_roots, root_problem},
     session::Session,
     tool::{McpToolAdapter, qualified_name},
     transport::{open, resolve_secrets},

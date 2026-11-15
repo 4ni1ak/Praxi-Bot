@@ -62,22 +62,41 @@ mod tests {
 
     #[test]
     fn detects_the_filesystem_server_and_its_roots() {
-        let a = args(&["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "/x", "--flag"]);
+        let a = args(&[
+            "-y",
+            "@modelcontextprotocol/server-filesystem@2.2.0",
+            "/x",
+            "--flag",
+        ]);
         assert_eq!(filesystem_roots(&a), Some(vec!["/x"]));
         assert_eq!(
-            filesystem_roots(&args(&["-y", "@modelcontextprotocol/server-filesystem@2.2.0"])),
+            filesystem_roots(&args(&[
+                "-y",
+                "@modelcontextprotocol/server-filesystem@2.2.0"
+            ])),
             Some(vec![])
         );
-        assert_eq!(filesystem_roots(&args(&["-y", "@playwright/mcp@0.0.84"])), None);
+        assert_eq!(
+            filesystem_roots(&args(&["-y", "@playwright/mcp@0.0.84"])),
+            None
+        );
     }
 
     #[test]
     fn missing_relative_or_nonexistent_roots_are_refused() {
         assert!(root_problem(&[], None).unwrap().contains("no folder"));
-        assert!(root_problem(&["."], None).unwrap().contains("not a full folder path"));
+        assert!(
+            root_problem(&["."], None)
+                .unwrap()
+                .contains("not a full folder path")
+        );
         let missing = std::env::temp_dir().join("praxi-no-such-dir-244b");
         let missing = missing.to_string_lossy().into_owned();
-        assert!(root_problem(&[&missing], None).unwrap().contains("not an existing folder"));
+        assert!(
+            root_problem(&[&missing], None)
+                .unwrap()
+                .contains("not an existing folder")
+        );
     }
 
     #[test]
@@ -86,6 +105,10 @@ mod tests {
         let d = dir.to_string_lossy().into_owned();
         assert!(root_problem(&[&d], None).is_none());
         let guard: PathGuard = Arc::new(|_| Some("protected".to_owned()));
-        assert!(root_problem(&[&d], Some(&guard)).unwrap().contains("protected"));
+        assert!(
+            root_problem(&[&d], Some(&guard))
+                .unwrap()
+                .contains("protected")
+        );
     }
 }

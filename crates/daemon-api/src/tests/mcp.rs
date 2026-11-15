@@ -673,7 +673,7 @@ async fn mcp_changes_are_announced_on_the_global_stream() {
 /// secrets, so every mutation is refused to every paired peer role (also under
 /// encoded, double-slash and trailing-slash spellings); GET stays open.
 #[tokio::test]
-async fn peer_router_refuses_every_mcp_mutation_to_every_role_and_audits_local_ones() {
+async fn peer_router_refuses_every_mcp_mutation_to_every_role() {
     use axum::{body::Body, http::Request};
     use tower::ServiceExt as _;
     let (t, fake) = with_mcp();
@@ -746,8 +746,12 @@ async fn peer_router_refuses_every_mcp_mutation_to_every_role_and_audits_local_o
         assert_eq!(resp.status(), want, "GET for {role:?}");
     }
     assert!(fake.list().is_empty(), "a peer must not add a server");
+}
 
-    // The local user mutates and every mutation leaves an audit row first.
+/// Every local MCP mutation leaves an audit row (names only, never a value).
+#[tokio::test]
+async fn local_mcp_mutations_are_audited_before_acting() {
+    let (t, _fake) = with_mcp();
     let r = call(
         &t,
         Method::POST,
