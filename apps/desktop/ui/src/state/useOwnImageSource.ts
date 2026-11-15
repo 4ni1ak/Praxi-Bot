@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
-import { sampleImageSource, type ToneSource } from "../lib/backdropTone";
+import { sampleImageSource, type ToneSource } from "../lib/backdropTone.ts";
 
 /** Wait this long after the last resize before the own image is sampled again. */
 export const RESAMPLE_DEBOUNCE_MS = 150;
 
-interface Sampled {
+export interface Sampled {
   url: string;
   width: number;
   height: number;
   source: ToneSource | null;
+}
+
+/** A sample counts only for the image and the window size it was taken at; anything else is the worst case. */
+export function usableSample(sampled: Sampled | null, url: string, now: { width: number; height: number }): ToneSource | null {
+  return sampled && sampled.url === url && sampled.width === now.width && sampled.height === now.height ? sampled.source : null;
 }
 
 /**
@@ -53,6 +58,5 @@ export function useOwnImageSource(url: string): ToneSource | null {
   }, [url, size.width, size.height]);
 
   // Valid only for this image at the window's current size.
-  const current = sampled && sampled.url === url && sampled.width === now.width && sampled.height === now.height;
-  return current ? sampled.source : null;
+  return usableSample(sampled, url, now);
 }

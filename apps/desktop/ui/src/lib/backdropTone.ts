@@ -11,6 +11,12 @@ export { combineDim, evaluateTone, makeToneSource, mayBeAnimated, plainTone, typ
 /** Own images are sampled at window size; bigger windows (4K and up) use the worst case instead. */
 export const MAX_IMAGE_SAMPLE_PIXELS = 4_000_000;
 
+/** Where an image of `iw` x `ih` lands on a `w` x `h` window under `background-size: cover` (centred). */
+export function coverRect(iw: number, ih: number, w: number, h: number): { x: number; y: number; width: number; height: number } {
+  const k = Math.max(w / iw, h / ih);
+  return { x: (w - iw * k) / 2, y: (h - ih * k) / 2, width: iw * k, height: ih * k };
+}
+
 /** The pixels of a drawn canvas that covers the window; null when it cannot be read (tainted canvas). */
 export function sampleCanvasSource(canvas: HTMLCanvasElement, windowWidth: number): ToneSource | null {
   try {
@@ -56,10 +62,8 @@ export function sampleImageSource(url: string, width: number, height: number): P
           resolve(null);
           return;
         }
-        const k = Math.max(w / img.naturalWidth, h / img.naturalHeight);
-        const dw = img.naturalWidth * k;
-        const dh = img.naturalHeight * k;
-        ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+        const r = coverRect(img.naturalWidth, img.naturalHeight, w, h);
+        ctx.drawImage(img, r.x, r.y, r.width, r.height);
         resolve(sampleCanvasSource(cv, w));
       } catch {
         resolve(null);
