@@ -50,6 +50,8 @@ pub trait BrowserDriver: Send + Sync {
     fn for_headless(&self, _headless: bool) -> Option<Arc<dyn BrowserDriver>> {
         None
     }
+    /// Close every browser this driver owns (bot deleted, daemon stopping).
+    async fn close_all(&self) {}
     /// Navigate to `url` (starting the browser if needed); returns the page snapshot.
     async fn open(&self, url: &str, profile: Option<&str>) -> Result<String, String>;
     /// Navigate to `url` with dialog options.
@@ -315,7 +317,7 @@ impl CdpDriver {
                         }
                     });
                     if let Some(session) = idle {
-                        let _ = session.browser.close().await;
+                        close_session(other.view.as_deref(), session).await;
                     }
                 }
             }
@@ -361,7 +363,7 @@ impl CdpDriver {
             .is_some_and(|sess| !Self::session_alive(sess) || sess.headless != desired_headless)
             && let Some(old) = guard.take()
         {
-            let _ = old.browser.close().await;
+            close_session(self.view.as_deref(), old).await;
         }
         if let Some(existing) = guard.as_ref() {
             if let Some(p) = profile
@@ -377,8 +379,14 @@ impl CdpDriver {
                 return Err("browser_idle; call browser_open before reading the browser".into());
             }
             *guard = Some(self.launch_session(profile).await?);
-            // Watching starts nothing: binding only tells the idle slot which page to serve.
-            if let (Some(view), Some(session)) = (&self.view, guard.as_ref()) {
+            // Watching starts nothing: binding only tells the idle slot which
+            // page to serve. The slot follows the driver that actually runs
+            // (headless or headed); if it is still held by an older browser of
+            // this bot, that one is retired to idle first.
+            if let (Some(view), Some(session)) = (&self.view, guard.as_ref())
+                && view.attach_page(&session.page).is_err()
+            {
+                let _ = view.detach_to_idle().await;
                 let _ = view.attach_page(&session.page);
             }
         }
@@ -410,6 +418,7 @@ impl CdpDriver {
             return;
         }
         let weak_session = Arc::downgrade(&self.session);
+        let view = self.view.clone();
         let pin = Arc::clone(&self.takeover_pin);
         let activity = Arc::clone(&self.activity);
         let timeout = self.settings.idle_timeout;
@@ -425,15 +434,32 @@ impl CdpDriver {
                 let Some(session) = weak_session.upgrade() else {
                     break;
                 };
-                reap_tick(&session, timeout, &pin, &activity, &mut state).await;
+                reap_tick(
+                    &session,
+                    view.as_deref(),
+                    timeout,
+                    &pin,
+                    &activity,
+                    &mut state,
+                )
+                .await;
             }
         });
     }
 
     /// Close the browser (the next call launches a new one).
     pub async fn shutdown(&self) {
-        if let Some(sess) = self.session.lock().await.take() {
-            let _ = sess.browser.close().await;
+        let session = self.session.lock().await.take();
+        if let Some(sess) = session {
+            close_session(self.view.as_deref(), sess).await;
+        }
+        let alternate = self.alternate_mode.lock().clone();
+        if let Some(alt) = alternate {
+            // One level only: the alternate driver has no alternate of its own.
+            let session = alt.session.lock().await.take();
+            if let Some(sess) = session {
+                close_session(alt.view.as_deref(), sess).await;
+            }
         }
     }
 
@@ -456,6 +482,7 @@ struct ReapState {
 /// action admitted just before the close is not racing it.
 async fn reap_tick(
     session: &Mutex<Option<Session>>,
+    view: Option<&browser_cdp::BrowserViewTarget>,
     timeout: Duration,
     pin: &std::sync::atomic::AtomicBool,
     activity: &std::sync::RwLock<Option<ActivityProbe>>,
@@ -490,8 +517,18 @@ async fn reap_tick(
         && !run_active()
         && let Some(s) = slot.take()
     {
-        let _ = s.browser.close().await;
+        close_session(view, s).await;
     }
+}
+
+/// Close a browser and return its live-view slot to idle (only when the slot
+/// still points at this browser's page), so the panel says "browser idle"
+/// instead of a generic failure, and notifies listeners.
+async fn close_session(view: Option<&browser_cdp::BrowserViewTarget>, session: Session) {
+    if let Some(view) = view {
+        let _ = view.detach_if_bound(&session.page).await;
+    }
+    let _ = session.browser.close().await;
 }
 
 /// Run `$body` against the cached session. A closed browser is replaced inside
@@ -551,10 +588,18 @@ impl BrowserDriver for CdpDriver {
                     let mut driver = CdpDriver::new(settings);
                     driver.takeover_pin = Arc::clone(&self.takeover_pin);
                     driver.activity = Arc::clone(&self.activity);
+                    // One live-view slot per bot, whichever mode runs: the
+                    // alternate driver binds it when it launches (and retires
+                    // the other mode's page from it).
+                    driver.view.clone_from(&self.view);
                     Arc::new(driver)
                 })
                 .clone(),
         )
+    }
+
+    async fn close_all(&self) {
+        self.shutdown().await;
     }
 
     async fn open_opts(
@@ -743,10 +788,12 @@ struct Shared {
 }
 
 /// The tool context supplies the bot identity, never the model's input.
+type BotDrivers = Arc<parking_lot::Mutex<std::collections::HashMap<String, Arc<Shared>>>>;
+
 struct ManagedBrowsers {
     settings: BrowserSettings,
     peers: BrowserPeers,
-    bots: parking_lot::Mutex<std::collections::HashMap<String, Arc<Shared>>>,
+    bots: BotDrivers,
     /// Where each bot's idle browser view target is registered.
     views: Option<Arc<live_view::TargetRegistry>>,
 }
@@ -774,11 +821,18 @@ impl Shared {
             cdp.peers = Some((id.into(), Arc::clone(&managed.peers)));
             if let Some(views) = &managed.views {
                 let pin = Arc::clone(&cdp.takeover_pin);
+                // Weak: the registry holds the target, the target must not hold the registry.
+                let registry = Arc::downgrade(views);
                 let target =
                     browser_cdp::BrowserViewTarget::new_idle(browser_cdp::BrowserViewConfig {
                         bot_id: uuid::Uuid::parse_str(id).ok(),
                         takeover_pin: Some(Arc::new(move |on| {
                             pin.store(on, std::sync::atomic::Ordering::SeqCst);
+                        })),
+                        on_change: Some(Arc::new(move || {
+                            if let Some(registry) = registry.upgrade() {
+                                registry.notify_changed();
+                            }
                         })),
                         ..browser_cdp::BrowserViewConfig::default()
                     });
@@ -812,17 +866,40 @@ pub fn managed_tools(
     views: Option<Arc<live_view::TargetRegistry>>,
 ) -> Vec<Arc<dyn Tool>> {
     let driver = Arc::new(CdpDriver::new(settings.clone()));
+    let peers = BrowserPeers::default();
+    let bots = BotDrivers::default();
+    if let Some(registry) = &views {
+        wire_retirement(registry, &bots, &peers);
+    }
     tools_with_pool(
         driver,
         data_dir,
         control,
         Some(ManagedBrowsers {
             settings,
-            peers: BrowserPeers::default(),
-            bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            peers,
+            bots,
             views,
         }),
     )
+}
+
+/// A deleted bot leaves no driver, browser or selectable screen behind.
+fn wire_retirement(registry: &live_view::TargetRegistry, bots: &BotDrivers, peers: &BrowserPeers) {
+    let (bots, peers) = (Arc::clone(bots), Arc::clone(peers));
+    registry.on_bot_retired(move |bot| retire_bot(&bots, &peers, &bot.to_string()));
+}
+
+/// Forget a deleted bot's driver and close its browser (in the background).
+fn retire_bot(bots: &BotDrivers, peers: &BrowserPeers, id: &str) {
+    let removed = bots.lock().remove(id);
+    peers.lock().remove(id);
+    if let Some(shared) = removed {
+        let driver = Arc::clone(&shared.driver);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move { driver.close_all().await });
+        }
+    }
 }
 
 /// One browser tool.
@@ -2061,7 +2138,7 @@ mod tests {
             managed: Some(ManagedBrowsers {
                 settings,
                 peers: BrowserPeers::default(),
-                bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                bots: BotDrivers::default(),
                 views: Some(Arc::clone(&registry)),
             }),
             data_dir: dir.path().into(),
@@ -2101,7 +2178,7 @@ mod tests {
             managed: Some(ManagedBrowsers {
                 settings,
                 peers: BrowserPeers::default(),
-                bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                bots: BotDrivers::default(),
                 views: None,
             }),
             data_dir: dir.path().into(),
@@ -2798,6 +2875,7 @@ mod tests {
         async fn tick(driver: &CdpDriver, timeout: Duration, state: &mut ReapState) {
             reap_tick(
                 &driver.session,
+                None,
                 timeout,
                 &driver.takeover_pin,
                 &driver.activity,
@@ -2883,6 +2961,7 @@ mod tests {
         tokio::time::advance(Duration::from_secs(1)).await;
         reap_tick(
             &driver.session,
+            None,
             timeout,
             &driver.takeover_pin,
             &driver.activity,
@@ -2901,6 +2980,7 @@ mod tests {
         }));
         reap_tick(
             &driver.session,
+            None,
             timeout,
             &driver.takeover_pin,
             &driver.activity,
@@ -3031,5 +3111,241 @@ mod tests {
         assert!(drv.for_headless(true).is_none());
         assert!(drv.session.lock().await.is_some());
         server.kill();
+    }
+
+    /// A fake browser: writes `DevToolsActivePort` for the profile the driver is
+    /// about to use, pointing at the in-process fake CDP server, then idles.
+    fn write_cdp_launcher(dir: &Path, profile: &Path, port: u16) -> PathBuf {
+        let file = profile.join("DevToolsActivePort").display().to_string();
+        assert!(!file.contains('"') && !file.contains('\''));
+        #[cfg(windows)]
+        {
+            let path = dir.join("fake-cdp-browser.cmd");
+            std::fs::write(
+                &path,
+                format!(
+                    "@echo off\r\n(echo {port}& echo /devtools/browser/fake)> \"{file}\"\r\nping -n 8 127.0.0.1 >nul\r\n"
+                ),
+            )
+            .unwrap();
+            path
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.join("fake-cdp-browser");
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n/devtools/browser/fake\\n' {port} > '{file}'\nsleep 8\n"
+                ),
+            )
+            .unwrap();
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).unwrap();
+            path
+        }
+    }
+
+    async fn session_for(server: &FakeCdp) -> Session {
+        let browser = Browser::connect(&server.url).await.unwrap();
+        let page = browser.first_page().await.unwrap();
+        Session {
+            browser,
+            page,
+            profile: None,
+            headless: true,
+            last_work: tokio::time::Instant::now(),
+        }
+    }
+
+    fn drain(rx: &mut tokio::sync::broadcast::Receiver<()>) -> usize {
+        let mut n = 0;
+        while rx.try_recv().is_ok() {
+            n += 1;
+        }
+        n
+    }
+
+    /// 244-V #2/#3: a host-desktop run (headed) launches through the alternate
+    /// driver. The bot's ONE registered slot must bind to that browser, and the
+    /// registry must announce it (register + attach) with no control event.
+    #[tokio::test]
+    async fn a_headed_host_run_binds_the_bots_registered_view_slot_and_announces_it() {
+        struct HostGate;
+        #[async_trait]
+        impl DesktopControlGate for HostGate {
+            async fn before_action(&self, _req: &ControlRequest) -> Result<(), String> {
+                Ok(())
+            }
+            fn browser_headless_for_run(&self, _run_id: &str) -> Option<bool> {
+                Some(false)
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bot = "0194a1c2-0000-7000-8000-0000000000a1";
+        let server = FakeCdp::start();
+        let port: u16 = server
+            .url
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        // The headed driver of a managed bot uses `<browsers>/<bot>/headed`.
+        let profile = dir.path().join("browsers").join(bot).join("headed");
+        let launcher = write_cdp_launcher(dir.path(), &profile, port);
+        let registry = Arc::new(live_view::TargetRegistry::default());
+        let mut changes = registry.subscribe_changes();
+        let tools = managed_tools(
+            BrowserSettings {
+                executable: Some(launcher),
+                headless: true,
+                ..BrowserSettings::isolated(dir.path())
+            },
+            dir.path(),
+            Some(Arc::new(HostGate)),
+            Some(Arc::clone(&registry)),
+        );
+        let ctx = ToolContext {
+            run_id: "run-host".into(),
+            bot_id: Some(bot.into()),
+            ..ToolContext::default()
+        };
+        // The navigation itself may fail against the fake server; the launch and
+        // the binding happen before it.
+        let _ = get(&tools, "browser_open")
+            .call(&ctx, json!({"url": "https://example.com"}))
+            .await;
+        let targets = registry.targets();
+        assert_eq!(targets.len(), 1, "one slot per bot, headless or headed");
+        assert_eq!(
+            targets[0].unavailable_reason, None,
+            "the slot is bound to the browser that actually runs, not left idle"
+        );
+        assert_eq!(targets[0].bot_id, uuid::Uuid::parse_str(bot).ok());
+        assert!(
+            drain(&mut changes) >= 2,
+            "registering the slot and binding it are both announced"
+        );
+        server.kill();
+    }
+
+    /// 244-V #6: a normal close (idle reclamation, shutdown) returns the slot to
+    /// the idle state, announces it, and a relaunch binds it again.
+    #[tokio::test]
+    async fn closing_the_browser_returns_the_slot_to_idle_and_a_relaunch_rebinds_it() {
+        use live_view::{Reason, ViewTarget};
+        let dir = tempfile::tempdir().unwrap();
+        let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&changes);
+        let view = browser_cdp::BrowserViewTarget::new_idle(browser_cdp::BrowserViewConfig {
+            on_change: Some(Arc::new(move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })),
+            ..browser_cdp::BrowserViewConfig::default()
+        });
+        let mut driver = CdpDriver::new(BrowserSettings::isolated(dir.path()));
+        driver.view = Some(view.clone());
+        for round in 0..2 {
+            let server = FakeCdp::start();
+            let session = session_for(&server).await;
+            view.attach_page(&session.page).unwrap();
+            *driver.session.lock().await = Some(session);
+            assert_eq!(view.info().unavailable_reason, None, "round {round}: bound");
+            let before = changes.load(std::sync::atomic::Ordering::SeqCst);
+            // Idle reclamation: the reaper closes it.
+            reap_tick(
+                &driver.session,
+                driver.view.as_deref(),
+                Duration::ZERO,
+                &driver.takeover_pin,
+                &driver.activity,
+                &mut ReapState::default(),
+            )
+            .await;
+            assert!(driver.session.lock().await.is_none());
+            assert_eq!(
+                view.info().unavailable_reason,
+                Some(Reason::BrowserIdle),
+                "round {round}: idle, not a generic failure"
+            );
+            assert!(
+                changes.load(std::sync::atomic::Ordering::SeqCst) > before,
+                "round {round}: the return to idle is announced"
+            );
+            server.kill();
+        }
+        // Shutdown takes the same path.
+        let server = FakeCdp::start();
+        let session = session_for(&server).await;
+        view.attach_page(&session.page).unwrap();
+        *driver.session.lock().await = Some(session);
+        driver.shutdown().await;
+        assert_eq!(view.info().unavailable_reason, Some(Reason::BrowserIdle));
+        server.kill();
+    }
+
+    /// 244-V #6: create-use-delete cycles leave nothing behind: the registry, the
+    /// driver map and the peer map stay empty, and the deleted bot's browser closes.
+    #[tokio::test]
+    async fn deleting_bots_removes_their_slots_drivers_and_browsers_without_leaking() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = BrowserSettings::isolated(dir.path());
+        let registry = Arc::new(live_view::TargetRegistry::default());
+        let bots = BotDrivers::default();
+        let peers = BrowserPeers::default();
+        wire_retirement(&registry, &bots, &peers);
+        let shared = Arc::new(Shared {
+            driver: Arc::new(CdpDriver::new(settings.clone())),
+            managed: Some(ManagedBrowsers {
+                settings,
+                peers: Arc::clone(&peers),
+                bots: Arc::clone(&bots),
+                views: Some(Arc::clone(&registry)),
+            }),
+            data_dir: dir.path().into(),
+            control: None,
+            observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        });
+        for n in 0..20u128 {
+            let id = uuid::Uuid::from_u128(0x0194_a1c2_0000_7000_8000_0000_0000_0000 + n);
+            let _bot_shared = shared.for_bot(Some(&id.to_string())).unwrap();
+            assert_eq!(registry.targets().len(), 1);
+            // The bot used its browser.
+            let server = FakeCdp::start();
+            let browser = Browser::connect(&server.url).await.unwrap();
+            let page = browser.first_page().await.unwrap();
+            let cdp = peers
+                .lock()
+                .get(&id.to_string())
+                .and_then(std::sync::Weak::upgrade)
+                .expect("the bot's driver");
+            *cdp.session.lock().await = Some(Session {
+                browser,
+                page,
+                profile: None,
+                headless: true,
+                last_work: tokio::time::Instant::now(),
+            });
+            // Delete the bot.
+            assert_eq!(registry.retire_bot(id), 1);
+            for _ in 0..200 {
+                if cdp.session.lock().await.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(cdp.session.lock().await.is_none(), "its browser was closed");
+            drop(cdp);
+            assert!(registry.targets().is_empty(), "slot removed");
+            assert!(bots.lock().is_empty(), "driver slot removed");
+            assert!(peers.lock().is_empty(), "peer entry removed");
+            server.kill();
+        }
     }
 }

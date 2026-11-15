@@ -25,6 +25,33 @@ pub struct Capabilities {
     pub reason: Option<Reason>,
 }
 
+/// Why a kind of screen is not offered, as a small FIXED set. Peers only ever
+/// see these codes (the UI words them in its own language); raw backend
+/// diagnostics (paths, user names, display names, environment values) stay in
+/// the local daemon log and never reach this type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableCode {
+    /// Desktop control is switched off in the daemon's settings.
+    DesktopOff,
+    /// This platform has no screen capture backend.
+    UnsupportedPlatform,
+    /// A Wayland session: only X11 can be captured.
+    Wayland,
+    /// No X11 display is configured or reachable.
+    NoDisplay,
+    /// The desktop could not be opened (locked session, secure desktop,
+    /// missing permission).
+    ScreenUnavailable,
+    /// The desktop backend failed to start.
+    StartFailed,
+    /// The screen is being probed right now.
+    Starting,
+    /// The probe did not answer in time; it is retried.
+    TimedOut,
+}
+
 /// A kind of screen this host cannot offer, and why. Lets the UI say
 /// "No screen: <reason>" instead of an empty panel.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -33,8 +60,8 @@ pub struct TargetUnavailable {
     pub kind: TargetKind,
     pub host_id: String,
     pub reason: Reason,
-    /// One short, path-free sentence for the user.
-    pub detail: String,
+    /// Fixed reason code; never free text.
+    pub code: UnavailableCode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -224,6 +251,11 @@ pub struct CreateSession {
     pub max_height: u32,
     pub codecs: Vec<Codec>,
     pub client_id: Uuid,
+    /// The bot whose panel asks. When set, the target must be this bot's own
+    /// browser or a shared desktop; another bot's browser is refused (403), so
+    /// a bot-scoped view can never resolve to someone else's screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

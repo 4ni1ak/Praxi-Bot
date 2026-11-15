@@ -156,6 +156,9 @@ impl ViewClock {
 /// Optional host callback invoked whenever interactive takeover starts or stops.
 pub type TakeoverPinHook = Arc<dyn Fn(bool) + Send + Sync>;
 
+/// Hook called after a target's lifecycle state changed.
+pub type ChangeHook = Arc<dyn Fn() + Send + Sync>;
+
 /// Optional listener called when a view detaches cleanly or fails.
 type StateNotify = Arc<Notify>;
 
@@ -184,6 +187,10 @@ pub struct BrowserViewConfig {
     pub stop_timeout: Duration,
     /// Optional hook wired to driver takeover pinning (e.g. `CdpDriver::set_takeover_pin`).
     pub takeover_pin: Option<TakeoverPinHook>,
+    /// Called (never under a lock, never with pixels) whenever the slot's state
+    /// changes: attached to a page, back to idle, or closed. Lets the daemon tell
+    /// an open panel to refetch its targets.
+    pub on_change: Option<ChangeHook>,
     /// Clock used for screencast scheduling windows and timestamps (defaults to real time).
     pub clock: ViewClock,
 }
@@ -202,6 +209,7 @@ impl std::fmt::Debug for BrowserViewConfig {
             .field("live_heartbeat_interval", &self.live_heartbeat_interval)
             .field("stop_timeout", &self.stop_timeout)
             .field("has_takeover_pin", &self.takeover_pin.is_some())
+            .field("has_on_change", &self.on_change.is_some())
             .field("clock", &self.clock)
             .finish()
     }
@@ -221,6 +229,7 @@ impl Default for BrowserViewConfig {
             live_heartbeat_interval: Duration::from_millis(1000),
             stop_timeout: Duration::from_millis(500),
             takeover_pin: None,
+            on_change: None,
             clock: ViewClock::System,
         }
     }
@@ -401,6 +410,8 @@ fn reconcile_dead_binding_locked(
         state.refresh_pending = false;
         state.stale = false;
         state.last_error = Some(detail.to_string());
+        // An abrupt loss (crash, tab destroyed) is reported as unavailable. A
+        // deliberate close goes through `detach_if_bound` first and is idle.
         state.lifecycle = LifecycleState::Unavailable {
             reason: Reason::Unavailable,
         };
@@ -572,6 +583,14 @@ impl AdapterCore {
                 notify.notify_one();
             }
             self.set_takeover_pin(false);
+            self.notify_changed();
+        }
+    }
+
+    /// Tell the owner the slot's state changed (outside every lock).
+    fn notify_changed(&self) {
+        if let Some(hook) = &self.config.on_change {
+            hook();
         }
     }
 
@@ -623,6 +642,7 @@ impl AdapterCore {
             notify.notify_one();
         }
         self.set_takeover_pin(false);
+        self.notify_changed();
     }
 
     fn stop_hook(self: &Arc<Self>) -> ViewStopHook {
@@ -653,6 +673,7 @@ impl AdapterCore {
                 notify.notify_one();
             }
             self.set_takeover_pin(false);
+            self.notify_changed();
         }
         binding
     }
@@ -672,6 +693,9 @@ impl AdapterCore {
             state.stale = false;
             state.last_error = None;
             state.lifecycle = LifecycleState::Idle;
+        }
+        if return_to_idle {
+            self.notify_changed();
         }
         Ok(())
     }
@@ -1007,7 +1031,27 @@ impl BrowserViewTarget {
             }
         });
         page.register_live_view_close_hook(&close_hook);
+        self.core.notify_changed();
         Ok(())
+    }
+
+    /// Return the slot to idle only if it is bound to `page`'s session. A
+    /// browser that is being closed calls this so a slot that has meanwhile
+    /// moved to another (newer) browser of the same bot is left alone.
+    ///
+    /// # Errors
+    /// Same as [`Self::detach_to_idle`].
+    pub async fn detach_if_bound(&self, page: &Page) -> Result<(), ViewError> {
+        let bound = {
+            let state = self.core.state.lock().map_err(|_| ViewError::Unavailable)?;
+            matches!(&state.lifecycle,
+                LifecycleState::Attached(b) if b.session_id == page.session_id())
+        };
+        if bound {
+            self.detach_to_idle().await
+        } else {
+            Ok(())
+        }
     }
 
     /// Deliberately retire an idle-capable browser view slot back to [`Reason::BrowserIdle`],
@@ -1078,6 +1122,7 @@ impl BrowserViewTarget {
                 notify.notify_one();
             }
             self.core.set_takeover_pin(false);
+            self.core.notify_changed();
         }
         status
     }
@@ -1158,6 +1203,7 @@ impl ViewTarget for BrowserViewTarget {
                 notify.notify_one();
             }
             self.core.set_takeover_pin(false);
+            self.core.notify_changed();
         }
         info
     }
