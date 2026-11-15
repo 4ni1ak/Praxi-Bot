@@ -15,6 +15,7 @@
 pub mod auth;
 pub mod changes;
 pub mod control;
+mod decider_routes;
 pub mod doctor;
 mod doctor_routes;
 pub mod dto;
@@ -66,6 +67,7 @@ const EMAIL_TESTS_AT_ONCE: usize = 2;
 
 pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
 pub use control::{ControlConfig, ControlHub};
+pub use decider_routes::{DeciderDto, DeciderHost, DeciderInput};
 pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
 pub use email::{EmailControl, EmailControlError};
 pub use error::ApiError;
@@ -214,6 +216,8 @@ struct Inner {
     leader: OnceLock<host::LeaderControl>,
     /// Embedder additions to `/v1/doctor` (see [`AppState::set_doctor_host`]).
     doctor_host: OnceLock<Arc<dyn DoctorHost>>,
+    /// Builds the decider from settings and secrets (see [`AppState::set_decider_host`]).
+    decider_host: OnceLock<Arc<dyn DeciderHost>>,
     /// One diagnostics run at a time (`/v1/doctor*`).
     doctor_runs: Arc<tokio::sync::Semaphore>,
     /// Runs inside the `/v1/doctor` CLI detection future before detecting
@@ -358,6 +362,7 @@ impl AppState {
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
             doctor_host: OnceLock::new(),
+            decider_host: OnceLock::new(),
             doctor_runs: Arc::new(tokio::sync::Semaphore::new(1)),
             #[cfg(test)]
             doctor_detect_hook: parking_lot::Mutex::new(None),
@@ -437,6 +442,22 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn set_doctor_detect_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
         *self.0.doctor_detect_hook.lock() = Some(hook);
+    }
+
+    /// Let `/v1/decider` and the providers reload (re)build the decider (call
+    /// once; a second call is ignored). Without it the routes only edit the
+    /// settings file.
+    pub fn set_decider_host(&self, host: Arc<dyn DeciderHost>) {
+        let _ = self.0.decider_host.set(host);
+    }
+
+    /// Build the decider from `decider.toml` now (startup).
+    pub fn install_decider(&self) {
+        decider_routes::reinstall(self);
+    }
+
+    pub(crate) fn decider_host(&self) -> Option<Arc<dyn DeciderHost>> {
+        self.0.decider_host.get().cloned()
     }
 
     pub(crate) fn doctor_host(&self) -> Option<Arc<dyn DoctorHost>> {
@@ -910,6 +931,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
         .route("/v1/providers/reload", post(r::reload_providers))
+        .route(
+            "/v1/decider",
+            get(decider_routes::get_decider).put(decider_routes::put_decider),
+        )
         .route("/v1/doctor", get(doctor_routes::get_doctor))
         .route("/v1/doctor/report", get(doctor_routes::report))
         .route("/v1/doctor/repair/{id}", post(doctor_routes::repair))

@@ -1433,6 +1433,7 @@ fn openapi_snapshot() {
         "/v1/providers",
         "/v1/providers/detected",
         "/v1/providers/reload",
+        "/v1/decider",
         "/v1/mcp/servers",
         "/v1/mcp/servers/{name}",
         "/v1/mcp/servers/{name}/reconnect",
@@ -1779,6 +1780,88 @@ async fn an_app_refusal_reaches_the_model_and_nothing_is_dispatched() {
     let r = run_and_reply(&t, &chat, &click_after_state(1)).await;
     assert!(r.contains("the user pressed Stop"), "{r}");
     assert_eq!(desktop.actions.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+// ---------------------------------------------------------------- decider
+
+struct SeenDecider(parking_lot::Mutex<Vec<agent_core::DeciderSettings>>);
+
+impl crate::DeciderHost for SeenDecider {
+    fn build(
+        &self,
+        settings: &agent_core::DeciderSettings,
+        _: &agent_core::Providers,
+        warn: &mut dyn FnMut(&str),
+    ) -> Option<Arc<agent_core::TurnDecider>> {
+        self.0.lock().push(settings.clone());
+        warn("decider backend gemini/m skipped: no API key");
+        None
+    }
+}
+
+#[tokio::test]
+async fn decider_settings_default_off_and_are_editable() {
+    let t = setup();
+    let seen = Arc::new(SeenDecider(parking_lot::Mutex::new(Vec::new())));
+    t.state.set_decider_host(Arc::clone(&seen) as _);
+    let d = call(&t, Method::GET, "/v1/decider", None).await.json();
+    assert_eq!(d["enabled"], false, "off until the owner enables it: {d}");
+    assert_eq!(d["preset"], "gemini");
+    assert_eq!(d["calls_made_today"], 0);
+    assert_eq!(d["active"], json!([]));
+
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/decider",
+        Some(
+            json!({"enabled": true, "preset": "gemini_then_openrouter_free",
+                    "daily_budget": 123, "gemini_model": "gemini-decision-x"}),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    let d = r.json();
+    assert_eq!(d["enabled"], true);
+    assert_eq!(d["preset"], "gemini_then_openrouter_free");
+    assert_eq!(d["gemini_model"], "gemini-decision-x");
+    assert_eq!(d["daily_budget"], 123);
+    assert_eq!(d["free_tier_notice"], true);
+    assert_eq!(
+        d["warnings"],
+        json!(["decider backend gemini/m skipped: no API key"])
+    );
+    // The free backend is a rule, never a fixed model id.
+    let built = seen.0.lock().last().cloned().unwrap();
+    assert!(built.enabled);
+    assert_eq!(built.backends.len(), 2);
+    assert_eq!(built.backends[1].model, "");
+    assert_eq!(
+        built.backends[1].model_match.as_deref(),
+        Some("*decider*:free")
+    );
+    // Persisted, and a bad preset is refused without changing anything.
+    assert_eq!(
+        call(&t, Method::GET, "/v1/decider", None).await.json()["daily_budget"],
+        123
+    );
+    let bad = call(
+        &t,
+        Method::PUT,
+        "/v1/decider",
+        Some(json!({"preset": "nope"})),
+    )
+    .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    let off = call(
+        &t,
+        Method::PUT,
+        "/v1/decider",
+        Some(json!({"enabled": false})),
+    )
+    .await;
+    assert_eq!(off.json()["enabled"], false);
+    assert_eq!(off.json()["preset"], "gemini_then_openrouter_free");
 }
 
 // ---------------------------------------------------------------- policy

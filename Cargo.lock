@@ -97,6 +97,7 @@ name = "agent-router"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "futures",
  "parking_lot",
  "regex",
@@ -104,6 +105,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tool-registry",

@@ -1274,6 +1274,8 @@ pub(crate) async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, Api
         active: providers.ids(),
     };
     s.agent().set_providers(providers);
+    // The decider keys come from the providers configuration: rebuild it.
+    s.install_decider();
     Ok(out)
 }
 

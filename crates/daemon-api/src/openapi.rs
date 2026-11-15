@@ -9,8 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
-    mcp_routes, routes, skills, sse, web, web_routes,
+    changes, decider_routes, doctor, doctor_routes, dto, email, email_routes, error, host,
+    live_view, mcp, mcp_routes, routes, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -95,6 +95,8 @@ impl Modify for Security {
         routes::detect_providers,
         routes::enable_cli_provider,
         routes::reload_providers,
+        decider_routes::get_decider,
+        decider_routes::put_decider,
         doctor_routes::get_doctor,
         doctor_routes::repair,
         doctor_routes::report,
@@ -137,7 +139,7 @@ impl Modify for Security {
         dto::GrantTargetDto, dto::RevokeGrant, dto::EffectivePolicyDto,
         dto::CategoryDecisionDto, dto::ControlMode, dto::ControlStateInput,
         dto::ControlStateDto, dto::LatestCursor, dto::ControlVerdict, dto::ControlDecisionInput,
-        dto::ControlDecisionResponse, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
+        dto::ControlDecisionResponse, decider_routes::DeciderDto, decider_routes::DeciderInput, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
         dto::ConfiguredProviderDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
         dto::ParseSchedule, dto::ParsedSchedule, dto::AcceptedResponse, dto::ChannelDto, dto::PairCodeDto, dto::ScheduleChanged, dto::ScheduleChangeKind,
         mcp::McpTransportKind, mcp::McpStatus, mcp::McpServerDto, mcp::McpTransportObject,
@@ -165,7 +167,7 @@ impl Modify for Security {
     tags(
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
-        (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
+        (name = "policy"), (name = "decider"), (name = "providers"), (name = "schedules"), (name = "channels"),
         (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"),
         (name = "skills"), (name = "doctor")
     )

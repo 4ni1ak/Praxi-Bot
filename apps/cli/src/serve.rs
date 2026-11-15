@@ -842,6 +842,37 @@ pub async fn run_daemon(
 /// capabilities and the production secret redactor (for the support report).
 /// Browsers are launched per run by the browser tools, so there is no shared
 /// session to restart (the repair stays unavailable).
+/// Builds the decider (cheap decision model) from `decider.toml`, the
+/// providers' keys and the secret store.
+struct ServeDeciderHost {
+    data_dir: std::path::PathBuf,
+    catalog: Catalog,
+    store: Option<Arc<dyn SecretStore>>,
+}
+
+impl daemon_api::DeciderHost for ServeDeciderHost {
+    fn build(
+        &self,
+        settings: &agent_core::DeciderSettings,
+        providers: &Providers,
+        warn: &mut dyn FnMut(&str),
+    ) -> Option<Arc<agent_core::TurnDecider>> {
+        let fallback = secret_store::MemoryStore::default();
+        let store: &dyn SecretStore = match &self.store {
+            Some(s) => s.as_ref(),
+            None => &fallback,
+        };
+        agent_core::build_decider(
+            settings,
+            &self.data_dir,
+            &self.catalog,
+            store,
+            providers,
+            warn,
+        )
+    }
+}
+
 struct ServeDoctorHost {
     desktop: Option<desktop_api::Capabilities>,
     redactor: SharedRedactor,
@@ -956,9 +987,16 @@ pub fn serve(
         desktop: desktop_caps,
         redactor: redactor.clone(),
     }));
+    state.set_decider_host(Arc::new(ServeDeciderHost {
+        data_dir: data_dir.to_path_buf(),
+        catalog: host.as_ref().map(|h| h.catalog.clone()).unwrap_or_default(),
+        store: telegram_store.clone(),
+    }));
     if let Some(host) = host {
         state.set_provider_host(host);
     }
+    // Off unless the owner enabled it in `decider.toml` / Settings.
+    state.install_decider();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
