@@ -78,8 +78,16 @@ impl McpHost {
         registry: ToolRegistry,
         secrets: Option<Arc<dyn SecretStore>>,
         redactor: Option<mcp_bridge::ExternalRedactor>,
+        registrar: Option<mcp_bridge::oauth::SecretRegistrar>,
     ) -> Arc<Self> {
-        Self::start_with_policy(data_dir, registry, secrets, redactor, McpPolicy::default())
+        Self::start_with_policy(
+            data_dir,
+            registry,
+            secrets,
+            redactor,
+            registrar,
+            McpPolicy::default(),
+        )
     }
 
     /// [`Self::start`] with a custom bridge policy (tests use short timeouts).
@@ -88,6 +96,7 @@ impl McpHost {
         registry: ToolRegistry,
         secrets: Option<Arc<dyn SecretStore>>,
         redactor: Option<mcp_bridge::ExternalRedactor>,
+        registrar: Option<mcp_bridge::oauth::SecretRegistrar>,
         policy: McpPolicy,
     ) -> Arc<Self> {
         let path = data_dir.join(MCP_FILE);
@@ -112,6 +121,9 @@ impl McpHost {
         // rmcp warnings, connect and discovery errors).
         if let Some(r) = redactor {
             manager = manager.with_redactor(r);
+        }
+        if let Some(register) = registrar {
+            manager = manager.with_secret_registrar(register);
         }
         let catalog = mcp_bridge::builtin_catalog().unwrap_or_else(|e| {
             eprintln!("warning: {e}");
@@ -918,7 +930,64 @@ mod tests {
     }
 
     fn open(dir: &Path) -> Arc<McpHost> {
-        McpHost::start_with_policy(dir, ToolRegistry::new(), None, None, fast_policy())
+        McpHost::start_with_policy(dir, ToolRegistry::new(), None, None, None, fast_policy())
+    }
+
+    #[tokio::test]
+    async fn oauth_token_values_are_registered_with_the_live_daemon_redactor() {
+        const ACCESS: &str = "host-access-sentinel-834c";
+        const REFRESH: &str = "host-refresh-sentinel-0fd9";
+        let dir = tempfile::tempdir().unwrap();
+        let url = "http://127.0.0.1:1/mcp";
+        let config = McpServerConfig::http("redaction", url);
+        TomlFileStore::new(dir.path().join(MCP_FILE))
+            .save(&[config])
+            .unwrap();
+        let store = Arc::new(secret_store::MemoryStore::new());
+        store
+            .set(
+                "mcp/redaction/oauth",
+                &json!({
+                    "resource": url,
+                    "credentials": {"client_id": "fixture", "token_response": {
+                        "access_token": ACCESS, "refresh_token": REFRESH, "token_type": "Bearer"
+                    }, "granted_scopes": [], "token_received_at": null, "issuer": null}
+                })
+                .to_string(),
+            )
+            .unwrap();
+        let redactor = agent_core::SharedRedactor::default();
+        let external: mcp_bridge::ExternalRedactor = {
+            let handle = redactor.clone();
+            Arc::new(move |text| handle.redact(text))
+        };
+        let registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value| handle.register(value))
+        };
+        let host = McpHost::start_with_policy(
+            dir.path(),
+            ToolRegistry::new(),
+            Some(store),
+            Some(external),
+            Some(registrar),
+            fast_policy(),
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while redactor.redact(ACCESS).contains(ACCESS) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let rendered = redactor.redact(&format!("access={ACCESS} refresh={REFRESH}"));
+        assert!(!rendered.contains(ACCESS));
+        assert!(!rendered.contains(REFRESH));
+        // Registration survives the production redactor's periodic reload.
+        redactor.replace(secret_store::Redactor::default());
+        assert!(!redactor.redact(ACCESS).contains(ACCESS));
+        assert!(!redactor.redact(REFRESH).contains(REFRESH));
+        host.shutdown().await;
     }
 
     fn stdio(name: &str, enabled: bool) -> McpServerInput {
@@ -1498,6 +1567,7 @@ mod tests {
             &data,
             ToolRegistry::new(),
             Some(secrets),
+            None,
             None,
             fast_policy(),
         );
