@@ -3,6 +3,7 @@
 //! Actions by ref. Every action returns an [`ActionResult`] carrying the refreshed view as a diff.
 
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -184,6 +185,38 @@ fn floats(v: &Value) -> Vec<f64> {
     v.as_array()
         .map(|a| a.iter().filter_map(Value::as_f64).collect())
         .unwrap_or_default()
+}
+
+/// The document a frame currently shows, as the browser reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameIdentity {
+    /// `scheme://host[:port]`, `None` for an opaque origin.
+    pub origin: Option<String>,
+    /// The loader (document) id: changes when the frame navigates.
+    pub loader_id: Option<String>,
+}
+
+/// What an approval card and the allow-list check need to know about a field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldTarget {
+    /// The field's accessible name (page-supplied text: label it as such).
+    pub name: String,
+    /// The field's role.
+    pub role: String,
+    /// Origin of the FRAME that holds the field (`None` = opaque / unknown).
+    pub frame_origin: Option<String>,
+    /// Origin of the top-level document (`None` = opaque / unknown).
+    pub top_origin: Option<String>,
+}
+
+/// An `http(s)` origin as Chrome reports it, or `None` for `null`, `://`,
+/// empty or any other scheme (an opaque origin matches nothing).
+fn web_origin(raw: Option<&str>) -> Option<String> {
+    let raw = raw?.trim();
+    let rest = raw
+        .strip_prefix("https://")
+        .or_else(|| raw.strip_prefix("http://"))?;
+    (!rest.is_empty() && !rest.contains(['/', '?', '#', ' ', '@'])).then(|| raw.to_owned())
 }
 
 impl Page {
@@ -389,6 +422,53 @@ impl Page {
         Ok(r.pointer("/result/value").cloned().unwrap_or(Value::Null))
     }
 
+    /// The origin and document identity of the frame that holds `e`, as the
+    /// BROWSER reports it (`Page.getFrameTree`), never as the page's own
+    /// script claims. `origin` is `None` for an opaque origin (sandboxed
+    /// frame, `data:`, `about:blank`), which no allow-list can match.
+    async fn frame_identity(&self, e: &RefEntry) -> Result<FrameIdentity> {
+        let tree = self
+            .cmd_on(e.session_id.as_deref(), "Page.getFrameTree", json!({}))
+            .await
+            .map_err(|err| Error::Element(format!("cannot read the frame of the field: {err}")))?;
+        let mut stack = vec![&tree["frameTree"]];
+        while let Some(node) = stack.pop() {
+            let f = &node["frame"];
+            if f["id"].as_str() == Some(e.frame_id.as_str()) {
+                return Ok(FrameIdentity {
+                    origin: web_origin(f["securityOrigin"].as_str()),
+                    loader_id: f["loaderId"].as_str().map(str::to_owned),
+                });
+            }
+            for c in node["childFrames"].as_array().into_iter().flatten() {
+                stack.push(c);
+            }
+        }
+        Err(Error::Element(
+            "the frame that holds the field is gone".into(),
+        ))
+    }
+
+    /// Origin of the top-level document, as the browser reports it.
+    async fn top_origin(&self) -> Option<String> {
+        let tree = self.cmd("Page.getFrameTree", json!({})).await.ok()?;
+        web_origin(tree["frameTree"]["frame"]["securityOrigin"].as_str())
+    }
+
+    /// Where a field lives right now: its label, role and the origin of the
+    /// frame that holds it next to the top-level origin. Used for the approval
+    /// card and for the allow-list check, before any value is touched.
+    pub async fn field_target(&self, r: &str) -> Result<FieldTarget> {
+        let e = self.locate(r).await?;
+        let frame = self.frame_identity(&e).await?;
+        Ok(FieldTarget {
+            name: e.name.clone(),
+            role: e.role.clone(),
+            frame_origin: frame.origin,
+            top_origin: self.top_origin().await,
+        })
+    }
+
     // -- inner actions --------------------------------------------------------------------------
 
     async fn click_inner(&self, r: &str, clicks: u32) -> Result<()> {
@@ -488,6 +568,61 @@ impl Page {
                 self.cmd("Input.insertText", json!({"text": text}))
                     .await
                     .map(|_| ())
+            }
+        }
+        .await;
+        self.finish(before, res).await
+    }
+
+    /// Type a secret value into a field, but only into a frame whose origin
+    /// `accept` approves. The frame origin is read from the browser (not from
+    /// page script) twice, before the field is focused and again immediately
+    /// before the value is inserted; a different origin or document in between,
+    /// or a navigation, types nothing. The value is never put into an error.
+    pub async fn fill_secret<F>(&self, r: &str, text: &str, accept: F) -> Result<ActionResult>
+    where
+        F: Fn(Option<String>) -> bool + Send + Sync,
+    {
+        let before = self.baseline().await?;
+        let res = async {
+            let e = self.locate(r).await?;
+            let nav = self.shared.nav_gen.load(Ordering::SeqCst);
+            let first = self.frame_identity(&e).await?;
+            if !accept(first.origin.clone()) {
+                return Err(Error::Element(
+                    "refused: the frame that holds this field is not an origin the owner allowed for this secret; nothing was typed"
+                        .into(),
+                ));
+            }
+            let second = self.frame_identity(&e).await?;
+            if second != first || self.shared.nav_gen.load(Ordering::SeqCst) != nav {
+                return Err(Error::Element(
+                    "the field's frame changed while it was being prepared; nothing was typed"
+                        .into(),
+                ));
+            }
+            // Written THROUGH the approved node itself (resolved by its backend
+            // id in its own frame), never with tab-wide `Input.insertText`, so a
+            // frame that steals focus cannot receive the value.
+            let status = self
+                .call_on(
+                    &e,
+                    "function(v){ if (!this.isConnected) return 'detached';                      const p = this instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype                        : this instanceof HTMLInputElement ? HTMLInputElement.prototype : null;                      const fire = () => { this.dispatchEvent(new Event('input', {bubbles: true}));                        this.dispatchEvent(new Event('change', {bubbles: true})); };                      if (p) { const d = Object.getOwnPropertyDescriptor(p, 'value');                        if (!d || !d.set) return 'unsupported'; d.set.call(this, v); fire();                        return this.value === v ? 'ok' : 'nostick'; }                      if (this.isContentEditable) { this.textContent = v; fire();                        return this.textContent === v ? 'ok' : 'nostick'; }                      return 'unsupported'; }",
+                    &[json!(text)],
+                )
+                .await?;
+            match status.as_str() {
+                Some("ok") => Ok(()),
+                Some("detached") => Err(Error::Element(
+                    "the field is no longer attached to the page; nothing was typed".into(),
+                )),
+                Some("nostick") => Err(Error::Element(
+                    "the page did not accept the value (it may only take real key events); nothing was typed with the keyboard instead"
+                        .into(),
+                )),
+                _ => Err(Error::Element(
+                    "this kind of field cannot be filled with a secret".into(),
+                )),
             }
         }
         .await;

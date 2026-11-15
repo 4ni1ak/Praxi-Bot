@@ -23,6 +23,7 @@ mod email_routes;
 pub mod error;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod fill_routes;
 pub mod host;
 mod knowledge;
 pub mod knowledge_runtime;
@@ -198,6 +199,8 @@ struct Inner {
     web_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
     secrets: OnceLock<Arc<dyn secret_store::SecretStore>>,
+    /// Owner-stored fill secrets (see [`AppState::set_fill_secrets`]).
+    fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// `schedules.db`, opened on first use.
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
@@ -354,6 +357,7 @@ impl AppState {
             skill_mutations: parking_lot::Mutex::new(()),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
+            fill_secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
             stops: parking_lot::Mutex::new(stop::StopBook::default()),
@@ -512,6 +516,16 @@ impl AppState {
                     "too many web search probes are running; try again in a moment",
                 )
             })
+    }
+
+    /// Enable `/v1/fill-secrets*` over `secrets` (call once; a second call is
+    /// ignored). Local-owner only; peers are refused by the peer router.
+    pub fn set_fill_secrets(&self, secrets: Arc<secret_store::FillSecrets>) {
+        let _ = self.0.fill_secrets.set(secrets);
+    }
+
+    pub(crate) fn fill_secrets(&self) -> Option<Arc<secret_store::FillSecrets>> {
+        self.0.fill_secrets.get().cloned()
     }
 
     pub(crate) fn secret_store(&self) -> Option<Arc<dyn secret_store::SecretStore>> {
@@ -835,6 +849,7 @@ pub fn router(state: AppState) -> Router {
 #[allow(clippy::too_many_lines)] // The route table of the whole API.
 fn api_routes() -> Router<AppState> {
     use email_routes as e;
+    use fill_routes as f;
     use live_view as v;
     use mcp_routes as m;
     use routes as r;
@@ -1053,6 +1068,22 @@ fn api_routes() -> Router<AppState> {
         )
         .route("/v1/web/search/test", post(w::test_web_search))
         .route("/v1/secrets/{*name}", post(m::set_secret))
+        .route(
+            "/v1/fill-secrets",
+            get(f::list_fill_secrets).post(f::create_fill_secret),
+        )
+        .route(
+            "/v1/fill-secrets/{*name}",
+            put(f::update_fill_secret).delete(f::delete_fill_secret),
+        )
+        .route(
+            "/v1/fill-grants",
+            get(f::list_fill_grants).post(f::create_fill_grant),
+        )
+        .route(
+            "/v1/fill-grants/{id}",
+            axum::routing::delete(f::revoke_fill_grant),
+        )
         .route("/v1/events", get(sse::events))
 }
 

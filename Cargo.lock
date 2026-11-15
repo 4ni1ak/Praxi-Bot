@@ -7376,11 +7376,13 @@ dependencies = [
  "directories",
  "fs4",
  "keyring",
+ "parking_lot",
  "regex",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "url",
  "uuid",
  "windows 0.62.2",
  "zeroize",
@@ -9085,6 +9087,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.119",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -10537,6 +10540,7 @@ dependencies = [
  "parking_lot",
  "protocol",
  "script-runtime",
+ "secret-store",
  "serde",
  "serde_json",
  "storage",

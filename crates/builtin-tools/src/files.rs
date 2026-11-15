@@ -1066,6 +1066,8 @@ const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
 ///   redirect a stored password) and `email-secret-cleanup.json` (pending
 ///   secret deletions after an account change).
 /// - `schedule.toml` (limits for bot-created schedules).
+/// - `fill-secrets.json` (the allowed origins / programs and standing grants of
+///   the owner's fill secrets: editing it would widen where a secret is typed).
 /// - `knowledge-host.json` (pins the native embedding library path and SHA),
 ///   `knowledge-authority.db` (owner egress grants) and `knowledge-runtime.db`
 ///   (embedding quota/cooldown ledger), with the same sidecars.
@@ -1081,7 +1083,7 @@ fn daemon_state_name(base: &str) -> bool {
         "knowledge-authority.db",
         "knowledge-runtime.db",
     ];
-    const FILES: [&str; 13] = [
+    const FILES: [&str; 14] = [
         "control-latch.json",
         "policy.json",
         "host.toml",
@@ -1094,6 +1096,7 @@ fn daemon_state_name(base: &str) -> bool {
         "email.toml",
         "email-secret-cleanup.json",
         "schedule.toml",
+        "fill-secrets.json",
         "knowledge-host.json",
     ];
     DATABASES.iter().any(|s| {
@@ -4163,6 +4166,8 @@ mod tests {
             "email.toml.tmp",
             "email.toml.bak",
             "email-secret-cleanup.json",
+            "fill-secrets.json",
+            "fill-secrets.json.tmp",
             "email-secret-cleanup.json.tmp",
             "schedule.toml",
             "schedule.toml.bak",

@@ -755,6 +755,9 @@ pub(crate) struct Shared {
     pub spawn_gate: Mutex<()>,
     /// Skills index (`AgentLoop::with_skills`).
     pub skills: OnceLock<skills::SkillIndex>,
+    /// Owner-stored fill secrets (from the builtin tool config); workflow
+    /// replay types them through the same checks as the fill tools.
+    pub fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.

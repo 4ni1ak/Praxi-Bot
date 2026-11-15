@@ -610,7 +610,7 @@ function AppShell() {
     >
       <div className={styles.mainColumn}>
         <div className={styles.titleBar} data-tauri-drag-region>
-          <span />
+          <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
           {botInView && panelBotView ? (
             <button
               ref={chipRef}
@@ -628,7 +628,6 @@ function AppShell() {
             </button>
           ) : <span />}
           <div className={styles.windowActions} data-tauri-drag-region>
-            <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
             <button className={styles.iconButton} title={t("account.settings")} aria-label={t("account.settings")} onClick={() => setSettingsOpen("general")}><Settings2 /></button>
             {isTauriRuntime() && !settings.windowFrame ? <>
               <button className={styles.iconButton} title={t("window.minimize")} aria-label={t("window.minimize")} onClick={() => void getCurrentWindow().minimize()}><Minus /></button>
