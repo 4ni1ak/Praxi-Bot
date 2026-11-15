@@ -7,6 +7,7 @@ export type McpErrorKind =
   | "closed"
   | "timeout"
   | "config"
+  | "needs_folder"
   | "other";
 
 export type RuntimeFamily = "node" | "uv" | "pipx" | "docker" | "other";
@@ -37,6 +38,7 @@ export function mcpErrorHintKey(
     case "spawn":
     case "timeout":
     case "config":
+    case "needs_folder":
       return `apps.error.hint.${kind}`;
     default:
       return null;

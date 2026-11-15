@@ -949,6 +949,22 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
     named || under_data_sensitive(path, data_dir)
 }
 
+/// Whether `root` must not be handed out as a whole folder (for example to a
+/// filesystem MCP server): it is, contains or lies inside the daemon's data
+/// directory, or it is or contains a credential-named entry on its own path.
+/// Same rules as the bot's file tools (`is_protected`), plus the containment
+/// test the file tools do not need for single files.
+#[must_use]
+pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
+    if is_protected(root, data_dir) {
+        return true;
+    }
+    let r = norm_parts(&widen_for_compare(root));
+    let d = norm_parts(&widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf()));
+    let n = r.len().min(d.len());
+    r[..n] == d[..n]
+}
+
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
 /// device path) still gets its directory widened: the final name is appended
 /// unchanged. Comparing the raw spelling (`x\..ot.db::$DATA`, an 8.3

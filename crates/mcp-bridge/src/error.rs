@@ -31,6 +31,14 @@ pub enum McpError {
         /// What the user should install (English, actionable).
         hint: String,
     },
+    /// A filesystem server has no usable folder to serve: the user must choose one.
+    #[error("MCP server `{server}` needs a folder to serve: {reason}")]
+    NeedsFolder {
+        /// Server id.
+        server: String,
+        /// Why the current setting cannot be used.
+        reason: String,
+    },
     /// The MCP handshake or a request failed at the transport/protocol level.
     #[error("MCP server `{server}`: {message}")]
     Transport {
@@ -71,6 +79,8 @@ pub enum McpErrorKind {
     Timeout,
     /// The configuration or a referenced secret is invalid or missing.
     Config,
+    /// A filesystem server needs a folder chosen by the user.
+    NeedsFolder,
     /// Anything else.
     Other,
 }
@@ -84,6 +94,7 @@ impl McpError {
             Self::Spawn { .. } => McpErrorKind::Spawn,
             Self::Timeout { .. } => McpErrorKind::Timeout,
             Self::Config(_) => McpErrorKind::Config,
+            Self::NeedsFolder { .. } => McpErrorKind::NeedsFolder,
             Self::Transport { message, .. } if message.contains("connection closed") => {
                 McpErrorKind::Closed
             }

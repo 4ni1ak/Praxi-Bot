@@ -29,7 +29,7 @@ test("a missing runtime gets a command-specific hint, other errors a class hint"
 });
 
 test("every hint key exists in both locales", () => {
-  const kinds = ["runtime_missing", "closed", "spawn", "timeout", "config"] as const;
+  const kinds = ["runtime_missing", "closed", "spawn", "timeout", "config", "needs_folder"] as const;
   const commands = ["npx", "uvx", "pipx", "docker", "x"];
   for (const lang of ["en", "tr"]) {
     const dict = locale(lang);

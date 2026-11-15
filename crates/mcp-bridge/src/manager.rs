@@ -13,7 +13,8 @@ use secret_store::SecretStore;
 use tool_registry::{Tool, ToolRegistry};
 
 use crate::{
-    config::{McpServerConfig, ToolFilter},
+    config::{McpServerConfig, McpTransport, ToolFilter},
+    roots::{PathGuard, filesystem_roots, root_problem},
     diagnostics::StderrLog,
     discovery::discover,
     error::{McpError, McpErrorKind, Result},
@@ -129,6 +130,7 @@ pub(crate) struct Server {
     policy: McpPolicy,
     secrets: Option<Arc<dyn SecretStore>>,
     redactor: Option<ExternalRedactor>,
+    path_guard: Option<PathGuard>,
     stderr: Arc<StderrLog>,
     /// The session; the async mutex also serialises (re)connects.
     session: tokio::sync::Mutex<Option<Arc<Session>>>,
@@ -258,6 +260,18 @@ impl Server {
             }
         }
         self.check_usable()?;
+        // A filesystem server is never started without an explicit, usable folder.
+        if let McpTransport::Stdio { args, .. } = &self.config.transport
+            && let Some(roots) = filesystem_roots(args)
+            && let Some(reason) = root_problem(&roots, self.path_guard.as_ref())
+        {
+            let e = McpError::NeedsFolder {
+                server: self.config.id.clone(),
+                reason,
+            };
+            self.record_failure(&e);
+            return Err(e);
+        }
         // Secrets are resolved fresh on every connect cycle and only held for
         // the attempts and the connection's diagnostic redactor. A missing secret means nothing is
         // spawned and nothing is retried.
@@ -539,6 +553,7 @@ pub struct McpManager {
     policy: McpPolicy,
     secrets: Option<Arc<dyn SecretStore>>,
     redactor: Option<ExternalRedactor>,
+    path_guard: Option<PathGuard>,
     servers: Mutex<BTreeMap<String, Arc<Server>>>,
 }
 
@@ -557,6 +572,7 @@ impl McpManager {
             policy,
             secrets: None,
             redactor: None,
+            path_guard: None,
             servers: Mutex::new(BTreeMap::new()),
         }
     }
@@ -575,6 +591,14 @@ impl McpManager {
     #[must_use]
     pub fn with_redactor(mut self, redactor: ExternalRedactor) -> Self {
         self.redactor = Some(redactor);
+        self
+    }
+
+    /// Host check applied to the folder of every filesystem server before it
+    /// starts (protected locations are refused, see [`crate::root_problem`]).
+    #[must_use]
+    pub fn with_path_guard(mut self, guard: PathGuard) -> Self {
+        self.path_guard = Some(guard);
         self
     }
 
@@ -610,6 +634,7 @@ impl McpManager {
             policy: self.policy,
             secrets: self.secrets.clone(),
             redactor: self.redactor.clone(),
+            path_guard: self.path_guard.clone(),
             stderr: Arc::default(),
             session: tokio::sync::Mutex::new(None),
             state: Mutex::new(State {

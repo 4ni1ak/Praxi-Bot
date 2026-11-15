@@ -25,8 +25,10 @@ import {
   filterCatalog,
   filterServers,
   isConnected,
+  MissingFolderError,
   MissingSecretError,
-  statusTone
+  statusTone,
+  withFolder
 } from "../lib/mcpApps";
 import { useDaemon } from "../state/DaemonContext";
 import { useMcp } from "../state/useMcp";
@@ -46,15 +48,51 @@ const MAX_FACES = 4;
  */
 
 /** The failure of one server: what to do first, then the full message and what the server printed. */
-function McpErrorBlock({ server }: { server: McpServer }) {
+function McpErrorBlock({
+  server,
+  busy,
+  onChooseFolder
+}: {
+  server: McpServer;
+  busy: boolean;
+  onChooseFolder: (folder: string) => void;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [folder, setFolder] = useState("");
   const hintKey = mcpErrorHintKey(server.error_kind, server.command);
   const stderr = server.stderr_tail ?? [];
   const id = `mcp-error-${server.name}`;
   return (
     <div className={styles.errorBlock} data-testid={`mcp-error-${server.name}`}>
       {hintKey ? <p className={styles.errorHint}>{t(hintKey)}</p> : null}
+      {server.error_kind === "needs_folder" ? (
+        <form
+          className={styles.folderForm}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (folder.trim()) {
+              onChooseFolder(folder.trim());
+            }
+          }}
+        >
+          <label className={formStyles.label} htmlFor={`mcp-folder-${server.name}`}>
+            {t("apps.folder.label")}
+          </label>
+          <input
+            id={`mcp-folder-${server.name}`}
+            className={formStyles.input}
+            value={folder}
+            placeholder={t("apps.folder.placeholder")}
+            spellCheck={false}
+            data-testid={`mcp-folder-input-${server.name}`}
+            onChange={(e) => setFolder(e.target.value)}
+          />
+          <Button type="submit" size="sm" variant="primary" disabled={busy || !folder.trim()}>
+            {t("apps.folder.save")}
+          </Button>
+        </form>
+      ) : null}
       <p className={styles.errorText}>{server.error}</p>
       <button
         type="button"
@@ -86,11 +124,13 @@ function ConnectedCell({
   busy,
   onReconnect,
   onDisconnect,
-  onSaveBots
+  onSaveBots,
+  onChooseFolder
 }: {
   server: McpServer;
   description?: string;
   busy: boolean;
+  onChooseFolder: (folder: string) => void;
   onReconnect: () => void;
   onDisconnect: () => void;
   onSaveBots: (from: BotScope, to: BotScope) => void;
@@ -165,7 +205,9 @@ function ConnectedCell({
           <ChevronDown aria-hidden="true" />
         </button>
       </div>
-      {server.error ? <McpErrorBlock server={server} /> : null}
+      {server.error ? (
+        <McpErrorBlock server={server} busy={busy} onChooseFolder={onChooseFolder} />
+      ) : null}
       {open ? (
         <div className={styles.panel} id={panelId}>
           <span className={styles.panelLabel}>{t("apps.access.label")}</span>
@@ -225,10 +267,12 @@ function DiscoverCell({
   onConnect
 }: {
   entry: McpCatalogEntry;
-  onConnect: (values: Record<string, string>) => Promise<void>;
+  onConnect: (values: Record<string, string>, folder?: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const secrets = entry.install.required_secrets;
+  const wantsFolder = Boolean(entry.install.folder);
+  const [folder, setFolder] = useState(entry.install.folder?.suggestion ?? "");
   const [asking, setAsking] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -236,7 +280,7 @@ function DiscoverCell({
   const submit = async (v: Record<string, string>) => {
     setBusy(true);
     try {
-      await onConnect(v);
+      await onConnect(v, wantsFolder ? folder : undefined);
       setAsking(false);
       setValues({});
     } finally {
@@ -244,7 +288,9 @@ function DiscoverCell({
     }
   };
 
-  const complete = secrets.every((s) => (values[s.name] ?? "").trim() !== "");
+  const complete =
+    secrets.every((s) => (values[s.name] ?? "").trim() !== "") &&
+    (!wantsFolder || folder.trim() !== "");
 
   return (
     <li
@@ -265,7 +311,7 @@ function DiscoverCell({
           disabled={busy || asking}
           aria-label={t("apps.connectApp", { name: entry.name })}
           onClick={() => {
-            if (secrets.length === 0) {
+            if (secrets.length === 0 && !wantsFolder) {
               void submit({});
             } else {
               setAsking(true);
@@ -285,6 +331,24 @@ function DiscoverCell({
             }
           }}
         >
+          {wantsFolder ? (
+            <div className={formStyles.field}>
+              <label className={formStyles.label} htmlFor={`${entry.id}-folder`}>
+                {t("apps.folder.label")}
+              </label>
+              <input
+                id={`${entry.id}-folder`}
+                className={formStyles.input}
+                autoFocus
+                spellCheck={false}
+                value={folder}
+                placeholder={t("apps.folder.placeholder")}
+                data-testid={`mcp-catalog-folder-${entry.id}`}
+                onChange={(e) => setFolder(e.target.value)}
+              />
+              <p className={formStyles.hint}>{t("apps.folder.hint")}</p>
+            </div>
+          ) : null}
           {secrets.map((s, i) => (
             <div key={s.name} className={formStyles.field}>
               <label className={formStyles.label} htmlFor={`${entry.id}-${s.name}`}>
@@ -312,7 +376,9 @@ function DiscoverCell({
               ) : null}
             </div>
           ))}
-          <p className={formStyles.hint}>{t("apps.secretHint")}</p>
+          {secrets.length > 0 ? (
+            <p className={formStyles.hint}>{t("apps.secretHint")}</p>
+          ) : null}
           <div className={styles.actions}>
             <Button type="submit" size="sm" variant="primary" disabled={!complete || busy}>
               {t("apps.connectNow")}
@@ -506,17 +572,25 @@ export function AppsModal({
     }
   };
 
-  const connect = async (entry: McpCatalogEntry, values: Record<string, string>) => {
+  const connect = async (
+    entry: McpCatalogEntry,
+    values: Record<string, string>,
+    folder?: string
+  ) => {
     if (!client) {
       return;
     }
     try {
-      await connectCatalogEntry(client, entry, values);
+      await connectCatalogEntry(client, entry, values, folder);
       toast.show(t("apps.connectedToast", { name: entry.name }), "success");
       await reload();
     } catch (e) {
       toast.show(
-        e instanceof MissingSecretError ? t("apps.missingSecret") : errorText(e),
+        e instanceof MissingSecretError
+          ? t("apps.missingSecret")
+          : e instanceof MissingFolderError
+            ? t("apps.folder.missing")
+            : errorText(e),
         "danger"
       );
       throw e;
@@ -597,6 +671,14 @@ export function AppsModal({
                         server={s}
                         description={describe(s.name)}
                         busy={busy === s.name}
+                        onChooseFolder={(folder) =>
+                          void run(s.name, async () => {
+                            await client?.updateMcpServer(s.name, {
+                              args: withFolder(s.args ?? [], folder)
+                            });
+                            await reload();
+                          })
+                        }
                         onReconnect={() =>
                           void run(s.name, async () => {
                             await client?.reconnectMcpServer(s.name);
@@ -644,7 +726,7 @@ export function AppsModal({
                       <DiscoverCell
                         key={entry.id}
                         entry={entry}
-                        onConnect={(values) => connect(entry, values)}
+                        onConnect={(values, folder) => connect(entry, values, folder)}
                       />
                     ))}
                   </ul>

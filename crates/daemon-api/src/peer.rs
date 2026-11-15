@@ -44,6 +44,16 @@ pub const PEER_DENIED_POST_PATHS: &[&str] = &["/v1/providers/cli/enable", "/v1/p
 /// platform, provider set), so peers do not read them either.
 pub const PEER_DENIED_PREFIX_DOCTOR: &str = "/v1/doctor";
 
+/// MCP server management starts programs and names host secrets: a mutation
+/// is an action of the local user at this host, never of a paired peer.
+pub const PEER_DENIED_PREFIX_MCP: &str = "/v1/mcp";
+
+/// Whether `path` (decoded and slash-normalized) is under `/v1/mcp`.
+fn is_mcp_path(path: &str) -> bool {
+    path.strip_prefix(PEER_DENIED_PREFIX_MCP)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 /// Whether `path` (decoded and slash-normalized) is a diagnostics endpoint.
 fn is_doctor_path(path: &str) -> bool {
     path.strip_prefix(PEER_DENIED_PREFIX_DOCTOR)
@@ -86,10 +96,13 @@ fn normalize_deny_path(path: &str) -> String {
 }
 
 /// Why `method path` is refused to every paired peer role, if it is: the
-/// host-local provider management and diagnostics endpoints.
+/// host-local provider management, MCP management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
     if *method == Method::POST && PEER_DENIED_POST_PATHS.contains(&check_path) {
         return Some("host-local provider management is not allowed for peers");
+    }
+    if is_mcp_path(check_path) && !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        return Some("MCP server management is only allowed for the local user");
     }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
 }

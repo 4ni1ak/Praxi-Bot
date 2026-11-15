@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 
 use crate::AppState;
 use crate::error::{ApiError, ErrorBody};
+use crate::live_view::Actor;
 use crate::mcp::{
     McpCatalogEntryDto, McpControl, McpControlError, McpServerDto, McpServerInput, McpToolDto,
     SetSecret,
@@ -33,6 +34,29 @@ impl From<McpControlError> for ApiError {
 fn mcp(s: &AppState) -> Result<Arc<dyn McpControl>, ApiError> {
     s.mcp()
         .ok_or_else(|| ApiError::unavailable("MCP management is not available in this daemon"))
+}
+
+/// Audit row of an MCP mutation, written BEFORE the change is made (a failed
+/// write refuses the request). The detail carries names and counts only, never
+/// an `env` / `headers` value, and passes through the daemon's live redactor
+/// when the embedder supplied one.
+fn audit_mcp(
+    s: &AppState,
+    actor: &Actor,
+    action: &str,
+    detail: serde_json::Value,
+) -> Result<(), ApiError> {
+    let detail = match s.doctor_host().and_then(|h| h.redactor()) {
+        Some(r) => {
+            let text = r.redact(&detail.to_string());
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text))
+        }
+        None => detail,
+    };
+    s.storage()
+        .append_audit(s.user_id(), None, &actor.key, action, &detail)
+        .map(|_| ())
+        .map_err(ApiError::internal)
 }
 
 /// All configured MCP servers with their live status and full config.
@@ -82,11 +106,27 @@ pub(crate) fn check_bot_ids(field: &str, ids: &[String]) -> Result<(), ApiError>
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn create_mcp_server(
     State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
     ApiJson(input): ApiJson<McpServerInput>,
 ) -> Result<(StatusCode, Json<McpServerDto>), ApiError> {
     if let Some(bots) = &input.bots {
         check_bot_ids("bots", bots)?;
     }
+    audit_mcp(
+        &s,
+        &actor,
+        "mcp.server_create",
+        serde_json::json!({
+            "name": input.name,
+            "command": input.command,
+            "url": input.url,
+            "args": input.args.as_ref().map_or(0, Vec::len),
+            "env_keys": input.env.keys().collect::<Vec<_>>(),
+            "secret_env": input.secret_env,
+            "secret_headers": input.secret_headers,
+            "enabled": input.enabled,
+        }),
+    )?;
     let server = mcp(&s)?.add(input).await?;
     Ok((StatusCode::CREATED, Json(server)))
 }
@@ -103,6 +143,7 @@ pub(crate) async fn create_mcp_server(
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn update_mcp_server(
     State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(name): Path<String>,
     ApiJson(patch): ApiJson<serde_json::Value>,
 ) -> Result<Json<McpServerDto>, ApiError> {
@@ -115,6 +156,18 @@ pub(crate) async fn update_mcp_server(
             check_bot_ids(field, &ids)?;
         }
     }
+    audit_mcp(
+        &s,
+        &actor,
+        "mcp.server_update",
+        serde_json::json!({
+            "name": name,
+            "fields": patch.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
+            "command": patch.get("command"),
+            "secret_env": patch.get("secret_env"),
+            "secret_headers": patch.get("secret_headers"),
+        }),
+    )?;
     Ok(Json(mcp(&s)?.update(&name, patch).await?))
 }
 
@@ -125,8 +178,15 @@ pub(crate) async fn update_mcp_server(
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn delete_mcp_server(
     State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    audit_mcp(
+        &s,
+        &actor,
+        "mcp.server_delete",
+        serde_json::json!({ "name": name }),
+    )?;
     mcp(&s)?.remove(&name).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -140,8 +200,15 @@ pub(crate) async fn delete_mcp_server(
               (status = 503, body = ErrorBody, description = "MCP management is not available")))]
 pub(crate) async fn reconnect_mcp_server(
     State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(name): Path<String>,
 ) -> Result<Json<McpServerDto>, ApiError> {
+    audit_mcp(
+        &s,
+        &actor,
+        "mcp.server_reconnect",
+        serde_json::json!({ "name": name }),
+    )?;
     Ok(Json(mcp(&s)?.reconnect(&name).await?))
 }
 

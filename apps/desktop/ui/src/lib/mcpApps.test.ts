@@ -26,11 +26,13 @@ import {
   filterCatalog,
   filterServers,
   isConnected,
+  MissingFolderError,
   MissingSecretError,
   secretStoreName,
   splitArgs,
   statusTone,
-  toggleBotInScope
+  toggleBotInScope,
+  withFolder
 } from "./mcpApps.ts";
 
 const entry = (id: string): McpCatalogEntry => {
@@ -448,4 +450,32 @@ test("the server editor reports a list edit that hit an open server", async () =
   assert.equal(applied, false);
   assert.equal(server.bots, null, "the server is not silently converted to a list");
   assert.equal(scopeApplied(opened, { mode: "all" }, server), true);
+});
+
+test("filesystem catalog entry needs a folder, and it becomes the only root", async () => {
+  const api = new MockApiClient();
+  await assert.rejects(
+    connectCatalogEntry(api, entry("filesystem"), {}),
+    (e: unknown) => e instanceof MissingFolderError
+  );
+  await assert.rejects(
+    connectCatalogEntry(api, entry("filesystem"), {}, "   "),
+    (e: unknown) => e instanceof MissingFolderError
+  );
+  assert.equal(api.servers.some((s) => s.name === "filesystem"), false);
+  const cfg = configFromCatalog(entry("filesystem"), " /home/me/Docs ");
+  assert.deepEqual(cfg.args, [
+    "-y",
+    "@modelcontextprotocol/server-filesystem@2.2.0",
+    "/home/me/Docs"
+  ]);
+  assert.ok(!cfg.args?.includes("."));
+});
+
+test("withFolder replaces the old roots and keeps package and flags", () => {
+  const pkg = "@modelcontextprotocol/server-filesystem@2.2.0";
+  assert.deepEqual(withFolder(["-y", pkg, "."], "D:\Docs"), ["-y", pkg, "D:\Docs"]);
+  assert.deepEqual(withFolder(["-y", pkg], "/x"), ["-y", pkg, "/x"]);
+  assert.deepEqual(withFolder(["-y", pkg, "--ro", "/a", "/b"], "/c"), ["-y", pkg, "--ro", "/c"]);
+  assert.deepEqual(withFolder(["serve"], "/c"), ["serve", "/c"]);
 });

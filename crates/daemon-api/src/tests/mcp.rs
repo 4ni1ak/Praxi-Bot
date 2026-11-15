@@ -217,6 +217,7 @@ impl McpControl for FakeMcp {
                 secret_env: BTreeMap::new(),
                 secret_headers: BTreeMap::new(),
                 required_secrets: Vec::new(),
+                folder: None,
             },
         }]
     }
@@ -666,4 +667,127 @@ async fn mcp_changes_are_announced_on_the_global_stream() {
     );
     assert!(seen.iter().all(|s| s.0 == "files"));
     let _ = TOKEN;
+}
+
+/// 244-A review finding 1: MCP management starts programs and names host
+/// secrets, so every mutation is refused to every paired peer role (also under
+/// encoded, double-slash and trailing-slash spellings); GET stays open.
+#[tokio::test]
+async fn peer_router_refuses_every_mcp_mutation_to_every_role_and_audits_local_ones() {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt as _;
+    let (t, fake) = with_mcp();
+    let body = stdio_body("files").to_string();
+    let routes: Vec<(Method, String)> = vec![
+        (Method::POST, "/v1/mcp/servers".into()),
+        (Method::POST, "/v1/mcp/servers/".into()),
+        (Method::POST, "//v1//mcp//servers".into()),
+        (Method::POST, "/v1/mcp%2Fservers".into()),
+        (Method::PUT, "/v1/mcp/servers/files".into()),
+        (Method::PUT, "/v1/mcp/servers/files/".into()),
+        (Method::PUT, "/v1/mcp/servers%2Ffiles".into()),
+        (Method::PATCH, "/v1/mcp/servers/files".into()),
+        (Method::DELETE, "/v1/mcp/servers/files".into()),
+        (Method::DELETE, "/v1/mcp//servers/files".into()),
+        (Method::POST, "/v1/mcp/servers/files/reconnect".into()),
+        (Method::POST, "/v1/mcp/servers/files/reconnect/".into()),
+        (Method::POST, "/v1/mcp/servers//files/reconnect".into()),
+        (Method::POST, "/v1/mcp%2Fservers%2Ffiles%2Freconnect".into()),
+        (Method::POST, "/v1/mcp/anything-new".into()),
+    ];
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in &routes {
+            let mut req = Request::builder()
+                .method(method.clone())
+                .uri(path.as_str())
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role,
+            });
+            let resp = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "role={role:?} {method} {path} should be 403"
+            );
+        }
+        // Reading stays as it is today.
+        let mut req = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/mcp/servers")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(crate::PeerIdentity {
+            key: "peer-key".into(),
+            role,
+        });
+        let resp = crate::peer_router(t.state.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        // Unchanged by this rule: desktop and phone peers read, node and host
+        // peers were already refused every non-desktop/phone route.
+        let want = if matches!(role, crate::PeerRole::Desktop | crate::PeerRole::Phone) {
+            StatusCode::OK
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        assert_eq!(resp.status(), want, "GET for {role:?}");
+    }
+    assert!(fake.list().is_empty(), "a peer must not add a server");
+
+    // The local user mutates and every mutation leaves an audit row first.
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/mcp/servers",
+        Some(stdio_body("files")),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/mcp/servers/files",
+        Some(json!({"enabled": true})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = call(&t, Method::POST, "/v1/mcp/servers/files/reconnect", None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = call(&t, Method::DELETE, "/v1/mcp/servers/files", None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let audit: Vec<_> = t
+        .state
+        .storage()
+        .list_audit(t.state.user_id())
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.action.starts_with("mcp."))
+        .collect();
+    let actions: Vec<&str> = audit.iter().map(|a| a.action.as_str()).collect();
+    assert_eq!(
+        actions,
+        [
+            "mcp.server_create",
+            "mcp.server_update",
+            "mcp.server_reconnect",
+            "mcp.server_delete"
+        ]
+    );
+    assert!(audit.iter().all(|a| a.actor.starts_with("local-ui:")));
+    // Names only: the secret *name* is recorded, no value ever is.
+    let detail = audit[0].detail.to_string();
+    assert!(detail.contains("mcp/some-key") && detail.contains("API_KEY"));
 }

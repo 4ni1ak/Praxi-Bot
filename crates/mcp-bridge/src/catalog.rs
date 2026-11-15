@@ -23,6 +23,13 @@ pub struct RequiredSecret {
     pub help_url: Option<String>,
 }
 
+/// A folder the user must choose before the server is added.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequiredFolder {
+    /// Human label for the folder field.
+    pub label: String,
+}
+
 /// How to run a catalog server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogInstall {
@@ -49,6 +56,9 @@ pub struct CatalogInstall {
     /// Secrets the user must provide first.
     #[serde(default)]
     pub required_secrets: Vec<RequiredSecret>,
+    /// A folder the user must choose; it is appended as the last argument.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<RequiredFolder>,
 }
 
 /// A catalog entry.

@@ -17,10 +17,13 @@ export const MOCK_MCP_CATALOG: McpCatalogEntry[] = [
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "."
+        "@modelcontextprotocol/server-filesystem@2.2.0"
       ],
-      "required_secrets": []
+      "required_secrets": [],
+      "folder": {
+        "label": "Folder the bot may read and write",
+        "suggestion": "C:\Users\you\Documents"
+      }
     }
   },
   {

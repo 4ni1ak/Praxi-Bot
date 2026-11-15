@@ -53,6 +53,8 @@ pub enum McpErrorKind {
     Timeout,
     /// The configuration or a referenced secret is invalid or missing.
     Config,
+    /// A filesystem server needs a folder chosen by the user.
+    NeedsFolder,
     /// Anything else.
     Other,
 }
@@ -306,6 +308,17 @@ pub struct McpRequiredSecretDto {
     pub help_url: Option<String>,
 }
 
+/// A folder the user must choose when adding a catalog entry; the app appends
+/// it as the last argument.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct McpFolderDto {
+    /// Label of the folder field.
+    pub label: String,
+    /// A safe default offered to the user (their Documents folder), if there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+}
+
 /// How to install a catalog entry: send it (plus `name` and `category`) to
 /// `POST /v1/mcp/servers` after storing the `required_secrets`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -332,6 +345,9 @@ pub struct McpCatalogInstallDto {
     pub secret_headers: BTreeMap<String, String>,
     /// Secrets to collect first.
     pub required_secrets: Vec<McpRequiredSecretDto>,
+    /// A folder to collect first (filesystem servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<McpFolderDto>,
 }
 
 /// An entry of the curated MCP catalog (`GET /v1/mcp/catalog`).

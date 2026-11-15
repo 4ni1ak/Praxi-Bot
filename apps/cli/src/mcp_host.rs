@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use daemon_api::mcp::{
-    McpCatalogEntryDto, McpCatalogInstallDto, McpErrorKind as ErrorKindDto, McpRequiredSecretDto,
-    McpServerChanged, McpServerDto, McpServerInput, McpStatus, McpToolDto, McpTransportInput,
-    McpTransportKind, McpTransportObject,
+    McpCatalogEntryDto, McpCatalogInstallDto, McpErrorKind as ErrorKindDto, McpFolderDto,
+    McpRequiredSecretDto, McpServerChanged, McpServerDto, McpServerInput, McpStatus, McpToolDto,
+    McpTransportInput, McpTransportKind, McpTransportObject,
 };
 use daemon_api::{McpControl, McpControlError};
 use mcp_bridge::{
@@ -44,7 +44,7 @@ const FILE_HEADER: &str = "\
 # [server.transport]\n\
 # type = \"stdio\"\n\
 # command = \"npx\"\n\
-# args = [\"-y\", \"@modelcontextprotocol/server-filesystem@2.2.0\", \".\"]\n\
+# args = [\"-y\", \"@modelcontextprotocol/server-filesystem@2.2.0\", \"/path/to/a/folder\"]\n\
 # [server.secret_env]\n\
 # API_KEY = \"mcp/files-key\"   # name of a secret, never its value\n";
 
@@ -54,6 +54,8 @@ pub struct McpHost {
     registry: ToolRegistry,
     store: TomlFileStore,
     catalog: Vec<CatalogEntry>,
+    /// Default folder offered for filesystem servers (never a protected one).
+    folder_suggestion: Option<String>,
     /// The configured servers (what `mcp.toml` holds), by name.
     configs: Mutex<BTreeMap<String, McpServerConfig>>,
     /// Servers whose connect is in flight.
@@ -105,7 +107,9 @@ impl McpHost {
                 (Vec::new(), Some(e.to_string()))
             }
         };
-        let mut manager = McpManager::with_policy(registry.clone(), policy);
+        let guard = root_guard(data_dir);
+        let folder_suggestion = suggest_folder(&guard);
+        let mut manager = McpManager::with_policy(registry.clone(), policy).with_path_guard(guard);
         if let Some(s) = secrets {
             manager = manager.with_secret_store(s);
         }
@@ -135,6 +139,7 @@ impl McpHost {
             registry,
             store,
             catalog,
+            folder_suggestion,
             configs: Mutex::new(loaded.iter().map(|c| (c.id.clone(), c.clone())).collect()),
             connecting: Mutex::new(HashMap::new()),
             next_connect: AtomicU64::new(1),
@@ -362,6 +367,52 @@ async fn poll(host: Weak<McpHost>) {
     }
 }
 
+/// Folder names that hold credentials; a filesystem root may not be one, nor
+/// lie inside one.
+const CREDENTIAL_DIRS: [&str; 6] = [".ssh", ".aws", ".gnupg", ".kube", ".azure", ".docker"];
+
+/// The check every filesystem-server folder passes before it is served: not
+/// the daemon's data folder (or one containing it, e.g. the home folder), not
+/// a credential location, not the folder the app is installed in, and not a
+/// drive / filesystem root. Reasons are fixed text (no paths).
+fn root_guard(data_dir: &Path) -> mcp_bridge::PathGuard {
+    let data_dir = data_dir.to_path_buf();
+    let install_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+    Arc::new(move |root: &Path| {
+        if root.parent().is_none() {
+            return Some("a whole drive is too broad, choose a folder".to_owned());
+        }
+        if builtin_tools::files::is_protected_root(root, &data_dir) {
+            return Some(
+                "this folder holds or contains Praxi-Bot's own data or credentials".to_owned(),
+            );
+        }
+        let in_cred = root.components().any(|c| {
+            CREDENTIAL_DIRS
+                .iter()
+                .any(|n| c.as_os_str().eq_ignore_ascii_case(n))
+        });
+        if in_cred {
+            return Some("this folder holds credentials or settings".to_owned());
+        }
+        if let Some(install) = &install_dir
+            && (install.starts_with(root) || root.starts_with(install))
+        {
+            return Some("this is the app's own install folder".to_owned());
+        }
+        None
+    })
+}
+
+/// The user's Documents folder when it exists and passes the guard.
+fn suggest_folder(guard: &mcp_bridge::PathGuard) -> Option<String> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    let docs = Path::new(&home).join("Documents");
+    (docs.is_dir() && guard(&docs).is_none()).then(|| docs.display().to_string())
+}
+
 fn error_kind_dto(kind: McpErrorKind) -> ErrorKindDto {
     match kind {
         McpErrorKind::RuntimeMissing => ErrorKindDto::RuntimeMissing,
@@ -369,6 +420,7 @@ fn error_kind_dto(kind: McpErrorKind) -> ErrorKindDto {
         McpErrorKind::Closed => ErrorKindDto::Closed,
         McpErrorKind::Timeout => ErrorKindDto::Timeout,
         McpErrorKind::Config => ErrorKindDto::Config,
+        McpErrorKind::NeedsFolder => ErrorKindDto::NeedsFolder,
         McpErrorKind::Other => ErrorKindDto::Other,
     }
 }
@@ -696,7 +748,7 @@ fn to_config(name: &str, input: McpServerInput) -> Result<McpServerConfig, McpCo
     Ok(cfg)
 }
 
-fn catalog_dto(e: &CatalogEntry) -> Option<McpCatalogEntryDto> {
+fn catalog_dto(e: &CatalogEntry, suggestion: Option<&str>) -> Option<McpCatalogEntryDto> {
     let transport = match e.install.transport.as_str() {
         "stdio" => McpTransportKind::Stdio,
         "http" => McpTransportKind::Http,
@@ -727,6 +779,10 @@ fn catalog_dto(e: &CatalogEntry) -> Option<McpCatalogEntryDto> {
                     help_url: s.help_url.clone(),
                 })
                 .collect(),
+            folder: e.install.folder.as_ref().map(|f| McpFolderDto {
+                label: f.label.clone(),
+                suggestion: suggestion.map(str::to_owned),
+            }),
         },
     })
 }
@@ -935,7 +991,10 @@ impl McpControl for McpHost {
     }
 
     fn catalog(&self) -> Vec<McpCatalogEntryDto> {
-        self.catalog.iter().filter_map(catalog_dto).collect()
+        self.catalog
+            .iter()
+            .filter_map(|e| catalog_dto(e, self.folder_suggestion.as_deref()))
+            .collect()
     }
 
     fn subscribe(&self) -> broadcast::Receiver<McpServerChanged> {
@@ -994,6 +1053,76 @@ mod tests {
             seen.push(ev.status);
         }
         seen
+    }
+
+    #[test]
+    fn root_guard_refuses_data_dir_credentials_install_dir_and_drive_roots() {
+        let data = tempfile::tempdir().unwrap();
+        let guard = root_guard(data.path());
+        // The data dir, a folder inside it and a folder that contains it.
+        assert!(guard(data.path()).is_some());
+        let inner = data.path().join("runs");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert!(guard(&inner).is_some());
+        assert!(guard(data.path().parent().unwrap()).is_some());
+        // Credential folders.
+        let ssh = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .join(".ssh")
+            .join("keys");
+        assert!(guard(&ssh).is_some());
+        // The app's own install folder.
+        let exe_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        assert!(guard(&exe_dir).is_some());
+        // A drive / filesystem root.
+        let root = std::env::temp_dir()
+            .ancestors()
+            .last()
+            .unwrap()
+            .to_path_buf();
+        assert!(guard(&root).is_some());
+        // An ordinary folder elsewhere is fine.
+        let other = tempfile::tempdir().unwrap();
+        assert!(guard(other.path()).is_none(), "{:?}", guard(other.path()));
+    }
+
+    #[tokio::test]
+    async fn catalog_filesystem_entry_asks_for_a_folder_and_never_suggests_a_protected_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = open(dir.path());
+        let fs = host
+            .catalog()
+            .into_iter()
+            .find(|e| e.id == "filesystem")
+            .unwrap();
+        let folder = fs.install.folder.expect("filesystem needs a folder");
+        assert!(!folder.label.is_empty());
+        assert!(!fs.install.args.unwrap().iter().any(|a| a == "."));
+        if let Some(s) = folder.suggestion {
+            assert!(root_guard(dir.path())(Path::new(&s)).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_filesystem_install_rooted_at_dot_shows_choose_a_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = open(dir.path());
+        let input: McpServerInput = serde_json::from_value(json!({
+            "name": "files",
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "."],
+        }))
+        .unwrap();
+        let dto = host.add(input).await.unwrap();
+        assert_eq!(dto.status, McpStatus::Error);
+        assert_eq!(dto.error_kind, Some(ErrorKindDto::NeedsFolder));
+        assert_eq!(dto.tool_count, 0);
     }
 
     #[tokio::test]

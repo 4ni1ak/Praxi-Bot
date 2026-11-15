@@ -1127,9 +1127,17 @@
         "runtime_other": "The program that starts this server was not found. Install it or give its full path in the server settings, then press Reconnect.",
         "closed": "The server stopped while starting. Open the details to see what it printed, fix that, then press Reconnect.",
         "spawn": "The server program could not be started. Check the command in the server settings, then press Reconnect.",
+        "needs_folder": "Choose the one folder this app may read and write, then press Save and connect.",
         "timeout": "The server did not answer in time. The first start can be slow while packages download; press Reconnect to try again.",
         "config": "The server settings or a required secret are missing or invalid. Fix them and press Reconnect."
       }
+    },
+    "folder": {
+      "label": "Folder the bot may read and write",
+      "placeholder": "Full path, for example C:\\Users\\you\\Documents",
+      "hint": "Only this folder is shared with the app. Praxi-Bot's own data and credential folders are refused.",
+      "missing": "Choose a folder first.",
+      "save": "Save and connect"
     },
     "reconnect": "Reconnect",
     "disconnectConfirm": "Disconnect this server?",

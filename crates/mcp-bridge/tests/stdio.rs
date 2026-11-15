@@ -177,6 +177,45 @@ async fn missing_launcher_is_classified_not_retried_and_carries_an_install_hint(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn filesystem_server_without_a_chosen_folder_is_not_started() {
+    let reg = ToolRegistry::new();
+    let guard: mcp_bridge::PathGuard = std::sync::Arc::new(|p| {
+        p.ends_with("forbidden")
+            .then(|| "protected folder".to_owned())
+    });
+    let mgr = McpManager::with_policy(reg, fast_policy(3)).with_path_guard(guard);
+    let pkg = "@modelcontextprotocol/server-filesystem@2.2.0";
+    // No folder, and the old default `.`: refused before anything is spawned.
+    for (id, args) in [("fs0", vec!["-y", pkg]), ("fs1", vec!["-y", pkg, "."])] {
+        let cfg = McpServerConfig::stdio(id, "praxi-never-spawned-244b", args);
+        let err = mgr.add_server(cfg).await.unwrap_err();
+        assert_eq!(err.kind(), mcp_bridge::McpErrorKind::NeedsFolder, "{err}");
+        assert_eq!(mgr.stderr_tail(id).len(), 0);
+        let snap = mgr.snapshot(id).unwrap();
+        assert_eq!(snap.consecutive_failures, 1, "not retried");
+    }
+    // A folder the host guard refuses.
+    let base = std::env::temp_dir().join("praxi-244b-guard");
+    let forbidden = base.join("forbidden");
+    std::fs::create_dir_all(&forbidden).unwrap();
+    let f = forbidden.to_string_lossy().into_owned();
+    let cfg = McpServerConfig::stdio("fs2", "praxi-never-spawned-244b", ["-y", pkg, f.as_str()]);
+    let err = mgr.add_server(cfg).await.unwrap_err();
+    assert_eq!(err.kind(), mcp_bridge::McpErrorKind::NeedsFolder);
+    assert!(err.to_string().contains("protected folder"), "{err}");
+    // A good folder gets past the check (then fails only because the launcher is fake).
+    let ok = base.to_string_lossy().into_owned();
+    let cfg = McpServerConfig::stdio("fs3", "praxi-never-spawned-244b", ["-y", pkg, ok.as_str()]);
+    let err = mgr.add_server(cfg).await.unwrap_err();
+    assert_eq!(
+        err.kind(),
+        mcp_bridge::McpErrorKind::RuntimeMissing,
+        "{err}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn quarantine_after_consecutive_call_failures_and_manual_reenable() {
     let reg = ToolRegistry::new();
     let mgr = McpManager::with_policy(reg.clone(), fast_policy(2));

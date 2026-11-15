@@ -1127,9 +1127,17 @@
         "runtime_other": "Bu sunucuyu başlatan program bulunamadı. Kurun ya da sunucu ayarlarında tam yolunu verin, sonra Yeniden bağlan'a basın.",
         "closed": "Sunucu başlarken durdu. Neyi yazdığını görmek için ayrıntıları açın, sorunu giderin ve Yeniden bağlan'a basın.",
         "spawn": "Sunucu programı başlatılamadı. Sunucu ayarlarındaki komutu kontrol edin ve Yeniden bağlan'a basın.",
+        "needs_folder": "Bu uygulamanın okuyup yazabileceği tek klasörü seçin, sonra Kaydet ve bağla'ya basın.",
         "timeout": "Sunucu zamanında yanıt vermedi. İlk başlatma paketler inerken yavaş olabilir; tekrar denemek için Yeniden bağlan'a basın.",
         "config": "Sunucu ayarları ya da gerekli bir gizli anahtar eksik veya geçersiz. Düzeltin ve Yeniden bağlan'a basın."
       }
+    },
+    "folder": {
+      "label": "Botun okuyup yazabileceği klasör",
+      "placeholder": "Tam yol, örneğin C:\\Users\\siz\\Documents",
+      "hint": "Uygulamayla yalnızca bu klasör paylaşılır. Praxi-Bot'un kendi verileri ve kimlik bilgisi klasörleri reddedilir.",
+      "missing": "Önce bir klasör seçin.",
+      "save": "Kaydet ve bağla"
     },
     "reconnect": "Yeniden bağlan",
     "disconnectConfirm": "Bu sunucunun bağlantısı kesilsin mi?",

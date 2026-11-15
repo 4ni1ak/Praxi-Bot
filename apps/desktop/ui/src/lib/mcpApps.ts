@@ -71,7 +71,10 @@ export function secretStoreName(entryId: string, secretName: string): string {
  * server receives them as environment variables, an http server as the
  * `Authorization` header (the secret holds the full header value).
  */
-export function configFromCatalog(entry: McpCatalogEntry): McpServerConfig {
+export function configFromCatalog(
+  entry: McpCatalogEntry,
+  folder?: string
+): McpServerConfig {
   const { install } = entry;
   const config: McpServerConfig = {
     name: entry.id,
@@ -82,6 +85,9 @@ export function configFromCatalog(entry: McpCatalogEntry): McpServerConfig {
   if (install.transport === "stdio") {
     config.command = install.command;
     config.args = install.args ?? [];
+    if (install.folder && folder) {
+      config.args = withFolder(config.args, folder.trim());
+    }
   } else {
     config.url = install.url;
   }
@@ -105,6 +111,34 @@ export function configFromCatalog(entry: McpCatalogEntry): McpServerConfig {
   return config;
 }
 
+const FS_SERVER_PACKAGE = "@modelcontextprotocol/server-filesystem";
+
+/**
+ * `args` of a filesystem server with its folder replaced by `folder`: everything
+ * up to and including the package spec and any flags is kept, the old roots are
+ * dropped, `folder` is the only root.
+ */
+export function withFolder(args: string[], folder: string): string[] {
+  const at = args.findIndex(
+    (a) => a === FS_SERVER_PACKAGE || a.startsWith(`${FS_SERVER_PACKAGE}@`)
+  );
+  if (at < 0) {
+    return [...args, folder];
+  }
+  return [
+    ...args.slice(0, at + 1),
+    ...args.slice(at + 1).filter((a) => a.startsWith("-")),
+    folder
+  ];
+}
+
+export class MissingFolderError extends Error {
+  constructor() {
+    super("missing: folder");
+    this.name = "MissingFolderError";
+  }
+}
+
 export class MissingSecretError extends Error {
   readonly secrets: string[];
   constructor(secrets: string[]) {
@@ -121,8 +155,12 @@ export class MissingSecretError extends Error {
 export async function connectCatalogEntry(
   api: Pick<McpApi, "setSecret" | "createMcpServer">,
   entry: McpCatalogEntry,
-  values: Record<string, string>
+  values: Record<string, string>,
+  folder?: string
 ): Promise<McpServer> {
+  if (entry.install.folder && !(folder ?? "").trim()) {
+    throw new MissingFolderError();
+  }
   const missing = entry.install.required_secrets
     .filter((s) => !(values[s.name] ?? "").trim())
     .map((s) => s.name);
@@ -135,7 +173,7 @@ export async function connectCatalogEntry(
       values[s.name].trim()
     );
   }
-  return api.createMcpServer(configFromCatalog(entry));
+  return api.createMcpServer(configFromCatalog(entry, folder));
 }
 
 /** Split a command line into arguments, honouring single and double quotes. */

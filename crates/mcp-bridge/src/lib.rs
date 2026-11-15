@@ -34,7 +34,7 @@
 //! [server.transport]
 //! type = "stdio"
 //! command = "npx"
-//! args = ["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "."]
+//! args = ["-y", "@modelcontextprotocol/server-filesystem@2.2.0", "/path/to/a/folder"]
 //! [server.secret_env]
 //! API_KEY = "mcp/files-key"
 //! ```
@@ -48,14 +48,16 @@ mod diagnostics;
 mod discovery;
 mod error;
 mod manager;
+mod roots;
 mod session;
 mod tool;
 mod transport;
 
-pub use catalog::{CatalogEntry, CatalogInstall, RequiredSecret, builtin_catalog};
+pub use catalog::{CatalogEntry, CatalogInstall, RequiredFolder, RequiredSecret, builtin_catalog};
 pub use config::{McpConfigStore, McpServerConfig, McpTransport, TomlFileStore};
 pub use diagnostics::ExternalRedactor;
 pub use error::{McpError, McpErrorKind, Result, runtime_install_hint};
 pub use manager::{Backoff, McpManager, McpPolicy, McpServerHandle, ServerSnapshot, ServerStatus};
+pub use roots::{FS_SERVER_PACKAGE, PathGuard, filesystem_roots, root_problem};
 pub use tool::qualified_name;
 pub use transport::OS_ESSENTIAL_ENV;
