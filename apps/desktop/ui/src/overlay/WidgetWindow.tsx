@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { CircleCheck, LoaderCircle } from "lucide-react";
+import { CircleCheck, LoaderCircle, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,7 @@ import {
 } from "../store/settingsStore";
 import {
   type ControlSnapshot,
+  dismissStopWidget,
   getControlState,
   giveBackControl,
   INITIAL_CONTROL_SNAPSHOT,
@@ -244,7 +245,7 @@ export function WidgetWindow() {
           {stopState.kind === "none" ? (
             <p className={styles.stepText}>{stepDisplay}</p>
           ) : (
-            <p
+            <div
               className={styles.stopLine}
               data-kind={stopState.kind}
               title={t(widgetStopKey)}
@@ -255,7 +256,20 @@ export function WidgetWindow() {
                 <CircleCheck aria-hidden="true" />
               )}
               <span>{t(widgetStopKey)}</span>
-            </p>
+              {stopState.kind === "pending" ? (
+                // No ack may ever come (daemon gone): the user can hide this window.
+                // It acknowledges nothing; the main window keeps the Stop's real state.
+                <button
+                  type="button"
+                  className={styles.stopDismiss}
+                  aria-label={t("widget.dismissStop")}
+                  title={t("widget.dismissStop")}
+                  onClick={() => void dismissStopWidget().catch(() => {})}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
           )}
           {isHumanDriving && controlState.refusedActionsCount > 0 ? (
             <span className={styles.refusedInfo}>

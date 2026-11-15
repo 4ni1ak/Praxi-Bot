@@ -417,6 +417,17 @@ export async function finishBotRun(expectedGeneration: number): Promise<ControlS
   return invoke<ControlSnapshot>("finish_bot_run", { expectedGeneration });
 }
 
+/**
+ * Hide the widget's pending-Stop indicator (widget or main window). Acknowledges
+ * nothing: the main window keeps showing whether the Stop was confirmed.
+ */
+export async function dismissStopWidget(): Promise<ControlSnapshot> {
+  if (!isTauriRuntime()) {
+    return INITIAL_CONTROL_SNAPSHOT;
+  }
+  return invoke<ControlSnapshot>("dismiss_stop_widget");
+}
+
 /** Acknowledge every Stop up to `seq` as handled (silent; main window only). */
 export async function ackStop(seq: number): Promise<ControlSnapshot> {
   if (!isTauriRuntime()) {

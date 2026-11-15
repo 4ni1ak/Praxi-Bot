@@ -159,6 +159,32 @@
   text-overflow: ellipsis;
 }
 
+.stopDismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.stopDismiss:hover {
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.stopDismiss:focus-visible {
+  outline: var(--size-border-thick) solid var(--color-focus);
+  outline-offset: var(--size-border);
+}
+
 .stopSpin {
   animation: widgetStopSpin var(--motion-duration-pulse) linear infinite;
 }
