@@ -88,7 +88,10 @@ mod tests {
     #[test]
     fn the_widget_never_covers_the_main_window_while_it_is_in_front() {
         assert!(presentable(true, false), "run active, user elsewhere");
-        assert!(!presentable(true, true), "main window focused: it carries the status");
+        assert!(
+            !presentable(true, true),
+            "main window focused: it carries the status"
+        );
         assert!(!presentable(false, false));
         assert!(!presentable(false, true));
     }
