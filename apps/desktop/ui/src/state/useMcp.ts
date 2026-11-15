@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { McpCatalogEntry, McpServer } from "../api/types";
+import { createScopedLoader } from "../lib/scopedLoader";
 import { applyServerEvent, eventNeedsRefetch } from "../lib/mcpApps";
 import { useDaemon } from "./DaemonContext";
 
@@ -22,24 +23,29 @@ export function useMcp(active: boolean): {
   const serversRef = useRef<McpServer[]>([]);
   serversRef.current = servers;
 
+  const loader = useRef(
+    createScopedLoader<{ s: McpServer[]; c: McpCatalogEntry[] }>(
+      (v) => {
+        setServers(v?.s ?? []);
+        setCatalog(v?.c ?? []);
+        if (v) {
+          setError(null);
+        }
+      },
+      (e) => setError(e instanceof Error ? e.message : String(e))
+    )
+  );
   const reload = useCallback(async () => {
     if (!client) {
+      loader.current.switchTo(null);
       return;
     }
     setLoading(true);
-    try {
-      const [s, c] = await Promise.all([
-        client.listMcpServers(),
-        client.mcpCatalog()
-      ]);
-      setServers(s);
-      setCatalog(c);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
+    await loader.current.load(client, async () => {
+      const [s, c] = await Promise.all([client.listMcpServers(), client.mcpCatalog()]);
+      return { s, c };
+    });
+    setLoading(false);
   }, [client]);
 
   useEffect(() => {

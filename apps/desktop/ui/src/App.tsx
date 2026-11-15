@@ -1,7 +1,7 @@
 import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
 import { isMockMode } from "./api/mockMode";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -1038,7 +1038,7 @@ export function ComputerScope({ children }: { children: ReactNode }) {
     <LiveViewProvider>
       {plan.localBridge ? <ControlBridgeHost /> : null}
       {!plan.hostSession ? (
-        children
+        <Fragment key={LOCAL_COMPUTER}>{children}</Fragment>
       ) : (
         <HostSession key={activeComputerId}>
           <LiveViewProvider>{children}</LiveViewProvider>

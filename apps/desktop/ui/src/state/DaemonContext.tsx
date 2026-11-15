@@ -181,8 +181,10 @@ function useDaemonData(conn: Connection | null): DaemonData {
       return undefined;
     }
     if (conn.base_url !== MOCK_BASE_URL) {
-      setClient(new ApiClient(conn));
-      return undefined;
+      const made = new ApiClient(conn);
+      setClient(made);
+      // Switching computers (or leaving the host) drops this connection's requests in flight.
+      return () => made.dispose();
     }
     // Mock code is only reachable in dev builds or with VITE_MOCK=1.
     if (!(import.meta.env.DEV || import.meta.env.VITE_MOCK === "1")) {
@@ -591,6 +593,9 @@ export function HostSession({ children }: { children: ReactNode }) {
 
   const clientRef = useRef(data.client);
   clientRef.current = data.client;
+  if (data.client) {
+    data.client.hostName = link?.name ?? local.activeHostName ?? "";
+  }
   const stopHostRuns = useCallback(async () => {
     const c = clientRef.current;
     if (!c) {
