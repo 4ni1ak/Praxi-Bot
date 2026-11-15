@@ -3740,3 +3740,30 @@ async fn telegram_409_resumes_after_capped_backoff_once_conflict_clears() {
     assert!(polls.load(Ordering::SeqCst) >= 5);
     channel.shutdown().await;
 }
+
+#[tokio::test]
+async fn app_approval_sends_all_arguments_before_the_only_approval_buttons() {
+    let body = format!("{}RECIPIENT-AT-END", "x".repeat(6000));
+    let messages = approval_messages(Some(json!({"kind":"app_action","app_name":"GitHub","action_slug":"GITHUB_SEND","version":"20260901_00","arguments":{"body":body}}))).await;
+    let all: String = messages
+        .iter()
+        .map(|m| m["text"].as_str().unwrap())
+        .collect();
+    assert!(all.contains(&body) && all.contains("via Composio") && all.contains("GITHUB_SEND"));
+    assert!(messages.len() > 1);
+    assert!(
+        messages[..messages.len() - 1]
+            .iter()
+            .all(|m| m.get("reply_markup").is_none())
+    );
+    let buttons = messages.last().unwrap()["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|b| b["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Approve once", "Deny"]
+    );
+}

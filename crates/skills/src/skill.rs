@@ -155,6 +155,9 @@ pub fn parse_skill(content: &str, source: Source, dir: Option<PathBuf>) -> Resul
     if description.trim().is_empty() {
         return Err("`description` must not be empty".into());
     }
+    if description.chars().any(char::is_control) {
+        return Err("`description` must be a single line without control characters".into());
+    }
     if description.chars().count() > MAX_DESCRIPTION_LEN {
         return Err(format!(
             "`description` is longer than {MAX_DESCRIPTION_LEN} characters"

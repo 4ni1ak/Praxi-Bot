@@ -30,6 +30,7 @@ mod bundled;
 mod frontmatter;
 pub mod hub;
 mod index;
+pub mod owner;
 mod scoped_store;
 mod skill;
 mod tools;

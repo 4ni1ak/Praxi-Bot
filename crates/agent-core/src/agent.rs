@@ -30,7 +30,8 @@ use crate::shared::{
     ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
     CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
     MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork, Shared,
-    StreamItem, Verdict, initiator_of, kind_for, kind_for_schedule,
+    StreamItem, Verdict, initiator_of, kind_for, kind_for_mention, kind_for_schedule,
+    mention_message_id,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -50,6 +51,28 @@ pub(crate) enum Start {
 pub struct AgentLoop {
     pub(crate) sh: Arc<Shared>,
     pub(crate) rt: Arc<Runtime>,
+}
+
+/// File access scope of a bot, read from its profile (`[files]`). A caller
+/// that is not a known bot gets no file access.
+struct LoopFsAccess {
+    sh: Weak<Shared>,
+}
+
+impl builtin_tools::FsAccessProvider for LoopFsAccess {
+    fn scope(&self, bot_id: Option<&str>) -> builtin_tools::FsScope {
+        let denied = || builtin_tools::FsScope::Folders(Vec::new());
+        let Some(sh) = self.sh.upgrade() else {
+            return denied();
+        };
+        let Some(bot) = bot_id.and_then(|b| b.parse::<Uuid>().ok()).map(BotId) else {
+            return denied();
+        };
+        let Ok(profile) = sh.profile_for(bot) else {
+            return denied();
+        };
+        profile.files.scope(&sh.unset_file_scope())
+    }
 }
 
 impl AgentLoop {
@@ -73,6 +96,7 @@ impl AgentLoop {
                     .is_some_and(|sh| sh.tool_visible_to_run(&ctx.run_id, spec))
             });
             Shared {
+                usage: crate::usage::Ledger::default(),
                 storage: Arc::clone(&storage),
                 surface: ToolSurface::with_visibility(
                     tools.clone(),
@@ -80,6 +104,7 @@ impl AgentLoop {
                     visibility,
                 ),
                 tools,
+                fs_unset_denied: RwLock::new(None),
                 checkpoint_access: RwLock::new((Vec::new(), Vec::new())),
                 providers: RwLock::new(providers),
                 global_policy: RwLock::new(cfg.global_policy.clone()),
@@ -102,6 +127,7 @@ impl AgentLoop {
                 grants: Mutex::new(load_grants(&storage)),
                 active: Mutex::new(HashMap::new()),
                 queued: Mutex::new(HashMap::new()),
+                mention_chain: Mutex::new(HashMap::new()),
                 tasks: Mutex::new(HashMap::new()),
                 bg: Mutex::new(Vec::new()),
                 gseq: AtomicU64::new(first_gseq),
@@ -111,6 +137,7 @@ impl AgentLoop {
                 rt: OnceLock::new(),
                 spawn_gate: Mutex::new(()),
                 skills: OnceLock::new(),
+                fill_secrets: OnceLock::new(),
                 skill_hints: RwLock::new(None),
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
@@ -118,6 +145,7 @@ impl AgentLoop {
                 identity_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
                 exec_gate: Mutex::new(()),
+                native_runs: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 task_reap_gate: Mutex::new(None),
                 #[cfg(test)]
@@ -185,6 +213,16 @@ impl AgentLoop {
         }));
         *self.sh.checkpoint_access.write() =
             (cfg.fs_allowed_roots.clone(), cfg.fs_granted_paths.clone());
+        // Static roots chosen by the host keep their meaning; otherwise each
+        // bot's own file access setting decides.
+        if cfg.fs_access.is_none() && cfg.fs_allowed_roots.is_empty() {
+            cfg.fs_access = Some(Arc::new(LoopFsAccess {
+                sh: Arc::downgrade(&self.sh),
+            }));
+        }
+        if let Some(secrets) = &cfg.fill_secrets {
+            let _ = self.sh.fill_secrets.set(Arc::clone(secrets));
+        }
         let _ = builtin_tools::register_builtin_tools(&self.sh.tools, cfg);
         self
     }
@@ -193,6 +231,37 @@ impl AgentLoop {
     #[must_use]
     pub fn checkpoint_access(&self) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
         self.sh.checkpoint_access.read().clone()
+    }
+
+    /// Decide per call whether bots without an explicit file access mode get
+    /// none (`true`, an always-on host) or "This computer" (`false`).
+    pub fn set_unset_file_access_denied(&self, denied: impl Fn() -> bool + Send + Sync + 'static) {
+        *self.sh.fs_unset_denied.write() = Some(Arc::new(denied));
+    }
+
+    /// Like [`Self::checkpoint_access`] for a run of `bot`: its CURRENT file
+    /// access setting decides (folder-only roots; an empty or unusable folder
+    /// list denies every path), so narrowing a bot also narrows review/restore.
+    #[must_use]
+    pub fn checkpoint_access_for(
+        &self,
+        bot: BotId,
+    ) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+        let (mut roots, grants) = self.checkpoint_access();
+        match self
+            .sh
+            .profile_for(bot)
+            .map(|p| p.files.scope(&self.sh.unset_file_scope()))
+        {
+            Ok(builtin_tools::FsScope::Folders(f)) if !f.is_empty() => roots = f,
+            // Folder mode without a folder (or an unset mode on a host): nothing resolves.
+            Ok(builtin_tools::FsScope::Folders(_)) => {
+                roots = vec![self.sh.storage.data_dir().join("__no-folder__")];
+            }
+            // This computer, or a profile that cannot be read: the static access.
+            Ok(builtin_tools::FsScope::Computer) | Err(_) => {}
+        }
+        (roots, grants)
     }
 
     /// Apply the production redactor, including its configured source refresher.
@@ -237,6 +306,20 @@ impl AgentLoop {
         let mut names: Vec<String> = self.sh.tools.list().into_iter().map(|s| s.name).collect();
         names.sort();
         names
+    }
+
+    /// Mask registered secrets in external data before an authorized source
+    /// adapter persists or embeds it. Source adapters refresh the secret
+    /// snapshot once per admitted batch with [`Self::refresh_external_redactor`].
+    #[must_use]
+    pub fn redact_external_text(&self, text: String) -> String {
+        self.sh.redact(text)
+    }
+
+    /// Refresh registered secrets once before admitting an external source
+    /// batch. Individual lines can then be redacted without secret-store I/O.
+    pub fn refresh_external_redactor(&self) {
+        self.sh.refresh_redactor();
     }
 
     /// The loop's tool registry (cheap clone). MCP servers register their
@@ -308,6 +391,62 @@ impl AgentLoop {
         self.sh.global_policy.read().clone()
     }
 
+    /// Resolve query-embedding egress in the actual active run's policy scope.
+    /// Unknown/cross-bot run IDs fail closed. Owner source opt-in remains an
+    /// independent host requirement; generic tool grants are not consulted.
+    #[must_use]
+    pub fn embedding_egress_decision(
+        &self,
+        bot_id: BotId,
+        run_id: &str,
+    ) -> permission_engine::Decision {
+        use permission_engine::{ActionRequest, Decision};
+        let Ok(run_id) = run_id.parse::<Uuid>().map(RunId) else {
+            return Decision::Deny;
+        };
+        let _gate = self.sh.exec_gate.lock();
+        // Never reconstruct a context from a caller-supplied persisted run ID.
+        // Only a currently executing run may exercise its captured initiator
+        // and inherited subagent policy.
+        if self.rt.state(run_id).ok() != Some(RunState::Running) {
+            return Decision::Deny;
+        }
+        let Some(ctx) = self
+            .sh
+            .runs
+            .lock()
+            .get(&run_id)
+            .filter(|ctx| ctx.bot_id == bot_id)
+            .cloned()
+        else {
+            return Decision::Deny;
+        };
+        if self
+            .sh
+            .policy_locked
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Decision::Deny;
+        }
+        let Ok(current) = self.sh.profile_for(bot_id) else {
+            return Decision::Deny;
+        };
+        let policy = self.sh.global_policy.read();
+        let request = ActionRequest {
+            category: PermissionCategory::Remote,
+            raw_command: String::new(),
+            initiator: ctx.initiator,
+        };
+        self.sh
+            .resolver
+            .resolve(&policy, ctx.bot_policy.as_ref(), None, &request)
+            .stricter(
+                self.sh
+                    .resolver
+                    .resolve(&policy, current.policy().as_ref(), None, &request),
+            )
+    }
+
     /// Replace the workspace-wide default policy.
     ///
     /// Bumps the policy revision, then denies pending approvals that the new
@@ -334,6 +473,22 @@ impl AgentLoop {
     #[must_use]
     pub fn price_for(&self, model: &str) -> Option<ModelPrice> {
         self.sh.price_for(model)
+    }
+
+    /// Owner kill switch: end every running native-tools engine process of
+    /// `bot_id` (the whole process tree). Returns how many were signalled.
+    #[allow(clippy::must_use_candidate)] // Callers may ignore the count.
+    pub fn kill_native_runs(&self, bot_id: BotId) -> usize {
+        let runs = self
+            .sh
+            .native_runs
+            .lock()
+            .remove(&bot_id)
+            .unwrap_or_default();
+        for (_, token) in &runs {
+            token.cancel();
+        }
+        runs.len()
     }
 
     /// Register the profile used by `bot_id` (otherwise the bot row's JSON
@@ -372,6 +527,7 @@ impl AgentLoop {
             control: Some(Arc::new(LoopControl {
                 sh: Arc::downgrade(&self.sh),
             })),
+            fill_secrets: self.sh.fill_secrets.get().cloned(),
             ..workflow_replay::ReplayOptions::default()
         };
         let (s2, h2, o2) = (store.clone(), handles.clone(), opts.clone());
@@ -490,6 +646,37 @@ impl AgentLoop {
         self.start_turn(chat_id, user_message, &kind_for(initiator), None, None)
     }
 
+    /// Start an external MCP task in a fresh, isolated chat. The credential id
+    /// is public attribution, never the bearer. Every tool requires one-time
+    /// owner approval, including reads and inherited child calls.
+    ///
+    /// # Errors
+    /// Existing chat history, unavailable bot, invalid task, or storage error.
+    pub fn run_external(
+        &self,
+        chat_id: ChatId,
+        credential_id: Uuid,
+        work: ScheduleWork,
+    ) -> Result<RunId> {
+        let text = match &work {
+            ScheduleWork::Prompt(text) => text.clone(),
+            ScheduleWork::Tool { .. } => "External agent requested a computer tool call.".into(),
+            ScheduleWork::Workflow { .. } => {
+                return Err(LoopError::Profile(
+                    "external workflow directives are not supported".into(),
+                ));
+            }
+        };
+        let directive = (!matches!(work, ScheduleWork::Prompt(_))).then_some(work);
+        self.start_turn(
+            chat_id,
+            &text,
+            &format!("turn:external_agent:{credential_id}"),
+            directive,
+            None,
+        )
+    }
+
     /// Start a run on behalf of schedule `schedule_id` (initiator
     /// [`InitiatorKind::Schedule`]) and return its run id; the run goes on in
     /// the background.  `work` says what it does: a normal prompt turn, a saved
@@ -526,6 +713,44 @@ impl AgentLoop {
         )
     }
 
+    /// Start an externally supplied scheduled run in a new, isolated chat.
+    /// The durable initiator survives resume and is inherited by all children.
+    ///
+    /// # Errors
+    /// Existing chat history or normal run-start errors.
+    pub fn run_scheduled_external(
+        &self,
+        chat_id: ChatId,
+        schedule_id: TaskId,
+        work: ScheduleWork,
+        note: Option<&str>,
+    ) -> Result<RunId> {
+        if !self.sh.storage.list_messages(chat_id)?.is_empty() {
+            return Err(LoopError::Profile(
+                "external schedule requires an empty chat".into(),
+            ));
+        }
+        let mut text = match &work {
+            ScheduleWork::Prompt(text) => text.clone(),
+            ScheduleWork::Workflow { name, params } => {
+                format!("Scheduled workflow {name}: {params:?}")
+            }
+            ScheduleWork::Tool { name, input } => format!("Scheduled tool {name}: {input}"),
+        };
+        if let Some(note) = note {
+            text.push_str("\n\n");
+            text.push_str(note);
+        }
+        let directive = (!matches!(work, ScheduleWork::Prompt(_))).then_some(work);
+        self.start_turn(
+            chat_id,
+            &text,
+            &format!("turn:external_schedule:{schedule_id}"),
+            directive,
+            None,
+        )
+    }
+
     /// `handoff`: the just-concluded run that still holds the chat's `active`
     /// slot; the new turn takes the slot over from it without a gap in which
     /// another start could slip in.
@@ -536,6 +761,65 @@ impl AgentLoop {
         kind: &str,
         directive: Option<ScheduleWork>,
         handoff: Option<RunId>,
+    ) -> Result<RunId> {
+        // `@Y` in the user's own message: Y answers this turn in this chat (up
+        // to three bots, one after the other). Only human turns are parsed.
+        if directive.is_none()
+            && initiator_of(kind) == InitiatorKind::Human
+            && let Some((first, rest)) = self.mention_targets(chat_id, user_message)
+        {
+            self.sh.mention_chain.lock().remove(&chat_id);
+            let msg_id = Uuid::now_v7();
+            let run = self.start_turn_as_bot(
+                chat_id,
+                user_message,
+                &kind_for_mention(msg_id),
+                None,
+                handoff,
+                Some(first),
+                false,
+            )?;
+            if !rest.is_empty() {
+                self.sh
+                    .mention_chain
+                    .lock()
+                    .insert(chat_id, rest.into_iter().map(|b| (b, msg_id)).collect());
+            }
+            return Ok(run);
+        }
+        // A plain turn ends any leftover chain of an earlier message.
+        self.sh.mention_chain.lock().remove(&chat_id);
+        self.start_turn_as_bot(chat_id, user_message, kind, directive, handoff, None, false)
+    }
+
+    /// Bots (existing, with a usable profile) the user's `text` calls with `@`,
+    /// first one split from the rest; `None` when it calls nobody else.
+    fn mention_targets(&self, chat_id: ChatId, text: &str) -> Option<(BotId, Vec<BotId>)> {
+        let chat = self.sh.storage.get_chat(chat_id).ok().flatten()?;
+        let bots: Vec<(BotId, String)> = self
+            .sh
+            .storage
+            .list_bots(chat.user_id)
+            .ok()?
+            .into_iter()
+            .filter(|b| self.sh.profile_for(b.id).is_ok())
+            .map(|b| (b.id, b.name))
+            .collect();
+        let mut all = crate::mention::resolve(&bots, chat.bot_id, text).into_iter();
+        let first = all.next()?;
+        Some((first, all.collect()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_turn_as_bot(
+        &self,
+        chat_id: ChatId,
+        user_message: &str,
+        kind: &str,
+        directive: Option<ScheduleWork>,
+        handoff: Option<RunId>,
+        as_bot: Option<BotId>,
+        reuse_user_message: bool,
     ) -> Result<RunId> {
         if self.sh.providers.read().setup_required() {
             return Err(LoopError::SetupRequired);
@@ -548,9 +832,23 @@ impl AgentLoop {
             .storage
             .get_chat(chat_id)?
             .ok_or_else(|| LoopError::NotFound(format!("chat {chat_id}")))?;
-        self.sh
-            .profile_for(chat.bot_id)
-            .map_err(LoopError::Profile)?;
+        // A mentioned bot runs in this chat with its own profile; the chat stays
+        // the owner's chat with `chat.bot_id`.
+        let run_bot = as_bot.unwrap_or(chat.bot_id);
+        self.sh.profile_for(run_bot).map_err(LoopError::Profile)?;
+        {
+            let messages = self.sh.storage.list_messages(chat_id)?;
+            if messages.iter().any(|m| m.role == "external_schedule") {
+                return Err(LoopError::Profile(
+                    "external schedule chat is isolated; start a new chat".into(),
+                ));
+            }
+            if messages.iter().any(|m| m.role == "external_agent") {
+                return Err(LoopError::Profile(
+                    "external task chats cannot accept follow-up messages; start a new chat".into(),
+                ));
+            }
+        }
         let run_id = {
             let mut active = self.sh.active.lock();
             if active
@@ -559,10 +857,38 @@ impl AgentLoop {
             {
                 return Err(LoopError::Busy(chat_id));
             }
+            // Check under the same lock as turn creation: a fast concurrent
+            // human/external turn must not race the history isolation boundary.
+            let messages = self.sh.storage.list_messages(chat_id)?;
+            if matches!(
+                initiator_of(kind),
+                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+            ) && !messages.is_empty()
+            {
+                return Err(LoopError::Profile(
+                    "external tasks require a fresh chat".into(),
+                ));
+            }
+            if messages
+                .iter()
+                .any(|m| m.role == "external_agent" || m.role == "external_schedule")
+            {
+                return Err(LoopError::Profile(
+                    "external task chats cannot be reused; start a new chat".into(),
+                ));
+            }
             let run_id = self
                 .rt
-                .create_run(chat.user_id, chat.bot_id, Some(chat_id), kind)?;
-            self.insert_user_message(chat.user_id, chat_id, run_id, user_message)?;
+                .create_run(chat.user_id, run_bot, Some(chat_id), kind)?;
+            if !reuse_user_message {
+                self.insert_user_message(
+                    chat.user_id,
+                    chat_id,
+                    run_id,
+                    user_message,
+                    mention_message_id(kind),
+                )?;
+            }
             if let Some(d) = directive {
                 self.sh.directives.lock().insert(run_id, d);
             }
@@ -598,6 +924,17 @@ impl AgentLoop {
         });
         {
             let active = self.sh.active.lock();
+            if self
+                .sh
+                .storage
+                .list_messages(chat_id)?
+                .iter()
+                .any(|m| m.role == "external_agent" || m.role == "external_schedule")
+            {
+                return Err(LoopError::Profile(
+                    "external task chats cannot accept follow-up messages; start a new chat".into(),
+                ));
+            }
             if let Some(&run_id) = active.get(&chat_id) {
                 if let Some(content) = steering {
                     let ctx = self.sh.runs.lock().get(&run_id).cloned();
@@ -609,6 +946,7 @@ impl AgentLoop {
                                 chat_id,
                                 run_id,
                                 content,
+                                None,
                             )?;
                             st.steer.push_back(stored);
                             return Ok(Delivery::Steered(run_id));
@@ -783,6 +1121,7 @@ impl AgentLoop {
                 let reason = "Cannot resume: stored computer identity is unknown or no longer belongs to this daemon or a paired desktop (identity changed or state imported); start a new run";
                 self.cancel_wait_pc_timer(run.id);
                 self.rt.fail_paused(run.id, reason)?;
+                crate::usage::finish(&self.sh, run.id);
                 self.sh.storage.append_audit(
                     run.user_id,
                     Some(run.id),
@@ -890,6 +1229,7 @@ impl AgentLoop {
         self.rt.cancel(run_id)?;
         // A cancelled parent takes its subagents with it.
         self.cancel_descendants(run_id);
+        crate::usage::finish(&self.sh, run_id);
         if idle_paused {
             if let Ok(Some(run)) = self.sh.storage.get_run(run_id)
                 && let Some(chat_id) = run.chat_id
@@ -1056,6 +1396,7 @@ impl AgentLoop {
         );
         let ctx = self.ctx_of(run_id);
         if self.rt.fail_paused(run_id, &message).is_ok() {
+            crate::usage::finish(&self.sh, run_id);
             self.sh.directives.lock().remove(&run_id);
             self.sh.run_computers.lock().remove(&run_id);
             if let Some(chat_id) = run.chat_id {
@@ -1332,12 +1673,13 @@ impl AgentLoop {
         chat_id: ChatId,
         run_id: RunId,
         text: &str,
+        id: Option<Uuid>,
     ) -> Result<String> {
         // A key pasted into the chat is stored (and replayed into every later
         // provider request) masked.
         self.sh.refresh_redactor();
         let content = self.sh.redact(text.to_owned());
-        self.insert_redacted_user_message(user_id, chat_id, run_id, content)
+        self.insert_redacted_user_message(user_id, chat_id, run_id, content, id)
     }
 
     fn insert_redacted_user_message(
@@ -1346,13 +1688,24 @@ impl AgentLoop {
         chat_id: ChatId,
         run_id: RunId,
         content: String,
+        id: Option<Uuid>,
     ) -> Result<String> {
         self.sh.storage.insert_message(&DbMessage {
-            id: Uuid::now_v7(),
+            id: id.unwrap_or_else(Uuid::now_v7),
             user_id,
             chat_id,
             run_id: Some(run_id),
-            role: "user".to_owned(),
+            role: match self
+                .sh
+                .storage
+                .get_run(run_id)?
+                .map(|run| initiator_of(&run.kind))
+            {
+                Some(InitiatorKind::ExternalAgent) => "external_agent",
+                Some(InitiatorKind::ExternalSchedule) => "external_schedule",
+                _ => "user",
+            }
+            .to_owned(),
             content: content.clone(),
             created_at_ms: now_ms(),
             exposure_untrusted: false,
@@ -1418,7 +1771,9 @@ impl AgentLoop {
 
     // Boxed so the spawn / `conclude` / next-turn recursion has a nameable type.
     fn drive(self, run_id: RunId, start: Start) -> BoxFuture<'static, ()> {
+        let activity = crate::usage::Activity::new(&self.sh, run_id);
         Box::pin(async move {
+            let _activity = activity;
             let res = match start {
                 Start::Fresh => {
                     let run = self.sh.storage.get_run(run_id).ok().flatten();
@@ -1588,8 +1943,12 @@ impl AgentLoop {
     }
 
     /// Persist the final answer, emit the closing events and start any queued turn.
+    #[allow(clippy::too_many_lines)] // one terminal bookkeeping pass; the order is the contract
     fn conclude(&self, run_id: RunId, res: &std::result::Result<RunState, RuntimeError>) {
         let run = self.sh.storage.get_run(run_id).ok().flatten();
+        if !matches!(res, Ok(RunState::Paused)) {
+            crate::usage::finish(&self.sh, run_id);
+        }
         crate::compaction::forget_turn(run_id);
         if !matches!(res, Ok(RunState::Paused)) {
             // A finished run's spill files are no longer reachable by the
@@ -1654,6 +2013,12 @@ impl AgentLoop {
         };
         // Provider errors can carry URLs with `?key=...`.
         let error = error.map(|e| self.sh.redact(e));
+        if error.is_some()
+            && let Some(chat_id) = run.as_ref().and_then(|r| r.chat_id)
+        {
+            // Stopped or failed: the remaining mentioned bots do not answer.
+            self.sh.mention_chain.lock().remove(&chat_id);
+        }
         if error.is_none()
             && let Some(run) = &run
             && let Some(chat_id) = run.chat_id
@@ -1708,26 +2073,53 @@ impl AgentLoop {
         // Take the next queued message and keep the chat reserved (the slot
         // stays with this run) until its turn has started, so a concurrent
         // start cannot make the follow-up bounce off `Busy`.
-        let next = {
+        let (chained, next) = {
             let mut active = self.sh.active.lock();
-            let next = if active.get(&chat_id) == Some(&run_id) {
-                let next = self
+            let (chained, next) = if active.get(&chat_id) == Some(&run_id) {
+                // The rest of a multi-mention message goes before later messages.
+                let chained = self
                     .sh
-                    .queued
+                    .mention_chain
                     .lock()
                     .get_mut(&chat_id)
                     .and_then(std::collections::VecDeque::pop_front);
-                if next.is_none() {
+                let next = if chained.is_some() {
+                    None
+                } else {
+                    self.sh
+                        .queued
+                        .lock()
+                        .get_mut(&chat_id)
+                        .and_then(std::collections::VecDeque::pop_front)
+                };
+                if chained.is_none() && next.is_none() {
                     active.remove(&chat_id);
                 }
-                next
+                (chained, next)
             } else {
-                None
+                (None, None)
             };
             drop(active);
-            next
+            (chained, next)
         };
-        if let Some(text) = next {
+        if let Some((bot, msg_id)) = chained {
+            let started = self.start_turn_as_bot(
+                chat_id,
+                "",
+                &kind_for_mention(msg_id),
+                None,
+                Some(run_id),
+                Some(bot),
+                true,
+            );
+            if started.is_err() {
+                self.sh.mention_chain.lock().remove(&chat_id);
+                let mut active = self.sh.active.lock();
+                if active.get(&chat_id) == Some(&run_id) {
+                    active.remove(&chat_id);
+                }
+            }
+        } else if let Some(text) = next {
             let started = self.start_turn(
                 chat_id,
                 &text,
@@ -1760,7 +2152,11 @@ impl AgentLoop {
         }
         if let Some(ex) = crate::memory::Exchange::of(&self.sh, run, final_text) {
             let sh = Arc::clone(&self.sh);
-            let handle = tokio::spawn(crate::memory::extract(sh, ex));
+            let activity = crate::usage::Activity::new(&sh, run.id);
+            let handle = tokio::spawn(async move {
+                let _activity = activity;
+                crate::memory::extract(sh, ex).await;
+            });
             let mut bg = self.sh.bg.lock();
             bg.retain(|h| !h.is_finished());
             bg.push(handle);

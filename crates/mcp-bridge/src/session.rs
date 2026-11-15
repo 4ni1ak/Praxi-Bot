@@ -15,14 +15,11 @@
 use std::{cell::RefCell, fmt, future::Future, time::Duration};
 
 use parking_lot::Mutex;
-use rmcp::{
-    RoleClient,
-    service::{Peer, RunningService},
-};
+use rmcp::{RoleClient, service::Peer};
 use tokio::sync::{oneshot, watch};
 use tracing::{Dispatch, Level, Metadata, subscriber::DefaultGuard};
 
-use crate::{McpError, Result, diagnostics::Redactor};
+use crate::{McpError, Result, client::Running, diagnostics::Redactor};
 
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(8);
 const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
@@ -157,6 +154,8 @@ pub(crate) struct Session {
     close: Mutex<Option<oneshot::Sender<()>>>,
     completed: watch::Receiver<bool>,
     pub(crate) redactor: Redactor,
+    /// Set once a `subscriptions/listen` stream was requested on this session.
+    pub(crate) listening: std::sync::atomic::AtomicBool,
 }
 
 impl fmt::Debug for Session {
@@ -192,7 +191,7 @@ impl Session {
 
     /// In-memory manager fixtures keep their service on the paused test clock.
     #[cfg(test)]
-    pub(crate) fn from_running(inner: RunningService<RoleClient, ()>, redactor: Redactor) -> Self {
+    pub(crate) fn from_running(inner: Running, redactor: Redactor) -> Self {
         let peer = inner.peer().clone();
         let (close, closing) = oneshot::channel();
         let (completed, completion) = watch::channel(false);
@@ -205,6 +204,7 @@ impl Session {
             close: Mutex::new(Some(close)),
             completed: completion,
             redactor,
+            listening: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -219,7 +219,7 @@ pub(crate) async fn open<F, Fut>(
 ) -> Result<Session>
 where
     F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = Result<RunningService<RoleClient, ()>>>,
+    Fut: Future<Output = Result<Running>>,
 {
     // Keep this sender across the readiness await. Cancelling open (including
     // retirement or its caller's timeout) immediately interrupts the handshake.
@@ -296,6 +296,7 @@ where
         close: Mutex::new(Some(close)),
         completed: completion,
         redactor,
+        listening: std::sync::atomic::AtomicBool::new(false),
     })
 }
 
@@ -307,7 +308,7 @@ async fn initialize<F, Fut>(
     ready: oneshot::Sender<Result<Peer<RoleClient>>>,
 ) where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<RunningService<RoleClient, ()>>>,
+    Fut: Future<Output = Result<Running>>,
 {
     let result = tokio::select! {
         biased;
@@ -336,7 +337,7 @@ async fn initialize<F, Fut>(
     drive(inner, closing).await;
 }
 
-async fn drive(inner: RunningService<RoleClient, ()>, mut closing: oneshot::Receiver<()>) {
+async fn drive(inner: Running, mut closing: oneshot::Receiver<()>) {
     let cancellation = inner.cancellation_token();
     let waiting = inner.waiting();
     tokio::pin!(waiting);
@@ -458,7 +459,7 @@ mod tests {
                 tokio::spawn(async { emit_probe() }).await.unwrap();
                 tokio::task::spawn_blocking(emit_probe).await.unwrap();
                 Ok(serve_directly(
-                    (),
+                    crate::client::BridgeClient::default(),
                     TestTransport {
                         probe: true,
                         close_started: None,
@@ -534,7 +535,7 @@ mod tests {
                 .await
                 .unwrap();
                 Ok(serve_directly(
-                    (),
+                    crate::client::BridgeClient::default(),
                     TestTransport {
                         probe: false,
                         close_started: None,
@@ -582,7 +583,7 @@ mod tests {
                 Duration::from_secs(5),
                 move || async move {
                     Ok(serve_directly(
-                        (),
+                        crate::client::BridgeClient::default(),
                         TestTransport {
                             close_started: Some(started),
                             release_close: Some(released),

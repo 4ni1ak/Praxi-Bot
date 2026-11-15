@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
-builtin-tools = { path = "../builtin-tools", version = "0.1.0" }
 calamine = "0.38"
 csv = "1"
 lopdf = { version = "0.47", default-features = false }

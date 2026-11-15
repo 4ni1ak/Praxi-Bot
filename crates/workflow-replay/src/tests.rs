@@ -177,6 +177,7 @@ fn click(window: &str, loc: DesktopLocator) -> Step {
         action: DesktopActionKind::Click,
         value: None,
         method: None,
+        secret: None,
     })
 }
 
@@ -371,12 +372,14 @@ async fn params_are_substituted_typed_and_validated() {
             target: Some(bloc("textbox", "Search")),
             action: BrowserActionKind::Fill,
             value: Some("{query} x{qty}".into()),
+            secret: None,
         }),
         Step::BrowserAction(BrowserAction {
             url_pattern: None,
             target: Some(bloc("button", "Go")),
             action: BrowserActionKind::Click,
             value: None,
+            secret: None,
         }),
         Step::Tool(ToolStep {
             tool: "shop_log".into(),
@@ -565,6 +568,7 @@ async fn browser_css_fallback_needs_a_unique_match() {
         }),
         action: BrowserActionKind::Click,
         value: None,
+        secret: None,
     })];
     let rp = replayer(
         handles(None, Some(browser.clone())),
@@ -606,6 +610,7 @@ async fn browser_url_mismatch_is_a_drift() {
         }),
         action: BrowserActionKind::Click,
         value: None,
+        secret: None,
     })];
     let r = replayer(
         handles(None, Some(browser.clone())),
@@ -937,6 +942,7 @@ async fn a_replay_step_never_reads_or_acts_while_control_is_held_back() {
         action: DesktopActionKind::Click,
         value: None,
         method: None,
+        secret: None,
     })]);
     let desktop = FakeDesktop::new(
         vec![window(1, "A - App")],
@@ -977,6 +983,7 @@ async fn refusing_control_gate_blocks_every_desktop_action_kind() {
             action: kind,
             value: Some("a".into()),
             method: None,
+            secret: None,
         })]);
         let desktop = FakeDesktop::new(
             vec![window(1, "A - App")],
@@ -1041,6 +1048,7 @@ async fn refusing_control_gate_blocks_every_browser_action_and_navigate() {
             target,
             action: kind,
             value: Some("x".into()),
+            secret: None,
         }));
     }
     cases.push(Step::Navigate(crate::format::Navigate {
@@ -1145,6 +1153,7 @@ fn typed_step(kind: DesktopActionKind, value: &str) -> Workflow {
         action: kind,
         value: Some(value.into()),
         method: None,
+        secret: None,
     })])
 }
 
@@ -1318,6 +1327,7 @@ async fn a_replayed_win_chord_has_no_eligible_target() {
             action: DesktopActionKind::Key,
             value: Some("win+r".into()),
             method: None,
+            secret: None,
         })]),
         &params(&json!({})),
         &gate,
@@ -1331,4 +1341,223 @@ async fn a_replayed_win_chord_has_no_eligible_target() {
         desktop.guarded.lock().is_empty(),
         "not covered, so not guarded"
     );
+}
+
+// ---------------------------------------------------------------- secrets
+
+mod secret_steps {
+    use super::*;
+    use builtin_tools::browser::FieldTarget;
+    use secret_store::{FillSecrets, MemoryStore, SecretStore};
+
+    const VALUE: &str = "hunter2-Correct-Horse-9!";
+    const GITHUB: &str = "https://github.com";
+    const PAGE: &str = "# Login (https://github.com/login)\n  [e1] textbox \"Password\"\n";
+
+    fn secret_step(name: &str) -> Step {
+        Step::BrowserAction(BrowserAction {
+            url_pattern: Some("https://github.com/*".into()),
+            target: Some(BrowserLocator {
+                role: "textbox".into(),
+                name: "Password".into(),
+                fingerprint: fingerprint_hex("textbox", "Password"),
+                aria_label: None,
+                css: None,
+                nth: None,
+            }),
+            action: BrowserActionKind::Fill,
+            value: None,
+            secret: Some(name.into()),
+        })
+    }
+
+    fn secrets() -> Arc<FillSecrets> {
+        let store: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
+        let secrets = Arc::new(FillSecrets::in_memory(store));
+        secrets
+            .upsert(
+                "login/github",
+                Some(VALUE),
+                Some(&[GITHUB.to_owned()]),
+                None,
+            )
+            .unwrap();
+        secrets
+    }
+
+    fn rig(frame: &str) -> (Arc<FakeBrowser>, Arc<FillSecrets>, Replayer) {
+        let browser = FakeBrowser::new(PAGE);
+        browser.targets.lock().insert(
+            "e1".into(),
+            FieldTarget {
+                name: "Password".into(),
+                role: "textbox".into(),
+                frame_origin: Some(frame.into()),
+                top_origin: Some(frame.into()),
+            },
+        );
+        let secrets = secrets();
+        let mut opts = ReplayOptions::instant();
+        opts.fill_secrets = Some(Arc::clone(&secrets));
+        let h = handles(None, Some(browser.clone()));
+        (browser, secrets, replayer(h, opts))
+    }
+
+    fn wf(step: Step) -> Workflow {
+        let mut w = Workflow::new("login");
+        w.steps = vec![step];
+        w
+    }
+
+    /// Guard: a recorded step keeps the reference; replay goes through the
+    /// gate with the same tool and the reference (never the value), then types.
+    #[tokio::test]
+    async fn replay_asks_through_the_gate_and_types_the_stored_value() {
+        let (browser, _s, rp) = rig(GITHUB);
+        let gate = RecordingGate::default();
+        let report = rp
+            .replay(&wf(secret_step("login/github")), &params(&json!({})), &gate)
+            .await
+            .unwrap();
+        assert!(report.is_completed(), "{report:?}");
+        let reqs = gate.requests.lock().clone();
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(reqs[0].tool, "browser_fill");
+        assert_eq!(
+            reqs[0].input,
+            json!({"ref": "e1", "secret": "login/github"})
+        );
+        assert!(
+            !serde_json::to_string(&reqs[0].input)
+                .unwrap()
+                .contains(VALUE)
+        );
+        assert_eq!(browser.typed_secrets.lock().as_slice(), [VALUE]);
+        // The report (what a handover or the model reads) never carries it.
+        assert!(
+            !format!("{report:?}").contains("Correct-Horse"),
+            "{report:?}"
+        );
+    }
+
+    /// Guard: replay re-checks the LIVE frame origin; a drifted page types nothing.
+    #[tokio::test]
+    async fn replay_refuses_a_frame_the_owner_did_not_allow() {
+        let (browser, _s, rp) = rig("https://evil.test");
+        let gate = RecordingGate::default();
+        let report = rp
+            .replay(&wf(secret_step("login/github")), &params(&json!({})), &gate)
+            .await
+            .unwrap();
+        assert!(!report.is_completed());
+        assert!(browser.typed_secrets.lock().is_empty());
+        assert!(
+            format!("{report:?}").contains("not allowed on https://evil.test"),
+            "{report:?}"
+        );
+    }
+
+    /// Guard: a deleted secret is a clear error before anything is asked.
+    #[tokio::test]
+    async fn replay_with_a_missing_secret_is_a_clear_error_and_asks_nothing() {
+        let (browser, secrets, rp) = rig(GITHUB);
+        secrets.delete("login/github").unwrap();
+        let gate = RecordingGate::default();
+        let report = rp
+            .replay(&wf(secret_step("login/github")), &params(&json!({})), &gate)
+            .await
+            .unwrap();
+        assert!(!report.is_completed());
+        let text = format!("{report:?}");
+        assert!(
+            text.contains("owner has no secret with that name"),
+            "{text}"
+        );
+        assert!(gate.requests.lock().is_empty());
+        assert!(browser.typed_secrets.lock().is_empty());
+    }
+
+    /// Guard: a refused gate (the owner said no) types nothing.
+    #[tokio::test]
+    async fn replay_types_nothing_when_the_gate_refuses() {
+        let (browser, _s, rp) = rig(GITHUB);
+        let gate = RecordingGate::denying("browser_fill");
+        let report = rp
+            .replay(
+                &wf(secret_step("login/github")),
+                &params(&json!({})),
+                &*gate,
+            )
+            .await
+            .unwrap();
+        assert!(!report.is_completed());
+        assert!(browser.typed_secrets.lock().is_empty());
+    }
+
+    /// Guard: no secrets service configured is a clear error.
+    #[tokio::test]
+    async fn replay_without_a_secret_service_refuses() {
+        let browser = FakeBrowser::new(PAGE);
+        let rp = replayer(
+            handles(None, Some(browser.clone())),
+            ReplayOptions::instant(),
+        );
+        let gate = RecordingGate::default();
+        let report = rp
+            .replay(&wf(secret_step("login/github")), &params(&json!({})), &gate)
+            .await
+            .unwrap();
+        assert!(!report.is_completed());
+        assert!(format!("{report:?}").contains("no secrets are configured"));
+    }
+
+    /// Guard: a desktop secret step is kept but never replayed blind.
+    #[tokio::test]
+    async fn a_desktop_secret_step_is_refused_at_replay() {
+        let gate = RecordingGate::default();
+        let step = Step::DesktopAction(DesktopAction {
+            app: None,
+            window_title_pattern: None,
+            target: Some(desk_loc("edit", "Text editor")),
+            action: DesktopActionKind::Type,
+            value: None,
+            method: None,
+            secret: Some("login/github".into()),
+        });
+        let h = handles(Some(notepad_desktop()), None);
+        let rp = replayer(h, ReplayOptions::instant());
+        let report = rp
+            .replay(&wf(step), &params(&json!({})), &gate)
+            .await
+            .unwrap();
+        assert!(!report.is_completed());
+        assert!(format!("{report:?}").contains("desktop secret steps are not replayed"));
+        assert!(gate.requests.lock().is_empty());
+    }
+
+    /// Guard: the format only allows a secret where it makes sense.
+    #[test]
+    fn validation_rejects_a_secret_in_the_wrong_place() {
+        let ok = wf(secret_step("login/github"));
+        ok.validate().unwrap();
+        // A value next to a secret.
+        let mut bad = ok.clone();
+        if let Step::BrowserAction(b) = &mut bad.steps[0] {
+            b.value = Some("x".into());
+        }
+        assert!(bad.validate().is_err());
+        // A secret on a click.
+        let mut bad = ok.clone();
+        if let Step::BrowserAction(b) = &mut bad.steps[0] {
+            b.action = BrowserActionKind::Click;
+        }
+        assert!(bad.validate().is_err());
+        // A reserved / malformed name.
+        for name in ["composio/gmail", "fill/x", "a b", ""] {
+            assert!(wf(secret_step(name)).validate().is_err(), "{name}");
+        }
+        // The file holds the reference only.
+        let json = ok.to_json().unwrap();
+        assert!(json.contains("login/github") && !json.contains("\"value\""));
+    }
 }

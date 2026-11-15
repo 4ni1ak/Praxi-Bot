@@ -49,6 +49,14 @@ export interface BotDraft {
   allowEgressAfterReads: boolean;
   computer: "local";
   browser: "local";
+  /** File access: "This computer" (default) or "Folder only". */
+  files: BotFilesDraft;
+}
+
+export interface BotFilesDraft {
+  mode: "computer" | "folder";
+  /** Absolute folders; only used in "folder" mode. */
+  folders: string[];
 }
 
 export const BOT_COLORS = CHARACTER_COLORS;
@@ -185,8 +193,16 @@ export function draftFromBot(bot?: Bot): BotDraft {
     categories,
     allowEgressAfterReads: perms.allow_egress_after_reads === true,
     computer: "local",
-    browser: "local"
+    browser: "local",
+    files: filesFromConfig(obj(cfg.files))
   };
+}
+
+function filesFromConfig(f: Json): BotFilesDraft {
+  const folders = Array.isArray(f.folders)
+    ? f.folders.filter((x): x is string => typeof x === "string")
+    : [];
+  return { mode: f.mode === "folder" ? "folder" : "computer", folders };
 }
 
 function slug(name: string): string {
@@ -279,17 +295,45 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
             : {})
         };
 
+  // `files` is written only when the form changed it: the daemon validates the
+  // folders, and an untouched value keeps the stored one.
+  const folders = draft.files.folders.map((f) => f.trim()).filter(Boolean);
+  const filesChanged =
+    initial !== undefined &&
+    JSON.stringify({ ...draft.files, folders }) !== JSON.stringify(initial.files);
+  const files =
+    filesChanged || (!initial && draft.files.mode === "folder")
+      ? draft.files.mode === "folder"
+        ? { mode: "folder", folders }
+        : { mode: "computer" }
+      : undefined;
+  // `runtime` (computer / browser target) is not edited by this form.  An existing bot keeps it
+  // exactly as stored (any target: off, browser, host, auto, a node id ...); only a new bot gets
+  // the form's default.
+  const runtime = existing
+    ? old.runtime
+    : { ...obj(old.runtime), computer: draft.computer, browser: draft.browser };
+
   return {
     ...old,
     bot: botSection,
     models,
     ...(permissionsOut === undefined ? {} : { permissions: permissionsOut }),
-    runtime: {
-      ...obj(old.runtime),
-      computer: draft.computer,
-      browser: draft.browser
-    }
+    ...(files === undefined ? {} : { files }),
+    ...(runtime === undefined ? {} : { runtime })
   };
+}
+
+/** How a stored `runtime` target reads in the UI (read-only): the value as stored, or `auto`. */
+export function runtimeTargetLabel(config: unknown, key: "computer" | "browser"): string {
+  const v = obj(obj(config).runtime)[key];
+  if (typeof v === "string" && v.trim()) return v.trim();
+  if (v && typeof v === "object") {
+    const o = v as Json;
+    const named = str(o.node) || str(o.id) || str(o.name) || str(o.kind);
+    return named || JSON.stringify(v);
+  }
+  return "auto";
 }
 
 export interface BotView {

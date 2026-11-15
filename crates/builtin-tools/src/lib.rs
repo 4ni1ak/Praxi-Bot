@@ -20,6 +20,11 @@ pub mod checkpoint;
 pub mod control;
 pub mod desktop;
 pub mod files;
+pub mod fill_secret;
+#[cfg(test)]
+mod fill_secret_tests;
+pub mod knowledge;
+pub mod knowledge_brain;
 pub mod meta;
 pub mod schedule;
 pub mod script;
@@ -55,7 +60,8 @@ pub use control::{
     ActionPermit, ControlRequest, DesktopControlGate, OBSERVATION_DISCARDED, PermitValidator,
 };
 pub use desktop::{DesktopSettings, SharedOcr, resolve_input_target};
-pub use files::{try_with_exclusive_file_access, with_checkpoint_access};
+pub use files::{try_with_exclusive_file_access, with_checkpoint_access, workspace_refusal};
+pub use fill_secret::{SECRETS_LIST, secrets_list_tool};
 pub use meta::{META_TOOL_NAMES, QUESTION_CARD_KIND, TODO_LIST_KIND, TodoItem, TodoStatus};
 pub use schedule::{
     PreviousSchedule, SCHEDULE_TOOL_NAMES, ScheduleCaller, ScheduleChange, ScheduleHost,
@@ -101,6 +107,8 @@ pub struct BuiltinConfig {
     pub email: Option<Arc<connector_email::EmailConnector>>,
     /// Web tools (search, fetch, feeds, sitemaps, metadata). `None` = web tools skipped.
     pub web: Option<web_tools::WebToolsConfig>,
+    /// Bot-scoped knowledge search. No model-facing source-management methods.
+    pub knowledge: Option<Arc<dyn knowledge::KnowledgeBackend>>,
     /// Directories `fs_*` may read and write. Empty does not add a root limit.
     /// A non-empty list that cannot be resolved denies every `fs_*` call.
     /// UNC paths, device paths, and credential files are still refused.
@@ -108,6 +116,42 @@ pub struct BuiltinConfig {
     /// Credential paths the host explicitly grants to `fs_*`. A grant does not
     /// permit UNC, device, or out-of-root paths.
     pub fs_granted_paths: Vec<PathBuf>,
+    /// Per-bot file access mode. With `Some`, `fs_allowed_roots` is ignored:
+    /// each call asks the provider for the calling bot's scope.
+    pub fs_access: Option<Arc<dyn FsAccessProvider>>,
+    /// Base for relative `fs_*` paths and anchor of the sensitive-location
+    /// denylist when `fs_access` is set. Defaults to the user's home.
+    pub fs_home: Option<PathBuf>,
+    /// Owner-stored fill secrets. With `Some`, `browser_fill`, `desktop_type`
+    /// and `desktop_set_value` accept `secret: "<name>"` and the model gets
+    /// `secrets_list`; with `None` a `secret` parameter is refused.
+    pub fill_secrets: Option<Arc<secret_store::FillSecrets>>,
+}
+
+/// What the built-in file tools may reach for one bot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FsScope {
+    /// "This computer": anywhere the user can read; credential, CLI-config,
+    /// Praxi data and OS-critical locations stay refused.
+    Computer,
+    /// "Folder only": these folders and nothing else (empty denies everything).
+    Folders(Vec<PathBuf>),
+}
+
+/// Looks up the file access scope of the bot making a call.
+pub trait FsAccessProvider: Send + Sync {
+    /// Scope for `bot_id` (`None` = not a bot: the narrowest sensible default
+    /// is the provider's choice).
+    fn scope(&self, bot_id: Option<&str>) -> FsScope;
+}
+
+/// The user's home directory from the environment.
+#[must_use]
+pub fn user_home() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_dir())
 }
 
 impl BuiltinConfig {
@@ -130,8 +174,12 @@ impl BuiltinConfig {
             control: None,
             email: None,
             web: None,
+            knowledge: None,
             fs_allowed_roots: Vec::new(),
             fs_granted_paths: Vec::new(),
+            fs_access: None,
+            fs_home: None,
+            fill_secrets: None,
         }
     }
 
@@ -155,27 +203,44 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     }
     let mut all: Vec<Arc<dyn Tool>> = Vec::new();
     if cfg.desktop.is_some() || cfg.dynamic_desktop {
-        all.extend(desktop::tools_dynamic(
+        all.extend(desktop::tools_dynamic_with_secrets(
             cfg.desktop,
             cfg.ocr,
             &cfg.data_dir,
             cfg.desktop_settings,
             cfg.control.clone(),
+            cfg.fill_secrets.clone(),
         ));
     }
     if let Some(driver) = cfg.browser {
-        all.extend(browser::tools(driver, &cfg.data_dir, cfg.control.clone()));
+        all.extend(browser::tools_with_secrets(
+            driver,
+            &cfg.data_dir,
+            cfg.control.clone(),
+            cfg.fill_secrets.clone(),
+        ));
     } else {
-        all.extend(browser::managed_tools(
+        all.extend(browser::managed_tools_with_secrets(
             cfg.browser_settings,
             &cfg.data_dir,
             cfg.control.clone(),
+            cfg.view_registry.clone(),
+            cfg.fill_secrets.clone(),
         ));
     }
-    all.extend(files::tools_bounded(
+    if let Some(secrets) = &cfg.fill_secrets {
+        all.push(fill_secret::secrets_list_tool(Arc::clone(secrets)));
+    }
+    let fs_home = cfg
+        .fs_access
+        .as_ref()
+        .and_then(|_| cfg.fs_home.clone().or_else(user_home));
+    all.extend(files::tools_scoped(
         &cfg.data_dir,
         &cfg.fs_allowed_roots,
         &cfg.fs_granted_paths,
+        cfg.fs_access.clone(),
+        fs_home,
     ));
     all.push(shell::tool(&cfg.data_dir));
     all.push(script::tool_with_control(
@@ -185,6 +250,9 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         cfg.control,
     ));
     all.extend(meta::tools());
+    if let Some(backend) = cfg.knowledge {
+        all.push(knowledge::tool(backend));
+    }
     if let Some(email) = &cfg.email {
         all.extend(connector_email::tools(email));
     }

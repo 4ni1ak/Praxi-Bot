@@ -45,9 +45,11 @@ mod csv_tools;
 mod docx;
 mod json_query;
 mod pdf;
+mod pdf_budget;
+mod pdf_cmap;
 mod xlsx;
 
-use std::path::PathBuf;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -58,6 +60,113 @@ use tool_registry::{
 };
 
 pub use common::Reply;
+
+/// Extract an already-authorized PDF or DOCX snapshot without reopening a path.
+/// The caller owns path authorization and supplies a display label, never an
+/// instruction. Both input and rendered output are bounded by `cfg`.
+///
+/// # Errors
+/// Rejects unsupported formats, oversized input and malformed documents.
+pub fn extract_bytes(
+    cfg: &DocToolsConfig,
+    extension: &str,
+    label: &str,
+    bytes: &[u8],
+) -> Result<Reply, ToolError> {
+    if bytes.len() as u64 > cfg.max_input_bytes {
+        return Err(ToolError::InvalidInput(
+            "document exceeds input limit".into(),
+        ));
+    }
+    let mut reply = std::panic::catch_unwind(|| match extension {
+        "pdf" => pdf::from_bytes(cfg, label, bytes),
+        "docx" => docx::read_bytes(cfg, label, bytes),
+        _ => Err(ToolError::InvalidInput(
+            "unsupported document format".into(),
+        )),
+    })
+    .map_err(|_| ToolError::Execution("document parser failed; source was not indexed".into()))??;
+    if reply.data["truncated"].as_bool() == Some(true) {
+        return Err(ToolError::InvalidInput(
+            "document source exceeds extraction limits; no truncated snapshot was indexed".into(),
+        ));
+    }
+    // Tool previews deliberately shorten tables/cells and prose. A knowledge
+    // snapshot instead renders all retained structured text or rejects it.
+    let complete = if extension == "pdf" {
+        let mut text = format!("# {label}\n");
+        for page in reply.data["pages"]
+            .as_array()
+            .ok_or_else(|| ToolError::Execution("missing PDF extraction pages".into()))?
+        {
+            if page.get("error").is_some() {
+                return Err(ToolError::Execution(
+                    "PDF source text extraction failed".into(),
+                ));
+            }
+            let _ = write!(
+                text,
+                "\n## Page {}\n\n{}\n",
+                page["page"],
+                page["text"].as_str().unwrap_or_default()
+            );
+        }
+        text
+    } else {
+        complete_docx_text(&reply.data)?
+    };
+    if complete.len() > cfg.max_output_bytes || complete.chars().count() > cfg.max_preview_chars {
+        return Err(ToolError::InvalidInput(
+            "document source exceeds extracted text limit; no truncated snapshot was indexed"
+                .into(),
+        ));
+    }
+    reply.markdown = complete;
+    Ok(reply)
+}
+
+fn complete_docx_text(data: &Value) -> Result<String, ToolError> {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for block in data["blocks"]
+        .as_array()
+        .ok_or_else(|| ToolError::Execution("missing DOCX extraction blocks".into()))?
+    {
+        match block["type"].as_str() {
+            Some("heading") => {
+                let level = usize::try_from(block["level"].as_u64().unwrap_or(1))
+                    .unwrap_or(1)
+                    .clamp(1, 9);
+                let _ = writeln!(
+                    text,
+                    "{} {}\n",
+                    "#".repeat(level),
+                    block["text"].as_str().unwrap_or_default()
+                );
+            }
+            Some("paragraph") => {
+                let _ = writeln!(text, "{}\n", block["text"].as_str().unwrap_or_default());
+            }
+            Some("table") => {
+                let rows: Vec<Vec<String>> = serde_json::from_value(block["rows"].clone())
+                    .map_err(|_| ToolError::Execution("invalid extracted DOCX table".into()))?;
+                for (index, row) in rows.iter().enumerate() {
+                    let cells: Vec<_> = row
+                        .iter()
+                        .map(|cell| cell.replace('|', "\\|").replace(['\r', '\n'], " "))
+                        .collect();
+                    let _ = writeln!(text, "| {} |", cells.join(" | "));
+                    if index == 0 {
+                        let _ = writeln!(text, "|{}|", vec![" --- "; row.len()].join("|"));
+                    }
+                }
+                text.push('\n');
+            }
+            _ => return Err(ToolError::Execution("invalid extracted DOCX block".into())),
+        }
+    }
+    Ok(text)
+}
 
 /// Limits applied by every doc tool.
 #[derive(Debug, Clone)]
@@ -73,10 +182,37 @@ pub struct DocToolsConfig {
     /// Largest written output (docx/xlsx/csv), in bytes (default 25 MiB).
     /// Also bounds DOCX read JSON, which has an additional hard 1 MiB cap.
     pub max_output_bytes: usize,
-    /// Daemon data directory. Writers refuse this tree and native CLI
-    /// configuration, including when a caller skips the permission check.
-    /// The default is a sentinel that is not a parent of ordinary temp files.
-    pub data_dir: PathBuf,
+    /// Extra check on every output path, run by the writer itself. The daemon
+    /// sets it to refuse its data directory and native CLI configuration, so a
+    /// caller that skips the permission check still cannot plant a skill or a
+    /// workflow there. It is a hook, not a dependency: `builtin-tools` already
+    /// depends on this crate's consumers, so the guard cannot be imported here.
+    pub write_guard: Option<WriteGuard>,
+}
+
+type GuardFn = dyn Fn(&str) -> Result<(), String> + Send + Sync + std::panic::RefUnwindSafe;
+
+/// A path check supplied by the embedder; `Err` carries the refusal reason.
+#[derive(Clone)]
+pub struct WriteGuard(Arc<GuardFn>);
+
+impl WriteGuard {
+    /// Wrap a check.
+    pub fn new(
+        check: impl Fn(&str) -> Result<(), String> + Send + Sync + std::panic::RefUnwindSafe + 'static,
+    ) -> Self {
+        Self(Arc::new(check))
+    }
+
+    pub(crate) fn check(&self, path: &str) -> Result<(), String> {
+        (self.0)(path)
+    }
+}
+
+impl std::fmt::Debug for WriteGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WriteGuard")
+    }
 }
 
 impl Default for DocToolsConfig {
@@ -87,7 +223,7 @@ impl Default for DocToolsConfig {
             max_preview_chars: 6000,
             max_cell_chars: 4000,
             max_output_bytes: 25 * 1024 * 1024,
-            data_dir: std::env::temp_dir().join("praxi-doc-tools-data-guard"),
+            write_guard: None,
         }
     }
 }
@@ -205,8 +341,15 @@ mod tests {
     #[test]
     fn write_file_refuses_the_daemon_data_directory() {
         let data = tempfile::tempdir().unwrap();
+        let root = data.path().to_path_buf();
         let cfg = DocToolsConfig {
-            data_dir: data.path().to_path_buf(),
+            write_guard: Some(WriteGuard::new(move |path| {
+                if std::path::Path::new(path).starts_with(&root) {
+                    Err("daemon data is not writable".into())
+                } else {
+                    Ok(())
+                }
+            })),
             ..DocToolsConfig::default()
         };
         let inside = data.path().join("skills.md");

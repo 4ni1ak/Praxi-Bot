@@ -96,6 +96,18 @@ pub trait DesktopBackend: Send + Sync {
     /// Report what this backend supports.
     fn capabilities(&self) -> Capabilities;
 
+    /// A VERIFIED identity of the program that owns `window` (for example a
+    /// code-signing publisher plus the executable's hash), as an opaque string
+    /// the owner can allow-list. `None` means this backend cannot verify it
+    /// (the default: a window title or pid is not an identity). Owner-stored
+    /// secrets are only ever typed into a program whose verified identity is on
+    /// the secret's allow-list, so a backend that returns `None` can never
+    /// receive one.
+    async fn program_identity(&self, window: &WindowInfo) -> Option<String> {
+        let _ = window;
+        None
+    }
+
     /// Return a live-view target adapter for watching and taking over this
     /// desktop backend's active host session, or return a typed capability /
     /// availability [`::live_view::Reason`].

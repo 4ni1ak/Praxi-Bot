@@ -8,7 +8,7 @@ export const MOCK_MCP_CATALOG: McpCatalogEntry[] = [
   {
     "id": "filesystem",
     "name": "Filesystem",
-    "description": "Read and write files in folders you choose.",
+    "description": "Optional. Praxi already has file access built in; add this only for an extra server limited to one folder you choose.",
     "category": "files",
     "homepage": "https://github.com/modelcontextprotocol/servers",
     "icon": "files",
@@ -17,10 +17,13 @@ export const MOCK_MCP_CATALOG: McpCatalogEntry[] = [
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "."
+        "@modelcontextprotocol/server-filesystem@2.2.0"
       ],
-      "required_secrets": []
+      "required_secrets": [],
+      "folder": {
+        "label": "Folder the bot may read and write",
+        "suggestion": "/home/you/Documents"
+      }
     }
   },
   {

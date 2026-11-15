@@ -18,12 +18,12 @@ export interface ThemeDef {
   accent?: string;
 }
 
-export type UiStyle = "solid" | "glass" | "line";
+export type UiStyle = "solid" | "tinted" | "glass" | "line";
 export type Corners = "sharp" | "soft" | "round";
 export type BubbleStyle = "soft" | "glass" | "line" | "plain";
 export type OwnBubble = "tint" | "accent" | "neutral";
 
-export const UI_STYLES: readonly UiStyle[] = ["solid", "glass", "line"];
+export const UI_STYLES: readonly UiStyle[] = ["solid", "tinted", "glass", "line"];
 export const CORNERS: readonly Corners[] = ["sharp", "soft", "round"];
 export const BUBBLE_STYLES: readonly BubbleStyle[] = ["soft", "glass", "line", "plain"];
 export const OWN_BUBBLES: readonly OwnBubble[] = ["tint", "accent", "neutral"];
@@ -115,6 +115,32 @@ export function inkOn(color: string): string {
   const ok = soft.filter((c) => contrastRatio(color, c) >= 4.5);
   if (ok.length) return ok.sort((a, b) => contrastRatio(color, b) - contrastRatio(color, a))[0];
   return contrastRatio(color, "#000000") >= contrastRatio(color, "#ffffff") ? "#000000" : "#ffffff";
+}
+
+/**
+ * Text-selection colours that stay visible on every listed surface (a chat bubble tinted with
+ * the bot's colour, a neutral card, ...).  The background walks from the first surface toward
+ * the ink until it differs from every surface by at least `MIN_SELECTION_CONTRAST`, and the
+ * foreground is the best ink on that background (>= 4.5), so selected text stays readable too.
+ */
+export const MIN_SELECTION_CONTRAST = 1.8;
+
+export function selectionColors(
+  surfaces: readonly string[],
+  ink: string
+): { background: string; foreground: string } {
+  const base = surfaces[0] ?? "#000000";
+  for (let t = 0.2; t <= 1.0001; t += 0.05) {
+    const background = mix(base, ink, t);
+    const foreground = inkOn(background);
+    if (
+      surfaces.every((s) => contrastRatio(background, s) >= MIN_SELECTION_CONTRAST) &&
+      contrastRatio(foreground, background) >= 4.5
+    ) {
+      return { background, foreground };
+    }
+  }
+  return { background: ink, foreground: base };
 }
 
 /* ---------- the 29 shipped themes ---------- */
@@ -381,7 +407,8 @@ export function buildTokens(
   let surface = d.surface;
   let elevated = d.raised;
   let border = lineWeak;
-  if (style === "glass") {
+  if (style === "glass" || style === "tinted") {
+    // Cards inside translucent panels (the panel itself is painted by the surface tokens).
     surface = alpha(d.surface, 52);
     elevated = alpha(d.raised, 55);
     border = lineMid;
@@ -391,6 +418,17 @@ export function buildTokens(
     elevated = base;
     border = lineMid;
   }
+
+  // Selection colours per surface: the default one must show on every plain surface, the others
+  // on the bubble tinted with the bot colour (soft / accent-filled / neutral).
+  const sel = (surfs: string[], ink: string) => selectionColors(surfs, ink);
+  const selDefault = sel([d.bg, d.surface, d.raised, d.hover], d.text);
+  const selUser = sel(
+    [mix(d.raised, accent, 0.2), mix(d.raised, accent, 0.32), mix(d.bg, accent, 0.26)],
+    d.text
+  );
+  const selAccent = sel([accent, accentHover], accentInk);
+  const selNeutral = sel([d.hover, d.raised], d.text);
 
   const tokens: Record<string, string> = {
     "--color-background": d.bg,
@@ -422,8 +460,14 @@ export function buildTokens(
     "--color-warning-subtle": `color-mix(in srgb, var(--color-warning) 10%, ${d.surface})`,
     "--color-focus": d.focus,
     "--color-scrollbar": mix(d.bg, d.text, 0.25),
-    "--color-selection": `color-mix(in srgb, ${accent} 35%, ${d.bg})`,
-    "--color-selection-text": d.text,
+    "--color-selection": selDefault.background,
+    "--color-selection-text": selDefault.foreground,
+    "--color-selection-user": selUser.background,
+    "--color-selection-user-text": selUser.foreground,
+    "--color-selection-accent": selAccent.background,
+    "--color-selection-accent-text": selAccent.foreground,
+    "--color-selection-neutral": selNeutral.background,
+    "--color-selection-neutral-text": selNeutral.foreground,
     "--color-code-bg": d.bg,
     "--color-code-text": d.text,
     "--color-code-keyword": accentText,

@@ -1,0 +1,14 @@
+[
+  {"id":"release","query":"atomic deployment symlink rollback manifest","expected_sources":["releases.md"]},
+  {"id":"database","query":"MySQL deadlock transaction retry idempotency","expected_sources":["mysql.md"]},
+  {"id":"backup","query":"restore rehearsal backup retention checksum","expected_sources":["backups.md"]},
+  {"id":"theme","query":"theme contrast amber focus keyboard","expected_sources":["themes.md"]},
+  {"id":"turkish","query":"Türkçe çeviri anahtarları eksik i18n","expected_sources":["localization.md"]},
+  {"id":"cache","query":"invalidateTenantCache cache namespace tenant","expected_sources":["cache.md"]},
+  {"id":"embedding","query":"embedding quota restart daily batching","expected_sources":["embeddings.md"]},
+  {"id":"brain","query":"shared brain approval fingerprint Markdown","expected_sources":["shared-brain.md"]},
+  {"id":"email","query":"e-posta fatura UID klasör izin","expected_sources":["email.md"]},
+  {"id":"incident","query":"interrupted workflow recovery checkpoints","expected_sources":["recovery.md"]},
+  {"id":"two-sources","query":"release backup restore rollback","expected_sources":["releases.md","backups.md"]},
+  {"id":"no-match","query":"zyxqvnonexistent8472","expected_sources":[]}
+]

@@ -87,3 +87,24 @@ in the curated catalog.
 
 A stdio `command` is executed. Do not point it at a shell one-liner or at a
 program you would not run yourself in a terminal as the daemon user.
+
+For HTTP OAuth, client identity is optional (CIMD, pre-registered client, then
+legacy dynamic registration). A confidential client uses a secret **name**:
+
+```toml
+[[server]]
+id = "remote"
+[server.transport]
+type = "http"
+url = "https://example.com/mcp"
+[server.oauth]
+client_id = "registered-client"
+client_secret_ref = "mcp/remote-client-secret"
+# client_metadata_url = "https://your-domain.example/mcp-client.json"
+# allow_loopback_http = true   # local development only; default false
+```
+
+Store that secret using `bot secrets set mcp/remote-client-secret`; never put
+its value in `mcp.toml`. Access and refresh tokens live in the secret store
+under `mcp/remote/oauth`. Client secrets are resolved again on reconnect so
+rotation takes effect. OAuth settings are refused on stdio transports.

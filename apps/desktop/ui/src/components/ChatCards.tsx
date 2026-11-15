@@ -19,7 +19,9 @@ import {
   controlGrantDetails,
   egressDetails,
   payloadReviewComplete,
+  appActionDetails,
   formatFiring,
+  brainDetails,
   scheduleDetails,
   type ControlGrantDetails,
   type EgressApprovalDetails,
@@ -363,6 +365,10 @@ export function ApprovalCard({
   const control = controlGrantDetails(tool.details);
   const [reviewedPayload, setReviewedPayload] = useState<string | null>(null);
   const reviewPending = egress?.reviewFullPayload && reviewedPayload !== egress.payload;
+  const app = appActionDetails(tool.details);
+  const brain = brainDetails(tool.details);
+  const unrenderable =
+    (tool.details as { kind?: unknown } | null | undefined)?.kind === "app_action" && !app;
 
   const decide = async (
     decision: "approve" | "deny",
@@ -404,7 +410,26 @@ export function ApprovalCard({
             </span>
           ) : null}
         </div>
-        {schedule ? (
+        {app ? (
+          <div data-testid="approval-app-action">
+            <p className={styles.approvalSummary}>{app.app} · {app.action}</p>
+            <p className={styles.bodyLabel}>{app.class} · {app.version}</p>
+            <details open={app.count <= 1000}>
+              <summary>{t("chat.approval.app.arguments", { count: app.count })}</summary>
+              <pre className={styles.code} tabIndex={0}>{app.argumentsText}</pre>
+            </details>
+            <p className={styles.bodyLabel}>{t("chat.approval.app.footer")}</p>
+          </div>
+        ) : brain ? (
+          <section className={styles.brainReview}>
+            <strong>{t("knowledge.brainApproval")}</strong>
+            <p className={formStyles.hint}>{t("knowledge.brainApprovalHint")}</p>
+            <code>{brain.path}</code>
+            <label>{t("knowledge.brainHash")}<code>{brain.sha256}</code></label>
+            {brain.sources.length ? <ul aria-label={t("knowledge.brainSources")}>{brain.sources.map((source) => <li key={source.id}>{source.label} · {source.id} · v{source.revision}</li>)}</ul> : null}
+            <pre className={styles.brainContent}>{brain.content}</pre>
+          </section>
+        ) : schedule ? (
           <>
             <p className={styles.approvalSummary}>
               {t(`chat.approval.schedule.title.${schedule.action}`)}
@@ -442,7 +467,7 @@ export function ApprovalCard({
           <Button
             size="sm"
             variant="primary"
-            disabled={disabled || reviewPending}
+            disabled={disabled || reviewPending || unrenderable}
             onClick={() => void decide("approve", "once")}
           >
             {isSendTool(tool.name)

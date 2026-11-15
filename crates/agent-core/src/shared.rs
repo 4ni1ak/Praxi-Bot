@@ -410,7 +410,9 @@ pub fn build_providers(
     let mut cli_built: Vec<String> = Vec::new();
     for s in cfg.providers.iter().filter(|p| p.enabled) {
         if let Some(CliSettings::Cli { engine, .. }) = &s.cli {
-            if cli_provider::engine_spec(engine.as_str()).is_some_and(|spec| spec.runnable) {
+            if cli_provider::engine_spec(engine.as_str())
+                .is_some_and(cli_provider::CliEngineSpec::can_enable)
+            {
                 cli_built.push(s.id.clone());
             } else {
                 warn(&format!(
@@ -536,6 +538,7 @@ impl ChatProvider for RedactingProvider {
 
 /// Mask secrets in every message and tool-call argument of `req`.
 pub(crate) fn redact_request(r: &SharedRedactor, req: &mut provider_catalog::ChatRequest) {
+    let knowledge_budgets = crate::knowledge::request_budgets(req);
     for m in &mut req.messages {
         redact_value(r, &mut m.content);
         for c in &mut m.tool_calls {
@@ -544,6 +547,7 @@ pub(crate) fn redact_request(r: &SharedRedactor, req: &mut provider_catalog::Cha
             }
         }
     }
+    crate::knowledge::rebudget_request(req, &knowledge_budgets);
 }
 
 pub(crate) enum Verdict {
@@ -564,7 +568,9 @@ pub(crate) struct Pending {
 
 #[derive(Default)]
 pub(crate) struct Grants {
-    pub this_chat: HashSet<(ChatId, String, Option<String>)>,
+    /// `(chat, bot, tool, computer)`: a grant given to one bot never covers another
+    /// bot answering in the same chat (`@mention`).
+    pub this_chat: HashSet<(ChatId, BotId, String, Option<String>)>,
     /// Persisted rules, in creation order.
     pub always: Vec<Grant>,
 }
@@ -766,8 +772,12 @@ pub struct SkillHints {
 }
 
 pub(crate) struct Shared {
+    pub usage: crate::usage::Ledger,
     pub storage: Arc<Storage>,
     pub tools: ToolRegistry,
+    /// Whether a bot that never chose a file access mode gets no file access
+    /// (always-on host) instead of "This computer". Evaluated per call.
+    pub fs_unset_denied: RwLock<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
     pub checkpoint_access: RwLock<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)>,
     pub providers: RwLock<Providers>,
     /// Workspace-wide policy; replaceable at runtime (`PUT /v1/policy`).
@@ -796,6 +806,9 @@ pub(crate) struct Shared {
     pub grants: Mutex<Grants>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
     pub queued: Mutex<HashMap<ChatId, VecDeque<String>>>,
+    /// Bots still to answer one user message that mentioned several bots
+    /// (`@A @B`), with that message's text. Only the user's own text fills it.
+    pub mention_chain: Mutex<HashMap<ChatId, VecDeque<(BotId, Uuid)>>>,
     pub tasks: Mutex<HashMap<RunId, JoinHandle<()>>>,
     /// Background work (memory extraction).
     pub bg: Mutex<Vec<JoinHandle<()>>>,
@@ -816,6 +829,9 @@ pub(crate) struct Shared {
     pub spawn_gate: Mutex<()>,
     /// Skills index (`AgentLoop::with_skills`).
     pub skills: OnceLock<skills::SkillIndex>,
+    /// Owner-stored fill secrets (from the builtin tool config); workflow
+    /// replay types them through the same checks as the fill tools.
+    pub fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.
@@ -833,6 +849,9 @@ pub(crate) struct Shared {
     /// Serialises a global-policy install with the decision to execute an
     /// already-approved tool. Not held across `.await`.
     pub exec_gate: Mutex<()>,
+    /// Cancellation tokens of the native-tools engine processes running per bot,
+    /// so the owner's kill switch can end them at once.
+    pub native_runs: Mutex<HashMap<BotId, Vec<(uuid::Uuid, tokio_util::sync::CancellationToken)>>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]
@@ -926,7 +945,20 @@ pub(crate) fn kind_for(i: InitiatorKind) -> String {
         InitiatorKind::Channel => format!("{KIND_PREFIX}:channel"),
         InitiatorKind::Subagent => format!("{KIND_PREFIX}:subagent"),
         InitiatorKind::Schedule => format!("{KIND_PREFIX}:schedule"),
+        InitiatorKind::ExternalAgent => format!("{KIND_PREFIX}:external_agent"),
+        InitiatorKind::ExternalSchedule => format!("{KIND_PREFIX}:external_schedule"),
     }
+}
+
+/// Run kind of a turn that answers the user message `msg` for a bot mentioned
+/// in it. The id binds the run to that exact message (first or later bot).
+pub(crate) fn kind_for_mention(msg: Uuid) -> String {
+    format!("{KIND_PREFIX}:mention:{msg}")
+}
+
+/// The user message a mention run (see [`kind_for_mention`]) answers.
+pub(crate) fn mention_message_id(kind: &str) -> Option<Uuid> {
+    kind.strip_prefix("turn:mention:")?.parse().ok()
 }
 
 /// Run kind of a turn started by schedule `id` (the id survives a restart).
@@ -936,7 +968,8 @@ pub(crate) fn kind_for_schedule(id: TaskId) -> String {
 
 /// The schedule behind a run kind written by [`kind_for_schedule`].
 pub fn schedule_id_of(kind: &str) -> Option<TaskId> {
-    kind.strip_prefix("turn:schedule:")?
+    kind.strip_prefix("turn:schedule:")
+        .or_else(|| kind.strip_prefix("turn:external_schedule:"))?
         .parse()
         .ok()
         .map(TaskId)
@@ -947,7 +980,13 @@ pub(crate) fn initiator_of(kind: &str) -> InitiatorKind {
         Some("routine") => InitiatorKind::Routine,
         Some("channel") => InitiatorKind::Channel,
         Some("subagent") => InitiatorKind::Subagent,
+        Some(s) if s == "external_schedule" || s.starts_with("external_schedule:") => {
+            InitiatorKind::ExternalSchedule
+        }
         Some(s) if s == "schedule" || s.starts_with("schedule:") => InitiatorKind::Schedule,
+        Some(s) if s == "external_agent" || s.starts_with("external_agent:") => {
+            InitiatorKind::ExternalAgent
+        }
         _ => InitiatorKind::Human,
     }
 }
@@ -961,6 +1000,16 @@ impl Shared {
             .get(model)
             .copied()
             .or_else(|| self.providers.read().price_for(model))
+    }
+
+    /// Scope of a bot that never chose a file access mode.
+    pub fn unset_file_scope(&self) -> builtin_tools::FsScope {
+        let denied = self.fs_unset_denied.read().as_ref().is_some_and(|f| f());
+        if denied {
+            builtin_tools::FsScope::Folders(Vec::new())
+        } else {
+            builtin_tools::FsScope::Computer
+        }
     }
 
     /// Profile for a bot: explicit registration, else the bot row's JSON config.
@@ -1385,6 +1434,13 @@ impl Shared {
             for label in prior.sources {
                 taint.note_label(&label);
             }
+            // Another bot's reply (an `@mention` chat) reaches this run as
+            // untrusted data whatever that bot read. Same single exposure
+            // state as every other source: no separate flag for mentions.
+            if crate::history::has_foreign_replies(&self.storage, run) {
+                taint.exposure.observe(true, false);
+                taint.note_label("another bot's reply");
+            }
         }
         taint
     }
@@ -1745,6 +1801,26 @@ impl Shared {
         specs
     }
 
+    /// The discovery-mode prompt block for this bot, or `None` when the model
+    /// was handed its tools directly (no `find_tool` among `specs`) or the bot
+    /// may use none of the advertised families. Built from the permission-
+    /// filtered registry, independent of per-turn router hints. Unchanged
+    /// registry and policy inputs produce identical bytes across turns.
+    pub(crate) fn discovery_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        if !specs.iter().any(|s| s.name == agent_router::FIND_TOOL) {
+            return None;
+        }
+        let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
+        crate::discovery_prompt::block(
+            visible
+                .iter()
+                .filter(|s| {
+                    self.decide(ctx, &s.name, s.effect, s.category, &Value::Null) != Decision::Deny
+                })
+                .map(|s| s.name.as_str()),
+        )
+    }
+
     pub fn audit(&self, ctx: &RunCtx, actor: &str, action: &str, detail: &serde_json::Value) {
         let _ = self
             .storage
@@ -1913,3 +1989,5 @@ pub(crate) const STEP_TOOLS: &str = "tools";
 pub(crate) const STEP_WORKFLOW: &str = "workflow";
 /// A built-in command run by the router (`/new`).
 pub(crate) const STEP_COMMAND: &str = "command";
+/// One system nudge after a model turn ended with no text after tool calls.
+pub(crate) const STEP_NUDGE: &str = "nudge";

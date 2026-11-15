@@ -58,6 +58,99 @@ pub struct Client {
 }
 
 impl Client {
+    /// A scoped MCP connection is loopback-only and never follows redirects.
+    /// Callers supply the scoped credential, not the daemon owner token.
+    pub fn scoped(base: &str, token: String) -> Result<Self> {
+        let url =
+            url::Url::parse(base).map_err(|_| fail(exit::REJECTED, "invalid MCP daemon URL"))?;
+        let local = url
+            .host_str()
+            .is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h == "::1");
+        if !local
+            || url.scheme() != "http"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return Err(fail(
+                exit::REJECTED,
+                "MCP daemon URL must be an HTTP loopback origin",
+            ));
+        }
+        if !token.starts_with("praxi-mcp.") {
+            return Err(fail(exit::AUTH, "MCP serve requires a scoped credential"));
+        }
+        Ok(Self {
+            base: base.trim_end_matches('/').to_owned(),
+            token,
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|_| fail(exit::GENERIC, "cannot build scoped MCP client"))?,
+        })
+    }
+
+    /// Bounded MCP facade request. Errors never echo response content, request
+    /// arguments, URLs or bearer strings supplied by an untrusted daemon.
+    pub async fn mcp_request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        let endpoint = path.split('?').next().unwrap_or_default();
+        if !((method == Method::GET && endpoint == "/v1/mcp-server/tools")
+            || (method == Method::POST && endpoint == "/v1/mcp-server/call"))
+        {
+            return Err(fail(exit::REJECTED, "not an MCP facade endpoint"));
+        }
+        let mut request = self
+            .http
+            .request(method, format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .timeout(daemon_api::mcp_server::MCP_APPROVAL_WAIT + Duration::from_secs(5));
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let mut response = request
+            .send()
+            .await
+            .map_err(|_| fail(exit::UNREACHABLE, "MCP daemon request failed"))?;
+        if !response.status().is_success() {
+            return Err(fail(
+                exit::REJECTED,
+                format!(
+                    "MCP daemon refused the request ({})",
+                    response.status().as_u16()
+                ),
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| fail(exit::GENERIC, "MCP response could not be read"))?
+        {
+            if bytes.len().saturating_add(chunk.len()) > 128 * 1024 {
+                return Err(fail(exit::GENERIC, "MCP response exceeds its byte budget"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        // The daemon applies the production redactor. Independently keep this
+        // process's own bearer out of any echoed success payload as well.
+        // Decode first: JSON escapes must not let a reflected bearer evade
+        // masking and become visible only after the caller parses the value.
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| fail(exit::GENERIC, "invalid MCP response"))?;
+        let mut redactor = secret_store::Redactor::new();
+        redactor.add_secret(&self.token);
+        serde_json::from_str(&redactor.redact(&value.to_string()))
+            .map_err(|_| fail(exit::GENERIC, "invalid MCP response"))
+    }
+
     /// Client for `base` (e.g. `http://127.0.0.1:47821`) with a bearer token.
     pub fn new(base: &str, token: String) -> Self {
         Self {

@@ -46,6 +46,11 @@ export function summarizeTarget(target: TargetInfo): TargetMetadataSummary {
 
 /**
  * Pick a target deterministically without launching any browser or side effect.
+ *
+ * A browser belongs to one bot, so automatic selection never lands on ANOTHER
+ * bot's browser: with a focused bot it considers that bot's own targets and the
+ * shared (bot-less) desktop; without one, only the shared desktop. Showing a
+ * different bot's browser takes an explicit `preferredTargetId`.
  */
 export function pickDefaultTarget(
   targets: readonly TargetInfo[],
@@ -60,19 +65,18 @@ export function pickDefaultTarget(
       return exact;
     }
   }
-  if (opts.botId) {
-    const botAvailable = targets.find(
-      (t) => t.bot_id === opts.botId && summarizeTarget(t).available
-    );
-    if (botAvailable) {
-      return botAvailable;
-    }
-    const botAny = targets.find((t) => t.bot_id === opts.botId);
-    if (botAny) {
-      return botAny;
-    }
-  }
-  return targets.find((t) => summarizeTarget(t).available) ?? targets[0];
+  const own = opts.botId
+    ? targets.filter((t) => t.bot_id === opts.botId)
+    : [];
+  const shared = targets.filter((t) => !t.bot_id);
+  const available = (t: TargetInfo) => summarizeTarget(t).available;
+  return (
+    own.find(available) ??
+    own[0] ??
+    shared.find(available) ??
+    shared[0] ??
+    null
+  );
 }
 
 export interface RenderedFrameSnapshot {
@@ -1022,10 +1026,33 @@ export function sameForeignPaused(
   );
 }
 
+/**
+ * Loopback endpoints that are NOT this computer's daemon: the guarded proxy to a
+ * paired host also listens on 127.0.0.1, but whoever uses it is a paired Desktop
+ * peer of the host, never its local user (card 252).
+ */
+const remoteLoopbackBaseUrls = new Set<string>();
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/$/, "");
+}
+
+/** Mark `baseUrl` (a loopback proxy to a paired host) as a peer connection. */
+export function markRemoteBaseUrl(baseUrl: string): () => void {
+  const key = normalizeBaseUrl(baseUrl);
+  remoteLoopbackBaseUrls.add(key);
+  return () => {
+    remoteLoopbackBaseUrls.delete(key);
+  };
+}
+
 /** Loopback (or mock) daemon URL: this client is the local user, not a paired peer. */
 export function isLocalBaseUrl(baseUrl: string): boolean {
   if (baseUrl.startsWith("mock://")) {
     return true;
+  }
+  if (remoteLoopbackBaseUrls.has(normalizeBaseUrl(baseUrl))) {
+    return false;
   }
   try {
     const host = new URL(baseUrl).hostname;

@@ -24,6 +24,11 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         | "fs_move" | "fs_delete" | "checkpoint_list" | "checkpoint_restore" | "schedule_list" => {
             ContentClass::none()
         }
+        // The names and allowed origins the owner chose for typed secrets. No
+        // value and no text a run or a page wrote, so it neither taints nor
+        // leaves the machine. Tainting it would also stop an owner's standing
+        // grant from covering the very fill the list exists for.
+        "secrets_list" => ContentClass::none(),
         // Editing reads old content and reports match counts, including no-op edits.
         "fs_edit" => ContentClass::private_read(),
         // Observation, including a click or a scroll. Those pick an on-screen

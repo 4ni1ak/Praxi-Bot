@@ -1,4 +1,5 @@
 import {
+  ArrowDown,
   ArrowLeft,
   ArrowUp,
   Bookmark,
@@ -13,6 +14,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -21,7 +23,7 @@ import { useTranslation } from "react-i18next";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
 import { ApiError } from "../api/client";
-import type { Message, SendMode } from "../api/types";
+import type { Bot, Message, SendMode } from "../api/types";
 import {
   ApprovalCard,
   NoticeLine,
@@ -32,7 +34,8 @@ import {
 } from "../components/ChatCards";
 import { Markdown } from "../components/Markdown";
 import { ModelPicker } from "../components/ModelPicker";
-import { RunChangesSection } from "../components/RunChangesSection";
+import { RunBar } from "../components/RunBar";
+import { RunChangesGate } from "../components/RunChangesGate";
 import { ThinkingChain } from "../components/ThinkingChain";
 import { useToast } from "../components/Toast";
 import {
@@ -41,7 +44,24 @@ import {
   draftFromBot,
   parseModelRef
 } from "../lib/botProfile";
+import {
+  nextFollow,
+  shouldProbeChanges,
+  showJumpToLatest,
+  showRouteChip
+} from "../lib/chatLogic";
 import { modelGroups } from "../lib/modelPicker";
+import { type ChatRunPhase, runBarModel, singleRunStop } from "../lib/runBar";
+import {
+  giveBackControl,
+  type ControlSnapshot,
+  pauseBotRun,
+  resumeBotRun,
+  takeTheWheel
+} from "../overlay/events";
+import { describeTool, stepPhase } from "../lib/toolLabels";
+import { brandIcon } from "../lib/brandIcons";
+import { useLiveView } from "../state/LiveViewContext";
 import { type Chain, chainOrderTs, groupRunItems } from "../lib/thinkingChain";
 import { type SendWith, shouldSend } from "../lib/settingsPrefs";
 import { rank } from "../lib/fuzzy";
@@ -49,7 +69,6 @@ import {
   applyCompletion,
   detectTrigger,
   mentionHandle,
-  parseLeadingMention,
   SLASH_COMMANDS
 } from "../lib/slash";
 import {
@@ -58,6 +77,7 @@ import {
   routeHoverValues
 } from "../lib/route";
 import { useDaemon } from "../state/DaemonContext";
+import { appLedger, cancelRun, requestStop, useLedgerVersion } from "../state/appStop";
 import { useProviders } from "../state/useProviders";
 import {
   assignChildRuns,
@@ -95,32 +115,13 @@ interface MenuBot {
 type Entry =
   | { kind: "day"; key: string; ts: number }
   | { kind: "user"; key: string; ts: number; text: string }
-  | { kind: "assistant"; key: string; ts: number; text: string; live: boolean }
+  | { kind: "assistant"; key: string; ts: number; text: string; live: boolean; botId?: string | null }
   | { kind: "item"; key: string; ts: number; item: TimelineItem; runId: string }
   | { kind: "chain"; key: string; ts: number; chain: Chain; runId: string }
   | { kind: "runError"; key: string; ts: number; message: string }
   | { kind: "route"; key: string; ts: number; run: RunState }
   | { kind: "changes"; key: string; ts: number; run: RunState }
   | { kind: "remember"; key: string; ts: number; run: RunState };
-
-const FILE_CHECKPOINT_TOOLS = new Set([
-  "fs_write",
-  "fs_edit",
-  "fs_move",
-  "fs_delete"
-]);
-
-function canShowRunChanges(run: RunState, isLastFinished: boolean): boolean {
-  if (run.finishedMs === undefined) {
-    return false;
-  }
-  if (isLastFinished) {
-    return true;
-  }
-  return run.items.some(
-    (item) => item.kind === "tool" && FILE_CHECKPOINT_TOOLS.has(item.name)
-  );
-}
 
 /** `idle` = offer the button; `saved` = done; `hidden` = the daemon said no (409). */
 type RememberState = "idle" | "busy" | "saved" | "hidden";
@@ -140,15 +141,29 @@ function canOfferRemember(run: RunState): boolean {
   );
 }
 
+/** "Bugün 13:34" / "15 Kasım 13:34" (v6 date separator). */
+function dayLabel(ts: number, today: string, mock: boolean): string {
+  const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(ts);
+  const isToday = mock || new Date(ts).toDateString() === new Date().toDateString();
+  const day = isToday ? today : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long" }).format(ts);
+  return `${day} ${time}`;
+}
+
 export function ChatView({
   chatId,
   onBack,
+  control,
+  onControl,
   onSwitchChat,
   showAgentRoute = false,
   sendWith = "enter"
 }: {
   chatId: string;
-  onBack: () => void;
+  /** Present only when there is a page to go back to; without it the header has no arrow. */
+  onBack?: () => void;
+  /** The native (desktop control) state; the run bar shows it next to the chat run. */
+  control: ControlSnapshot;
+  onControl: (snapshot: ControlSnapshot) => void;
   /** Open another chat (after a `/new` turn created one). */
   onSwitchChat?: (chatId: string) => void;
   /** Debug: also show the chip for a plain `Agent` decision at K4. */
@@ -306,7 +321,8 @@ export function ChatView({
           key: `m-${m.id}`,
           ts: m.created_at_ms,
           text: m.content,
-          live: false
+          live: false,
+          botId: m.bot_id
         });
       }
     }
@@ -314,7 +330,8 @@ export function ChatView({
       .reverse()
       .find((r) => r.finishedMs !== undefined);
     for (const run of chatRuns) {
-      if (run.route && routeChip(run.route, showAgentRoute)) {
+      const chip = run.route ? routeChip(run.route, showAgentRoute) : null;
+      if (run.route && chip && showRouteChip(chip.cheap, showAgentRoute)) {
         out.push({
           kind: "route",
           key: `${run.id}-route`,
@@ -360,7 +377,7 @@ export function ChatView({
           message: run.error
         });
       }
-      if (canShowRunChanges(run, run === lastFinished)) {
+      if (shouldProbeChanges(run, run === lastFinished)) {
         out.push({
           kind: "changes",
           key: `${run.id}-changes`,
@@ -388,31 +405,63 @@ export function ChatView({
   }, [messages, chatRuns, showAgentRoute, remember]);
 
   const lastItem = entries[entries.length - 1];
-  const streaming =
-    active && lastItem?.kind === "item" && lastItem.item.kind === "text";
-
-  // ---- keep the view at the bottom unless the user scrolled up
-  const lastLen =
-    lastItem?.kind === "item" && lastItem.item.kind === "text"
-      ? lastItem.item.text.length
-      : lastItem?.kind === "chain"
-        ? lastItem.chain.steps.length
-        : 0;
-  useEffect(() => {
+  // ---- follow new content unless the user scrolled up
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const lastTop = useRef(0);
+  const [jumpVisible, setJumpVisible] = useState(false);
+  const scrollToEnd = useCallback((smooth = false) => {
+    const el = scrollerRef.current;
+    if (el) {
+      stickToBottom.current = true;
+      if (smooth && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }, []);
+  // Content grows (streaming text, a chain opening, an image): follow before paint.
+  useLayoutEffect(() => {
+    const content = timelineRef.current;
+    if (!content || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const ro = new ResizeObserver(() => {
+      if (stickToBottom.current) {
+        const el = scrollerRef.current;
+        if (el) {
+          el.scrollTop = el.scrollHeight;
+          lastTop.current = el.scrollTop;
+        }
+      }
+    });
+    ro.observe(content);
+    // The viewport itself changes height when the run bar opens or closes.
+    if (scrollerRef.current) {
+      ro.observe(scrollerRef.current);
+    }
+    return () => ro.disconnect();
+  }, [chat?.id]);
+  useLayoutEffect(() => {
     if (stickToBottom.current) {
       const el = scrollerRef.current;
       if (el) {
         el.scrollTop = el.scrollHeight;
+        lastTop.current = el.scrollTop;
       }
     }
-  }, [entries.length, lastLen]);
+  }, [entries.length]);
 
   const onScroll = () => {
     const el = scrollerRef.current;
-    if (el) {
-      stickToBottom.current =
-        el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!el) {
+      return;
     }
+    const next = nextFollow(stickToBottom.current, el, lastTop.current);
+    lastTop.current = el.scrollTop;
+    stickToBottom.current = next;
+    const jump = showJumpToLatest(next, el);
+    setJumpVisible((prev) => (prev === jump ? prev : jump));
   };
 
   // ---- "/" commands and "@" bot mentions in the composer
@@ -506,29 +555,14 @@ export function ChatView({
   };
 
   const send = async () => {
-    let body = text.trim();
+    const body = text.trim();
     if (!client || !body || sending) {
       return;
     }
     setSending(true);
     setError(null);
     try {
-      // "@Other do x" starts a chat with that bot; "@ThisBot do x" just sends.
-      const mention = parseLeadingMention(
-        body,
-        bots.map((b) => ({ id: b.id, name: botView(b).name }))
-      );
-      if (mention && mention.bot.id !== chat?.bot_id) {
-        const created = await client.createChat(mention.bot.id);
-        await client.sendMessage(created.id, mention.rest);
-        await refreshChats().catch(() => {});
-        setText("");
-        onSwitchChat?.(created.id);
-        return;
-      }
-      if (mention) {
-        body = mention.rest;
-      }
+      // "@Other do x": the daemon lets Other answer in THIS chat.
       const res = await client.sendMessage(
         chatId,
         body,
@@ -538,7 +572,7 @@ export function ChatView({
         toast.show(t("chat.stopped"), "info");
       }
       setText("");
-      stickToBottom.current = true;
+      scrollToEnd();
       await Promise.all([loadMessages(), refreshRuns()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -588,12 +622,21 @@ export function ChatView({
     }
   };
 
+  const { openViewer } = useLiveView();
+  const nativeActive = control.mode !== "idle";
   const stop = async () => {
+    // Through the Stop ledger (PR #94 owns the logic): the run is held (cannot act) at
+    // once and the cancel is retried with the same stop id until the daemon reports it
+    // terminal. A desktop-driving run is stopped with the app-wide Stop.
+    if (nativeActive) {
+      requestStop("banner");
+      return;
+    }
     if (!client || !activeRunId) {
       return;
     }
+    cancelRun(activeRunId);
     try {
-      await client.cancelRun(activeRunId);
       await refreshRuns();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -613,9 +656,51 @@ export function ChatView({
   };
 
   const awaitingApproval = serverLive?.state === "waiting_approval" || chatRuns.some(run => run.finishedMs === undefined && run.items.some(item => item.kind === "tool" && item.status === "awaiting_approval"));
+  const chatPhase: ChatRunPhase = active
+    ? awaitingApproval
+      ? "waiting_approval"
+      : "live"
+    : pausedRunId
+      ? "paused"
+      : "none";
+  useLedgerVersion();
+  const ledgerRun = activeRunId
+    ? appLedger().runEntries().find((e) => e.id === activeRunId)
+    : undefined;
+  const stopProgress = singleRunStop(ledgerRun?.phase);
+  const barModel = runBarModel({ chat: chatPhase, native: control.mode });
+  const liveRunState = chatRuns.find((r) => r.id === activeRunId);
+  const barStartedMs =
+    liveRunState?.startedMs ?? serverLive?.created_at_ms ?? null;
+  const liveTool = liveRunState
+    ? [...liveRunState.items]
+        .reverse()
+        .find(
+          (i): i is Extract<TimelineItem, { kind: "tool" }> =>
+            i.kind === "tool" &&
+            (i.status === "requested" || i.status === "running")
+        )
+    : undefined;
+  let barDetail: string | null = nativeActive ? control.currentStep : null;
+  if (!barDetail && liveTool) {
+    const label = describeTool(liveTool.name, liveTool.input, (n) => {
+      const b = brandIcon(n);
+      return b.known ? b.name : null;
+    });
+    barDetail = t(`${label.key}.${stepPhase(liveTool.status)}`, label.values);
+  }
+  const barBotName =
+    control.bot && control.bot.botId !== chat?.bot_id
+      ? control.bot.botName
+      : undefined;
   const lastFailed = [...chatRuns].reverse()[0]?.error;
   const avatarState = awaitingApproval ? "waiting-approval" : active ? (lastItem?.kind === "chain" || (lastItem?.kind === "item" && lastItem.item.kind === "tool") ? "working" : "thinking") : lastFailed ? "error" : "idle";
-  const botAvatarFor = (decorative: boolean) => <BotAvatar bot={view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" }} size="sm" state={avatarState} decorative={decorative} />;
+  // The bot that answered: a mentioned bot's run has its own bot id.
+  const guestBot = (botId: string | null | undefined) =>
+    botId && botId !== chat?.bot_id ? bots.find((b) => b.id === botId) : undefined;
+  const runGuest = (runId: string) => guestBot(runs.find((r) => r.id === runId)?.bot_id);
+  const botAvatarFor = (decorative: boolean, size: "xs" | "sm" = "sm", guest?: Bot) => <BotAvatar bot={guest ? botView(guest) : (view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" })} size={size} state={guest ? undefined : avatarState} decorative={decorative} />;
+  const guestName = (guest?: Bot) => guest ? <span className={styles.authorName}>{botView(guest).name}</span> : null;
 
   const rememberRun = async (runId: string) => {
     if (!client) {
@@ -647,11 +732,14 @@ export function ChatView({
     if (!client) {
       return;
     }
-    await client.cancelRun(childRunId);
+    cancelRun(childRunId);
     await refreshRuns();
   };
 
-  const renderItem = (item: TimelineItem, runId: string): ReactNode => {
+  const renderItem = (
+    item: TimelineItem,
+    runId: string
+  ): ReactNode => {
     const run = events.runs[runId];
     const nested = run?.parentRunId !== undefined;
     switch (item.kind) {
@@ -661,8 +749,8 @@ export function ChatView({
         }
         return (
           <div className={styles.assistantRow}>
-            {botAvatarFor(false)}
             <div className={styles.assistantBubble}>
+              {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
           </div>
@@ -724,40 +812,39 @@ export function ChatView({
     return (
       <div className={styles.empty}>
         <p>{t("chat.notFound")}</p>
-        <Button variant="secondary" onClick={onBack}>
-          <ArrowLeft />{t("common.back")}
-        </Button>
+        {onBack ? (
+          <Button variant="secondary" onClick={onBack}>
+            <ArrowLeft />{t("common.back")}
+          </Button>
+        ) : null}
       </div>
     );
   }
 
   return (
     <div className={styles.root}>
-      <header className={styles.header}>
-        <Button size="sm" variant="ghost" title={t("common.back")} aria-label={t("common.back")} onClick={onBack}>
-          <ArrowLeft />
-        </Button>
-        <span className={styles.headerText}>
-          <span className={styles.title}>{chat.title}</span>
-        </span>
-        {active ? (
-          <Button size="sm" variant="danger" onClick={() => void stop()}>
-            <Square />{t("chat.stop")}
+      {/* v6: no title row (the chat is named in the sidebar); a back button only while a page to go back to exists. */}
+      {onBack ? (
+        <header className={styles.header}>
+          <Button size="sm" variant="ghost" title={t("common.back")} aria-label={t("common.back")} onClick={onBack}>
+            <ArrowLeft />
           </Button>
-        ) : pausedRunId ? (
-          <Button size="sm" variant="primary" onClick={() => void resume()}>
-            {t("chat.resume")}
-          </Button>
-        ) : null}
-      </header>
+        </header>
+      ) : null}
 
+      <div className={styles.scrollWrap}>
       <div
         className={styles.scroller}
         ref={scrollerRef}
         onScroll={onScroll}
         data-testid="chat-timeline"
+        role="log"
+        aria-label={t("chat.timelineLabel")}
+        aria-live="off"
+        tabIndex={0}
       >
         <div
+          ref={timelineRef}
           className={[
             styles.timeline,
             entries.length === 0 ? styles.timelineEmpty : ""
@@ -788,10 +875,14 @@ export function ChatView({
               </div>
             </div>
           ) : null}
-          {entries.map((e) => {
+          {entries.map((e, index) => {
+            // The bot's avatar leads a block of bot output; later rows of the block line up under it.
+            const prev = entries[index - 1];
+            const lead =
+              !prev || prev.kind === "user" || prev.kind === "day";
             switch (e.kind) {
               case "day":
-                return <div key={e.key} className={styles.conversationLabel}>{isMockMode() || new Date(e.ts).toDateString() === new Date().toDateString() ? t("chat.conversationLabel") : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long" }).format(e.ts)}</div>;
+                return <div key={e.key} className={styles.conversationLabel}>{dayLabel(e.ts, t("chat.conversationLabel"), isMockMode())}</div>;
               case "user":
                 return (
                   <div key={e.key} className={styles.userRow}>
@@ -801,8 +892,8 @@ export function ChatView({
               case "assistant":
                 return (
                   <div key={e.key} className={styles.assistantRow}>
-                    {botAvatarFor(false)}
                     <div className={styles.assistantBubble}>
+                      {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
                   </div>
@@ -850,13 +941,14 @@ export function ChatView({
                     ["chat.notice.checkpointRestored", "chat.notice.checkpointRestorePartial"].includes(item.i18nKey ?? "")
                 ).length;
                 return (
-                  <RunChangesSection
-                    key={e.key}
-                    runId={e.run.id}
-                    client={client}
-                    restoreSignal={restoreSignal}
-                    safetyCheckpointIds={e.run.items.flatMap((item) => item.kind === "notice" && ["chat.notice.checkpointRestored", "chat.notice.checkpointRestorePartial"].includes(item.i18nKey ?? "") && item.values?.safetyId ? [String(item.values.safetyId)] : [])}
-                  />
+                  <div key={e.key} className={styles.laneRow}>
+                    <RunChangesGate
+                      runId={e.run.id}
+                      client={client}
+                      restoreSignal={restoreSignal}
+                      safetyCheckpointIds={e.run.items.flatMap((item) => item.kind === "notice" && ["chat.notice.checkpointRestored", "chat.notice.checkpointRestorePartial"].includes(item.i18nKey ?? "") && item.values?.safetyId ? [String(item.values.safetyId)] : [])}
+                    />
+                  </div>
                 );
               }
               case "remember": {
@@ -885,34 +977,37 @@ export function ChatView({
               case "chain":
                 return (
                   <div key={e.key} className={styles.chainRow}>
-                    <ThinkingChain
-                      chain={e.chain}
-                      avatar={
-                        <BotAvatar
-                          bot={view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" }}
-                          size="xs"
-                          state={e.chain.live ? "working" : "idle"}
-                          decorative
-                        />
-                      }
-                    />
+                    <ThinkingChain chain={e.chain} avatar={lead ? botAvatarFor(true, "xs", runGuest(e.runId)) : undefined} />
                   </div>
                 );
               case "item":
                 return (
-                  <div key={e.key} className={styles.itemRow}>
+                  <div
+                    key={e.key}
+                    className={[
+                      styles.itemRow,
+                      e.item.kind === "text" ? styles.itemRowText : ""
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
                     {renderItem(e.item, e.runId)}
                   </div>
                 );
             }
           })}
-          {active && !streaming && !(lastItem?.kind === "chain" && lastItem.chain.live) ? (
-            <p className={styles.working} role="status">
-              <span className={styles.workingDot} aria-hidden="true" />
-              {t("chat.working")}
-            </p>
-          ) : null}
         </div>
+      </div>
+      {jumpVisible ? (
+        <button
+          type="button"
+          className={styles.jump}
+          onClick={() => scrollToEnd(true)}
+        >
+          <ArrowDown aria-hidden="true" />
+          {t("chat.jumpToLatest")}
+        </button>
+      ) : null}
       </div>
 
       <footer className={styles.composer}>
@@ -921,29 +1016,31 @@ export function ChatView({
             {error}
           </p>
         ) : null}
-        {active ? (
-          <div
-            className={styles.modeRow}
-            role="radiogroup"
-            aria-label={t("chat.modeLabel")}
-          >
-            <span className={styles.modeLabel}>{t("chat.modeLabel")}</span>
-            {(["queue", "steer"] as const).map((m) => (
-              <Button
-                key={m}
-                size="sm"
-                variant="secondary"
-                active={mode === m}
-                role="radio"
-                aria-checked={mode === m}
-                title={t(`chat.mode.${m}Hint`)}
-                onClick={() => setMode(m)}
-              >
-                {t(`chat.mode.${m}`)}
-              </Button>
-            ))}
-          </div>
-        ) : null}
+        <div className={styles.dockWrap}>
+          <RunBar
+            model={barModel}
+            botName={barBotName}
+            detail={barDetail}
+            startedMs={barStartedMs}
+            runStop={stopProgress ? { phase: stopProgress, error: ledgerRun?.error ?? null } : null}
+            humanDriving={control.mode === "human_driving"}
+            onStop={() => void stop()}
+            onPause={() => void pauseBotRun().then(onControl).catch(() => {})}
+            onResume={() => {
+              if (barModel?.native) {
+                void resumeBotRun().then(onControl).catch(() => {});
+              } else {
+                void resume();
+              }
+            }}
+            onWheel={() => {
+              const next =
+                control.mode === "human_driving" ? giveBackControl() : takeTheWheel();
+              void next.then(onControl).catch(() => {});
+            }}
+            onBigView={() => openViewer()}
+          />
+        </div>
         <div className={styles.boxWrap}>
           {menuOpen ? (
             <div
@@ -1047,6 +1144,22 @@ export function ChatView({
             }}
           />
           <div className={styles.tools}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.plus}
+              title={t("chat.addCommand")}
+              aria-label={t("chat.addCommand")}
+              onClick={() => {
+                if (text === "") {
+                  setText("/");
+                  setCaret(1);
+                }
+                inputRef.current?.focus();
+              }}
+            >
+              <Plus />
+            </Button>
             {bot ? (
               <div>
                 <ModelPicker
@@ -1057,6 +1170,37 @@ export function ChatView({
                   placement="top-start"
                   onPick={(ref) => void pickModel(ref)}
                 />
+              </div>
+            ) : null}
+            {active ? (
+              <div
+                className={styles.mode}
+                role="radiogroup"
+                aria-label={t("chat.modeLabel")}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                    e.preventDefault();
+                    const next: SendMode = mode === "queue" ? "steer" : "queue";
+                    setMode(next);
+                    (e.currentTarget.querySelector(`[data-mode="${next}"]`) as HTMLElement | null)?.focus();
+                  }
+                }}
+              >
+                {(["queue", "steer"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    data-mode={m}
+                    aria-checked={mode === m}
+                    tabIndex={mode === m ? 0 : -1}
+                    className={styles.modeOption}
+                    title={t(`chat.mode.${m}Hint`)}
+                    onClick={() => setMode(m)}
+                  >
+                    {t(`chat.mode.${m}`)}
+                  </button>
+                ))}
               </div>
             ) : null}
             <span className={styles.spacer} />
@@ -1073,7 +1217,6 @@ export function ChatView({
           </div>
           </div>
         </div>
-        <p className={styles.composerHint}>{t("chat.composerHint")}</p>
       </footer>
     </div>
   );
