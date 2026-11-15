@@ -8,8 +8,13 @@ documents. No private files, real mail, keys or network responses are used.
 Run `cargo test -p memory-store --test retrieval_eval -- --nocapture`.
 
 The test reports source-deduplicated recall@5 and reciprocal rank over positive
-queries. A separate no-match query checks abstention. Expected source filenames
-are in `queries.json`; citation ranges and catalog scope are checked separately
+queries. The corpus has 15 sources, including same-vocabulary glossary, planning
+agenda and keyboard-shopping distractors. `queries.json` preserves the original
+labels; `ranking-cases.json` adds nine natural-language answer cases with exact
+first-source assertions and six realistic negative questions. Including the
+original no-match case, all seven abstentions must be empty. Aggregate gates are
+recall@5 >= 0.95 and MRR >= 0.95; measured scores are printed separately.
+Citation ranges and catalog scope are checked separately
 in `knowledge.rs`. PR2 runs the same corpus through its deterministic fake
 embedder and hybrid retriever; that is wiring evidence, not a benchmark of Gemini
 or another semantic model.
@@ -30,60 +35,49 @@ The comparison baseline concatenates this whole corpus as hypothetical memory
 context. Today's shipped default has memory disabled, so it costs zero memory
 tokens. The benchmark must never be described as measured production savings
 over that default, or as the billed token count of a Gemini model. Agent-core
-also measures the full request/tool interaction overhead using this corpus.
+also measures complete serialized requests with `cl100k_base` and `o200k_base`:
+the shipped zero-memory default, actual enabled `MemoryConfig` recall through
+`with_recall`/`render_recall_block`, and both requests in an explicit retrieval
+turn. The retrieval totals include tool schema, model-issued call, citations and
+JSON escaping. Legacy background extraction/consolidation model calls are outside
+the first-request recall measurement. A bot with no enabled source must produce
+exactly the same request as a loop without the knowledge tool: zero added schema
+or memory tokens. Automatic retrieval remains gated until native taint enforcement.
 
 The corpus and thresholds are versioned. Changing expected sources to make a
 failed search pass is not an acceptable fix without reviewing the query's
 meaning. Duplicate chunks from one document do not count as independent relevant
 sources. No request usage value from a scripted provider is used as measurement.
 
-## Example measured run
+## Follow-up measurement
 
-The cumulative PR3 Linux run on 2026-11-14 used the unchanged 12-source fixture
-corpus, 54 chunks, 11 positive queries and one separate no-match query. Both
-quality tests and the full-request comparison passed. Generated UUIDs affect BPE
-counts, so these are observed samples, not exact golden token counts.
+One local run of the expanded fixture produced recall@5 **1.000**, MRR **0.950**,
+and all **7/7** negative-query abstentions. All nine natural-language ranking
+cases selected their expected source first. These are lexical fixture results,
+not semantic model accuracy or production quality estimates.
 
-Quality and result cost use **two separate retrieval configurations**. The
-quality pass requests `top_k=5`, a 2,000-estimated-token budget and a 32,768-byte
-ceiling, then deduplicates source identities before computing these metrics:
+The actual request-path test for `Find atomic deployment symlink rollback
+manifest` measured the following reference token counts. IDs are generated at
+runtime, so repeated BPE counts can vary slightly; hard output bounds and the
+quality gates are asserted independently.
 
-| Measurement | Lexical | Deterministic hybrid |
+| Request path | cl100k_base | o200k_base |
 | --- | ---: | ---: |
-| Source-deduplicated Recall@5 | 1.000 | 1.000 |
-| MRR over positive queries | 1.000 | 1.000 |
+| Default, no enabled memory or knowledge source | 112 | 114 |
+| Legacy enabled recall, actual first request, 800 estimated-token recall budget | 811 | 813 |
+| Explicit knowledge retrieval, first planning request including tool schema | 308 | 318 |
+| Explicit knowledge retrieval, second request including call and cited results | 1,038 | 1,052 |
+| Explicit knowledge retrieval, total input across both requests | 1,346 | 1,370 |
 
-The cost pass uses the shipped defaults: `top_k=5`, 600 estimated tokens and
-8,192 bytes. It checks that every positive query retains at least one expected
-source and that the complete serialized result saves more than 75% of the
-whole-corpus tokens. It does not recompute full Recall/MRR or assert that every
-expected source survives this tighter budget, including the two-source query.
+**This run does not show token savings over either the shipped zero-memory
+default or the optional legacy recall path.** Explicit retrieval pays for a
+model-issued tool call and a second request. Legacy background extraction and
+consolidation are outside the first-request recall comparison, and provider
+output tokens, caching and billing are not measured here. A missing/disabled
+source contributes exactly zero additional tool-schema or memory tokens.
 
-| Default-budget cost measurement | Lexical | Deterministic hybrid |
-| --- | ---: | ---: |
-| Mean complete-result `cl100k_base` tokens | 704 | 707 |
-| Maximum complete-result `cl100k_base` tokens | 930 | 970 |
-| Same whole-corpus stuffing baseline | 4,816 | 4,816 |
-
-Hybrid indexing embedded 54 document inputs and 12 query inputs. Repeated indexing
-and repeated searches reused the respective caches; the fake embedding dimension
-was 1,288. This demonstrates indexing/fusion/cache behavior, not real-model
-paraphrase or multilingual quality.
-
-The agent test counts the entire serialized test `ChatRequest`, including the
-knowledge tool schema, its call, result, citations and escaping. Its control
-removes that tool schema and inserts the same complete corpus as hypothetical
-memory context. It measured:
-
-| Reference tokenizer | Bounded retrieval request | Whole-corpus request | Reduction |
-| --- | ---: | ---: | ---: |
-| `cl100k_base` | 1,105 | 5,190 | 78.7% |
-| `o200k_base` | 1,119 | 4,862 | 77.0% |
-
-Reproduce that comparison with
-`cargo test -p agent-core --lib knowledge::tests::complete_rag_request_uses_fewer_reference_tokens_than_stuffing_same_corpus -- --exact --nocapture`.
-Its gate requires more than 50% reduction under both tokenizers while retaining
-the relevant source. These figures are not vendor billing, production-wide
-turn averages, or savings over the shipped `memory: None` baseline. Available
-tool definitions still add their ordinary schema overhead even when automatic
-retrieval is disabled.
+For the separate counterfactual of concatenating all 15 documents, the corpus
+alone is 5,184 cl100k tokens. Across the 20 positive queries, complete bounded
+search JSON averaged 652 cl100k tokens (maximum 926). That comparison describes
+selective evidence size, and must not be presented as a saving over the real
+legacy implementation or the default configuration.

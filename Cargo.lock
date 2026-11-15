@@ -1309,6 +1309,7 @@ dependencies = [
  "futures-util",
  "live-view",
  "mcp-bridge",
+ "memory-store",
  "parking_lot",
  "peer-network",
  "permission-engine",

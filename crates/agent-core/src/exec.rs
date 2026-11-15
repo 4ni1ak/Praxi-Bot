@@ -1017,7 +1017,7 @@ impl TurnExecutor {
             let knowledge_request = knowledge_requests.get(&call_uuid);
             if !is_error && let Some(request) = knowledge_request {
                 text = crate::knowledge::rebudget_text(&text, request);
-                is_error = text.is_empty();
+                is_error = text == crate::knowledge::RETRIEVAL_UNAVAILABLE;
             }
             let output_preview = preview(&text);
             // A tool that already spilled its own output is not spilled again.
