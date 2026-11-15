@@ -1,3 +1,4 @@
+import { applyPatchOps, type PatchOp } from "../lib/botPatch.ts";
 import { ApiClient, ApiError } from "./client.ts";
 import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
 import { MockLiveViewService } from "./mockLiveView.ts";
@@ -13,6 +14,8 @@ import type {
   EmailAccount,
   EmailAccountInput,
   InputBatch,
+  ComposioApp,
+  ComposioToolkit,
   McpServer,
   McpServerConfig,
   McpTool,
@@ -48,6 +51,7 @@ function bot(id: string, name: string, color: string, shape: string, model: stri
     id,
     name,
     created_at_ms: NOW,
+    version: 1,
     config: {
       bot: { id: name.toLowerCase(), name, color, shape, persona: "" },
       models: { executor: model, planner: model, classifier: model }
@@ -61,6 +65,7 @@ const MOCK_SKILLS_CATALOG: SkillsCatalog = {
       name: "code-review",
       description: "Inspect pull requests for subtle bugs, missing tests, and style regressions.",
       version: "1.2.0",
+      body_sha256: "mock",
       scope: "bundled",
       requires: { apps: [], domains: [], keywords: ["review", "pr"] },
       hub: null
@@ -69,6 +74,7 @@ const MOCK_SKILLS_CATALOG: SkillsCatalog = {
       name: "github-triage",
       description: "Categorize new issues, check duplicates, and suggest labels.",
       version: "1.0.4",
+      body_sha256: "mock",
       scope: "shared",
       requires: { apps: ["github"], domains: ["github.com"], keywords: ["issues"] },
       hub: { source: "clawhub", locked: true }
@@ -77,6 +83,7 @@ const MOCK_SKILLS_CATALOG: SkillsCatalog = {
       name: "meeting-notes",
       description: "Turn transcripts into crisp action items and owners.",
       version: "0.9.0",
+      body_sha256: "mock",
       scope: "shared",
       requires: { apps: [], domains: [], keywords: [] },
       hub: null
@@ -85,6 +92,7 @@ const MOCK_SKILLS_CATALOG: SkillsCatalog = {
       name: "release-notes",
       description: "Draft changelog highlights grouped by user impact.",
       version: "1.1.0",
+      body_sha256: "mock",
       scope: "bundled",
       requires: { apps: [], domains: [], keywords: [] },
       hub: null
@@ -590,6 +598,8 @@ export class MockApiClient extends ApiClient {
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
         return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+      case "GET /hosts":
+        return ok({ local_version: "0.1.0-mock", local_api_version: "1", hosts: [] });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":
@@ -696,6 +706,15 @@ export class MockApiClient extends ApiClient {
         return ok({ repair: id, detail: "done" });
       }
       case "GET /providers":
+        if (seg[1] === "cli") {
+          return ok(this.detectedProvidersList.map((detected) => ({
+            detected, executable_names: [detected.id], version_args: ["--version"], auth_args: [],
+            path: null, minimum_version: null, outdated: false,
+            login: detected.id === "opencode" ? "opencode auth login" : detected.id,
+            docs_url: "", install: null,
+            limitation: detected.id === "opencode" ? "native_tools_not_confined" : null
+          })));
+        }
         if (seg[1] === "detected") {
           const screen =
             typeof window !== "undefined"
@@ -786,7 +805,7 @@ export class MockApiClient extends ApiClient {
         if (this.bots.some((b) => b.name.toLowerCase() === input.name.toLowerCase())) {
           throw new ApiError(409, "conflict", `a bot named "${input.name}" already exists`);
         }
-        const created = { id: crypto.randomUUID(), name: input.name, config: input.config, created_at_ms: Date.now() } as Bot;
+        const created = { id: crypto.randomUUID(), name: input.name, config: input.config, created_at_ms: Date.now(), version: 1 } as Bot;
         this.bots.push(created);
         return ok(created);
       }
@@ -795,13 +814,38 @@ export class MockApiClient extends ApiClient {
           return ok(this.putBotSkillsState(seg[1], opts.body as PutBotSkillsInput));
         }
         { const index = this.bots.findIndex(b => b.id === seg[1]);
-          if (index >= 0) this.bots[index] = { ...this.bots[index], ...(opts.body as Partial<Bot>) };
+          if (index >= 0) this.bots[index] = { ...this.bots[index], ...(opts.body as Partial<Bot>), version: this.bots[index].version + 1 };
           return ok(this.bots[index] ?? this.bots[0]); }
+      case "PATCH /bots": {
+        const index = this.bots.findIndex((b) => b.id === seg[1]);
+        const current = this.bots[index];
+        if (!current) throw new ApiError(404, "not_found", "bot");
+        const input = opts.body as { expected_version: number; name?: string; ops?: PatchOp[] };
+        if (input.expected_version !== current.version) {
+          throw new ApiError(409, "version_conflict", "the bot changed since `expected_version`", {
+            error: { code: "version_conflict", message: "the bot changed since `expected_version`" },
+            current: structuredClone(current)
+          });
+        }
+        const next = {
+          ...current,
+          name: input.name ?? current.name,
+          config: applyPatchOps(current.config, input.ops ?? []),
+          version: current.version + 1
+        } as Bot;
+        this.bots[index] = next;
+        return ok(structuredClone(next));
+      }
       case "GET /email":
       case "POST /email":
       case "PUT /email":
       case "DELETE /email":
         return ok(this.email(method, seg, opts.body));
+      case "GET /composio":
+      case "POST /composio":
+      case "PUT /composio":
+      case "DELETE /composio":
+        return ok(this.composio(method, seg, opts.body));
       case "GET /mcp":
       case "POST /mcp":
       case "PUT /mcp":
@@ -1141,6 +1185,55 @@ export class MockApiClient extends ApiClient {
       return structuredClone(this.webSearchConfig);
     }
     throw new ApiError(404, "not_found", "mock web");
+  }
+
+  private mockComposioKey = false;
+  private mockComposioApps: ComposioApp[] = [];
+
+  /** Review-state stand-in for `/v1/composio/*` (no network, no key). */
+  private composio(method: string, seg: string[], body: unknown): unknown {
+    const [, sub, slug, action] = seg;
+    const status = { configured: this.mockComposioKey, key_setup_url: "https://platform.composio.dev/" };
+    const kit = (s: string, name: string, cats: string[]): ComposioToolkit => ({
+      slug: s, name, description: `${name} actions for your bots`, categories: cats, tools_count: 24,
+      native_first: false, state: "not_connected", enabled: false
+    });
+    if (!sub) {
+      return status;
+    }
+    if (sub === "key") {
+      this.mockComposioKey = method === "PUT";
+      return { ...status, configured: this.mockComposioKey };
+    }
+    if (sub === "toolkits") {
+      const items = [kit("instagram", "Instagram", ["social"]), kit("linkedin", "LinkedIn", ["social"]),
+        kit("twitter", "X", ["social"]), kit("hubspot", "HubSpot", ["crm"]), kit("gmail", "Gmail", ["email"]),
+        kit("github", "GitHub", ["developer"])];
+      return { popular: items.slice(0, 3), items, next_cursor: null };
+    }
+    if (sub === "apps" && !slug) {
+      return structuredClone(this.mockComposioApps);
+    }
+    if (sub === "apps" && slug) {
+      const i = this.mockComposioApps.findIndex((a) => a.slug === slug);
+      if (action === "connect") {
+        const app: ComposioApp = { slug, name: slug, state: "active", enabled: true, native_first: false, bots: null, tools: 6 };
+        if (i < 0) { this.mockComposioApps.push(app); }
+        return { redirect_url: "https://connect.composio.dev/link/mock", expires_at: "" };
+      }
+      if (i < 0) {
+        throw new ApiError(404, "not_found", `app ${slug} not found`);
+      }
+      if (method === "DELETE") {
+        this.mockComposioApps.splice(i, 1);
+        return { remote_removed: true };
+      }
+      if (action === "enabled") {
+        this.mockComposioApps[i] = { ...this.mockComposioApps[i], enabled: (body as { enabled: boolean }).enabled };
+      }
+      return this.mockComposioApps[i];
+    }
+    throw new ApiError(404, "not_found", "mock composio");
   }
 
   private mcp(method: string, seg: string[], body: unknown): unknown {

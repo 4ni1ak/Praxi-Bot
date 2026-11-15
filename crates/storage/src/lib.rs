@@ -19,6 +19,6 @@ pub use event_log::{EventLogWriter, event_log_path, read_event_log};
 pub use journal::{EventJournal, FsJournalSink, JournalRecord, JournalSink};
 pub use paths::{DATA_DIR_ENV, data_dir, resolve_data_dir, without_verbatim_prefix};
 pub use records::{
-    Approval, AuditEntry, Bot, BotSkillAssignment, Chat, EventIndexRow, Message, Run, RunStep,
-    SkillAssignmentMode, User,
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, EventIndexRow, Message, Run,
+    RunStep, SkillAssignmentMode, User,
 };

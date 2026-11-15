@@ -922,6 +922,19 @@ pub fn serve(
     });
     let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
     let views = Arc::new(live_view::TargetRegistry::default());
+    // This computer's screen becomes a (lazy) view target. Opening it can touch
+    // the OS, so it is probed on a worker thread with a deadline: the API starts
+    // regardless, and the panel is told why while there is no screen. The raw
+    // reason goes only to this log, redacted.
+    let _desktop_view = crate::view_targets::DesktopRegistrar::start(
+        Arc::clone(&views),
+        crate::view_targets::local_opener(desktop.clone()),
+        {
+            let redactor = redactor.clone();
+            Arc::new(move |line: &str| eprintln!("warning: {}", redactor.redact(line)))
+        },
+        crate::view_targets::Timing::default(),
+    );
     let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
     let effective_peer_enabled =
         peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
@@ -957,6 +970,7 @@ pub fn serve(
     )?;
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
+    let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
@@ -1012,6 +1026,15 @@ pub fn serve(
         .await?;
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
+        }
+        // Screen grants of paired devices survive a restart: a headless host
+        // has nobody at its screen to grant them again. Pairing
+        // reconciliation below still revokes devices that are gone.
+        state.load_screen_privileges().await;
+        if !host_is_host {
+            // This computer's links to paired hosts (`/v1/hosts`); the peer
+            // endpoint starts lazily unless `--peer` already started one.
+            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone());
         }
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
         let computer = Arc::new(crate::computer::CliComputerProvider::new(
@@ -1082,6 +1105,27 @@ pub fn serve(
             Some(mcp_registrar),
         );
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
+        // Composio app connections: the key stays in the secret store (reserved
+        // `composio/` prefix); without a store there is no key custody, so the
+        // feature stays off.
+        if let Some(store) = telegram_store.clone() {
+            let redact: composio::Redact = {
+                let handle = redactor.clone();
+                Arc::new(move |text: &str| handle.redact(text))
+            };
+            let audit = Arc::new(crate::composio_host::DaemonAudit(state.audit_writer()));
+            match crate::composio_host::ComposioHost::start(
+                data_dir,
+                composio_tools,
+                store,
+                redact,
+                audit,
+                { let handle = redactor.clone(); Arc::new(move |value| handle.register(value)) },
+            ) {
+                Ok(host) => state.set_composio(host as Arc<dyn daemon_api::ComposioControl>),
+                Err(e) => eprintln!("warning: composio: {e}; app connections are off"),
+            }
+        }
         if let Some(email) = email {
             state.set_email(email as Arc<dyn daemon_api::EmailControl>);
         }

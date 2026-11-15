@@ -3,10 +3,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use cli_provider::{ApprovalLevel, EngineMode};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use permission_engine::{Policy, Rule};
 use protocol::PermissionCategory;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Errors while loading a profile.
 #[derive(Debug, thiserror::Error)]
@@ -77,6 +78,28 @@ impl Default for RouterSettings {
     }
 }
 
+/// When the owner consented to the risky engine settings of this bot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EngineConsent {
+    /// The owner agreed that a CLI runs this bot's file and shell actions.
+    pub native_tools_at_ms: Option<i64>,
+    /// The owner agreed to "Full access" (no approval prompts) for this bot.
+    pub full_access_at_ms: Option<i64>,
+}
+
+/// `[engine]` table: who runs this bot's file and shell actions. Only the local
+/// owner can change it (`PUT /v1/bots/{id}/engine`); bot create / update refuse it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EngineSettings {
+    pub mode: EngineMode,
+    pub approval_level: ApprovalLevel,
+    /// Absolute folder chosen by the owner; required in `native_tools` mode.
+    pub workspace: Option<String>,
+    pub consent: EngineConsent,
+}
+
 #[derive(Deserialize)]
 struct BotSection {
     id: String,
@@ -98,6 +121,8 @@ struct Raw {
     router: RouterSettings,
     #[serde(default)]
     runtime: computer_target::RuntimeConfig,
+    #[serde(default)]
+    engine: EngineSettings,
 }
 
 /// A loaded bot profile.
@@ -121,6 +146,8 @@ pub struct BotProfile {
     pub router: RouterSettings,
     /// Runtime configuration (`[runtime]`, including `computer` target).
     pub runtime: computer_target::RuntimeConfig,
+    /// Engine mode, approval level and workspace of a CLI-backed bot.
+    pub engine: EngineSettings,
     allow: GlobSet,
     exclude: GlobSet,
     /// Extra allow-lists a tool must also match (subagent narrowing).
@@ -172,6 +199,7 @@ impl TryFrom<Raw> for BotProfile {
             tools: r.tools,
             router: r.router,
             runtime: r.runtime,
+            engine: r.engine,
         })
     }
 }

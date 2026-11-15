@@ -13,7 +13,11 @@
 //! browser `EventSource` clients (Host / Origin still apply).
 
 pub mod auth;
+mod bot_engine;
 pub mod changes;
+mod cli_engines;
+pub mod composio;
+mod composio_routes;
 pub mod control;
 pub mod doctor;
 mod doctor_routes;
@@ -25,6 +29,7 @@ pub mod error;
 pub mod fake;
 mod fill_routes;
 pub mod host;
+pub mod host_links;
 mod knowledge;
 pub mod knowledge_runtime;
 mod knowledge_settings;
@@ -71,6 +76,7 @@ use tokio_util::sync::CancellationToken;
 const EMAIL_TESTS_AT_ONCE: usize = 2;
 
 pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
+pub use composio::{ComposioControl, ComposioControlError};
 pub use control::{ControlConfig, ControlHub};
 pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
 pub use email::{EmailControl, EmailControlError};
@@ -182,9 +188,12 @@ struct Inner {
     live_view: Arc<live_view::LiveView>,
     refresh_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
     provider_host: OnceLock<ProviderHost>,
+    host_links: OnceLock<Arc<dyn host_links::HostLinks>>,
     knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
+    /// Composio app connections (see [`AppState::set_composio`]).
+    composio: OnceLock<Arc<dyn ComposioControl>>,
     /// E-mail account management (see [`AppState::set_email`]).
     email: OnceLock<Arc<dyn EmailControl>>,
     /// Bounds concurrent "test connection" calls (see `email_routes`).
@@ -220,6 +229,7 @@ struct Inner {
     policy_load_error: parking_lot::Mutex<Option<String>>,
     /// CLI provider detector (`GET /v1/providers/detected`).
     detector: parking_lot::RwLock<Arc<cli_provider::Detector>>,
+    cli_installs: cli_engines::InstallBook,
     /// The running scheduler (see [`AppState::start_scheduler`]).
     scheduler: parking_lot::Mutex<Option<Scheduler>>,
     leader: OnceLock<host::LeaderControl>,
@@ -348,8 +358,10 @@ impl AppState {
             live_view,
             refresh_rx: parking_lot::Mutex::new(Some(refresh_rx)),
             provider_host: OnceLock::new(),
+            host_links: OnceLock::new(),
             knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
+            composio: OnceLock::new(),
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
@@ -371,6 +383,7 @@ impl AppState {
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
+            cli_installs: cli_engines::InstallBook::default(),
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
             doctor_host: OnceLock::new(),
@@ -397,10 +410,26 @@ impl AppState {
         let _ = self.0.provider_host.set(host);
     }
 
+    /// Enable `/v1/hosts/*` (this computer's links to paired hosts). Call
+    /// once, before [`serve`]; a second call is ignored.
+    pub fn set_host_links(&self, links: Arc<dyn host_links::HostLinks>) {
+        let _ = self.0.host_links.set(links);
+    }
+
+    pub(crate) fn host_links(&self) -> Option<Arc<dyn host_links::HostLinks>> {
+        self.0.host_links.get().cloned()
+    }
+
     /// Enable `/v1/mcp/*` with the embedder MCP manager (call once, before
     /// [`serve`]; a second call is ignored).
     pub fn set_mcp(&self, mcp: Arc<dyn McpControl>) {
         let _ = self.0.mcp.set(mcp);
+    }
+
+    /// Enable `/v1/composio/*` with the embedder Composio service (call once,
+    /// before serving).
+    pub fn set_composio(&self, composio: Arc<dyn ComposioControl>) {
+        let _ = self.0.composio.set(composio);
     }
 
     /// Enable `/v1/email/*` with the embedder e-mail manager (call once, before
@@ -477,6 +506,10 @@ impl AppState {
 
     pub(crate) fn mcp(&self) -> Option<Arc<dyn McpControl>> {
         self.0.mcp.get().cloned()
+    }
+
+    pub(crate) fn composio(&self) -> Option<Arc<dyn ComposioControl>> {
+        self.0.composio.get().cloned()
     }
 
     pub(crate) fn email(&self) -> Option<Arc<dyn EmailControl>> {
@@ -746,6 +779,21 @@ impl AppState {
     pub(crate) fn storage(&self) -> &Storage {
         &self.0.storage
     }
+    /// A writer of secret-free audit rows for the embedder (the Composio tools
+    /// and connect flow): `(action, detail)`, actor `composio`.
+    pub fn audit_writer(
+        &self,
+    ) -> impl Fn(&str, &serde_json::Value) -> Result<(), String> + Send + Sync + 'static {
+        let storage = Arc::clone(&self.0.storage);
+        let user = self.0.user_id;
+        move |action, detail| {
+            storage
+                .append_audit(user, None, "composio", action, detail)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+    }
+
     pub(crate) fn storage_arc(&self) -> Arc<Storage> {
         Arc::clone(&self.0.storage)
     }
@@ -848,6 +896,7 @@ pub fn router(state: AppState) -> Router {
 
 #[allow(clippy::too_many_lines)] // The route table of the whole API.
 fn api_routes() -> Router<AppState> {
+    use composio_routes as c;
     use email_routes as e;
     use fill_routes as f;
     use live_view as v;
@@ -856,6 +905,12 @@ fn api_routes() -> Router<AppState> {
     use web_routes as w;
     Router::new()
         .route("/v1/host", get(host::status))
+        .route("/v1/hosts", get(host_links::list))
+        .route("/v1/hosts/pair", post(host_links::pair))
+        .route(
+            "/v1/hosts/{id}/connect",
+            post(host_links::connect).delete(host_links::disconnect),
+        )
         .route("/v1/host/invite", post(host::invite))
         .route(
             "/v1/host/devices/{key}",
@@ -866,6 +921,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/host/update", post(host::update))
         .route("/v1/health", get(r::health))
         .route("/v1/view/targets", get(v::targets))
+        .route("/v1/view/availability", get(v::availability))
         .route("/v1/view/sessions", post(v::create_session))
         .route(
             "/v1/view/sessions/{id}",
@@ -933,6 +989,8 @@ fn api_routes() -> Router<AppState> {
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )
+        .route("/v1/bots/{id}/engine", put(bot_engine::put_engine))
+        .route("/v1/bots/{id}/engine/kill", post(bot_engine::kill_engine))
         .route(
             "/v1/bots/{id}/skills",
             get(skills::get_bot_skills).put(skills::put_bot_skills),
@@ -952,7 +1010,10 @@ fn api_routes() -> Router<AppState> {
         )
         .route(
             "/v1/bots/{id}",
-            get(r::get_bot).put(r::update_bot).delete(r::delete_bot),
+            get(r::get_bot)
+                .put(r::update_bot)
+                .patch(r::patch_bot)
+                .delete(r::delete_bot),
         )
         .route("/v1/chats", get(r::list_chats).post(r::create_chat))
         .route(
@@ -993,6 +1054,12 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers", get(r::list_providers))
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
+        .route("/v1/providers/cli", get(cli_engines::list))
+        .route("/v1/providers/cli/install", post(cli_engines::preview))
+        .route(
+            "/v1/providers/cli/install/{approval_id}/decision",
+            post(cli_engines::decide),
+        )
         .route("/v1/providers/reload", post(r::reload_providers))
         .route("/v1/doctor", get(doctor_routes::get_doctor))
         .route("/v1/doctor/report", get(doctor_routes::report))
@@ -1049,6 +1116,25 @@ fn api_routes() -> Router<AppState> {
             post(m::logout_mcp_auth),
         )
         .route("/v1/mcp/catalog", get(m::mcp_catalog))
+        .route("/v1/composio", get(c::composio_status))
+        .route(
+            "/v1/composio/key",
+            put(c::composio_set_key).delete(c::composio_remove_key),
+        )
+        .route("/v1/composio/toolkits", get(c::composio_catalog))
+        .route("/v1/composio/apps", get(c::composio_list_apps))
+        .route(
+            "/v1/composio/apps/{slug}",
+            get(c::composio_get_app).delete(c::composio_disconnect),
+        )
+        .route(
+            "/v1/composio/apps/{slug}/connect",
+            post(c::composio_connect),
+        )
+        .route(
+            "/v1/composio/apps/{slug}/enabled",
+            put(c::composio_set_enabled),
+        )
         .route(
             "/v1/email/accounts",
             get(e::list_email_accounts).post(e::create_email_account),
@@ -1112,6 +1198,14 @@ pub async fn serve(
         .start()
         .await
         .map_err(std::io::Error::other)?;
+    // Fake-provider/test embedders have no host provider configuration and
+    // must never probe the real machine's credentialed CLIs as a side effect.
+    if state.provider_host().is_some() {
+        let detector = state.detector();
+        tokio::spawn(async move {
+            let _ = detector.detect(false).await;
+        });
+    }
     let cancel = state.shutdown_token();
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(async move {

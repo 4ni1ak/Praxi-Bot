@@ -71,8 +71,27 @@ pub fn is_managed_oauth_name(name: &str) -> bool {
 
 /// A reference to a secret by name. Safe to persist and to show to the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(try_from = "String", into = "String")]
 pub struct SecretRef(String);
+
+impl TryFrom<String> for SecretRef {
+    type Error = SecretError;
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        // Deserialization refuses only native-integration names; managed MCP
+        // OAuth names are refused again in `resolve`, as before.
+        validate_name(&name)?;
+        if is_reserved_name(&name) {
+            return Err(SecretError::InvalidName(name));
+        }
+        Ok(Self(name))
+    }
+}
+
+impl From<SecretRef> for String {
+    fn from(r: SecretRef) -> Self {
+        r.0
+    }
+}
 
 impl SecretRef {
     /// Create a reference after validating the name.
@@ -84,7 +103,7 @@ impl SecretRef {
         let name = name.into();
         validate_name(&name)?;
         refuse_fill_namespace(&name)?;
-        if is_managed_oauth_name(&name) {
+        if is_reserved_name(&name) || is_managed_oauth_name(&name) {
             return Err(SecretError::InvalidName(name));
         }
         Ok(Self(name))
@@ -101,6 +120,21 @@ impl fmt::Display for SecretRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// Prefix of secrets owned by a native integration (the Composio API key).
+/// No configuration, tool, bot, peer or state export may reference or read
+/// them: [`SecretRef::new`] refuses these names, the secrets route refuses to
+/// write them and state bundles skip them.  Only the owning crate talks to the
+/// store with the literal name.
+pub const RESERVED_PREFIX: &str = "composio/";
+
+/// Whether `name` is reserved for a native integration (case-insensitive, and
+/// not fooled by leading slashes).
+#[must_use]
+pub fn is_reserved_name(name: &str) -> bool {
+    let n = name.trim_start_matches('/').to_ascii_lowercase();
+    n.starts_with(RESERVED_PREFIX) || n == "composio"
 }
 
 /// Store prefix of the owner-only fill secrets (see [`crate::FillSecrets`]).
@@ -185,12 +219,37 @@ pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, Se
     refuse_fill_namespace(r.name())?;
     // A deserialized reference skipped `SecretRef::new`: check again here,
     // the one place every configured reference is resolved.
-    if is_managed_oauth_name(r.name()) {
+    if is_managed_oauth_name(r.name()) || is_reserved_name(r.name()) {
         return Err(SecretError::InvalidName(r.name().to_string()));
     }
     store
         .get(r.name())?
         .ok_or_else(|| SecretError::NotFound(r.name().to_string()))
+}
+
+#[cfg(test)]
+mod reserved_tests {
+    use super::*;
+
+    #[test]
+    fn composio_names_cannot_become_references() {
+        for n in [
+            "composio/api-key",
+            "Composio/API-KEY",
+            "/composio/x",
+            "composio",
+        ] {
+            assert!(is_reserved_name(n), "{n}");
+            assert!(SecretRef::new(n).is_err(), "{n}");
+            assert!(
+                serde_json::from_str::<SecretRef>(&format!("\"{n}\"")).is_err(),
+                "{n}"
+            );
+        }
+        assert!(SecretRef::new("mcp/github-token").is_ok());
+        assert!(serde_json::from_str::<SecretRef>("\"mcp/x\"").is_ok());
+        assert!(!is_reserved_name("composiox/a"));
+    }
 }
 
 #[cfg(test)]

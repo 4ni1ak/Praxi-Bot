@@ -972,7 +972,7 @@
         "tags": [
           "bots"
         ],
-        "summary": "Replace a bot's name and profile.",
+        "summary": "Replace a bot profile using its loaded `expected_version` (required; missing is 428).",
         "operationId": "update_bot",
         "parameters": [
           {
@@ -1017,7 +1017,27 @@
               }
             }
           },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
           "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "428": {
             "description": "",
             "content": {
               "application/json": {
@@ -1067,6 +1087,228 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Change only the listed fields of a bot, atomically, if `expected_version` is current.",
+        "operationId": "patch_bot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotPatchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "patch exceeds depth, size or operation limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the bot changed since `expected_version`; `current` is its state now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/engine": {
+      "put": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Set a bot's engine mode, approval level and workspace (local owner only).",
+        "operationId": "put_engine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotEngineInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/engine/kill": {
+      "post": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Kill switch: back to Praxi-governed and end the bot's running CLI processes.",
+        "operationId": "kill_engine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -1606,6 +1848,443 @@
             }
           },
           "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Key status.",
+        "operationId": "composio_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioStatusDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Composio is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Apps the owner connected or started to connect.",
+        "operationId": "composio_list_apps",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComposioAppDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps/{slug}": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "One app, refreshed from Composio (poll this while sign-in is pending).",
+        "operationId": "composio_get_app",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioAppDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Disconnect an app: deletes the Composio-side account when possible and\nalways forgets the app locally.",
+        "operationId": "composio_disconnect",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioDisconnectDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps/{slug}/connect": {
+      "post": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Start connecting an app: returns the Composio-hosted consent link, valid\nonce.  The caller opens it in the system browser.  Connecting is the\nowner's opt-in for that app.",
+        "operationId": "composio_connect",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioConnectDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/apps/{slug}/enabled": {
+      "put": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Switch an app's tools on or off.",
+        "operationId": "composio_set_enabled",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Toolkit slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposioEnabledInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioAppDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/key": {
+      "put": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Validate (one cheap authenticated call to Composio) and store the project\nAPI key in the OS secret store.  **Write-only**: no route returns it.",
+        "operationId": "composio_set_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposioKeyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioStatusDto"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "malformed or rejected key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Composio unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Delete the key; every Composio tool disappears.",
+        "operationId": "composio_remove_key",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/composio/toolkits": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Composio's toolkit catalog (searchable, paged, cached), with this\ninstallation's state per toolkit.",
+        "operationId": "composio_catalog",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Text matched against name, slug and description.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Category.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 100 (default 48).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioCatalogDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "no key yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
             "description": "",
             "content": {
               "application/json": {
@@ -2585,7 +3264,7 @@
           "events"
         ],
         "summary": "Host notifications: `host_state_changed` carries `HostConfig`, `host_conflict` carries\n`HostConflict` (reason, peer, epoch, notification). These live refetch hints have no cursor.\nDocumentation stub for the SSE route (the handler lives in `sse.rs`).",
-        "description": "Server-sent events; each `data:` is a `protocol::Envelope` JSON object, the\nSSE `event:` is its `type`.  With `run_id` the SSE `id` is the run-local\n`seq` and `Last-Event-ID: <seq>` resumes from the run's NDJSON log.  Without\nit the stream covers all runs: the SSE `id` is a daemon-wide, strictly\nincreasing `gseq` (persisted) and `Last-Event-ID: <gseq>` replays every\nmissed event of every run, in order, before going live.  Browsers cannot set\nheaders on `EventSource`, so this route (and only this one) also accepts the\nAPI token as the `token` query parameter (Host / Origin checks still apply;\nthe token is compared in constant time; beware that URLs may be logged).\n\nThe daemon-wide stream (no `run_id`) also carries `schedule_changed` events\n(`dto::ScheduleChanged`: `{\"type\":\"schedule_changed\",\"schedule_id\",\"kind\"}`,\nkind `created` / `updated` / `toggled` / `deleted`) when a schedule is changed\nthrough the API.  They have no SSE `id`, are not replayed and are not\nenvelopes: treat them as a hint to refetch `/v1/schedules`.\n\nA replay gap is explicit: `event: gap` has an `id` equal to `to_gseq` and\ndata `{from_gseq, to_gseq, run_id, reason}`; reason is `log_line_missing` or\n`log_unreadable`. It is audited before the cursor passes the missing row.\n`/v1/events/status.sse_gaps_total` (authenticated) counts these notifications since daemon startup.\nAfter three consecutive replay failures (or live-buffer overflow),\n`event: error` carries `{code: \"replay_unavailable\", last_event_id}` and the\nstream closes. This error has no `id`; reconnect with the last received ID.\nRetry delays start at 250 ms and double up to 5 s. Live buffering is limited\nto 1000 events and 4 MiB per subscriber; replay chunks hold at most 2 MiB of serialized events (a single larger event closes the stream with `replay_unavailable`), and at most `max_sse_subscribers` streams (default 16) may be open: further requests get `503`. The desktop currently ignores unknown\nevent names; card 144 can surface gap/error notifications without changing\nthe ordering or cursor contract.\n\nIt likewise carries `mcp_server_changed` events (`mcp::McpServerChanged`:\n`{\"type\":\"mcp_server_changed\",\"name\",\"status\"}`) when an MCP server is\nadded, updated, removed or changes status (connecting / connected / error /\nquarantined ...); same rules: a hint to refetch `/v1/mcp/servers`.\n\nAnd `control_state_changed` events (`dto::ControlStateChanged`:\n`{\"type\":\"control_state_changed\",\"state\",\"owner\",\"target_id\",\"reason\"}`) when\na screen takeover is acquired, becomes active, is interrupted, released or\nrecovered (no ids, epochs, pixels or text); not replayed.",
+        "description": "Server-sent events; each `data:` is a `protocol::Envelope` JSON object, the\nSSE `event:` is its `type`.  With `run_id` the SSE `id` is the run-local\n`seq` and `Last-Event-ID: <seq>` resumes from the run's NDJSON log.  Without\nit the stream covers all runs: the SSE `id` is a daemon-wide, strictly\nincreasing `gseq` (persisted) and `Last-Event-ID: <gseq>` replays every\nmissed event of every run, in order, before going live.  Browsers cannot set\nheaders on `EventSource`, so this route (and only this one) also accepts the\nAPI token as the `token` query parameter (Host / Origin checks still apply;\nthe token is compared in constant time; beware that URLs may be logged).\n\nThe daemon-wide stream (no `run_id`) also carries `schedule_changed` events\n(`dto::ScheduleChanged`: `{\"type\":\"schedule_changed\",\"schedule_id\",\"kind\"}`,\nkind `created` / `updated` / `toggled` / `deleted`) when a schedule is changed\nthrough the API.  They have no SSE `id`, are not replayed and are not\nenvelopes: treat them as a hint to refetch `/v1/schedules`.\n\nA replay gap is explicit: `event: gap` has an `id` equal to `to_gseq` and\ndata `{from_gseq, to_gseq, run_id, reason}`; reason is `log_line_missing` or\n`log_unreadable`. It is audited before the cursor passes the missing row.\n`/v1/events/status.sse_gaps_total` (authenticated) counts these notifications since daemon startup.\nAfter three consecutive replay failures (or live-buffer overflow),\n`event: error` carries `{code: \"replay_unavailable\", last_event_id}` and the\nstream closes. This error has no `id`; reconnect with the last received ID.\nRetry delays start at 250 ms and double up to 5 s. Live buffering is limited\nto 1000 events and 4 MiB per subscriber; replay chunks hold at most 2 MiB of serialized events (a single larger event closes the stream with `replay_unavailable`), and at most `max_sse_subscribers` streams (default 16) may be open: further requests get `503`. The desktop currently ignores unknown\nevent names; card 144 can surface gap/error notifications without changing\nthe ordering or cursor contract.\n\nIt likewise carries `mcp_server_changed` events (`mcp::McpServerChanged`:\n`{\"type\":\"mcp_server_changed\",\"name\",\"status\"}`) when an MCP server is\nadded, updated, removed or changes status (connecting / connected / error /\nquarantined ...); same rules: a hint to refetch `/v1/mcp/servers`.\n\nAnd `control_state_changed` events (`dto::ControlStateChanged`:\n`{\"type\":\"control_state_changed\",\"state\",\"owner\",\"target_id\",\"reason\"}`) when\na screen takeover is acquired, becomes active, is interrupted, released or\nrecovered (no ids, epochs, pixels or text); not replayed.\n\nAnd `view_targets_changed` events (`{\"type\":\"view_targets_changed\"}`) when a screen\ntarget appears, goes idle, attaches to a page or closes, or a missing-screen\nreason changes: a pixel-free hint to refetch `/v1/view/targets` and\n`/v1/view/availability`; not replayed.",
         "operationId": "events_doc",
         "parameters": [
           {
@@ -3289,6 +3968,127 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLinkList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/pair": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_pair",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairHostInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLinkInfo"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/connect": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_connect",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostLinkConnection"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_disconnect",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
           }
         },
         "security": [
@@ -4049,6 +4849,48 @@
         ]
       }
     },
+    "/v1/providers/cli": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "path",
+            "description": "When set to 1, bypasses the in-process 60-second cache.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CliEngineDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/cli/enable": {
       "post": {
         "tags": [
@@ -4095,12 +4937,91 @@
         ]
       }
     },
+    "/v1/providers/cli/install": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Creates an expiring approval; never starts a process.",
+        "operationId": "preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliInstallApproval"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/providers/cli/install/{approval_id}/decision": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Approve once (or deny). SSE `output` is untrusted text; `done` includes a\nstable error code and follows re-detection. Disconnect cancels the owned tree.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE output and done events; denied approvals emit done only",
+            "content": {
+              "text/event-stream": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/detected": {
       "get": {
         "tags": [
           "providers"
         ],
-        "summary": "Detect installed, signed-in coding CLIs.",
+        "summary": "Detect installed, signed-in coding CLIs. Local owner only: the rows carry\nthe signed-in account label (an email or organisation) and install state.",
         "operationId": "detect_providers",
         "parameters": [
           {
@@ -4126,6 +5047,16 @@
                   "items": {
                     "$ref": "#/components/schemas/DetectedProviderDto"
                   }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "caller is not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -5549,6 +6480,35 @@
         ]
       }
     },
+    "/v1/view/availability": {
+      "get": {
+        "tags": [
+          "view"
+        ],
+        "summary": "Which kinds of screen this host cannot offer and why (empty when none is\nmissing), so the panel can say \"No screen: <reason>\". Same access rule as\n`GET /v1/view/targets`; no pixels, no paths.",
+        "operationId": "availability",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TargetUnavailable"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/view/privileges/{peer_key}": {
       "put": {
         "tags": [
@@ -6327,6 +7287,24 @@
           }
         }
       },
+      "BotConflictBody": {
+        "type": "object",
+        "description": "`409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now.",
+        "required": [
+          "error",
+          "current"
+        ],
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/BotDto",
+            "description": "The current bot, with its current version."
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail",
+            "description": "`version_conflict`."
+          }
+        }
+      },
       "BotDto": {
         "type": "object",
         "description": "Public bot representation.",
@@ -6334,7 +7312,8 @@
           "id",
           "name",
           "config",
-          "created_at_ms"
+          "created_at_ms",
+          "version"
         ],
         "properties": {
           "config": {
@@ -6375,8 +7354,49 @@
                 "description": "Parsed `[runtime]` computer target settings (`auto` when omitted in profile)."
               }
             ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bot revision: starts at 1; profile writes and skill assignment changes\nadvance it in the write transaction. Send the loaded value back as\n`expected_version` to both PUT and PATCH."
           }
         }
+      },
+      "BotEngineInput": {
+        "type": "object",
+        "description": "New engine settings for one bot.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "approval_level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ask` (default), `accept_edits`, `auto` or `full`."
+          },
+          "consent_full_access": {
+            "type": "boolean",
+            "description": "The owner confirms Full access (no approval prompts) for this bot."
+          },
+          "consent_native_tools": {
+            "type": "boolean",
+            "description": "The owner confirms that a CLI runs this bot's file and shell actions."
+          },
+          "mode": {
+            "type": "string",
+            "description": "`praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does)."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute workspace folder; required for `native_tools`."
+          }
+        },
+        "additionalProperties": false
       },
       "BotInput": {
         "type": "object",
@@ -6384,6 +7404,14 @@
         "properties": {
           "config": {
             "description": "Profile as a JSON object."
+          },
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Required for PUT: version of the profile being replaced. Missing is 428;\nstale is 409 with the current bot. Not used when creating a bot."
           },
           "name": {
             "type": [
@@ -6409,6 +7437,63 @@
                 "description": "Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`\nwhen both are supplied. Omission on update preserves the stored target."
               }
             ]
+          }
+        }
+      },
+      "BotPatchInput": {
+        "type": "object",
+        "description": "`PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.\nEvery field not named - including unknown keys - stays exactly as stored.",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version the client loaded (`BotDto::version`).  A different current\nversion refuses the whole patch with `409` and returns the current bot."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New display name."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BotPatchOp"
+            },
+            "description": "Profile changes, applied in order (at most 128). Values/result use a\nconservative 1 MiB escaped JSON budget; excessive input is 400."
+          }
+        }
+      },
+      "BotPatchKind": {
+        "type": "string",
+        "description": "How one [`BotPatchOp`] changes the profile.",
+        "enum": [
+          "set",
+          "unset"
+        ]
+      },
+      "BotPatchOp": {
+        "type": "object",
+        "description": "One field-level change of a bot profile.",
+        "required": [
+          "op",
+          "path"
+        ],
+        "properties": {
+          "op": {
+            "$ref": "#/components/schemas/BotPatchKind",
+            "description": "`set` or `unset`."
+          },
+          "path": {
+            "type": "string",
+            "description": "RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,\n`/permissions/categories/fs/level`, `/runtime/computer`.  Object keys\nonly: a path through an array or a scalar is refused. At most 32 segments\nand 4096 bytes; resulting profile depth at most 32."
+          },
+          "value": {
+            "description": "The new value (`set` only)."
           }
         }
       },
@@ -6575,9 +7660,14 @@
           "name",
           "description",
           "version",
+          "body_sha256",
           "scope"
         ],
         "properties": {
+          "body_sha256": {
+            "type": "string",
+            "description": "Hex SHA-256 of the Markdown body (the part after the frontmatter, trimmed): lets a\nclient tell whether the catalog lists the file it just wrote or an older one."
+          },
           "description": {
             "type": "string",
             "description": "One-line description from frontmatter."
@@ -6830,12 +7920,443 @@
           "unknown"
         ]
       },
+      "CliEngineDto": {
+        "type": "object",
+        "required": [
+          "detected",
+          "executable_names",
+          "version_args",
+          "auth_args",
+          "outdated",
+          "login",
+          "docs_url"
+        ],
+        "properties": {
+          "auth_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty when no safe, locally verified CLI auth-status command is known."
+          },
+          "detected": {
+            "$ref": "#/components/schemas/DetectedProviderDto"
+          },
+          "docs_url": {
+            "type": "string"
+          },
+          "executable_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "install": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CliInstallDto"
+              }
+            ]
+          },
+          "limitation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "login": {
+            "type": "string"
+          },
+          "minimum_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "native": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CliNativeDto",
+                "description": "Present when bots can use this CLI with its own tools."
+              }
+            ]
+          },
+          "outdated": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CliInstallApproval": {
+        "type": "object",
+        "required": [
+          "approval_id",
+          "engine_id",
+          "command",
+          "expires_at_ms"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "command": {
+            "type": "string"
+          },
+          "engine_id": {
+            "type": "string"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CliInstallDecision": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CliInstallDto": {
+        "type": "object",
+        "required": [
+          "program",
+          "args",
+          "command",
+          "verified",
+          "executable"
+        ],
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string"
+          },
+          "executable": {
+            "type": "boolean"
+          },
+          "program": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CliInstallInput": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CliLevelDto": {
+        "type": "object",
+        "description": "One approval level for a CLI that runs with its own tools.",
+        "required": [
+          "level",
+          "offered",
+          "applied",
+          "native_setting"
+        ],
+        "properties": {
+          "applied": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "description": "`ask`, `accept_edits`, `auto` or `full`."
+          },
+          "native_setting": {
+            "type": "string",
+            "description": "The CLI's own setting this level maps to (shown to the owner)."
+          },
+          "offered": {
+            "type": "boolean",
+            "description": "`false` when the CLI has no such mode: it would run as `applied`."
+          }
+        }
+      },
+      "CliNativeDto": {
+        "type": "object",
+        "description": "Native-tools mode of a CLI: the CLI runs files and shell itself.",
+        "required": [
+          "support",
+          "levels"
+        ],
+        "properties": {
+          "levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CliLevelDto"
+            }
+          },
+          "support": {
+            "type": "string",
+            "description": "`verified` (flags confirmed in the installed CLI) or `experimental`."
+          }
+        }
+      },
       "Codec": {
         "type": "string",
         "enum": [
           "jpeg",
           "webp"
         ]
+      },
+      "ComposioAppDto": {
+        "type": "object",
+        "description": "A connected (or connecting) app.",
+        "required": [
+          "slug",
+          "name",
+          "state",
+          "enabled",
+          "native_first",
+          "tools"
+        ],
+        "properties": {
+          "bots": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Bots allowed; `null` = all."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "The owner enabled it (tools exist only while enabled and active)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "native_first": {
+            "type": "boolean",
+            "description": "Praxi connects it directly."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Toolkit slug."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ComposioConnState",
+            "description": "State."
+          },
+          "tools": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Direct tools currently offered to the model.",
+            "minimum": 0
+          }
+        }
+      },
+      "ComposioCatalogDto": {
+        "type": "object",
+        "description": "`GET /v1/composio/toolkits`.",
+        "required": [
+          "popular",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposioToolkitDto"
+            },
+            "description": "The page, in Composio's popularity order."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor of the next page."
+          },
+          "popular": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposioToolkitDto"
+            },
+            "description": "Pinned popular row (first page without filters only; empty otherwise)."
+          }
+        }
+      },
+      "ComposioConnState": {
+        "type": "string",
+        "description": "Connection state of an app.",
+        "enum": [
+          "not_connected",
+          "pending",
+          "active",
+          "expired"
+        ]
+      },
+      "ComposioConnectDto": {
+        "type": "object",
+        "description": "`POST /v1/composio/apps/{slug}/connect`: the one-time consent link.",
+        "required": [
+          "redirect_url",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "description": "When the link expires (ISO timestamp, may be empty)."
+          },
+          "redirect_url": {
+            "type": "string",
+            "description": "https URL on Composio's domain; open it in the system browser."
+          }
+        }
+      },
+      "ComposioDisconnectDto": {
+        "type": "object",
+        "description": "`DELETE /v1/composio/apps/{slug}` result.",
+        "required": [
+          "remote_removed"
+        ],
+        "properties": {
+          "remote_removed": {
+            "type": "boolean",
+            "description": "The account was deleted on Composio's side too.  When `false` the app\nis forgotten locally and the owner can remove it in Composio's dashboard."
+          }
+        }
+      },
+      "ComposioEnabledInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/composio/apps/{slug}/enabled`.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "New value."
+          }
+        }
+      },
+      "ComposioKeyInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/composio/key`.  Write-only.",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "The Composio project API key."
+          }
+        }
+      },
+      "ComposioStatusDto": {
+        "type": "object",
+        "description": "`GET /v1/composio`.",
+        "required": [
+          "configured",
+          "key_setup_url"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "A key is stored (the key itself is never returned)."
+          },
+          "key_setup_url": {
+            "type": "string",
+            "description": "Where the owner creates the key (https, on Composio's domain)."
+          }
+        }
+      },
+      "ComposioToolkitDto": {
+        "type": "object",
+        "description": "One toolkit of the Composio catalog.",
+        "required": [
+          "slug",
+          "name",
+          "description",
+          "categories",
+          "native_first",
+          "state",
+          "enabled"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names."
+          },
+          "description": {
+            "type": "string",
+            "description": "Short description (third-party text)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "The owner enabled it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "native_first": {
+            "type": "boolean",
+            "description": "Praxi connects it directly (always `false` until a zero-setup direct\npath exists); the UI notes it but never blocks the choice."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Toolkit slug."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ComposioConnState",
+            "description": "State for this installation."
+          },
+          "tools_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Number of actions, when Composio reports it.",
+            "minimum": 0
+          }
+        }
       },
       "ConfiguredProviderDto": {
         "type": "object",
@@ -7164,6 +8685,14 @@
           "client_id"
         ],
         "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The bot whose panel asks. When set, the target must be this bot's own\nbrowser or a shared desktop; another bot's browser is refused (403), so\na bot-scoped view can never resolve to someone else's screen."
+          },
           "client_id": {
             "type": "string",
             "format": "uuid"
@@ -8532,6 +10061,99 @@
             "minimum": 0
           }
         }
+      },
+      "HostLinkConnection": {
+        "type": "object",
+        "description": "An open channel: a loopback endpoint that forwards to the host's API over\nthe paired connection. `token` is a bearer for that proxy only, valid while\nthe channel lives; it is never logged.",
+        "required": [
+          "id",
+          "name",
+          "base_url",
+          "token",
+          "state"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HostLinkState"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "HostLinkInfo": {
+        "type": "object",
+        "description": "A paired host.",
+        "required": [
+          "id",
+          "name",
+          "state"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One short, path-free sentence for `offline` / `unreachable`."
+          },
+          "id": {
+            "type": "string",
+            "description": "Paired device key (public, not a secret)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name the host announced at pairing."
+          },
+          "state": {
+            "$ref": "#/components/schemas/HostLinkState"
+          }
+        }
+      },
+      "HostLinkList": {
+        "type": "object",
+        "description": "`GET /v1/hosts`.",
+        "required": [
+          "local_version",
+          "local_api_version",
+          "hosts"
+        ],
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostLinkInfo"
+            }
+          },
+          "local_api_version": {
+            "type": "string",
+            "description": "HTTP API version of this computer's daemon."
+          },
+          "local_version": {
+            "type": "string",
+            "description": "Version of this computer's daemon."
+          }
+        }
+      },
+      "HostLinkState": {
+        "type": "string",
+        "description": "Connection state of one paired host as seen from this computer.",
+        "enum": [
+          "idle",
+          "connecting",
+          "connected",
+          "offline",
+          "unreachable"
+        ]
       },
       "HostMode": {
         "type": "string",
@@ -10610,6 +12232,19 @@
           }
         }
       },
+      "PairHostInput": {
+        "type": "object",
+        "description": "`POST /v1/hosts/pair`.",
+        "required": [
+          "ticket"
+        ],
+        "properties": {
+          "ticket": {
+            "type": "string",
+            "description": "Pairing ticket printed by `bot host invite --role desktop` on the host."
+          }
+        }
+      },
       "ParseSchedule": {
         "type": "object",
         "description": "Body of `POST /v1/schedules/parse`.",
@@ -12435,6 +14070,45 @@
           "desktop"
         ]
       },
+      "TargetUnavailable": {
+        "type": "object",
+        "description": "A kind of screen this host cannot offer, and why. Lets the UI say\n\"No screen: <reason>\" instead of an empty panel.",
+        "required": [
+          "kind",
+          "host_id",
+          "reason",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/UnavailableCode",
+            "description": "Fixed reason code; never free text."
+          },
+          "host_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/Reason"
+          }
+        }
+      },
+      "UnavailableCode": {
+        "type": "string",
+        "description": "Why a kind of screen is not offered, as a small FIXED set. Peers only ever\nsee these codes (the UI words them in its own language); raw backend\ndiagnostics (paths, user names, display names, environment values) stay in\nthe local daemon log and never reach this type.",
+        "enum": [
+          "desktop_off",
+          "unsupported_platform",
+          "wayland",
+          "no_display",
+          "screen_unavailable",
+          "start_failed",
+          "starting",
+          "timed_out"
+        ]
+      },
       "UnifiedDiffDto": {
         "type": "object",
         "description": "Unified text diff payload for a single changed text file.",
@@ -12861,6 +14535,9 @@
     },
     {
       "name": "email"
+    },
+    {
+      "name": "composio"
     },
     {
       "name": "web"

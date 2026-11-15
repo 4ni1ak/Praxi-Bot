@@ -5,11 +5,14 @@ mod channels;
 mod channels_tests;
 mod client;
 mod commands;
+mod composio_host;
 mod computer;
 mod doctor;
 mod email_cmd;
 mod email_host;
 mod host;
+mod host_links;
+mod host_provision;
 mod host_runtime;
 mod mcp_host;
 mod mcp_paste;
@@ -19,6 +22,7 @@ mod prompt;
 mod remote;
 mod serve;
 mod update;
+mod view_targets;
 mod web_host;
 mod wizard;
 
@@ -571,6 +575,14 @@ fn run() -> Result<()> {
     } = command
     {
         return current_thread_runtime()?.block_on(host::join(&data_dir, ticket));
+    }
+
+    // Provisioning runs in the owner's terminal and needs no secret store.
+    if let Command::Host {
+        action: host::HostCmd::Provision(cmd),
+    } = command
+    {
+        return host_provision::run(cmd, &data_dir, &|| make_client(&cli, &data_dir));
     }
 
     // Daemon commands (no secret store needed, except `serve` with real providers).
@@ -1240,12 +1252,27 @@ mod tests {
             vec!["invite", "--role", "host"],
             vec!["join", "bot-pair:TEST"],
             vec!["revoke", "key"],
+            vec![
+                "add",
+                "ubuntu@203.0.113.7",
+                "--ssh-port",
+                "2222",
+                "--key",
+                "k",
+                "--yes",
+            ],
+            vec!["repair", "opc@203.0.113.7"],
+            vec!["upgrade", "oracle"],
+            vec!["remove", "oracle", "--purge", "--yes"],
         ] {
             let cli = Cli::try_parse_from(["bot", "host"].into_iter().chain(args)).unwrap();
             assert!(matches!(cli.command, Some(Command::Host { .. })));
         }
         assert!(Cli::try_parse_from(["bot", "host", "invite", "--role", "admin"]).is_err());
         assert!(Cli::try_parse_from(["bot", "host", "join"]).is_err());
+        assert!(
+            Cli::try_parse_from(["bot", "host", "remove", "x", "--purge", "--uninstall"]).is_err()
+        );
     }
 
     #[test]

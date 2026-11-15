@@ -15,6 +15,7 @@ import {
   type ToolItem
 } from "../state/timeline";
 import {
+  appActionDetails,
   formatFiring,
   brainDetails,
   scheduleDetails,
@@ -255,7 +256,10 @@ export function ApprovalCard({
   const outbound = isOutboundSend(tool.name);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const app = appActionDetails(tool.details);
   const brain = brainDetails(tool.details);
+  const unrenderable =
+    (tool.details as { kind?: unknown } | null | undefined)?.kind === "app_action" && !app;
 
   const decide = async (
     decision: "approve" | "deny",
@@ -297,7 +301,17 @@ export function ApprovalCard({
             </span>
           ) : null}
         </div>
-        {brain ? (
+        {app ? (
+          <div data-testid="approval-app-action">
+            <p className={styles.approvalSummary}>{app.app} · {app.action}</p>
+            <p className={styles.bodyLabel}>{app.class} · {app.version}</p>
+            <details open={app.count <= 1000}>
+              <summary>{t("chat.approval.app.arguments", { count: app.count })}</summary>
+              <pre className={styles.code} tabIndex={0}>{app.argumentsText}</pre>
+            </details>
+            <p className={styles.bodyLabel}>{t("chat.approval.app.footer")}</p>
+          </div>
+        ) : brain ? (
           <section className={styles.brainReview}>
             <strong>{t("knowledge.brainApproval")}</strong>
             <p className={formStyles.hint}>{t("knowledge.brainApprovalHint")}</p>
@@ -331,7 +345,7 @@ export function ApprovalCard({
           <Button
             size="sm"
             variant="primary"
-            disabled={disabled}
+            disabled={disabled || unrenderable}
             onClick={() => void decide("approve", "once")}
           >
             {isSendTool(tool.name)

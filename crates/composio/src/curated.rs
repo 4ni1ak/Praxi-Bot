@@ -1,0 +1,154 @@
+//! The small Praxi-shipped table around the open Composio catalog.
+//!
+//! It never decides what exists (Composio's toolkit list and per-toolkit tool
+//! list do) and never waives an approval.  It only
+//! - names the toolkits Praxi connects natively (`native_first`),
+//! - pins the "popular" row of the catalog,
+//! - marks well-known read-only actions, for display, grouping and for picking
+//!   which actions get a direct tool when a toolkit has more than the cap.
+//!
+//! UNVERIFIED: the popular slugs other than `twitter`, `slack`, `hubspot`,
+//! `salesforce`, `airtable` and the read-only action slugs come from memory,
+//! not from the live catalog; entries that the live catalog does not know are
+//! simply not shown / not matched.
+
+use std::collections::BTreeSet;
+
+use serde::Deserialize;
+
+/// A pinned popular toolkit.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Popular {
+    /// Composio toolkit slug.
+    pub slug: String,
+    /// Display name (used until the live catalog gives one).
+    pub name: String,
+}
+
+#[derive(Deserialize)]
+struct File {
+    cap_per_toolkit: usize,
+    native_first: Vec<String>,
+    popular: Vec<Popular>,
+    read_only_actions: Vec<String>,
+}
+
+/// The shipped table.
+#[derive(Debug, Clone)]
+pub struct Curated {
+    /// Most direct tools exposed to the model per connected toolkit.
+    /// Selection rule: known read-only actions first, then the order of
+    /// Composio's tool list, up to this number.  The rest is reachable through
+    /// `apps_find_action` and `apps_run_action`.
+    pub cap_per_toolkit: usize,
+    native_first: BTreeSet<String>,
+    /// Popular row, in display order.
+    pub popular: Vec<Popular>,
+    read_only: BTreeSet<String>,
+}
+
+impl Curated {
+    /// The table compiled into the binary.
+    ///
+    /// # Panics
+    /// Never in a build that passed the tests.
+    #[must_use]
+    pub fn builtin() -> Self {
+        Self::from_json(include_str!("curated.json")).expect("curated.json")
+    }
+
+    /// Parse a table (tests use it to exercise the `native_first` mechanism).
+    ///
+    /// # Errors
+    /// Malformed JSON.
+    pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
+        let f: File = serde_json::from_str(text)?;
+        Ok(Self {
+            cap_per_toolkit: f.cap_per_toolkit,
+            native_first: f.native_first.into_iter().collect(),
+            popular: f.popular,
+            read_only: f.read_only_actions.into_iter().collect(),
+        })
+    }
+
+    /// Whether Praxi connects (or will connect) `slug` itself.
+    #[must_use]
+    pub fn is_native_first(&self, slug: &str) -> bool {
+        self.native_first.contains(slug)
+    }
+
+    /// Whether `tool_slug` is a well-known read-only action.
+    #[must_use]
+    pub fn is_known_read(&self, tool_slug: &str) -> bool {
+        self.read_only.contains(tool_slug)
+    }
+
+    /// Display name of a popular slug.
+    #[must_use]
+    pub fn popular_name(&self, slug: &str) -> Option<&str> {
+        self.popular
+            .iter()
+            .find(|p| p.slug == slug)
+            .map(|p| p.name.as_str())
+    }
+}
+
+/// Display class of an action: `read` only for the shipped table, the others
+/// are name heuristics for grouping.  No class waives an approval.
+#[must_use]
+pub fn display_class(curated: &Curated, tool_slug: &str) -> &'static str {
+    if curated.is_known_read(tool_slug) {
+        return "read";
+    }
+    let s = format!("_{}_", tool_slug.to_ascii_uppercase());
+    let has = |words: &[&str]| words.iter().any(|w| s.contains(&format!("_{w}_")));
+    if has(&["DELETE", "REMOVE", "DESTROY", "ARCHIVE", "REVOKE"]) {
+        "destructive"
+    } else if has(&[
+        "SEND", "POST", "PUBLISH", "REPLY", "TWEET", "SHARE", "INVITE", "FORWARD",
+    ]) {
+        "send"
+    } else {
+        "other"
+    }
+}
+
+/// Short action name of a Composio tool slug inside its toolkit:
+/// `GITHUB_CREATE_AN_ISSUE` of `github` is `create_an_issue`.
+#[must_use]
+pub fn short_name(toolkit: &str, tool_slug: &str) -> String {
+    let lower = tool_slug.to_ascii_lowercase();
+    let prefix = format!("{}_", toolkit.to_ascii_lowercase());
+    lower.strip_prefix(&prefix).unwrap_or(&lower).to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn table_loads_and_classifies_for_display() {
+        let c = Curated::builtin();
+        assert!(c.cap_per_toolkit > 0);
+        // Empty until a zero-setup direct path (remote MCP + OAuth) exists.
+        assert!(!c.is_native_first("github") && !c.is_native_first("instagram"));
+        let moved = Curated::from_json(
+            r#"{"cap_per_toolkit":5,"native_first":["github"],"popular":[],"read_only_actions":[]}"#,
+        )
+        .unwrap();
+        assert!(moved.is_native_first("github"));
+        assert_eq!(c.popular_name("twitter"), Some("X"));
+        assert_eq!(display_class(&c, "SLACK_LIST_ALL_CHANNELS"), "read");
+        assert_eq!(display_class(&c, "SLACK_SEND_MESSAGE"), "send");
+        assert_eq!(
+            display_class(&c, "GITHUB_DELETE_A_REPOSITORY"),
+            "destructive"
+        );
+        assert_eq!(display_class(&c, "FOO_DO_THING"), "other");
+        assert_eq!(
+            short_name("github", "GITHUB_CREATE_AN_ISSUE"),
+            "create_an_issue"
+        );
+        assert_eq!(short_name("x", "OTHER_THING"), "other_thing");
+    }
+}
