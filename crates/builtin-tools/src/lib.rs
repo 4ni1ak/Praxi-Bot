@@ -242,39 +242,37 @@ mod tests {
     }
 
     #[test]
-    fn only_programs_launchers_are_classified_as_executing() {
-        // The built-in names that start a program chosen by their arguments.
-        // A new tool that does the same must be added here and in `classify`.
-        let executors = ["shell_run", "script_run", "desktop_launch"];
-        let dir = tempfile::tempdir().unwrap();
-        let registry = ToolRegistry::new();
-        let cfg = BuiltinConfig::new(dir.path().into(), Arc::new(AllowAll));
-        let tools = build_builtin_tools(cfg, &registry);
-        let mut names: Vec<String> = tools.iter().map(|tool| tool.spec().name.clone()).collect();
-        names.extend(
-            [
-                "desktop_list_apps",
-                "desktop_launch",
-                "desktop_get_state",
-                "desktop_click",
-                "desktop_type",
-                "desktop_set_value",
-                "desktop_key",
-                "desktop_scroll",
-                "desktop_drag",
-            ]
-            .map(str::to_owned),
-        );
-        for name in &names {
-            let class = crate::util::classify(name).unwrap();
-            assert_eq!(class.executes, executors.contains(&name.as_str()), "{name}");
-            assert!(
-                !class.executes || class.egress,
-                "{name} must show its command"
-            );
-        }
+    fn only_program_starters_and_desktop_input_are_registered_as_executing() {
+        // Read off the specs the registered tools carry, desktop and browser
+        // tools included, not off `classify` alone. A new tool that starts a
+        // program or drives input must be added here and in `classify`.
+        let executors = [
+            "shell_run",
+            "script_run",
+            "desktop_launch",
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_drag",
+        ];
+        let (_d, reg) = registry();
+        let specs = reg.list();
         for name in executors {
-            assert!(names.iter().any(|n| n == name), "{name} was not audited");
+            assert!(specs.iter().any(|spec| spec.name == name), "{name} missing");
+        }
+        assert!(specs.iter().any(|spec| spec.name == "desktop_click"));
+        for spec in &specs {
+            assert_eq!(
+                spec.content.executes,
+                executors.contains(&spec.name.as_str()),
+                "{}",
+                spec.name
+            );
+            assert!(
+                !spec.content.executes || spec.content.egress,
+                "{} must show its arguments on a card",
+                spec.name
+            );
         }
     }
 

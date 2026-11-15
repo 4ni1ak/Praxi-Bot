@@ -42,10 +42,12 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         // A shell, a script, and a desktop launch start a program chosen by
         // their arguments. In a run that read untrusted content they ask even
         // when the egress waiver is on; the command is the content.
-        "shell_run" | "script_run" | "desktop_launch" => ContentClass::all().executes(),
+        // The desktop input tools drive the keyboard and pointer: Win+R, a
+        // terminal or a save dialog turns them into a launcher, so they count.
+        "shell_run" | "script_run" | "desktop_launch" | "desktop_type" | "desktop_set_value"
+        | "desktop_key" | "desktop_drag" => ContentClass::all().executes(),
         "browser_open" | "browser_back" | "browser_click" | "browser_fill" | "browser_select"
-        | "browser_press" | "browser_eval" | "browser_tabs" | "desktop_type"
-        | "desktop_set_value" | "desktop_key" | "desktop_drag" => ContentClass::all(),
+        | "browser_press" | "browser_eval" | "browser_tabs" => ContentClass::all(),
         "schedule_create" | "schedule_update" | "schedule_resume" => ContentClass::egress(),
         _ => return None,
     })

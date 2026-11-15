@@ -56,7 +56,9 @@ fn spec(
         content: match name {
             // Replay drives other tools and the report is untrusted data.
             RUN_TOOL_NAME => ContentClass::all(),
-            LIST_TOOL_NAME => ContentClass::private_read(),
+            // Names, descriptions and parameters of saved workflows, which a
+            // tainted run or an import may have written.
+            LIST_TOOL_NAME => ContentClass::untrusted_private(),
             _ => ContentClass::unspecified(),
         },
     }

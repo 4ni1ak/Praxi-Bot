@@ -6,8 +6,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tool_registry::{
-    ContentClass, ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError,
-    ToolOutput, ToolSpec,
+    ContentClass, ContentPart, Effect, OutputExposure, PermissionCategory, Platform, Tool,
+    ToolContext, ToolError, ToolOutput, ToolSpec,
 };
 
 use crate::index::SkillIndex;
@@ -162,6 +162,13 @@ fn list_output(index: &SkillIndex) -> ToolOutput {
     if text.is_empty() {
         text.push_str("No skills available.");
     }
+    // A listed skill stored as untrusted carries text a tainted run wrote.
+    // The output then counts as untrusted, not only private.
+    let exposure = skills.iter().any(|s| s.untrusted).then(|| OutputExposure {
+        ingests_untrusted: true,
+        reads_private: true,
+        label: "skill list".to_owned(),
+    });
     ToolOutput {
         content: vec![
             ContentPart::Json {
@@ -170,7 +177,7 @@ fn list_output(index: &SkillIndex) -> ToolOutput {
             ContentPart::Text { text },
         ],
         spill: None,
-        exposure: None,
+        exposure,
     }
 }
 
