@@ -311,7 +311,7 @@ impl RestoreLock {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "restore_in_progress",
-                "another restore is in progress",
+                "another restore is in progress; retrying after it finishes is safe",
             ));
         }
         locks.insert(run);
@@ -325,6 +325,52 @@ impl Drop for RestoreLock {
     fn drop(&mut self) {
         self.state.0.restore_locks.lock().remove(&self.run);
     }
+}
+
+fn paths_overlap(left: &str, right: &str) -> bool {
+    #[cfg(windows)]
+    let (left, right) = (left.to_lowercase(), right.to_lowercase());
+    let left = std::path::Path::new(&left);
+    let right = std::path::Path::new(&right);
+    left.starts_with(right) || right.starts_with(left)
+}
+
+fn ensure_no_overlapping_run(
+    state: &AppState,
+    store: &CheckpointStore,
+    run_id: RunId,
+    paths: &[&str],
+) -> Result<(), ApiError> {
+    ensure_run_finished(&state.run_of_user(run_id)?)?;
+    let runs = state
+        .storage()
+        .list_runs(state.user_id())
+        .map_err(ApiError::internal)?;
+    for other in runs
+        .iter()
+        .filter(|r| r.id != run_id && ensure_run_finished(r).is_err())
+    {
+        let checkpoints = store.list(&other.id.0.to_string()).map_err(map_store_err)?;
+        if checkpoints
+            .iter()
+            .flat_map(|cp| &cp.entries)
+            .any(|entry| paths.iter().any(|path| paths_overlap(path, &entry.path)))
+        {
+            let title = other
+                .chat_id
+                .and_then(|id| state.storage().get_chat(id).ok().flatten())
+                .map_or_else(|| other.kind.clone(), |chat| chat.title);
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "run_files_in_use",
+                format!(
+                    "run {} ({title}, {}) has overlapping file changes; finish or cancel it before restoring",
+                    other.id, other.state
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn later_writers(
@@ -565,16 +611,11 @@ pub(crate) async fn restore_changes(
     tokio::task::spawn_blocking(move || {
         let _lock = lock;
         let report = builtin_tools::try_with_exclusive_file_access(&data_dir, || builtin_tools::with_checkpoint_access(&data_dir, &roots, &grants, || {
-            // Refuse conservatively while any other run can still write. This
-            // includes Paused runs that can resume with stale filesystem state.
-            let runs = state.storage().list_runs(state.user_id()).map_err(ApiError::internal)?;
-            if runs.iter().any(|r| r.id != run_id && ensure_run_finished(r).is_err()) {
-                return Err(ApiError::conflict("another non-terminal run may be writing files; finish or cancel it first"));
-            }
-            ensure_run_finished(&state.run_of_user(run_id)?)?;
             let store = CheckpointStore::new(&data_dir);
             verify_checkpoint_scope(&store, &cp_arg, &run_str)?;
             let preview = store.selection_preview(&run_str, &cp_arg).map_err(map_store_err)?;
+            let paths: Vec<_> = preview.iter().filter(|e| e.accessible && e.action != RestoreAction::Keep).map(|e| e.path.as_str()).collect();
+            ensure_no_overlapping_run(&state, &store, run_id, &paths)?;
             let modified: Vec<_> = preview.iter().filter(|e| e.accessible && e.verification == Verification::Changed).map(|e| e.path.as_str()).collect();
             let unknown: Vec<_> = preview.iter().filter(|e| e.accessible && e.verification == Verification::Unknown).map(|e| e.path.as_str()).collect();
             if !force && (!modified.is_empty() || !unknown.is_empty()) {
@@ -594,10 +635,7 @@ pub(crate) async fn restore_changes(
                 }
                 #[cfg(test)]
                 if *state.0.restore_fail_at.lock() == Some(index) { return Err(io::Error::other("injected checkpoint failure")); }
-                let runs = state.storage().list_runs(state.user_id()).map_err(io::Error::other)?;
-                if runs.iter().any(|r| ensure_run_finished(r).is_err()) {
-                    return Err(io::Error::other(format!("a run became active during restore checkpoint {index}")));
-                }
+                ensure_no_overlapping_run(&state, &store, run_id, &paths).map_err(io::Error::other)?;
                 Ok(())
             }).map_err(map_store_err)
         })).map_err(|e| ApiError::conflict(e.to_string()))??;
@@ -1239,6 +1277,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unrelated_paused_and_queued_runs_allow_restore_overlapping_runs_are_named() {
+        for state in [RunState::Paused, RunState::Queued] {
+            let h = setup_harness();
+            let (path, _) = edit(&h, h.run_id, "target.txt");
+            edit(&h, h.other_run_id, "unrelated.txt");
+            h.state
+                .storage()
+                .update_run_state(h.other_run_id, state.as_str(), None)
+                .unwrap();
+            let url = format!("/v1/runs/{}/changes/all/restore", h.run_id);
+            assert_eq!(
+                call(&h.app, Method::POST, &url, None, true).await.0,
+                StatusCode::OK
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), "before");
+            let store = CheckpointStore::new(h.dir.path());
+            store
+                .create(&h.other_run_id.0.to_string(), "fs_edit", &[&path])
+                .unwrap();
+            let (status, body) = call(
+                &h.app,
+                Method::POST,
+                &url,
+                Some(json!({"force":true})),
+                true,
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(body["error"]["code"], "run_files_in_use");
+            let message = body["error"]["message"].as_str().unwrap();
+            assert!(message.contains(&h.other_run_id.to_string()));
+            assert!(message.contains("chat"));
+            assert!(message.contains(state.as_str()));
+            assert_eq!(fs::read_to_string(path).unwrap(), "before");
+        }
+    }
+
+    #[test]
+    fn overlapping_paths_include_directory_descendants_but_not_sibling_prefixes() {
+        assert!(paths_overlap("/work/tree", "/work/tree/child.txt"));
+        assert!(paths_overlap("/work/tree/child.txt", "/work/tree"));
+        assert!(!paths_overlap("/work/tree", "/work/tree-other"));
+        #[cfg(windows)]
+        assert!(paths_overlap("C:/Work/Tree", "c:/work/tree/child.txt"));
+    }
+
+    #[tokio::test]
     async fn restore_refuses_paused_other_active_run_and_double_restore() {
         let h = setup_harness();
         let (path, _) = edit(&h, h.run_id, "busy.txt");
@@ -1269,6 +1354,10 @@ mod tests {
         h.state
             .storage()
             .update_run_state(h.run_id, RunState::Succeeded.as_str(), None)
+            .unwrap();
+        let store = CheckpointStore::new(h.dir.path());
+        store
+            .create(&h.other_run_id.0.to_string(), "fs_edit", &[&path])
             .unwrap();
         h.state
             .storage()
@@ -1303,6 +1392,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"]["code"], "restore_in_progress");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("retrying")
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "after");
         drop(lock);
         assert_eq!(
