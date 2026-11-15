@@ -4106,20 +4106,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn knowledge_state_files_resist_edit_move_delete_and_checkpoint_restore() {
+    async fn knowledge_state_files_resist_every_file_tool_and_cannot_be_checkpointed() {
         let (d, w, t) = setup();
         let c = ctx();
-        for name in [
+        let names = [
             "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
             "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
             "knowledge-runtime.db",
             "knowledge-runtime.db-wal",
-        ] {
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
+        ];
+        assert_eq!(names.len(), 11);
+        for name in names {
             let file = d.path().join(name);
             fs::write(&file, "pinned").unwrap();
             let own = w.path().join("own.txt");
             fs::write(&own, "mine").unwrap();
             for (tool, input) in [
+                ("fs_read", json!({"path": &file})),
+                ("fs_write", json!({"path": &file, "content": "evil"})),
                 (
                     "fs_edit",
                     json!({"path": &file, "old": "pinned", "new": "evil"}),
@@ -4136,25 +4147,59 @@ mod tests {
                     matches!(err, ToolError::PermissionDenied(_)),
                     "{tool} {name}: {err}"
                 );
+                assert!(!err.to_string().contains("pinned"), "{tool} {name}");
                 assert_eq!(
                     fs::read_to_string(&file).unwrap(),
                     "pinned",
                     "{tool} {name}"
                 );
+                assert_eq!(fs::read_to_string(&own).unwrap(), "mine", "{tool} {name}");
             }
-            // A checkpoint that names the file cannot be used to write it back.
+            // `CheckpointStore::create` vets every named path with the same
+            // protection and refuses an ungranted protected file outright, so
+            // no checkpoint exists that could later write the file back.
             let store = crate::checkpoint::CheckpointStore::new(d.path());
-            if let Ok(id) = store.create("run-cp", "fs_write", &[file.as_path()]) {
-                fs::write(&file, "changed-by-daemon").unwrap();
-                let restored =
-                    crate::files::with_checkpoint_access(d.path(), &[], &[], || store.restore(&id));
-                assert!(restored.is_err(), "{name}: restore must refuse");
-                assert_eq!(
-                    fs::read_to_string(&file).unwrap(),
-                    "changed-by-daemon",
-                    "{name}"
-                );
+            let err = store
+                .create("run-cp", "fs_write", &[file.as_path()])
+                .expect_err(name);
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{name}");
+            assert_eq!(err.to_string(), GRANT_MSG, "{name}");
+            assert!(
+                store.list("run-cp").unwrap().is_empty(),
+                "{name}: a refused create must leave no checkpoint"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn state_files_stay_protected_when_reached_through_a_symlinked_data_dir() {
+        let real = tempfile::tempdir().unwrap();
+        let alias_parent = tempfile::tempdir().unwrap();
+        let alias = alias_parent.path().join("data-link");
+        std::os::unix::fs::symlink(real.path(), &alias).unwrap();
+        // The daemon hands the file tools the canonical data dir (what
+        // `Storage::open` resolves); the bot may name it through the alias.
+        let t = tools(&fs::canonicalize(&alias).unwrap());
+        let c = ctx();
+        for name in ["knowledge-host.json", "bot.db"] {
+            let file = real.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            for path in [alias.join(name), file.clone()] {
+                for (tool, input) in [
+                    ("fs_read", json!({"path": &path})),
+                    ("fs_write", json!({"path": &path, "content": "evil"})),
+                    ("fs_delete", json!({"path": &path})),
+                ] {
+                    let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                    assert!(
+                        matches!(err, ToolError::PermissionDenied(_)),
+                        "{tool} {}: {err}",
+                        path.display()
+                    );
+                }
             }
+            assert_eq!(fs::read_to_string(&file).unwrap(), "pinned");
         }
     }
 
