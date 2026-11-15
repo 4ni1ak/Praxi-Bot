@@ -95,6 +95,7 @@ impl DeciderBackendSettings {
 /// depends on a specific id, the defaults below are only the starting chain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[allow(clippy::struct_excessive_bools)] // independent feature switches of a settings file
 pub struct DeciderSettings {
     /// Master switch (default off: it needs a provider key).
     pub enabled: bool,
@@ -139,14 +140,14 @@ impl Default for DeciderSettings {
             family_min: 0.25,
             standalone_max: 0.10,
             backends: vec![DeciderBackendSettings {
-                    provider: "gemini".into(),
-                    model: "gemini-decision-1".into(),
-                    api: None,
-                    base_url: None,
-                    rpm: 200,
-                    tpm: 50_000,
-                    rpd: 10_000,
-                }],
+                provider: "gemini".into(),
+                model: "gemini-decision-1".into(),
+                api: None,
+                base_url: None,
+                rpm: 200,
+                tpm: 50_000,
+                rpd: 10_000,
+            }],
         }
     }
 }

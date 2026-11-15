@@ -586,6 +586,32 @@ impl Decider {
         outcome
     }
 
+    /// Cache `answers` for `key`, evicting expired entries (then the oldest)
+    /// when the cache is full.
+    fn remember(&self, key: u128, at: Instant, backend: &str, answers: &Answers) {
+        if self.cfg.cache_ttl.is_zero() || self.cfg.cache_entries == 0 {
+            return;
+        }
+        let mut cache = self.cache.lock();
+        if cache.len() >= self.cfg.cache_entries {
+            let ttl = self.cfg.cache_ttl;
+            cache.retain(|_, c| at.duration_since(c.at) < ttl);
+            if cache.len() >= self.cfg.cache_entries
+                && let Some(oldest) = cache.iter().min_by_key(|(_, c)| c.at).map(|(k, _)| *k)
+            {
+                cache.remove(&oldest);
+            }
+        }
+        cache.insert(
+            key,
+            Cached {
+                at,
+                backend: backend.to_owned(),
+                answers: answers.clone(),
+            },
+        );
+    }
+
     async fn decide_inner(
         &self,
         req: &DecisionRequest,
@@ -665,27 +691,7 @@ impl Decider {
                 bump(&self.counters.fallbacks);
             }
             let backend = slot.backend.id().to_owned();
-            if !self.cfg.cache_ttl.is_zero() && self.cfg.cache_entries > 0 {
-                let mut cache = self.cache.lock();
-                if cache.len() >= self.cfg.cache_entries {
-                    let ttl = self.cfg.cache_ttl;
-                    cache.retain(|_, c| started.duration_since(c.at) < ttl);
-                    if cache.len() >= self.cfg.cache_entries
-                        && let Some(oldest) =
-                            cache.iter().min_by_key(|(_, c)| c.at).map(|(k, _)| *k)
-                    {
-                        cache.remove(&oldest);
-                    }
-                }
-                cache.insert(
-                    key,
-                    Cached {
-                        at: started,
-                        backend: backend.clone(),
-                        answers: answers.clone(),
-                    },
-                );
-            }
+            self.remember(key, started, &backend, &answers);
             return Outcome {
                 answers,
                 backend: Some(backend),

@@ -64,10 +64,7 @@ fn settings_round_trip_and_validate() {
         DeciderApi::OpenrouterDecisions
     );
     assert_eq!(custom.backends[1].effective_api(), DeciderApi::ChatJson);
-    assert!(
-        custom.tool_preselect,
-        "unset switches keep their defaults"
-    );
+    assert!(custom.tool_preselect, "unset switches keep their defaults");
     custom.save(dir.path()).unwrap();
     assert_eq!(DeciderSettings::load(dir.path()).unwrap(), custom);
 
@@ -91,8 +88,8 @@ fn a_disabled_or_unusable_decider_is_not_built() {
     let dir = tempfile::tempdir().unwrap();
     let catalog = provider_catalog::Catalog::default();
     let store = secret_store::MemoryStore::default();
-    let mut warnings = Vec::new();
-    let mut warn = |w: &str| warnings.push(w.to_owned());
+    let warnings = std::cell::RefCell::new(Vec::new());
+    let mut warn = |w: &str| warnings.borrow_mut().push(w.to_owned());
 
     // Off by default, even though the default chain names a backend.
     let off = DeciderSettings::default();
@@ -108,9 +105,17 @@ fn a_disabled_or_unusable_decider_is_not_built() {
         ..DeciderSettings::default()
     };
     assert!(
-        build_decider(&keyless, dir.path(), &catalog, &store, &providers(), &mut warn).is_none()
+        build_decider(
+            &keyless,
+            dir.path(),
+            &catalog,
+            &store,
+            &providers(),
+            &mut warn
+        )
+        .is_none()
     );
-    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert_eq!(warnings.borrow().len(), 3, "{warnings:?}");
 
     // A chat-JSON backend over a configured provider is usable; the unusable
     // one before it is skipped, not fatal.
