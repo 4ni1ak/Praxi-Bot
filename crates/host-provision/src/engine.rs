@@ -789,13 +789,30 @@ impl Engine<'_> {
             return None;
         }
         if reachable {
-            if let Some(key) = self.rec().desktop_key.clone() {
-                let _ = self.upload(
-                    "remove.stage",
-                    T,
-                    StageFile::Provision,
-                    &remote::provision_sh(),
+            // The helper is needed by every remote removal step, paired or not
+            // (the staging dir is deleted at the end of every run).
+            let staged = self.upload(
+                "remove.stage",
+                T,
+                StageFile::Provision,
+                &remote::provision_sh(),
+            );
+            if let Err(r) = staged {
+                if need_server {
+                    self.emit(report, r);
+                    return None;
+                }
+                self.emit(
+                    report,
+                    StepResult::warn(
+                        "remove.stage",
+                        T,
+                        r.detail,
+                        "Could not stage the helper; only forgetting the server locally.",
+                    ),
                 );
+            }
+            if let Some(key) = self.rec().desktop_key.clone() {
                 let params = format!("key={key}\n");
                 let r = self.exec(
                     "remove.revoke",
@@ -827,12 +844,15 @@ impl Engine<'_> {
                 );
             }
             if need_server {
-                let _ = self.upload(
+                if let Err(r) = self.upload(
                     "remove.stage",
                     T,
                     StageFile::Installer,
                     &remote::installer_sh(),
-                );
+                ) {
+                    self.emit(report, r);
+                    return None;
+                }
                 let sub = if level == RemoveLevel::Purge {
                     Sub::Purge
                 } else {

@@ -113,7 +113,7 @@ cmd_install_gh() {
     die "no supported package manager (apt-get or dnf) to install the GitHub CLI"
   fi
   have="$(gh_version || true)"
-  [[ -n "${have}" ]] && version_ge "${have}" "${MIN_GH}" || die "GitHub CLI >= ${MIN_GH} is required, found '${have:-none}'"
+  if [[ -z "${have}" ]] || ! version_ge "${have}" "${MIN_GH}"; then die "GitHub CLI >= ${MIN_GH} is required, found '${have:-none}'"; fi
   log "gh ${have} installed"
 }
 

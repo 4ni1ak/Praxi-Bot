@@ -349,3 +349,48 @@ fn resume_after_a_failed_step_skips_what_is_already_done() {
         .count();
     assert_eq!(installs, again);
 }
+
+#[test]
+fn an_installed_but_unpaired_host_can_be_uninstalled_and_purged() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    let store = Store::new(dir.path().join("hosts"));
+    let kh = KnownHosts::new(store.known_hosts_path());
+    kh.pin("203.0.113.7", 22, &fake.keys[0]).unwrap();
+    for (level, sub) in [
+        (RemoveLevel::Uninstall, Sub::Uninstall),
+        (RemoveLevel::Purge, Sub::Purge),
+    ] {
+        store.save(&record()).unwrap(); // installed earlier, pairing never finished: no desktop_key
+        fake.calls.borrow_mut().clear();
+        let (local, mut ui) = (Local::default(), TestUi::default());
+        let mut engine = Engine {
+            transport: &fake,
+            local: &local,
+            ui: &mut ui,
+            store: &store,
+            known_hosts: &kh,
+            params: Params {
+                record: record(),
+                mode: Mode::Repair,
+                app_version: "0.1.0".into(),
+                desktop: true,
+                retry_delay: Duration::ZERO,
+            },
+        };
+        let r = engine.remove(level);
+        assert!(r.ok(), "{}", r.table());
+        let calls = fake.calls.borrow();
+        let helper = calls
+            .iter()
+            .position(|(c, _)| *c == RemoteCmd::Stage(StageFile::Provision))
+            .expect("helper staged");
+        let run = calls
+            .iter()
+            .position(|(c, _)| *c == RemoteCmd::Provision(sub))
+            .expect("uninstall ran");
+        assert!(helper < run, "the helper is uploaded before it is executed");
+        drop(calls);
+        kh.pin("203.0.113.7", 22, &fake.keys[0]).unwrap(); // remove forgets the pin
+    }
+}
