@@ -101,3 +101,16 @@ const LIVE = new Set(["pending", "running", "waiting_approval"]);
 export function liveRunIds(runs: ReadonlyArray<{ id: string; state: string }>): string[] {
   return runs.filter((r) => LIVE.has(r.state)).map((r) => r.id);
 }
+
+/**
+ * What is mounted for a given active computer. The local safety machinery (the
+ * control bridge: heartbeat, native Stop / tray, local events, approval overlays)
+ * is ALWAYS connected to this computer's daemon; a host only adds a second
+ * session for the views.
+ */
+export function computerScopePlan(
+  activeComputerId: string,
+  localId = "local"
+): { localBridge: true; hostSession: boolean } {
+  return { localBridge: true, hostSession: activeComputerId !== localId };
+}

@@ -14,6 +14,7 @@
 
 pub mod auth;
 pub mod changes;
+mod cli_engines;
 pub mod control;
 pub mod doctor;
 mod doctor_routes;
@@ -23,15 +24,19 @@ mod email_routes;
 pub mod error;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
+mod fill_routes;
 pub mod host;
 pub mod host_links;
+mod knowledge;
 pub mod knowledge_runtime;
+mod knowledge_settings;
 pub mod live_view;
 pub mod mcp;
 mod mcp_routes;
 pub mod openapi;
 pub mod peer;
 pub mod policy;
+mod provider_models;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;
@@ -194,6 +199,8 @@ struct Inner {
     web_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
     secrets: OnceLock<Arc<dyn secret_store::SecretStore>>,
+    /// Owner-stored fill secrets (see [`AppState::set_fill_secrets`]).
+    fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// `schedules.db`, opened on first use.
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
@@ -213,6 +220,7 @@ struct Inner {
     policy_load_error: parking_lot::Mutex<Option<String>>,
     /// CLI provider detector (`GET /v1/providers/detected`).
     detector: parking_lot::RwLock<Arc<cli_provider::Detector>>,
+    cli_installs: cli_engines::InstallBook,
     /// The running scheduler (see [`AppState::start_scheduler`]).
     scheduler: parking_lot::Mutex<Option<Scheduler>>,
     leader: OnceLock<host::LeaderControl>,
@@ -283,6 +291,8 @@ impl AppState {
         cfg: DaemonConfig,
         registry: Arc<::live_view::TargetRegistry>,
     ) -> Result<Self, storage::StorageError> {
+        memory_store::knowledge::brain::cleanup_stale_staging(storage.data_dir())
+            .map_err(std::io::Error::other)?;
         let user_id = if let Some(u) = storage.list_users()?.into_iter().next() {
             u.id
         } else {
@@ -348,6 +358,7 @@ impl AppState {
             skills: OnceLock::new(),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
+            fill_secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
             stops: parking_lot::Mutex::new(stop::StopBook::default()),
@@ -361,6 +372,7 @@ impl AppState {
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
+            cli_installs: cli_engines::InstallBook::default(),
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
             doctor_host: OnceLock::new(),
@@ -516,6 +528,16 @@ impl AppState {
                     "too many web search probes are running; try again in a moment",
                 )
             })
+    }
+
+    /// Enable `/v1/fill-secrets*` over `secrets` (call once; a second call is
+    /// ignored). Local-owner only; peers are refused by the peer router.
+    pub fn set_fill_secrets(&self, secrets: Arc<secret_store::FillSecrets>) {
+        let _ = self.0.fill_secrets.set(secrets);
+    }
+
+    pub(crate) fn fill_secrets(&self) -> Option<Arc<secret_store::FillSecrets>> {
+        self.0.fill_secrets.get().cloned()
     }
 
     pub(crate) fn secret_store(&self) -> Option<Arc<dyn secret_store::SecretStore>> {
@@ -839,6 +861,7 @@ pub fn router(state: AppState) -> Router {
 #[allow(clippy::too_many_lines)] // The route table of the whole API.
 fn api_routes() -> Router<AppState> {
     use email_routes as e;
+    use fill_routes as f;
     use live_view as v;
     use mcp_routes as m;
     use routes as r;
@@ -861,6 +884,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/host/update", post(host::update))
         .route("/v1/health", get(r::health))
         .route("/v1/view/targets", get(v::targets))
+        .route("/v1/view/availability", get(v::availability))
         .route("/v1/view/sessions", post(v::create_session))
         .route(
             "/v1/view/sessions/{id}",
@@ -881,6 +905,50 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/openapi.json", get(openapi::serve_openapi))
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
         .route(
+            "/v1/bots/{bot}/knowledge/sources",
+            get(knowledge::list_sources)
+                .post(knowledge::create_source)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    knowledge::MAX_SOURCE_REQUEST_BYTES,
+                )),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}",
+            put(knowledge::update_source).delete(knowledge::delete_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}/reindex",
+            post(knowledge::reindex_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}/embed",
+            post(knowledge::embed_source),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/settings",
+            get(knowledge_settings::get_settings).put(knowledge_settings::put_settings),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/email-captures",
+            get(knowledge::email_captures),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-approvals",
+            post(knowledge_settings::request_embedding_approval),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm",
+            post(knowledge_settings::confirm_embedding_approval),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-grants",
+            axum::routing::delete(knowledge_settings::revoke_embedding_grant),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/embedding-cooldown/reset",
+            post(knowledge_settings::reset_embedding_cooldown),
+        )
+        .route(
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )
@@ -891,7 +959,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/skills", get(skills::list_skills))
         .route(
             "/v1/bots/{id}",
-            get(r::get_bot).put(r::update_bot).delete(r::delete_bot),
+            get(r::get_bot)
+                .put(r::update_bot)
+                .patch(r::patch_bot)
+                .delete(r::delete_bot),
         )
         .route("/v1/chats", get(r::list_chats).post(r::create_chat))
         .route(
@@ -932,6 +1003,12 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers", get(r::list_providers))
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
+        .route("/v1/providers/cli", get(cli_engines::list))
+        .route("/v1/providers/cli/install", post(cli_engines::preview))
+        .route(
+            "/v1/providers/cli/install/{approval_id}/decision",
+            post(cli_engines::decide),
+        )
         .route("/v1/providers/reload", post(r::reload_providers))
         .route("/v1/doctor", get(doctor_routes::get_doctor))
         .route("/v1/doctor/report", get(doctor_routes::report))
@@ -970,6 +1047,23 @@ fn api_routes() -> Router<AppState> {
             post(m::reconnect_mcp_server),
         )
         .route("/v1/mcp/servers/{name}/tools", get(m::list_mcp_tools))
+        .route("/v1/mcp/servers/{name}/auth/start", post(m::start_mcp_auth))
+        .route(
+            "/v1/mcp/servers/{name}/auth/callback",
+            post(m::complete_mcp_auth),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/cancel",
+            post(m::cancel_mcp_auth),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/status",
+            get(m::mcp_auth_status),
+        )
+        .route(
+            "/v1/mcp/servers/{name}/auth/logout",
+            post(m::logout_mcp_auth),
+        )
         .route("/v1/mcp/catalog", get(m::mcp_catalog))
         .route(
             "/v1/email/accounts",
@@ -990,6 +1084,22 @@ fn api_routes() -> Router<AppState> {
         )
         .route("/v1/web/search/test", post(w::test_web_search))
         .route("/v1/secrets/{*name}", post(m::set_secret))
+        .route(
+            "/v1/fill-secrets",
+            get(f::list_fill_secrets).post(f::create_fill_secret),
+        )
+        .route(
+            "/v1/fill-secrets/{*name}",
+            put(f::update_fill_secret).delete(f::delete_fill_secret),
+        )
+        .route(
+            "/v1/fill-grants",
+            get(f::list_fill_grants).post(f::create_fill_grant),
+        )
+        .route(
+            "/v1/fill-grants/{id}",
+            axum::routing::delete(f::revoke_fill_grant),
+        )
         .route("/v1/events", get(sse::events))
 }
 
@@ -1018,6 +1128,14 @@ pub async fn serve(
         .start()
         .await
         .map_err(std::io::Error::other)?;
+    // Fake-provider/test embedders have no host provider configuration and
+    // must never probe the real machine's credentialed CLIs as a side effect.
+    if state.provider_host().is_some() {
+        let detector = state.detector();
+        tokio::spawn(async move {
+            let _ = detector.detect(false).await;
+        });
+    }
     let cancel = state.shutdown_token();
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(async move {

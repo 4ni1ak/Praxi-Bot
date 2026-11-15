@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_lines)]
+mod availability_scope;
 mod browser_target_loss;
 use super::*;
 use ::live_view::*;
@@ -363,6 +364,7 @@ async fn all_routes_require_auth_host_origin_and_never_query_tokens() {
     let id = Uuid::now_v7();
     for (method, path, body) in [
         (Method::GET, "/v1/view/targets".into(), None),
+        (Method::GET, "/v1/view/availability".into(), None),
         (Method::POST, "/v1/view/sessions".into(), Some(json!({}))),
         (Method::GET, format!("/v1/view/sessions/{id}/frames"), None),
         (
@@ -1196,6 +1198,54 @@ async fn takeover_session_binding_and_text_byte_rate_are_independent_limits() {
         .await
         .0,
         StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+/// 244-V: why a screen is missing is served under the same rule as the target
+/// list: no token = 401, a peer without screen:view = 403, nothing is leaked.
+/// The reason is a fixed code, never free text.
+#[tokio::test]
+async fn availability_follows_the_target_list_access_rule_and_carries_a_code() {
+    let t = Test::new();
+    // Nothing recorded: an empty list for the local user.
+    let (status, body) = t
+        .call(None, Method::GET, "/v1/view/availability", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+    t.state
+        .live_view()
+        .registry
+        .note_unavailable(live_view::TargetUnavailable {
+            kind: live_view::TargetKind::Desktop,
+            host_id: "local".into(),
+            reason: live_view::Reason::Unavailable,
+            code: live_view::UnavailableCode::DesktopOff,
+        });
+    let (status, body) = t
+        .call(None, Method::GET, "/v1/view/availability", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body[0]["kind"], "desktop");
+    assert_eq!(body[0]["reason"], "unavailable");
+    assert_eq!(body[0]["code"], "desktop_off");
+    assert!(
+        body[0].get("detail").is_none(),
+        "no free text on the wire: {body}"
+    );
+    // A granted peer reads it; an ungranted one is refused like for the targets.
+    assert_eq!(
+        t.call(Some("alice"), Method::GET, "/v1/view/availability", None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    t.auto_grant.store(false, Ordering::SeqCst);
+    assert_eq!(
+        t.call(Some("bob"), Method::GET, "/v1/view/availability", None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
     );
 }
 

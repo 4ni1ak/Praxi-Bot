@@ -33,6 +33,7 @@ fn database_with_grant(dir: &Path) {
                 "bot": {"id": "assistant", "name": "assistant"},
                 "models": {"executor": "fake/model"}
             }),
+            1,
         )
         .unwrap();
     storage

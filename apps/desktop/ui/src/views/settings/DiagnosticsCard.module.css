@@ -10,7 +10,7 @@
   background-image: var(--surface-sheen);
 }
 :global(:root[data-style="glass"]) .summary,
-:global(:root[data-style="glass"]) .list { background-color: color-mix(in srgb, var(--color-surface-elevated) 55%, transparent); border-color: var(--color-border-strong); backdrop-filter: blur(var(--blur-glass)) saturate(1.5); }
+:global(:root[data-style="glass"]) .list { border-color: var(--color-border-strong); }
 :global(:root[data-style="line"]) .summary,
 :global(:root[data-style="line"]) .list { background: transparent; border-color: var(--color-border-strong); }
 

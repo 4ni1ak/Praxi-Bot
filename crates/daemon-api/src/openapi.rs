@@ -9,8 +9,9 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, host_links, live_view,
-    mcp, mcp_routes, routes, skills, sse, web, web_routes,
+    changes, doctor, doctor_routes, dto, email, email_routes, error, fill_routes, host, host_links,
+    knowledge, knowledge_settings, live_view, mcp, mcp_routes, routes, skills, sse, web,
+    web_routes,
 };
 
 struct Security;
@@ -43,9 +44,11 @@ impl Modify for Security {
             except GET /v1/health need `Authorization: Bearer <token>`."
     ),
     paths(
+        crate::cli_engines::list, crate::cli_engines::preview, crate::cli_engines::decide,
         host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
+        live_view::availability,
         live_view::create_session,
         live_view::update_session,
         live_view::heartbeat,
@@ -56,6 +59,10 @@ impl Modify for Security {
         live_view::set_privileges,
         live_view::input::input,
         live_view::stream::frames,
+        knowledge::list_sources, knowledge::create_source, knowledge::update_source, knowledge::delete_source, knowledge::reindex_source, knowledge::embed_source,
+        knowledge_settings::get_settings, knowledge_settings::put_settings, knowledge::email_captures,
+        knowledge_settings::request_embedding_approval, knowledge_settings::confirm_embedding_approval,
+        knowledge_settings::revoke_embedding_grant, knowledge_settings::reset_embedding_cooldown,
         routes::list_bots,
         routes::create_bot,
         routes::get_bot,
@@ -65,6 +72,7 @@ impl Modify for Security {
         skills::get_bot_skills,
         skills::put_bot_skills,
         routes::update_bot,
+        routes::patch_bot,
         routes::delete_bot,
         routes::list_chats,
         routes::create_chat,
@@ -115,7 +123,19 @@ impl Modify for Security {
         mcp_routes::reconnect_mcp_server,
         mcp_routes::list_mcp_tools,
         mcp_routes::mcp_catalog,
+        mcp_routes::start_mcp_auth,
+        mcp_routes::complete_mcp_auth,
+        mcp_routes::cancel_mcp_auth,
+        mcp_routes::mcp_auth_status,
+        mcp_routes::logout_mcp_auth,
         mcp_routes::set_secret,
+        fill_routes::list_fill_secrets,
+        fill_routes::create_fill_secret,
+        fill_routes::update_fill_secret,
+        fill_routes::delete_fill_secret,
+        fill_routes::list_fill_grants,
+        fill_routes::create_fill_grant,
+        fill_routes::revoke_fill_grant,
         email_routes::list_email_accounts,
         email_routes::create_email_account,
         email_routes::update_email_account,
@@ -129,7 +149,7 @@ impl Modify for Security {
     ),
     components(schemas(
         ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
-        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
+        dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::BotPatchInput, dto::BotPatchOp, dto::BotPatchKind, dto::BotConflictBody, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
         dto::MessageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
         dto::DecisionResponse, dto::RunDto, dto::StopScope, dto::StopRunsInput, dto::StopOutcome, dto::StopRunResult, dto::StopRunsResponse, dto::UsageTotals, dto::BotUsage,
@@ -138,11 +158,12 @@ impl Modify for Security {
         dto::CategoryDecisionDto, dto::ControlMode, dto::ControlStateInput,
         dto::ControlStateDto, dto::LatestCursor, dto::ControlVerdict, dto::ControlDecisionInput,
         dto::ControlDecisionResponse, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
-        dto::ConfiguredProviderDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
+        dto::ConfiguredProviderDto, dto::ModelMetadataDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
         dto::ParseSchedule, dto::ParsedSchedule, dto::AcceptedResponse, dto::ChannelDto, dto::PairCodeDto, dto::ScheduleChanged, dto::ScheduleChangeKind,
-        mcp::McpTransportKind, mcp::McpStatus, mcp::McpServerDto, mcp::McpTransportObject,
+        mcp::McpTransportKind, mcp::McpStatus, mcp::McpErrorKind, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
-        mcp::McpCatalogInstallDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
+        mcp::McpOAuthConfig, mcp::McpAuthState, mcp::McpAuthStart, mcp::McpAuthCallback,
+        mcp::McpCatalogInstallDto, mcp::McpFolderDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,
@@ -160,6 +181,8 @@ impl Modify for Security {
         skills::AvailableSkillDto, skills::OwnSkillDto, skills::BotSkillsDto, skills::PutBotSkillsInput,
         doctor::Status, doctor::Repair, doctor::Check, doctor_routes::DoctorReport,
         doctor_routes::RepairResult,
+        fill_routes::FillSecretDto, fill_routes::CreateFillSecret, fill_routes::UpdateFillSecret,
+        fill_routes::FillGrantDto, fill_routes::CreateFillGrant,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
@@ -214,6 +237,11 @@ pub struct ApiDoc;
 /// `{"type":"control_state_changed","state","owner","target_id","reason"}`) when
 /// a screen takeover is acquired, becomes active, is interrupted, released or
 /// recovered (no ids, epochs, pixels or text); not replayed.
+///
+/// And `view_targets_changed` events (`{"type":"view_targets_changed"}`) when a screen
+/// target appears, goes idle, attaches to a page or closes, or a missing-screen
+/// reason changes: a pixel-free hint to refetch `/v1/view/targets` and
+/// `/v1/view/availability`; not replayed.
 #[utoipa::path(get, path = "/v1/events", tag = "events", security(("bearer" = [])),
     params(
         ("run_id" = Option<uuid::Uuid>, Query, description = "Follow only this run; the stream ends after run_finished"),

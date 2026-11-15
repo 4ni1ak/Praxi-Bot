@@ -512,3 +512,121 @@ async fn host_link_routes_work_for_the_local_user_and_keep_secrets_out_of_the_au
     );
     assert!(!dbg.contains("proxy-secret-token"));
 }
+
+#[tokio::test]
+async fn on_a_host_no_peer_can_mint_tickets_revoke_devices_or_change_leadership() {
+    let t = host_daemon();
+    for role in [crate::PeerRole::Desktop, crate::PeerRole::Phone] {
+        for (method, path) in [
+            (Method::POST, "/v1/host/invite"),
+            (Method::POST, "//v1/host//invite/"),
+            (Method::DELETE, "/v1/host/devices/abcd"),
+            (Method::POST, "/v1/host/standby"),
+            (Method::POST, "/v1/host/activate"),
+            (Method::POST, "/v1/host/update"),
+        ] {
+            let r = peer_call(
+                &t,
+                role,
+                method.clone(),
+                path,
+                Some(json!({"role": "phone"})),
+            )
+            .await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN, "{role:?} {method} {path}");
+        }
+    }
+    let invited = count_audit(&t, "host.invite");
+    assert_eq!(invited, 0, "a refused invite leaves no ticket or row");
+    // Reading the status stays open to the desktop, and the local user can still invite.
+    let r = peer_call(&t, crate::PeerRole::Desktop, Method::GET, "/v1/host", None).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn on_a_host_a_peer_cannot_relax_execution_policy_but_can_edit_the_rest_of_a_bot() {
+    let t = host_daemon();
+    let desktop = crate::PeerRole::Desktop;
+    // Global policy: refused for the peer, still available locally.
+    let r = peer_call(&t, desktop, Method::PUT, "/v1/policy", Some(json!({}))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let profile = |extra: &str, name: &str| {
+        format!(
+            "[bot]\nid = \"tester\"\nname = \"{name}\"\n\n[models]\nexecutor = \"fake/echo\"\n{extra}"
+        )
+    };
+    // Creating a bot with a permission preset or tool lists is refused; without them it works.
+    for extra in [
+        "\n[permissions]\npreset = \"full\"\n",
+        "\n[tools]\nallow = [\"*\"]\n",
+    ] {
+        let r = peer_call(
+            &t,
+            desktop,
+            Method::POST,
+            "/v1/bots",
+            Some(json!({"profile_toml": profile(extra, "A")})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{extra}");
+    }
+    let r = peer_call(
+        &t,
+        desktop,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": profile("", "Plain")})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    // A bot the local owner made with a strict preset: the peer can rename it,
+    // but not change the preset, and omitting it keeps the stored one.
+    let strict = "\n[permissions]\npreset = \"read-only\"\n";
+    let made = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": profile(strict, "Owner")})),
+    )
+    .await;
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    let path = format!("/v1/bots/{id}");
+    let relax = "\n[permissions]\npreset = \"full\"\n";
+    let r = peer_call(
+        &t,
+        desktop,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": profile(relax, "Owner"), "expected_version": 1})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = peer_call(
+        &t,
+        desktop,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": profile("", "Renamed"), "expected_version": 1})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    let bot = call(&t, Method::GET, &path, None).await.json();
+    assert_eq!(bot["name"], "Renamed");
+    assert_eq!(
+        bot["config"]["permissions"]["preset"], "read-only",
+        "omitted policy is preserved"
+    );
+    let r = peer_call(
+        &t,
+        desktop,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": profile(strict, "Again"), "expected_version": 2})),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::OK,
+        "repeating the stored policy is not a change"
+    );
+}

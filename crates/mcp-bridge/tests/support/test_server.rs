@@ -3,6 +3,14 @@
 //! Tools: `echo` (read-only), `delete_all` (no annotations), `read_secret`,
 //! `fail` (tool-level error), `crash` (exits the process), `env_keys`
 //! (names of the environment variables it was started with).
+//!
+//! `MCP_TEST_MODE=features` adds what the feature tests need: the `grow` tool
+//! (adds the `extra` tool and announces `tools/list_changed`), `structured`
+//! (a summary text plus `structuredContent`), `embedded` (an embedded text
+//! resource), `hidden` (a description with invisible characters), two
+//! resources and one prompt. `echo` with `"pid": true` answers the process id.
+//! `MCP_EXIT_MARKER` names a file written when the server exits by itself
+//! after its stdin was closed.
 
 #![allow(clippy::unused_async_trait_impl)]
 
@@ -11,16 +19,28 @@ use std::sync::Arc;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-        JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
-        Tool, ToolAnnotations,
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation, JsonObject,
+        ListPromptsResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt,
+        PromptMessage, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+        Resource, ResourceContents, Role, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
     },
-    service::RequestContext,
+    service::{RequestContext, SubscriptionContext},
     transport::stdio,
 };
 use serde_json::json;
 
-struct TestServer;
+#[derive(Default)]
+struct TestServer {
+    /// `grow` was called: `extra` is part of the tool list.
+    grown: std::sync::atomic::AtomicBool,
+    /// Wakes the `subscriptions/listen` streams.
+    changed: tokio::sync::Notify,
+}
+
+fn features() -> bool {
+    std::env::var("MCP_TEST_MODE").as_deref() == Ok("features")
+}
 
 fn tool(name: &'static str, description: &'static str, read_only: bool) -> Tool {
     let schema: JsonObject = serde_json::from_value(json!({
@@ -37,7 +57,17 @@ fn tool(name: &'static str, description: &'static str, read_only: bool) -> Tool 
 
 impl ServerHandler for TestServer {
     fn get_info(&self) -> ServerConfig {
-        let config = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
+        let capabilities = if features() {
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .enable_resources()
+                .enable_prompts()
+                .build()
+        } else {
+            ServerCapabilities::builder().enable_tools().build()
+        };
+        let config = ServerConfig::new(capabilities);
         if std::env::var("MCP_TEST_MODE").as_deref() == Ok("secret-diagnostics") {
             config.with_server_info(Implementation::new(
                 std::env::var("API_KEY").unwrap(),
@@ -119,14 +149,121 @@ impl ServerHandler for TestServer {
             let duplicate = Tool::new(secret, "duplicate diagnostic test", Arc::default());
             tools.extend([duplicate.clone(), duplicate]);
         }
+        if features() {
+            tools.push(tool("grow", "Adds the `extra` tool", false));
+            tools.push(tool("structured", "Returns structured content", true));
+            tools.push(tool("embedded", "Returns an embedded resource", true));
+            tools.push(tool(
+                "hidden",
+                "visible\u{200B}\u{E0041}\u{202E}\u{7} text",
+                true,
+            ));
+            if self.grown.load(std::sync::atomic::Ordering::SeqCst) {
+                tools.push(tool("extra", "Appeared at runtime", true));
+            }
+        }
         Ok(ListToolsResult::with_all_items(tools))
+    }
+
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
+        loop {
+            tokio::select! {
+                () = context.cancelled() => return Ok(()),
+                () = self.changed.notified() => {
+                    let _ = context.sink().notify_tool_list_changed().await;
+                }
+            }
+        }
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(vec![
+            Resource::new("memo://notes", "notes"),
+            Resource::new("memo://blob", "blob"),
+        ]))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let contents = match request.uri.as_str() {
+            "memo://notes" => ResourceContents::text("remember the milk", "memo://notes"),
+            "memo://blob" => ResourceContents::BlobResourceContents {
+                uri: "memo://blob".into(),
+                mime_type: Some("application/x-test".into()),
+                blob: "QUJD".into(),
+                meta: None,
+            },
+            other => {
+                return Err(ErrorData::invalid_params(
+                    format!("unknown resource {other}"),
+                    None,
+                ));
+            }
+        };
+        Ok(ReadResourceResult::new(vec![contents]).into())
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(ListPromptsResult::with_all_items(vec![Prompt::new(
+            "greet",
+            Some("Greets someone"),
+            None,
+        )]))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, ErrorData> {
+        let who = request
+            .arguments
+            .as_ref()
+            .and_then(|a| a.get("who"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("world")
+            .to_owned();
+        Ok(GetPromptResult::new(vec![PromptMessage::new_text(
+            Role::User,
+            format!("Say hello to {who}"),
+        )])
+        .into())
     }
 
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        let wants_pid = request
+            .arguments
+            .as_ref()
+            .and_then(|a| a.get("pid"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        // Answer this call, then die on its own a moment later.
+        if let Some(ms) = request
+            .arguments
+            .as_ref()
+            .and_then(|a| a.get("exit_after_ms"))
+            .and_then(serde_json::Value::as_u64)
+        {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                std::process::exit(4);
+            });
+        }
         let text = request
             .arguments
             .as_ref()
@@ -145,7 +282,32 @@ impl ServerHandler for TestServer {
             tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
         }
         let result = match request.name.as_ref() {
+            "echo" if wants_pid => {
+                CallToolResult::success(vec![ContentBlock::text(std::process::id().to_string())])
+            }
             "echo" => CallToolResult::success(vec![ContentBlock::text(text)]),
+            "grow" if features() => {
+                self.grown.store(true, std::sync::atomic::Ordering::SeqCst);
+                // 2026-07-28: on the listen stream. Earlier versions: unscoped.
+                self.changed.notify_waiters();
+                let _ = context.peer.notify_tool_list_changed().await;
+                CallToolResult::success(vec![ContentBlock::text("grown")])
+            }
+            "extra" if features() => CallToolResult::success(vec![ContentBlock::text("extra")]),
+            "structured" if features() => {
+                let mut result = CallToolResult::success(vec![ContentBlock::text("two rows")]);
+                result.structured_content = Some(json!({"rows": [1, 2]}));
+                result
+            }
+            "embedded" if features() => {
+                let block = serde_json::from_value(json!({
+                    "type": "resource",
+                    "resource": {"uri": "memo://notes", "mimeType": "text/plain", "text": "inline note"}
+                }))
+                .expect("embedded resource block");
+                CallToolResult::success(vec![block])
+            }
+            "hidden" if features() => CallToolResult::success(vec![ContentBlock::text("ok")]),
             "delete_all" => CallToolResult::success(vec![ContentBlock::text("deleted")]),
             "read_secret" => CallToolResult::success(vec![ContentBlock::text("s3cret")]),
             "fail" => CallToolResult::error(vec![ContentBlock::text("it failed")]),
@@ -197,6 +359,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     spawn_orphan();
     match std::env::var("MCP_TEST_MODE").as_deref() {
+        Ok("exit-with-stderr") => {
+            // Explains itself on stderr and dies before the MCP handshake.
+            eprintln!("PRAXI-EXPLAIN: runtime X is missing");
+            std::process::exit(1);
+        }
         Ok("secret-stderr") => {
             eprintln!("child secret: {}", std::env::var("API_KEY").unwrap());
         }
@@ -235,7 +402,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {}
     }
-    let service = TestServer.serve(stdio()).await?;
+    let service = TestServer::default().serve(stdio()).await?;
     service.waiting().await?;
+    // Only reached when the client closed stdin and let the server finish.
+    if let Some(marker) = std::env::var_os("MCP_EXIT_MARKER") {
+        std::fs::write(marker, "clean")?;
+    }
     Ok(())
 }

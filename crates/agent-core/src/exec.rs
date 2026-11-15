@@ -33,8 +33,8 @@ use crate::history::{
 };
 use crate::router::{RoutePlan, route_hints};
 use crate::shared::{
-    CallRec, ModelOut, ResultRec, RunCtx, STEP_COMMAND, STEP_MODEL, STEP_TOOLS, STEP_USER,
-    STEP_WORKFLOW, Shared, xe,
+    CallRec, ModelOut, ResultRec, RunCtx, STEP_COMMAND, STEP_MODEL, STEP_NUDGE, STEP_TOOLS,
+    STEP_USER, STEP_WORKFLOW, Shared, xe,
 };
 
 pub(crate) struct TurnExecutor {
@@ -133,6 +133,25 @@ fn call_key(name: &str, args: &str) -> (String, Value) {
     (name.to_owned(), v)
 }
 
+/// True when the turn's last model step ended with no text after tool calls
+/// and no nudge was sent yet (one nudge per turn).
+fn silent_end(history: &[RunStep]) -> bool {
+    let Some(last) = history.last() else {
+        return false;
+    };
+    let blank = step_output::<ModelOut>(last)
+        .is_some_and(|m| m.text.trim().is_empty() && !m.stopped_by_guard);
+    let turn_start = history
+        .iter()
+        .rposition(|s| s.name == STEP_USER)
+        .unwrap_or(0);
+    let turn = &history[turn_start..];
+    blank && turn.iter().any(|s| s.name == STEP_TOOLS) && !turn.iter().any(|s| s.name == STEP_NUDGE)
+}
+
+/// Shown when the model is still silent after the nudge (never end empty).
+const SILENT_FALLBACK: &str = "The model returned no answer after using tools, so I could not finish this. Try again or pick a stronger model. / Model araçları kullandıktan sonra yanıt vermedi; tekrar dene ya da daha güçlü bir model seç.";
+
 fn user_step(text: &str) -> StepSpec {
     StepSpec {
         name: STEP_USER.to_owned(),
@@ -173,6 +192,7 @@ impl StepExecutor for TurnExecutor {
     ) -> Result<Value, ExecError> {
         match step.name.as_str() {
             STEP_USER => Ok(json!({ "text": step.input["text"] })),
+            STEP_NUDGE => Ok(json!({})),
             STEP_MODEL => self.exec_model(run, step, cancel).await,
             STEP_TOOLS => self.exec_tools(run, step).await,
             STEP_WORKFLOW => self.exec_workflow(run, step).await,
@@ -282,6 +302,9 @@ impl TurnExecutor {
                 return Ok(Some(user_step(&text)));
             }
             if finished {
+                if let Some(step) = self.nudge_step(&ctx, history, model_steps) {
+                    return Ok(Some(step));
+                }
                 st.closed = true;
                 return Ok(None);
             }
@@ -313,6 +336,9 @@ impl TurnExecutor {
             .chain(&ctx.profile.models.fallback)
             .any(|m| m.starts_with("cli:"));
         let mut input = json!({ "model": ctx.profile.models.executor, "n": model_steps });
+        if history.iter().any(|s| s.name == STEP_NUDGE) {
+            input["nudged"] = json!(true);
+        }
         if cli_session {
             input["cli_session"] = json!(true);
         }
@@ -324,6 +350,23 @@ impl TurnExecutor {
             // which provider errors are worth retrying.
             retry: None,
         }))
+    }
+
+    /// The one-per-turn nudge when the model went silent after tool calls.
+    fn nudge_step(
+        &self,
+        ctx: &RunCtx,
+        history: &[RunStep],
+        model_steps: usize,
+    ) -> Option<StepSpec> {
+        let g = &self.sh.cfg.guards;
+        let limit = ctx.sub.as_ref().map_or(g.max_steps, |s| s.max_steps);
+        (silent_end(history) && model_steps < limit as usize).then(|| StepSpec {
+            name: STEP_NUDGE.to_owned(),
+            input: json!({}),
+            idempotent: true,
+            retry: None,
+        })
     }
 
     /// The closing, tool-less model call that replaces a hard failure when a
@@ -472,6 +515,16 @@ impl TurnExecutor {
             .map(|r| GUARD_NOTE.replace("{reason}", r));
         let (skills, suggested_skills) =
             self.skills_block(run.id, &ctx, &steps, &hints.skills, &specs);
+        // Discovery mode: say where the tools are (stable block, before the skills index).
+        let skills = match (self.sh.discovery_block(&ctx, &specs), skills) {
+            (Some(d), Some(s)) => Some(format!(
+                "{d}
+
+{s}"
+            )),
+            (Some(d), None) => Some(d),
+            (None, s) => s,
+        };
         let lookup = |n: &str| self.sh.tools.get(n).map(|t| t.spec().clone());
         let spill_dir = self
             .sh
@@ -568,6 +621,20 @@ impl TurnExecutor {
             };
             return Err(xe(message));
         };
+        if guard_reason.is_none()
+            && step.input["nudged"] == true
+            && out.text.trim().is_empty()
+            && out.tool_calls.is_empty()
+        {
+            self.sh.emit(
+                &ctx,
+                Event::MessageDelta(MessageDelta {
+                    run_id: run.id,
+                    text: SILENT_FALLBACK.to_owned(),
+                }),
+            );
+            SILENT_FALLBACK.clone_into(&mut out.text);
+        }
         if let Some(reason) = guard_reason {
             // Tools were disabled: ignore anything the model still tried to call.
             out.tool_calls.clear();
@@ -922,30 +989,49 @@ impl TurnExecutor {
                         continue;
                     }
                 };
-                match self
+                // An owner-created standing grant that covers exactly this
+                // call (verified by the tool against the live facts) stands in
+                // for the card. Nothing else can: policy, presets and grants
+                // were already overridden to Ask for such a call.
+                if self
                     .sh
-                    .request_approval(
-                        &ctx,
-                        call_uuid,
-                        &resolved.name,
-                        effect,
-                        category,
-                        &resolved.input,
-                        details,
-                    )
+                    .standing_grant(&ctx, &resolved.name, &resolved.input)
                     .await
+                    .is_some()
                 {
-                    Ok(permit) => Slot::Run {
+                    Slot::Run {
                         tool,
                         input,
                         call: call_uuid,
                         meta,
-                        permit: Some(permit),
-                    },
-                    Err(reason) => Slot::Done {
-                        text: user_denied(reason),
-                        is_error: true,
-                    },
+                        permit: None,
+                    }
+                } else {
+                    match self
+                        .sh
+                        .request_approval(
+                            &ctx,
+                            call_uuid,
+                            &resolved.name,
+                            effect,
+                            category,
+                            &resolved.input,
+                            details,
+                        )
+                        .await
+                    {
+                        Ok(permit) => Slot::Run {
+                            tool,
+                            input,
+                            call: call_uuid,
+                            meta,
+                            permit: Some(permit),
+                        },
+                        Err(reason) => Slot::Done {
+                            text: user_denied(reason),
+                            is_error: true,
+                        },
+                    }
                 }
             } else {
                 Slot::Run {

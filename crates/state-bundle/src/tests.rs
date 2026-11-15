@@ -17,7 +17,7 @@ pub(super) fn database(dir: &Path, populated: bool) {
     if populated {
         Connection::open(dir.join("bot.db")).unwrap().execute_batch(
             "INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001', 'owner', 1);
-             INSERT INTO bots VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'assistant', '{\"model\":\"fake\"}', 2);
+             INSERT INTO bots (id, user_id, name, config_json, created_at_ms) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'assistant', '{\"model\":\"fake\"}', 2);
              INSERT INTO chats VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'hello', 3);"
         ).unwrap();
     }
@@ -87,7 +87,7 @@ pub(super) fn replace_payload(bytes: &[u8], name: &str, payload: Vec<u8>) -> Vec
 }
 
 #[tokio::test]
-async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
+async fn knowledge_sidecars_are_excluded_and_unchecked_imports_are_rejected() {
     use sha2::{Digest, Sha256};
 
     let source = tempfile::tempdir().unwrap();
@@ -95,7 +95,7 @@ async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
     let bot = "00000000-0000-0000-0000-000000000002";
     let root = source.path().join("bots").join(bot);
     fs::create_dir_all(&root).unwrap();
-    for name in ["knowledge.db", "knowledge.db-wal", "knowledge.db-shm"] {
+    for name in ["knowledge.db-wal", "knowledge.db-shm"] {
         fs::write(root.join(name), b"unchecked knowledge bytes").unwrap();
     }
     let bytes = bundle(source.path()).await;
@@ -126,7 +126,9 @@ async fn standalone_knowledge_files_are_excluded_and_rejected_on_import() {
             serde_json::to_vec(&manifest).unwrap(),
         ));
         let error = rejected(&pack(&entries), ImportOptions::default()).await;
-        assert!(error.to_string().contains("allowlist"), "{name}: {error}");
+        if name.ends_with("-wal") || name.ends_with("-shm") {
+            assert!(error.to_string().contains("allowlist"), "{name}: {error}");
+        }
     }
 }
 
@@ -213,7 +215,7 @@ async fn populated_round_trip_with_selected_secrets_and_progress() {
     let source = tempfile::tempdir().unwrap();
     database(source.path(), true);
     let live = Connection::open(source.path().join("bot.db")).unwrap();
-    live.execute_batch("PRAGMA journal_mode=WAL; INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000004', 'wal-only', 4)").unwrap();
+    live.execute_batch("PRAGMA journal_mode=WAL; UPDATE bots SET version=17; INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000004', 'wal-only', 4)").unwrap();
     let schedule = Connection::open(source.path().join("schedules.db")).unwrap();
     schedule
         .execute_batch(include_str!(
@@ -283,12 +285,29 @@ async fn populated_round_trip_with_selected_secrets_and_progress() {
     );
     assert!(target_store.get("unselected").unwrap().is_none());
     let original = storage::Storage::open(source.path()).unwrap();
+    // Export uses SQLite backup, including the nondefault revision even in WAL.
+    let exported = tempfile::tempdir().unwrap();
+    let payload = unpack(&bytes)
+        .into_iter()
+        .find(|(path, _)| path == "bot.db")
+        .unwrap()
+        .1;
+    fs::write(exported.path().join("bot.db"), payload).unwrap();
+    let exported_conn = Connection::open(exported.path().join("bot.db")).unwrap();
+    assert_eq!(
+        exported_conn
+            .query_row("SELECT version FROM bots", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        17
+    );
     let imported = storage::Storage::open(target.path()).unwrap();
     assert_eq!(
         original.list_users().unwrap(),
         imported.list_users().unwrap()
     );
     let user = original.list_users().unwrap()[0].id;
+    let bot = original.list_bots(user).unwrap()[0].id;
+    assert_eq!(imported.get_bot_versioned(bot).unwrap().unwrap().1, 17);
     assert_eq!(
         original.list_bots(user).unwrap(),
         imported.list_bots(user).unwrap()
@@ -371,6 +390,28 @@ async fn skill_lock_and_publication_staging_files_are_not_bundled() {
         paths.iter().all(|path| !path.contains(".praxi-")),
         "{paths:?}"
     );
+}
+
+// Review #81-8's export claim is already prevented by the shared `.praxi-*`
+// exclusion. Keep a brain-specific proof so future root additions preserve it.
+#[tokio::test]
+async fn review_81_brain_staging_is_already_excluded_from_bundles() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    fs::create_dir(dir.path().join("brain")).unwrap();
+    fs::write(dir.path().join("brain/decision.md"), "Published decision.").unwrap();
+    fs::write(
+        dir.path()
+            .join(format!("brain/.praxi-brain-{}.tmp", uuid::Uuid::now_v7())),
+        "Private staging.",
+    )
+    .unwrap();
+    let paths: Vec<_> = unpack(&bundle(dir.path()).await)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert!(paths.iter().any(|path| path == "brain/decision.md"));
+    assert!(paths.iter().all(|path| !path.contains(".praxi-brain-")));
 }
 
 #[tokio::test]
@@ -889,7 +930,9 @@ async fn older_schema_migrates_forward() {
     let conn = Connection::open(dir.path().join("bot.db")).unwrap();
     conn.execute_batch(include_str!("../../storage/migrations/0001_init.sql"))
         .unwrap();
-    conn.execute_batch("PRAGMA user_version=1").unwrap();
+    conn.execute_batch("PRAGMA user_version=1;
+        INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001','owner',1);
+        INSERT INTO bots (id,user_id,name,created_at_ms) VALUES ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','legacy',2);").unwrap();
     drop(conn);
     let bytes = bundle(dir.path()).await;
     let target = tempfile::tempdir().unwrap();
@@ -908,6 +951,14 @@ async fn older_schema_migrates_forward() {
         storage::migrate::latest_version()
     );
     conn.prepare("SELECT spec_json FROM runs").unwrap();
+    assert_eq!(
+        conn.query_row("SELECT name,version FROM bots", [], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?
+        )))
+        .unwrap(),
+        ("legacy".into(), 1)
+    );
 }
 
 #[tokio::test]
@@ -1581,4 +1632,137 @@ async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert(
             .iter()
             .any(|g| g.computer.as_deref() == Some(&format!("host:{b}")))
     );
+}
+
+#[tokio::test]
+async fn review95_invalid_bot_revision_bundle_preserves_destination_before_swap() {
+    for damage in ["missing", "zero", "text", "nullable"] {
+        let source = tempfile::tempdir().unwrap();
+        database(source.path(), true);
+        let conn = Connection::open(source.path().join("bot.db")).unwrap();
+        conn.execute_batch("DROP TRIGGER IF EXISTS bots_profile_revision; DROP TRIGGER IF EXISTS bot_skills_revision_ai; DROP TRIGGER IF EXISTS bot_skills_revision_au; DROP TRIGGER IF EXISTS bot_skills_revision_ad;").unwrap();
+        match damage {
+            "missing" => conn.execute_batch("ALTER TABLE bots DROP COLUMN version").unwrap(),
+            "zero" => conn.execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE bots SET version=0").unwrap(),
+            "text" => conn.execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE bots SET version='bad'").unwrap(),
+            "nullable" => conn.execute_batch("ALTER TABLE bots DROP COLUMN version; ALTER TABLE bots ADD COLUMN version INTEGER DEFAULT 1").unwrap(),
+            _ => unreachable!(),
+        }
+        drop(conn);
+        let bytes = bundle(source.path()).await;
+        let target = tempfile::tempdir().unwrap();
+        database(target.path(), true);
+        let before = fs::read(target.path().join("bot.db")).unwrap();
+        let err = import(
+            target.path(),
+            &MemoryStore::new(),
+            bytes.as_slice(),
+            ImportOptions {
+                replace: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("bot.db"), "{damage}: {err}");
+        assert_eq!(
+            fs::read(target.path().join("bot.db")).unwrap(),
+            before,
+            "{damage}"
+        );
+        assert!(!target.path().join("import-staging").exists());
+    }
+}
+
+/// Review finding 9: MCP OAuth records (tokens) never leave the secret
+/// store: `All` skips them, naming one fails, and a bundle carrying one is
+/// refused on import.
+#[tokio::test]
+async fn mcp_oauth_records_are_never_exported_or_imported() {
+    const RECORD: &str = r#"{"resource":"https://mcp.example/mcp","credentials":{"client_id":"c","token_response":{"access_token":"bundle-access-sentinel-6d2e","refresh_token":"bundle-refresh-sentinel-0a9f","token_type":"Bearer"},"granted_scopes":[],"token_received_at":null,"issuer":null}}"#;
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let store = MemoryStore::new();
+    store.set("mcp/linear/oauth", RECORD).unwrap();
+    store.set("MCP/Other/OAuth", RECORD).unwrap();
+    store
+        .set("mcp/linear/oauth-client", "dcr-secret-sentinel-11b4")
+        .unwrap();
+    store.set("plain", "kept").unwrap();
+    let mut bytes = Vec::new();
+    let manifest = export(
+        source.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::All,
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    assert_eq!(manifest.secret_names, vec!["plain".to_owned()]);
+    let raw = String::from_utf8_lossy(&bytes);
+    for token in [
+        "bundle-access-sentinel-6d2e",
+        "bundle-refresh-sentinel-0a9f",
+        "dcr-secret-sentinel-11b4",
+    ] {
+        assert!(!raw.contains(token), "{token} exported");
+    }
+    for name in [
+        "mcp/linear/oauth",
+        "MCP/Other/OAuth",
+        "mcp/linear/oauth-client",
+    ] {
+        let mut out = Vec::new();
+        assert!(
+            export(
+                source.path(),
+                &store,
+                ExportOptions {
+                    secrets: SecretSelection::Names(vec![name.into()]),
+                    ..Default::default()
+                },
+                &mut out,
+            )
+            .await
+            .is_err(),
+            "{name} exported by name"
+        );
+    }
+}
+
+/// A bundle that carries an MCP OAuth record is refused on import: it would
+/// plant someone else's sign-in.
+#[tokio::test]
+async fn a_bundle_carrying_an_mcp_oauth_record_is_refused_on_import() {
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let store = MemoryStore::new();
+    store.set("plain", "kept").unwrap();
+    let mut bytes = Vec::new();
+    export(
+        source.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::Names(vec!["plain".into()]),
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    let planted = replace_payload(
+        &bytes,
+        "secrets.json",
+        serde_json::to_vec(&serde_json::json!({"mcp/victim/oauth": "{}"})).unwrap(),
+    );
+    let planted = alter_manifest(&planted, |m| {
+        m.secret_names = vec!["mcp/victim/oauth".into()];
+    });
+    assert!(matches!(
+        rejected(&planted, ImportOptions::default()).await,
+        ImportError::Invalid(_)
+    ));
 }

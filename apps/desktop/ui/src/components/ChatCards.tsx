@@ -16,6 +16,7 @@ import {
 } from "../state/timeline";
 import {
   formatFiring,
+  brainDetails,
   scheduleDetails,
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
@@ -254,6 +255,7 @@ export function ApprovalCard({
   const outbound = isOutboundSend(tool.name);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const brain = brainDetails(tool.details);
 
   const decide = async (
     decision: "approve" | "deny",
@@ -295,7 +297,16 @@ export function ApprovalCard({
             </span>
           ) : null}
         </div>
-        {schedule ? (
+        {brain ? (
+          <section className={styles.brainReview}>
+            <strong>{t("knowledge.brainApproval")}</strong>
+            <p className={formStyles.hint}>{t("knowledge.brainApprovalHint")}</p>
+            <code>{brain.path}</code>
+            <label>{t("knowledge.brainHash")}<code>{brain.sha256}</code></label>
+            {brain.sources.length ? <ul aria-label={t("knowledge.brainSources")}>{brain.sources.map((source) => <li key={source.id}>{source.label} · {source.id} · v{source.revision}</li>)}</ul> : null}
+            <pre className={styles.brainContent}>{brain.content}</pre>
+          </section>
+        ) : schedule ? (
           <>
             <p className={styles.approvalSummary}>
               {t(`chat.approval.schedule.title.${schedule.action}`)}

@@ -182,7 +182,11 @@ impl Shared {
         );
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
-        if self.always_ask(name) {
+        // The same holds for a call that types an owner-stored secret
+        // ([`Tool::always_ask_for`]): the policy level, the Full preset, read
+        // shortcuts, "this chat" / "always" grants and any run-scoped control
+        // grant sit BELOW this early return, so none of them can waive it.
+        if self.must_ask(name, input) {
             if d == Decision::Allow {
                 d = Decision::ask();
             }
@@ -223,10 +227,40 @@ impl Shared {
         }
     }
 
-    /// The registered tool `name` must be confirmed on every call
-    /// ([`tool_registry::Tool::always_ask`]).
-    pub(crate) fn always_ask(&self, name: &str) -> bool {
-        self.tools.get(name).is_some_and(|t| t.always_ask())
+    /// This very call must be confirmed (the tool always asks, or its
+    /// [`tool_registry::Tool::always_ask_for`] says so for this input).
+    pub(crate) fn must_ask(&self, name: &str, input: &Value) -> bool {
+        self.tools
+            .get(name)
+            .is_some_and(|t| t.always_ask() || t.always_ask_for(input))
+    }
+
+    /// An owner-created standing grant that covers exactly this call, as the
+    /// tool itself verifies it right now. Only meaningful for calls that
+    /// [`Self::must_ask`]; recorded in the audit log by id.
+    pub(crate) async fn standing_grant(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        input: &Value,
+    ) -> Option<tool_registry::StandingGrant> {
+        let tool = self.tools.get(name)?;
+        if !tool.always_ask_for(input) {
+            return None;
+        }
+        let tctx = tool_registry::ToolContext {
+            run_id: ctx.run_id.to_string(),
+            bot_id: Some(ctx.bot_id.to_string()),
+            ..tool_registry::ToolContext::default()
+        };
+        let grant = tool.standing_grant(&tctx, input).await?;
+        self.audit(
+            ctx,
+            "system",
+            "secret.standing_grant_used",
+            &json!({ "tool": name, "grant": grant.id, "label": grant.label }),
+        );
+        Some(grant)
     }
 
     fn closed_guard(
@@ -524,13 +558,14 @@ impl Shared {
         }
         // An always-ask tool must show the user what it does: refuse to ask
         // without details rather than fall back to the generic card.
-        if self.always_ask(name) && details.is_none() {
+        let must_ask = self.must_ask(name, input);
+        if must_ask && details.is_none() {
             return Err(Some(
                 "internal error: this tool needs approval details to be asked about; it was not run"
                     .into(),
             ));
         }
-        let once_only = details.is_some() || self.always_ask(name);
+        let once_only = details.is_some() || must_ask;
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
         let prefix = computer_approval(ctx, name, category, &mut details);
@@ -797,7 +832,7 @@ impl ExecPermit {
             .storage
             .decide_approval(self.approval_id, "approved");
         // Approving an always-ask tool confirms this one call only.
-        let scope = if self.sh.always_ask(&self.name) {
+        let scope = if self.sh.must_ask(&self.name, &self.input) {
             ApprovalScope::Once
         } else {
             self.scope
@@ -992,23 +1027,31 @@ impl ToolGate for LoopGate {
                     .approval_details(&ctx, &req.tool, &req.input)
                     .await
                     .map_err(|e| format!("{}: {e}", req.tool))?;
-                sh.request_approval(
-                    &ctx,
-                    ToolCallId::new(),
-                    &req.tool,
-                    req.effect,
-                    req.category,
-                    &req.input,
-                    details,
-                )
-                .await
-                .and_then(ExecPermit::commit)
-                .map_err(|reason| {
-                    format!(
-                        "permission denied by the user{}",
-                        reason.map_or_else(String::new, |r| format!(": {r}"))
+                if sh
+                    .standing_grant(&ctx, &req.tool, &req.input)
+                    .await
+                    .is_some()
+                {
+                    Ok(())
+                } else {
+                    sh.request_approval(
+                        &ctx,
+                        ToolCallId::new(),
+                        &req.tool,
+                        req.effect,
+                        req.category,
+                        &req.input,
+                        details,
                     )
-                })
+                    .await
+                    .and_then(ExecPermit::commit)
+                    .map_err(|reason| {
+                        format!(
+                            "permission denied by the user{}",
+                            reason.map_or_else(String::new, |r| format!(": {r}"))
+                        )
+                    })
+                }
             }
         };
         result?;

@@ -118,6 +118,7 @@ async fn direct_tool(host: &Host, run: String, query: &str) -> SearchResponse {
 
 async fn owner_update_bot(host: &Host, config: Value) {
     use tower::ServiceExt;
+    let version = host.state.storage().bot_version(host.bot).unwrap().unwrap();
     let response = crate::router(host.state.clone())
         .oneshot(
             axum::http::Request::builder()
@@ -126,7 +127,9 @@ async fn owner_update_bot(host: &Host, config: Value) {
                 .header("host", "127.0.0.1:47821")
                 .header("authorization", "Bearer test-token")
                 .header("content-type", "application/json")
-                .body(axum::body::Body::from(json!({"config":config}).to_string()))
+                .body(axum::body::Body::from(
+                    json!({"expected_version":version,"config":config}).to_string(),
+                ))
                 .unwrap(),
         )
         .await

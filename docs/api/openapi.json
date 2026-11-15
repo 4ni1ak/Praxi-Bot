@@ -202,6 +202,725 @@
         ]
       }
     },
+    "/v1/bots/{bot}/knowledge/email-captures": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Recent successful, explicitly scoped mailbox reads available to this bot.",
+        "operationId": "email_captures",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeEmailCapture"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-approvals": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Ask policy for an owner-reviewable destination and source snapshot. Merely\nopening the card grants no authority and starts no provider request.",
+        "operationId": "request_embedding_approval",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingGrantTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingApprovalChallenge"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Confirm exactly the server snapshot the local owner reviewed. A changed\nprofile/source, expired card or replay requires a fresh owner decision.",
+        "operationId": "confirm_embedding_approval",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "approval",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-cooldown/reset": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Explicit owner recovery for a provider's shared retry delay; quota usage and\nper-source failure records remain intact.",
+        "operationId": "reset_embedding_cooldown",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/embedding-grants": {
+      "delete": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "revoke_embedding_grant",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingGrantTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/settings": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "get_settings",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSettingsDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "put_settings",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSettingsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "list_sources",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeSourceDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "create_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSourceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMutation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources/{source}": {
+      "put": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "update_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSourceChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSourceDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "delete_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources/{source}/embed": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "embed_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeEmbed"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeEmbeddingProgress"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/knowledge/sources/{source}/reindex": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "reindex_source",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeReindex"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMutation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{id}": {
       "get": {
         "tags": [
@@ -253,7 +972,7 @@
         "tags": [
           "bots"
         ],
-        "summary": "Replace a bot's name and profile.",
+        "summary": "Replace a bot profile using its loaded `expected_version` (required; missing is 428).",
         "operationId": "update_bot",
         "parameters": [
           {
@@ -298,7 +1017,27 @@
               }
             }
           },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
           "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "428": {
             "description": "",
             "content": {
               "application/json": {
@@ -348,6 +1087,92 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Change only the listed fields of a bot, atomically, if `expected_version` is current.",
+        "operationId": "patch_bot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotPatchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "patch exceeds depth, size or operation limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the bot changed since `expected_version`; `current` is its state now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
+          "422": {
             "description": "",
             "content": {
               "application/json": {
@@ -1866,7 +2691,7 @@
           "events"
         ],
         "summary": "Host notifications: `host_state_changed` carries `HostConfig`, `host_conflict` carries\n`HostConflict` (reason, peer, epoch, notification). These live refetch hints have no cursor.\nDocumentation stub for the SSE route (the handler lives in `sse.rs`).",
-        "description": "Server-sent events; each `data:` is a `protocol::Envelope` JSON object, the\nSSE `event:` is its `type`.  With `run_id` the SSE `id` is the run-local\n`seq` and `Last-Event-ID: <seq>` resumes from the run's NDJSON log.  Without\nit the stream covers all runs: the SSE `id` is a daemon-wide, strictly\nincreasing `gseq` (persisted) and `Last-Event-ID: <gseq>` replays every\nmissed event of every run, in order, before going live.  Browsers cannot set\nheaders on `EventSource`, so this route (and only this one) also accepts the\nAPI token as the `token` query parameter (Host / Origin checks still apply;\nthe token is compared in constant time; beware that URLs may be logged).\n\nThe daemon-wide stream (no `run_id`) also carries `schedule_changed` events\n(`dto::ScheduleChanged`: `{\"type\":\"schedule_changed\",\"schedule_id\",\"kind\"}`,\nkind `created` / `updated` / `toggled` / `deleted`) when a schedule is changed\nthrough the API.  They have no SSE `id`, are not replayed and are not\nenvelopes: treat them as a hint to refetch `/v1/schedules`.\n\nA replay gap is explicit: `event: gap` has an `id` equal to `to_gseq` and\ndata `{from_gseq, to_gseq, run_id, reason}`; reason is `log_line_missing` or\n`log_unreadable`. It is audited before the cursor passes the missing row.\n`/v1/events/status.sse_gaps_total` (authenticated) counts these notifications since daemon startup.\nAfter three consecutive replay failures (or live-buffer overflow),\n`event: error` carries `{code: \"replay_unavailable\", last_event_id}` and the\nstream closes. This error has no `id`; reconnect with the last received ID.\nRetry delays start at 250 ms and double up to 5 s. Live buffering is limited\nto 1000 events and 4 MiB per subscriber; replay chunks hold at most 2 MiB of serialized events (a single larger event closes the stream with `replay_unavailable`), and at most `max_sse_subscribers` streams (default 16) may be open: further requests get `503`. The desktop currently ignores unknown\nevent names; card 144 can surface gap/error notifications without changing\nthe ordering or cursor contract.\n\nIt likewise carries `mcp_server_changed` events (`mcp::McpServerChanged`:\n`{\"type\":\"mcp_server_changed\",\"name\",\"status\"}`) when an MCP server is\nadded, updated, removed or changes status (connecting / connected / error /\nquarantined ...); same rules: a hint to refetch `/v1/mcp/servers`.\n\nAnd `control_state_changed` events (`dto::ControlStateChanged`:\n`{\"type\":\"control_state_changed\",\"state\",\"owner\",\"target_id\",\"reason\"}`) when\na screen takeover is acquired, becomes active, is interrupted, released or\nrecovered (no ids, epochs, pixels or text); not replayed.",
+        "description": "Server-sent events; each `data:` is a `protocol::Envelope` JSON object, the\nSSE `event:` is its `type`.  With `run_id` the SSE `id` is the run-local\n`seq` and `Last-Event-ID: <seq>` resumes from the run's NDJSON log.  Without\nit the stream covers all runs: the SSE `id` is a daemon-wide, strictly\nincreasing `gseq` (persisted) and `Last-Event-ID: <gseq>` replays every\nmissed event of every run, in order, before going live.  Browsers cannot set\nheaders on `EventSource`, so this route (and only this one) also accepts the\nAPI token as the `token` query parameter (Host / Origin checks still apply;\nthe token is compared in constant time; beware that URLs may be logged).\n\nThe daemon-wide stream (no `run_id`) also carries `schedule_changed` events\n(`dto::ScheduleChanged`: `{\"type\":\"schedule_changed\",\"schedule_id\",\"kind\"}`,\nkind `created` / `updated` / `toggled` / `deleted`) when a schedule is changed\nthrough the API.  They have no SSE `id`, are not replayed and are not\nenvelopes: treat them as a hint to refetch `/v1/schedules`.\n\nA replay gap is explicit: `event: gap` has an `id` equal to `to_gseq` and\ndata `{from_gseq, to_gseq, run_id, reason}`; reason is `log_line_missing` or\n`log_unreadable`. It is audited before the cursor passes the missing row.\n`/v1/events/status.sse_gaps_total` (authenticated) counts these notifications since daemon startup.\nAfter three consecutive replay failures (or live-buffer overflow),\n`event: error` carries `{code: \"replay_unavailable\", last_event_id}` and the\nstream closes. This error has no `id`; reconnect with the last received ID.\nRetry delays start at 250 ms and double up to 5 s. Live buffering is limited\nto 1000 events and 4 MiB per subscriber; replay chunks hold at most 2 MiB of serialized events (a single larger event closes the stream with `replay_unavailable`), and at most `max_sse_subscribers` streams (default 16) may be open: further requests get `503`. The desktop currently ignores unknown\nevent names; card 144 can surface gap/error notifications without changing\nthe ordering or cursor contract.\n\nIt likewise carries `mcp_server_changed` events (`mcp::McpServerChanged`:\n`{\"type\":\"mcp_server_changed\",\"name\",\"status\"}`) when an MCP server is\nadded, updated, removed or changes status (connecting / connected / error /\nquarantined ...); same rules: a hint to refetch `/v1/mcp/servers`.\n\nAnd `control_state_changed` events (`dto::ControlStateChanged`:\n`{\"type\":\"control_state_changed\",\"state\",\"owner\",\"target_id\",\"reason\"}`) when\na screen takeover is acquired, becomes active, is interrupted, released or\nrecovered (no ids, epochs, pixels or text); not replayed.\n\nAnd `view_targets_changed` events (`{\"type\":\"view_targets_changed\"}`) when a screen\ntarget appears, goes idle, attaches to a page or closes, or a missing-screen\nreason changes: a pixel-free hint to refetch `/v1/view/targets` and\n`/v1/view/availability`; not replayed.",
         "operationId": "events_doc",
         "parameters": [
           {
@@ -1969,6 +2794,397 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SseStatus"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-grants": {
+      "get": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "List the standing grants.",
+        "operationId": "list_fill_grants",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FillGrantDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Create a standing grant: \"this secret on this exact origin without asking\".",
+        "operationId": "create_fill_grant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFillGrant"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillGrantDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "the origin is not on the secret's allowed list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-grants/{id}": {
+      "delete": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Revoke a standing grant.",
+        "operationId": "revoke_fill_grant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Grant id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-secrets": {
+      "get": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "List the fill secrets: names and allow-lists, never values.",
+        "operationId": "list_fill_secrets",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FillSecretDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "no fill secrets in this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Create a fill secret with its allow-lists. The value is write-only.",
+        "operationId": "create_fill_secret",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFillSecret"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillSecretDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad name, value or allow-list entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the name exists; use PUT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-secrets/{name}": {
+      "put": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Change a fill secret's value and/or allow-lists.",
+        "operationId": "update_fill_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name, may contain `/`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFillSecret"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillSecretDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Delete a fill secret, its value and its standing grants.",
+        "operationId": "delete_fill_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name, may contain `/`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -2576,6 +3792,266 @@
         ]
       }
     },
+    "/v1/mcp/servers/{name}/auth/callback": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Finish a pending sign-in with a pasted redirect URL (host without a browser).",
+        "operationId": "complete_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpAuthCallback"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/cancel": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Close the one-shot listener and cancel a pending token exchange.",
+        "operationId": "cancel_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/logout": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Cancel sign-in and forget stored tokens before disconnecting.",
+        "operationId": "logout_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/start": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Start a sign-in from an authenticated local user's explicit action.",
+        "operationId": "start_mcp_auth",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthStart"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp/servers/{name}/auth/status": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Read authentication state, never credentials.",
+        "operationId": "mcp_auth_status",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpAuthState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp/servers/{name}/reconnect": {
       "post": {
         "tags": [
@@ -2770,6 +4246,17 @@
         ],
         "summary": "Configured providers, catalog entries and the models each configured\nprovider offers (fetched live, with a short timeout; failures are reported\nper provider and never fail the route).",
         "operationId": "list_providers",
+        "parameters": [
+          {
+            "name": "chat_only",
+            "in": "query",
+            "description": "Default true: omit deprecated and non-chat models. False exposes all\nkinds for advanced clients; it does not change bot execution.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -2777,6 +4264,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProvidersDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/providers/cli": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "path",
+            "description": "When set to 1, bypasses the in-process 60-second cache.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CliEngineDto"
+                  }
                 }
               }
             }
@@ -2835,12 +4364,91 @@
         ]
       }
     },
+    "/v1/providers/cli/install": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Creates an expiring approval; never starts a process.",
+        "operationId": "preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliInstallApproval"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/providers/cli/install/{approval_id}/decision": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Approve once (or deny). SSE `output` is untrusted text; `done` includes a\nstable error code and follows re-detection. Disconnect cancels the owned tree.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliInstallDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE output and done events; denied approvals emit done only",
+            "content": {
+              "text/event-stream": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/detected": {
       "get": {
         "tags": [
           "providers"
         ],
-        "summary": "Detect installed, signed-in coding CLIs.",
+        "summary": "Detect installed, signed-in coding CLIs. Local owner only: the rows carry\nthe signed-in account label (an email or organisation) and install state.",
         "operationId": "detect_providers",
         "parameters": [
           {
@@ -2866,6 +4474,16 @@
                   "items": {
                     "$ref": "#/components/schemas/DetectedProviderDto"
                   }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "caller is not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -3981,6 +5599,35 @@
         ]
       }
     },
+    "/v1/view/availability": {
+      "get": {
+        "tags": [
+          "view"
+        ],
+        "summary": "Which kinds of screen this host cannot offer and why (empty when none is\nmissing), so the panel can say \"No screen: <reason>\". Same access rule as\n`GET /v1/view/targets`; no pixels, no paths.",
+        "operationId": "availability",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TargetUnavailable"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/view/privileges/{peer_key}": {
       "put": {
         "tags": [
@@ -4759,6 +6406,24 @@
           }
         }
       },
+      "BotConflictBody": {
+        "type": "object",
+        "description": "`409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now.",
+        "required": [
+          "error",
+          "current"
+        ],
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/BotDto",
+            "description": "The current bot, with its current version."
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail",
+            "description": "`version_conflict`."
+          }
+        }
+      },
       "BotDto": {
         "type": "object",
         "description": "Public bot representation.",
@@ -4766,7 +6431,8 @@
           "id",
           "name",
           "config",
-          "created_at_ms"
+          "created_at_ms",
+          "version"
         ],
         "properties": {
           "config": {
@@ -4807,6 +6473,11 @@
                 "description": "Parsed `[runtime]` computer target settings (`auto` when omitted in profile)."
               }
             ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bot revision: starts at 1; profile writes and skill assignment changes\nadvance it in the write transaction. Send the loaded value back as\n`expected_version` to both PUT and PATCH."
           }
         }
       },
@@ -4816,6 +6487,14 @@
         "properties": {
           "config": {
             "description": "Profile as a JSON object."
+          },
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Required for PUT: version of the profile being replaced. Missing is 428;\nstale is 409 with the current bot. Not used when creating a bot."
           },
           "name": {
             "type": [
@@ -4841,6 +6520,63 @@
                 "description": "Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`\nwhen both are supplied. Omission on update preserves the stored target."
               }
             ]
+          }
+        }
+      },
+      "BotPatchInput": {
+        "type": "object",
+        "description": "`PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.\nEvery field not named - including unknown keys - stays exactly as stored.",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version the client loaded (`BotDto::version`).  A different current\nversion refuses the whole patch with `409` and returns the current bot."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New display name."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BotPatchOp"
+            },
+            "description": "Profile changes, applied in order (at most 128). Values/result use a\nconservative 1 MiB escaped JSON budget; excessive input is 400."
+          }
+        }
+      },
+      "BotPatchKind": {
+        "type": "string",
+        "description": "How one [`BotPatchOp`] changes the profile.",
+        "enum": [
+          "set",
+          "unset"
+        ]
+      },
+      "BotPatchOp": {
+        "type": "object",
+        "description": "One field-level change of a bot profile.",
+        "required": [
+          "op",
+          "path"
+        ],
+        "properties": {
+          "op": {
+            "$ref": "#/components/schemas/BotPatchKind",
+            "description": "`set` or `unset`."
+          },
+          "path": {
+            "type": "string",
+            "description": "RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,\n`/permissions/categories/fs/level`, `/runtime/computer`.  Object keys\nonly: a path through an array or a scalar is refused. At most 32 segments\nand 4096 bytes; resulting profile depth at most 32."
+          },
+          "value": {
+            "description": "The new value (`set` only)."
           }
         }
       },
@@ -5007,9 +6743,14 @@
           "name",
           "description",
           "version",
+          "body_sha256",
           "scope"
         ],
         "properties": {
+          "body_sha256": {
+            "type": "string",
+            "description": "Hex SHA-256 of the Markdown body (the part after the frontmatter, trimmed): lets a\nclient tell whether the catalog lists the file it just wrote or an older one."
+          },
           "description": {
             "type": "string",
             "description": "One-line description from frontmatter."
@@ -5262,6 +7003,158 @@
           "unknown"
         ]
       },
+      "CliEngineDto": {
+        "type": "object",
+        "required": [
+          "detected",
+          "executable_names",
+          "version_args",
+          "auth_args",
+          "outdated",
+          "login",
+          "docs_url"
+        ],
+        "properties": {
+          "auth_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty when no safe, locally verified CLI auth-status command is known."
+          },
+          "detected": {
+            "$ref": "#/components/schemas/DetectedProviderDto"
+          },
+          "docs_url": {
+            "type": "string"
+          },
+          "executable_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "install": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CliInstallDto"
+              }
+            ]
+          },
+          "limitation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "login": {
+            "type": "string"
+          },
+          "minimum_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outdated": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CliInstallApproval": {
+        "type": "object",
+        "required": [
+          "approval_id",
+          "engine_id",
+          "command",
+          "expires_at_ms"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "command": {
+            "type": "string"
+          },
+          "engine_id": {
+            "type": "string"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CliInstallDecision": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CliInstallDto": {
+        "type": "object",
+        "required": [
+          "program",
+          "args",
+          "command",
+          "verified",
+          "executable"
+        ],
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string"
+          },
+          "executable": {
+            "type": "boolean"
+          },
+          "program": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CliInstallInput": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "Codec": {
         "type": "string",
         "enum": [
@@ -5313,12 +7206,19 @@
             "type": "boolean",
             "description": "Is the configured default."
           },
+          "model_details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelMetadataDto"
+            },
+            "description": "Presentation metadata: recommended models first by rank, then the rest\nby display name. Split on `recommended` for an \"All models\" expander.\nNo model is added just because it appears in the curated table."
+          },
           "models": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Model ids the provider reports (empty without a listing)."
+            "description": "Model ids in the same order as `model_details`. By default only current\nchat candidates are shown; `?chat_only=false` includes everything."
           },
           "models_error": {
             "type": [
@@ -5528,6 +7428,56 @@
           }
         }
       },
+      "CreateFillGrant": {
+        "type": "object",
+        "description": "Body of `POST /v1/fill-grants`.",
+        "required": [
+          "secret",
+          "origin"
+        ],
+        "properties": {
+          "origin": {
+            "type": "string",
+            "description": "The exact origin; it must already be on the secret's allowed list."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The secret."
+          }
+        }
+      },
+      "CreateFillSecret": {
+        "type": "object",
+        "description": "Body of `POST /v1/fill-secrets`.",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name, letters/digits/`.`/`_`/`-` with `/` separators, at most 64 bytes."
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact origins like `https://github.com` (scheme, host, port; no wildcard)."
+          },
+          "programs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Verified desktop program identities."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value. Write-only: no route returns it."
+          }
+        }
+      },
       "CreateSession": {
         "type": "object",
         "required": [
@@ -5539,6 +7489,14 @@
           "client_id"
         ],
         "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The bot whose panel asks. When set, the target must be this bot's own\nbrowser or a shared desktop; another bot's browser is refused (403), so\na bot-scoped view can never resolve to someone else's screen."
+          },
           "client_id": {
             "type": "string",
             "format": "uuid"
@@ -6150,6 +8108,90 @@
           }
         }
       },
+      "EmbeddingApprovalChallenge": {
+        "type": "object",
+        "required": [
+          "id",
+          "target",
+          "profile_fingerprint",
+          "provider_id",
+          "model",
+          "endpoint_identity",
+          "expires_at_ms",
+          "policy_decision"
+        ],
+        "properties": {
+          "endpoint_identity": {
+            "type": "string"
+          },
+          "expires_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "model": {
+            "type": "string"
+          },
+          "policy_decision": {
+            "type": "string"
+          },
+          "profile_fingerprint": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/EmbeddingGrantTarget"
+          }
+        }
+      },
+      "EmbeddingGrantTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "queries"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "source_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "documents"
+                ]
+              },
+              "source_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ]
+      },
       "EnableCliProviderInput": {
         "type": "object",
         "description": "Request body for `POST /v1/providers/cli/enable`.",
@@ -6295,6 +8337,77 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "FillGrantDto": {
+        "type": "object",
+        "description": "A standing grant: this secret on this exact origin without asking.",
+        "required": [
+          "id",
+          "secret",
+          "origin",
+          "created_at_ms"
+        ],
+        "properties": {
+          "created_at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time, milliseconds since the epoch.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Id used to revoke it."
+          },
+          "origin": {
+            "type": "string",
+            "description": "The exact origin."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The secret."
+          }
+        }
+      },
+      "FillSecretDto": {
+        "type": "object",
+        "description": "One fill secret as the owner sees it. Never the value.",
+        "required": [
+          "name",
+          "origins",
+          "programs",
+          "has_value",
+          "updated_at_ms"
+        ],
+        "properties": {
+          "has_value": {
+            "type": "boolean",
+            "description": "Whether a value is stored."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name the assistant writes in `secret` (for example `login/github`)."
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact web origins the secret may be typed on."
+          },
+          "programs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Verified desktop program identities the secret may be typed into."
+          },
+          "updated_at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last change, milliseconds since the epoch.",
+            "minimum": 0
           }
         }
       },
@@ -7208,6 +9321,571 @@
           "up"
         ]
       },
+      "KnowledgeEmailCapture": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "tool_call_id",
+          "account",
+          "created_ms"
+        ],
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tool_call_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "KnowledgeEmbed": {
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reset_retry": {
+            "type": "boolean",
+            "description": "True only for an explicit user retry. Continuation batches keep retries,\nprovider cooldowns and the shared quota ledger intact."
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeEmbeddingDto": {
+        "type": "object",
+        "required": [
+          "provider_id",
+          "model",
+          "dimensions",
+          "request_dimensions",
+          "endpoint",
+          "profile_fingerprint",
+          "query_remote",
+          "requests_per_minute",
+          "requests_per_day"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "local_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "profile_fingerprint": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "query_remote": {
+            "type": "boolean"
+          },
+          "request_dimensions": {
+            "type": "boolean"
+          },
+          "requests_per_day": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "requests_per_minute": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "KnowledgeEmbeddingInput": {
+        "type": "object",
+        "required": [
+          "provider_id",
+          "model",
+          "dimensions",
+          "requests_per_minute",
+          "requests_per_day"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "local_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Select an already installed host profile; cannot choose native files."
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "request_dimensions": {
+            "type": "boolean"
+          },
+          "requests_per_day": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "requests_per_minute": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeEmbeddingProgress": {
+        "type": "object",
+        "description": "Progress of one bounded embedding batch. The queue resumes from hashes and\nsource revisions already committed; no provider response body is exposed.",
+        "required": [
+          "status",
+          "embedded_chunks",
+          "cache_hits",
+          "remaining_chunks",
+          "skipped_chunks"
+        ],
+        "properties": {
+          "cache_hits": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "embedded_chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failure_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_attempt_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "remaining_chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped_chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/KnowledgeEmbeddingStatus"
+          }
+        }
+      },
+      "KnowledgeEmbeddingStatus": {
+        "type": "string",
+        "enum": [
+          "progress",
+          "complete",
+          "awaiting_consent",
+          "deferred",
+          "cancelled",
+          "failed"
+        ]
+      },
+      "KnowledgeFileFailure": {
+        "type": "object",
+        "description": "A skipped file never prevents the page cursor from advancing.",
+        "required": [
+          "locator",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "locator": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeIndexStatus": {
+        "type": "object",
+        "description": "A bounded indexing page. Replay starts from hashes already committed.",
+        "required": [
+          "processed",
+          "unchanged",
+          "removed",
+          "failures"
+        ],
+        "properties": {
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeFileFailure"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "removed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unchanged": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "KnowledgeLocalProfileDto": {
+        "type": "object",
+        "description": "A host-installed local model. Native file locations are never API inputs.",
+        "required": [
+          "id",
+          "label",
+          "model",
+          "dimensions"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeMutation": {
+        "type": "object",
+        "required": [
+          "source",
+          "indexing"
+        ],
+        "properties": {
+          "indexing": {
+            "$ref": "#/components/schemas/KnowledgeIndexStatus"
+          },
+          "source": {
+            "$ref": "#/components/schemas/KnowledgeSourceDto"
+          }
+        }
+      },
+      "KnowledgeReindex": {
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last relative file from the previous page; omitted starts a new scan."
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeRevision": {
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSettingsDto": {
+        "type": "object",
+        "required": [
+          "auto_retrieve",
+          "auto_retrieval_available",
+          "local_embeddings_available",
+          "local_profiles"
+        ],
+        "properties": {
+          "auto_retrieval_available": {
+            "type": "boolean"
+          },
+          "auto_retrieve": {
+            "type": "boolean"
+          },
+          "embedding": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/KnowledgeEmbeddingDto"
+              }
+            ]
+          },
+          "local_embeddings_available": {
+            "type": "boolean"
+          },
+          "local_profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeLocalProfileDto"
+            }
+          }
+        }
+      },
+      "KnowledgeSettingsInput": {
+        "type": "object",
+        "required": [
+          "auto_retrieve"
+        ],
+        "properties": {
+          "auto_retrieve": {
+            "type": "boolean"
+          },
+          "embedding": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/KnowledgeEmbeddingInput",
+                "description": "Null explicitly disables embeddings; lexical retrieval remains available."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSourceAction": {
+        "type": "string",
+        "enum": [
+          "enable",
+          "disable",
+          "revoke_remote",
+          "rename",
+          "rebind"
+        ]
+      },
+      "KnowledgeSourceChange": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/KnowledgeSourceAction"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An owner-selected replacement path, required to rebind imported files."
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSourceDto": {
+        "type": "object",
+        "description": "Source metadata; source bodies and credentials are never listed.",
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "locator",
+          "enabled",
+          "requires_path_selection",
+          "revision",
+          "documents",
+          "chunks",
+          "updated_ms"
+        ],
+        "properties": {
+          "chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "documents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KnowledgeSourceKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "locator": {
+            "type": "string"
+          },
+          "remote_profile_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requires_path_selection": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "KnowledgeSourceInput": {
+        "type": "object",
+        "description": "A user-selected source. Body fields cannot choose an owner, trust or consent.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "account": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Must equal the explicit account in the recorded `email_read` arguments."
+          },
+          "chat_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Saved text/HTML or a note; never interpreted as a source URL to fetch.\nAt most 4 MiB decoded UTF-8 input and 1 MiB extracted/indexed text.\nThe JSON envelope permits up to 24 MiB + 64 KiB for escaped input."
+          },
+          "html": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KnowledgeSourceKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute path on the daemon host, for a file or folder only."
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Email sources use a successful recorded `email_read` in this bot's run."
+          },
+          "tool_call_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeSourceKind": {
+        "type": "string",
+        "description": "Source kinds accepted by user management; every kind remains untrusted data.",
+        "enum": [
+          "file",
+          "folder",
+          "saved_web",
+          "conversation",
+          "email",
+          "note",
+          "shared_brain"
+        ]
+      },
       "LatestCursor": {
         "type": "object",
         "description": "`GET /v1/events/latest`.",
@@ -7222,6 +9900,48 @@
             "minimum": 0
           }
         }
+      },
+      "McpAuthCallback": {
+        "type": "object",
+        "description": "Body of `POST /v1/mcp/servers/{name}/auth/callback`.",
+        "required": [
+          "redirect_url"
+        ],
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "description": "The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "McpAuthStart": {
+        "type": "object",
+        "description": "Browser destination for a user-started, five-minute sign-in.",
+        "required": [
+          "authorization_url",
+          "expires_in"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "McpAuthState": {
+        "type": "string",
+        "description": "Authentication state, independent of transport errors.",
+        "enum": [
+          "signed_out",
+          "signing_in",
+          "signed_in",
+          "auth_required"
+        ]
       },
       "McpCatalogEntryDto": {
         "type": "object",
@@ -7303,6 +10023,17 @@
               "type": "string"
             }
           },
+          "folder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpFolderDto",
+                "description": "A folder to collect first (filesystem servers)."
+              }
+            ]
+          },
           "required_secrets": {
             "type": "array",
             "items": {
@@ -7342,6 +10073,74 @@
             "description": "Endpoint (http)."
           }
         }
+      },
+      "McpErrorKind": {
+        "type": "string",
+        "description": "Class of the last connect error of an MCP server, so a UI can show a\nlocalized \"what to do\" next to the raw `error` text.",
+        "enum": [
+          "runtime_missing",
+          "spawn",
+          "closed",
+          "timeout",
+          "config",
+          "needs_folder",
+          "other"
+        ]
+      },
+      "McpFolderDto": {
+        "type": "object",
+        "description": "A folder the user must choose when adding a catalog entry; the app appends\nit as the last argument.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Label of the folder field."
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A safe default offered to the user (their Documents folder), if there is one."
+          }
+        }
+      },
+      "McpOAuthConfig": {
+        "type": "object",
+        "description": "OAuth configuration contains no credential values.",
+        "properties": {
+          "allow_loopback_http": {
+            "type": "boolean"
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_metadata_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_secret_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The authorization server a pre-registered client is bound to;\nrequired with `client_id` / `client_secret_ref`."
+          }
+        },
+        "additionalProperties": false
       },
       "McpRequiredSecretDto": {
         "type": "object",
@@ -7463,6 +10262,17 @@
             ],
             "description": "Most recent error, if any."
           },
+          "error_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpErrorKind",
+                "description": "Class of `error`, for a localized hint."
+              }
+            ]
+          },
           "headers": {
             "type": "object",
             "description": "Plain request headers (http). Not secrets.",
@@ -7476,6 +10286,17 @@
           "name": {
             "type": "string",
             "description": "Server name (the `<server>` of `mcp:<server>/<tool>`)."
+          },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "Public OAuth identity and secret names only."
+              }
+            ]
           },
           "secret_env": {
             "type": "object",
@@ -7500,6 +10321,13 @@
           "status": {
             "$ref": "#/components/schemas/McpStatus",
             "description": "Connection state."
+          },
+          "stderr_tail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Last lines the server wrote to stderr (secret-redacted, bounded) while\nit is in an error state; empty otherwise."
           },
           "tool_allow": {
             "type": "array",
@@ -7619,6 +10447,17 @@
               "null"
             ],
             "description": "Server name; `id` is accepted as an alias.  Required on POST; on PUT the\npath wins (a different name in the body is rejected)."
+          },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "HTTP OAuth identity; client secrets are secret-store references."
+              }
+            ]
           },
           "secret_env": {
             "type": "object",
@@ -7776,6 +10615,17 @@
             ],
             "description": "Server name; `id` is accepted as an alias.  The path wins (a different\nname in the body is rejected)."
           },
+          "oauth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpOAuthConfig",
+                "description": "HTTP OAuth identity; null clears it."
+              }
+            ]
+          },
           "secret_env": {
             "type": [
               "object",
@@ -7853,6 +10703,7 @@
         "type": "string",
         "description": "Connection state of an MCP server.",
         "enum": [
+          "auth_required",
           "connected",
           "connecting",
           "disconnected",
@@ -8034,6 +10885,50 @@
           "steer",
           "queue"
         ]
+      },
+      "ModelMetadataDto": {
+        "type": "object",
+        "description": "Presentation only: never changes execution capabilities or configured ids.",
+        "required": [
+          "id",
+          "display_name",
+          "kind",
+          "recommended",
+          "deprecated"
+        ],
+        "properties": {
+          "deprecated": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,\n`video`, or `other`. Kind describes primary use, not input modalities."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short annotation such as `preview` or a live `OpenRouter` `free` id."
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "recommended_rank": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "Modifier": {
         "type": "string",
@@ -9776,6 +12671,45 @@
           "desktop"
         ]
       },
+      "TargetUnavailable": {
+        "type": "object",
+        "description": "A kind of screen this host cannot offer, and why. Lets the UI say\n\"No screen: <reason>\" instead of an empty panel.",
+        "required": [
+          "kind",
+          "host_id",
+          "reason",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/UnavailableCode",
+            "description": "Fixed reason code; never free text."
+          },
+          "host_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/Reason"
+          }
+        }
+      },
+      "UnavailableCode": {
+        "type": "string",
+        "description": "Why a kind of screen is not offered, as a small FIXED set. Peers only ever\nsee these codes (the UI words them in its own language); raw backend\ndiagnostics (paths, user names, display names, environment values) stay in\nthe local daemon log and never reach this type.",
+        "enum": [
+          "desktop_off",
+          "unsupported_platform",
+          "wayland",
+          "no_display",
+          "screen_unavailable",
+          "start_failed",
+          "starting",
+          "timed_out"
+        ]
+      },
       "UnifiedDiffDto": {
         "type": "object",
         "description": "Unified text diff payload for a single changed text file.",
@@ -9809,6 +12743,39 @@
           "physical_px",
           "css_px"
         ]
+      },
+      "UpdateFillSecret": {
+        "type": "object",
+        "description": "Body of `PUT /v1/fill-secrets/{name}`. Every field is optional; a value,\nwhen given, replaces the stored one.",
+        "properties": {
+          "origins": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the allowed origins."
+          },
+          "programs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the allowed programs."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New value (write-only)."
+          }
+        }
       },
       "UsageSummary": {
         "type": "object",

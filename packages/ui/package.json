@@ -9,6 +9,8 @@
     ".": "./src/index.ts",
     "./bot-shape": "./src/botShape.ts",
     "./theme-model": "./src/themeModel.ts",
+    "./surface-model": "./src/surfaceModel.ts",
+    "./tone-model": "./src/toneModel.ts",
     "./tokens.css": "./tokens.css"
   },
   "scripts": {

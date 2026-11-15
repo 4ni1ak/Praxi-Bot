@@ -929,14 +929,162 @@ const CREDENTIAL_NAMES: &[&str] = &[
     "praxi-node.env",
     "secrets.enc",
     "identity.key",
+    // CLI configuration can install hooks/tools as well as carry credentials.
+    ".claude",
+    ".claude.json",
+    ".codex",
+    ".gemini",
+    ".cursor",
+    ".cursor-agent",
+    ".opencode",
+    // Project-level OpenCode config can declare plugins, commands and MCP
+    // servers that run code, so it is protected in every workspace on purpose.
+    // Likewise `.claude/` (hooks, commands) and `.cursor/` (rules, MCP).
+    "opencode.json",
+    "opencode.jsonc",
+    "oauth_creds.json",
 ];
+
+/// Config and data locations of the CLIs that are plain directory names
+/// (`opencode`, `cursor`, ...) and therefore only protected at their known
+/// place, as consecutive path components (lower case). A repository that merely
+/// lives in a folder called `opencode` or `cursor` stays usable.
+const CLI_CONFIG_SEQUENCES: &[&[&str]] = &[
+    &[".config", "opencode"],
+    &[".config", "claude"],
+    &[".config", "cursor"],
+    &[".config", "cursor-agent"],
+    &[".local", "share", "opencode"],
+    &[".local", "share", "cursor-agent"],
+    &["appdata", "roaming", "opencode"],
+    &["appdata", "roaming", "cursor"],
+    &["appdata", "local", "opencode"],
+    &["appdata", "local", "cursor"],
+    &["appdata", "local", "cursor-agent"],
+    &["library", "application support", "opencode"],
+    &["library", "application support", "cursor"],
+    &["library", "application support", "claude"],
+];
+
+fn env_abs_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+fn sequence_in(parts: &[String], seq: &[&str]) -> bool {
+    parts.windows(seq.len()).any(|w| {
+        w.iter()
+            .zip(seq)
+            .all(|(part, want)| canonical_name(part) == *want)
+    })
+}
+
+/// Directories that hold the CLI executables detection and the Claude runtime
+/// search outside the user's PATH (mirrors `cli-provider`'s `augment`). A file
+/// tool must never create, replace or move anything there: the next detection
+/// or run would execute it outside the permission engine.
+fn cli_executable_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for home in ["HOME", "USERPROFILE"]
+        .iter()
+        .filter_map(|k| env_abs_dir(k))
+    {
+        for rel in [
+            ".local/bin",
+            "bin",
+            ".volta/bin",
+            ".bun/bin",
+            ".npm-global",
+            ".nvm/versions/node",
+            ".local/share/cursor-agent",
+            "AppData/Roaming/npm",
+            "AppData/Local/cursor-agent",
+        ] {
+            out.push(home.join(rel));
+        }
+    }
+    if let Some(dir) = env_abs_dir("APPDATA") {
+        out.push(dir.join("npm"));
+    }
+    if let Some(dir) = env_abs_dir("LOCALAPPDATA") {
+        out.push(dir.join("cursor-agent"));
+    }
+    if let Some(dir) = env_abs_dir("NPM_CONFIG_PREFIX") {
+        out.push(dir);
+    }
+    out
+}
+
+/// Config locations relocated by an environment variable the CLIs honour.
+fn cli_relocated_config_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(dir) = env_abs_dir("XDG_CONFIG_HOME") {
+        out.extend(["opencode", "claude", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    if let Some(dir) = env_abs_dir("XDG_DATA_HOME") {
+        out.extend(["opencode", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    for key in ["APPDATA", "LOCALAPPDATA"] {
+        if let Some(dir) = env_abs_dir(key) {
+            out.extend(["opencode", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+        }
+    }
+    out
+}
+
+fn cli_location(parts: &[String]) -> bool {
+    // The directory set only depends on the process environment, which is fixed
+    // at startup; building it per call made directory walks quadratic.
+    static DIRS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    if CLI_CONFIG_SEQUENCES
+        .iter()
+        .any(|seq| sequence_in(parts, seq))
+    {
+        return true;
+    }
+    DIRS.get_or_init(|| {
+        cli_executable_dirs()
+            .into_iter()
+            .chain(cli_relocated_config_dirs())
+            .map(|dir| norm_parts(&widen_for_compare(&dir)))
+            .collect()
+    })
+    .iter()
+    .any(|dir| parts.starts_with(dir))
+}
 
 /// Hard link to a credential file under another name (`notes.txt` → `.env`)
 /// is not detected. These tools cannot create a hard link; a second directory
 /// entry for the same file is a known limitation of the name denylist.
 fn name_is_credential(name: &str) -> bool {
     let n = name.trim_end_matches([' ', '.']).to_ascii_lowercase();
-    n == ".env" || n.starts_with(".env.") || CREDENTIAL_NAMES.contains(&n.as_str())
+    n == ".env"
+        || n.starts_with(".env.")
+        // `.claude.json.backup*` and other siblings Claude Code writes.
+        || n.starts_with(".claude.json.")
+        || CREDENTIAL_NAMES.contains(&n.as_str())
+}
+
+fn cli_home_override(path: &[String]) -> bool {
+    [
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "GEMINI_CLI_HOME",
+        "OPENCODE_CONFIG_DIR",
+        "OPENCODE_CONFIG",
+    ]
+    .iter()
+    .any(|key| {
+        let Some(dir) = std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        else {
+            return false;
+        };
+        let dir = norm_parts(&widen_for_compare(&dir));
+        path.starts_with(&dir)
+    })
 }
 
 fn is_protected(path: &Path, data_dir: &Path) -> bool {
@@ -946,7 +1094,52 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
             false
         }
     });
-    named || under_data_sensitive(path, data_dir)
+    named || {
+        let parts = norm_parts(&widen_for_compare(path));
+        cli_home_override(&parts) || cli_location(&parts) || under_data_sensitive(path, data_dir)
+    }
+}
+
+/// Whether `root` must not be handed out as a whole folder (for example to a
+/// filesystem MCP server): it is, contains or lies inside the daemon's data
+/// directory, or it is or contains a credential-named entry on its own path.
+/// Same rules as the bot's file tools (`is_protected`), plus the containment
+/// test the file tools do not need for single files.
+#[must_use]
+pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
+    if is_protected(root, data_dir) {
+        return true;
+    }
+    let r = norm_parts(&widen_for_compare(root));
+    let d = norm_parts(&widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf()));
+    let n = r.len().min(d.len());
+    r[..n] == d[..n]
+}
+
+/// Resolve an existing local folder using the file tools' reparse-safe walk.
+/// Network/device syntax and drive mappings are classified before metadata;
+/// ambiguous parent traversal is refused rather than normalized across links.
+///
+/// # Errors
+/// The folder is relative, missing, remote, or cannot be safely resolved.
+pub fn resolve_local_folder(path: &Path) -> Result<PathBuf, ToolError> {
+    reject_syntax(&path.to_string_lossy())?;
+    if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
+        return Err(denied("choose an absolute folder without parent traversal"));
+    }
+    let lexical = lexical_absolute(&path.to_string_lossy())?;
+    let ctx = ResolveCtx {
+        follow: Follow::Content,
+        roots: &[],
+        drives: &DriveCache::new(),
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = final_identity(&resolve_local(&lexical, &ctx)?)?;
+    if !resolved.is_dir() {
+        return Err(denied("choose an existing folder"));
+    }
+    Ok(resolved)
 }
 
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
@@ -1024,14 +1217,26 @@ const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
 ///   redirect a stored password) and `email-secret-cleanup.json` (pending
 ///   secret deletions after an account change).
 /// - `schedule.toml` (limits for bot-created schedules).
+/// - `fill-secrets.json` (the allowed origins / programs and standing grants of
+///   the owner's fill secrets: editing it would widen where a secret is typed).
+/// - `knowledge-host.json` (pins the native embedding library path and SHA),
+///   `knowledge-authority.db` (owner egress grants) and `knowledge-runtime.db`
+///   (embedding quota/cooldown ledger), with the same sidecars.
 /// - the atomic-write temp files (`.tmp*`) of any of them.
 ///
 /// Deliberately NOT listed: `skills.lock.json` / `skills-usage.json` (counters
 /// and a lockfile for bot-writable skills; no authority) and logs.
 fn daemon_state_name(base: &str) -> bool {
-    const DATABASES: [&str; 3] = ["bot.db", "schedules.db", "memory.db"];
-    const FILES: [&str; 12] = [
+    const DATABASES: [&str; 5] = [
+        "bot.db",
+        "schedules.db",
+        "memory.db",
+        "knowledge-authority.db",
+        "knowledge-runtime.db",
+    ];
+    const FILES: [&str; 15] = [
         "control-latch.json",
+        "view-privileges.json",
         "policy.json",
         "host.toml",
         "config.toml",
@@ -1043,6 +1248,8 @@ fn daemon_state_name(base: &str) -> bool {
         "email.toml",
         "email-secret-cleanup.json",
         "schedule.toml",
+        "fill-secrets.json",
+        "knowledge-host.json",
     ];
     DATABASES.iter().any(|s| {
         base == *s
@@ -3045,6 +3252,212 @@ mod tests {
     }
 
     #[test]
+    fn cli_configuration_and_credentials_are_protected_even_in_broad_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            ".claude/settings.json",
+            ".claude/.credentials.json",
+            ".claude.json",
+            ".codex/auth.json",
+            ".gemini/oauth_creds.json",
+            ".cursor/mcp.json",
+            ".cursor-agent/auth.json",
+            "AppData/Roaming/Cursor/User/settings.json",
+            ".claude.json.backup.1700000000",
+            ".config/claude/settings.json",
+            ".config/opencode/opencode.json",
+            ".opencode/plugins/local.ts",
+            "project/opencode.json",
+            "project/opencode.jsonc",
+            ".local/share/opencode/auth.json",
+            "AppData/Local/opencode/auth.json",
+            ".CODEX. /auth.json",
+        ] {
+            assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
+        }
+        assert!(!is_protected(&dir.path().join("report.txt"), dir.path()));
+    }
+
+    #[test]
+    fn repositories_named_like_a_cli_are_not_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            "code/opencode/src/main.rs",
+            "code/opencode/README.md",
+            "src/cursor/mod.rs",
+            "work/cursor-agent/notes.txt",
+            "opencode/package.json",
+            "cursor",
+            "projects/claude/readme.md",
+            "a/.config/other/opencode/x",
+        ] {
+            assert!(
+                !is_protected(&dir.path().join(path), dir.path()),
+                "{path} must stay usable"
+            );
+        }
+    }
+
+    /// Run `name` again in a child process with `envs` set, so the test can
+    /// change HOME and friends without touching sibling tests.
+    fn rerun_with_env(name: &str, fixture: &str, root: &Path, envs: &[(&str, PathBuf)]) {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args(["--exact", name]);
+        child.env(fixture, root);
+        for (key, value) in envs {
+            child.env(key, value);
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn cli_executable_directories_are_protected() {
+        const FIXTURE: &str = "PRAXI_C250_BIN_DIR_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for path in [
+                ".local/bin/claude",
+                "bin/claude",
+                ".volta/bin/claude",
+                ".bun/bin/opencode",
+                ".npm-global/bin/claude",
+                "AppData/Roaming/npm/claude.cmd",
+                "AppData/Roaming/npm/claude.exe",
+                "AppData/Local/cursor-agent/cursor-agent.cmd",
+                ".nvm/versions/node/v22.1.0/bin/claude",
+                "prefix/bin/claude",
+                "xdg-config/opencode/opencode.json",
+                "xdg-data/opencode/auth.json",
+            ] {
+                assert!(is_protected(&root.join(path), &root), "{path}");
+            }
+            assert!(!is_protected(&root.join("docs/claude.md"), &root));
+            assert!(!is_protected(&root.join(".local/other/claude"), &root));
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::cli_executable_directories_are_protected",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+                ("APPDATA", root.path().join("AppData/Roaming")),
+                ("LOCALAPPDATA", root.path().join("AppData/Local")),
+                ("NPM_CONFIG_PREFIX", root.path().join("prefix")),
+                ("XDG_CONFIG_HOME", root.path().join("xdg-config")),
+                ("XDG_DATA_HOME", root.path().join("xdg-data")),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn file_tools_refuse_to_plant_cli_executables() {
+        const FIXTURE: &str = "PRAXI_C250_PLANT_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            let (_d, _w, t) = setup();
+            let c = ctx();
+            for rel in [".local/bin/claude", "AppData/Roaming/npm/claude.cmd"] {
+                let target = root.join(rel);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                let err = get(&t, "fs_write")
+                    .call(&c, json!({"path": &target, "content": "evil"}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                let src = root.join("planted.txt");
+                fs::write(&src, "evil").unwrap();
+                let err = get(&t, "fs_move")
+                    .call(&c, json!({"from": &src, "to": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                fs::write(&target, "real").unwrap();
+                let err = get(&t, "fs_delete")
+                    .call(&c, json!({"path": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert_eq!(fs::read_to_string(&target).unwrap(), "real");
+            }
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::file_tools_refuse_to_plant_cli_executables",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+            ],
+        );
+    }
+
+    #[test]
+    fn cli_custom_config_paths_are_protected() {
+        const FIXTURE: &str = "PRAXI_C250_CONFIG_PATH_FIXTURE";
+        const OVERRIDES: &[&str] = &[
+            "CODEX_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "GEMINI_CLI_HOME",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG",
+        ];
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for key in OVERRIDES {
+                let private = root.join(key);
+                assert!(is_protected(&private, &root), "{key}");
+                assert!(is_protected(&private.join("settings.json"), &root), "{key}");
+                assert!(
+                    !is_protected(&root.join(format!("{key}-other")), &root),
+                    "{key}"
+                );
+            }
+            return;
+        }
+        // Isolate overrides in a child harness; parallel tests never inherit
+        // mutations of this process's environment or real user config homes.
+        let root = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args([
+            "--exact",
+            "files::tests::cli_custom_config_paths_are_protected",
+        ]);
+        child.env(FIXTURE, root.path());
+        for key in OVERRIDES {
+            child.env(key, root.path().join(key));
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn restore_keeps_protected_descendants_and_exact_credential_grants() {
         let data = tempfile::tempdir().unwrap();
         let work = tempfile::tempdir().unwrap();
@@ -3938,6 +4351,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mcp_folder_resolver_classifies_links_before_following() {
+        let base = tempfile::tempdir().unwrap();
+        let link = base.path().join("remote-link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("//192.0.2.1/share/dir", &link).unwrap();
+        #[cfg(unix)]
+        assert!(resolve_local_folder(&link).is_err());
+        #[cfg(windows)]
+        {
+            let target = base.path().ancestors().last().unwrap();
+            link_dir(target, &link).unwrap();
+            assert_eq!(
+                resolve_local_folder(&link).unwrap(),
+                resolve_local_folder(target).unwrap()
+            );
+        }
+        assert!(resolve_local_folder(Path::new(r"\\192.0.2.1\share\dir")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mcp_folder_resolver_expands_case_and_short_credential_data_install_aliases() {
+        let base = tempfile::tempdir().unwrap();
+        let data = base.path().join("daemon-data-directory");
+        let install = base.path().join("application-install-directory");
+        for name in [
+            ".ssh",
+            ".docker",
+            "daemon-data-directory",
+            "application-install-directory",
+        ] {
+            let path = base.path().join(name);
+            fs::create_dir(&path).unwrap();
+        }
+        for path in [
+            &data,
+            &install,
+            &base.path().join(".ssh"),
+            &base.path().join(".docker"),
+        ] {
+            let short = win_fs::short_path(path).unwrap();
+            let canonical = resolve_local_folder(&short).unwrap();
+            assert_eq!(
+                norm_parts(&canonical),
+                norm_parts(&resolve_local_folder(path).unwrap())
+            );
+            if path == &data || path == &install {
+                assert!(is_protected_root(
+                    &canonical,
+                    &resolve_local_folder(path).unwrap()
+                ));
+            } else {
+                assert_eq!(canonical.file_name(), path.file_name());
+            }
+            let upper = PathBuf::from(path.display().to_string().to_ascii_uppercase());
+            assert_eq!(
+                norm_parts(&resolve_local_folder(&upper).unwrap()),
+                norm_parts(&canonical)
+            );
+        }
+    }
+
     /// Directory symlink, or a junction on Windows (no extra privilege).
     fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
         #[cfg(unix)]
@@ -4048,9 +4524,22 @@ mod tests {
             "email.toml.tmp",
             "email.toml.bak",
             "email-secret-cleanup.json",
+            "fill-secrets.json",
+            "fill-secrets.json.tmp",
             "email-secret-cleanup.json.tmp",
             "schedule.toml",
             "schedule.toml.bak",
+            "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
+            "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
         ] {
             let file = d.path().join(name);
             fs::write(&file, secret).unwrap();
@@ -4082,6 +4571,104 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn knowledge_state_files_resist_every_file_tool_and_cannot_be_checkpointed() {
+        let (d, w, t) = setup();
+        let c = ctx();
+        let names = [
+            "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
+            "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
+        ];
+        assert_eq!(names.len(), 11);
+        for name in names {
+            let file = d.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            let own = w.path().join("own.txt");
+            fs::write(&own, "mine").unwrap();
+            for (tool, input) in [
+                ("fs_read", json!({"path": &file})),
+                ("fs_write", json!({"path": &file, "content": "evil"})),
+                (
+                    "fs_edit",
+                    json!({"path": &file, "old": "pinned", "new": "evil"}),
+                ),
+                ("fs_move", json!({"from": &file, "to": w.path().join("x")})),
+                (
+                    "fs_move",
+                    json!({"from": &own, "to": &file, "overwrite": true}),
+                ),
+                ("fs_delete", json!({"path": &file})),
+            ] {
+                let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{tool} {name}: {err}"
+                );
+                assert!(!err.to_string().contains("pinned"), "{tool} {name}");
+                assert_eq!(
+                    fs::read_to_string(&file).unwrap(),
+                    "pinned",
+                    "{tool} {name}"
+                );
+                assert_eq!(fs::read_to_string(&own).unwrap(), "mine", "{tool} {name}");
+            }
+            // `CheckpointStore::create` vets every named path with the same
+            // protection and refuses an ungranted protected file outright, so
+            // no checkpoint exists that could later write the file back.
+            let store = crate::checkpoint::CheckpointStore::new(d.path());
+            let err = store
+                .create("run-cp", "fs_write", &[file.as_path()])
+                .expect_err(name);
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{name}");
+            assert_eq!(err.to_string(), GRANT_MSG, "{name}");
+            assert!(
+                store.list("run-cp").unwrap().is_empty(),
+                "{name}: a refused create must leave no checkpoint"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn state_files_stay_protected_when_reached_through_a_symlinked_data_dir() {
+        let real = tempfile::tempdir().unwrap();
+        let alias_parent = tempfile::tempdir().unwrap();
+        let alias = alias_parent.path().join("data-link");
+        std::os::unix::fs::symlink(real.path(), &alias).unwrap();
+        // The daemon hands the file tools the canonical data dir (what
+        // `Storage::open` resolves); the bot may name it through the alias.
+        let t = tools(&fs::canonicalize(&alias).unwrap());
+        let c = ctx();
+        for name in ["knowledge-host.json", "bot.db"] {
+            let file = real.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            for path in [alias.join(name), file.clone()] {
+                for (tool, input) in [
+                    ("fs_read", json!({"path": &path})),
+                    ("fs_write", json!({"path": &path, "content": "evil"})),
+                    ("fs_delete", json!({"path": &path})),
+                ] {
+                    let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                    assert!(
+                        matches!(err, ToolError::PermissionDenied(_)),
+                        "{tool} {}: {err}",
+                        path.display()
+                    );
+                }
+            }
+            assert_eq!(fs::read_to_string(&file).unwrap(), "pinned");
+        }
     }
 
     #[tokio::test]
@@ -4177,6 +4764,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_bot_cannot_grant_screen_access_by_editing_view_privileges() {
+        // `view-privileges.json` is reloaded at daemon start as live screen
+        // view/input grants for paired devices (card 252).
+        let (d, _w, t) = setup();
+        let c = ctx();
+        let file = d.path().join("view-privileges.json");
+        let original = "{}";
+        std::fs::write(&file, original).unwrap();
+        let forged = r#"{"peer:abc":{"view":true,"input":true}}"#;
+        for (tool, input) in [
+            ("fs_write", json!({"path": &file, "content": forged})),
+            (
+                "fs_edit",
+                json!({"path": &file, "old": "{}", "new": forged}),
+            ),
+            ("fs_delete", json!({"path": &file})),
+        ] {
+            let err = get(&t, tool).call(&c, input).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{tool}: {err}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    }
+
+    #[tokio::test]
     async fn a_not_yet_existing_protected_name_with_a_trailing_dot_cannot_be_created() {
         let (d, _w, t) = setup();
         let c = ctx();
@@ -4209,6 +4823,17 @@ mod tests {
             "praxi-node.env",
             "secrets.enc",
             "identity.key",
+            // CLI configuration can install hooks/tools as well as carry credentials.
+            ".claude",
+            ".claude.json",
+            ".codex",
+            ".gemini",
+            ".cursor",
+            ".opencode",
+            ".claude.json.backup",
+            "opencode.json",
+            "opencode.jsonc",
+            "oauth_creds.json",
         ] {
             let file = w.path().join(name);
             fs::write(&file, secret).unwrap();
