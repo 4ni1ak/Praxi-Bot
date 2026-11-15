@@ -1352,13 +1352,41 @@ fn schedule_dto(sc: &Schedule, has_webhook: bool) -> ScheduleDto {
         next_run_at_ms: sc.next_run_at,
         misfire_policy: sc.misfire_policy.as_str().to_owned(),
         has_webhook,
+        trigger: None,
+        precheck: sc
+            .precheck
+            .as_ref()
+            .map(|p| serde_json::to_value(p).unwrap_or(Value::Null)),
+        skipped_by_precheck: 0,
+        consecutive_errors: 0,
         origin: sc.origin.as_str().to_owned(),
     }
 }
 
 fn dto_of(s: &AppState, sc: &Schedule) -> Result<ScheduleDto, ApiError> {
-    let has = s.schedule_store()?.get_trigger(sc.id)?.is_some();
-    Ok(schedule_dto(sc, has))
+    let store = s.schedule_store()?;
+    let trigger = store.get_trigger(sc.id)?;
+    let has = matches!(trigger, Some(Trigger::Webhook { .. }));
+    let mut dto = schedule_dto(sc, has);
+    if matches!(
+        trigger,
+        Some(Trigger::FileWatch { .. } | Trigger::Email { .. })
+    ) {
+        dto.next_run_at_ms = None;
+    }
+    dto.trigger = trigger
+        .filter(|t| !matches!(t, Trigger::Webhook { .. }))
+        .map(|t| serde_json::to_value(t).unwrap_or(Value::Null));
+    let checks = store.check_state(sc)?;
+    dto.skipped_by_precheck = checks.skipped_by_precheck;
+    dto.consecutive_errors = checks.precheck_errors.max(checks.trigger_errors);
+    if let Some(value) = &mut dto.trigger {
+        redact_schedule_value(s, value);
+    }
+    if let Some(value) = &mut dto.precheck {
+        redact_schedule_value(s, value);
+    }
+    Ok(dto)
 }
 
 /// The schedule `id`, when its bot belongs to the local user.
@@ -1444,6 +1472,92 @@ fn apply_webhook(
     Ok(())
 }
 
+fn redact_schedule_value(s: &AppState, value: &mut Value) {
+    match value {
+        Value::String(text) => *text = s.0.agent.redact_host_text(text.clone()),
+        Value::Array(a) => {
+            for value in a {
+                redact_schedule_value(s, value);
+            }
+        }
+        Value::Object(o) => {
+            let previous = std::mem::take(o);
+            for (key, mut value) in previous {
+                redact_schedule_value(s, &mut value);
+                o.insert(s.0.agent.redact_host_text(key), value);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn schedule_extensions(
+    s: &AppState,
+    schedule: &mut Schedule,
+    input: &ScheduleInput,
+) -> Result<Option<Option<Trigger>>, ApiError> {
+    if input.trigger.is_some() && input.webhook_secret.is_some() {
+        return Err(bad_schedule("give trigger or webhook_secret, not both"));
+    }
+    for value in [&input.trigger, &input.precheck].into_iter().flatten() {
+        let mut shown = value.clone();
+        redact_schedule_value(s, &mut shown);
+        if shown != *value {
+            return Err(bad_schedule(
+                "schedule extension contains protected secret text",
+            ));
+        }
+    }
+    if input.trigger.is_some() || input.precheck.is_some() || schedule.precheck.is_some() {
+        for value in [
+            serde_json::to_value(&schedule.payload).unwrap_or(Value::Null),
+            Value::String(schedule.name.clone()),
+        ] {
+            let mut shown = value.clone();
+            redact_schedule_value(s, &mut shown);
+            if shown != value {
+                return Err(bad_schedule(
+                    "schedule definition contains protected secret text",
+                ));
+            }
+        }
+    }
+    if let Some(value) = &input.precheck {
+        schedule.precheck = if value.is_null() {
+            None
+        } else {
+            let check: scheduler::Precheck = serde_json::from_value(value.clone())
+                .map_err(|_| bad_schedule("invalid precheck"))?;
+            crate::schedule::validate_precheck(&s.0.agent, schedule.bot_id, &check)
+                .map_err(bad_schedule)?;
+            Some(check)
+        };
+    }
+    match &input.trigger {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(value) => {
+            let trigger: Trigger = serde_json::from_value(value.clone())
+                .map_err(|_| bad_schedule("invalid trigger"))?;
+            if matches!(trigger, Trigger::Webhook { .. }) {
+                return Err(bad_schedule(
+                    "use the existing webhook configuration for webhooks",
+                ));
+            }
+            crate::schedule::validate_trigger(
+                &s.0.agent,
+                &s.0.storage,
+                schedule.bot_id,
+                schedule.id,
+                &trigger,
+            )
+            .await
+            .map_err(bad_schedule)?;
+            Ok(Some(Some(trigger)))
+        }
+    }
+}
+
 /// List schedules.
 #[utoipa::path(get, path = "/v1/schedules", tag = "schedules", security(("bearer" = [])),
     responses((status = 200, body = Vec<ScheduleDto>)))]
@@ -1466,8 +1580,14 @@ pub(crate) async fn list_schedules(
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_schedule(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::peer::PeerIdentity>>,
     ApiJson(input): ApiJson<ScheduleInput>,
 ) -> Result<(StatusCode, Json<ScheduleDto>), ApiError> {
+    if peer.is_some() && (input.trigger.is_some() || input.precheck.is_some()) {
+        return Err(ApiError::forbidden(
+            "schedule triggers and prechecks are local-owner only",
+        ));
+    }
     let p = schedule_parts(&s, &input)?;
     let mut sc = Schedule::new(
         BotId(input.bot_id),
@@ -1482,14 +1602,25 @@ pub(crate) async fn create_schedule(
         sc.enabled = false;
         sc.next_run_at = None;
     }
+    let trigger = schedule_extensions(&s, &mut sc, &input).await?;
     let store = s.schedule_store()?;
-    store.insert(&sc)?;
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.create_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string(),"bot_id":sc.bot_id.to_string()}),
+    )?;
+    store.insert_config(&sc, trigger.flatten().as_ref())?;
     if let Err(e) = apply_webhook(&store, sc.id, input.webhook_secret.as_deref()) {
         let _ = store.delete(sc.id);
         return Err(e);
     }
     s.publish_schedule_changed(sc.id.0, ScheduleChangeKind::Created);
-    Ok((StatusCode::CREATED, Json(dto_of(&s, &sc)?)))
+    Ok((
+        StatusCode::CREATED,
+        Json(dto_of(&s, &store.get(sc.id)?.unwrap_or(sc))?),
+    ))
 }
 
 /// Get one schedule.
@@ -1513,9 +1644,23 @@ pub(crate) async fn get_schedule(
 pub(crate) async fn update_schedule(
     State(s): State<AppState>,
     Path(sid): Path<String>,
+    peer: Option<axum::Extension<crate::peer::PeerIdentity>>,
     ApiJson(input): ApiJson<ScheduleInput>,
 ) -> Result<Json<ScheduleDto>, ApiError> {
     let mut sc = schedule_of_user(&s, &sid)?;
+    if peer.is_some()
+        && (input.trigger.is_some()
+            || input.precheck.is_some()
+            || sc.precheck.is_some()
+            || matches!(
+                s.schedule_store()?.get_trigger(sc.id)?,
+                Some(Trigger::FileWatch { .. } | Trigger::Email { .. })
+            ))
+    {
+        return Err(ApiError::forbidden(
+            "schedule triggers and prechecks are local-owner only",
+        ));
+    }
     if input.bot_id != sc.bot_id.0 {
         return Err(bad_schedule("the bot of a schedule cannot be changed"));
     }
@@ -1525,16 +1670,26 @@ pub(crate) async fn update_schedule(
     sc.payload = p.payload;
     sc.misfire_policy = p.policy;
     sc.spec = p.spec;
+    let trigger = schedule_extensions(&s, &mut sc, &input).await?;
     let store = s.schedule_store()?;
-    // The user is rewriting it: a bot-made schedule becomes the user's, so the
-    // bot can no longer change what the user wrote (this also bumps the
-    // revision, which stales any approval a bot had prepared for it).
-    if sc.origin == scheduler::ScheduleOrigin::Bot {
-        store.set_origin(sc.id, scheduler::ScheduleOrigin::User)?;
-    }
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.update_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string(),"bot_id":sc.bot_id.to_string()}),
+    )?;
+    // User edits take ownership in the same revision-checked transaction.
+    sc.origin = scheduler::ScheduleOrigin::User;
     // Run progress may have changed after schedule_of_user. The store reads
     // it again and computes any re-arm under the same write transaction.
-    let (sc, was_enabled) = persist_schedule_edit(&store, &sc, input.enabled, now_ms())?;
+    let (sc, was_enabled) = persist_schedule_edit(
+        &store,
+        &sc,
+        input.enabled,
+        now_ms(),
+        trigger.as_ref().map(|t| t.as_ref()),
+    )?;
     apply_webhook(&store, sc.id, input.webhook_secret.as_deref())?;
     s.publish_schedule_changed(
         sc.id.0,
@@ -1544,20 +1699,22 @@ pub(crate) async fn update_schedule(
             ScheduleChangeKind::Toggled
         },
     );
-    Ok(Json(dto_of(&s, &sc)?))
+    Ok(Json(dto_of(&s, &store.get(sc.id)?.unwrap_or(sc))?))
 }
 
 /// Persist the PUT definition without trusting the route's runtime snapshot.
 /// Keeping this boundary separate also allows deterministic read/write race
 /// tests without a process-global hook or a real clock/sleep.
+#[allow(clippy::option_option)] // Omitted preserves, null clears, value replaces the trigger.
 fn persist_schedule_edit(
     store: &scheduler::ScheduleStore,
     definition: &Schedule,
     enabled: Option<bool>,
     now: i64,
+    trigger: Option<Option<&Trigger>>,
 ) -> Result<(Schedule, bool), ApiError> {
     store
-        .update_definition_and_rearm(definition, enabled, now)?
+        .update_config(definition, enabled, now, trigger)?
         .ok_or_else(|| ApiError::not_found(format!("schedule {}", definition.id)))
 }
 
@@ -1572,7 +1729,15 @@ pub(crate) async fn delete_schedule(
 ) -> Result<StatusCode, ApiError> {
     let sc = schedule_of_user(&s, &sid)?;
     let store = s.schedule_store()?;
-    store.remove_trigger(sc.id)?;
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.delete_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string()}),
+    )?;
+    // Foreign-key cascade removes the trigger in the same transaction; never
+    // briefly expose a deleted file/e-mail trigger as an ordinary timer.
     store.delete(sc.id)?;
     s.publish_schedule_changed(sc.id.0, ScheduleChangeKind::Deleted);
     Ok(StatusCode::NO_CONTENT)
@@ -1764,7 +1929,7 @@ mod schedule_update_tests {
             });
             read.wait();
             fired.wait();
-            let (fresh, _) = persist_schedule_edit(&store, &stale, None, 60_000).unwrap();
+            let (fresh, _) = persist_schedule_edit(&store, &stale, None, 60_000, None).unwrap();
             assert_eq!(fresh.name, "after");
             assert_eq!(fresh.payload, stale.payload);
             assert_eq!(fresh.last_run_at, Some(60_000));
@@ -1785,7 +1950,7 @@ mod schedule_update_tests {
         store.insert(&stale).unwrap();
         store.record_run_intent(stale.id, 1_000, None).unwrap();
         stale.name = "renamed".into();
-        let (fresh, _) = persist_schedule_edit(&store, &stale, None, 2_000).unwrap();
+        let (fresh, _) = persist_schedule_edit(&store, &stale, None, 2_000, None).unwrap();
         assert_eq!(fresh.last_run_at, Some(1_000));
         assert_eq!(fresh.next_run_at, None);
         assert_eq!(store.list_due(2_000).unwrap(), vec![]);
@@ -1797,12 +1962,12 @@ mod schedule_update_tests {
         let stale = schedule(ScheduleSpec::Every { seconds: 60 });
         store.insert(&stale).unwrap();
         store.set_enabled(stale.id, false, None).unwrap();
-        let (fresh, was_enabled) = persist_schedule_edit(&store, &stale, None, 10).unwrap();
+        let (fresh, was_enabled) = persist_schedule_edit(&store, &stale, None, 10, None).unwrap();
         assert!(!was_enabled);
         assert!(!fresh.enabled);
         assert_eq!(fresh.next_run_at, None);
         store.delete(stale.id).unwrap();
-        assert!(persist_schedule_edit(&store, &stale, Some(true), 20).is_err());
+        assert!(persist_schedule_edit(&store, &stale, Some(true), 20, None).is_err());
         assert!(store.get(stale.id).unwrap().is_none());
     }
 }

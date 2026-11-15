@@ -168,7 +168,11 @@ impl Shared {
         let req = ActionRequest {
             category,
             raw_command,
-            initiator: ctx.initiator,
+            initiator: if ctx.initiator == InitiatorKind::ExternalSchedule {
+                InitiatorKind::Schedule
+            } else {
+                ctx.initiator
+            },
         };
         let r = &self.resolver;
         if self.locked_deny(category) {
@@ -180,9 +184,27 @@ impl Shared {
             None,
             &req,
         );
+        // Neither a Schedule deny nor a source-specific deny may be relaxed
+        // by changing the durable initiator used for external-data isolation.
+        if ctx.initiator == InitiatorKind::ExternalSchedule {
+            let source_req = ActionRequest {
+                category,
+                raw_command: req.raw_command.clone(),
+                initiator: InitiatorKind::ExternalSchedule,
+            };
+            if r.resolve(
+                &self.global_policy.read(),
+                ctx.bot_policy.as_ref(),
+                None,
+                &source_req,
+            ) == Decision::Deny
+            {
+                d = Decision::Deny;
+            }
+        }
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
-        if self.always_ask(name) {
+        if self.always_ask(name) || ctx.initiator == InitiatorKind::ExternalSchedule {
             if d == Decision::Allow {
                 d = Decision::ask();
             }
@@ -363,7 +385,7 @@ impl Shared {
     }
 
     /// Locked deny-all mode applies to `category`.
-    fn locked_deny(&self, category: PermissionCategory) -> bool {
+    pub(crate) fn locked_deny(&self, category: PermissionCategory) -> bool {
         category != PermissionCategory::Meta
             && self.policy_locked.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -479,7 +501,10 @@ impl Shared {
         ctx: &RunCtx,
         rx: oneshot::Receiver<Verdict>,
     ) -> Option<Result<Verdict, oneshot::error::RecvError>> {
-        if ctx.initiator != InitiatorKind::Schedule {
+        if !matches!(
+            ctx.initiator,
+            InitiatorKind::Schedule | InitiatorKind::ExternalSchedule
+        ) {
             return Some(rx.await);
         }
         let limit = self.cfg.schedule_approval_timeout;
@@ -530,7 +555,9 @@ impl Shared {
                     .into(),
             ));
         }
-        let once_only = details.is_some() || self.always_ask(name);
+        let once_only = details.is_some()
+            || self.always_ask(name)
+            || ctx.initiator == InitiatorKind::ExternalSchedule;
         let closed = self.closed_guard(ctx, name, input, token);
         let args = input.to_string();
         let prefix = computer_approval(ctx, name, category, &mut details);
@@ -797,7 +824,9 @@ impl ExecPermit {
             .storage
             .decide_approval(self.approval_id, "approved");
         // Approving an always-ask tool confirms this one call only.
-        let scope = if self.sh.always_ask(&self.name) {
+        let scope = if self.sh.always_ask(&self.name)
+            || self.ctx.initiator == InitiatorKind::ExternalSchedule
+        {
             ApprovalScope::Once
         } else {
             self.scope

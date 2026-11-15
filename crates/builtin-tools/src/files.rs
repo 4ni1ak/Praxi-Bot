@@ -107,6 +107,135 @@ struct Shared {
     drives: DriveCache,
 }
 
+/// Filename and metadata only; never a file's bytes.
+#[derive(Debug, Clone)]
+pub struct WatchFile {
+    /// Local path inside the configured workspace.
+    pub path: PathBuf,
+    /// Size and modification timestamp, used only for change detection.
+    pub fingerprint: String,
+}
+
+/// Bounded metadata snapshot using the same local/root/credential boundary as
+/// file tools, with stricter no-symlink semantics. Empty roots fail closed.
+///
+/// # Errors
+/// Unconfigured roots, outside/protected/link path, invalid glob, or I/O/size limit.
+pub fn watch_snapshot(
+    data_dir: &Path,
+    roots: &[PathBuf],
+    raw: &str,
+    glob: &str,
+) -> Result<Vec<WatchFile>, ToolError> {
+    if roots.is_empty() {
+        return Err(denied("file watches require explicit workspace roots"));
+    }
+    let drives = DriveCache::new();
+    let (allowed_roots, roots_unresolved) = match prepare_roots(roots, &drives) {
+        Ok(r) => (r, false),
+        Err(()) => (Vec::new(), true),
+    };
+    let data_dir = canonical_data_dir(data_dir);
+    let sh = Shared {
+        checkpoints: CheckpointStore::new(&data_dir),
+        spill_dir: data_dir.join("spill"),
+        data_dir,
+        allowed_roots,
+        grants: Vec::new(),
+        roots_unresolved,
+        drives,
+    };
+    let root = validate_path(&sh, raw, Follow::Watch)?;
+    if root.parent().is_none() {
+        return Err(denied("system roots cannot be watched"));
+    }
+    #[cfg(unix)]
+    if [
+        "/etc", "/proc", "/sys", "/dev", "/usr", "/bin", "/sbin", "/var",
+    ]
+    .iter()
+    .any(|p| root.starts_with(p))
+    {
+        return Err(denied("system directories cannot be watched"));
+    }
+    #[cfg(windows)]
+    if root
+        .components()
+        .filter_map(|c| {
+            if let Component::Normal(n) = c {
+                Some(n.to_string_lossy().to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .next()
+        .is_some_and(|n| {
+            [
+                "windows",
+                "program files",
+                "program files (x86)",
+                "programdata",
+            ]
+            .contains(&n.as_str())
+        })
+    {
+        return Err(denied("system directories cannot be watched"));
+    }
+
+    if !fs::symlink_metadata(&root)
+        .map_err(|_| exec_err("watch root unavailable"))?
+        .is_dir()
+    {
+        return Err(denied("watch root must be a directory"));
+    }
+    let pattern = matcher(Some(glob))?.ok_or_else(|| exec_err("watch glob required"))?;
+    let mut dirs = vec![(root.clone(), 0usize)];
+    let mut visited = 0usize;
+    let mut out = Vec::new();
+    while let Some((dir, depth)) = dirs.pop() {
+        let dir = validate_path(&sh, &dir.to_string_lossy(), Follow::Watch)?;
+        for item in fs::read_dir(dir).map_err(|_| exec_err("watch directory unavailable"))? {
+            visited += 1;
+            if visited > 1000 {
+                return Err(exec_err("watch snapshot exceeds 1000 entries"));
+            }
+            let entry = item.map_err(|_| exec_err("watch entry unavailable"))?;
+            let path = entry.path();
+            let metadata =
+                fs::symlink_metadata(&path).map_err(|_| exec_err("watch metadata unavailable"))?;
+            if metadata.file_type().is_symlink() || reparse_unsafe(&metadata) {
+                continue;
+            }
+            // Revalidate each descendant; credential exclusions apply to paths
+            // discovered by a directory walk as well as the supplied root.
+            let Ok(path) = validate_path(&sh, &path.to_string_lossy(), Follow::Watch) else {
+                continue;
+            };
+            if metadata.is_dir() {
+                if depth >= 16 {
+                    return Err(exec_err("watch depth exceeds 16"));
+                }
+                if !SKIP_DIRS.iter().any(|n| entry.file_name() == *n) {
+                    dirs.push((path, depth + 1));
+                }
+            } else if metadata.is_file() && glob_hit(&pattern, &root, &path) {
+                let modified = metadata
+                    .modified()
+                    .map_err(|_| exec_err("watch timestamp unavailable"))?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| exec_err("watch timestamp unavailable"))?
+                    .as_nanos();
+                out.push(WatchFile {
+                    path,
+                    fingerprint: format!("{}:{modified}", metadata.len()),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
 /// One file tool.
 pub struct FsTool {
     spec: ToolSpec,
@@ -366,6 +495,8 @@ enum Class {
 /// How far [`validate_path`] follows links before the filesystem is changed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Follow {
+    /// Metadata-only watcher: refuse every symlink, including intermediate components.
+    Watch,
     /// Read the file or directory. The final symlink is resolved.
     Content,
     /// Write bytes. The final symlink is resolved; a missing tail is allowed.
@@ -795,6 +926,9 @@ fn resolve_local(path: &Path, ctx: &ResolveCtx<'_>) -> Result<PathBuf, ToolError
                 }
             }
             Ok(meta) if meta.file_type().is_symlink() => {
+                if ctx.follow == Follow::Watch {
+                    return Err(denied("watch paths may not contain links"));
+                }
                 return follow_link(&acc, &next, &names[i + 1..], ctx);
             }
             Ok(_) => acc = next,
@@ -5451,5 +5585,81 @@ mod tests {
                 .unwrap(),
         );
         assert!(ok.contains("subst-ok"), "{ok}");
+    }
+}
+
+#[cfg(test)]
+mod c225_watch_tests {
+    use super::*;
+    #[test]
+    fn c225_watch_glob_roots_and_metadata_only() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.txt"), "private content never returned").unwrap();
+        fs::write(root.path().join("b.csv"), "also private").unwrap();
+        let files = watch_snapshot(
+            root.path(),
+            &[root.path().to_path_buf()],
+            &root.path().to_string_lossy(),
+            "*.txt",
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.ends_with("a.txt"));
+        assert!(!format!("{files:?}").contains("private content"));
+        assert!(
+            watch_snapshot(
+                root.path(),
+                &[root.path().to_path_buf()],
+                &outside.path().to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
+        assert!(watch_snapshot(root.path(), &[], &root.path().to_string_lossy(), "*").is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn c225_watch_never_follows_root_intermediate_or_descendant_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("hidden.txt"), "never read").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
+        let roots = [root.path().to_path_buf()];
+        let files =
+            watch_snapshot(root.path(), &roots, &root.path().to_string_lossy(), "**/*").unwrap();
+        assert!(files.is_empty());
+        assert!(
+            watch_snapshot(
+                root.path(),
+                &roots,
+                &root.path().join("link").to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::create_dir(root.path().join("real/nested")).unwrap();
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("internal")).unwrap();
+        assert!(
+            watch_snapshot(
+                root.path(),
+                &roots,
+                &root.path().join("internal").to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
+        // The link is an intermediate component here; a final-entry metadata
+        // check alone cannot enforce the watcher's no-traversal guarantee.
+        assert!(
+            watch_snapshot(
+                root.path(),
+                &roots,
+                &root.path().join("internal/nested").to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
     }
 }

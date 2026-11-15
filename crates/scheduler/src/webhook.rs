@@ -182,7 +182,7 @@ pub async fn handle_webhook(
         &WebhookMeta::default(),
         None,
     )?;
-    executor.execute(&fired).await
+    crate::engine::execute_checked(store, executor, &fired).await
 }
 
 /// Look up and authenticate a webhook call, record the firing, and return the
@@ -205,7 +205,9 @@ pub(crate) fn prepare_webhook(
         .get_trigger(id)?
         .ok_or_else(|| SchedulerError::NotFound(format!("webhook trigger for schedule {id}")))?;
 
-    let Trigger::Webhook { secret } = trigger;
+    let Trigger::Webhook { secret } = trigger else {
+        return Err(SchedulerError::NotFound("webhook trigger".into()));
+    };
     if let Some(ts) = meta.timestamp_ms {
         if (now_ms.saturating_sub(ts)).abs() > REPLAY_WINDOW_MS {
             return Err(SchedulerError::InvalidSignature);
@@ -243,7 +245,7 @@ pub(crate) fn prepare_webhook(
     }
 
     let mut fired = schedule.clone();
-    fired.payload = schedule.payload.with_webhook_input(body);
+    fired.external_input = Some(body.to_owned());
     fired.last_run_at = Some(now_ms);
     // Only touch last_run_at: rewriting next_run_at here could race with the
     // engine and resurrect an already-fired timer occurrence.

@@ -628,13 +628,16 @@ impl AppState {
         &self,
         limits: ScheduleLimits,
     ) -> Result<usize, scheduler::SchedulerError> {
-        let host = Arc::new(schedule_tools::DaemonScheduleHost::new(
-            self.schedule_store()?,
-            self.storage_arc(),
-            self.user_id(),
-            self.0.schedule_events.clone(),
-            limits,
-        ));
+        let host = Arc::new(
+            schedule_tools::DaemonScheduleHost::new(
+                self.schedule_store()?,
+                self.storage_arc(),
+                self.user_id(),
+                self.0.schedule_events.clone(),
+                limits,
+            )
+            .with_agent(self.0.agent.clone()),
+        );
         let registry = self.0.agent.tool_registry();
         Ok(
             builtin_tools::schedule::tools(&(host as Arc<dyn builtin_tools::ScheduleHost>))

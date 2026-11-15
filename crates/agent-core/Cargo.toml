@@ -28,6 +28,7 @@ protocol.workspace = true
 provider-catalog = { path = "../provider-catalog", version = "0.1.0" }
 secret-store.workspace = true
 skills = { path = "../skills", version = "0.1.0" }
+script-runtime = { path = "../script-runtime", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 storage.workspace = true

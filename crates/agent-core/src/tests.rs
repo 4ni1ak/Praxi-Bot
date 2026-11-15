@@ -2,6 +2,7 @@
 
 #![allow(clippy::assert_is_empty)]
 
+mod c225;
 mod planning_pause;
 
 use std::collections::VecDeque;

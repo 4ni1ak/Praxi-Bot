@@ -37,6 +37,13 @@
       "enum": [
         "schedule"
       ]
+    },
+    {
+      "description": "A schedule supplied external trigger/precheck data; every tool needs once-only approval.",
+      "type": "string",
+      "enum": [
+        "external_schedule"
+      ]
     }
   ]
 }
