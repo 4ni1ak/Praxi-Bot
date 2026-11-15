@@ -184,6 +184,11 @@ pub(crate) async fn set_secret(
         .secret_store()
         .ok_or_else(|| ApiError::unavailable("this daemon has no secret store"))?;
     secret_store::validate_name(&name).map_err(|_| ApiError::bad_request("invalid secret name"))?;
+    // Secrets owned by a native integration (the Composio key) are written by
+    // that integration's own route only, by no role at all through this one.
+    if secret_store::is_reserved_name(&name) {
+        return Err(ApiError::forbidden("this secret name is reserved"));
+    }
     if input.value.is_empty() || input.value.len() > MAX_SECRET_BYTES {
         return Err(ApiError::bad_request(
             "the value must be between 1 byte and 64 KiB",

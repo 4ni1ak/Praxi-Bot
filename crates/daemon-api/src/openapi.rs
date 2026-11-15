@@ -9,8 +9,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, doctor, doctor_routes, dto, email, email_routes, error, host, live_view, mcp,
-    mcp_routes, routes, skills, sse, web, web_routes,
+    changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
+    host, live_view, mcp, mcp_routes, routes, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -116,6 +116,15 @@ impl Modify for Security {
         mcp_routes::list_mcp_tools,
         mcp_routes::mcp_catalog,
         mcp_routes::set_secret,
+        composio_routes::composio_status,
+        composio_routes::composio_set_key,
+        composio_routes::composio_remove_key,
+        composio_routes::composio_catalog,
+        composio_routes::composio_list_apps,
+        composio_routes::composio_get_app,
+        composio_routes::composio_connect,
+        composio_routes::composio_set_enabled,
+        composio_routes::composio_disconnect,
         email_routes::list_email_accounts,
         email_routes::create_email_account,
         email_routes::update_email_account,
@@ -143,6 +152,9 @@ impl Modify for Security {
         mcp::McpTransportKind, mcp::McpStatus, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
         mcp::McpCatalogInstallDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
+        composio::ComposioConnState, composio::ComposioStatusDto, composio::ComposioKeyInput,
+        composio::ComposioToolkitDto, composio::ComposioCatalogDto, composio::ComposioAppDto,
+        composio::ComposioConnectDto, composio::ComposioEnabledInput, composio::ComposioDisconnectDto,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
         email::EmailProbeStatus, email::EmailTestReport,
@@ -166,7 +178,7 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "web"),
+        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"),
         (name = "skills"), (name = "doctor")
     )
 )]

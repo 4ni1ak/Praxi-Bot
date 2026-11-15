@@ -5,6 +5,7 @@ mod channels;
 mod channels_tests;
 mod client;
 mod commands;
+mod composio_host;
 mod computer;
 mod doctor;
 mod email_cmd;

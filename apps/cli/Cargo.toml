@@ -33,6 +33,7 @@ builtin-tools = { path = "../../crates/builtin-tools", version = "0.1.0" }
 computer-target = { path = "../../crates/computer-target", version = "0.1.0" }
 browser-cdp = { path = "../../crates/browser-cdp", version = "0.1.0" }
 mcp-bridge = { path = "../../crates/mcp-bridge", version = "0.1.0" }
+composio = { path = "../../crates/composio", version = "0.1.0" }
 fs4 = "1"
 clap = { workspace = true, features = ["env"] }
 daemon-api = { path = "../../crates/daemon-api", version = "0.1.0" }
