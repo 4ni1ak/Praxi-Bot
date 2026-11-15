@@ -209,19 +209,37 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// UI -> tray: how many approvals / questions wait for the user.
+///
+/// # Errors
+/// When the calling window is not the main window.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // tauri commands take owned arguments
-pub fn set_needs_count(state: State<'_, TrayState>, count: u32) {
+pub fn set_needs_count(
+    window: tauri::Window,
+    state: State<'_, TrayState>,
+    count: u32,
+) -> Result<(), String> {
+    crate::window_gate::require_window(&window, crate::window_gate::MAIN_ONLY)?;
     *state.needs.lock() = count;
     state.refresh();
+    Ok(())
 }
 
 /// UI -> tray: menu / tooltip strings in the UI language.
+///
+/// # Errors
+/// When the calling window is not the main window.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // tauri commands take owned arguments
-pub fn set_tray_labels(state: State<'_, TrayState>, labels: TrayLabels) {
+pub fn set_tray_labels(
+    window: tauri::Window,
+    state: State<'_, TrayState>,
+    labels: TrayLabels,
+) -> Result<(), String> {
+    crate::window_gate::require_window(&window, crate::window_gate::MAIN_ONLY)?;
     *state.labels.lock() = labels;
     state.refresh();
+    Ok(())
 }
 
 /// Show a native notification; clicking it brings the app to the front and

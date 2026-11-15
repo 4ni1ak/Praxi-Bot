@@ -479,25 +479,41 @@ fn start_bot_run(
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn pause_bot_run(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn pause_bot_run(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.pause().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn resume_bot_run(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn resume_bot_run(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.resume().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn take_the_wheel(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn take_the_wheel(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.take_the_wheel().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
-fn give_back_control(control: State<'_, ControlHandle>) -> Result<ControlSnapshot, String> {
+fn give_back_control(
+    window: Window,
+    control: State<'_, ControlHandle>,
+) -> Result<ControlSnapshot, String> {
+    require_window(&window, MAIN_AND_WIDGET)?;
     control.give_back().map_err(|e| e.to_string())
 }
 
@@ -775,7 +791,13 @@ fn write_windows_autostart(reg_key: &str, enabled: bool) -> Result<bool, String>
 /// Check whether per-user autostart (`HKCU\...\Run\Praxi-Bot`) is enabled.
 /// Off by default.
 #[tauri::command]
-fn get_autostart() -> bool {
+#[allow(clippy::needless_pass_by_value)]
+fn get_autostart(window: Window) -> Result<bool, String> {
+    require_window(&window, MAIN_ONLY)?;
+    Ok(get_autostart_impl())
+}
+
+fn get_autostart_impl() -> bool {
     #[cfg(windows)]
     {
         query_windows_autostart(&autostart_reg_key())
@@ -998,7 +1020,7 @@ mod tests {
     #[test]
     fn autostart_is_unsupported_off_windows() {
         assert!(!super::autostart_supported_impl());
-        assert!(!super::get_autostart());
+        assert!(!super::get_autostart_impl());
         assert_eq!(
             super::set_autostart_impl(true),
             Err("autostart is not supported on this platform".to_owned())
@@ -1027,8 +1049,10 @@ mod tests {
     }
 }
 
-/// Card 239: every custom command is listed in the app manifest, and the
-/// capability files grant each window exactly its documented set.
+/// Card 239: every custom command is listed in the app manifest, the manifest
+/// is really handed to `tauri-build`, the capability files grant each window
+/// exactly its documented set, and the commands that must check the calling
+/// window do so.
 #[cfg(test)]
 mod acl_tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -1050,36 +1074,61 @@ mod acl_tests {
             .expect("tauri.conf.json")
     }
 
-    /// Function names that follow a `#[tauri::command]` attribute in `src/*.rs`.
-    fn command_fns_in_sources() -> BTreeSet<String> {
-        let mut names = BTreeSet::new();
-        for entry in fs::read_dir(desktop_dir().join("src")).expect("src dir") {
+    /// Every `*.rs` file under `dir`, recursively.
+    fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
+        {
             let path = entry.expect("dir entry").path();
-            if path.extension().is_none_or(|e| e != "rs") {
-                continue;
-            }
-            let text = read(&path);
-            let mut lines = text.lines().map(str::trim);
-            while let Some(line) = lines.next() {
-                if line != "#[tauri::command]" {
-                    continue;
-                }
-                for next in lines.by_ref() {
-                    if next.starts_with("#[") || next.starts_with("///") {
-                        continue;
-                    }
-                    let rest = next
-                        .trim_start_matches("pub ")
-                        .trim_start_matches("async ")
-                        .strip_prefix("fn ")
-                        .unwrap_or_else(|| panic!("expected a fn after #[tauri::command]: {next}"));
-                    let name = rest.split(['(', '<']).next().expect("fn name").trim();
-                    names.insert(name.to_owned());
-                    break;
-                }
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
             }
         }
-        names
+    }
+
+    fn source_files() -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        rust_files(&desktop_dir().join("src"), &mut files);
+        files.sort();
+        files
+    }
+
+    /// Function names that follow a `#[tauri::command...]` attribute in `src/**/*.rs`,
+    /// each with the source of its body (up to the next top-level `}`).
+    fn command_fns_in_sources() -> BTreeMap<String, String> {
+        let mut found = BTreeMap::new();
+        for path in source_files() {
+            let text = read(&path).replace("\r\n", "\n");
+            let lines: Vec<&str> = text.lines().collect();
+            for (n, line) in lines.iter().enumerate() {
+                // Only a real attribute line, not this test's own string literals.
+                if !line.trim_start().starts_with("#[tauri::command") {
+                    continue;
+                }
+                let rest = lines[n + 1..].join(
+                    "
+",
+                );
+                let fn_at = rest.find("fn ").expect("fn after #[tauri::command]");
+                let signature = &rest[fn_at + 3..];
+                let name = signature
+                    .split(['(', '<'])
+                    .next()
+                    .expect("fn name")
+                    .trim()
+                    .to_owned();
+                let end = signature
+                    .find(
+                        "
+}
+",
+                    )
+                    .map_or(signature.len(), |i| i + 3);
+                found.insert(name, signature[..end].to_owned());
+            }
+        }
+        found
     }
 
     /// Names inside `tauri::generate_handler![ ... ]` (module prefixes stripped).
@@ -1100,8 +1149,32 @@ mod acl_tests {
     }
 
     #[test]
+    fn build_rs_hands_the_command_list_to_the_app_manifest() {
+        // If build.rs went back to plain `tauri_build::build()`, Tauri would not
+        // create the app ACL at all and would silently allow every custom command
+        // from every window, with all other tests still green.
+        let build_rs = read(&desktop_dir().join("build.rs")).replace(char::is_whitespace, "");
+        assert!(
+            build_rs.contains("include!(\"src/command_names.rs\");"),
+            "build.rs must include src/command_names.rs"
+        );
+        assert!(
+            build_rs.contains("tauri_build::try_build("),
+            "build.rs must call tauri_build::try_build"
+        );
+        assert!(
+            build_rs.contains("AppManifest::new().commands(COMMAND_NAMES)"),
+            "build.rs must pass COMMAND_NAMES to AppManifest::commands"
+        );
+        assert!(
+            !build_rs.contains("tauri_build::build()"),
+            "plain tauri_build::build() has no app manifest"
+        );
+    }
+
+    #[test]
     fn every_registered_command_has_a_manifest_entry() {
-        let declared = command_fns_in_sources();
+        let declared: BTreeSet<String> = command_fns_in_sources().into_keys().collect();
         let registered = registered_handlers();
         let manifest = manifest();
         assert_eq!(
@@ -1130,6 +1203,72 @@ mod acl_tests {
             undeclared.is_empty(),
             "registered handlers without #[tauri::command]: {undeclared:?}"
         );
+    }
+
+    /// Commands that must reject a call from a window they are not meant for,
+    /// with the allow-list constant they must check. Everything else must be
+    /// listed in `ACL_ONLY`, so a new command has to be classified here.
+    const GATED: &[(&str, &str)] = &[
+        ("begin_action", "MAIN_ONLY"),
+        ("start_bot_run", "MAIN_ONLY"),
+        ("pause_bot_run", "MAIN_AND_WIDGET"),
+        ("resume_bot_run", "MAIN_AND_WIDGET"),
+        ("take_the_wheel", "MAIN_AND_WIDGET"),
+        ("give_back_control", "MAIN_AND_WIDGET"),
+        ("stop_bot_run", "MAIN_AND_WIDGET"),
+        ("finish_bot_run", "MAIN_ONLY"),
+        ("ack_stop", "MAIN_ONLY"),
+        ("set_stop_hotkey", "MAIN_ONLY"),
+        ("overlay_show_target", "MAIN_ONLY"),
+        ("overlay_click", "MAIN_ONLY"),
+        ("overlay_clear", "MAIN_ONLY"),
+        ("simulate_bot_run", "MAIN_ONLY"),
+        ("daemon_connect", "MAIN_ONLY"),
+        ("daemon_restart", "MAIN_ONLY"),
+        ("providers_cli", "MAIN_ONLY"),
+        ("get_autostart", "MAIN_ONLY"),
+        ("set_autostart", "MAIN_ONLY"),
+        ("notify_show", "MAIN_ONLY"),
+        ("set_needs_count", "MAIN_ONLY"),
+        ("set_tray_labels", "MAIN_ONLY"),
+    ];
+
+    /// Read-only commands with no side effect beyond returning state; the
+    /// capability files are their only gate (and `get_control_state` is the
+    /// one command the widget and overlays use to draw).
+    const ACL_ONLY: &[&str] = &[
+        "get_control_state",
+        "is_human_driving",
+        "get_monitors_geometry",
+        "autostart_supported",
+    ];
+
+    #[test]
+    fn every_gated_command_calls_the_window_gate() {
+        let commands = command_fns_in_sources();
+        let classified: BTreeSet<String> = GATED
+            .iter()
+            .map(|(n, _)| (*n).to_owned())
+            .chain(ACL_ONLY.iter().map(|n| (*n).to_owned()))
+            .collect();
+        assert_eq!(
+            classified,
+            commands.keys().cloned().collect::<BTreeSet<_>>(),
+            "every command must be listed in GATED or ACL_ONLY"
+        );
+        for (name, allow) in GATED {
+            let body = &commands[*name];
+            let call = format!("require_window(&window, {allow})?;");
+            let body_flat = body.replace("crate::window_gate::", "");
+            assert!(
+                body_flat.contains(&call),
+                "{name} must call {call} before doing anything"
+            );
+            assert!(
+                body_flat.contains("window: Window") || body_flat.contains("window: tauri::Window"),
+                "{name} must take the calling window"
+            );
+        }
     }
 
     /// Enabled capability -> (id, window patterns, custom commands it allows).
@@ -1202,10 +1341,21 @@ mod acl_tests {
         names.iter().map(|n| (*n).to_owned()).collect()
     }
 
+    /// Manifest commands no window calls today (no UI caller). They keep an
+    /// `allow-*` permission in the manifest but are granted to no window.
+    const UNGRANTED: &[&str] = &[
+        "is_human_driving",
+        "overlay_show_target",
+        "overlay_clear",
+        "get_monitors_geometry",
+        "autostart_supported",
+    ];
+
     #[test]
     fn each_window_label_may_call_exactly_its_documented_commands() {
+        let main: BTreeSet<String> = manifest().difference(&set(UNGRANTED)).cloned().collect();
         let expected: BTreeMap<&str, BTreeSet<String>> = BTreeMap::from([
-            ("main", manifest()),
+            ("main", main),
             (
                 "widget",
                 set(&[
@@ -1229,6 +1379,9 @@ mod acl_tests {
                 "commands callable from window {label:?}"
             );
         }
+        // finish_bot_run / ack_stop are reserved for card 237 PR C and main only.
+        assert!(commands_for("main").contains("finish_bot_run"));
+        assert!(commands_for("main").contains("ack_stop"));
     }
 
     #[test]
@@ -1260,12 +1413,15 @@ mod acl_tests {
                 "ack_stop",
                 "begin_action",
                 "providers_cli",
+                "get_autostart",
                 "set_autostart",
                 "daemon_connect",
                 "daemon_restart",
                 "simulate_bot_run",
                 "set_stop_hotkey",
                 "notify_show",
+                "set_needs_count",
+                "set_tray_labels",
             ] {
                 assert!(
                     !allowed.contains(sensitive),
@@ -1273,6 +1429,26 @@ mod acl_tests {
                 );
             }
         }
+    }
+
+    /// Every `http(s)://` / `ws(s)://` origin in a CSP string.
+    fn origins(csp: &str) -> Vec<String> {
+        csp.split([' ', ';'])
+            .filter(|t| {
+                ["http://", "https://", "ws://", "wss://"]
+                    .iter()
+                    .any(|p| t.starts_with(p))
+            })
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn is_loopback_origin(origin: &str) -> bool {
+        let host = origin.split("://").nth(1).unwrap_or("");
+        let host = host
+            .strip_prefix("[::1]")
+            .map_or_else(|| host.split(':').next().unwrap_or(""), |_| "[::1]");
+        matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "ipc.localhost")
     }
 
     #[test]
@@ -1286,7 +1462,8 @@ mod acl_tests {
             "default-src 'self'; script-src 'self'; style-src 'self'; \
              style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; \
              font-src 'self' data:; \
-             connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; \
+             connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* \
+             http://localhost:* http://[::1]:*; \
              object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
         );
         assert!(!csp.contains("unsafe-eval"));
@@ -1298,13 +1475,44 @@ mod acl_tests {
             script_src, "script-src 'self'",
             "no inline or remote scripts in release"
         );
+        for origin in origins(csp) {
+            assert!(is_loopback_origin(&origin), "release CSP origin {origin}");
+        }
+    }
+
+    #[test]
+    fn dev_csp_allows_only_loopback_origins_and_no_eval() {
+        let config = tauri_conf();
         let dev = config["app"]["security"]["devCsp"]
             .as_str()
             .expect("devCsp");
         assert!(!dev.contains("unsafe-eval"));
-        assert!(
-            !dev.contains("https:"),
-            "dev CSP must not allow remote origins"
-        );
+        assert!(!dev.contains("https:"), "dev CSP must not allow https:");
+        let found = origins(dev);
+        assert!(found.iter().any(|o| o.starts_with("ws://localhost:1420")));
+        for origin in found {
+            assert!(
+                is_loopback_origin(&origin),
+                "devCsp allows a non-loopback origin: {origin}"
+            );
+        }
+        // Bare scheme sources would allow any host.
+        for scheme in ["http:", "ws:", "wss:", "*"] {
+            assert!(
+                !dev.split([' ', ';']).any(|t| t == scheme),
+                "devCsp must not contain the bare source {scheme}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_keep_the_default_http_ipc_scheme_the_csp_assumes() {
+        // The CSP allows `http://ipc.localhost` (Windows IPC with useHttpsScheme
+        // false). Turning useHttpsScheme on would move IPC to https://ipc.localhost
+        // and the CSP would block every command; change both together.
+        let config = tauri_conf();
+        for window in config["app"]["windows"].as_array().expect("windows") {
+            assert_ne!(window["useHttpsScheme"], serde_json::json!(true));
+        }
     }
 }

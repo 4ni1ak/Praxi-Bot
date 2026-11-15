@@ -1,12 +1,11 @@
 {
   "identifier": "app-commands-main",
-  "description": "Custom app commands the main window may call (every command of the app manifest)",
+  "description": "Custom app commands the main window calls today, plus finish_bot_run and ack_stop (reserved for card 237 PR C)",
   "windows": [
     "main"
   ],
   "permissions": [
     "allow-get-control-state",
-    "allow-is-human-driving",
     "allow-begin-action",
     "allow-start-bot-run",
     "allow-pause-bot-run",
@@ -17,17 +16,13 @@
     "allow-finish-bot-run",
     "allow-ack-stop",
     "allow-set-stop-hotkey",
-    "allow-overlay-show-target",
     "allow-overlay-click",
-    "allow-overlay-clear",
     "allow-simulate-bot-run",
-    "allow-get-monitors-geometry",
     "allow-daemon-connect",
     "allow-daemon-restart",
     "allow-providers-cli",
     "allow-get-autostart",
     "allow-set-autostart",
-    "allow-autostart-supported",
     "allow-notify-show",
     "allow-set-needs-count",
     "allow-set-tray-labels"
