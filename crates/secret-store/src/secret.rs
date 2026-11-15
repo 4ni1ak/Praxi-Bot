@@ -157,6 +157,7 @@ pub trait SecretStore: Send + Sync {
 /// [`SecretError::NotFound`] if the secret does not exist,
 /// [`SecretError::Reserved`] for a fill secret.
 pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, SecretError> {
+    refuse_fill_namespace(r.name())?;
     store
         .get(r.name())?
         .ok_or_else(|| SecretError::NotFound(r.name().to_string()))

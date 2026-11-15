@@ -1014,7 +1014,7 @@ impl Replayer {
                         "this step types the secret `{name}` but no secrets are configured"
                     ))
                 })?;
-                if false && !s.exists(name) {
+                if !s.exists(name) {
                     return Err(Stop::Failed(format!(
                         "this step types the secret `{name}` but the owner has no secret with that name (it may have been deleted); add it again or edit the workflow"
                     )));

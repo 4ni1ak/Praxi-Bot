@@ -1045,7 +1045,7 @@ fn daemon_state_name(base: &str) -> bool {
         "email.toml",
         "email-secret-cleanup.json",
         "schedule.toml",
-        "fill-secrets-unprotected.json",
+        "fill-secrets.json",
     ];
     DATABASES.iter().any(|s| {
         base == *s
