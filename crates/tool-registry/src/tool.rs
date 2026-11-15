@@ -75,10 +75,24 @@ impl Default for ToolContext {
     }
 }
 
+/// A narrow, owner-created standing authorisation that stands in for the
+/// approval card of one specific call (for example "this secret on this exact
+/// origin"). Returned by [`Tool::standing_grant`]; the loop records it in the
+/// audit log and does not ask. It is never a policy waiver: nothing but the
+/// tool itself can produce one, and only after it re-verified the exact facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandingGrant {
+    /// The grant's id (safe to audit: no value).
+    pub id: String,
+    /// One line saying what was authorised (names and origins only).
+    pub label: String,
+}
+
 /// A callable tool.
 ///
 /// **Delegation rule:** a `Tool` that forwards calls to another tool (a
 /// wrapper, bridge or dispatcher) must also forward [`Tool::always_ask`],
+/// [`Tool::always_ask_for`], [`Tool::standing_grant`],
 /// [`Tool::approval_details`] and [`Tool::approval_closed`] to it, otherwise
 /// the wrapped tool's confirmation guarantees are silently lost. Prefer
 /// implementing [`ToolWrapper`] (where the hooks are required methods with no
@@ -148,6 +162,23 @@ pub trait Tool: Send + Sync {
     fn always_ask(&self) -> bool {
         false
     }
+
+    /// Like [`Tool::always_ask`] but decided from this call's input: a call
+    /// that types an owner-stored secret must be confirmed every time, however
+    /// permissive the policy, grants, read shortcuts or presets are. Only an
+    /// outright deny is stricter. Default: no.
+    fn always_ask_for(&self, _input: &Value) -> bool {
+        false
+    }
+
+    /// An owner-created standing authorisation covering exactly this call, if
+    /// there is one, checked against the facts the tool itself verifies at this
+    /// moment (never against what the model claims). `Some` lets the loop skip
+    /// the approval card for this call and audit the grant's id; it does not
+    /// skip [`Tool::call`]'s own checks. Default: none.
+    async fn standing_grant(&self, _ctx: &ToolContext, _input: &Value) -> Option<StandingGrant> {
+        None
+    }
 }
 
 /// A wrapper trait for tools that delegate to another [`Tool`].
@@ -182,6 +213,12 @@ pub trait ToolWrapper: Send + Sync {
 
     /// Forward [`Tool::always_ask`] to the wrapped tool.
     fn always_ask(&self) -> bool;
+
+    /// Forward [`Tool::always_ask_for`] to the wrapped tool.
+    fn always_ask_for(&self, input: &Value) -> bool;
+
+    /// Forward [`Tool::standing_grant`] to the wrapped tool.
+    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant>;
 
     /// Forward [`Tool::approval_details`] to the wrapped tool.
     ///
@@ -233,6 +270,14 @@ impl<W: ToolWrapper> Tool for W {
 
     fn always_ask(&self) -> bool {
         ToolWrapper::always_ask(self)
+    }
+
+    fn always_ask_for(&self, input: &Value) -> bool {
+        ToolWrapper::always_ask_for(self, input)
+    }
+
+    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant> {
+        ToolWrapper::standing_grant(self, ctx, input).await
     }
 }
 
@@ -289,7 +334,13 @@ mod delegation_guard {
         "Discovery",
     ];
 
-    const REQUIRED_HOOKS: &[&str] = &["always_ask", "approval_details", "approval_closed"];
+    const REQUIRED_HOOKS: &[&str] = &[
+        "always_ask",
+        "always_ask_for",
+        "standing_grant",
+        "approval_details",
+        "approval_closed",
+    ];
 
     #[derive(Default)]
     struct TypeInfo {
@@ -680,6 +731,12 @@ impl tool_registry::Tool for Good {
     fn always_ask(&self) -> bool {
         self.inner.always_ask()
     }
+    fn always_ask_for(&self, i: &Value) -> bool {
+        self.inner.always_ask_for(i)
+    }
+    async fn standing_grant(&self, c: &ToolContext, i: &Value) -> Option<StandingGrant> {
+        self.inner.standing_grant(c, i).await
+    }
     async fn approval_details(&self, c: &ToolContext, i: &Value) -> Result<Option<Value>, ToolError> {
         self.inner.approval_details(c, i).await
     }
@@ -689,10 +746,26 @@ impl tool_registry::Tool for Good {
 }
 "#;
         assert!(missing_hooks_in_source(genuine).is_empty(), "{genuine}");
+
+        // A wrapper that forwards the three older hooks but forgets the
+        // per-call ones silently loses "this call must always ask".
+        let forgets_per_call = r"
+struct W { inner: Arc<dyn Tool> }
+impl Tool for W {
+    fn always_ask(&self) -> bool { self.inner.always_ask() }
+    async fn approval_details(&self, c: &ToolContext, i: &Value) -> Result<Option<Value>, ToolError> {
+        self.inner.approval_details(c, i).await
+    }
+    fn approval_closed(&self, c: &ToolContext, i: &Value, t: Option<&str>) {
+        self.inner.approval_closed(c, i, t);
+    }
+}
+";
+        assert_eq!(missing_hooks_in_source(forgets_per_call), vec!["W"]);
     }
 
-    #[test]
-    fn tool_wrapper_trait_forwards_all_approval_hooks() {
+    #[tokio::test]
+    async fn tool_wrapper_trait_forwards_all_approval_hooks() {
         use crate::{Effect, ToolError, ToolSpec};
         use protocol::PermissionCategory;
         use std::sync::Arc;
@@ -717,6 +790,19 @@ impl tool_registry::Tool for Good {
             }
             fn always_ask(&self) -> bool {
                 true
+            }
+            fn always_ask_for(&self, input: &serde_json::Value) -> bool {
+                input.get("secret").is_some()
+            }
+            async fn standing_grant(
+                &self,
+                _ctx: &crate::ToolContext,
+                _input: &serde_json::Value,
+            ) -> Option<crate::StandingGrant> {
+                Some(crate::StandingGrant {
+                    id: "g1".into(),
+                    label: "inner".into(),
+                })
             }
             async fn approval_details(
                 &self,
@@ -755,6 +841,16 @@ impl tool_registry::Tool for Good {
             fn always_ask(&self) -> bool {
                 self.0.always_ask()
             }
+            fn always_ask_for(&self, input: &serde_json::Value) -> bool {
+                self.0.always_ask_for(input)
+            }
+            async fn standing_grant(
+                &self,
+                ctx: &crate::ToolContext,
+                input: &serde_json::Value,
+            ) -> Option<crate::StandingGrant> {
+                self.0.standing_grant(ctx, input).await
+            }
             async fn approval_details(
                 &self,
                 ctx: &crate::ToolContext,
@@ -786,6 +882,15 @@ impl tool_registry::Tool for Good {
         });
         let wrapped: Arc<dyn crate::Tool> = Arc::new(Wrap(inner));
         assert!(wrapped.always_ask());
+        // The per-call hooks must come back with the INNER tool's distinctive
+        // answers, not the trait defaults (false / None).
+        assert!(wrapped.always_ask_for(&serde_json::json!({"secret": "x"})));
+        assert!(!wrapped.always_ask_for(&serde_json::json!({"text": "x"})));
+        let grant = wrapped
+            .standing_grant(&crate::ToolContext::default(), &serde_json::json!({}))
+            .await
+            .expect("the inner standing grant is forwarded");
+        assert_eq!(grant.id, "g1");
         assert!(
             wrapped.output_provenance().is_none(),
             "a wrapper must not invent private-content exposure for an ordinary tool"

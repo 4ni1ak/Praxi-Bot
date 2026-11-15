@@ -61,6 +61,7 @@ impl SecretRef {
     pub fn new(name: impl Into<String>) -> Result<Self, SecretError> {
         let name = name.into();
         validate_name(&name)?;
+        refuse_fill_namespace(&name)?;
         Ok(Self(name))
     }
 
@@ -74,6 +75,30 @@ impl SecretRef {
 impl fmt::Display for SecretRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// Store prefix of the owner-only fill secrets (see [`crate::FillSecrets`]).
+pub const FILL_PREFIX: &str = "fill/";
+
+/// Whether `name` is in the fill namespace (ASCII case-insensitive, so a
+/// case-folding backend cannot be used to step around the prefix).
+#[must_use]
+pub fn is_fill_name(name: &str) -> bool {
+    name.get(..FILL_PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(FILL_PREFIX))
+}
+
+/// Configuration (providers, MCP, OpenAPI, e-mail, channels) can never name a
+/// fill secret: only the fill tools, through [`crate::FillSecrets`], read them.
+///
+/// # Errors
+/// [`SecretError::Reserved`] for a `fill/` name.
+pub fn refuse_fill_namespace(name: &str) -> Result<(), SecretError> {
+    if is_fill_name(name) {
+        Err(SecretError::Reserved(name.to_string()))
+    } else {
+        Ok(())
     }
 }
 
@@ -125,9 +150,14 @@ pub trait SecretStore: Send + Sync {
 
 /// Resolve a [`SecretRef`] to its value. Call only at the provider / MCP boundary.
 ///
+/// A `SecretRef` can also come from deserialisation (which skips
+/// [`SecretRef::new`]), so the fill namespace is refused here as well.
+///
 /// # Errors
-/// [`SecretError::NotFound`] if the secret does not exist.
+/// [`SecretError::NotFound`] if the secret does not exist,
+/// [`SecretError::Reserved`] for a fill secret.
 pub fn resolve(store: &dyn SecretStore, r: &SecretRef) -> Result<SecretValue, SecretError> {
+    refuse_fill_namespace(r.name())?;
     store
         .get(r.name())?
         .ok_or_else(|| SecretError::NotFound(r.name().to_string()))
