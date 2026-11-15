@@ -269,7 +269,7 @@ async fn granted_app_types_and_presses_keys_without_cards_with_the_waiver_off() 
 }
 
 /// The ten desktop calls of the card's Notepad example after one `fs_read`:
-/// an observation, launch, then type/key/type/key/set_value/key/type/key (the
+/// an observation, launch, then `type`, `key`, `type`, `key`, `set_value`, `key`, `type`, `key` (the
 /// last two land in the Save dialog).
 fn notepad_script() -> Arc<Fake> {
     let mut replies = vec![calls(&[("c0", "fs_read", json!({"path": "page.html"}))])];

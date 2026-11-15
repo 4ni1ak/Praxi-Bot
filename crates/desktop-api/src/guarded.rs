@@ -16,6 +16,8 @@
 //!   (the loop then revokes the grant for the run);
 //! * a failure reports truthfully how much text was already delivered.
 
+use std::fmt::Write as _;
+
 use crate::guard::{ActGuard, InputTarget, Refusal, check_guard};
 
 /// UTF-16 units per text chunk; a check runs before each chunk.
@@ -91,21 +93,21 @@ impl GuardFailure {
     /// when part of the text went out, and it says the permission is withdrawn.
     #[must_use]
     pub fn message(&self) -> String {
-        let mut out = String::new();
-        if let Some(r) = self.refusal {
-            out.push_str(&format!("stopped by the guard ({r}): {}", r.why()));
+        let mut out = if let Some(r) = self.refusal {
+            format!("stopped by the guard ({r}): {}", r.why())
         } else if let Some(e) = &self.os_error {
-            out.push_str(&format!("the send failed: {e}"));
+            format!("the send failed: {e}")
         } else {
-            out.push_str("the send did not complete");
-        }
+            "the send did not complete".to_owned()
+        };
         if self.delivered_units == 0 {
             out.push_str("; nothing was sent");
         } else {
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "; {} of {} text units had already been typed before this stop and the rest was not sent (do not type the delivered part again)",
                 self.delivered_units, self.total_units
-            ));
+            );
         }
         if !self.release_confirmed {
             out.push_str("; the keyboard state could not be confirmed clean");
@@ -266,8 +268,8 @@ pub fn guarded_write(
 /// The only key shapes a task-wide permission may send, one per call.
 ///
 /// * one navigation/editing key: Enter, Tab, Esc, Backspace, Delete, the arrows,
-///   Home, End, PageUp, PageDown;
-/// * Shift plus Tab, an arrow, Home, End, PageUp or PageDown (selection);
+///   Home, End, `PageUp`, `PageDown`;
+/// * Shift plus Tab, an arrow, Home, End, `PageUp` or `PageDown` (selection);
 /// * Ctrl plus one of A, C, X, V, Z, Y, S, F.
 ///
 /// Everything else is refused, on purpose: no Alt combination (Alt+Space and
@@ -328,6 +330,7 @@ pub fn chord_allowed(keys: &[String]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::assert_is_empty)]
 mod tests {
     use super::*;
     use crate::guard::ProcessIdentity;

@@ -1096,10 +1096,8 @@ impl DesktopTool {
                     _ => focus_matters = true,
                 }
             }
-            Op::Type | Op::SetValue => {
-                if input.get("index").is_some_and(secure_ref) {
-                    refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
-                }
+            Op::Type | Op::SetValue if input.get("index").is_some_and(secure_ref) => {
+                refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
             }
             _ => {}
         }
@@ -1748,14 +1746,8 @@ pub(crate) mod fake {
         }
 
         fn key_chord_refusal(&self, keys: &[String]) -> Option<desktop_api::Refusal> {
-            keys.iter()
-                .any(|k| {
-                    matches!(
-                        k.trim().to_lowercase().as_str(),
-                        "win" | "windows" | "super" | "cmd" | "meta"
-                    )
-                })
-                .then_some(desktop_api::Refusal::Chord)
+            // The same allowlist the real backends use.
+            (!desktop_api::guarded::chord_allowed(keys)).then_some(desktop_api::Refusal::Chord)
         }
 
         async fn screenshot(&self, _r: Region, _q: Quality) -> Result<Image, DesktopError> {
@@ -2149,13 +2141,13 @@ mod tests {
         let (_d2, t2) = build(fake2, None);
         observed(&t2, &ctx).await;
         let focus = get(&t2, "desktop_key")
-            .control_target(&ctx, &json!({"keys": "a"}))
+            .control_target(&ctx, &json!({"keys": "enter"}))
             .await
             .unwrap();
         assert_eq!(focus.refusal.as_deref(), Some("password_field"));
         // With an element index the click moves the focus first.
         let by_index = get(&t2, "desktop_key")
-            .control_target(&ctx, &json!({"keys": "a", "index": 1, "gen": 1}))
+            .control_target(&ctx, &json!({"keys": "enter", "index": 1, "gen": 1}))
             .await
             .unwrap();
         assert!(by_index.eligible(), "{by_index:?}");

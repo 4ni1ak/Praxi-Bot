@@ -116,14 +116,7 @@ impl DesktopBackend for FakeDesktop {
     }
 
     fn key_chord_refusal(&self, keys: &[String]) -> Option<desktop_api::Refusal> {
-        keys.iter()
-            .any(|k| {
-                matches!(
-                    k.trim().to_lowercase().as_str(),
-                    "win" | "super" | "cmd" | "meta"
-                )
-            })
-            .then_some(desktop_api::Refusal::Chord)
+        (!desktop_api::guarded::chord_allowed(keys)).then_some(desktop_api::Refusal::Chord)
     }
 
     async fn snapshot(&self, scope: Option<u64>) -> Result<Snapshot, DesktopError> {

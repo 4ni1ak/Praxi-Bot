@@ -148,9 +148,7 @@ pub fn point_hit(x: f64, y: f64) -> Option<(HWND, HWND)> {
 /// dialogs included). `None`-free: a window without an owner is `false`.
 fn is_owned(top: HWND) -> bool {
     // SAFETY: plain query on a handle.
-    unsafe { GetWindow(top, GW_OWNER) }
-        .map(|o| !o.0.is_null())
-        .unwrap_or(false)
+    unsafe { GetWindow(top, GW_OWNER) }.is_ok_and(|o| !o.0.is_null())
 }
 
 fn facts(hwnd: HWND, owned: bool) -> Option<InputTarget> {

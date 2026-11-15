@@ -532,7 +532,7 @@ impl Worker {
     /// Facts about one UIA element, all read live (never from the snapshot
     /// cache): its own process, elevation, password state, and the class and
     /// ownership of its top-level window. Any unavailable fact is a refusal.
-    fn element_fact(&self, el: &IUIAutomationElement) -> Result<InputTarget, Refusal> {
+    fn element_fact(el: &IUIAutomationElement) -> Result<InputTarget, Refusal> {
         // SAFETY: live COM property reads on an element owned by this thread.
         let (pid, password, native) = unsafe {
             (
@@ -566,7 +566,7 @@ impl Worker {
         let window = identity::top_level_facts(fg).ok_or(Refusal::NoIdentity)?;
         // SAFETY: COM call on the STA thread's IUIAutomation instance.
         let focused = unsafe { self.uia.GetFocusedElement() }.map_err(|_| Refusal::NoIdentity)?;
-        Ok(vec![window, self.element_fact(&focused)?])
+        Ok(vec![window, Self::element_fact(&focused)?])
     }
 
     /// The window and program keyboard input would reach now. Mirrors
@@ -696,7 +696,7 @@ impl Worker {
                 let el = self.resolve(*index, *generation)?.element.clone();
                 // Live facts of the very element, plus the foreground and focus
                 // facts the keyboard path uses, read right before the write.
-                let facts = self.element_fact(&el).and_then(|e| {
+                let facts = Self::element_fact(&el).and_then(|e| {
                     let mut all = self.keyboard_facts()?;
                     all.push(e);
                     Ok(all)
