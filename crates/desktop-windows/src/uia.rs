@@ -37,6 +37,7 @@ use windows::{
 };
 
 use crate::{
+    guard_glue::{self as glue, ElementRaw},
     identity, input,
     pure::{self, MAX_NODES, RawNode},
     winlist,
@@ -529,44 +530,35 @@ impl Worker {
 
     // ── run-scoped control grant: facts about the real receiver ──────────────
 
-    /// Facts about one UIA element, all read live (never from the snapshot
-    /// cache): its own process, elevation, password state, and the class and
-    /// ownership of its top-level window. Any unavailable fact is a refusal.
-    fn element_fact(el: &IUIAutomationElement) -> Result<InputTarget, Refusal> {
+    /// The raw live properties of one UIA element (never the snapshot cache).
+    fn element_raw(el: &IUIAutomationElement) -> ElementRaw<HWND> {
         // SAFETY: live COM property reads on an element owned by this thread.
-        let (pid, password, native) = unsafe {
-            (
-                el.CurrentProcessId().map_err(|_| Refusal::NoIdentity)?,
-                el.CurrentIsPassword()
-                    .map_err(|_| Refusal::PasswordField)?
-                    .as_bool(),
-                el.CurrentNativeWindowHandle()
-                    .map_err(|_| Refusal::NoIdentity)?,
-            )
-        };
-        let pid = u32::try_from(pid).map_err(|_| Refusal::NoIdentity)?;
-        let top = if native.0.is_null() {
-            winlist::foreground_hwnd().ok_or(Refusal::NoIdentity)?
-        } else {
-            identity::root_of(native).ok_or(Refusal::NoIdentity)?
-        };
-        let mut t = identity::top_level_facts(top).ok_or(Refusal::NoIdentity)?;
-        // The element's own program, not its window's: they differ for an
-        // embedded child that belongs to another process.
-        t.identity = identity::process_identity(pid).ok_or(Refusal::NoIdentity)?;
-        t.elevated = identity::process_elevated(pid);
-        t.password_focus = password;
-        Ok(t)
+        unsafe {
+            ElementRaw {
+                pid: el.CurrentProcessId().map_err(|_| Refusal::NoIdentity),
+                password: el
+                    .CurrentIsPassword()
+                    .map(BOOL::as_bool)
+                    .map_err(|_| Refusal::PasswordField),
+                native: el
+                    .CurrentNativeWindowHandle()
+                    .map(|h| (!h.0.is_null()).then_some(h))
+                    .map_err(|_| Refusal::NoIdentity),
+            }
+        }
+    }
+
+    /// The live focused element, raw.
+    fn focused_raw(&self) -> Result<ElementRaw<HWND>, Refusal> {
+        // SAFETY: COM call on the STA thread's IUIAutomation instance.
+        let focused = unsafe { self.uia.GetFocusedElement() }.map_err(|_| Refusal::NoIdentity)?;
+        Ok(Self::element_raw(&focused))
     }
 
     /// The facts that must all pass the guard before keyboard input: the
     /// foreground window and the live focused element.
     fn keyboard_facts(&self) -> Result<Vec<InputTarget>, Refusal> {
-        let fg = winlist::foreground_hwnd().ok_or(Refusal::NoIdentity)?;
-        let window = identity::top_level_facts(fg).ok_or(Refusal::NoIdentity)?;
-        // SAFETY: COM call on the STA thread's IUIAutomation instance.
-        let focused = unsafe { self.uia.GetFocusedElement() }.map_err(|_| Refusal::NoIdentity)?;
-        Ok(vec![window, Self::element_fact(&focused)?])
+        glue::keyboard_facts(&RealOs, self.focused_raw())
     }
 
     /// The window and program keyboard input would reach now. Mirrors
@@ -580,9 +572,10 @@ impl Worker {
             (Some(f), Some(s)) if f == s || winlist::window_pid(f) == winlist::window_pid(s) => {
                 (f, true)
             }
-            (_, Some(s)) => (s, false),
+            (Some(_), Some(s)) => (s, false),
             (Some(f), None) => (f, true),
-            (None, None) => return None,
+            // No foreground to read: no identity, no grant offered.
+            (None, _) => return None,
         };
         let mut t = identity::top_level_facts(hwnd)?;
         if is_fg {
@@ -668,50 +661,44 @@ impl Worker {
     /// `SetValue` only, each through the platform-neutral guarded flow with the
     /// real receivers and the real sink. No UIA fallback exists on this path.
     fn act_guarded_flow(&mut self, action: &Action, g: &ActGuard) -> Res<ActionResult> {
-        let to_err = |f: desktop_api::GuardFailure| DesktopError::GuardRefused(f.message());
         let mut verified = None;
-        match action {
-            Action::Click {
-                target,
-                method: ClickMethod::Global,
-            } => {
+        let plan = glue::plan(action)?;
+        match plan {
+            glue::Plan::Click(target) => {
                 let p = self.point(target)?;
-                guarded::guarded_click(g, p, &mut WinProbe { w: self }, &mut WinSink)
-                    .map_err(to_err)?;
+                self.with_probe(|probe| {
+                    guarded::guarded_click(g, p, probe, &mut glue::Sink(Win32Input))
+                })
+                .map_err(|f| glue::to_error(&f))?;
             }
-            Action::TypeText { text } => {
+            glue::Plan::Type(text) => {
                 self.focus_target();
-                guarded::guarded_type(g, text, &mut WinProbe { w: self }, &mut WinSink)
-                    .map_err(to_err)?;
+                self.with_probe(|probe| {
+                    guarded::guarded_type(g, text, probe, &mut glue::Sink(Win32Input))
+                })
+                .map_err(|f| glue::to_error(&f))?;
             }
-            Action::KeyPress { keys } => {
+            glue::Plan::Key(keys) => {
                 self.focus_target();
-                guarded::guarded_key(g, keys, &mut WinProbe { w: self }, &mut WinSink)
-                    .map_err(to_err)?;
+                self.with_probe(|probe| {
+                    guarded::guarded_key(g, keys, probe, &mut glue::Sink(Win32Input))
+                })
+                .map_err(|f| glue::to_error(&f))?;
             }
-            Action::SetValue {
-                target: Target::ByIndex { index, generation },
+            glue::Plan::SetValue {
+                index,
+                generation,
                 value,
             } => {
-                let el = self.resolve(*index, *generation)?.element.clone();
+                let el = self.resolve(index, generation)?.element.clone();
                 // Live facts of the very element, plus the foreground and focus
                 // facts the keyboard path uses, read right before the write.
-                let facts = Self::element_fact(&el).and_then(|e| {
-                    let mut all = self.keyboard_facts()?;
-                    all.push(e);
-                    Ok(all)
-                });
+                let facts = glue::write_facts(&RealOs, Self::element_raw(&el), self.focused_raw());
                 guarded::guarded_write(g, facts, || {
                     Self::set_value_pattern_only(&el, value).map(|v| verified = Some(v))
                 })
-                .map_err(to_err)?;
+                .map_err(|f| glue::to_error(&f))?;
                 self.last_focused = Some(el);
-            }
-            _ => {
-                return Err(DesktopError::GuardRefused(
-                    "this action is not covered by a task-wide permission (drag, scroll, clicks other than the focusing click, and coordinate set_value always ask)"
-                        .into(),
-                ));
             }
         }
         Ok(ActionResult {
@@ -720,44 +707,66 @@ impl Worker {
             new_snapshot: None,
         })
     }
+
+    fn with_probe<R>(&self, f: impl FnOnce(&mut glue::Probe<'_, RealOs>) -> R) -> R {
+        let focused = || self.focused_raw();
+        f(&mut glue::Probe {
+            os: &RealOs,
+            focused: &focused,
+            modifiers_down: &input::modifiers_down,
+        })
+    }
 }
 
-/// The live receivers, read from the worker's UIA instance and the OS.
-struct WinProbe<'a> {
-    w: &'a Worker,
-}
+/// The real window and process queries.
+struct RealOs;
 
-impl guarded::InputProbe for WinProbe<'_> {
-    fn keyboard_receivers(&mut self) -> Result<Vec<InputTarget>, Refusal> {
-        self.w.keyboard_facts()
+impl glue::WinFacts for RealOs {
+    type Window = HWND;
+
+    fn foreground(&self) -> Option<HWND> {
+        winlist::foreground_hwnd()
     }
 
-    fn point_receivers(&mut self, (x, y): (f64, f64)) -> Result<Vec<InputTarget>, Refusal> {
-        let (child, root) = identity::point_hit(x, y).ok_or(Refusal::NoIdentity)?;
-        let c = identity::child_facts(child).ok_or(Refusal::NoIdentity)?;
-        let r = identity::top_level_facts(root).ok_or(Refusal::NoIdentity)?;
-        Ok(vec![c, r])
+    fn root_of(&self, w: HWND) -> Option<HWND> {
+        identity::root_of(w)
     }
 
-    fn modifiers_down(&mut self) -> Result<bool, Refusal> {
-        Ok(input::modifiers_down())
+    fn top_level_facts(&self, w: HWND) -> Option<InputTarget> {
+        identity::top_level_facts(w)
+    }
+
+    fn child_facts(&self, w: HWND) -> Option<InputTarget> {
+        identity::child_facts(w)
+    }
+
+    fn process_identity(&self, pid: u32) -> Option<desktop_api::ProcessIdentity> {
+        identity::process_identity(pid)
+    }
+
+    fn process_elevated(&self, pid: u32) -> Option<bool> {
+        identity::process_elevated(pid)
+    }
+
+    fn point_hit(&self, x: f64, y: f64) -> Option<(HWND, HWND)> {
+        identity::point_hit(x, y)
     }
 }
 
 /// The real `SendInput` calls.
-struct WinSink;
+struct Win32Input;
 
-impl guarded::InputSink for WinSink {
-    fn type_units(&mut self, units: &[u16]) -> Result<(), String> {
-        input::type_units(units).map_err(|e| e.to_string())
+impl glue::InputApi for Win32Input {
+    fn type_units(&mut self, units: &[u16]) -> Result<(), DesktopError> {
+        input::type_units(units)
     }
 
-    fn key_chord(&mut self, keys: &[String]) -> Result<(), String> {
-        input::key_chord(keys).map_err(|e| e.to_string())
+    fn key_chord(&mut self, keys: &[String]) -> Result<(), DesktopError> {
+        input::key_chord(keys)
     }
 
-    fn click(&mut self, (x, y): (f64, f64)) -> Result<(), String> {
-        input::click_at(x, y).map_err(|e| e.to_string())
+    fn click_at(&mut self, x: f64, y: f64) -> Result<(), DesktopError> {
+        input::click_at(x, y)
     }
 
     fn release_all(&mut self) -> bool {
