@@ -6,6 +6,10 @@ import {
   PALETTES, FAVORITE_THEMES, DEFAULT_CUSTOM_THEME, UI_STYLES, buildTokens, contrastRatio, deriveTheme,
   fallbackAccent, inkOn, mix, normalizeHex, paletteById
 } from '../src/themeModel.ts';
+import {
+  buildThemeTokens, effectiveUiStyle, planSurfaces, PANEL_BLUR_MAX, PANEL_BLUR_MIN, PANEL_TRANSPARENCY_MAX,
+  PANEL_TRANSPARENCY_MIN, TEXT_TARGET, WORST_TONE
+} from '../src/surfaceModel.ts';
 
 // Every shipped theme must be readable.  The derivation pulls faded text, status colours and
 // accent text toward the text colour until they pass, so the hard requirement is the one
@@ -61,9 +65,62 @@ for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_TH
   process.stdout.write(`${name}: ${d.light ? 'light' : 'dark'}; text contrast >= ${lowest.toFixed(2)}:1 (bg/surface/raised)\n`);
 }
 
+// Translucent surfaces (card 244-E): every layer text can sit on, at the slider extremes, over the
+// worst backdrop (pure white / black) and over mid-grey and coloured backdrops.  Primary text must
+// reach TEXT_TARGET on the shell layers and 4.5 elsewhere; muted / secondary / status / accent text
+// 4.5 everywhere; faint text and control borders 3.
+const flat = (c) => ({ peak: { light: c, dark: c }, soft: { light: c, dark: c } });
+const TONES = [['worst', WORST_TONE], ['grey', flat('#808080')], ['blue', flat('#4a7bd0')], ['orange', flat('#d9822b')],
+  ['busy', { peak: { light: '#f5f0e0', dark: '#0a1020' }, soft: { light: '#9ab0a8', dark: '#203038' } }]];
+let surfaceCells = 0;
+for (const theme of [...PALETTES, { id: 'custom (default)', ...DEFAULT_CUSTOM_THEME }]) {
+  const d = deriveTheme(theme);
+  const accent = theme.accent ?? fallbackAccent(d);
+  for (const style of UI_STYLES) {
+    for (const transparentChat of [false, true]) {
+      for (const transparency of [PANEL_TRANSPARENCY_MIN, PANEL_TRANSPARENCY_MAX]) {
+        for (const blur of [PANEL_BLUR_MIN, PANEL_BLUR_MAX]) {
+          for (const [toneName, tone] of TONES) {
+            const opts = { transparency, blur, transparentChat, tone };
+            const plan = planSurfaces(d, style, true, opts);
+            const t = buildThemeTokens(theme, accent, style, true, opts);
+            const cell = `${theme.id}/${style}/${transparentChat ? 'clear' : 'pane'}/t${transparency}/b${blur}/${toneName}`;
+            for (const layer of plan.layers) {
+              surfaceCells++;
+              check(cell, `text/${layer.name}`, d.text, layer.color, layer.textMin);
+              for (const key of ['secondary', 'muted']) check(cell, `${key}/${layer.name}`, t[`--color-text-${key}`], layer.color, 4.5);
+              for (const key of ['success', 'warning', 'danger', 'accent-text']) check(cell, `${key}/${layer.name}`, t[`--color-${key}`], layer.color, 4.5);
+              check(cell, `faint/${layer.name}`, t['--color-text-faint'], layer.color, 3);
+              check(cell, `control border/${layer.name}`, t['--color-border-strong'], layer.color, 3);
+            }
+            // The re-derived colours must still hold on the theme's own solid surfaces.
+            for (const s of [d.bg, d.surface, d.raised]) {
+              check(cell, 'muted/solid', t['--color-text-muted'], s, 4.5);
+              check(cell, 'accent text/solid', t['--color-accent-text'], s, 4.5);
+            }
+            for (const key of ['--shell-fill', '--shell-filter', '--center-fill', '--center-scrim', '--float-fill', '--composer-fill']) {
+              assert.ok(t[key], `${cell}: ${key}`);
+            }
+            if (style === 'solid' && !transparentChat) {
+              assert.equal(plan.layers.length, 0, `${cell}: solid panels add no translucent layer`);
+            }
+            if (transparentChat) assert.equal(t['--center-fill'], 'transparent', `${cell}: clear chat area has no fill`);
+          }
+        }
+      }
+    }
+  }
+}
+// Platform fallbacks: reduced transparency paints solid; no backdrop-filter turns glass into tinted.
+assert.equal(effectiveUiStyle('glass', { backdropFilter: true, reducedTransparency: true }), 'solid');
+assert.equal(effectiveUiStyle('glass', { backdropFilter: false, reducedTransparency: false }), 'tinted');
+assert.equal(effectiveUiStyle('tinted', { backdropFilter: false, reducedTransparency: false }), 'tinted');
+process.stdout.write(`surfaces: ${surfaceCells} layer checks (styles x chat area x transparency/blur extremes x backdrops; text >= ${TEXT_TARGET}:1 on panels)
+`);
+
 // tokens.css must carry exactly the derived default theme (no stale generated CSS).
 const def = paletteById('obsidian');
-const expected = buildTokens(def, fallbackAccent(deriveTheme(def)), 'solid', false);
+const expected = buildThemeTokens(def, fallbackAccent(deriveTheme(def)), 'solid', false);
 for (const [k, v] of Object.entries(expected)) assert.ok(css.includes(`${k}: ${v};`), `tokens.css is stale: ${k} (run pnpm --dir packages/ui generate:themes)`);
 
 if (failures.length) {

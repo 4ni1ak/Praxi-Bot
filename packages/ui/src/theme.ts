@@ -1,5 +1,4 @@
 import {
-  buildTokens,
   colorSchemeFor,
   DEFAULT_CUSTOM_THEME,
   deriveTheme,
@@ -15,6 +14,36 @@ import {
   type ThemeDef,
   type UiStyle
 } from "./themeModel";
+import {
+  buildThemeTokens,
+  DEFAULT_SURFACE,
+  effectiveUiStyle,
+  surfaceSupport,
+  type SurfaceOptions
+} from "./surfaceModel";
+
+export {
+  buildThemeTokens,
+  DEFAULT_SURFACE,
+  effectiveUiStyle,
+  isFloatingStyle,
+  PANEL_BLUR_DEFAULT,
+  PANEL_BLUR_MAX,
+  PANEL_BLUR_MIN,
+  PANEL_TRANSPARENCY_DEFAULT,
+  PANEL_TRANSPARENCY_MAX,
+  PANEL_TRANSPARENCY_MIN,
+  WORST_TONE,
+  osPrefersReducedTransparency,
+  paintedUiStyle,
+  setReducedTransparencyOverride,
+  subscribeSurfaceSupport,
+  surfaceSupport,
+  type BackdropTone,
+  type PlatformSurfaceSupport,
+  type SurfaceOptions,
+  type ToneExtremes
+} from "./surfaceModel";
 
 export {
   accentAfterThemeChange,
@@ -72,6 +101,8 @@ export interface ThemeOverrides {
   ownBubble?: OwnBubble;
   /** A canvas backdrop (or own image) is active: panels float, line style turns see-through. */
   backdropActive?: boolean;
+  /** Panel transparency / blur / transparent chat area and the sampled backdrop tone (card 244-E). */
+  surface?: SurfaceOptions;
   background?: ThemeBackground;
 }
 
@@ -139,9 +170,16 @@ export function applyTheme(theme: ThemeDef, overrides?: ThemeOverrides): void {
   const root = document.documentElement;
   for (const prop of appliedProps) root.style.removeProperty(prop);
 
-  const style = overrides?.style ?? "solid";
+  const env = surfaceSupport();
+  const style = effectiveUiStyle(overrides?.style ?? "solid", env);
   const accent = normalizeHex(overrides?.accentColor) ?? accentFor("", theme);
-  const tokens = buildTokens(theme, accent, style, overrides?.backdropActive === true);
+  const surface = overrides?.surface ?? DEFAULT_SURFACE;
+  // Reduced transparency: the chat area keeps its background too.
+  const clearChat = surface.transparentChat && !env.reducedTransparency;
+  const tokens = buildThemeTokens(theme, accent, style, overrides?.backdropActive === true, {
+    ...surface,
+    transparentChat: clearChat
+  });
   appliedProps = Object.keys(tokens);
   for (const [prop, value] of Object.entries(tokens)) root.style.setProperty(prop, value);
   root.style.colorScheme = colorSchemeFor(theme);
@@ -172,5 +210,6 @@ export function applyTheme(theme: ThemeDef, overrides?: ThemeOverrides): void {
   root.dataset.meb = overrides?.ownBubble ?? "tint";
   const backdropActive = overrides?.backdropActive === true;
   root.dataset.backdrop = backdropActive ? "on" : "off";
-  root.dataset.float = backdropActive || style === "glass" ? "on" : "off";
+  root.dataset.chat = clearChat ? "clear" : "pane";
+  root.dataset.float = backdropActive || style === "glass" || style === "tinted" ? "on" : "off";
 }
