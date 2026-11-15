@@ -2840,6 +2840,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            folder?: null | components["schemas"]["McpFolderDto"];
             /** @description Secrets to collect first. */
             required_secrets: components["schemas"]["McpRequiredSecretDto"][];
             /** @description Environment variable -> secret name (stdio). */
@@ -2854,6 +2855,22 @@ export interface components {
             transport: components["schemas"]["McpTransportKind"];
             /** @description Endpoint (http). */
             url?: string | null;
+        };
+        /**
+         * @description Class of the last connect error of an MCP server, so a UI can show a
+         *     localized "what to do" next to the raw `error` text.
+         * @enum {string}
+         */
+        McpErrorKind: "runtime_missing" | "spawn" | "closed" | "timeout" | "config" | "needs_folder" | "other";
+        /**
+         * @description A folder the user must choose when adding a catalog entry; the app appends
+         *     it as the last argument.
+         */
+        McpFolderDto: {
+            /** @description Label of the folder field. */
+            label: string;
+            /** @description A safe default offered to the user (their Documents folder), if there is one. */
+            suggestion?: string | null;
         };
         /** @description OAuth configuration contains no credential values. */
         McpOAuthConfig: {
@@ -2913,6 +2930,7 @@ export interface components {
             };
             /** @description Most recent error, if any. */
             error?: string | null;
+            error_kind?: null | components["schemas"]["McpErrorKind"];
             /** @description Plain request headers (http). Not secrets. */
             headers?: {
                 [key: string]: string;
@@ -2930,6 +2948,11 @@ export interface components {
             };
             /** @description Connection state. */
             status: components["schemas"]["McpStatus"];
+            /**
+             * @description Last lines the server wrote to stderr (secret-redacted, bounded) while
+             *     it is in an error state; empty otherwise.
+             */
+            stderr_tail?: string[];
             /** @description Glob allow list over server-side tool names; empty = all. */
             tool_allow?: string[];
             /**

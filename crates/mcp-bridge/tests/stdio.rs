@@ -147,6 +147,97 @@ async fn child_gets_only_declared_environment() {
         );
     }
     assert!(got.iter().any(|k| k == "MCP_TEST_DECLARED"));
+    // Regression (244-A): `npx.cmd` / `uvx` die at once without PATH, which
+    // surfaced as "connection closed: initialize response" in the installed app.
+    assert!(
+        got.iter().any(|k| k.eq_ignore_ascii_case("PATH")),
+        "the launcher environment must carry PATH (got: {got:?})"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_launcher_is_classified_not_retried_and_carries_an_install_hint() {
+    let reg = ToolRegistry::new();
+    let mgr = McpManager::with_policy(reg, fast_policy(3));
+    let cfg = McpServerConfig::stdio("sq", "praxi-no-such-launcher-244a", ["x"]);
+    let err = mgr.add_server(cfg).await.unwrap_err();
+    assert_eq!(err.kind(), mcp_bridge::McpErrorKind::RuntimeMissing);
+    let snap = mgr.snapshot("sq").unwrap();
+    assert_eq!(
+        snap.last_error_kind,
+        Some(mcp_bridge::McpErrorKind::RuntimeMissing)
+    );
+    // Not retried: one failure, not `max_attempts`.
+    assert_eq!(snap.consecutive_failures, 1);
+    let msg = snap.last_error.unwrap();
+    assert!(
+        msg.contains("praxi-no-such-launcher-244a") && msg.contains("was not found on PATH"),
+        "{msg}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn filesystem_server_without_a_chosen_folder_is_not_started() {
+    let reg = ToolRegistry::new();
+    let guard: mcp_bridge::PathGuard = std::sync::Arc::new(|p| {
+        if p.ends_with("forbidden") {
+            Err("protected folder".to_owned())
+        } else {
+            Ok(p.to_path_buf())
+        }
+    });
+    let mgr = McpManager::with_policy(reg, fast_policy(3)).with_path_guard(guard);
+    let pkg = "@modelcontextprotocol/server-filesystem@2.2.0";
+    // No folder, and the old default `.`: refused before anything is spawned.
+    for (id, args) in [("fs0", vec!["-y", pkg]), ("fs1", vec!["-y", pkg, "."])] {
+        let cfg = McpServerConfig::stdio(id, "praxi-never-spawned-244b", args);
+        let err = mgr.add_server(cfg).await.unwrap_err();
+        assert_eq!(err.kind(), mcp_bridge::McpErrorKind::NeedsFolder, "{err}");
+        assert_eq!(mgr.stderr_tail(id).len(), 0);
+        let snap = mgr.snapshot(id).unwrap();
+        assert_eq!(snap.consecutive_failures, 1, "not retried");
+    }
+    // A folder the host guard refuses.
+    let base = std::env::temp_dir().join("praxi-244b-guard");
+    let forbidden = base.join("forbidden");
+    std::fs::create_dir_all(&forbidden).unwrap();
+    let f = forbidden.to_string_lossy().into_owned();
+    let cfg = McpServerConfig::stdio("fs2", "praxi-never-spawned-244b", ["-y", pkg, f.as_str()]);
+    let err = mgr.add_server(cfg).await.unwrap_err();
+    assert_eq!(err.kind(), mcp_bridge::McpErrorKind::NeedsFolder);
+    assert!(err.to_string().contains("protected folder"), "{err}");
+    // A good folder gets past the check (then fails only because the launcher is fake).
+    let ok = base.to_string_lossy().into_owned();
+    let cfg = McpServerConfig::stdio("fs3", "praxi-never-spawned-244b", ["-y", pkg, ok.as_str()]);
+    let err = mgr.add_server(cfg).await.unwrap_err();
+    assert_eq!(
+        err.kind(),
+        mcp_bridge::McpErrorKind::RuntimeMissing,
+        "{err}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// 244-A review finding 4: a child that explains itself on stderr and dies
+/// before the handshake must not lose that explanation (no sleeps here).
+#[tokio::test(flavor = "multi_thread")]
+async fn startup_failure_keeps_the_childs_stderr_explanation() {
+    for round in 0..5 {
+        let reg = ToolRegistry::new();
+        let mgr = McpManager::with_policy(reg, fast_policy(3));
+        let mut cfg = config("early");
+        if let McpTransport::Stdio { env, .. } = &mut cfg.transport {
+            env.insert("MCP_TEST_MODE".into(), "exit-with-stderr".into());
+        }
+        let err = mgr.add_server(cfg).await.unwrap_err();
+        assert_eq!(err.kind(), mcp_bridge::McpErrorKind::Closed, "{err}");
+        let tail = mgr.stderr_tail("early");
+        assert!(
+            tail.iter()
+                .any(|l| l.contains("PRAXI-EXPLAIN: runtime X is missing")),
+            "round {round}: explanation lost: {tail:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

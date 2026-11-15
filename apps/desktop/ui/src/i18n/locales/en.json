@@ -1140,6 +1140,32 @@
       "notApplied": "{{name}}: not saved, this app was changed elsewhere (for example it is now open to all bots). Showing its current state.",
       "savedToast": "{{name}}: bot access saved"
     },
+    "error": {
+      "showDetails": "Show details",
+      "hideDetails": "Hide details",
+      "message": "Error",
+      "stderr": "What the server printed",
+      "noStderr": "The server printed nothing before it stopped.",
+      "hint": {
+        "runtime_node": "Node.js was not found on PATH. Install the LTS version from https://nodejs.org (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
+        "runtime_uv": "uv was not found on PATH. Install it (Windows: winget install --id=astral-sh.uv -e, or https://docs.astral.sh/uv/) or add its folder to PATH, restart Praxi-Bot, then press Reconnect.",
+        "runtime_pipx": "pipx was not found on PATH. Install it from https://pipx.pypa.io (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
+        "runtime_docker": "The docker command was not found on PATH. Install Docker (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
+        "runtime_other": "The program that starts this server was not found on PATH. Install it, add its folder to PATH or give its full path in the server settings, restart Praxi-Bot, then press Reconnect.",
+        "closed": "The server stopped while starting. Open the details to see what it printed (for example Docker installed but not running), fix that, then press Reconnect.",
+        "spawn": "The server program could not be started. Check the command in the server settings, then press Reconnect.",
+        "needs_folder": "Choose the one folder this app may read and write, then press Save and connect.",
+        "timeout": "The server did not answer in time. The first start can be slow while packages download; press Reconnect to try again.",
+        "config": "The server settings or a required secret are missing or invalid. Fix them and press Reconnect."
+      }
+    },
+    "folder": {
+      "label": "Folder the bot may read and write",
+      "placeholder": "Full path, for example C:\\Users\\you\\Documents",
+      "hint": "Only this folder is shared with the app. Praxi-Bot's own data and credential folders are refused.",
+      "missing": "Choose a folder first.",
+      "save": "Save and connect"
+    },
     "reconnect": "Reconnect",
     "disconnectConfirm": "Disconnect this server?",
     "disconnect": "Disconnect",
@@ -1898,6 +1924,8 @@
     "refresh": "Refresh targets",
     "backToChat": "Back",
     "targetsLabel": "Target screen",
+    "checkingTargets": "Checking for screens…",
+    "queryFailed": "Could not load the screen list. It is retried automatically.",
     "noTargets": "No screen targets reported yet.",
     "hostLabel": "Host: {{host}}",
     "viewOnly": "View only",
@@ -1936,6 +1964,9 @@
       "active": "You are in control",
       "finishing": "Handing back…",
       "paused": "Paused",
+      "checking": "Checking screens…",
+      "queryFailed": "Could not load screens",
+      "noScreen": "No screen yet",
       "unavailable": "Unavailable",
       "closed": "Closed",
       "disconnected": "Connection lost",

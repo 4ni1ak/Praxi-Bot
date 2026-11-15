@@ -1140,6 +1140,32 @@
       "notApplied": "{{name}}: kaydedilmedi, bu uygulama başka yerde değiştirildi (örneğin artık tüm botlara açık). Güncel durum gösteriliyor.",
       "savedToast": "{{name}}: bot erişimi kaydedildi"
     },
+    "error": {
+      "showDetails": "Ayrıntıları göster",
+      "hideDetails": "Ayrıntıları gizle",
+      "message": "Hata",
+      "stderr": "Sunucunun yazdıkları",
+      "noStderr": "Sunucu durmadan önce hiçbir şey yazmadı.",
+      "hint": {
+        "runtime_node": "Node.js PATH üzerinde bulunamadı. LTS sürümünü https://nodejs.org adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_uv": "uv PATH üzerinde bulunamadı. Kurun (Windows: winget install --id=astral-sh.uv -e veya https://docs.astral.sh/uv/) ya da klasörünü PATH'e ekleyin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_pipx": "pipx PATH üzerinde bulunamadı. https://pipx.pypa.io adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_docker": "docker komutu PATH üzerinde bulunamadı. Docker'ı kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_other": "Bu sunucuyu başlatan program PATH üzerinde bulunamadı. Kurun, klasörünü PATH'e ekleyin ya da sunucu ayarlarında tam yolunu verin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "closed": "Sunucu başlarken durdu. Neyi yazdığını görmek için ayrıntıları açın (örneğin Docker kurulu ama çalışmıyor), sorunu giderin ve Yeniden bağlan'a basın.",
+        "spawn": "Sunucu programı başlatılamadı. Sunucu ayarlarındaki komutu kontrol edin ve Yeniden bağlan'a basın.",
+        "needs_folder": "Bu uygulamanın okuyup yazabileceği tek klasörü seçin, sonra Kaydet ve bağla'ya basın.",
+        "timeout": "Sunucu zamanında yanıt vermedi. İlk başlatma paketler inerken yavaş olabilir; tekrar denemek için Yeniden bağlan'a basın.",
+        "config": "Sunucu ayarları ya da gerekli bir gizli anahtar eksik veya geçersiz. Düzeltin ve Yeniden bağlan'a basın."
+      }
+    },
+    "folder": {
+      "label": "Botun okuyup yazabileceği klasör",
+      "placeholder": "Tam yol, örneğin C:\\Users\\siz\\Documents",
+      "hint": "Uygulamayla yalnızca bu klasör paylaşılır. Praxi-Bot'un kendi verileri ve kimlik bilgisi klasörleri reddedilir.",
+      "missing": "Önce bir klasör seçin.",
+      "save": "Kaydet ve bağla"
+    },
     "reconnect": "Yeniden bağlan",
     "disconnectConfirm": "Bu sunucunun bağlantısı kesilsin mi?",
     "disconnect": "Bağlantıyı kes",
@@ -1898,6 +1924,8 @@
     "refresh": "Hedefleri yenile",
     "backToChat": "Geri",
     "targetsLabel": "Hedef ekran",
+    "checkingTargets": "Ekranlar denetleniyor…",
+    "queryFailed": "Ekran listesi yüklenemedi. Otomatik olarak yeniden denenecek.",
     "noTargets": "Henüz bildirilen bir ekran hedefi yok.",
     "hostLabel": "Ana makine: {{host}}",
     "viewOnly": "Salt izleme",
@@ -1936,6 +1964,9 @@
       "active": "Kontrol sizde",
       "finishing": "Geri veriliyor…",
       "paused": "Duraklatıldı",
+      "checking": "Ekranlar denetleniyor…",
+      "queryFailed": "Ekranlar yüklenemedi",
+      "noScreen": "Henüz ekran yok",
       "unavailable": "Kullanılamıyor",
       "closed": "Kapalı",
       "disconnected": "Bağlantı kesildi",

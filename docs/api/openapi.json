@@ -8759,6 +8759,17 @@
               "type": "string"
             }
           },
+          "folder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpFolderDto",
+                "description": "A folder to collect first (filesystem servers)."
+              }
+            ]
+          },
           "required_secrets": {
             "type": "array",
             "items": {
@@ -8796,6 +8807,39 @@
               "null"
             ],
             "description": "Endpoint (http)."
+          }
+        }
+      },
+      "McpErrorKind": {
+        "type": "string",
+        "description": "Class of the last connect error of an MCP server, so a UI can show a\nlocalized \"what to do\" next to the raw `error` text.",
+        "enum": [
+          "runtime_missing",
+          "spawn",
+          "closed",
+          "timeout",
+          "config",
+          "needs_folder",
+          "other"
+        ]
+      },
+      "McpFolderDto": {
+        "type": "object",
+        "description": "A folder the user must choose when adding a catalog entry; the app appends\nit as the last argument.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Label of the folder field."
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A safe default offered to the user (their Documents folder), if there is one."
           }
         }
       },
@@ -8954,6 +8998,17 @@
             ],
             "description": "Most recent error, if any."
           },
+          "error_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpErrorKind",
+                "description": "Class of `error`, for a localized hint."
+              }
+            ]
+          },
           "headers": {
             "type": "object",
             "description": "Plain request headers (http). Not secrets.",
@@ -9002,6 +9057,13 @@
           "status": {
             "$ref": "#/components/schemas/McpStatus",
             "description": "Connection state."
+          },
+          "stderr_tail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Last lines the server wrote to stderr (secret-redacted, bounded) while\nit is in an error state; empty otherwise."
           },
           "tool_allow": {
             "type": "array",
