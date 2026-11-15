@@ -888,7 +888,21 @@ async fn the_foreground_page_makes_matching_skills_suggested() {
     }));
     let run = lp.run_turn(env.chat, "hello").unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
-    assert!(system_of(&brain.requests()[0]).contains("[suggested] my-site"));
+    let reqs = brain.requests();
+    assert!(!system_of(&reqs[0]).contains("- [suggested]"));
+    let user = reqs[0]
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .unwrap();
+    let note = user.content.as_str().unwrap();
+    assert!(note.starts_with("hello"), "{note}");
+    assert!(
+        note.contains("[loop hint, not written by the user: Suggested skills"),
+        "{note}"
+    );
+    assert!(note.contains("my-site"), "{note}");
 }
 
 #[tokio::test]
@@ -1306,4 +1320,72 @@ async fn a_child_inherits_a_private_read_and_asks_before_search() {
     assert!(reason.contains("file secret.txt"), "{reason}");
     assert_eq!(search.count.load(Ordering::SeqCst), 0);
     lp.cancel(parent).unwrap();
+}
+
+#[tokio::test]
+async fn the_skill_hint_is_decided_once_and_stays_identical_within_the_turn() {
+    let env = setup();
+    let brain = skill_brain();
+    let lp = skill_loop(&env, &brain);
+    let calls_seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = Arc::clone(&calls_seen);
+    // The foreground page matches the skill at the first model call only.
+    lp.set_skill_hints(Arc::new(move || {
+        let first = seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+        SkillHints {
+            domain: first.then(|| "example.com".to_owned()),
+            app: None,
+        }
+    }));
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let reqs = brain.requests();
+    assert!(reqs.len() >= 2);
+    let user_of = |r: &ChatRequest| {
+        r.messages
+            .iter()
+            .find(|m| m.role == MessageRole::User)
+            .unwrap()
+            .content
+            .clone()
+    };
+    assert!(user_of(&reqs[0]).as_str().unwrap().contains("my-site"));
+    assert_eq!(user_of(&reqs[0]), user_of(&reqs[1]), "no mid-turn rewrite");
+}
+
+#[tokio::test]
+async fn no_skill_suggestions_when_skill_read_is_not_available() {
+    let env = setup();
+    let brain = Brain::new(|_| say("ok"));
+    let skills_dir = env.dir.path().join("skills").join("my-site");
+    std::fs::create_dir_all(&skills_dir).unwrap();
+    std::fs::write(
+        skills_dir.join("SKILL.md"),
+        "---\nname: my-site\ndescription: How to use my-site\nwhen:\n  domains: [example.com]\n---\nbody\n",
+    )
+    .unwrap();
+    let index = skills::SkillIndex::load(skills::SkillPaths::from_data_dir(env.dir.path(), None));
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile("[tools]\nexclude = [\"skill_read\"]\n"),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+    lp.set_skill_hints(Arc::new(|| SkillHints {
+        domain: Some("example.com".into()),
+        app: None,
+    }));
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let reqs = brain.requests();
+    assert!(!tool_names(&reqs[0]).contains(&"skill_read".to_owned()));
+    for m in &reqs[0].messages {
+        assert!(
+            !m.content.as_str().unwrap_or_default().contains("loop hint"),
+            "{m:?}"
+        );
+    }
 }

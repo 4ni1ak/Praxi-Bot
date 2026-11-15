@@ -18,7 +18,7 @@ use protocol::event::{
     MessageDelta, ModelFallback, TodoItem, TodoStatus, TodoUpdated, ToolCallCompleted,
     ToolCallDenied, ToolCallRequested,
 };
-use protocol::{Event, ToolCallId};
+use protocol::{Event, RunId, ToolCallId};
 use provider_catalog::{ChatChunk, ChatRequest, ModelRef, ProviderError};
 use serde_json::{Value, json};
 use storage::{Run, RunStep};
@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tool_registry::{ContentPart, Tool, ToolContext, ToolOutput, ToolSpec};
 
 use crate::approval::ExecPermit;
+use crate::compaction::Compaction;
 use crate::history::{
     GUARD_NOTE, build_messages, expose, status_of, step_output, tool_defs, truncate_utf8,
 };
@@ -504,7 +505,15 @@ impl TurnExecutor {
         let note = guard_reason
             .as_deref()
             .map(|r| GUARD_NOTE.replace("{reason}", r));
-        let skills = self.skills_block(&ctx, &steps, &hints.skills);
+        let (skills, suggested_skills) =
+            self.skills_block(run.id, &ctx, &steps, &hints.skills, &specs);
+        let lookup = |n: &str| self.sh.tools.get(n).map(|t| t.spec().clone());
+        let spill_dir = self
+            .sh
+            .storage
+            .data_dir()
+            .join("spill")
+            .join(run.id.to_string());
         let messages = build_messages(
             &self.sh.storage,
             run,
@@ -512,6 +521,8 @@ impl TurnExecutor {
             &ctx.profile,
             note.as_deref(),
             skills.as_deref(),
+            suggested_skills.as_deref(),
+            &Compaction::from_guards(&self.sh.cfg.guards, Some(&lookup), Some(&spill_dir)),
         )
         .map_err(xe)?;
         let mut primary = ctx.profile.models.executor.clone();
@@ -632,42 +643,78 @@ impl TurnExecutor {
         }
     }
 
-    /// The skills index block for the system prompt: skills matching the
-    /// foreground page / app (when the embedder tells us) or else the turn's
-    /// latest user text are listed first.
+    /// The skills index block for the system prompt (name-ordered, so it does
+    /// not change between the model calls of a turn) and, separately, the short
+    /// note naming the skills that match the foreground page / app (when the
+    /// embedder tells us, read at the first model call only), the turn's user
+    /// text or the router hint.  The note is decided once per turn and reused
+    /// byte for byte; it is only offered while `skill_read` is reachable.
     fn skills_block(
         &self,
+        run: RunId,
         ctx: &RunCtx,
         steps: &[RunStep],
         suggested: &[String],
-    ) -> Option<String> {
-        let index = self.sh.skills.get()?;
-        let hints = self
-            .sh
-            .skill_hints
-            .read()
-            .as_ref()
-            .map(|f| f())
-            .unwrap_or_default();
-        let text = steps
-            .iter()
-            .rev()
-            .find(|s| s.name == STEP_USER)
-            .and_then(|s| s.input["text"].as_str())
-            .map(str::to_owned)
-            .or_else(|| ctx.sub.as_ref().map(|s| s.task.clone()));
-        let skill_ctx = skills::SkillContext {
-            domain: hints.domain,
-            app: hints.app,
-            text,
+        specs: &[ToolSpec],
+    ) -> (Option<String>, Option<String>) {
+        let Some(index) = self.sh.skills.get() else {
+            return (None, None);
         };
         // Per-bot resolver: learned skills of this bot (and only this bot) are
         // listed next to the shared and bundled ones. An unusable bot id falls
         // back to the shared view, the same scope a bot-less caller gets.
+        let bot = ctx.bot_id.to_string();
+        let stable = skills::SkillContext::default();
         let block = index
-            .prompt_block_for_bot(Some(&ctx.bot_id.to_string()), &skill_ctx, suggested)
-            .unwrap_or_else(|_| index.prompt_block_suggesting(&skill_ctx, suggested));
-        (!block.is_empty()).then_some(block)
+            .prompt_block_for_bot(Some(&bot), &stable, &[])
+            .unwrap_or_else(|_| index.prompt_block(&stable));
+        let note = crate::compaction::turn_hint(run, || {
+            let first_call = !steps
+                .iter()
+                .any(|s| s.name == STEP_MODEL && status_of(s) == Some(StepStatus::Succeeded));
+            let hints = if first_call {
+                self.sh
+                    .skill_hints
+                    .read()
+                    .as_ref()
+                    .map(|f| f())
+                    .unwrap_or_default()
+            } else {
+                crate::shared::SkillHints::default()
+            };
+            let text = steps
+                .iter()
+                .rev()
+                .find(|s| s.name == STEP_USER)
+                .and_then(|s| s.input["text"].as_str())
+                .map(str::to_owned)
+                .or_else(|| ctx.sub.as_ref().map(|s| s.task.clone()));
+            let skill_ctx = skills::SkillContext {
+                domain: hints.domain,
+                app: hints.app,
+                text,
+            };
+            let listed = index
+                .for_bot(Some(&bot))
+                .map_or_else(|_| index.list(), |view| view.list());
+            let names: Vec<String> = listed
+                .into_iter()
+                .filter(|s| s.matches(&skill_ctx) || suggested.contains(&s.name))
+                .map(|s| s.name)
+                .collect();
+            (!names.is_empty()).then(|| {
+                format!(
+                    "Suggested skills for the current page/app/request (load one with skill_read): {}",
+                    names.join(", ")
+                )
+            })
+        })
+        .filter(|_| {
+            specs.iter().any(|s| s.name == "skill_read")
+                || (ctx.profile.tool_visible("skill_read")
+                    && specs.iter().any(|s| s.name == agent_router::USE_TOOL))
+        });
+        ((!block.is_empty()).then_some(block), note)
     }
 
     /// One model, up to `model_retry.max_attempts` attempts inside one shared
@@ -992,81 +1039,77 @@ impl TurnExecutor {
 
         // Reads batched by `pending_tools` run concurrently; everything else is a single call.
         let ctx_ref: &RunCtx = &ctx;
-        let outcomes = futures::future::join_all(slots.into_iter().zip(calls.iter().cloned()).map(
-            |(slot, _call)| async move {
-                let not_run = taint::ExecFact::did_not_run();
-                match slot {
-                    Slot::Done { text, is_error } => (text, is_error, None, false, not_run),
-                    Slot::Spawn {
-                        input,
-                        call: call_id,
-                        model_call_id,
-                        permit,
-                    } => {
-                        if let Err(reason) = commit_or_deny(permit) {
-                            return (user_denied(reason), true, None, false, not_run);
-                        }
-                        let (t, e, d) = self
-                            .run_subagent(run, ctx_ref, call_id, &model_call_id, input)
-                            .await;
-                        // The child's own steps carry its exposure. This row
-                        // is the spawn call, which does not itself ingest.
-                        (t, e, d, false, not_run)
+        let outcomes = futures::future::join_all(slots.into_iter().map(|slot| async move {
+            let not_run = taint::ExecFact::did_not_run();
+            match slot {
+                Slot::Done { text, is_error } => (text, is_error, None, None, not_run),
+                Slot::Spawn {
+                    input,
+                    call: call_id,
+                    model_call_id,
+                    permit,
+                } => {
+                    if let Err(reason) = commit_or_deny(permit) {
+                        return (user_denied(reason), true, None, None, not_run);
                     }
-                    Slot::Run {
-                        tool,
-                        input,
-                        call: call_id,
-                        meta,
-                        permit,
-                        class,
-                    } => {
-                        // Re-check under the policy mutex immediately before the
-                        // call. A deny that landed after approval does not run the
-                        // tool and does not keep a grant (`commit` stores it).
-                        if let Err(reason) = commit_or_deny(permit) {
-                            return (user_denied(reason), true, None, false, not_run);
-                        }
-                        let (text, is_error, duration_ms, self_spilled, exposure) = self
-                            .run_tool(run, ctx_ref, call_id, &tool, input, meta)
-                            .await;
-                        // The result is in the model context even when the tool
-                        // returned an error. A denial before this point is not.
-                        // The class was captured at resolution time. Output
-                        // exposure, when the tool set one, replaces it: that
-                        // is how discovery carries the metadata it actually
-                        // returned. Neither value is read from the result text.
-                        let fact = match &exposure {
-                            Some(exposure) => {
-                                taint::ExecFact::from_exposure(exposure, &class.label)
-                            }
-                            None => taint::ExecFact::ran(
-                                tool_registry::ContentClass::declared(
-                                    class.ingests_untrusted,
-                                    class.reads_private,
-                                    false,
-                                ),
-                                class.label,
-                            ),
-                        };
-                        fact_note(ctx_ref, &fact);
-                        (text, is_error, duration_ms, self_spilled, fact)
-                    }
+                    let (t, e, d) = self
+                        .run_subagent(run, ctx_ref, call_id, &model_call_id, input)
+                        .await;
+                    // The child's own steps carry its exposure. This row
+                    // is the spawn call, which does not itself ingest.
+                    (t, e, d, None, not_run)
                 }
-            },
-        ))
+                Slot::Run {
+                    tool,
+                    input,
+                    call: call_id,
+                    meta,
+                    permit,
+                    class,
+                } => {
+                    // Re-check under the policy mutex immediately before the
+                    // call. A deny that landed after approval does not run the
+                    // tool and does not keep a grant (`commit` stores it).
+                    if let Err(reason) = commit_or_deny(permit) {
+                        return (user_denied(reason), true, None, None, not_run);
+                    }
+                    let (text, is_error, duration_ms, own_spill, exposure) = self
+                        .run_tool(run, ctx_ref, call_id, &tool, input, meta)
+                        .await;
+                    // The result is in the model context even when the tool
+                    // returned an error. A denial before this point is not.
+                    // The class was captured at resolution time. Output
+                    // exposure, when the tool set one, replaces it: that
+                    // is how discovery carries the metadata it actually
+                    // returned. Neither value is read from the result text.
+                    let fact = match &exposure {
+                        Some(exposure) => taint::ExecFact::from_exposure(exposure, &class.label),
+                        None => taint::ExecFact::ran(
+                            tool_registry::ContentClass::declared(
+                                class.ingests_untrusted,
+                                class.reads_private,
+                                false,
+                            ),
+                            class.label,
+                        ),
+                    };
+                    fact_note(ctx_ref, &fact);
+                    (text, is_error, duration_ms, own_spill, fact)
+                }
+            }
+        }))
         .await;
 
         let g = &self.sh.cfg.guards;
         let mut results = Vec::with_capacity(calls.len());
-        for ((call, call_uuid), (text, is_error, duration_ms, self_spilled, fact)) in
+        for ((call, call_uuid), (text, is_error, duration_ms, own_spill, fact)) in
             calls.iter().zip(uuids).zip(outcomes)
         {
             let text = self.sh.redact(text);
             let output_preview = preview(&text);
             // A tool that already spilled its own output is not spilled again.
-            let (mut text, spill_path) = if self_spilled {
-                (text, None)
+            let (mut text, spill_path) = if own_spill.is_some() {
+                (text, own_spill)
             } else {
                 self.spill(run, call_uuid, text)
             };
@@ -1113,7 +1156,7 @@ impl TurnExecutor {
         String,
         bool,
         Option<u64>,
-        bool,
+        Option<String>,
         Option<tool_registry::OutputExposure>,
     ) {
         let g = &self.sh.cfg.guards;
@@ -1145,7 +1188,7 @@ impl TurnExecutor {
         )
         .await;
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let mut self_spilled = false;
+        let mut own_spill: Option<String> = None;
         let exposure = match &outcome {
             Ok(Ok(out)) => out.exposure.clone(),
             _ => None,
@@ -1158,11 +1201,11 @@ impl TurnExecutor {
             Ok(Err(e)) => (format!("Error: {e}"), true),
             Ok(Ok(out)) if meta => self.meta_output(ctx, call, &out).await,
             Ok(Ok(out)) => {
-                self_spilled = out.spill.is_some();
+                own_spill = out.spill.as_ref().map(|s| s.path.clone());
                 (render_output(&out), false)
             }
         };
-        (text, is_error, Some(duration_ms), self_spilled, exposure)
+        (text, is_error, Some(duration_ms), own_spill, exposure)
     }
 
     /// Turn the structured output of a `Meta` tool into events: a todo list
