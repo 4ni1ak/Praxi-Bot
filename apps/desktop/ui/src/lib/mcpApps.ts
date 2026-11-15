@@ -245,6 +245,7 @@ export function statusTone(status: McpStatus): StatusTone {
     case "quarantined":
       return "bad";
     case "disconnected":
+    case "auth_required":
       return "muted";
   }
 }

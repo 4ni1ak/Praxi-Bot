@@ -196,3 +196,43 @@ pub(crate) async fn set_secret(
         .map_err(|_| ApiError::internal("cannot store the secret"))?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// Start a sign-in from an authenticated local user's explicit action.
+#[utoipa::path(post, path = "/v1/mcp/servers/{name}/auth/start", tag = "mcp", security(("bearer" = [])),
+    params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthStart), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
+pub(crate) async fn start_mcp_auth(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<crate::mcp::McpAuthStart>, ApiError> {
+    Ok(Json(mcp(&s)?.auth_start(&name).await?))
+}
+
+/// Close the one-shot listener and cancel a pending token exchange.
+#[utoipa::path(post, path = "/v1/mcp/servers/{name}/auth/cancel", tag = "mcp", security(("bearer" = [])),
+    params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody)))]
+pub(crate) async fn cancel_mcp_auth(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<crate::mcp::McpAuthState>, ApiError> {
+    Ok(Json(mcp(&s)?.auth_cancel(&name).await?))
+}
+
+/// Read authentication state, never credentials.
+#[utoipa::path(get, path = "/v1/mcp/servers/{name}/auth/status", tag = "mcp", security(("bearer" = [])),
+    params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody)))]
+pub(crate) async fn mcp_auth_status(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<crate::mcp::McpAuthState>, ApiError> {
+    Ok(Json(mcp(&s)?.auth_status(&name).await?))
+}
+
+/// Cancel sign-in and forget stored tokens before disconnecting.
+#[utoipa::path(post, path = "/v1/mcp/servers/{name}/auth/logout", tag = "mcp", security(("bearer" = [])),
+    params(("name" = String, Path)), responses((status = 200, body = crate::mcp::McpAuthState), (status = 404, body = ErrorBody)))]
+pub(crate) async fn logout_mcp_auth(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<crate::mcp::McpAuthState>, ApiError> {
+    Ok(Json(mcp(&s)?.auth_logout(&name).await?))
+}

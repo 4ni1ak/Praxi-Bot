@@ -35,6 +35,7 @@ impl FakeMcp {
             McpTransportInput::Kind(McpTransportKind::Stdio)
         );
         McpServerDto {
+            oauth: input.oauth.clone(),
             name: name.to_owned(),
             transport: if stdio {
                 McpTransportKind::Stdio
@@ -664,4 +665,62 @@ async fn mcp_changes_are_announced_on_the_global_stream() {
     );
     assert!(seen.iter().all(|s| s.0 == "files"));
     let _ = TOKEN;
+}
+
+#[tokio::test]
+async fn oauth_routes_are_host_local_for_every_peer_role() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+    let (t, _) = with_mcp();
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, suffix) in [
+            (Method::POST, "start"),
+            (Method::POST, "cancel"),
+            (Method::POST, "logout"),
+            (Method::GET, "status"),
+        ] {
+            for path in [
+                format!("/v1/mcp/servers/s/auth/{suffix}"),
+                format!("/v1/mcp/servers/s/auth/{suffix}/"),
+                format!("/v1/mcp//servers/s//auth/{suffix}"),
+                format!("/v1/mcp/servers/s/%61uth%2F{suffix}"),
+            ] {
+                let mut request = Request::builder()
+                    .method(method.clone())
+                    .uri(&path)
+                    .body(Body::empty())
+                    .unwrap();
+                request.extensions_mut().insert(crate::PeerIdentity {
+                    key: "oauth-peer".into(),
+                    role,
+                });
+                let response = crate::peer_router(t.state.clone())
+                    .oneshot(request)
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::FORBIDDEN, "{role:?} {path}");
+            }
+        }
+    }
+    // Local authentication is still mandatory and user requests reach the handler.
+    for (method, suffix) in [
+        (Method::POST, "start"),
+        (Method::POST, "cancel"),
+        (Method::POST, "logout"),
+        (Method::GET, "status"),
+    ] {
+        let path = format!("/v1/mcp/servers/s/auth/{suffix}");
+        let r = send(&t.app, method.clone(), &path, None, &[]).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(
+            call(&t, method, &path, None).await.status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
 }

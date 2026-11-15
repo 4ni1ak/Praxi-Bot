@@ -733,6 +733,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp/servers/{name}/auth/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close the one-shot listener and cancel a pending token exchange. */
+        post: operations["cancel_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel sign-in and forget stored tokens before disconnecting. */
+        post: operations["logout_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a sign-in from an authenticated local user's explicit action. */
+        post: operations["start_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read authentication state, never credentials. */
+        get: operations["mcp_auth_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp/servers/{name}/reconnect": {
         parameters: {
             query?: never;
@@ -2133,6 +2201,17 @@ export interface components {
              */
             gseq: number;
         };
+        /** @description Browser destination for a user-started, five-minute sign-in. */
+        McpAuthStart: {
+            authorization_url: string;
+            /** Format: int64 */
+            expires_in: number;
+        };
+        /**
+         * @description Authentication state, independent of transport errors.
+         * @enum {string}
+         */
+        McpAuthState: "signed_out" | "signing_in" | "signed_in" | "auth_required";
         /** @description An entry of the curated MCP catalog (`GET /v1/mcp/catalog`). */
         McpCatalogEntryDto: {
             /** @description Permission category of its tools. */
@@ -2177,6 +2256,13 @@ export interface components {
             transport: components["schemas"]["McpTransportKind"];
             /** @description Endpoint (http). */
             url?: string | null;
+        };
+        /** @description OAuth configuration contains no credential values. */
+        McpOAuthConfig: {
+            allow_loopback_http?: boolean;
+            client_id?: string | null;
+            client_metadata_url?: string | null;
+            client_secret_ref?: string | null;
         };
         /** @description A secret the user must provide to install a catalog entry. */
         McpRequiredSecretDto: {
@@ -2230,6 +2316,7 @@ export interface components {
             };
             /** @description Server name (the `<server>` of `mcp:<server>/<tool>`). */
             name: string;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
             /** @description Environment variable -> secret name (stdio). */
             secret_env?: {
                 [key: string]: string;
@@ -2287,6 +2374,7 @@ export interface components {
              *     path wins (a different name in the body is rejected).
              */
             name?: string | null;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
             /** @description Environment variable -> secret name. */
             secret_env?: {
                 [key: string]: string;
@@ -2348,6 +2436,7 @@ export interface components {
              *     name in the body is rejected).
              */
             name?: string | null;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
             /** @description Environment variable -> secret name.  Present object replaces the map. */
             secret_env?: {
                 [key: string]: string;
@@ -2370,7 +2459,7 @@ export interface components {
          * @description Connection state of an MCP server.
          * @enum {string}
          */
-        McpStatus: "connected" | "connecting" | "disconnected" | "error" | "quarantined";
+        McpStatus: "auth_required" | "connected" | "connecting" | "disconnected" | "error" | "quarantined";
         /** @description A tool of an MCP server (`GET /v1/mcp/servers/{name}/tools`). */
         McpToolDto: {
             /** @description Description given by the server. */
@@ -4689,6 +4778,130 @@ export interface operations {
             };
             /** @description MCP management is not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    cancel_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    logout_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    start_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthStart"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    mcp_auth_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
