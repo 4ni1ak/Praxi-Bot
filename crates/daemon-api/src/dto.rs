@@ -272,6 +272,10 @@ pub struct MessageDto {
     pub chat_id: Uuid,
     /// Run that produced / carried it.
     pub run_id: Option<Uuid>,
+    /// Bot that ran `run_id` (the author of an assistant message). It differs
+    /// from the chat's bot when another bot answered an `@mention`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<Uuid>,
     /// `user` / `assistant` / `system` / `tool`.
     pub role: String,
     /// Text.

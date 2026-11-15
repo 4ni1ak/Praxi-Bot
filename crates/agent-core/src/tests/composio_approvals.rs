@@ -151,7 +151,9 @@ async fn composio_read_asks_for_all_policies_grants_and_callers() {
                 });
             }
             if mode == "chat_grant" {
-                grants.this_chat.insert((env.chat, name.into(), None));
+                grants
+                    .this_chat
+                    .insert((env.chat, env.bot, name.into(), None));
             }
         }
         let store = workflow_replay::WorkflowStore::new(env.dir.path());

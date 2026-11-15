@@ -60,7 +60,7 @@ async fn external_agent_read_gate_precedes_full_policy_persisted_grants_and_read
             .grants
             .lock()
             .this_chat
-            .insert((env.chat, "fs_read".into(), None));
+            .insert((env.chat, env.bot, "fs_read".into(), None));
         let mut rx = lp.subscribe();
         let run = lp
             .run_external(

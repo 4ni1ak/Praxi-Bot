@@ -250,6 +250,7 @@ impl Shared {
             let g = self.grants.lock();
             g.this_chat.contains(&(
                 ctx.chat_id,
+                ctx.bot_id,
                 name.to_owned(),
                 ctx.tool_grant_scope(name, category),
             )) || g.covers(
@@ -896,6 +897,7 @@ impl ExecPermit {
             ApprovalScope::ThisChat => {
                 self.sh.grants.lock().this_chat.insert((
                     self.ctx.chat_id,
+                    self.ctx.bot_id,
                     self.name.clone(),
                     self.ctx.tool_grant_scope(&self.name, self.category),
                 ));

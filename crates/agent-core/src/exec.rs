@@ -241,10 +241,17 @@ impl TurnExecutor {
     }
 
     fn first_user_text(&self, ctx: &RunCtx, run: &Run) -> Result<String, ExecError> {
-        self.sh
-            .storage
-            .list_messages(ctx.chat_id)
-            .map_err(xe)?
+        let messages = self.sh.storage.list_messages(ctx.chat_id).map_err(xe)?;
+        // A mention run (first or later bot, owner bot included) is bound to the
+        // exact user message that carried the mentions.
+        if let Some(id) = crate::shared::mention_message_id(&run.kind) {
+            return messages
+                .iter()
+                .find(|m| m.id == id && m.role == "user")
+                .map(|m| m.content.clone())
+                .ok_or_else(|| xe("turn has no user message"));
+        }
+        messages
             .into_iter()
             .find(|m| {
                 m.run_id == Some(run.id)

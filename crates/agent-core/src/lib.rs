@@ -22,6 +22,7 @@ mod exec;
 mod history;
 mod knowledge;
 mod memory;
+mod mention;
 mod profile;
 mod router;
 mod schedule_precheck;

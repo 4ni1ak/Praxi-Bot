@@ -30,7 +30,8 @@ use crate::shared::{
     ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
     CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
     MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork, Shared,
-    StreamItem, Verdict, initiator_of, kind_for, kind_for_schedule,
+    StreamItem, Verdict, initiator_of, kind_for, kind_for_mention, kind_for_schedule,
+    mention_message_id,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -103,6 +104,7 @@ impl AgentLoop {
                 grants: Mutex::new(load_grants(&storage)),
                 active: Mutex::new(HashMap::new()),
                 queued: Mutex::new(HashMap::new()),
+                mention_chain: Mutex::new(HashMap::new()),
                 tasks: Mutex::new(HashMap::new()),
                 bg: Mutex::new(Vec::new()),
                 gseq: AtomicU64::new(first_gseq),
@@ -657,6 +659,65 @@ impl AgentLoop {
         directive: Option<ScheduleWork>,
         handoff: Option<RunId>,
     ) -> Result<RunId> {
+        // `@Y` in the user's own message: Y answers this turn in this chat (up
+        // to three bots, one after the other). Only human turns are parsed.
+        if directive.is_none()
+            && initiator_of(kind) == InitiatorKind::Human
+            && let Some((first, rest)) = self.mention_targets(chat_id, user_message)
+        {
+            self.sh.mention_chain.lock().remove(&chat_id);
+            let msg_id = Uuid::now_v7();
+            let run = self.start_turn_as_bot(
+                chat_id,
+                user_message,
+                &kind_for_mention(msg_id),
+                None,
+                handoff,
+                Some(first),
+                false,
+            )?;
+            if !rest.is_empty() {
+                self.sh
+                    .mention_chain
+                    .lock()
+                    .insert(chat_id, rest.into_iter().map(|b| (b, msg_id)).collect());
+            }
+            return Ok(run);
+        }
+        // A plain turn ends any leftover chain of an earlier message.
+        self.sh.mention_chain.lock().remove(&chat_id);
+        self.start_turn_as_bot(chat_id, user_message, kind, directive, handoff, None, false)
+    }
+
+    /// Bots (existing, with a usable profile) the user's `text` calls with `@`,
+    /// first one split from the rest; `None` when it calls nobody else.
+    fn mention_targets(&self, chat_id: ChatId, text: &str) -> Option<(BotId, Vec<BotId>)> {
+        let chat = self.sh.storage.get_chat(chat_id).ok().flatten()?;
+        let bots: Vec<(BotId, String)> = self
+            .sh
+            .storage
+            .list_bots(chat.user_id)
+            .ok()?
+            .into_iter()
+            .filter(|b| self.sh.profile_for(b.id).is_ok())
+            .map(|b| (b.id, b.name))
+            .collect();
+        let mut all = crate::mention::resolve(&bots, chat.bot_id, text).into_iter();
+        let first = all.next()?;
+        Some((first, all.collect()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_turn_as_bot(
+        &self,
+        chat_id: ChatId,
+        user_message: &str,
+        kind: &str,
+        directive: Option<ScheduleWork>,
+        handoff: Option<RunId>,
+        as_bot: Option<BotId>,
+        reuse_user_message: bool,
+    ) -> Result<RunId> {
         if self.sh.providers.read().setup_required() {
             return Err(LoopError::SetupRequired);
         }
@@ -668,20 +729,23 @@ impl AgentLoop {
             .storage
             .get_chat(chat_id)?
             .ok_or_else(|| LoopError::NotFound(format!("chat {chat_id}")))?;
-        if self
-            .sh
-            .storage
-            .list_messages(chat_id)?
-            .iter()
-            .any(|m| m.role == "external_schedule")
+        // A mentioned bot runs in this chat with its own profile; the chat stays
+        // the owner's chat with `chat.bot_id`.
+        let run_bot = as_bot.unwrap_or(chat.bot_id);
+        self.sh.profile_for(run_bot).map_err(LoopError::Profile)?;
         {
-            return Err(LoopError::Profile(
-                "external schedule chat is isolated; start a new chat".into(),
-            ));
+            let messages = self.sh.storage.list_messages(chat_id)?;
+            if messages.iter().any(|m| m.role == "external_schedule") {
+                return Err(LoopError::Profile(
+                    "external schedule chat is isolated; start a new chat".into(),
+                ));
+            }
+            if messages.iter().any(|m| m.role == "external_agent") {
+                return Err(LoopError::Profile(
+                    "external task chats cannot accept follow-up messages; start a new chat".into(),
+                ));
+            }
         }
-        self.sh
-            .profile_for(chat.bot_id)
-            .map_err(LoopError::Profile)?;
         let run_id = {
             let mut active = self.sh.active.lock();
             if active
@@ -712,8 +776,16 @@ impl AgentLoop {
             }
             let run_id = self
                 .rt
-                .create_run(chat.user_id, chat.bot_id, Some(chat_id), kind)?;
-            self.insert_user_message(chat.user_id, chat_id, run_id, user_message)?;
+                .create_run(chat.user_id, run_bot, Some(chat_id), kind)?;
+            if !reuse_user_message {
+                self.insert_user_message(
+                    chat.user_id,
+                    chat_id,
+                    run_id,
+                    user_message,
+                    mention_message_id(kind),
+                )?;
+            }
             if let Some(d) = directive {
                 self.sh.directives.lock().insert(run_id, d);
             }
@@ -771,6 +843,7 @@ impl AgentLoop {
                                 chat_id,
                                 run_id,
                                 content,
+                                None,
                             )?;
                             st.steer.push_back(stored);
                             return Ok(Delivery::Steered(run_id));
@@ -1494,12 +1567,13 @@ impl AgentLoop {
         chat_id: ChatId,
         run_id: RunId,
         text: &str,
+        id: Option<Uuid>,
     ) -> Result<String> {
         // A key pasted into the chat is stored (and replayed into every later
         // provider request) masked.
         self.sh.refresh_redactor();
         let content = self.sh.redact(text.to_owned());
-        self.insert_redacted_user_message(user_id, chat_id, run_id, content)
+        self.insert_redacted_user_message(user_id, chat_id, run_id, content, id)
     }
 
     fn insert_redacted_user_message(
@@ -1508,9 +1582,10 @@ impl AgentLoop {
         chat_id: ChatId,
         run_id: RunId,
         content: String,
+        id: Option<Uuid>,
     ) -> Result<String> {
         self.sh.storage.insert_message(&DbMessage {
-            id: Uuid::now_v7(),
+            id: id.unwrap_or_else(Uuid::now_v7),
             user_id,
             chat_id,
             run_id: Some(run_id),
@@ -1759,6 +1834,7 @@ impl AgentLoop {
     }
 
     /// Persist the final answer, emit the closing events and start any queued turn.
+    #[allow(clippy::too_many_lines)] // one terminal bookkeeping pass; the order is the contract
     fn conclude(&self, run_id: RunId, res: &std::result::Result<RunState, RuntimeError>) {
         let run = self.sh.storage.get_run(run_id).ok().flatten();
         if !matches!(res, Ok(RunState::Paused)) {
@@ -1828,6 +1904,12 @@ impl AgentLoop {
         };
         // Provider errors can carry URLs with `?key=...`.
         let error = error.map(|e| self.sh.redact(e));
+        if error.is_some()
+            && let Some(chat_id) = run.as_ref().and_then(|r| r.chat_id)
+        {
+            // Stopped or failed: the remaining mentioned bots do not answer.
+            self.sh.mention_chain.lock().remove(&chat_id);
+        }
         if error.is_none()
             && let Some(run) = &run
             && let Some(chat_id) = run.chat_id
@@ -1878,26 +1960,53 @@ impl AgentLoop {
         // Take the next queued message and keep the chat reserved (the slot
         // stays with this run) until its turn has started, so a concurrent
         // start cannot make the follow-up bounce off `Busy`.
-        let next = {
+        let (chained, next) = {
             let mut active = self.sh.active.lock();
-            let next = if active.get(&chat_id) == Some(&run_id) {
-                let next = self
+            let (chained, next) = if active.get(&chat_id) == Some(&run_id) {
+                // The rest of a multi-mention message goes before later messages.
+                let chained = self
                     .sh
-                    .queued
+                    .mention_chain
                     .lock()
                     .get_mut(&chat_id)
                     .and_then(std::collections::VecDeque::pop_front);
-                if next.is_none() {
+                let next = if chained.is_some() {
+                    None
+                } else {
+                    self.sh
+                        .queued
+                        .lock()
+                        .get_mut(&chat_id)
+                        .and_then(std::collections::VecDeque::pop_front)
+                };
+                if chained.is_none() && next.is_none() {
                     active.remove(&chat_id);
                 }
-                next
+                (chained, next)
             } else {
-                None
+                (None, None)
             };
             drop(active);
-            next
+            (chained, next)
         };
-        if let Some(text) = next {
+        if let Some((bot, msg_id)) = chained {
+            let started = self.start_turn_as_bot(
+                chat_id,
+                "",
+                &kind_for_mention(msg_id),
+                None,
+                Some(run_id),
+                Some(bot),
+                true,
+            );
+            if started.is_err() {
+                self.sh.mention_chain.lock().remove(&chat_id);
+                let mut active = self.sh.active.lock();
+                if active.get(&chat_id) == Some(&run_id) {
+                    active.remove(&chat_id);
+                }
+            }
+        } else if let Some(text) = next {
             let started = self.start_turn(
                 chat_id,
                 &text,

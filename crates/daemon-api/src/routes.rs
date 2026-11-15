@@ -858,20 +858,27 @@ pub(crate) async fn list_messages(
     Path(cid): Path<String>,
 ) -> Result<Json<Vec<MessageDto>>, ApiError> {
     let chat = s.chat_of_user(ChatId(id(&cid)?))?;
-    Ok(Json(
-        s.storage()
-            .list_messages(chat.id)?
-            .into_iter()
-            .map(|m| MessageDto {
-                id: m.id,
-                chat_id: m.chat_id.0,
-                run_id: m.run_id.map(|r| r.0),
-                role: m.role,
-                content: m.content,
-                created_at_ms: m.created_at_ms,
-            })
-            .collect(),
-    ))
+    let mut run_bots: std::collections::HashMap<RunId, Option<Uuid>> =
+        std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for m in s.storage().list_messages(chat.id)? {
+        let bot_id = match m.run_id {
+            Some(run) => *run_bots
+                .entry(run)
+                .or_insert_with(|| s.storage().get_run(run).ok().flatten().map(|r| r.bot_id.0)),
+            None => None,
+        };
+        out.push(MessageDto {
+            id: m.id,
+            chat_id: m.chat_id.0,
+            run_id: m.run_id.map(|r| r.0),
+            bot_id,
+            role: m.role,
+            content: m.content,
+            created_at_ms: m.created_at_ms,
+        });
+    }
+    Ok(Json(out))
 }
 
 /// Send a user message.  Starts a turn when the chat is idle (returns its run
