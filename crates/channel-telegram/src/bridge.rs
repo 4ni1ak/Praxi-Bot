@@ -456,6 +456,25 @@ fn validate_base_url(url: &str) -> Result<()> {
     }
 }
 
+fn approval_markup(a: &protocol::event::ApprovalNeeded) -> Option<InlineKeyboardMarkup> {
+    let mut row = vec![InlineButton::new(
+        "Approve once",
+        format_approval_callback(a.call_id, "once"),
+    )];
+    // No standing grant for tools that bring details.
+    if a.details.is_none() {
+        row.push(InlineButton::new(
+            "Always",
+            format_approval_callback(a.call_id, "always"),
+        ));
+    }
+    row.push(InlineButton::new(
+        "Deny",
+        format_approval_callback(a.call_id, "deny"),
+    ));
+    InlineKeyboardMarkup::from_rows(vec![row])
+}
+
 impl TelegramChannel {
     /// Construct a [`TelegramChannel`] without spawning the background polling task.
     ///
@@ -1026,6 +1045,23 @@ impl TelegramChannel {
                 ),
             },
         };
+        // Bound one approval to what a person can review in this chat. A
+        // longer card stays on the desktop, with no Approve button here.
+        let redacted = self.redact(&body);
+        let chunks = protocol::approval_text::chunk_text(&redacted, 3500);
+        if chunks.len() > 40 {
+            let _ = self
+                .send_redacted(
+                    chat_id,
+                    &format!(
+                        "⚠️ {} needs approval, but it is too large to review in Telegram. Review it in the desktop app.",
+                        a.tool_name
+                    ),
+                    None,
+                )
+                .await;
+            return Ok(());
+        }
         let markup = if offer {
             {
                 let mut pending = self.inner.pending_approvals.lock();
@@ -1041,29 +1077,13 @@ impl TelegramChannel {
                 }
                 once.insert(a.call_id);
             }
-            let mut row = vec![InlineButton::new(
-                "Approve once",
-                format_approval_callback(a.call_id, "once"),
-            )];
-            // No standing grant for tools that bring details.
-            if a.details.is_none() {
-                row.push(InlineButton::new(
-                    "Always",
-                    format_approval_callback(a.call_id, "always"),
-                ));
-            }
-            row.push(InlineButton::new(
-                "Deny",
-                format_approval_callback(a.call_id, "deny"),
-            ));
-            InlineKeyboardMarkup::from_rows(vec![row])
+            approval_markup(&a)
         } else {
             None
         };
         // Redact first, then split, so a secret cannot straddle two
         // messages; the buttons go on the last message only.
         // Telegram counts UTF-16 units.
-        let chunks = protocol::approval_text::chunk_text(&self.redact(&body), 3500);
         let last = chunks.len() - 1;
         for (i, chunk) in chunks.iter().enumerate() {
             let m = if i == last { markup.as_ref() } else { None };
