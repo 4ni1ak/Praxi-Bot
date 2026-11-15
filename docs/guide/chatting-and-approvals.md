@@ -158,29 +158,50 @@ the restore itself can be undone. Shell commands and desktop actions are not
 covered by checkpoints.
 
 Restoring a whole run (or a connected set of files) from the run's change
-review is all-or-nothing: the daemon stages every file, swaps them in with
-renames and rolls back if one step fails. A graceful stop of the daemon waits
-for a running restore to finish. After a restore that completes cleanly, the
-files count as reviewed; if one of them is edited afterwards it shows up as
-"changed since" and asking to restore it again needs confirmation. After a
-restore that failed part way, the files are not marked as reviewed, so the next
-attempt asks you to confirm ("could not verify").
+review works in two phases. First the daemon writes an audit row
+(`checkpoint.restore_started`) and takes a safety checkpoint of the files as
+they are now. Only after that checkpoint is complete does it stage each file
+next to its target and swap the staged copies in with renames. If a step fails,
+the daemon tries to roll the swapped files back; that rollback is best effort
+and can itself fail, in which case the result reports it and the files may be
+in a mixed state. A graceful stop of the daemon waits for a running restore to
+finish. After a restore that completes cleanly, the files count as reviewed; if
+one of them is edited afterwards it shows up as "changed since" and asking to
+restore it again needs confirmation. A path whose restoration was skipped (for
+example a link that could not be recreated) is not marked as reviewed. After a
+restore that failed part way, nothing is marked as reviewed, so the next
+attempt shows "could not verify" and asks you to confirm.
 
 If the daemon process is killed hard (power loss, crash, `kill -9`) in the middle
-of a restore, no completion is recorded. What is left: an audit row
-`checkpoint.restore_started`, a safety checkpoint named `pre-restore:...` with
-the exact files as they were just before the restore began (listed in
-`GET /v1/runs/{id}/changes` as `safety_checkpoint_ids`), and possibly a mix of
-restored and not yet restored files, plus stray `.praxi-restore-*` temporary
-files next to them. To recover, restore that safety checkpoint (from the run's
-change review, or `checkpoint_restore` with its id) to return every file to the
-pre-restore state, delete the leftover temporary files if any remain, then run
-the undo again. Nothing is repaired automatically on startup.
+of a restore, no completion is recorded. What is left depends on the moment:
+
+- Killed while the safety checkpoint was still being copied: an audit row
+  `checkpoint.restore_started`, no usable safety checkpoint and no swapped
+  files. Run the undo again.
+- Killed after the swaps began: the audit row, a complete safety checkpoint
+  (operation label `pre-restore:...`, recovery id `cp-...`, listed in
+  `GET /v1/runs/{id}/changes` as `safety_checkpoint_ids`) holding the files as
+  they were just before the restore, possibly a mix of restored and not yet
+  restored files, and temporary files next to the targets named
+  `<filename>.praxi-restore-<uuid>`, `<filename>.praxi-restore-old-<uuid>` or
+  `<filename>.praxi-restore-aborted-<uuid>`.
+
+To recover in the second case, restore that safety checkpoint (from the run's
+change review, or `checkpoint_restore` with its `cp-...` id). Its preview can
+show "could not verify", and you then have to confirm the overwrite. Delete the
+leftover temporary files if any remain, then run the undo again. Nothing is
+repaired automatically on startup. The checkpoint manifest is synced to disk, but
+the copied file contents are not individually synced before the swaps, so a
+power loss can still lose a safety copy; a plain process kill cannot.
 
 Paths of other runs that are still active are compared before a restore. The
-comparison ignores case on Windows and macOS and follows symlinks that exist at
-that moment, but it can still miss hard links, bind mounts and aliases created
-afterwards, so avoid undoing files that another running bot is working on.
+comparison ignores case on Windows and macOS and resolves links with the same
+no-follow, local-only rules the file tools use. A path that cannot be verified
+that way (a link to a network location, a network drive, an unreadable folder,
+or more paths than the daemon will resolve in one check) counts as overlapping
+and the restore is refused until the other run finishes. It can still miss hard
+links, bind mounts and aliases created afterwards, so avoid undoing files that
+another running bot is working on.
 
 ## Limits per turn
 
