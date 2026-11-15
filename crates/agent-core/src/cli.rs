@@ -556,6 +556,7 @@ mod tests {
             command: "praxi-c062-nonexistent-fixture".into(),
         });
         provider_catalog::ProviderConfig {
+            quarantined: std::collections::BTreeMap::default(),
             providers: vec![setting],
             default_provider: None,
         }

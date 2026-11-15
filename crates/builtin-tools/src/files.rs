@@ -1312,7 +1312,7 @@ fn daemon_state_name(base: &str) -> bool {
         "knowledge-authority.db",
         "knowledge-runtime.db",
     ];
-    const FILES: [&str; 15] = [
+    const FILES: [&str; 16] = [
         "control-latch.json",
         "view-privileges.json",
         "policy.json",
@@ -1320,6 +1320,7 @@ fn daemon_state_name(base: &str) -> bool {
         "config.toml",
         "mcp.toml",
         "providers.toml",
+        "composio.toml",
         "web.toml",
         "telegram_state.json",
         "telegram-inbox.jsonl",
@@ -1329,17 +1330,21 @@ fn daemon_state_name(base: &str) -> bool {
         "fill-secrets.json",
         "knowledge-host.json",
     ];
-    DATABASES.iter().any(|s| {
-        base == *s
-            || base
-                .strip_prefix(s)
-                .is_some_and(|rest| matches!(rest, "-wal" | "-shm" | "-journal"))
-    }) || FILES.iter().any(|s| {
-        base == *s
-            || base
-                .strip_prefix(s)
-                .is_some_and(|rest| matches!(rest, ".tmp" | ".bak"))
-    }) || base.starts_with(".tmp")
+    base.starts_with("composio.toml.tmp")
+        || base.starts_with("composio.toml.bak")
+        || DATABASES.iter().any(|s| {
+            base == *s
+                || base
+                    .strip_prefix(s)
+                    .is_some_and(|rest| matches!(rest, "-wal" | "-shm" | "-journal"))
+        })
+        || FILES.iter().any(|s| {
+            base == *s
+                || base
+                    .strip_prefix(s)
+                    .is_some_and(|rest| matches!(rest, ".tmp" | ".bak"))
+        })
+        || base.starts_with(".tmp")
 }
 
 /// A protected path is readable only when that path itself is granted.
@@ -4595,6 +4600,9 @@ mod tests {
             "config.toml",
             "mcp.toml",
             "providers.toml",
+            "composio.toml",
+            "composio.toml.tmp",
+            "composio.toml.bak",
             "web.toml",
             "telegram_state.json",
             "telegram-inbox.jsonl",
@@ -4746,6 +4754,52 @@ mod tests {
                 }
             }
             assert_eq!(fs::read_to_string(&file).unwrap(), "pinned");
+        }
+    }
+
+    #[tokio::test]
+    async fn composio_state_is_guarded_by_real_mutation_and_checkpoint_tools() {
+        let (d, w, t) = setup();
+        let c = ctx();
+        for name in [
+            "composio.toml",
+            "composio.toml.tmp",
+            "composio.toml.bak",
+            "composio.toml.tmp-123",
+            "composio.toml.bak.1",
+        ] {
+            let file = d.path().join(name);
+            fs::write(&file, "original").unwrap();
+            let source = w.path().join("replacement.txt");
+            fs::write(&source, "replacement").unwrap();
+            for (tool, input) in [
+                (
+                    "fs_edit",
+                    json!({"path":file,"old":"original","new":"changed"}),
+                ),
+                ("fs_delete", json!({"path":file})),
+                ("fs_move", json!({"from":source,"to":file,"overwrite":true})),
+            ] {
+                assert!(
+                    get(&t, tool).call(&c, input).await.is_err(),
+                    "{tool}: {name}"
+                );
+                assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+            }
+            let id = plant_blob(
+                d.path(),
+                "run-1",
+                &file.display().to_string(),
+                "replacement",
+            );
+            let _ = get(&t, "checkpoint_restore")
+                .call(&c, json!({"id":id}))
+                .await;
+            assert_eq!(
+                fs::read_to_string(&file).unwrap(),
+                "original",
+                "checkpoint restore {name}"
+            );
         }
     }
 

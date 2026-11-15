@@ -256,6 +256,15 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
 
 pub(crate) fn prepare(staging: &Path, manifest: &Manifest, opts: &ImportOptions) -> Result<()> {
     const DATABASES: &[&str] = &["bot.db", "schedules.db", "memory.db"];
+    let composio = staging.join("composio.toml");
+    if composio.exists() {
+        let text = fs::read_to_string(composio)?;
+        let state: composio::StateFile =
+            toml::from_str(&text).map_err(|_| invalid("invalid composio.toml"))?;
+        state
+            .validate()
+            .map_err(|_| invalid("invalid Composio installation state"))?;
+    }
     if let Some(schemas) = &manifest.db_schemas {
         for db in schemas.keys() {
             if (!DATABASES.contains(&db.as_str()) && crate::knowledge::bot_from_path(db).is_none())
@@ -354,6 +363,10 @@ pub(crate) fn commit(
     incoming_policy: &Policy,
     allow_policy_relaxation: bool,
 ) -> Result<Option<PathBuf>> {
+    // A bundle can never write a reserved integration secret (the Composio key).
+    if let Some(name) = secrets.keys().find(|n| secret_store::is_reserved_name(n)) {
+        return Err(secret_store::SecretError::InvalidName(name.clone()).into());
+    }
     let roots = roots();
     let mut old_roots = Vec::new();
     for root in &roots {

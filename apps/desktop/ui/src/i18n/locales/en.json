@@ -361,6 +361,10 @@
           "read_only": "read-only"
         },
         "note": "This approval covers only this change; it is asked every time."
+      },
+      "app": {
+        "arguments": "Show all arguments ({{count}} characters)",
+        "footer": "Via Composio. Approve only this action with all arguments shown above."
       }
     },
     "question": {
@@ -1110,7 +1114,7 @@
   "apps": {
     "title": "Apps",
     "search": "Search apps",
-    "mcpServers": "Your own MCP server",
+    "mcpServers": "Advanced",
     "categoriesLabel": "Categories",
     "categories": {
       "all": "All",
@@ -1219,7 +1223,47 @@
     "manage": "Manage",
     "close": "Close",
     "usedBy": "Used by",
-    "connectApp": "Connect {{name}}"
+    "connectApp": "Connect {{name}}",
+    "localSection": "On this computer",
+    "advanced": {
+      "title": "Custom MCP server",
+      "tokenCards": "Services with an access token",
+      "tokenHint": "These ask for a personal token you create yourself. Most services connect without one through Composio on the main screen."
+    },
+    "composio": {
+      "title": "Composio",
+      "via": "via Composio",
+      "setupTitle": "Connect apps without tokens",
+      "setupBody": "Composio signs you in to Instagram, LinkedIn, Gmail and hundreds more. Create a free project API key once, paste it here, and you never enter another token.",
+      "getKey": "Open the Composio key page",
+      "keyLabel": "Composio API key",
+      "keyHint": "Checked immediately, then kept in your system keychain. It is never shown again.",
+      "keySave": "Save key",
+      "dataNotice": "Inputs and results of these apps pass through Composio's servers and are logged there by default. Praxi asks you before every action.",
+      "dataNoticeSensitive": "Your mail, documents or messages from this app pass through Composio's servers and are logged there by default. Praxi asks you before every action.",
+      "continue": "Continue to sign-in",
+      "nativeNote": "Praxi also connects this one directly",
+      "popular": "Popular",
+      "catalog": "All apps",
+      "connectedSection": "Connected",
+      "loadMore": "Show more",
+      "loading": "Loading apps…",
+      "noResults": "No matching apps.",
+      "waiting": "Waiting for sign-in in your browser…",
+      "state": {
+        "not_connected": "Not connected",
+        "pending": "Signing in",
+        "active": "Connected",
+        "expired": "Sign-in expired"
+      },
+      "enable": "Turn on",
+      "disable": "Turn off",
+      "removeKey": "Remove key",
+      "removeKeyConfirm": "Remove the key",
+      "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "disconnectedLocal": "{{name}} was removed here. Remove it in the Composio dashboard too.",
+      "retryOpen": "Retry opening sign-in"
+    }
   },
   "help": {
     "title": "Keyboard shortcuts",

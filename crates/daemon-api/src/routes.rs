@@ -1512,7 +1512,11 @@ pub(crate) async fn list_providers(
                 active: active.contains(&p.id),
                 models: model_details.iter().map(|m| m.id.clone()).collect(),
                 model_details,
-                models_error: models_error.map(|e| s.agent().redact_host_text(e)),
+                models_error: cfg
+                    .quarantined
+                    .get(&p.id)
+                    .cloned()
+                    .or_else(|| models_error.map(|e| s.agent().redact_host_text(e))),
             }
         })
         .collect();

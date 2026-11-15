@@ -14,6 +14,8 @@ import type {
   EmailAccount,
   EmailAccountInput,
   InputBatch,
+  ComposioApp,
+  ComposioToolkit,
   McpServer,
   McpServerConfig,
   McpTool,
@@ -839,6 +841,11 @@ export class MockApiClient extends ApiClient {
       case "PUT /email":
       case "DELETE /email":
         return ok(this.email(method, seg, opts.body));
+      case "GET /composio":
+      case "POST /composio":
+      case "PUT /composio":
+      case "DELETE /composio":
+        return ok(this.composio(method, seg, opts.body));
       case "GET /mcp":
       case "POST /mcp":
       case "PUT /mcp":
@@ -1178,6 +1185,55 @@ export class MockApiClient extends ApiClient {
       return structuredClone(this.webSearchConfig);
     }
     throw new ApiError(404, "not_found", "mock web");
+  }
+
+  private mockComposioKey = false;
+  private mockComposioApps: ComposioApp[] = [];
+
+  /** Review-state stand-in for `/v1/composio/*` (no network, no key). */
+  private composio(method: string, seg: string[], body: unknown): unknown {
+    const [, sub, slug, action] = seg;
+    const status = { configured: this.mockComposioKey, key_setup_url: "https://platform.composio.dev/" };
+    const kit = (s: string, name: string, cats: string[]): ComposioToolkit => ({
+      slug: s, name, description: `${name} actions for your bots`, categories: cats, tools_count: 24,
+      native_first: false, state: "not_connected", enabled: false
+    });
+    if (!sub) {
+      return status;
+    }
+    if (sub === "key") {
+      this.mockComposioKey = method === "PUT";
+      return { ...status, configured: this.mockComposioKey };
+    }
+    if (sub === "toolkits") {
+      const items = [kit("instagram", "Instagram", ["social"]), kit("linkedin", "LinkedIn", ["social"]),
+        kit("twitter", "X", ["social"]), kit("hubspot", "HubSpot", ["crm"]), kit("gmail", "Gmail", ["email"]),
+        kit("github", "GitHub", ["developer"])];
+      return { popular: items.slice(0, 3), items, next_cursor: null };
+    }
+    if (sub === "apps" && !slug) {
+      return structuredClone(this.mockComposioApps);
+    }
+    if (sub === "apps" && slug) {
+      const i = this.mockComposioApps.findIndex((a) => a.slug === slug);
+      if (action === "connect") {
+        const app: ComposioApp = { slug, name: slug, state: "active", enabled: true, native_first: false, bots: null, tools: 6 };
+        if (i < 0) { this.mockComposioApps.push(app); }
+        return { redirect_url: "https://connect.composio.dev/link/mock", expires_at: "" };
+      }
+      if (i < 0) {
+        throw new ApiError(404, "not_found", `app ${slug} not found`);
+      }
+      if (method === "DELETE") {
+        this.mockComposioApps.splice(i, 1);
+        return { remote_removed: true };
+      }
+      if (action === "enabled") {
+        this.mockComposioApps[i] = { ...this.mockComposioApps[i], enabled: (body as { enabled: boolean }).enabled };
+      }
+      return this.mockComposioApps[i];
+    }
+    throw new ApiError(404, "not_found", "mock composio");
   }
 
   private mcp(method: string, seg: string[], body: unknown): unknown {

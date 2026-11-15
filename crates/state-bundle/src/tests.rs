@@ -1203,6 +1203,44 @@ async fn all_does_not_carry_mailbox_passwords_unless_named() {
 }
 
 #[tokio::test]
+async fn the_composio_key_never_rides_in_a_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    let store = MemoryStore::new();
+    store.set("provider/key", "k").unwrap();
+    store
+        .set("composio/api-key", "ck_test_SECRETKEY_0123456789")
+        .unwrap();
+    let mut bytes = Vec::new();
+    let manifest = export(
+        dir.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::All,
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await
+    .unwrap();
+    assert_eq!(manifest.secret_names, ["provider/key"]);
+    assert!(!bytes.windows(10).any(|w| w == b"ck_test_SE"));
+    // Naming it explicitly is refused too.
+    let mut bytes = Vec::new();
+    let named = export(
+        dir.path(),
+        &store,
+        ExportOptions {
+            secrets: SecretSelection::Names(vec!["composio/api-key".into()]),
+            ..Default::default()
+        },
+        &mut bytes,
+    )
+    .await;
+    assert!(named.is_err());
+}
+
+#[tokio::test]
 async fn all_none_and_missing_secret_selection() {
     let dir = tempfile::tempdir().unwrap();
     database(dir.path(), false);
@@ -1632,6 +1670,129 @@ async fn import_on_machine_with_older_key_keeps_foreign_and_legacy_grants_inert(
             .iter()
             .any(|g| g.computer.as_deref() == Some(&format!("host:{b}")))
     );
+}
+
+#[tokio::test]
+async fn incoming_reserved_secret_rejected_before_any_live_state_or_store_change() {
+    use sha2::{Digest, Sha256};
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let mut entries = unpack(&bundle(source.path()).await);
+    let (_, tail) = entries.pop().unwrap();
+    let mut manifest: Manifest = serde_json::from_slice(&tail).unwrap();
+    let payload = br#"{"composio/api-key":"foreign","ordinary":"incoming"}"#.to_vec();
+    manifest.files.push(FileRecord {
+        path: "secrets.json".into(),
+        size: payload.len() as u64,
+        sha256: format!("{:x}", Sha256::digest(&payload)),
+    });
+    manifest.secret_names = vec!["composio/api-key".into(), "ordinary".into()];
+    entries.push(("secrets.json".into(), payload));
+    entries.push((
+        "manifest.json".into(),
+        serde_json::to_vec(&manifest).unwrap(),
+    ));
+    let target = tempfile::tempdir().unwrap();
+    database(target.path(), true);
+    fs::write(target.path().join("composio.toml"), "original identity").unwrap();
+    let store = MemoryStore::new();
+    store.set("composio/api-key", "original").unwrap();
+    store.set("ordinary", "original ordinary").unwrap();
+    let before = fs::read(target.path().join("bot.db")).unwrap();
+    let bytes = pack(&entries);
+    let error = import(
+        target.path(),
+        &store,
+        bytes.as_slice(),
+        ImportOptions {
+            replace: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, ImportError::Secret(_)), "{error:?}");
+    assert_eq!(
+        store.get("composio/api-key").unwrap().unwrap().expose(),
+        "original"
+    );
+    assert_eq!(
+        store.get("ordinary").unwrap().unwrap().expose(),
+        "original ordinary"
+    );
+    assert_eq!(fs::read(target.path().join("bot.db")).unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(target.path().join("composio.toml")).unwrap(),
+        "original identity"
+    );
+    assert!(!target.path().join("import-staging").exists());
+}
+
+#[tokio::test]
+async fn composio_identity_and_app_settings_survive_validated_state_transfer() {
+    use sha2::{Digest, Sha256};
+
+    let source = tempfile::tempdir().unwrap();
+    database(source.path(), false);
+    let path = source.path().join("composio.toml");
+    let mut state = composio::StateFile::load(&path).unwrap();
+    state.apps.insert(
+        "github".into(),
+        composio::AppConfig {
+            enabled: false,
+            bots: Some(vec!["00000000-0000-0000-0000-000000000002".into()]),
+            account_id: Some("ca_this_installation".into()),
+        },
+    );
+    state.save(&path).unwrap();
+    let bytes = bundle(source.path()).await;
+    assert!(unpack(&bytes).iter().any(|(p, _)| p == "composio.toml"));
+    let target = tempfile::tempdir().unwrap();
+    import(
+        target.path(),
+        &MemoryStore::new(),
+        bytes.as_slice(),
+        ImportOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        composio::StateFile::load(&target.path().join("composio.toml")).unwrap(),
+        state
+    );
+    // A correctly checksummed file still needs semantic validation.
+    let mut entries = unpack(&bytes);
+    let (_, tail) = entries.pop().unwrap();
+    let mut manifest: Manifest = serde_json::from_slice(&tail).unwrap();
+    let (_, data) = entries
+        .iter_mut()
+        .find(|(p, _)| p == "composio.toml")
+        .unwrap();
+    *data = b"user_id = 'someone-else'".to_vec();
+    let record = manifest
+        .files
+        .iter_mut()
+        .find(|r| r.path == "composio.toml")
+        .unwrap();
+    record.size = data.len() as u64;
+    record.sha256 = format!("{:x}", Sha256::digest(data));
+    entries.push((
+        "manifest.json".into(),
+        serde_json::to_vec(&manifest).unwrap(),
+    ));
+    let bad = pack(&entries);
+    let target = tempfile::tempdir().unwrap();
+    assert!(
+        import(
+            target.path(),
+            &MemoryStore::new(),
+            bad.as_slice(),
+            ImportOptions::default()
+        )
+        .await
+        .is_err()
+    );
+    assert!(!target.path().join("composio.toml").exists());
 }
 
 #[tokio::test]

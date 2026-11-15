@@ -204,6 +204,16 @@ fn is_doctor_path(path: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// Composio app connections are the owner's: refused to every paired role
+/// except Desktop (which acts for the owner), for every method.
+pub const PEER_OWNER_PREFIX_COMPOSIO: &str = "/v1/composio";
+
+/// Whether `path` (decoded and slash-normalized) is a Composio endpoint.
+fn is_composio_path(path: &str) -> bool {
+    path.strip_prefix(PEER_OWNER_PREFIX_COMPOSIO)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 /// Same API and permissions as loopback, with transport authentication.
 pub fn peer_router(state: AppState) -> Router {
     crate::api_routes()
@@ -377,6 +387,10 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     let check_path = normalize_deny_path(&path);
     if let Some(why) = host_local_denial(req.method(), &check_path) {
         return ApiError::forbidden(why).into_response();
+    }
+    if is_composio_path(&check_path) && peer.role != PeerRole::Desktop {
+        return ApiError::forbidden("Composio connections are managed by the owner's desktop only")
+            .into_response();
     }
     // An encoded `/` inside an MCP path (e.g. in the server-name segment) is
     // never legitimate: refuse it for every method.

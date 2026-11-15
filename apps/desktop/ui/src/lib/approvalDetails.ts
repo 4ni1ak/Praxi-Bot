@@ -119,3 +119,17 @@ export function formatFiring(rfc3339: string, locale?: string): string {
   }).format(d);
   return `${date}, ${m[4]}:${m[5]}`;
 }
+
+/** App actions carry the complete JSON arguments; malformed cards cannot approve. */
+export function appActionDetails(details: unknown) {
+  if (!isObject(details) || details.kind !== "app_action" || !isObject(details.arguments) ||
+      typeof details.app_name !== "string" || typeof details.action_slug !== "string" ||
+      typeof details.version !== "string" || typeof details.class !== "string") return null;
+  const compact = JSON.stringify(details.arguments);
+  if (new TextEncoder().encode(compact).length > 32 * 1024) return null;
+  // Preserve every value while making invisible/bidi characters visible as JSON escapes.
+  const argumentsText = JSON.stringify(details.arguments, null, 2).replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Zl}\p{Zp}\u2800]/gu,
+    (c) => c.split("").map((unit) => "\\u" + unit.charCodeAt(0).toString(16).padStart(4, "0")).join(""));
+  return { app: details.app_name, action: details.action_slug, version: details.version,
+    class: details.class, argumentsText, count: [...argumentsText].length };
+}

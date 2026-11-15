@@ -282,6 +282,11 @@ pub(crate) async fn set_secret(
         .secret_store()
         .ok_or_else(|| ApiError::unavailable("this daemon has no secret store"))?;
     secret_store::validate_name(&name).map_err(|_| ApiError::bad_request("invalid secret name"))?;
+    // Secrets owned by a native integration (the Composio key) are written by
+    // that integration's own route only, by no role at all through this one.
+    if secret_store::is_reserved_name(&name) {
+        return Err(ApiError::forbidden("this secret name is reserved"));
+    }
     // The fill namespace belongs to the owner-only `/v1/fill-secrets` routes,
     // which bind each secret to its allow-lists; this generic sink (reachable
     // by a paired desktop) must not create or overwrite one.

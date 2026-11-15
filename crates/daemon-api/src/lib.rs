@@ -16,6 +16,8 @@ pub mod auth;
 mod bot_engine;
 pub mod changes;
 mod cli_engines;
+pub mod composio;
+mod composio_routes;
 pub mod control;
 pub mod doctor;
 mod doctor_routes;
@@ -73,6 +75,7 @@ use tokio_util::sync::CancellationToken;
 const EMAIL_TESTS_AT_ONCE: usize = 2;
 
 pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
+pub use composio::{ComposioControl, ComposioControlError};
 pub use control::{ControlConfig, ControlHub};
 pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
 pub use email::{EmailControl, EmailControlError};
@@ -188,6 +191,8 @@ struct Inner {
     knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
+    /// Composio app connections (see [`AppState::set_composio`]).
+    composio: OnceLock<Arc<dyn ComposioControl>>,
     /// E-mail account management (see [`AppState::set_email`]).
     email: OnceLock<Arc<dyn EmailControl>>,
     /// Bounds concurrent "test connection" calls (see `email_routes`).
@@ -353,6 +358,7 @@ impl AppState {
             host_links: OnceLock::new(),
             knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
+            composio: OnceLock::new(),
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
@@ -414,6 +420,12 @@ impl AppState {
     /// [`serve`]; a second call is ignored).
     pub fn set_mcp(&self, mcp: Arc<dyn McpControl>) {
         let _ = self.0.mcp.set(mcp);
+    }
+
+    /// Enable `/v1/composio/*` with the embedder Composio service (call once,
+    /// before serving).
+    pub fn set_composio(&self, composio: Arc<dyn ComposioControl>) {
+        let _ = self.0.composio.set(composio);
     }
 
     /// Enable `/v1/email/*` with the embedder e-mail manager (call once, before
@@ -490,6 +502,10 @@ impl AppState {
 
     pub(crate) fn mcp(&self) -> Option<Arc<dyn McpControl>> {
         self.0.mcp.get().cloned()
+    }
+
+    pub(crate) fn composio(&self) -> Option<Arc<dyn ComposioControl>> {
+        self.0.composio.get().cloned()
     }
 
     pub(crate) fn email(&self) -> Option<Arc<dyn EmailControl>> {
@@ -759,6 +775,21 @@ impl AppState {
     pub(crate) fn storage(&self) -> &Storage {
         &self.0.storage
     }
+    /// A writer of secret-free audit rows for the embedder (the Composio tools
+    /// and connect flow): `(action, detail)`, actor `composio`.
+    pub fn audit_writer(
+        &self,
+    ) -> impl Fn(&str, &serde_json::Value) -> Result<(), String> + Send + Sync + 'static {
+        let storage = Arc::clone(&self.0.storage);
+        let user = self.0.user_id;
+        move |action, detail| {
+            storage
+                .append_audit(user, None, "composio", action, detail)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+    }
+
     pub(crate) fn storage_arc(&self) -> Arc<Storage> {
         Arc::clone(&self.0.storage)
     }
@@ -861,6 +892,7 @@ pub fn router(state: AppState) -> Router {
 
 #[allow(clippy::too_many_lines)] // The route table of the whole API.
 fn api_routes() -> Router<AppState> {
+    use composio_routes as c;
     use email_routes as e;
     use fill_routes as f;
     use live_view as v;
@@ -1068,6 +1100,25 @@ fn api_routes() -> Router<AppState> {
             post(m::logout_mcp_auth),
         )
         .route("/v1/mcp/catalog", get(m::mcp_catalog))
+        .route("/v1/composio", get(c::composio_status))
+        .route(
+            "/v1/composio/key",
+            put(c::composio_set_key).delete(c::composio_remove_key),
+        )
+        .route("/v1/composio/toolkits", get(c::composio_catalog))
+        .route("/v1/composio/apps", get(c::composio_list_apps))
+        .route(
+            "/v1/composio/apps/{slug}",
+            get(c::composio_get_app).delete(c::composio_disconnect),
+        )
+        .route(
+            "/v1/composio/apps/{slug}/connect",
+            post(c::composio_connect),
+        )
+        .route(
+            "/v1/composio/apps/{slug}/enabled",
+            put(c::composio_set_enabled),
+        )
         .route(
             "/v1/email/accounts",
             get(e::list_email_accounts).post(e::create_email_account),
