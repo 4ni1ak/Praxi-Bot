@@ -253,6 +253,10 @@
       "emptyCatalog": "Henüz ortak veya yerleşik beceri yüklü değil.",
       "emptySearch": "Aramana uyan beceri yok.",
       "ownTitle": "Bu botun kendi öğrendiği beceriler ({{count}})",
+      "tooMany": "En fazla {{max}} beceri atanabilir. Daha az beceri seç ya da \"Tüm ortak beceriler\" seçeneğini kullan.",
+      "conflict": "Bu pencere açıldıktan sonra beceriler değişti (başka bir pencere ya da cihaz kaydetti). Güncel atama yeniden yüklendi; gözden geçirip tekrar dene.",
+      "invalid": "Kaydedilemedi: {{detail}}",
+      "boundaryHint": "Bu, botun önüne konan ve beceri araçlarıyla yükleyebildiği becerileri sınırlar. Gizli bir depo değildir: dosya ya da kabuk erişimi olan bir bot, beceri klasörünü diskten yine de okuyabilir.",
       "ownHint": "Öğrenilen beceriler bu bota aittir ve her zaman etkin kalır.",
       "scope": {
         "shared": "ortak",

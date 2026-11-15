@@ -5,6 +5,7 @@ import type { BotSkills } from "../api/types.ts";
 import {
   buildPutSkillsPayload,
   createBotSkillsDraft,
+  exceedsSkillLimit,
   filterAvailableSkills,
   isBotSkillsDirty,
   removeMissingDraftSkill,
@@ -14,6 +15,7 @@ import {
 } from "./botSkills.ts";
 
 const SAMPLE_BOT_SKILLS: BotSkills = {
+  version: 0,
   mode: "all",
   assigned: [],
   available: [
@@ -58,19 +60,22 @@ test("first switch from all to selected pre-checks every currently visible skill
   draft = switchSkillMode(draft, "all", SAMPLE_BOT_SKILLS.available);
   assert.equal(draft.mode, "all");
   assert.deepEqual(buildPutSkillsPayload(draft, SAMPLE_BOT_SKILLS.available), {
-    mode: "all"
+    mode: "all",
+    expected_version: 0
   });
 
   draft = switchSkillMode(draft, "selected", SAMPLE_BOT_SKILLS.available);
   assert.deepEqual([...draft.selected], ["code-review"]);
   assert.deepEqual(buildPutSkillsPayload(draft, SAMPLE_BOT_SKILLS.available), {
     mode: "selected",
-    names: ["code-review"]
+    names: ["code-review"],
+    expected_version: 0
   });
 });
 
 test("selected mode preserves missing entries until explicitly removed", () => {
   const dto: BotSkills = {
+    version: 7,
     mode: "selected",
     assigned: [
       { name: "code-review", state: "ok" },
@@ -85,7 +90,8 @@ test("selected mode preserves missing entries until explicitly removed", () => {
   assert.equal(isBotSkillsDirty(draft, dto), false);
   assert.deepEqual(buildPutSkillsPayload(draft, dto.available), {
     mode: "selected",
-    names: ["code-review", "gone-skill"]
+    names: ["code-review", "gone-skill"],
+    expected_version: 7
   });
 
   draft = removeMissingDraftSkill(draft, "gone-skill");
@@ -93,12 +99,30 @@ test("selected mode preserves missing entries until explicitly removed", () => {
   assert.equal(isBotSkillsDirty(draft, dto), true);
   assert.deepEqual(buildPutSkillsPayload(draft, dto.available), {
     mode: "selected",
-    names: ["code-review"]
+    names: ["code-review"],
+    expected_version: 7
   });
+});
+
+test("the save payload carries the loaded version and the 200-skill cap is detected", () => {
+  const many = Array.from({ length: 201 }, (_, i) => ({
+    ...SAMPLE_BOT_SKILLS.available[0],
+    name: `skill-${i}`
+  }));
+  const dto: BotSkills = { ...SAMPLE_BOT_SKILLS, version: 3, available: many };
+  let draft = createBotSkillsDraft(dto);
+  assert.equal(draft.version, 3);
+  // "Pre-check all" with more than 200 catalog skills must not be sent as is.
+  draft = switchSkillMode(draft, "selected", dto.available);
+  const payload = buildPutSkillsPayload(draft, dto.available);
+  assert.equal(payload.expected_version, 3);
+  assert.equal(exceedsSkillLimit(payload), true);
+  assert.equal(exceedsSkillLimit({ mode: "all" }), false);
 });
 
 test("filterAvailableSkills matches Turkish diacritics and summarizeBotSkills counts missing separately", () => {
   const withTurkish: BotSkills = {
+    version: 2,
     mode: "selected",
     assigned: [
       { name: "gunluk-ozet", state: "ok" },
@@ -155,8 +179,19 @@ test("MockApiClient getBotSkills and putBotSkills round-trip and validate", asyn
 
   const updated = await client.putBotSkills(atlas.id, {
     mode: "selected",
-    names: [catalog.skills[0].name]
+    names: [catalog.skills[0].name],
+    expected_version: initial.version
   });
+  assert.ok(updated.version > initial.version);
+  // A second writer holding the old version gets a 409 and changes nothing.
+  await assert.rejects(
+    () =>
+      client.putBotSkills(atlas.id, {
+        mode: "all",
+        expected_version: initial.version
+      }),
+    (e: unknown) => (e as { status?: number }).status === 409
+  );
   assert.equal(updated.mode, "selected");
   assert.deepEqual(updated.assigned, [{ name: catalog.skills[0].name, state: "ok" }]);
 

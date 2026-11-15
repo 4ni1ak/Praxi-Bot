@@ -386,9 +386,11 @@ export class MockApiClient extends ApiClient {
     }
   ];
 
-  private botSkills = new Map<string, { mode: SkillAssignmentMode; names: string[] }>([
-    [NOVA, { mode: "selected", names: ["meeting-notes", "removed-skill"] }]
-  ]);
+  private botSkills = new Map<
+    string,
+    { mode: SkillAssignmentMode; names: string[]; version: number }
+  >([[NOVA, { mode: "selected", names: ["meeting-notes", "removed-skill"], version: 1 }]]);
+  private botSkillsVersion = 1;
 
   constructor() {
     super({ base_url: MOCK_BASE_URL, token: "mock" });
@@ -714,6 +716,7 @@ export class MockApiClient extends ApiClient {
     );
     const selectedSet = new Set(names);
     return {
+      version: stored?.version ?? 0,
       mode,
       assigned: names.map((name) => ({
         name,
@@ -730,6 +733,14 @@ export class MockApiClient extends ApiClient {
   private putBotSkillsState(botId: string, body: PutBotSkillsInput): BotSkills {
     if (!this.bots.some((b) => b.id === botId)) {
       throw new ApiError(404, "not_found", `bot ${botId} not found`);
+    }
+    const current = this.botSkills.get(botId)?.version ?? 0;
+    if (body.expected_version != null && body.expected_version !== current) {
+      throw new ApiError(
+        409,
+        "conflict",
+        `bot skill assignment changed (expected version ${body.expected_version}, current ${current})`
+      );
     }
     if (body.mode === "all") {
       this.botSkills.delete(botId);
@@ -749,7 +760,12 @@ export class MockApiClient extends ApiClient {
     if (normalized.length > 200) {
       throw new ApiError(422, "unprocessable_entity", "too many assigned skills");
     }
-    this.botSkills.set(botId, { mode: "selected", names: normalized });
+    this.botSkillsVersion += 1;
+    this.botSkills.set(botId, {
+      mode: "selected",
+      names: normalized,
+      version: this.botSkillsVersion
+    });
     return this.getBotSkillsState(botId);
   }
 

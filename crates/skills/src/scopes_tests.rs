@@ -924,12 +924,11 @@ fn root_with_assignments_fails_closed_on_direct_reads_and_unsafe_bot_paths() {
     assert!(index.has_assignments());
 
     // Direct unfiltered calls on the root index fail closed (empty).
-    assert!(index.list().is_empty());
+    assert_eq!(index.list(), Vec::new());
     assert!(index.get("secret-shared").is_none());
-    assert!(
-        index
-            .prompt_block_suggesting(&SkillContext::default(), &["secret-shared".to_owned()])
-            .is_empty()
+    assert_eq!(
+        index.prompt_block_suggesting(&SkillContext::default(), &["secret-shared".to_owned()]),
+        ""
     );
 
     // Invalid bot id returns Err on prompt_block_for_bot and for_bot.

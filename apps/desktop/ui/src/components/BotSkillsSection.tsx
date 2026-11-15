@@ -2,10 +2,12 @@ import { Search, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Card } from "ui";
-import type { ApiClient } from "../api/client";
+import { ApiError, type ApiClient } from "../api/client";
 import type { BotSkills } from "../api/types";
 import {
+  MAX_ASSIGNED_SKILLS,
   buildPutSkillsPayload,
+  exceedsSkillLimit,
   createBotSkillsDraft,
   filterAvailableSkills,
   type BotSkillsDraft,
@@ -93,13 +95,31 @@ export function BotSkillsSection({
     setSaveError(null);
     try {
       const payload = buildPutSkillsPayload(draft, data.available);
+      if (exceedsSkillLimit(payload)) {
+        const message = t("bots.skills.tooMany", { max: MAX_ASSIGNED_SKILLS });
+        setSaveError(message);
+        toast.show(message, "danger");
+        return;
+      }
       const updated = await client.putBotSkills(botId, payload);
       setData(updated);
       setModalOpen(false);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setSaveError(message);
-      toast.show(message, "danger");
+      if (e instanceof ApiError && e.status === 409) {
+        // Someone else saved first: show their state, never overwrite it.
+        setModalOpen(false);
+        toast.show(t("bots.skills.conflict"), "danger");
+        void load();
+      } else {
+        const message =
+          e instanceof ApiError && e.status === 422
+            ? t("bots.skills.invalid", { detail: e.message })
+            : e instanceof Error
+              ? e.message
+              : String(e);
+        setSaveError(message);
+        toast.show(message, "danger");
+      }
     } finally {
       setSaving(false);
     }
@@ -189,6 +209,8 @@ export function BotSkillsSection({
                 <X />
               </button>
             </div>
+
+            <p className={formStyles.hint}>{t("bots.skills.boundaryHint")}</p>
 
             <div className={styles.controls}>
               <Segmented

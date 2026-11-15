@@ -1026,9 +1026,7 @@ fn write_skill_assignment_tx(
                 |r| r.get(0),
             )
             .optional()?;
-        let current = current_raw
-            .and_then(|v| u64::try_from(v).ok())
-            .unwrap_or(0);
+        let current = current_raw.and_then(|v| u64::try_from(v).ok()).unwrap_or(0);
         if current != expected {
             return Err(StorageError::Conflict(format!(
                 "bot skill assignment changed (expected version {expected}, current {current})"
@@ -1765,7 +1763,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(repaired.version, 0);
             }
-            other => panic!("expected Corrupt, got {other:?}"),
+            other @ SkillAssignmentLookup::Ok(_) => panic!("expected Corrupt, got {other:?}"),
         }
         assert_eq!(st.get_bot_skill_assignment(bot.id).unwrap(), None);
         assert!(st.bot_skill_assignment_generation().unwrap() > g2);

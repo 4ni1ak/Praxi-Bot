@@ -8,12 +8,17 @@ import { matchesQuery } from "./searchText.ts";
 
 /** Local draft state for the "Choose skills" dialog. */
 export interface BotSkillsDraft {
+  /** Assignment version the dialog was opened with; sent back as `expected_version`. */
+  version: number;
   mode: SkillAssignmentMode;
   selected: Set<string>;
   missing: string[];
   initializedSelected: boolean;
   query: string;
 }
+
+/** Server-side cap on assigned names (`MAX_ASSIGNED_SKILLS`). */
+export const MAX_ASSIGNED_SKILLS = 200;
 
 /** Summary counts rendered on the bot profile card before opening the modal. */
 export interface BotSkillsSummary {
@@ -28,6 +33,7 @@ export interface BotSkillsSummary {
 export function createBotSkillsDraft(dto: BotSkills): BotSkillsDraft {
   if (dto.mode === "selected") {
     return {
+      version: dto.version,
       mode: "selected",
       selected: new Set(dto.assigned.map((a) => a.name)),
       missing: dto.assigned
@@ -38,6 +44,7 @@ export function createBotSkillsDraft(dto: BotSkills): BotSkillsDraft {
     };
   }
   return {
+    version: dto.version,
     mode: "all",
     selected: new Set(),
     missing: [],
@@ -125,7 +132,7 @@ export function buildPutSkillsPayload(
   available: AvailableSkill[]
 ): PutBotSkillsInput {
   if (draft.mode === "all") {
-    return { mode: "all" };
+    return { mode: "all", expected_version: draft.version };
   }
   const names: string[] = [];
   const seen = new Set<string>();
@@ -141,7 +148,12 @@ export function buildPutSkillsPayload(
       names.push(m);
     }
   }
-  return { mode: "selected", names };
+  return { mode: "selected", names, expected_version: draft.version };
+}
+
+/** True when a `selected` payload has more names than the daemon accepts. */
+export function exceedsSkillLimit(payload: PutBotSkillsInput): boolean {
+  return (payload.names?.length ?? 0) > MAX_ASSIGNED_SKILLS;
 }
 
 /** Compute non-zero summary numbers for the bot profile skills card. */

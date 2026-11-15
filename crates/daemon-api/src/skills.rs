@@ -23,10 +23,16 @@ use crate::routes::{ApiJson, id};
 pub const MAX_ASSIGNED_SKILLS: usize = 200;
 
 /// [`::skills::AssignmentSource`] backed by [`Storage`] (`bot_skill_assignment`
-/// in `bot.db`) with an in-memory generation counter bumped on every change.
+/// in `bot.db`). The cache generation is read from the database (a counter its
+/// triggers bump on every insert, update and delete of an assignment row), so a
+/// write from any writer, including a state-bundle import on a live daemon or a
+/// second connection, invalidates cached per-bot views; there is no in-memory
+/// counter to forget to bump.
 pub struct SkillAssignments {
     storage: Arc<Storage>,
-    generation: AtomicU64,
+    /// Counts failed generation reads; folded into the returned value so a
+    /// failing database never produces a repeating (cacheable) generation.
+    failures: AtomicU64,
 }
 
 impl SkillAssignments {
@@ -35,13 +41,8 @@ impl SkillAssignments {
     pub fn new(storage: Arc<Storage>) -> Self {
         Self {
             storage,
-            generation: AtomicU64::new(1),
+            failures: AtomicU64::new(0),
         }
-    }
-
-    /// Bump the generation counter so cached per-bot views invalidate.
-    pub fn bump(&self) {
-        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -64,7 +65,12 @@ impl ::skills::AssignmentSource for SkillAssignments {
     }
 
     fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
+        match self.storage.bot_skill_assignment_generation() {
+            Ok(g) => g,
+            // Unreadable: hand out a value no cached view carries (high bit
+            // set, never repeats), so the view is rebuilt and fails closed.
+            Err(_) => (1 << 63) | self.failures.fetch_add(1, Ordering::AcqRel),
+        }
     }
 }
 
@@ -209,6 +215,10 @@ pub struct OwnSkillDto {
 /// Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BotSkillsDto {
+    /// Version of the stored assignment (`0` when none). Send it back as
+    /// `expected_version` on `PUT` so a stale dialog gets `409` instead of
+    /// overwriting a newer assignment.
+    pub version: u64,
     /// Current assignment mode (`all` or `selected`).
     pub mode: SkillAssignmentModeDto,
     /// Explicitly assigned names when `mode == "selected"`.
@@ -227,6 +237,25 @@ pub struct PutBotSkillsInput {
     /// Skill names to assign when `mode == "selected"` (max 200).
     #[serde(default)]
     pub names: Vec<String>,
+    /// Version the client loaded (`BotSkillsDto::version`). When set and not
+    /// current the write is refused with `409`; omit for an unconditional write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_version: Option<u64>,
+}
+
+/// Strip credentials, query and fragment from a hub provenance tag such as
+/// `git:https://user:token@host/repo?x=y`, so the catalog (also served to
+/// paired phones) never carries a secret.
+pub(crate) fn redact_source_tag(tag: &str) -> String {
+    let Some(scheme_end) = tag.find("://") else {
+        return tag.to_owned();
+    };
+    let (head, rest) = tag.split_at(scheme_end + 3);
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let tail = tail.split(['?', '#']).next().unwrap_or("");
+    format!("{head}{host}{tail}")
 }
 
 fn load_hub_map(data_dir: &Path) -> HashMap<String, SkillHubInfoDto> {
@@ -239,7 +268,7 @@ fn load_hub_map(data_dir: &Path) -> HashMap<String, SkillHubInfoDto> {
         .map(|entry| {
             let name = entry.entry.name;
             let info = SkillHubInfoDto {
-                source: entry.source_tag,
+                source: redact_source_tag(&entry.source_tag),
                 locked: entry.present && !entry.modified,
             };
             (name, info)
@@ -313,7 +342,25 @@ fn build_bot_skills(
     data_dir: &Path,
     bot_id: BotId,
 ) -> Result<BotSkillsDto, ApiError> {
-    let row = storage.get_bot_skill_assignment(bot_id)?;
+    // A malformed row must not 500 the page: runtime fails closed for it, so it
+    // is shown as `selected` with nothing assigned, and the user can overwrite
+    // it (with the version reported here) to repair it.
+    let (row, version) = match storage.inspect_bot_skill_assignment(bot_id)? {
+        storage::SkillAssignmentLookup::Ok(row) => {
+            let v = row.as_ref().map_or(0, |r| r.version);
+            (row, v)
+        }
+        storage::SkillAssignmentLookup::Corrupt { version, .. } => (
+            Some(storage::records::BotSkillAssignment {
+                bot_id,
+                mode: SkillAssignmentMode::Selected,
+                names: Vec::new(),
+                updated_at_ms: 0,
+                version,
+            }),
+            version,
+        ),
+    };
     let (catalog, _) = index.catalog().map_err(ApiError::internal)?;
     let hub_map = load_hub_map(data_dir);
     let hub_skills_dir = HubPaths::from_data_dir(data_dir).skills_dir;
@@ -376,6 +423,7 @@ fn build_bot_skills(
         .collect();
 
     Ok(BotSkillsDto {
+        version,
         mode,
         assigned,
         available,
@@ -427,6 +475,7 @@ pub(crate) async fn get_bot_skills(
     responses((status = 200, body = BotSkillsDto),
               (status = 403, body = ErrorBody, description = "peer role not allowed"),
               (status = 404, body = ErrorBody, description = "unknown bot"),
+              (status = 409, body = ErrorBody, description = "the assignment changed since `expected_version`"),
               (status = 422, body = ErrorBody, description = "invalid skill name or too many skills"),
               (status = 503, body = ErrorBody, description = "skills are not available")))]
 pub(crate) async fn put_bot_skills(
@@ -468,13 +517,18 @@ pub(crate) async fn put_bot_skills(
         .as_ref()
         .map_or_else(|| "user".to_owned(), |p| format!("desktop:{}", p.0.key));
     let mode = input.mode;
+    let expected_version = input.expected_version;
     let storage_for_write = Arc::clone(&storage);
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
-        let prev = storage_for_write.get_bot_skill_assignment(bot.id)?;
-        let prev_names: BTreeSet<String> = match prev {
-            Some(r) if r.mode == SkillAssignmentMode::Selected => r.names.into_iter().collect(),
-            _ => BTreeSet::new(),
-        };
+        let prev_names: BTreeSet<String> =
+            match storage_for_write.inspect_bot_skill_assignment(bot.id)? {
+                storage::SkillAssignmentLookup::Ok(Some(r))
+                    if r.mode == SkillAssignmentMode::Selected =>
+                {
+                    r.names.into_iter().collect()
+                }
+                _ => BTreeSet::new(),
+            };
         let next_names: BTreeSet<String> = match mode {
             SkillAssignmentModeDto::All => BTreeSet::new(),
             SkillAssignmentModeDto::Selected => clean_names.iter().cloned().collect(),
@@ -494,22 +548,22 @@ pub(crate) async fn put_bot_skills(
             "added": added,
             "removed": removed,
         });
-        storage_for_write.set_bot_skill_assignment_audited(
+        storage_for_write.set_bot_skill_assignment_audited_versioned(
             user_id,
             bot.id,
             storage_mode,
             &write_names,
             &actor,
             &detail,
+            expected_version,
         )?;
         Ok(())
     })
     .await
     .map_err(ApiError::internal)??;
 
-    // Bump after the audited DB transaction commits so SkillIndex::for_bot
-    // invalidates its cache only after the audit record is durable.
-    s.bump_skill_assignments();
+    // No cache bump: the views' cache key is the database generation, which
+    // the commit above already advanced.
 
     let data_dir = s.data_dir();
     let dto =

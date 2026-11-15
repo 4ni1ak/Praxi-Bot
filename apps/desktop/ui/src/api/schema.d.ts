@@ -1386,6 +1386,13 @@ export interface components {
             mode: components["schemas"]["SkillAssignmentModeDto"];
             /** @description Skills learned by this bot (`bots/<id>/skills/`), read-only. */
             own: components["schemas"]["OwnSkillDto"][];
+            /**
+             * Format: int64
+             * @description Version of the stored assignment (`0` when none). Send it back as
+             *     `expected_version` on `PUT` so a stale dialog gets `409` instead of
+             *     overwriting a newer assignment.
+             */
+            version: number;
         };
         /** @description Usage of one bot. */
         BotUsage: components["schemas"]["UsageTotals"] & {
@@ -2522,6 +2529,12 @@ export interface components {
         };
         /** @description Body of `PUT /v1/bots/{id}/skills`. */
         PutBotSkillsInput: {
+            /**
+             * Format: int64
+             * @description Version the client loaded (`BotSkillsDto::version`). When set and not
+             *     current the write is refused with `409`; omit for an unconditional write.
+             */
+            expected_version?: number | null;
             /** @description Assignment mode (`all` or `selected`). */
             mode: components["schemas"]["SkillAssignmentModeDto"];
             /** @description Skill names to assign when `mode == "selected"` (max 200). */
@@ -3474,6 +3487,15 @@ export interface operations {
             };
             /** @description unknown bot */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the assignment changed since `expected_version` */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

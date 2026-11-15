@@ -1126,9 +1126,18 @@ async fn skills_block_fails_closed_on_bot_dir_reparse_point() {
         cfg(Policy::full()),
     )
     .with_skills(index);
+    lp.set_skill_hints(Arc::new(|| SkillHints {
+        domain: Some("example.com".into()),
+        app: None,
+    }));
 
     let run = lp.run_turn(env.chat, "hello").unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    for m in &brain.requests()[0].messages {
+        let text = m.content.as_str().unwrap_or_default();
+        assert!(!text.contains("secret-shared"), "hint leaked: {text}");
+        assert!(!text.contains("other-private"), "hint leaked: {text}");
+    }
     let sys = system_of(&brain.requests()[0]);
     assert!(!sys.contains("secret-shared"), "{sys}");
     assert!(!sys.contains("other-private"), "{sys}");
@@ -1222,6 +1231,16 @@ async fn subagent_inherits_selected_bot_skill_assignment() {
     );
 }
 
+fn tool_step_output(env: &Env, run: protocol::RunId) -> String {
+    env.storage
+        .list_steps(run)
+        .unwrap()
+        .iter()
+        .filter(|s| s.name == "tools")
+        .map(|s| serde_json::to_string(&s.output).unwrap())
+        .collect()
+}
+
 #[tokio::test]
 async fn scheduled_run_enforces_selected_bot_skill_assignment() {
     let env = setup();
@@ -1238,13 +1257,12 @@ async fn scheduled_run_enforces_selected_bot_skill_assignment() {
         "UNASSIGNED_BODY",
     );
 
-    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(
-        env.storage.data_dir(),
-    ))
-    .with_assignments(Arc::new(SelectedOne {
-        bot: env.bot.to_string(),
-        allowed: "assigned-skill",
-    }));
+    let index =
+        skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.storage.data_dir()))
+            .with_assignments(Arc::new(SelectedOne {
+                bot: env.bot.to_string(),
+                allowed: "assigned-skill",
+            }));
     let brain = Brain::new(|_| say("scheduled ok"));
     let lp = make(
         &env.storage,
@@ -1261,35 +1279,38 @@ async fn scheduled_run_enforces_selected_bot_skill_assignment() {
         .run_scheduled(
             env.chat,
             protocol::TaskId::new(),
-            crate::Work::Tool {
+            crate::ScheduleWork::Tool {
                 name: "skill_read".into(),
                 input: json!({ "name": "unassigned-skill" }),
             },
         )
         .unwrap();
-    assert_eq!(lp.wait(denied).await.unwrap(), RunState::Failed);
+    lp.wait(denied).await.unwrap();
+    let out = tool_step_output(&env, denied);
+    assert!(out.contains("unknown skill"), "{out}");
+    assert!(!out.contains("UNASSIGNED_BODY"), "{out}");
 
     // Scheduled tool run on an assigned skill succeeds.
     let allowed = lp
         .run_scheduled(
             env.chat,
             protocol::TaskId::new(),
-            crate::Work::Tool {
+            crate::ScheduleWork::Tool {
                 name: "skill_read".into(),
                 input: json!({ "name": "assigned-skill" }),
             },
         )
         .unwrap();
-    assert_eq!(lp.wait(allowed).await.unwrap(), RunState::Succeeded);
+    lp.wait(allowed).await.unwrap();
+    let out = tool_step_output(&env, allowed);
+    assert!(out.contains("ASSIGNED_BODY"), "{out}");
 
     // Scheduled prompt turn excludes unassigned and bundled skills from its system prompt.
     let prompted = lp
         .run_scheduled(
             env.chat,
             protocol::TaskId::new(),
-            crate::Work::Prompt {
-                text: "scheduled prompt".into(),
-            },
+            crate::ScheduleWork::Prompt("scheduled prompt".into()),
         )
         .unwrap();
     assert_eq!(lp.wait(prompted).await.unwrap(), RunState::Succeeded);
@@ -1609,4 +1630,60 @@ async fn no_skill_suggestions_when_skill_read_is_not_available() {
             "{m:?}"
         );
     }
+}
+
+fn write_hint_skill(dir: &std::path::Path, name: &str) {
+    let root = dir.join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("SKILL.md"),
+        format!(
+            "---\nname: {name}\ndescription: d-{name}\nwhen:\n  domains: [example.com]\n---\nbody\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// The per-turn skill hint (folded into the user message, not the system
+/// prompt) is built from the bot-filtered view too: a skill the user withheld
+/// from this bot is never named in it, even when its `when:` matches the page.
+#[tokio::test]
+async fn the_per_turn_skill_hint_uses_the_bot_filtered_view() {
+    let env = setup();
+    write_hint_skill(&env.dir.path().join("skills"), "assigned-skill");
+    write_hint_skill(&env.dir.path().join("skills"), "unassigned-skill");
+    let index = skills::SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedOne {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+    let brain = Brain::new(|_| say("ok"));
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &[],
+        profile(""),
+        cfg(Policy::full()),
+    )
+    .with_skills(index);
+    lp.set_skill_hints(Arc::new(|| SkillHints {
+        domain: Some("example.com".into()),
+        app: None,
+    }));
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let reqs = brain.requests();
+    let user = reqs[0]
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .unwrap();
+    let note = user.content.as_str().unwrap();
+    assert!(note.contains("Suggested skills"), "{note}");
+    assert!(note.contains("assigned-skill"), "{note}");
+    assert!(!note.contains("unassigned-skill"), "{note}");
+    let sys = system_of(&reqs[0]);
+    assert!(!sys.contains("unassigned-skill"), "{sys}");
 }

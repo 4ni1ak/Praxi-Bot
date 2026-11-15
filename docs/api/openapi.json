@@ -591,6 +591,16 @@
               }
             }
           },
+          "409": {
+            "description": "the assignment changed since `expected_version`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
           "422": {
             "description": "invalid skill name or too many skills",
             "content": {
@@ -4232,6 +4242,7 @@
         "type": "object",
         "description": "Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`.",
         "required": [
+          "version",
           "mode",
           "assigned",
           "available",
@@ -4262,6 +4273,12 @@
               "$ref": "#/components/schemas/OwnSkillDto"
             },
             "description": "Skills learned by this bot (`bots/<id>/skills/`), read-only."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version of the stored assignment (`0` when none). Send it back as\n`expected_version` on `PUT` so a stale dialog gets `409` instead of\noverwriting a newer assignment.",
+            "minimum": 0
           }
         }
       },
@@ -7282,6 +7299,15 @@
           "mode"
         ],
         "properties": {
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Version the client loaded (`BotSkillsDto::version`). When set and not\ncurrent the write is refused with `409`; omit for an unconditional write.",
+            "minimum": 0
+          },
           "mode": {
             "$ref": "#/components/schemas/SkillAssignmentModeDto",
             "description": "Assignment mode (`all` or `selected`)."

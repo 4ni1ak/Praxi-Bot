@@ -217,8 +217,7 @@ pub fn build_agent_with_live_views(
     redactor: SharedRedactor,
     view_registry: Option<Arc<live_view::TargetRegistry>>,
 ) -> AgentLoop {
-    let assignments = Arc::new(daemon_api::SkillAssignments::new(Arc::clone(storage)));
-    let skills = load_skills(data_dir).with_assignments(assignments);
+    let skills = skill_index_with_assignments(storage, data_dir);
     build_agent_with_skills(
         storage,
         providers,
@@ -230,6 +229,14 @@ pub fn build_agent_with_live_views(
     )
 }
 
+/// The skill index every agent loop and `/v1/skills` route of the daemon share:
+/// the catalog plus the database-backed per-bot assignment source. This is the
+/// only place that builds it, so a bot never sees an unfiltered root index.
+pub(crate) fn skill_index_with_assignments(storage: &Arc<Storage>, data_dir: &Path) -> SkillIndex {
+    let assignments = Arc::new(daemon_api::SkillAssignments::new(Arc::clone(storage)));
+    load_skills(data_dir).with_assignments(assignments as Arc<dyn skills::AssignmentSource>)
+}
+
 fn build_agent_with_skills(
     storage: &Arc<Storage>,
     providers: Providers,
@@ -239,6 +246,12 @@ fn build_agent_with_skills(
     view_registry: Option<Arc<live_view::TargetRegistry>>,
     skills: SkillIndex,
 ) -> AgentLoop {
+    // Loud, never silent: without an assignment source every bot would see
+    // every shared and bundled skill.
+    assert!(
+        skills.has_assignments(),
+        "skill index must carry the per-bot assignment source"
+    );
     // Placeholder: `with_builtin_tools` replaces it with the loop's own gate.
     let gate = ResolverGate::new(
         PermissionResolver::new(),
@@ -845,9 +858,7 @@ pub fn serve(
         }) as Arc<dyn SecretStore>
     });
     let views = Arc::new(live_view::TargetRegistry::default());
-    let skill_assignments = Arc::new(daemon_api::SkillAssignments::new(Arc::clone(&storage)));
-    let skill_index = load_skills(data_dir)
-        .with_assignments(Arc::clone(&skill_assignments) as Arc<dyn skills::AssignmentSource>);
+    let skill_index = skill_index_with_assignments(&storage, data_dir);
     let agent = build_agent_with_skills(
         &storage,
         providers,
@@ -872,8 +883,9 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent, storage, cfg, views)?;
-    state.set_skills(skill_index);
-    state.set_skill_assignments(skill_assignments);
+    state
+        .set_skills(skill_index)
+        .map_err(|e| format!("skills wiring: {e}"))?;
     register_schedule_tools(data_dir, &state);
     if let Some(host) = host {
         state.set_provider_host(host);
@@ -1678,5 +1690,61 @@ order = [\"bing\", \"tavily\", \"bogus\", \"duckduckgo\"]
                 .check_url(&url::Url::parse("http://127.0.0.1:47000/").unwrap())
                 .is_err()
         );
+    }
+
+    /// `serve()` builds its skill index only through
+    /// `skill_index_with_assignments`: an assignment source is attached, the
+    /// root index refuses unfiltered reads, and a `selected` bot with nothing
+    /// assigned does not see a shared skill the user withheld. A refactor that
+    /// drops the source fails here (and `AppState::set_skills` / the loop
+    /// builder refuse such an index at startup).
+    #[test]
+    fn serve_skill_index_carries_the_assignment_source_and_filters_bots() {
+        use protocol::{BotId, UserId};
+        use storage::records::{Bot, User};
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("skills").join("withheld");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            shared.join("SKILL.md"),
+            "---
+name: withheld
+description: d
+version: 1
+---
+body
+",
+        )
+        .unwrap();
+        let storage = Arc::new(Storage::open(dir.path()).unwrap());
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "b".into(),
+            config: serde_json::json!({}),
+            created_at_ms: 2,
+        };
+        storage.insert_user(&user).unwrap();
+        storage.insert_bot(&bot).unwrap();
+
+        let index = skill_index_with_assignments(&storage, dir.path());
+        assert!(index.has_assignments());
+        assert_eq!(index.list(), Vec::new(), "root index must refuse list()");
+        let id = bot.id.to_string();
+        assert!(index.for_bot(Some(&id)).unwrap().get("withheld").is_some());
+        storage
+            .set_bot_skill_assignment(bot.id, storage::SkillAssignmentMode::Selected, &[])
+            .unwrap();
+        // Same index, no explicit bump: the DB generation invalidates the cache.
+        assert!(index.for_bot(Some(&id)).unwrap().get("withheld").is_none());
+
+        // The daemon refuses to serve an index without the source.
+        let plain = load_skills(dir.path());
+        assert!(!plain.has_assignments());
     }
 }

@@ -35,8 +35,7 @@ fn setup_skills(prepare: impl FnOnce(&Path)) -> T {
         t.state.storage().data_dir(),
     ))
     .with_assignments(Arc::clone(&assignments) as Arc<dyn ::skills::AssignmentSource>);
-    t.state.set_skills(index);
-    t.state.set_skill_assignments(assignments);
+    t.state.set_skills(index).unwrap();
     t
 }
 
@@ -431,4 +430,168 @@ async fn peer_router_enforces_roles_on_skill_routes() {
         .await,
         StatusCode::OK
     );
+}
+
+#[tokio::test]
+async fn stale_expected_version_is_refused_with_409_and_current_succeeds() {
+    let t = setup_skills(|dir| {
+        write_skill(&dir.join("skills"), "alpha", "A", "a", None);
+        write_skill(&dir.join("skills"), "beta", "B", "b", None);
+    });
+    let bot_id = create_bot(&t).await;
+    let path = format!("/v1/bots/{bot_id}/skills");
+    let loaded = call(&t, Method::GET, &path, None).await.json();
+    assert_eq!(loaded["version"], 0);
+
+    // Another client saves first.
+    let first = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"mode": "selected", "names": ["alpha"], "expected_version": 0})),
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::OK, "{:?}", first.json());
+    let v1 = first.json()["version"].as_u64().unwrap();
+    assert!(v1 > 0);
+
+    // A dialog still holding version 0 must not overwrite it.
+    let stale = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"mode": "selected", "names": ["beta"], "expected_version": 0})),
+    )
+    .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT, "{:?}", stale.json());
+    let now = call(&t, Method::GET, &path, None).await.json();
+    assert_eq!(now["assigned"], json!([{"name": "alpha", "state": "ok"}]));
+
+    let ok = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"mode": "selected", "names": ["beta"], "expected_version": v1})),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.json());
+}
+
+#[tokio::test]
+async fn a_corrupt_assignment_row_still_loads_and_can_be_repaired() {
+    let t = setup_skills(|dir| write_skill(&dir.join("skills"), "alpha", "A", "a", None));
+    let bot_id = create_bot(&t).await;
+    let path = format!("/v1/bots/{bot_id}/skills");
+    let put = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"mode": "selected", "names": ["alpha"]})),
+    )
+    .await;
+    assert_eq!(put.status, StatusCode::OK);
+    rusqlite::Connection::open(t.state.storage().data_dir().join("bot.db"))
+        .unwrap()
+        .execute(
+            "UPDATE bot_skill_assignment SET names_json = 'not-json' WHERE bot_id = ?1",
+            [&bot_id],
+        )
+        .unwrap();
+
+    // Runtime fails closed: the bot sees no shared skill ...
+    let view = t
+        .state
+        .skills_index()
+        .unwrap()
+        .for_bot(Some(&bot_id))
+        .unwrap();
+    assert!(view.get("alpha").is_none());
+    // ... but the endpoint reports it instead of answering 500.
+    let got = call(&t, Method::GET, &path, None).await;
+    assert_eq!(got.status, StatusCode::OK, "{:?}", got.json());
+    let body = got.json();
+    assert_eq!(body["mode"], "selected");
+    assert_eq!(body["assigned"], json!([]));
+    let version = body["version"].clone();
+    let fixed = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"mode": "all", "names": [], "expected_version": version})),
+    )
+    .await;
+    assert_eq!(fixed.status, StatusCode::OK, "{:?}", fixed.json());
+    let view = t
+        .state
+        .skills_index()
+        .unwrap()
+        .for_bot(Some(&bot_id))
+        .unwrap();
+    assert!(view.get("alpha").is_some());
+}
+
+#[tokio::test]
+async fn a_write_by_another_storage_handle_invalidates_cached_views() {
+    let t = setup_skills(|dir| write_skill(&dir.join("skills"), "alpha", "A", "a", None));
+    let bot_id = create_bot(&t).await;
+    let index = t.state.skills_index().unwrap();
+    assert!(index.for_bot(Some(&bot_id)).unwrap().get("alpha").is_some());
+    // Not through the API: a second connection (as a state-bundle import or a
+    // restore would). No bump exists anywhere for this write.
+    let other = storage::Storage::open(t.state.storage().data_dir()).unwrap();
+    other
+        .set_bot_skill_assignment(
+            protocol::BotId(bot_id.parse().unwrap()),
+            storage::SkillAssignmentMode::Selected,
+            &[],
+        )
+        .unwrap();
+    assert!(index.for_bot(Some(&bot_id)).unwrap().get("alpha").is_none());
+}
+
+#[test]
+fn storage_and_skills_name_validators_agree() {
+    let long = "a".repeat(64);
+    let too_long = "a".repeat(65);
+    let cases = [
+        "a",
+        "alpha-skill",
+        "a_b",
+        "A",
+        "UPPER",
+        "with space",
+        "",
+        "..",
+        "a/b",
+        r"a\b",
+        "é",
+        "con",
+        "-lead",
+        "trail-",
+        "a.b",
+        "ok-1",
+        &long,
+        &too_long,
+        "a\0b",
+        "a\nb",
+    ];
+    for name in cases {
+        assert_eq!(
+            storage::is_valid_skill_name(name),
+            ::skills::validate_name(name).is_ok(),
+            "validators disagree on {name:?}"
+        );
+    }
+}
+
+#[test]
+fn hub_source_tags_never_carry_credentials() {
+    use crate::skills::redact_source_tag as r;
+    assert_eq!(
+        r("git:https://user:tok@github.com/o/r.git?token=x#frag"),
+        "git:https://github.com/o/r.git"
+    );
+    assert_eq!(r("git:https://tok@host/o/r"), "git:https://host/o/r");
+    assert_eq!(r("git:https://host?x=1"), "git:https://host");
+    assert_eq!(r("local:/some/path"), "local:/some/path");
 }
