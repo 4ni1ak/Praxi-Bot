@@ -350,13 +350,18 @@ fn link_dir(target: &Path, link: &Path) -> bool {
     #[cfg(unix)]
     let linked = std::os::unix::fs::symlink(target, link).is_ok();
     #[cfg(windows)]
-    let linked = std::process::Command::new("cmd")
-        .args(["/C", "mklink", "/J"])
-        .arg(link)
-        .arg(target)
-        .output()
-        .is_ok_and(|out| out.status.success())
-        || std::os::windows::fs::symlink_dir(target, link).is_ok();
+    let linked = {
+        // mklink parses forward slashes as switches, even inside absolute paths.
+        let target: std::path::PathBuf = target.components().collect();
+        let link: std::path::PathBuf = link.components().collect();
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .is_ok_and(|out| out.status.success())
+            || std::os::windows::fs::symlink_dir(target, link).is_ok()
+    };
     #[cfg(not(any(unix, windows)))]
     let linked = false;
     assert!(
