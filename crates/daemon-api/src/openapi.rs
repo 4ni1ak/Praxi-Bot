@@ -157,7 +157,7 @@ impl Modify for Security {
         dto::CategoryDecisionDto, dto::ControlMode, dto::ControlStateInput,
         dto::ControlStateDto, dto::LatestCursor, dto::ControlVerdict, dto::ControlDecisionInput,
         dto::ControlDecisionResponse, dto::PolicyDto, dto::PolicyInput, dto::ProvidersDto,
-        dto::ConfiguredProviderDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
+        dto::ConfiguredProviderDto, dto::ModelMetadataDto, dto::CatalogProviderDto, dto::DetectedProviderDto, dto::CliAuthState, dto::EnableCliProviderInput, dto::ReloadResponse, dto::RememberResponse, dto::ScheduleDto, dto::ScheduleInput,
         dto::ParseSchedule, dto::ParsedSchedule, dto::AcceptedResponse, dto::ChannelDto, dto::PairCodeDto, dto::ScheduleChanged, dto::ScheduleChangeKind,
         mcp::McpTransportKind, mcp::McpStatus, mcp::McpErrorKind, mcp::McpServerDto, mcp::McpTransportObject,
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,

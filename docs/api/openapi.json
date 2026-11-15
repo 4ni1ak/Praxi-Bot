@@ -4065,6 +4065,17 @@
         ],
         "summary": "Configured providers, catalog entries and the models each configured\nprovider offers (fetched live, with a short timeout; failures are reported\nper provider and never fail the route).",
         "operationId": "list_providers",
+        "parameters": [
+          {
+            "name": "chat_only",
+            "in": "query",
+            "description": "Default true: omit deprecated and non-chat models. False exposes all\nkinds for advanced clients; it does not change bot execution.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -6829,12 +6840,19 @@
             "type": "boolean",
             "description": "Is the configured default."
           },
+          "model_details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelMetadataDto"
+            },
+            "description": "Presentation metadata: recommended models first by rank, then the rest\nby display name. Split on `recommended` for an \"All models\" expander.\nNo model is added just because it appears in the curated table."
+          },
           "models": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Model ids the provider reports (empty without a listing)."
+            "description": "Model ids in the same order as `model_details`. By default only current\nchat candidates are shown; `?chat_only=false` includes everything."
           },
           "models_error": {
             "type": [
@@ -10279,6 +10297,50 @@
           "steer",
           "queue"
         ]
+      },
+      "ModelMetadataDto": {
+        "type": "object",
+        "description": "Presentation only: never changes execution capabilities or configured ids.",
+        "required": [
+          "id",
+          "display_name",
+          "kind",
+          "recommended",
+          "deprecated"
+        ],
+        "properties": {
+          "deprecated": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,\n`video`, or `other`. Kind describes primary use, not input modalities."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short annotation such as `preview` or a live `OpenRouter` `free` id."
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "recommended_rank": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "Modifier": {
         "type": "string",
