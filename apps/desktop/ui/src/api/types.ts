@@ -300,6 +300,14 @@ export type McpTool = S["McpToolDto"];
 export type McpRequiredSecret = S["McpRequiredSecretDto"];
 export type McpCatalogEntry = S["McpCatalogEntryDto"];
 
+export type ComposioStatus = S["ComposioStatusDto"];
+export type ComposioConnState = S["ComposioConnState"];
+export type ComposioToolkit = S["ComposioToolkitDto"];
+export type ComposioCatalog = S["ComposioCatalogDto"];
+export type ComposioApp = S["ComposioAppDto"];
+export type ComposioConnect = S["ComposioConnectDto"];
+export type ComposioDisconnect = S["ComposioDisconnectDto"];
+
 // ---- E-mail accounts (`/v1/email/*`) ---------------------------------------
 
 export type EmailAccount = S["EmailAccountDto"];

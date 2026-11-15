@@ -196,6 +196,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/composio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Key status. */
+        get: operations["composio_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Apps the owner connected or started to connect. */
+        get: operations["composio_list_apps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One app, refreshed from Composio (poll this while sign-in is pending). */
+        get: operations["composio_get_app"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect an app: deletes the Composio-side account when possible and
+         *     always forgets the app locally.
+         */
+        delete: operations["composio_disconnect"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps/{slug}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start connecting an app: returns the Composio-hosted consent link, valid
+         *     once.  The caller opens it in the system browser.  Connecting is the
+         *     owner's opt-in for that app.
+         */
+        post: operations["composio_connect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps/{slug}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Switch an app's tools on or off. */
+        put: operations["composio_set_enabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Validate (one cheap authenticated call to Composio) and store the project
+         *     API key in the OS secret store.  **Write-only**: no route returns it.
+         */
+        put: operations["composio_set_key"];
+        post?: never;
+        /** Delete the key; every Composio tool disappears. */
+        delete: operations["composio_remove_key"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/toolkits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Composio's toolkit catalog (searchable, paged, cached), with this
+         *     installation's state per toolkit.
+         */
+        get: operations["composio_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/control/override": {
         parameters: {
             query?: never;
@@ -1677,6 +1811,97 @@ export interface components {
         CliAuthState: "signed_in" | "signed_out" | "unknown";
         /** @enum {string} */
         Codec: "jpeg" | "webp";
+        /** @description A connected (or connecting) app. */
+        ComposioAppDto: {
+            /** @description Bots allowed; `null` = all. */
+            bots?: string[] | null;
+            /** @description The owner enabled it (tools exist only while enabled and active). */
+            enabled: boolean;
+            /** @description Display name. */
+            name: string;
+            /** @description Praxi connects it directly. */
+            native_first: boolean;
+            /** @description Toolkit slug. */
+            slug: string;
+            /** @description State. */
+            state: components["schemas"]["ComposioConnState"];
+            /**
+             * Format: int32
+             * @description Direct tools currently offered to the model.
+             */
+            tools: number;
+        };
+        /** @description `GET /v1/composio/toolkits`. */
+        ComposioCatalogDto: {
+            /** @description The page, in Composio's popularity order. */
+            items: components["schemas"]["ComposioToolkitDto"][];
+            /** @description Cursor of the next page. */
+            next_cursor?: string | null;
+            /** @description Pinned popular row (first page without filters only; empty otherwise). */
+            popular: components["schemas"]["ComposioToolkitDto"][];
+        };
+        /**
+         * @description Connection state of an app.
+         * @enum {string}
+         */
+        ComposioConnState: "not_connected" | "pending" | "active" | "expired";
+        /** @description `POST /v1/composio/apps/{slug}/connect`: the one-time consent link. */
+        ComposioConnectDto: {
+            /** @description When the link expires (ISO timestamp, may be empty). */
+            expires_at: string;
+            /** @description https URL on Composio's domain; open it in the system browser. */
+            redirect_url: string;
+        };
+        /** @description `DELETE /v1/composio/apps/{slug}` result. */
+        ComposioDisconnectDto: {
+            /**
+             * @description The account was deleted on Composio's side too.  When `false` the app
+             *     is forgotten locally and the owner can remove it in Composio's dashboard.
+             */
+            remote_removed: boolean;
+        };
+        /** @description Body of `PUT /v1/composio/apps/{slug}/enabled`. */
+        ComposioEnabledInput: {
+            /** @description New value. */
+            enabled: boolean;
+        };
+        /** @description Body of `PUT /v1/composio/key`.  Write-only. */
+        ComposioKeyInput: {
+            /** @description The Composio project API key. */
+            value: string;
+        };
+        /** @description `GET /v1/composio`. */
+        ComposioStatusDto: {
+            /** @description A key is stored (the key itself is never returned). */
+            configured: boolean;
+            /** @description Where the owner creates the key (https, on Composio's domain). */
+            key_setup_url: string;
+        };
+        /** @description One toolkit of the Composio catalog. */
+        ComposioToolkitDto: {
+            /** @description Category names. */
+            categories: string[];
+            /** @description Short description (third-party text). */
+            description: string;
+            /** @description The owner enabled it. */
+            enabled: boolean;
+            /** @description Display name. */
+            name: string;
+            /**
+             * @description Praxi connects it directly (always `false` until a zero-setup direct
+             *     path exists); the UI notes it but never blocks the choice.
+             */
+            native_first: boolean;
+            /** @description Toolkit slug. */
+            slug: string;
+            /** @description State for this installation. */
+            state: components["schemas"]["ComposioConnState"];
+            /**
+             * Format: int64
+             * @description Number of actions, when Composio reports it.
+             */
+            tools_count?: number | null;
+        };
         /** @description A configured provider (never carries a key). */
         ConfiguredProviderDto: {
             /** @description Loaded in the running loop (a restart or `reload` picks up changes). */
@@ -4102,6 +4327,290 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioStatusDto"];
+                };
+            };
+            /** @description Composio is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_list_apps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioAppDto"][];
+                };
+            };
+        };
+    };
+    composio_get_app: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioAppDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_disconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioDisconnectDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioConnectDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_set_enabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposioEnabledInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioAppDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_set_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposioKeyInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioStatusDto"];
+                };
+            };
+            /** @description malformed or rejected key */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Composio unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_remove_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioStatusDto"];
+                };
+            };
+        };
+    };
+    composio_catalog: {
+        parameters: {
+            query?: {
+                /** @description Text matched against name, slug and description. */
+                search?: string;
+                /** @description Category. */
+                category?: string;
+                /** @description Cursor from the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 100 (default 48). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioCatalogDto"];
+                };
+            };
+            /** @description no key yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1076,7 +1076,7 @@
   "apps": {
     "title": "Uygulamalar",
     "search": "Uygulamalarda ara",
-    "mcpServers": "Kendi MCP sunucun",
+    "mcpServers": "Gelişmiş",
     "categoriesLabel": "Kategoriler",
     "categories": {
       "all": "Tümü",
@@ -1146,7 +1146,46 @@
     "manage": "Yönet",
     "close": "Kapat",
     "usedBy": "Kullananlar",
-    "connectApp": "{{name}} uygulamasını bağla"
+    "connectApp": "{{name}} uygulamasını bağla",
+    "localSection": "Bu bilgisayarda",
+    "advanced": {
+      "title": "Özel MCP sunucusu",
+      "tokenCards": "Erişim anahtarı isteyen hizmetler",
+      "tokenHint": "Bunlar kendi oluşturduğun kişisel bir anahtar ister. Çoğu hizmet ana ekrandaki Composio ile anahtarsız bağlanır."
+    },
+    "composio": {
+      "title": "Composio",
+      "via": "Composio ile",
+      "setupTitle": "Uygulamaları anahtarsız bağla",
+      "setupBody": "Composio, Instagram, LinkedIn, Gmail ve yüzlercesine senin yerine giriş yapar. Ücretsiz bir proje API anahtarını bir kez oluştur, buraya yapıştır; bir daha anahtar girmezsin.",
+      "getKey": "Composio anahtar sayfasını aç",
+      "keyLabel": "Composio API anahtarı",
+      "keyHint": "Hemen doğrulanır, sonra sistem anahtar zincirinde saklanır. Bir daha gösterilmez.",
+      "keySave": "Anahtarı kaydet",
+      "dataNotice": "Bu uygulamaların girdileri ve sonuçları Composio sunucularından geçer ve orada varsayılan olarak kaydedilir. Praxi her işlemden önce sana sorar.",
+      "dataNoticeSensitive": "Bu uygulamadaki e-postaların, belgelerin veya mesajların Composio sunucularından geçer ve orada varsayılan olarak kaydedilir. Praxi her işlemden önce sana sorar.",
+      "continue": "Girişe devam et",
+      "nativeNote": "Praxi bunu doğrudan da bağlıyor",
+      "popular": "Popüler",
+      "catalog": "Tüm uygulamalar",
+      "connectedSection": "Bağlı",
+      "loadMore": "Daha fazla göster",
+      "loading": "Uygulamalar yükleniyor…",
+      "noResults": "Eşleşen uygulama yok.",
+      "waiting": "Tarayıcında girişin tamamlanması bekleniyor…",
+      "state": {
+        "not_connected": "Bağlı değil",
+        "pending": "Giriş yapılıyor",
+        "active": "Bağlı",
+        "expired": "Giriş süresi doldu"
+      },
+      "enable": "Aç",
+      "disable": "Kapat",
+      "removeKey": "Anahtarı kaldır",
+      "removeKeyConfirm": "Anahtarı kaldır",
+      "openFailed": "Giriş bağlantısı Composio bağlantısı olmadığı için açılmadı.",
+      "disconnectedLocal": "{{name}} burada kaldırıldı. Composio panelinden de kaldır."
+    }
   },
   "help": {
     "title": "Klavye kısayolları",

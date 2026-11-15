@@ -30,6 +30,7 @@ import {
 import { useDaemon } from "../state/DaemonContext";
 import { useMcp } from "../state/useMcp";
 import styles from "./AppsModal.module.css";
+import { ComposioSection } from "./ComposioSection";
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -451,12 +452,22 @@ export function AppsModal({
   }, [open]);
 
   const shownServers = useMemo(() => filterServers(servers, query), [servers, query]);
-  const shownCatalog = useMemo(
+  const available = useMemo(
     () =>
       filterCatalog(catalog, query, ALL_CATEGORIES).filter(
         (entry) => !isConnected(entry, servers)
       ),
     [catalog, query, servers]
+  );
+  // Local servers need nothing from the user; the token-paste cards live under
+  // Advanced (services are connected through Composio instead).
+  const shownCatalog = useMemo(
+    () => available.filter((e) => e.install.required_secrets.length === 0),
+    [available]
+  );
+  const tokenCatalog = useMemo(
+    () => available.filter((e) => e.install.required_secrets.length > 0),
+    [available]
   );
   const describe = (name: string) => catalog.find((c) => c.id === name)?.description;
 
@@ -532,6 +543,8 @@ export function AppsModal({
           ) : null}
 
           {advanced ? (
+            <>
+            <h3 className={styles.sectionLabel}>{t("apps.advanced.title")}</h3>
             <CustomServerForm
               existing={servers.map((s) => s.name)}
               onCancel={() => setAdvanced(false)}
@@ -550,8 +563,25 @@ export function AppsModal({
                 });
               }}
             />
+            {tokenCatalog.length > 0 ? (
+              <section className={styles.section} aria-labelledby="apps-token-h">
+                <h3 className={styles.sectionLabel} id="apps-token-h">{t("apps.advanced.tokenCards")}</h3>
+                <p className={formStyles.hint}>{t("apps.advanced.tokenHint")}</p>
+                <ul className={styles.grid}>
+                  {tokenCatalog.map((entry) => (
+                    <DiscoverCell
+                      key={entry.id}
+                      entry={entry}
+                      onConnect={(values) => connect(entry, values)}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            </>
           ) : (
             <>
+              <ComposioSection active={open} query={query} />
               {shownServers.length > 0 ? (
                 <section className={styles.section} aria-labelledby="apps-connected-h">
                   <h3 className={styles.sectionLabel} id="apps-connected-h">{t("apps.connectedSection")}</h3>
@@ -597,8 +627,9 @@ export function AppsModal({
                 </section>
               ) : null}
 
+              {shownCatalog.length > 0 || loading ? (
               <section className={styles.section} aria-labelledby="apps-discover-h">
-                <h3 className={styles.sectionLabel} id="apps-discover-h">{t("apps.catalogSection")}</h3>
+                <h3 className={styles.sectionLabel} id="apps-discover-h">{t("apps.localSection")}</h3>
                 {shownCatalog.length === 0 ? (
                   <p className={styles.empty}><Search aria-hidden="true" />
                     {loading ? t("apps.loading") : t("apps.noResults")}
@@ -615,6 +646,7 @@ export function AppsModal({
                   </ul>
                 )}
               </section>
+              ) : null}
             </>
           )}
         </div>

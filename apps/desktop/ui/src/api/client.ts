@@ -24,6 +24,11 @@ import type {
   EmailTestReport,
   InputBatch,
   InputResult,
+  ComposioApp,
+  ComposioCatalog,
+  ComposioConnect,
+  ComposioDisconnect,
+  ComposioStatus,
   McpCatalogEntry,
   McpServer,
   McpServerPatch,
@@ -489,6 +494,45 @@ export class ApiClient {
     return this.request("POST", `/secrets/${encodeURIComponent(name)}`, {
       body: { value }
     });
+  }
+
+  // ---- Composio app connections (owner-only routes) ---------------------
+
+  composioStatus(): Promise<ComposioStatus> {
+    return this.request("GET", "/composio");
+  }
+  /** The key is write-only: validated, stored in the OS secret store, never returned. */
+  setComposioKey(value: string): Promise<ComposioStatus> {
+    return this.request("PUT", "/composio/key", { body: { value } });
+  }
+  removeComposioKey(): Promise<ComposioStatus> {
+    return this.request("DELETE", "/composio/key");
+  }
+  composioToolkits(q: {
+    search?: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<ComposioCatalog> {
+    return this.request("GET", "/composio/toolkits", {
+      query: { search: q.search || null, cursor: q.cursor ?? null, limit: q.limit ?? null }
+    });
+  }
+  composioApps(): Promise<ComposioApp[]> {
+    return this.request("GET", "/composio/apps");
+  }
+  composioApp(slug: string): Promise<ComposioApp> {
+    return this.request("GET", `/composio/apps/${encodeURIComponent(slug)}`);
+  }
+  composioConnect(slug: string): Promise<ComposioConnect> {
+    return this.request("POST", `/composio/apps/${encodeURIComponent(slug)}/connect`);
+  }
+  composioSetEnabled(slug: string, enabled: boolean): Promise<ComposioApp> {
+    return this.request("PUT", `/composio/apps/${encodeURIComponent(slug)}/enabled`, {
+      body: { enabled }
+    });
+  }
+  composioDisconnect(slug: string): Promise<ComposioDisconnect> {
+    return this.request("DELETE", `/composio/apps/${encodeURIComponent(slug)}`);
   }
 
   // ---- E-mail accounts -------------------------------------------------
