@@ -200,6 +200,31 @@ pub struct ControlSnapshot {
     pub active_target: Option<OverlayShowTargetPayload>,
     pub last_click: Option<OverlayClickPayload>,
     pub refused_actions_count: u64,
+    /// Monotonic revision of the control state. Raised under the state lock by every mutating
+    /// method, so a consumer can apply a snapshot only when its revision is higher than the last
+    /// one it applied (events may be delivered out of order).
+    #[serde(default)]
+    pub state_rev: u64,
+    /// Raised only by a user stop (see [`StopCause::User`]); never by a normal run finish,
+    /// `set_stop_hotkey`, `set_current_step`, `clear` or a refused `begin_action`.
+    #[serde(default)]
+    pub stop_seq: u64,
+    /// Token handed in with the user stop that produced the current `stop_seq`
+    /// (`None` when that stop carried no token, e.g. hotkey, tray or widget).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_stop_token: Option<String>,
+    /// Highest `stop_seq` a consumer has acknowledged through `ack_stop`.
+    #[serde(default)]
+    pub stop_acked_seq: u64,
+}
+
+/// Why the state machine went to [`ControlMode::Idle`] through [`ControlStateMachine::stop_with`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopCause {
+    /// The user decided to stop (hotkey, tray, widget, banner, ...). Raises `stop_seq`.
+    User { token: Option<String> },
+    /// A run ended normally. Goes to Idle and raises `run_generation` but NOT `stop_seq`.
+    Finished,
 }
 
 /// Errors returned by invalid control state transitions or hotkey configuration.
@@ -225,6 +250,10 @@ pub struct ControlStateMachine {
     active_target: Option<OverlayShowTargetPayload>,
     last_click: Option<OverlayClickPayload>,
     refused_actions_count: u64,
+    state_rev: u64,
+    stop_seq: u64,
+    last_stop_token: Option<String>,
+    stop_acked_seq: u64,
 }
 
 impl Default for ControlStateMachine {
@@ -246,7 +275,16 @@ impl ControlStateMachine {
             active_target: None,
             last_click: None,
             refused_actions_count: 0,
+            state_rev: 0,
+            stop_seq: 0,
+            last_stop_token: None,
+            stop_acked_seq: 0,
         }
+    }
+
+    /// Raises the state revision. Called by every mutating method before it snapshots.
+    fn bump_rev(&mut self) {
+        self.state_rev = self.state_rev.wrapping_add(1);
     }
 
     /// Current control mode (`BotDriving | HumanDriving | Paused | Idle`).
@@ -259,6 +297,18 @@ impl ControlStateMachine {
     #[must_use]
     pub fn run_generation(&self) -> u64 {
         self.run_generation
+    }
+
+    /// Current state revision.
+    #[must_use]
+    pub fn state_rev(&self) -> u64 {
+        self.state_rev
+    }
+
+    /// Current user-stop sequence.
+    #[must_use]
+    pub fn stop_seq(&self) -> u64 {
+        self.stop_seq
     }
 
     /// Returns `true` when the human has taken the wheel (`HumanDriving`).
@@ -297,6 +347,10 @@ impl ControlStateMachine {
             active_target: self.active_target.clone(),
             last_click: self.last_click,
             refused_actions_count: self.refused_actions_count,
+            state_rev: self.state_rev,
+            stop_seq: self.stop_seq,
+            last_stop_token: self.last_stop_token.clone(),
+            stop_acked_seq: self.stop_acked_seq,
         }
     }
 
@@ -306,6 +360,7 @@ impl ControlStateMachine {
         bot: BotRunMeta,
         initial_step: impl Into<String>,
     ) -> ControlSnapshot {
+        self.bump_rev();
         self.run_generation = self.run_generation.wrapping_add(1);
         self.mode = ControlMode::BotDriving;
         self.bot = Some(bot);
@@ -324,6 +379,7 @@ impl ControlStateMachine {
     pub fn pause(&mut self) -> Result<ControlSnapshot, ControlError> {
         match self.mode {
             ControlMode::BotDriving | ControlMode::Paused => {
+                self.bump_rev();
                 self.mode = ControlMode::Paused;
                 self.active_target = None;
                 Ok(self.snapshot())
@@ -343,6 +399,7 @@ impl ControlStateMachine {
     pub fn resume(&mut self) -> Result<ControlSnapshot, ControlError> {
         match self.mode {
             ControlMode::Paused | ControlMode::BotDriving => {
+                self.bump_rev();
                 self.mode = ControlMode::BotDriving;
                 Ok(self.snapshot())
             }
@@ -364,6 +421,7 @@ impl ControlStateMachine {
     pub fn take_the_wheel(&mut self) -> Result<ControlSnapshot, ControlError> {
         match self.mode {
             ControlMode::BotDriving | ControlMode::Paused | ControlMode::HumanDriving => {
+                self.bump_rev();
                 self.mode = ControlMode::HumanDriving;
                 self.active_target = None;
                 self.last_click = None;
@@ -384,6 +442,7 @@ impl ControlStateMachine {
     pub fn give_back(&mut self) -> Result<ControlSnapshot, ControlError> {
         match self.mode {
             ControlMode::HumanDriving | ControlMode::BotDriving => {
+                self.bump_rev();
                 self.mode = ControlMode::BotDriving;
                 Ok(self.snapshot())
             }
@@ -394,9 +453,24 @@ impl ControlStateMachine {
         }
     }
 
-    /// Stops all bot activity immediately from any state and transitions to [`ControlMode::Idle`].
+    /// User stop without a token: stops all bot activity immediately from any state,
+    /// transitions to [`ControlMode::Idle`] and raises `stop_seq`.
+    ///
+    /// Every caller that does not explicitly mean "the run ended" (hotkey, tray, menu,
+    /// widget, channel) goes through here, so an unlabeled stop is always a user stop.
     pub fn stop_all(&mut self) -> ControlSnapshot {
+        self.stop_with(StopCause::User { token: None })
+    }
+
+    /// Goes to [`ControlMode::Idle`] from any state. Always raises `run_generation`
+    /// (existing contract); raises `stop_seq` only for [`StopCause::User`].
+    pub fn stop_with(&mut self, cause: StopCause) -> ControlSnapshot {
+        self.bump_rev();
         self.run_generation = self.run_generation.wrapping_add(1);
+        if let StopCause::User { token } = cause {
+            self.stop_seq = self.stop_seq.wrapping_add(1);
+            self.last_stop_token = token;
+        }
         self.mode = ControlMode::Idle;
         self.bot = None;
         self.current_step = None;
@@ -406,8 +480,26 @@ impl ControlStateMachine {
         self.snapshot()
     }
 
+    /// Normal end of a run. A no-op (current snapshot, `false`) when
+    /// `run_generation != expected_generation`, so a finished old run cannot idle a newer
+    /// native run. Otherwise goes Idle without raising `stop_seq` and returns `true`.
+    pub fn finish_run(&mut self, expected_generation: u64) -> (ControlSnapshot, bool) {
+        if self.run_generation != expected_generation {
+            return (self.snapshot(), false);
+        }
+        (self.stop_with(StopCause::Finished), true)
+    }
+
+    /// Acknowledges a stop sequence (monotonic `max`, clamped to the current `stop_seq` so a
+    /// future sequence cannot be acknowledged). Silent: does not raise `state_rev`.
+    pub fn ack_stop(&mut self, seq: u64) -> ControlSnapshot {
+        self.stop_acked_seq = self.stop_acked_seq.max(seq.min(self.stop_seq));
+        self.snapshot()
+    }
+
     /// Updates the current human-readable step text shown in the floating mini widget.
     pub fn set_current_step(&mut self, step: impl Into<String>) -> ControlSnapshot {
+        self.bump_rev();
         if self.mode != ControlMode::Idle {
             self.current_step = Some(step.into());
         }
@@ -425,6 +517,7 @@ impl ControlStateMachine {
     ) -> Result<ControlSnapshot, ControlError> {
         let raw = hotkey.into();
         let parsed = parse_hotkey(&raw)?;
+        self.bump_rev();
         self.stop_hotkey = parsed.canonical_string();
         Ok(self.snapshot())
     }
@@ -448,6 +541,7 @@ impl ControlStateMachine {
     ) -> bool {
         let label = label.into();
         let action = action.into();
+        self.bump_rev();
         if self.mode != ControlMode::BotDriving {
             if self.mode == ControlMode::HumanDriving {
                 self.refused_actions_count = self.refused_actions_count.saturating_add(1);
@@ -463,6 +557,7 @@ impl ControlStateMachine {
     /// Like [`Self::begin_action_with_detail`] for an action without an on-screen
     /// target (a key press, an app launch): only the step text changes.
     pub fn begin_action_untargeted(&mut self, label: impl Into<String>) -> bool {
+        self.bump_rev();
         if self.mode != ControlMode::BotDriving {
             if self.mode == ControlMode::HumanDriving {
                 self.refused_actions_count = self.refused_actions_count.saturating_add(1);
@@ -477,6 +572,7 @@ impl ControlStateMachine {
     /// Confirms after the ~300 ms pre-action highlight delay that the bot is still allowed to act
     /// and that the run generation has not changed.
     pub fn confirm_action_after_highlight(&mut self, expected_generation: u64) -> bool {
+        self.bump_rev();
         if self.run_generation != expected_generation {
             return false;
         }
@@ -500,12 +596,14 @@ impl ControlStateMachine {
             return None;
         }
         let click = OverlayClickPayload { x, y, timestamp_ms };
+        self.bump_rev();
         self.last_click = Some(click);
         Some(click)
     }
 
     /// Clears any active target highlight and click ripple.
     pub fn clear_overlay(&mut self) -> ControlSnapshot {
+        self.bump_rev();
         self.active_target = None;
         self.last_click = None;
         self.snapshot()
@@ -869,11 +967,42 @@ impl ControlHandle {
     /// Stops all active bot runs (`* -> Idle`) and clears the overlay.
     #[allow(clippy::must_use_candidate)]
     pub fn stop_all(&self) -> ControlSnapshot {
-        let snapshot = self.state.lock().stop_all();
+        self.stop_with(StopCause::User { token: None })
+    }
+
+    /// User stop carrying the caller's token (echoed back as `last_stop_token`).
+    #[allow(clippy::must_use_candidate)]
+    pub fn stop_user(&self, token: Option<String>) -> ControlSnapshot {
+        self.stop_with(StopCause::User { token })
+    }
+
+    /// Normal end of a run: `* -> Idle` without raising `stop_seq`, and only when
+    /// `run_generation == expected_generation` (otherwise nothing changes and nothing is emitted).
+    #[allow(clippy::must_use_candidate)]
+    pub fn finish_run(&self, expected_generation: u64) -> ControlSnapshot {
+        let (snapshot, changed) = self.state.lock().finish_run(expected_generation);
+        if changed {
+            self.emit_stopped(&snapshot);
+        }
+        snapshot
+    }
+
+    /// Acknowledges `seq` (see [`ControlStateMachine::ack_stop`]). Emits no event.
+    #[allow(clippy::must_use_candidate)]
+    pub fn ack_stop(&self, seq: u64) -> ControlSnapshot {
+        self.state.lock().ack_stop(seq)
+    }
+
+    fn stop_with(&self, cause: StopCause) -> ControlSnapshot {
+        let snapshot = self.state.lock().stop_with(cause);
+        self.emit_stopped(&snapshot);
+        snapshot
+    }
+
+    fn emit_stopped(&self, snapshot: &ControlSnapshot) {
         let sink = self.sink.read().clone();
         sink.on_clear();
-        sink.on_state_changed(&snapshot);
-        snapshot
+        sink.on_state_changed(snapshot);
     }
 
     /// Updates the current step text and broadcasts the updated snapshot.
@@ -910,6 +1039,7 @@ impl ControlHandle {
         let payload = build_target_payload(rect, label.into(), action.into(), text);
         let snapshot = {
             let mut guard = self.state.lock();
+            guard.bump_rev();
             guard.active_target = Some(payload.clone());
             guard.snapshot()
         };
@@ -931,6 +1061,7 @@ impl ControlHandle {
                     y,
                     timestamp_ms: now_ms,
                 };
+                guard.bump_rev();
                 guard.last_click = Some(payload);
                 Some(payload)
             }
@@ -1080,6 +1211,29 @@ pub fn parse_hotkey(spec: &str) -> Result<ParsedHotkey, ControlError> {
     })
 }
 
+/// Interval of the passive global hotkey poll (unchanged from the Idle-skipping version).
+pub const HOTKEY_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// Pure edge detector of the global stop hotkey: fires once per physical press (when the combo
+/// goes from released to pressed). Holding the keys (OS auto-repeat) never fires again.
+/// Takes no control mode on purpose: Idle is not special.
+#[must_use]
+pub fn hotkey_edge(was_pressed: bool, pressed_now: bool) -> (bool, bool) {
+    (pressed_now && !was_pressed, pressed_now)
+}
+
+/// One poll step of the hotkey listener: applies [`hotkey_edge`] and, on a press edge,
+/// performs a user stop (`stop_seq` rises) from whatever mode the handle is in.
+/// Returns the new `was_pressed`. Testable without Win32.
+#[must_use]
+pub fn poll_hotkey_once(control: &ControlHandle, was_pressed: bool, pressed_now: bool) -> bool {
+    let (fire, now) = hotkey_edge(was_pressed, pressed_now);
+    if fire {
+        let _ = control.stop_all();
+    }
+    now
+}
+
 /// Spawns a background global hotkey listener on Windows so pressing the configured
 /// Stop All hotkey (default `Ctrl+Alt+Esc`) cancels the active run even when another
 /// application holds focus.
@@ -1128,23 +1282,14 @@ pub fn spawn_global_hotkey_listener(control: ControlHandle) {
         .spawn(move || {
             let mut was_pressed = false;
             loop {
-                std::thread::sleep(Duration::from_millis(25));
-                let (is_idle, hotkey_str) = {
-                    let guard = control.state.lock();
-                    (guard.is_idle(), guard.snapshot().stop_hotkey)
-                };
-                if is_idle {
-                    was_pressed = false;
-                    continue;
-                }
+                std::thread::sleep(HOTKEY_POLL_INTERVAL);
+                // Polled in EVERY mode including Idle: a restored browser/remote run has no
+                // native run, yet the global shortcut must still produce a Stop.
+                let hotkey_str = control.state.lock().stop_hotkey.clone();
                 let Ok(parsed) = parse_hotkey(&hotkey_str) else {
                     continue;
                 };
-                let pressed_now = is_hotkey_pressed(parsed);
-                if pressed_now && !was_pressed {
-                    control.stop_all();
-                }
-                was_pressed = pressed_now;
+                was_pressed = poll_hotkey_once(&control, was_pressed, is_hotkey_pressed(parsed));
             }
         })
         .ok();
@@ -1303,6 +1448,300 @@ mod tests {
         sm.take_the_wheel().expect("take wheel");
         assert!(!sm.confirm_action_after_highlight(generation));
         assert_eq!(sm.snapshot().refused_actions_count, 1);
+    }
+
+    /// Drives the machine into each mode, returning it ready for a stop.
+    fn machine_in(mode: ControlMode) -> ControlStateMachine {
+        let mut sm = ControlStateMachine::new();
+        match mode {
+            ControlMode::Idle => {}
+            ControlMode::BotDriving => {
+                sm.start_run(sample_bot(), "Running");
+            }
+            ControlMode::HumanDriving => {
+                sm.start_run(sample_bot(), "Running");
+                sm.take_the_wheel().expect("wheel");
+            }
+            ControlMode::Paused => {
+                sm.start_run(sample_bot(), "Running");
+                sm.pause().expect("pause");
+            }
+        }
+        sm
+    }
+
+    const ALL_MODES: [ControlMode; 4] = [
+        ControlMode::BotDriving,
+        ControlMode::HumanDriving,
+        ControlMode::Paused,
+        ControlMode::Idle,
+    ];
+
+    #[test]
+    fn state_rev_strictly_increases_on_every_emitting_method() {
+        let mut sm = ControlStateMachine::new();
+        let mut last = sm.state_rev();
+        let mut check = |snap: ControlSnapshot, what: &str| {
+            assert!(snap.state_rev > last, "{what} did not raise state_rev");
+            last = snap.state_rev;
+        };
+        // refused while Idle still emits a snapshot, so it must raise the revision too
+        assert!(!sm.begin_action(sample_rect(), "idle refused"));
+        check(sm.snapshot(), "begin_action (refused)");
+        check(sm.start_run(sample_bot(), "s"), "start_run");
+        assert!(sm.begin_action(sample_rect(), "a"));
+        check(sm.snapshot(), "begin_action");
+        assert!(sm.begin_action_untargeted("u"));
+        check(sm.snapshot(), "begin_action_untargeted");
+        let generation = sm.run_generation();
+        let _ = sm.confirm_action_after_highlight(generation);
+        check(sm.snapshot(), "confirm_action_after_highlight");
+        sm.record_click(1.0, 2.0, 3).expect("click");
+        check(sm.snapshot(), "record_click");
+        check(sm.set_current_step("x"), "set_current_step");
+        check(sm.clear_overlay(), "clear_overlay");
+        check(
+            sm.set_stop_hotkey("Ctrl+Shift+S").expect("hk"),
+            "set_stop_hotkey",
+        );
+        check(sm.pause().expect("pause"), "pause");
+        check(sm.resume().expect("resume"), "resume");
+        check(sm.take_the_wheel().expect("wheel"), "take_the_wheel");
+        check(sm.give_back().expect("back"), "give_back");
+        check(sm.stop_all(), "stop_all");
+        check(sm.stop_all(), "stop_all (Idle->Idle)");
+        check(sm.stop_with(StopCause::Finished), "stop_with(Finished)");
+        let generation = sm.run_generation();
+        check(sm.finish_run(generation).0, "finish_run");
+        // an invalid transition changes nothing and must not raise it
+        let before = sm.state_rev();
+        assert!(sm.pause().is_err());
+        assert_eq!(sm.state_rev(), before);
+    }
+
+    #[test]
+    fn user_stop_raises_stop_seq_and_generation_from_every_mode() {
+        for mode in ALL_MODES {
+            let mut sm = machine_in(mode);
+            let (seq, generation) = (sm.stop_seq(), sm.run_generation());
+            let snap = sm.stop_all();
+            assert_eq!(snap.mode, ControlMode::Idle, "{mode:?}");
+            assert_eq!(snap.stop_seq, seq + 1, "{mode:?}");
+            assert_eq!(snap.run_generation, generation + 1, "{mode:?}");
+            // a second press while already idle is another Stop
+            assert_eq!(sm.stop_all().stop_seq, seq + 2, "{mode:?} idle->idle");
+        }
+    }
+
+    #[test]
+    fn only_user_stops_raise_stop_seq() {
+        let mut sm = ControlStateMachine::new();
+        sm.start_run(sample_bot(), "s");
+        let generation = sm.run_generation();
+        let _ = sm.begin_action(sample_rect(), "a");
+        let _ = sm.confirm_action_after_highlight(generation);
+        let _ = sm.record_click(1.0, 1.0, 1);
+        sm.set_current_step("x");
+        sm.clear_overlay();
+        sm.set_stop_hotkey("Ctrl+Alt+F9").expect("hk");
+        sm.pause().expect("pause");
+        sm.resume().expect("resume");
+        sm.take_the_wheel().expect("wheel");
+        // refused begin_action while the human drives
+        assert!(!sm.begin_action(sample_rect(), "refused"));
+        sm.give_back().expect("back");
+        assert_eq!(sm.stop_seq(), 0, "no non-stop method may raise stop_seq");
+        let generation = sm.run_generation();
+        sm.finish_run(generation);
+        assert_eq!(sm.stop_seq(), 0, "finish_run must not raise stop_seq");
+        assert_eq!(sm.stop_all().stop_seq, 1);
+    }
+
+    #[test]
+    fn finished_stop_raises_generation_not_stop_seq() {
+        for mode in ALL_MODES {
+            let mut sm = machine_in(mode);
+            let (seq, generation) = (sm.stop_seq(), sm.run_generation());
+            let snap = sm.stop_with(StopCause::Finished);
+            assert_eq!(snap.mode, ControlMode::Idle, "{mode:?}");
+            assert_eq!(snap.run_generation, generation + 1, "{mode:?}");
+            assert_eq!(snap.stop_seq, seq, "{mode:?}");
+            assert!(
+                snap.bot.is_none() && snap.current_step.is_none(),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn finish_with_stale_generation_is_noop() {
+        let mut sm = ControlStateMachine::new();
+        sm.start_run(sample_bot(), "old run");
+        let old_generation = sm.run_generation();
+        sm.start_run(sample_bot(), "new run");
+        let before = sm.snapshot();
+
+        let (snap, changed) = sm.finish_run(old_generation);
+        assert!(!changed);
+        assert_eq!(snap, before, "stale finish must not change anything");
+        assert_eq!(sm.snapshot(), before);
+        assert!(sm.is_bot_driving(), "newer native run must keep driving");
+
+        let current = sm.run_generation();
+        let (snap, changed) = sm.finish_run(current);
+        assert!(changed);
+        assert_eq!(snap.mode, ControlMode::Idle);
+        assert_eq!(snap.stop_seq, 0);
+    }
+
+    #[test]
+    fn stop_token_is_reported_with_its_seq() {
+        let mut sm = ControlStateMachine::new();
+        let snap = sm.stop_with(StopCause::User {
+            token: Some("stop-1".to_string()),
+        });
+        assert_eq!(snap.stop_seq, 1);
+        assert_eq!(snap.last_stop_token.as_deref(), Some("stop-1"));
+        // a finish keeps the token of the stop that produced the current seq
+        sm.start_run(sample_bot(), "s");
+        let generation = sm.run_generation();
+        let snap = sm.finish_run(generation).0;
+        assert_eq!(snap.stop_seq, 1);
+        assert_eq!(snap.last_stop_token.as_deref(), Some("stop-1"));
+        // an untokened user stop replaces it, so token and seq never disagree
+        let snap = sm.stop_all();
+        assert_eq!(snap.stop_seq, 2);
+        assert_eq!(snap.last_stop_token, None);
+        let json = serde_json::to_value(&snap).expect("serialize");
+        assert_eq!(json["stopSeq"], 2);
+        assert_eq!(json["stateRev"], snap.state_rev);
+        assert!(json.get("lastStopToken").is_none());
+    }
+
+    #[test]
+    fn ack_stop_is_monotonic_idempotent_silent_and_cannot_ack_the_future() {
+        let mut sm = ControlStateMachine::new();
+        sm.stop_all();
+        sm.stop_all();
+        sm.stop_all();
+        let rev = sm.state_rev();
+        assert_eq!(sm.ack_stop(2).stop_acked_seq, 2);
+        assert_eq!(sm.ack_stop(2).stop_acked_seq, 2, "idempotent");
+        assert_eq!(sm.ack_stop(1).stop_acked_seq, 2, "never goes backwards");
+        assert_eq!(sm.ack_stop(99).stop_acked_seq, 3, "clamped to stop_seq");
+        assert_eq!(sm.state_rev(), rev, "ack is silent");
+        // a stop raised after the ack is again unacknowledged
+        let snap = sm.stop_all();
+        assert!(snap.stop_seq > snap.stop_acked_seq);
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        snapshots: Mutex<Vec<ControlSnapshot>>,
+    }
+
+    impl OverlayEventSink for RecordingSink {
+        fn on_show_target(&self, _payload: &OverlayShowTargetPayload) {}
+        fn on_click(&self, _payload: &OverlayClickPayload) {}
+        fn on_clear(&self) {}
+        fn on_state_changed(&self, snapshot: &ControlSnapshot) {
+            self.snapshots.lock().push(snapshot.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_finish_and_ack_emit_only_when_something_changed() {
+        let handle = ControlHandle::new(Duration::from_millis(1));
+        let sink = Arc::new(RecordingSink::default());
+        handle.set_sink(sink.clone());
+        handle.start_run(sample_bot(), "run");
+        let generation = handle.snapshot().run_generation;
+        let emitted = sink.snapshots.lock().len();
+
+        // stale finish: no event, run untouched
+        handle.finish_run(generation + 5);
+        assert_eq!(sink.snapshots.lock().len(), emitted);
+        assert_eq!(handle.snapshot().mode, ControlMode::BotDriving);
+
+        // ack: no event
+        handle.ack_stop(0);
+        assert_eq!(sink.snapshots.lock().len(), emitted);
+
+        // real finish: one event, no stop_seq
+        let snap = handle.finish_run(generation);
+        assert_eq!(sink.snapshots.lock().len(), emitted + 1);
+        assert_eq!((snap.mode, snap.stop_seq), (ControlMode::Idle, 0));
+
+        // token stop through the handle
+        let snap = handle.stop_user(Some("t".to_string()));
+        assert_eq!(snap.stop_seq, 1);
+        assert_eq!(snap.last_stop_token.as_deref(), Some("t"));
+        let revs: Vec<u64> = sink.snapshots.lock().iter().map(|s| s.state_rev).collect();
+        assert!(
+            revs.windows(2).all(|w| w[0] < w[1]),
+            "emitted revs {revs:?}"
+        );
+    }
+
+    #[test]
+    fn hotkey_edge_fires_once_per_press() {
+        // no mode input at all: Idle is not special
+        assert_eq!(hotkey_edge(false, false), (false, false));
+        assert_eq!(hotkey_edge(false, true), (true, true));
+        // key held / OS auto-repeat: no further fire
+        assert_eq!(hotkey_edge(true, true), (false, true));
+        assert_eq!(hotkey_edge(true, false), (false, false));
+        let mut was = false;
+        let fires = [false, true, true, true, false, true, true, false]
+            .into_iter()
+            .filter(|&now| {
+                let (fire, next) = hotkey_edge(was, now);
+                was = next;
+                fire
+            })
+            .count();
+        assert_eq!(fires, 2, "two physical presses");
+    }
+
+    #[tokio::test]
+    async fn hotkey_handler_produces_one_stop_per_press_in_every_mode_including_idle() {
+        for mode in ALL_MODES {
+            let handle = ControlHandle::new(Duration::from_millis(1));
+            match mode {
+                ControlMode::Idle => {}
+                ControlMode::BotDriving => {
+                    handle.start_run(sample_bot(), "r");
+                }
+                ControlMode::HumanDriving => {
+                    handle.start_run(sample_bot(), "r");
+                    handle.take_the_wheel().expect("wheel");
+                }
+                ControlMode::Paused => {
+                    handle.start_run(sample_bot(), "r");
+                    handle.pause().expect("pause");
+                }
+            }
+            let base = handle.snapshot().stop_seq;
+            let mut was = false;
+            // press held for several polls = one Stop
+            for _ in 0..5 {
+                was = poll_hotkey_once(&handle, was, true);
+            }
+            assert_eq!(
+                handle.snapshot().stop_seq,
+                base + 1,
+                "{mode:?}: one press = one Stop"
+            );
+            assert_eq!(handle.snapshot().mode, ControlMode::Idle, "{mode:?}");
+            // released, then pressed again = a second Stop
+            was = poll_hotkey_once(&handle, was, false);
+            let _ = poll_hotkey_once(&handle, was, true);
+            assert_eq!(
+                handle.snapshot().stop_seq,
+                base + 2,
+                "{mode:?}: second press"
+            );
+        }
     }
 
     #[tokio::test]
