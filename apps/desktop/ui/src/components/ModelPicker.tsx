@@ -89,6 +89,8 @@ export function ModelPicker({
 
   const [valueProvider = "", ...rest] = value.split("/");
   const valueModel = rest.join("/");
+  const valueLabel = groups.find((g) => g.provider === valueProvider)
+    ?.models.find((m) => m.ref === value)?.displayName ?? valueModel;
 
   return (
     <div className={styles.root}>
@@ -111,7 +113,7 @@ export function ModelPicker({
         <span className={styles.triggerText}>
           {autoOption?.selected
             ? autoOption.label
-            : valueModel || placeholder || t("modelPicker.none")}
+            : valueLabel || placeholder || t("modelPicker.none")}
         </span>
         <ChevronDown />
       </button>
@@ -197,7 +199,7 @@ export function ModelPicker({
                           onClick={() => pick(m.ref)}
                         >
                           <BrandMark name={productBrandKey(m.provider, m.model)} size={16} />
-                          <span className={styles.optionText}>{m.model}</span>
+                          <span className={styles.optionText}>{m.displayName}</span>
                           {active ? <Check aria-hidden="true" /> : null}
                         </button>
                       );

@@ -34,6 +34,7 @@ mod mcp_routes;
 pub mod openapi;
 pub mod peer;
 pub mod policy;
+mod provider_models;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;

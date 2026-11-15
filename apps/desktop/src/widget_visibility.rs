@@ -6,7 +6,10 @@
 //! - a run in progress shows it;
 //! - a user Stop that is not acknowledged yet keeps it shown ("Stopping…"), unless the
 //!   user dismissed that Stop's indicator (the main window keeps showing the truth);
-//! - after an ack it stays for a short confirmation, measured from the NEWEST ack.
+//! - after an ack it stays for a short confirmation, measured from the NEWEST ack;
+//! - it never covers the main window: while the main window is the focused, visible
+//!   window the widget stays hidden (the main window shows the same status itself, in
+//!   its run bar), and it reappears when the user leaves the main window.
 
 use std::time::{Duration, Instant};
 
@@ -67,11 +70,31 @@ impl WidgetVisibility {
     }
 }
 
+/// The widget is for when the main window is NOT in front: it floats over the user's other
+/// work. When the main window is focused (and not minimized) its own run bar and Stop status
+/// carry everything, so the always-on-top widget would only sit on top of the chat and the
+/// right panel.
+#[must_use]
+pub fn presentable(policy_visible: bool, main_in_front: bool) -> bool {
+    policy_visible && !main_in_front
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const IDLE: ControlMode = ControlMode::Idle;
+
+    #[test]
+    fn the_widget_never_covers_the_main_window_while_it_is_in_front() {
+        assert!(presentable(true, false), "run active, user elsewhere");
+        assert!(
+            !presentable(true, true),
+            "main window focused: it carries the status"
+        );
+        assert!(!presentable(false, false));
+        assert!(!presentable(false, true));
+    }
 
     #[test]
     fn a_run_in_progress_shows_it_and_an_acked_idle_hides_it() {

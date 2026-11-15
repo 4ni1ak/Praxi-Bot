@@ -648,15 +648,31 @@ export class MockApiClient extends ApiClient {
               not_covered: ["shell", "web", "email", "desktop"]
             });
           }
+          const withChanges =
+            typeof window !== "undefined" &&
+            new URLSearchParams(window.location.search).get("screen") === "changes";
           return ok({
             run_id: runId,
-            changes: [],
+            changes: withChanges
+              ? [{
+                  accessible: true, after_size: 412, before_size: 380, checkpoint_id: "mock-cp-1",
+                  current_matches_after: true, existed: true, is_dir: false, is_link: false,
+                  kind: "modified", op: "fs_edit", path: "docs/haftalik-ozet.md", verification: "matched",
+                  text: { added_lines: 2, removed_lines: 1, hunks: 1, unified: ["@@ -1,3 +1,4 @@", " # Haftalik ozet", "-Taslak", "+Hazir", "+Sonraki adim: surum kontrolleri", " Notlar", ""].join(String.fromCharCode(10)) }
+                }]
+              : [],
             next_offset: null,
             covered: ["fs_write", "fs_edit", "fs_move", "fs_delete"],
             not_covered: ["shell", "web", "email", "desktop"]
           });
         }
-        return ok([]);
+        {
+          const live = mockLiveRunId();
+          return ok(live ? [{
+            id: live, bot_id: "11111111-1111-4111-8111-111111111111", chat_id: CHAT_ID,
+            state: "running", created_at_ms: Date.now() - 6000, parent_run_id: null
+          }] : []);
+        }
       case "GET /usage":
         return ok(USAGE);
       case "GET /doctor": {
@@ -794,8 +810,15 @@ export class MockApiClient extends ApiClient {
       case "POST /runs":
         if (seg[1] === "stop") {
           // The mock has no live runs: every Stop targets nothing and is confirmed at once.
-          const input = opts.body as { stop_id: string };
-          return ok({ stop_id: input.stop_id, first_seen: true, audited: true, results: [] });
+          const input = opts.body as { stop_id: string; run_ids?: string[] };
+          // Review state `?screen=working|approval`: the live mock run winds down slowly, so the
+          // "Stopping..." status stays on screen.
+          const live = mockLiveRunId();
+          const targets = live && (input.run_ids ?? [live]).includes(live) ? [live] : [];
+          return ok({
+            stop_id: input.stop_id, first_seen: true, audited: true,
+            results: targets.map((run_id) => ({ run_id, outcome: "cancel_requested", state: "running" }))
+          });
         }
         if (seg[2] === "changes" && seg[4] === "restore") {
           return ok({
@@ -1183,6 +1206,13 @@ export class MockApiClient extends ApiClient {
   }
 }
 
+/** The id of the live mock run for `?screen=working|approval` (review states), else null. */
+function mockLiveRunId(): string | null {
+  if (typeof window === "undefined") return null;
+  const screen = new URLSearchParams(window.location.search).get("screen");
+  return screen === "working" || screen === "approval" ? "mock-live" : null;
+}
+
 /** Review-state events for `?mock=1&screen=...` (approval, streaming, default run). */
 export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["event"] }[] {
   const out: { ts_ms: number; event: GlobalEnvelope["event"] }[] = [];
@@ -1212,10 +1242,10 @@ export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["even
     ];
     events.forEach((event, i) => out.push({ ts_ms: Date.now() - 4000 + i * 300, event }));
   } else if (screen !== "empty") {
-    const runId = "mock-review-run";
+    const runId = screen === "changes" ? "mock-changes-run" : "mock-review-run";
     const events: GlobalEnvelope["event"][] = [
       { type: "run_started", run_id: runId, bot_id: "11111111-1111-4111-8111-111111111111", chat_id: "33333333-3333-4333-8333-333333333333" },
-      { type: "tool_call_requested", run_id: runId, call_id: "mock-tool", tool_name: "github.search", input: { query: "is:closed updated:this-week" } },
+      { type: "tool_call_requested", run_id: runId, call_id: "mock-tool", tool_name: screen === "changes" ? "fs_edit" : "github.search", input: screen === "changes" ? { path: "docs/haftalik-ozet.md" } : { query: "is:closed updated:this-week" } },
       { type: "tool_call_completed", run_id: runId, call_id: "mock-tool", error: null },
       { type: "run_finished", run_id: runId, error: null }
     ];

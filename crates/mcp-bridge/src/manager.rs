@@ -28,7 +28,8 @@ use crate::{
     config::{McpServerConfig, McpTransport, ToolFilter},
     diagnostics::StderrLog,
     discovery::discover,
-    error::{McpError, Result},
+    error::{McpError, McpErrorKind, Result},
+    roots::{PathGuard, canonicalize_filesystem_args},
     session::Session,
     tool::{Aux, McpAuxAdapter, McpToolAdapter, qualified_name},
     transport::{open, resolve_secrets},
@@ -139,6 +140,8 @@ pub struct ServerSnapshot {
     pub tools: Vec<String>,
     /// Most recent error message.
     pub last_error: Option<String>,
+    /// Class of [`Self::last_error`] (`None` when there is no error).
+    pub last_error_kind: Option<McpErrorKind>,
     /// The server asked for an OAuth sign-in (or its stored sign-in can no
     /// longer be used). Only the user can clear this, by signing in.
     pub auth_required: bool,
@@ -152,6 +155,8 @@ struct State {
     failures: u32,
     tools: Vec<String>,
     last_error: Option<String>,
+    /// Meaningful only while `last_error` is set.
+    last_error_kind: McpErrorKind,
 }
 
 /// Internal per-server state shared with the tool adapters.
@@ -162,6 +167,7 @@ pub(crate) struct Server {
     policy: McpPolicy,
     secrets: Option<Arc<dyn SecretStore>>,
     redactor: Option<ExternalRedactor>,
+    path_guard: Option<PathGuard>,
     stderr: Arc<StderrLog>,
     /// The session; the async mutex also serialises (re)connects.
     session: tokio::sync::Mutex<Option<Arc<Session>>>,
@@ -283,6 +289,7 @@ impl Server {
         }
         st.failures = st.failures.saturating_add(1);
         st.last_error = Some(self.redacted(error));
+        st.last_error_kind = error.kind();
         if st.status == ServerStatus::Connected {
             st.status = ServerStatus::Disconnected;
         }
@@ -332,6 +339,7 @@ impl Server {
             .await
     }
 
+    #[allow(clippy::too_many_lines)] // one sequential connect-and-classify flow
     async fn connect_session(&self, reset_on_success: bool) -> Result<Arc<Session>> {
         let mut slot = self.session.lock().await;
         self.check_usable()?;
@@ -349,6 +357,18 @@ impl Server {
             }
         }
         self.check_usable()?;
+        // A filesystem server is never started without an explicit, usable folder.
+        let mut launch_config = self.config.clone();
+        if let McpTransport::Stdio { args, .. } = &mut launch_config.transport
+            && let Err(reason) = canonicalize_filesystem_args(args, self.path_guard.as_ref())
+        {
+            let e = McpError::NeedsFolder {
+                server: self.config.id.clone(),
+                reason,
+            };
+            self.record_failure(&e);
+            return Err(e);
+        }
         // Secrets are resolved fresh on every connect cycle and only held for
         // the attempts and the connection's diagnostic redactor. A missing secret means nothing is
         // spawned and nothing is retried.
@@ -391,7 +411,7 @@ impl Server {
         let mut last = None;
         for attempt in 0..attempts {
             match open(
-                &self.config,
+                &launch_config,
                 &secrets,
                 &self.stderr,
                 self.policy.connect_timeout,
@@ -423,8 +443,8 @@ impl Server {
                     self.note_connect_error(&e);
                     return Err(e);
                 }
-                // A config error cannot be fixed by retrying.
-                Err(e @ McpError::Config(_)) => {
+                // A config error or a missing launcher cannot be fixed by retrying.
+                Err(e @ (McpError::Config(_) | McpError::RuntimeMissing { .. })) => {
                     self.record_failure(&e);
                     return Err(e);
                 }
@@ -785,6 +805,7 @@ impl Server {
             consecutive_failures: st.failures,
             tools: st.tools.clone(),
             last_error: st.last_error.clone(),
+            last_error_kind: st.last_error.as_ref().map(|_| st.last_error_kind),
             auth_required: st.auth_required,
         }
     }
@@ -853,6 +874,7 @@ pub struct McpManager {
     policy: McpPolicy,
     secrets: Option<Arc<dyn SecretStore>>,
     redactor: Option<ExternalRedactor>,
+    path_guard: Option<PathGuard>,
     registrar: Option<crate::oauth::SecretRegistrar>,
     servers: Mutex<BTreeMap<String, Arc<Server>>>,
 }
@@ -872,6 +894,7 @@ impl McpManager {
             policy,
             secrets: None,
             redactor: None,
+            path_guard: None,
             registrar: None,
             servers: Mutex::new(BTreeMap::new()),
         }
@@ -891,6 +914,14 @@ impl McpManager {
     #[must_use]
     pub fn with_redactor(mut self, redactor: ExternalRedactor) -> Self {
         self.redactor = Some(redactor);
+        self
+    }
+
+    /// Host check applied to the folder of every filesystem server before it
+    /// starts (protected locations are refused, see [`crate::root_problem`]).
+    #[must_use]
+    pub fn with_path_guard(mut self, guard: PathGuard) -> Self {
+        self.path_guard = Some(guard);
         self
     }
 
@@ -1020,6 +1051,7 @@ impl McpManager {
             policy: self.policy,
             secrets: self.secrets.clone(),
             redactor: self.redactor.clone(),
+            path_guard: self.path_guard.clone(),
             stderr: Arc::default(),
             session: tokio::sync::Mutex::new(None),
             state: Mutex::new(State {
@@ -1033,6 +1065,7 @@ impl McpManager {
                 failures: 0,
                 tools: Vec::new(),
                 last_error: None,
+                last_error_kind: McpErrorKind::Other,
                 auth_required: false,
             }),
             operation: tokio::sync::Mutex::new(()),
