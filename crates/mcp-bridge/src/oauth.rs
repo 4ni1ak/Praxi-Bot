@@ -369,10 +369,39 @@ impl SignIn {
     /// # Errors
     /// Timeout, a wrong or replayed redirect, or a refused exchange.
     pub async fn finish(self, timeout: Duration) -> Result<()> {
-        let callback = self
-            .listener
-            .wait(&self.server, &self.state, timeout)
-            .await?;
+        self.finish_or_pasted(timeout, None).await
+    }
+
+    /// [`SignIn::finish`] for a host without a local browser: whichever comes
+    /// first decides, the redirect on the loopback listener or the redirect
+    /// URL the user copied from the browser's address bar and pasted (sent on
+    /// `pasted`). Both pass the same checks: the URL must be our
+    /// `redirect_uri`, the `state` is compared before anything else, and the
+    /// flow is consumed by the first answer, right or wrong.
+    ///
+    /// # Errors
+    /// As [`SignIn::finish`]; a pasted URL that is not our redirect.
+    pub async fn finish_or_pasted(
+        self,
+        timeout: Duration,
+        pasted: Option<tokio::sync::oneshot::Receiver<String>>,
+    ) -> Result<()> {
+        let redirect_uri = self.listener.redirect_uri();
+        let callback = match pasted {
+            None => {
+                self.listener
+                    .wait(&self.server, &self.state, timeout)
+                    .await?
+            }
+            Some(pasted) => {
+                tokio::select! {
+                    received = self.listener.wait(&self.server, &self.state, timeout) => received?,
+                    Ok(url) = pasted => {
+                        pasted_callback(&self.server, &redirect_uri, &url, &self.state)?
+                    }
+                }
+            }
+        };
         self.session
             .handle_callback_with_issuer(&callback.code, &self.state, callback.issuer.as_deref())
             .await
@@ -667,6 +696,47 @@ fn query_param(target: &str, key: &str) -> Option<String> {
         .and_then(|(_, v)| percent_decode(v))
 }
 
+/// Check a redirect target (`/callback?...`) against the expected `state`.
+fn parse_callback(
+    target: &str,
+    expected_state: &str,
+) -> std::result::Result<Callback, &'static str> {
+    if !(target == "/callback" || target.starts_with("/callback?")) {
+        return Err("the redirect listener received an unexpected request");
+    }
+    // Compare the state before anything else is looked at.
+    if query_param(target, "state").as_deref() != Some(expected_state) {
+        Err("the redirect carried a wrong `state`")
+    } else if query_param(target, "error").is_some() {
+        Err("the authorization server refused the request")
+    } else {
+        match query_param(target, "code").filter(|c| !c.is_empty()) {
+            Some(code) => Ok(Callback {
+                code,
+                issuer: query_param(target, "iss"),
+            }),
+            None => Err("the redirect carried no authorization code"),
+        }
+    }
+}
+
+/// A redirect URL the user pasted: it must be exactly our `redirect_uri`
+/// (scheme, loopback host, port, path) plus the query.
+fn pasted_callback(
+    server: &str,
+    redirect_uri: &str,
+    pasted: &str,
+    expected_state: &str,
+) -> Result<Callback> {
+    let pasted = pasted.trim();
+    let target = pasted
+        .strip_prefix(redirect_uri)
+        .filter(|rest| rest.is_empty() || rest.starts_with('?'))
+        .map(|rest| format!("/callback{rest}"))
+        .ok_or_else(|| flow_error(server, "the pasted address is not this sign-in's redirect"))?;
+    parse_callback(&target, expected_state).map_err(|message| flow_error(server, message))
+}
+
 impl CallbackListener {
     /// Bind a random port on `127.0.0.1` (never another interface).
     ///
@@ -734,23 +804,8 @@ impl CallbackListener {
         let (mut socket, target) = received;
 
         let outcome = match target.as_deref() {
-            Some(target) if target == "/callback" || target.starts_with("/callback?") => {
-                // Compare the state before anything else is looked at.
-                if query_param(target, "state").as_deref() != Some(expected_state) {
-                    Err("the redirect carried a wrong `state`")
-                } else if query_param(target, "error").is_some() {
-                    Err("the authorization server refused the request")
-                } else {
-                    match query_param(target, "code").filter(|c| !c.is_empty()) {
-                        Some(code) => Ok(Callback {
-                            code,
-                            issuer: query_param(target, "iss"),
-                        }),
-                        None => Err("the redirect carried no authorization code"),
-                    }
-                }
-            }
-            _ => Err("the redirect listener received an unexpected request"),
+            Some(target) => parse_callback(target, expected_state),
+            None => Err("the redirect listener received an unexpected request"),
         };
         let (status, body) = match &outcome {
             Ok(_) => ("200 OK", "Signed in. You can close this window."),
@@ -772,6 +827,62 @@ impl CallbackListener {
             .await;
         let _ = socket.shutdown().await;
         outcome.map_err(|message| flow_error(server, message))
+    }
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::*;
+
+    const REDIRECT: &str = "http://127.0.0.1:4711/callback";
+
+    #[test]
+    fn a_pasted_redirect_passes_the_same_checks_as_the_listener() {
+        let ok = pasted_callback(
+            "s",
+            REDIRECT,
+            "  http://127.0.0.1:4711/callback?code=abc&state=st&iss=https%3A%2F%2Fa.example \n",
+            "st",
+        )
+        .unwrap();
+        assert_eq!(ok.code, "abc");
+        assert_eq!(ok.issuer.as_deref(), Some("https://a.example"));
+        for (url, why) in [
+            (
+                "http://127.0.0.1:4711/callback?code=abc&state=other",
+                "wrong `state`",
+            ),
+            (
+                "http://127.0.0.1:4711/callback?state=st",
+                "no authorization code",
+            ),
+            (
+                "http://127.0.0.1:4711/callback?error=access_denied&state=st",
+                "refused",
+            ),
+            (
+                "http://127.0.0.1:4712/callback?code=abc&state=st",
+                "not this sign-in",
+            ),
+            (
+                "http://evil.example/callback?code=abc&state=st",
+                "not this sign-in",
+            ),
+            (
+                "http://127.0.0.1:4711/callbackx?code=abc&state=st",
+                "not this sign-in",
+            ),
+            (
+                "https://127.0.0.1:4711/callback?code=abc&state=st",
+                "not this sign-in",
+            ),
+            ("code=abc&state=st", "not this sign-in"),
+        ] {
+            let err = pasted_callback("s", REDIRECT, url, "st")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(why), "{url}: {err}");
+        }
     }
 }
 

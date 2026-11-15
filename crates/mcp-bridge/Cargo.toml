@@ -38,7 +38,7 @@ secret-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { version = "1", features = ["io-util", "net", "process", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 toml.workspace = true
 tool-registry = { path = "../tool-registry", version = "0.1.0" }
 tracing = "0.1"
