@@ -13,6 +13,7 @@
     "allow-take-the-wheel",
     "allow-give-back-control",
     "allow-stop-bot-run",
+    "allow-dismiss-stop-widget",
     "allow-finish-bot-run",
     "allow-ack-stop",
     "allow-set-stop-hotkey",

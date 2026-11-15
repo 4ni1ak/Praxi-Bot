@@ -35,8 +35,10 @@ Other existing building blocks:
 | API/UI | `rememberRun` saves a reusable workflow; no semantic-memory CRUD or knowledge settings | Bot-scoped sources/settings/search/indexing UI and generated API client |
 
 PDF extraction has no OCR dependency: scanned/image-only PDFs can produce no
-text. Citations for transformed PDF/DOCX/HTML refer to the extracted document
-and say so; they must not invent original PDF page numbers or Word line numbers.
+text. File citations use a `#extracted-text` locator and line ranges within the
+indexed, extracted/redacted text, including Markdown and code. The live secret
+redactor can replace multiline spans, so these ranges must not be presented as
+original filesystem, PDF page or Word line numbers.
 
 ## Boundaries and storage
 
@@ -73,6 +75,11 @@ migrations, including triggers, foreign keys, indexes and FTS shadow tables.
 Validation rejects additional or altered schema objects before import resets
 source authority; an imported trigger cannot restore consent or suppress deletion.
 Data and SQLite page layout may differ without changing the supported schema.
+State-bundle import also attests the complete migrated `bot.db` schema before
+sanitizing settings. This import-only check retains the canonical audit triggers
+and rejects additional or altered objects, including a dormant trigger that
+could restore an imported embedding configuration later. Ordinary runtime
+storage initialization is unchanged.
 
 ## Source acquisition, incremental work and limits
 
@@ -84,7 +91,34 @@ instead of reopening an unchecked path. Saved web pages accept saved content and
 a validated HTTP(S) locator; they do not crawl or refresh that URL. A conversation
 snapshot requires owner **and** bot/chat equality. Email snapshots come from an
 authorized read by this bot and are rechecked against the account's current
-binding. Account rebind/delete invalidates related sources.
+binding. Only a successful account binding change or removal invalidates related
+sources; password rotation, unrelated edits and failed updates preserve them.
+
+The daemon resolves its own data directory once at startup as a trusted root.
+Source selection rejects that directory, its descendants, and any ancestor that
+would include it. Only an explicit shared-brain attachment may read the exact
+`data_dir/brain` directory. Credential roots (`.kube`, `.docker`, cloud credential
+stores and browser profiles) and protected filenames remain excluded after
+canonicalization, including Windows short-name aliases. No-follow handle checks
+still apply below the selected root. Paths and labels are checked against live
+registered secret values; normal long paths are not treated as base64 secrets.
+Saved URLs also reject userinfo and secret-bearing query/fragment values.
+
+Source mutations, embedding configuration and owner approval/reset routes reject
+all paired peer roles, including Desktop, Phone, Node and Host. Generic bot
+JSON/TOML editors reject peer changes to the decoded knowledge subtree while
+preserving ordinary name/profile edits. The owner uses dedicated knowledge
+settings so stale generic profile snapshots cannot restore saved consent.
+
+The email selector only offers a successful, persisted `email_read` result with
+an explicit account argument from an owned run of this same bot. Failed or
+spilled results are excluded, the matching call/result is bounded before it is
+copied from storage, and indexing rechecks current account ownership. A
+conversation snapshot accepts at most 2,000 messages and 1 MiB of text; an
+incomplete oversized conversation is refused. All source metadata and document
+text are treated as private, untrusted data. Known credential files are refused;
+credential-shaped text and the daemon's currently registered exact secret values
+are redacted before indexing or embedding.
 
 Markdown chunking preserves heading ancestry, paragraphs, fenced code and table
 headers. Large blocks split on complete lines where possible; pathological long
@@ -100,14 +134,56 @@ per chunk, 4,096 chunks per document, 256 sources, 50,000 documents and 100,000
 chunks per bot. Source adapters impose their own input/extraction/scan limits
 before invoking parsers. Indexing publishes one document at a time, reports a
 cursor for bounded folder pages, and can restart safely through hash comparison.
-Removed files are pruned only after a complete successful scan; a partial scan
-must not delete unseen documents. Files larger than the limit are reported as
-skipped/errors instead of being silently truncated into a complete-looking index.
+Individual folder files that fail reading, extraction or indexing are recorded
+with safe failure codes; the cursor continues past them. Missing files are pruned
+only once discovery reaches the end, including when other entries were skipped.
+A partial scan must not delete unseen documents. A fatal initial scan rolls back
+the new source. Oversized or incomplete extraction is explicitly refused rather
+than saved as a complete-looking truncated document.
 
-CPU-heavy parsing/indexing runs off async executor threads with a shared bounded
-worker permit. The permit stays with blocking work if its awaiting request is
+The shipped file adapter admits at most 4 MiB of input bytes and 1 MiB of
+extracted UTF-8 text per document. Saved-content source requests allow a JSON
+body of `6 × 4 MiB + 64 KiB`: the sixfold allowance covers JSON Unicode/control
+escaping of the decoded byte budget, and the remainder bounds metadata overhead.
+The decoded content still has its own 4 MiB limit. Complete PDF/DOCX extraction
+must fit the 1 MiB text limit; interactive document-tool preview limits do not
+silently shorten indexed content. Folder discovery is bounded by 4,096 directory
+entries and a depth of 24; a single indexing page handles at most 32 files.
+Hidden entries, dependency/build directories and known credential files are
+excluded. An opened file must be regular, have one hard link and remain within
+the byte limit. On Unix it is opened without blocking before type validation,
+so replacement with a FIFO cannot leave an indexing worker waiting for a writer.
+
+PDF knowledge ingestion uses a deliberately conservative subset, independently
+of the interactive `pdf_extract` tool:
+
+| Admission | Knowledge source limit |
+| --- | --- |
+| Decoded stream / page extraction stream | 1 MiB per stream |
+| Stream markers and pages | 64 each; marker counting is conservative |
+| Retained object accounting | 16 MiB, 25,000 nodes, nesting depth 64 |
+| Cross-reference entries | 25,000 declared entries before allocation |
+| Compressed object work | 64 MiB of decoded-length × member-count accounting |
+| Fonts | 32 per page |
+| Unicode character maps | 4,096 mappings per document, at most 8 UTF-16 code units per destination |
+| Character-map decoding / scanning | 4 MiB / 8 MiB aggregate work |
+
+Encrypted PDFs and indirect stream-length references are refused before parsing,
+including escaped PDF names and comment-separated references. Compressed object
+headers are checked before expansion, and Unicode map ranges are counted before
+the library builds its reverse map. These checks prevent small files from
+bypassing the output limit through stream/object or character-map expansion.
+Uncommon or complex PDFs may need a simplified export. The parser remains
+in-process: these are input, retained-object and work admission limits, not an
+OS-enforced RSS/CPU ceiling or a claim about transient allocator overhead.
+
+CPU-heavy parsing/indexing and source/configuration writes run off async executor
+threads with one bounded mutation worker per trusted data directory. The permit stays with blocking work if its awaiting request is
 cancelled. This avoids releasing capacity while a parser is still running.
-Lexical search admits two concurrent blocking operations; indexing admits one.
+Read-only source/settings metadata uses a separate bounded read queue. Lexical
+search admits two concurrent blocking operations; indexing admits one.
+An occupied indexing slot returns a busy response instead of accumulating an
+unbounded queue of parser tasks.
 No GPU, remote vector server, daemon-managed model download or telemetry is
 required. These bounds are design constraints, not a benchmark claim for the
 owner's ARM host; real throughput remains to be measured there.
@@ -218,14 +294,66 @@ new consent and matching vectors; old vectors cannot silently answer queries.
 
 Remote document indexing requires an explicit **per-source** grant for that
 profile fingerprint. The model cannot create it with a tool argument or a
-document annotation. Query embedding has a separate bot setting/grant: source
-consent does not authorize sending arbitrary chat text. Reranking has no implied
+document annotation. Query embedding has a separate owner grant: source consent does not authorize
+sending arbitrary chat text. Portable bot/source JSON is never grant authority.
+The host records explicit confirmations separately in `knowledge-authority.db`,
+bound to owner, bot, profile, index epoch and source identity. Each five-minute
+approval challenge binds the current source revision and is single use. Import
+rotates the index epoch, including when bot/source IDs are unchanged. Reranking has no implied
 remote grant. A missing/revoked grant leaves lexical retrieval available.
 Indexing checks grant/revision before dispatch and again before publishing an
 asynchronous result. Deletion/revocation prevents future publication; already
 dispatched HTTP bytes cannot be recalled. No raw document cache is shared across
 bots, and source deletion removes its chunks/vector associations and unused
 derived cache records.
+
+The daemon installs this runtime behind the same `knowledge_search` tool. It
+reads the bot's current owner settings for every invocation and caches at most
+16 bot/profile services. Each bot keeps only its current configuration snapshot;
+changing or disabling settings releases the old service. Query-vector caches
+hold hashes and at most 64 vectors for five minutes, never raw query text.
+Before each remote attempt the host re-resolves the existing provider's current
+`SecretRef` and destination. A cached service cannot send to a newly configured
+endpoint under an old grant, and key rotation does not retain an old key.
+The live secret redactor refreshes once before each outbound batch.
+
+Source/settings mutations and dispatch admission share a **per-bot** lane;
+network requests do not hold that lane. Other bots keep their hybrid path while
+one provider request waits. Revocation cancels that bot's admitted generation,
+and deletion waits for bounded workers to release SQLite/model handles, even
+when the original HTTP/tool waiter was dropped. Publication also rechecks source
+revision, current host authority and cancellation.
+
+Both owner approvals and every outbound dispatch use the permission engine's
+`Remote` category. This reuses the existing remote-computer category: an
+effective `Remote: deny` also denies embedding egress, using the existing
+global/bot override rules. The category is not an independent network
+capability. A general tool/category grant never substitutes for explicit source
+or query confirmation. Unsupported permission limits cannot be turned into a
+standing embedding grant. The `Remote` decision at query dispatch uses the
+**actual active run**, including its initiator and inherited subagent policy;
+unknown, completed and cross-bot run IDs fail closed. The current bot policy is
+also rechecked. Owner setup uses the Human initiator; a scheduled/channel query
+cannot borrow that initiator. On native #46 integration the same final dispatch
+guard must also consume the tainted-run egress decision, including an owner grant
+that appears after the initial dynamic tool classification.
+
+Automatic continuation preserves durable retry limits. Provider 429/cooldown
+results never consume the terminal source-failure attempt budget, although the
+HTTP attempt remains charged to quota. An explicit owner retry resets a source's
+failed-job state. Owner cooldown recovery separately clears provider cooldowns
+and corresponding job deadlines across bots on the same account, without
+refunding quota reservations. Retry delays are capped at 48 hours; existing
+unbounded values are capped persistently rather than extended on every poll.
+Small wall-clock rollbacks remain conservative; a large rollback rebases future
+reservations, logs the adjustment and recovers within one rolling budget day.
+
+Input-size/provider validation failures reduce the durable batch size until a
+single bad chunk is isolated. Its safe failure code is persisted and exposed as
+`skipped_chunks`; healthy chunks continue and no failed document body is logged.
+Explicit source retry clears these exclusions. A new profile keeps old paid
+vectors until each source's replacement generation is complete without skipped
+chunks. Inactive generations never answer queries under the new fingerprint.
 
 Gemini 001 uses `RETRIEVAL_QUERY`/`RETRIEVAL_DOCUMENT`. Gemini Embedding 2 instead
 uses documented task prefixes and document title/text formatting; its multiple
@@ -238,12 +366,23 @@ use arrays of inputs and validate returned indices before reordering vectors.
 
 The owner's approximate 100 RPM / 1,000 RPD are configurable account budgets,
 not advertised universal quotas. A host-wide durable ledger reserves each
-attempt, including retries, across bots sharing an account group. Batching,
+attempt, including retries, across bots sharing an account group. The daemon
+derives that group from the configured SecretRef/environment credential identity
+or anonymous endpoint; a bot's `account_group` string is ignored. Batching,
 cache hits, persistent backoff and `Retry-After` avoid retry storms. Conservative
 rolling limits avoid assuming a provider's midnight boundary. The actual
 [Gemini limits](https://ai.google.dev/gemini-api/docs/rate-limits) are project-scoped
 and vary by account/model. A local ledger cannot coordinate unrelated machines
 using the same external account; provider 429s remain authoritative.
+The source settings UI uses conservative input units: each item in a batch counts
+toward the configured minute/day budget. Provider aliases with the same saved
+`SecretRef` share a default quota group; environment-only credentials use the
+provider identity. Separate saved credentials can still belong to the same
+upstream project, so the local grouping does not discover or replace provider
+project limits. The owner can enter embedding model IDs manually; the chat model
+picker's results are not used as an embedding-capability test. Gemini settings
+accept the explicit supported 001, 2 and 2-preview identifiers, with no inferred
+task format for an unknown model family.
 
 The optional local path uses explicitly supplied model/tokenizer artifacts with
 the existing permissively licensed fastembed/ONNX stack, where supported. It
@@ -251,6 +390,48 @@ must not infer permission to download missing artifacts. Multilingual E5 uses
 different `query:`/`passage:` prefixes. Native artifact availability, model
 license/checksums and Windows/ARM performance require separate validation; the
 default build and CI retrieval eval never need a real model or a GPU.
+Build this adapter with `cargo build -p cli --features local-embeddings`. The
+operator installs six absolute, SHA-256-pinned files through the fixed
+`data_dir/knowledge-host.json` registry. Bots can select only an installed
+`local_profile_id`; they cannot supply paths, pins or executable bytes. See the
+[host setup guide](../guide/knowledge-embeddings.md) for the file format.
+The registry is opened without following a final symlink/reparse point and its
+opened handle is checked before reading. On Unix it must belong to the daemon
+user and disallow group/world writes.
+
+The model/tokenizer assets are verified into owned byte snapshots. Linux loads
+the runtime from a sealed memfd; Windows loads a private snapshot with an open
+handle denying write/delete sharing. The process retains that handle for the
+runtime lifetime. Replacing the original path after verification cannot change
+the loaded bytes. Native loading fails closed on other platforms until an
+immutable snapshot implementation is available. The local recipe uses up to
+eight tokenizer-checked windows per chunk, covers the complete input, and pools
+normalized vectors with token weights. Inference uses one CPU thread and one
+global slot with batches of two windows. Windows/Linux CI compiles and tests
+hermetic artifact/tokenizer fixtures; it does not run real model weights.
+
+The local feature uses dynamic ONNX linking without model-hub/runtime-download
+features. CI fetches Cargo dependencies first, verifies the resolved feature
+graph (including negative controls), then runs tests with Cargo `--offline`,
+`ORT_SKIP_DOWNLOAD=1` and `ORT_OFFLINE=1`. Cargo offline mode is not an OS network
+sandbox and does not prevent arbitrary build-script sockets. The graph check
+and ort-sys's disabled linking/download branch establish the narrower claim:
+this optional embedding adapter has no enabled artifact download feature.
+
+### Exact vector scan ceiling
+
+A bounded SQL preflight checks eligible row count and dimensions before any
+query quota reservation or HTTP request. The configured row ceiling is at most
+100,000 (default 20,000), and the dimension-aware byte ceiling is the lower of
+16 MiB or `query_timeout_ms × 32 KiB`. At the default 500 ms budget this permits
+at most 10,666 vectors at 384 dimensions, 2,666 at 1,536, or 1,333 at 3,072.
+Source filters apply before this count. A larger corpus or mismatched dimensions
+returns `LexicalDegraded` without paying for a query embedding. These are
+conservative admission ceilings, not throughput guarantees for every CPU.
+Vectors are normalized at ingestion; scans borrow f32-LE SQLite blobs and compute
+dot products without allocating and renormalizing each stored vector. The
+runtime deadline remains a second bound. Large-corpus ANN indexing is outside
+this exact-scan implementation.
 
 ## Shared Markdown brain and state transfer
 
@@ -259,17 +440,43 @@ per-bot index. The first write operation creates a new Markdown note rather than
 overwriting a human edit. `knowledge_brain_write` always asks for approval,
 including under otherwise permissive policies. Before the card appears, it
 freezes the exact rendered bytes, target relative path, source labels/revisions,
-bot/run identity and hash in a bounded, expiring, one-use approval record. The
+bot/run identity and hash in a bounded, one-use approval record tied to the live
+approval guard. The
 card shows the proposed content, not a vague summary. Changed arguments,
-expired/reused approvals or changed source revisions fail. Capability-scoped
+closed/reused approvals or changed source revisions fail. Capability-scoped
 no-replace publication prevents traversal and accidental overwrite. Imported
 frontmatter does not grant trust or write authority.
 
+Atomic publication is implemented for Linux and Windows. Linux uses an unnamed
+staging inode, requiring an `O_TMPFILE`-capable filesystem and accessible
+`/proc/self/fd`. Windows also publishes from the held source and directory
+handles, pins the staged file against concurrent writes/deletion, and requires a
+local filesystem supporting hard links. Unsupported filesystems
+or publication failures reject the write instead of falling back to a mutable
+staging pathname. The bot tool advertises only these two supported platforms;
+human editing and explicitly selected brain reads remain ordinary Markdown use.
+The final publication holds a source-revision transaction and rechecks the
+approved brain directory identity immediately before linking the new file.
+A directory replaced while publication waits for that transaction cannot retarget
+the approved note. Pending records follow the live approval guard, are bounded to 64 per bot, and
+contain at most 64 KiB of rendered Markdown; the approval card shows those exact
+bytes and their hash. Startup cleanup only removes ordinary files with an exact
+`.praxi-brain-<canonical UUID>.tmp` name below the trusted brain handle. It unlinks
+the staging name without following links; published Markdown and external
+targets survive. Fake names, directories and symlinks are left untouched. Staging
+names were already excluded from state bundles and remain excluded.
+
 State bundles explicitly snapshot nested knowledge databases using SQLite's
 backup API and validate scope/schema/foreign keys/index consistency before
-installation. WAL and SHM files are not ordinary bundle blobs. Import disables
-external source bindings, clears remote document/query consent and automatic
-retrieval, and requires reauthorization on the destination. Pending approvals
+installation. All imported vectors, including local `remote=0` vectors and
+derived caches, are discarded; re-enabling a source cannot trust imported vector
+geometry. WAL and SHM files are not ordinary bundle blobs. Import disables
+all source bindings, clears remote document/query consent and automatic
+retrieval, and clears the entire embedding configuration. File/folder locators
+require explicit path selection on the receiving host before they can be enabled.
+The same source identity and label survive that selection, while old indexed
+bytes and document grants are invalidated. Installed local models are selected
+only by a host profile ID; imported paths/hashes cannot choose native code. Pending approvals
 and in-flight jobs are not transferable authority. The host quota ledger is
 runtime state: it is excluded and an existing destination ledger must not be
 rolled back by import. Shared Markdown files transfer as data and are only
@@ -280,7 +487,13 @@ indexed by bots that explicitly attach the brain.
 The fixture corpus, queries and expected source IDs live under `evals/retrieval`.
 Normal Rust tests run lexical recall@k/MRR and a deterministic fake-embedder
 hybrid eval without network. Fake vectors test fusion, cache and isolation; they
-are not evidence of Gemini/OpenAI semantic quality. Provider wire tests use local
+are not evidence of Gemini/OpenAI semantic quality. A separate held-out concept
+fixture uses eight natural-language queries with no lexical hit and asserts
+Recall@1 = MRR@1 = 1.0, a 600-token serialized response ceiling, and at least 50%
+savings against stuffing its complete corpus. Its broken-query-vector negative
+control must drop recall to zero; the lexical channel cannot mask disconnection.
+This deterministic semantic-path test is not a learned-model quality benchmark.
+Provider wire tests use local
 mock HTTP responses. Real paid provider calls and model downloads are unnecessary.
 
 Token tests report both the lightweight output estimate and real reference BPE

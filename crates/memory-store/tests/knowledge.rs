@@ -109,10 +109,10 @@ fn concurrent_first_open_and_source_writers_are_serialized() {
             })
             .collect();
         for worker in workers {
-            worker
-                .join()
-                .unwrap()
-                .expect("parallel migration/write failed");
+            assert!(
+                worker.join().unwrap().is_ok(),
+                "parallel migration/write failed"
+            );
         }
     });
     assert_eq!(
@@ -543,7 +543,7 @@ fn source_delete_removes_chunks_documents_and_fts_rows() {
             .unwrap();
         assert_eq!(count, 0, "orphaned {table}");
     }
-    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 1);
+    assert_eq!(KnowledgeStore::validate_and_migrate(&path).unwrap(), 3);
 }
 
 #[test]

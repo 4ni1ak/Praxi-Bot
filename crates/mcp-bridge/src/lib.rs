@@ -43,17 +43,22 @@
 //! meta-tools rather than shown to the model directly.
 
 mod catalog;
+mod client;
 mod config;
 mod diagnostics;
 mod discovery;
 mod error;
 mod manager;
+pub mod oauth;
+pub mod oauth_net;
 mod session;
 mod tool;
 mod transport;
 
-pub use catalog::{CatalogEntry, CatalogInstall, RequiredSecret, builtin_catalog};
-pub use config::{McpConfigStore, McpServerConfig, McpTransport, TomlFileStore};
+pub use catalog::{
+    CatalogEntry, CatalogInstall, RequiredSecret, builtin_catalog, check_stdio_package_pin,
+};
+pub use config::{McpConfigStore, McpServerConfig, McpTransport, OAuthConfig, TomlFileStore};
 pub use diagnostics::ExternalRedactor;
 pub use error::{McpError, Result};
 pub use manager::{Backoff, McpManager, McpPolicy, McpServerHandle, ServerSnapshot, ServerStatus};
