@@ -13,6 +13,7 @@ fn archive(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
         zip.start_file(
             *name,
             zip::write::SimpleFileOptions::default()
+                .system(zip::System::Unix)
                 .compression_method(zip::CompressionMethod::Stored)
                 .unix_permissions(*mode),
         )
@@ -118,6 +119,13 @@ fn zip_import_accepts_inert_extras_and_rejects_unsafe_paths_and_modes() {
         (SKILL_FILE, md.as_bytes(), 0o644),
         ("script.sh", b"do not run", 0o755),
     ]);
+    // Preserve the tested metadata on Windows too; its native ZIP origin
+    // otherwise discards the executable permission bits before our reader.
+    let mut fixture = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    assert_eq!(
+        fixture.by_name("script.sh").unwrap().unix_mode().unwrap() & 0o777,
+        0o755
+    );
     assert!(matches!(
         PreparedSkill::zip(&bytes),
         Err(OwnerError::Invalid)

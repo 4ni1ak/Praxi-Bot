@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::de::DeserializeOwned;
@@ -16,6 +17,8 @@ use crate::{MemoryError, Result, Trust};
 
 pub(super) const SOURCE_COLS: &str =
     "id,kind,label,locator,trust,enabled,revision,remote_embedding_json,created_ms,updated_ms";
+
+const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// One bot's local knowledge database. No embedder is required.
 #[derive(Debug)]
@@ -48,7 +51,7 @@ impl KnowledgeStore {
         reject_symlink(&path)?;
         let conn = Connection::open(path)?;
         configure(&conn)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        enable_wal(&conn)?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, scope)
     }
@@ -459,8 +462,33 @@ impl KnowledgeStore {
     }
 }
 
+fn enable_wal(conn: &Connection) -> Result<()> {
+    // Concurrent first opens may return SQLITE_BUSY while promoting the
+    // journal lock without invoking SQLite's busy handler. Retry that narrow
+    // transition within the same connection-wide wait budget. Never retry
+    // schema, binding, corruption or other SQLite failures.
+    let deadline = Instant::now() + SQLITE_BUSY_TIMEOUT;
+    let result = loop {
+        conn.busy_timeout(deadline.saturating_duration_since(Instant::now()))?;
+        match conn.pragma_update(None, "journal_mode", "WAL") {
+            Err(error)
+                if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy)
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(
+                    Duration::from_millis(5)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            result => break result,
+        }
+    };
+    conn.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
+    result.map_err(Into::into)
+}
+
 fn configure(conn: &Connection) -> Result<()> {
-    conn.busy_timeout(std::time::Duration::from_secs(2))?;
+    conn.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "cache_size", -16_384)?;
     conn.pragma_update(None, "temp_store", "FILE")?;
