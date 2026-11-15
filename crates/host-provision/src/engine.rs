@@ -80,6 +80,11 @@ pub struct Params {
     pub desktop: bool,
     /// Pause between health attempts right after a (re)start.
     pub retry_delay: Duration,
+    /// May the engine download and install Praxi on the server? That needs a
+    /// published release (the server fetches `v<app_version>` itself). When
+    /// false the install step only DETECTS an existing host-mode install and
+    /// the flow goes on to pair; anything else stops with a plain message.
+    pub allow_install: bool,
 }
 
 pub struct Engine<'a> {
@@ -113,6 +118,58 @@ fn fail_from(id: &'static str, title: &str, e: &TransportError) -> StepResult {
         TransportError::Other(_) => "See the log for details.",
     };
     StepResult::fail(id, title, e.to_string(), hint)
+}
+
+/// Install step without permission to install: pair with what is there.
+fn detect_only(existing: &Existing, app: &str) -> StepResult {
+    const T: &str = "Install Praxi";
+    match existing {
+        Existing::Installed {
+            version,
+            host_mode: true,
+            active: true,
+        } if facts::semver(version) == facts::semver(app) => StepResult::skip(
+            "install",
+            T,
+            format!("Praxi {version} already installed in host mode"),
+        ),
+        Existing::Installed {
+            version,
+            host_mode: true,
+            active: true,
+        } => StepResult::warn(
+            "install",
+            T,
+            format!(
+                "Praxi {version} is installed in host mode (this app is {app}); nothing was changed"
+            ),
+            "Install was not needed. If the versions differ a lot, update the one that is older.",
+        ),
+        Existing::Installed {
+            host_mode: true,
+            active: false,
+            ..
+        } => StepResult::fail(
+            "install",
+            T,
+            "Praxi is installed in host mode but its service is not running",
+            "On the server run: sudo systemctl start praxi",
+        ),
+        Existing::Installed {
+            host_mode: false, ..
+        } => StepResult::fail(
+            "install",
+            T,
+            "Praxi on this server is not running in host mode",
+            "Switching it to host mode needs a published Praxi release, which does not exist yet.",
+        ),
+        Existing::Fresh => StepResult::fail(
+            "install",
+            T,
+            "Praxi is not installed on this server, and automatic install needs a published release",
+            "No release has been published yet. Install Praxi on the server by hand, then add it again.",
+        ),
+    }
 }
 
 impl Engine<'_> {
@@ -345,6 +402,11 @@ impl Engine<'_> {
         let existing = facts::existing(facts);
         let mode = self.params.mode;
         let name = self.rec().name.clone();
+
+        if !self.params.allow_install {
+            let r = detect_only(&existing, &app);
+            return self.finish(report, r);
+        }
 
         let (run, snapshot) = match (&existing, mode) {
             (Existing::Installed { version, .. }, _)

@@ -159,6 +159,17 @@ fn record() -> HostRecord {
 }
 
 fn run(dir: &std::path::Path, fake: &Fake, local: &Local, ui: &mut TestUi, mode: Mode) -> Report {
+    run_with(dir, fake, local, ui, mode, true)
+}
+
+fn run_with(
+    dir: &std::path::Path,
+    fake: &Fake,
+    local: &Local,
+    ui: &mut TestUi,
+    mode: Mode,
+    allow_install: bool,
+) -> Report {
     let store = Store::new(dir.join("hosts"));
     let kh = KnownHosts::new(store.known_hosts_path());
     let record = store.load("oracle").unwrap_or_else(record);
@@ -174,6 +185,7 @@ fn run(dir: &std::path::Path, fake: &Fake, local: &Local, ui: &mut TestUi, mode:
             app_version: "0.1.0".into(),
             desktop: true,
             retry_delay: Duration::ZERO,
+            allow_install,
         },
     };
     engine.run()
@@ -376,6 +388,7 @@ fn an_installed_but_unpaired_host_can_be_uninstalled_and_purged() {
                 app_version: "0.1.0".into(),
                 desktop: true,
                 retry_delay: Duration::ZERO,
+                allow_install: true,
             },
         };
         let r = engine.remove(level);
@@ -393,4 +406,36 @@ fn an_installed_but_unpaired_host_can_be_uninstalled_and_purged() {
         drop(calls);
         kh.pin("203.0.113.7", 22, &fake.keys[0]).unwrap(); // remove forgets the pin
     }
+}
+
+#[test]
+fn already_installed_host_is_only_paired_when_install_is_not_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, local, mut ui) = (
+        Fake::new(),
+        Local::default(),
+        TestUi {
+            accept: true,
+            asked: 0,
+        },
+    );
+    *fake.preflight.borrow_mut() = installed_facts();
+    let r = run_with(dir.path(), &fake, &local, &mut ui, Mode::Add, false);
+    assert!(r.ok(), "{}", r.table());
+    assert_eq!(status_of(&r, "install"), Status::Skip);
+    assert_eq!(status_of(&r, "pair"), Status::Pass);
+    assert!(
+        !fake.ran(RemoteCmd::Provision(Sub::Install))
+            && !fake.ran(RemoteCmd::Stage(StageFile::Installer)),
+        "nothing is downloaded or installed"
+    );
+
+    // A fresh server is refused plainly, before anything is staged.
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, local) = (Fake::new(), Local::default());
+    let r = run_with(dir.path(), &fake, &local, &mut ui, Mode::Add, false);
+    assert!(!r.ok());
+    assert_eq!(status_of(&r, "install"), Status::Fail);
+    assert!(r.results.iter().all(|s| s.id != "pair"));
+    assert!(!fake.ran(RemoteCmd::Provision(Sub::Install)));
 }

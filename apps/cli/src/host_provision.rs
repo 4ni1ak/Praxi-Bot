@@ -204,7 +204,7 @@ fn resolve(store: &Store, args: &TargetArgs) -> Result<HostRecord> {
     )
 }
 
-fn resolve_parts(
+pub(crate) fn resolve_parts(
     store: &Store,
     target: &str,
     port: Option<u32>,
@@ -243,7 +243,7 @@ fn resolve_parts(
     Ok(rec)
 }
 
-fn transport(store: &Store, rec: &HostRecord) -> Result<OpenSshTransport> {
+pub(crate) fn transport(store: &Store, rec: &HostRecord) -> Result<OpenSshTransport> {
     let paths = SshPaths {
         ssh: host_provision::ssh::resolve_binary("ssh")?,
         keyscan: host_provision::ssh::resolve_binary("ssh-keyscan")?,
@@ -317,6 +317,7 @@ pub fn run(cmd: &ProvisionCmd, data_dir: &Path, client: &dyn Fn() -> Result<Clie
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             desktop: !args.no_desktop,
             retry_delay: Duration::from_secs(5),
+            allow_install: true,
         },
     };
     let report = engine.run();
@@ -391,6 +392,7 @@ fn remove(
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             desktop: true,
             retry_delay: Duration::ZERO,
+            allow_install: true,
         },
     };
     let report = engine.remove(level);

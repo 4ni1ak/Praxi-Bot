@@ -1,6 +1,7 @@
 import { applyPatchOps, type PatchOp } from "../lib/botPatch.ts";
 import { ApiClient, ApiError } from "./client.ts";
 import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
+import { MockHostSetup } from "./mockHostSetup.ts";
 import { MockLiveViewService } from "./mockLiveView.ts";
 import type {
   Bot,
@@ -409,6 +410,7 @@ export class MockApiClient extends ApiClient {
   /** Repairs run so far (tests). */
   readonly repairs: string[] = [];
   private readonly liveView = new MockLiveViewService();
+  private readonly hostSetup = new MockHostSetup();
   private webSearchConfig: WebSearchConfig = {
     order: ["searxng", "brave", "tavily", "duckduckgo", "duckduckgo_lite", "bing"],
     active_backends: ["duckduckgo", "duckduckgo_lite", "bing"],
@@ -541,6 +543,14 @@ export class MockApiClient extends ApiClient {
     await Promise.resolve();
     const ok = (v: unknown) => v as T;
     const seg = path.split("/").filter(Boolean).map(decodeURIComponent);
+    if (seg[0] === "hosts" && seg[1] === "setup") {
+      const body = opts.body as { host: string; accept: boolean };
+      if (!seg[2] && method === "POST") return ok(this.hostSetup.start(opts.body as never));
+      if (seg[2] === "ssh-keys") return ok({ keys: this.hostSetup.keys() });
+      if (seg[3] === "host-key") return ok(this.hostSetup.answerKey(seg[2], body.accept));
+      if (seg[3] === "cancel") return ok(this.hostSetup.cancel(seg[2]));
+      return ok(this.hostSetup.get(seg[2]));
+    }
     if (seg[0] === "bots" && seg[2] === "knowledge") {
       if (!this.bots.some((bot) => bot.id === seg[1])) throw new ApiError(404, "not_found", "bot");
       const bot = seg[1];

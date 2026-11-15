@@ -218,7 +218,10 @@ impl HostLinks for CliHostLinks {
 }
 
 pub fn install(state: &daemon_api::AppState, data: PathBuf, shared: Option<PeerNetwork>) {
-    state.set_host_links(Arc::new(CliHostLinks::new(data, shared)));
+    let links = Arc::new(CliHostLinks::new(data.clone(), shared));
+    state.set_host_links(links.clone());
+    // The "Add server" wizard pairs through the same links.
+    state.set_host_setup(Arc::new(crate::host_setup::CliHostSetup::new(data, links)));
 }
 
 #[cfg(test)]

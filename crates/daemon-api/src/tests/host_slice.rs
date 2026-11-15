@@ -630,3 +630,85 @@ async fn on_a_host_a_peer_cannot_relax_execution_policy_but_can_edit_the_rest_of
         "repeating the stored policy is not a change"
     );
 }
+
+#[derive(Default)]
+struct FakeSetup {
+    starts: parking_lot::Mutex<usize>,
+}
+
+fn fake_job() -> crate::host_setup::HostSetupJob {
+    crate::host_setup::HostSetupJob {
+        id: "job-1".into(),
+        state: crate::host_setup::HostSetupState::Running,
+        target: "ubuntu@203.0.113.7:22".into(),
+        steps: Vec::new(),
+        notes: Vec::new(),
+        host_key: None,
+        host_id: None,
+        host_name: None,
+        view_targets: None,
+        install_available: false,
+    }
+}
+
+impl crate::host_setup::HostSetup for FakeSetup {
+    fn start(
+        &self,
+        _input: crate::host_setup::StartHostSetupInput,
+    ) -> Result<crate::host_setup::HostSetupJob, crate::host_setup::HostSetupError> {
+        *self.starts.lock() += 1;
+        Ok(fake_job())
+    }
+    fn job(&self, id: &str) -> Option<crate::host_setup::HostSetupJob> {
+        (id == "job-1").then(fake_job)
+    }
+    fn answer_host_key(
+        &self,
+        _id: &str,
+        _accept: bool,
+    ) -> Result<crate::host_setup::HostSetupJob, crate::host_setup::HostSetupError> {
+        Ok(fake_job())
+    }
+    fn cancel(
+        &self,
+        _id: &str,
+    ) -> Result<crate::host_setup::HostSetupJob, crate::host_setup::HostSetupError> {
+        Ok(fake_job())
+    }
+    fn ssh_keys(&self) -> Vec<crate::host_setup::SshKeyHint> {
+        Vec::new()
+    }
+}
+
+#[tokio::test]
+async fn server_setup_is_local_only_and_never_reaches_the_seam_from_a_peer() {
+    let t = setup();
+    let setup_seam = Arc::new(FakeSetup::default());
+    t.state.set_host_setup(setup_seam.clone());
+    let body = json!({"host": "203.0.113.7", "key_path": "/home/u/.ssh/id_ed25519"});
+    let routes: Vec<(Method, &str)> = vec![
+        (Method::POST, "/v1/hosts/setup"),
+        (Method::GET, "/v1/hosts/setup/job-1"),
+        (Method::POST, "/v1/hosts/setup/job-1/host-key"),
+        (Method::POST, "/v1/hosts/setup/job-1/cancel"),
+        (Method::GET, "/v1/hosts/setup/ssh-keys"),
+    ];
+    for role in ROLES {
+        for (method, path) in &routes {
+            let r = peer_call(&t, role, method.clone(), path, Some(body.clone())).await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN, "{role:?} {method} {path}");
+        }
+    }
+    assert_eq!(*setup_seam.starts.lock(), 0, "no peer started a setup");
+
+    // The local user can; the key file path is not audited.
+    let r = call(&t, Method::POST, "/v1/hosts/setup", Some(body)).await;
+    assert_eq!(
+        r.status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&r.body)
+    );
+    assert_eq!(*setup_seam.starts.lock(), 1);
+    assert_eq!(count_audit(&t, "host_setup.start"), 1);
+}

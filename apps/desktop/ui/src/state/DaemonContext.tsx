@@ -117,6 +117,10 @@ export interface DaemonContextValue {
   hostList: HostLinkList | null;
   /** Switch the whole UI (API, events, live view) to this computer or a host. */
   selectComputer: (id: string) => Promise<void>;
+  /** This computer's own daemon client (the "Add server" wizard talks to it, never to a host). */
+  localApi: ApiClient | null;
+  /** Re-read the paired hosts now (after the wizard paired one). */
+  refreshHosts: () => Promise<void>;
   /** Pair with a host by ticket; resolves to the new entry. */
   pairHost: (ticket: string) => Promise<HostLinkInfo>;
   /** Stop every live run on the active host (listed scope, never a sweep). */
@@ -510,6 +514,8 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     hostConn,
     hostList,
     selectComputer,
+    localApi: localClient,
+    refreshHosts,
     pairHost,
     stopHostRuns: async () => 0
   };

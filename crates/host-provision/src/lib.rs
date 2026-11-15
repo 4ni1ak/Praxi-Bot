@@ -1,7 +1,8 @@
 //! Turn a rented Linux server into a paired Praxi host over SSH.
 //!
-//! Library only: the owner's terminal (`bot host add ...`) drives it. There is
-//! deliberately no daemon HTTP route and no model tool for provisioning.
+//! Library only: the owner's terminal (`bot host add ...`) and the desktop
+//! app's "Add server" wizard (local-owner-only `/v1/hosts/setup` routes, never
+//! open to a peer) drive it. There is deliberately no model tool for it.
 //!
 //! Transport is the system OpenSSH client (key file or ssh-agent; passwords
 //! are not supported in this version). The engine only knows the

@@ -31,6 +31,7 @@ mod file_access;
 mod fill_routes;
 pub mod host;
 pub mod host_links;
+pub mod host_setup;
 mod knowledge;
 pub mod knowledge_runtime;
 mod knowledge_settings;
@@ -191,6 +192,7 @@ struct Inner {
     refresh_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
     provider_host: OnceLock<ProviderHost>,
     host_links: OnceLock<Arc<dyn host_links::HostLinks>>,
+    host_setup: OnceLock<Arc<dyn host_setup::HostSetup>>,
     knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
@@ -363,6 +365,7 @@ impl AppState {
             refresh_rx: parking_lot::Mutex::new(Some(refresh_rx)),
             provider_host: OnceLock::new(),
             host_links: OnceLock::new(),
+            host_setup: OnceLock::new(),
             knowledge_runtime: OnceLock::new(),
             mcp: OnceLock::new(),
             mcp_server: parking_lot::Mutex::new(mcp_server::McpServerBook::default()),
@@ -430,6 +433,16 @@ impl AppState {
     /// once, before [`serve`]; a second call is ignored.
     pub fn set_host_links(&self, links: Arc<dyn host_links::HostLinks>) {
         let _ = self.0.host_links.set(links);
+    }
+
+    /// Enable `/v1/hosts/setup/*` (the desktop "Add server" wizard). Call
+    /// once, before [`serve`]; a second call is ignored.
+    pub fn set_host_setup(&self, setup: Arc<dyn host_setup::HostSetup>) {
+        let _ = self.0.host_setup.set(setup);
+    }
+
+    pub(crate) fn host_setup(&self) -> Option<Arc<dyn host_setup::HostSetup>> {
+        self.0.host_setup.get().cloned()
     }
 
     pub(crate) fn host_links(&self) -> Option<Arc<dyn host_links::HostLinks>> {
@@ -933,6 +946,11 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/host", get(host::status))
         .route("/v1/hosts", get(host_links::list))
         .route("/v1/hosts/pair", post(host_links::pair))
+        .route("/v1/hosts/setup", post(host_setup::start))
+        .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
+        .route("/v1/hosts/setup/{job}", get(host_setup::get))
+        .route("/v1/hosts/setup/{job}/host-key", post(host_setup::host_key))
+        .route("/v1/hosts/setup/{job}/cancel", post(host_setup::cancel))
         .route(
             "/v1/hosts/{id}/connect",
             post(host_links::connect).delete(host_links::disconnect),
