@@ -342,3 +342,6 @@ export type AvailableSkill = S["AvailableSkillDto"];
 export type OwnSkill = S["OwnSkillDto"];
 export type BotSkills = S["BotSkillsDto"];
 export type PutBotSkillsInput = S["PutBotSkillsInput"];
+
+export type CliEngineDto = S["CliEngineDto"];
+export type CliInstallApproval = S["CliInstallApproval"];

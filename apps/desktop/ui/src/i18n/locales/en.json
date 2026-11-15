@@ -1244,7 +1244,30 @@
         "signIn": "Sign in",
         "signInIn": "Run in a terminal:",
         "install": "Install",
-        "toggle": "Use {{name}}"
+        "toggle": "Use {{name}}",
+        "installedVersion": "Installed · {{version}}",
+        "outdated": "Outdated",
+        "nativeToolsOpen": "OpenCode is detection-only: disabling its native tools has not been verified.",
+        "commandVerified": "Command verified in local reference; installation has not been tested.",
+        "commandUnverified": "Unverified command — review the vendor docs, then copy and run yourself.",
+        "copyCommand": "Copy command",
+        "howSignIn": "How to sign in",
+        "docs": "Docs",
+        "copied": "Command copied",
+        "installApproval": "Runs as your current user, without elevation. This downloads and executes vendor software. Approve once to continue. Sign in separately in your terminal.",
+        "installSummary": "Install or update {{engine}}",
+        "installRunning": "Installing… leaving this section does not revoke an accepted approval.",
+        "installOutput": "Installer output (untrusted)",
+        "installDone": "Installer finished. Detection refreshed; sign-in may still be required.",
+        "installErrors": {
+          "npm_missing": "Install Node.js with npm, then retry, or copy the command to your terminal.",
+          "node_missing": "Node.js could not be found. Copy the command and run it in your terminal.",
+          "npm_shim_refused": "This npm launcher cannot run safely here. Copy the command and run it in your terminal.",
+          "powershell_missing": "PowerShell could not be found. Copy the command and run it in your terminal.",
+          "timeout": "Installation exceeded ten minutes and was stopped. Check the output before retrying.",
+          "output_limit": "Installer output exceeded the limit and installation was stopped. Use your terminal to continue.",
+          "install_failed": "Installation did not finish successfully. Check the output or run the command in your terminal."
+        }
       },
       "advanced": "Advanced provider settings"
     },

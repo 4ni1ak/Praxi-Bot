@@ -1,3 +1,4 @@
+import { createSseParser } from "./events.ts";
 import type { Connection } from "./connection";
 import type {
   AcceptedResponse,
@@ -6,6 +7,8 @@ import type {
   BotInput,
   Chat,
   ConfiguredProviderDto,
+  CliEngineDto,
+  CliInstallApproval,
   ControlModeName,
   ControlStateDto,
   ControlVerdict,
@@ -163,6 +166,41 @@ export class ApiClient {
       throw new ApiError(res.status, code, message);
     }
     return res;
+  }
+
+  cliEngines(refresh = false): Promise<CliEngineDto[]> {
+    return this.request("GET", "/providers/cli", { query: { refresh: refresh ? "1" : null } });
+  }
+
+  previewCliInstall(id: string): Promise<CliInstallApproval> {
+    return this.request("POST", "/providers/cli/install", { body: { id } });
+  }
+
+  async decideCliInstall(id: string, decision: "approve" | "deny", onOutput: (text: string) => void): Promise<void> {
+    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision } });
+    const reader = res.body?.getReader();
+    if (!reader) { throw new Error("Missing install stream"); }
+    let done = false;
+    let failure: string | null = null;
+    const parse = createSseParser((message) => {
+      const data = JSON.parse(message.data) as { text?: string; ok?: boolean; error?: string };
+      if (message.event === "output" && typeof data.text === "string") { onOutput(data.text); }
+      if (message.event === "done") {
+        done = true;
+        if (!data.ok && data.error !== "denied") { failure = data.error ?? "install_failed"; }
+      }
+    });
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) { break; }
+        parse(decoder.decode(chunk.value, { stream: true }));
+      }
+      parse(decoder.decode());
+      if (!done) { throw new Error("Install stream disconnected"); }
+      if (failure) { throw new Error(failure); }
+    } finally { await reader.cancel(); reader.releaseLock(); }
   }
 
   health(): Promise<Health> {
