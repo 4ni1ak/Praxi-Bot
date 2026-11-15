@@ -849,7 +849,7 @@ mod tests {
         // Dropping the origin from the allow-list drops its grant.
         s.upsert("a/one", None, Some(&["https://two.test".into()]), None)
             .unwrap();
-        assert!(s.grants().is_empty());
+        assert_eq!(s.grants().len(), 0);
         let g = s.grant_create("a/one", "https://two.test").unwrap();
         assert!(s.grant_revoke(&g.id).unwrap());
         assert!(!s.grant_revoke(&g.id).unwrap());
