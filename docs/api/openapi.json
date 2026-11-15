@@ -2652,14 +2652,11 @@
         "parameters": [
           {
             "name": "chat_only",
-            "in": "path",
+            "in": "query",
             "description": "Default true: omit deprecated and non-chat models. False exposes all\nkinds for advanced clients; it does not change bot execution.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
+              "type": "boolean"
             }
           }
         ],
@@ -7871,7 +7868,7 @@
               "string",
               "null"
             ],
-            "description": "A short annotation such as `preview` or a live OpenRouter `free` id."
+            "description": "A short annotation such as `preview` or a live `OpenRouter` `free` id."
           },
           "recommended": {
             "type": "boolean"

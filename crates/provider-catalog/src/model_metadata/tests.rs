@@ -27,7 +27,11 @@ fn curated_validation_rejects_duplicate_ids_ranks_and_nonchat_recommendations() 
     let source = include_str!("../model_metadata.json");
     let load = || serde_json::from_str::<CuratedModels>(source).unwrap();
     let mut table = load();
-    let duplicate = table.providers[0].models[0].clone();
+    let mut duplicate = table.providers[0].models[0].clone();
+    // Isolate the id guard from recommendation-rank duplication so removing
+    // id validation cannot be hidden by an unrelated validation failure.
+    duplicate.recommended = false;
+    duplicate.recommended_rank = None;
     table.providers[0].models.push(duplicate);
     assert!(table.validate().is_err());
     let mut table = load();

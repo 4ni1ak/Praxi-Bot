@@ -3,6 +3,20 @@ use provider_catalog::{ChatProvider, ProviderError, ProviderSettings};
 
 const SECRET: &str = "fixture-live-provider-secret-123456";
 
+#[test]
+fn provider_models_openapi_declares_optional_query() {
+    let document: Value = serde_json::from_str(&crate::openapi::openapi_json()).unwrap();
+    let parameters = document["paths"]["/v1/providers"]["get"]["parameters"]
+        .as_array()
+        .unwrap();
+    let chat_only = parameters
+        .iter()
+        .find(|p| p["name"] == "chat_only")
+        .unwrap();
+    assert_eq!(chat_only["in"], "query");
+    assert_eq!(chat_only["required"], false);
+}
+
 #[derive(serde::Deserialize)]
 struct Legacy {
     id: String,

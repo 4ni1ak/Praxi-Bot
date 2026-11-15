@@ -2684,7 +2684,7 @@ export interface components {
              *     `video`, or `other`. Kind describes primary use, not input modalities.
              */
             kind: string;
-            /** @description A short annotation such as `preview` or a live OpenRouter `free` id. */
+            /** @description A short annotation such as `preview` or a live `OpenRouter` `free` id. */
             note?: string | null;
             recommended: boolean;
             /** Format: int32 */
@@ -5395,15 +5395,15 @@ export interface operations {
     };
     list_providers: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /**
                  * @description Default true: omit deprecated and non-chat models. False exposes all
                  *     kinds for advanced clients; it does not change bot execution.
                  */
-                chat_only: boolean | null;
+                chat_only?: boolean;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

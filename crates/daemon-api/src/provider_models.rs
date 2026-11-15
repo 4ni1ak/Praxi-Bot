@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::dto::ModelMetadataDto;
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct ProvidersQuery {
     /// Default true: omit deprecated and non-chat models. False exposes all
     /// kinds for advanced clients; it does not change bot execution.
