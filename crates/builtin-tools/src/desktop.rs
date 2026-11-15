@@ -1040,15 +1040,14 @@ fn card_title(title: &str) -> String {
 }
 
 impl DesktopTool {
-    /// The kind of input this tool sends, for the four tools a run-scoped
-    /// control grant can ever cover. Click and scroll are not input in that
-    /// sense and have no target.
+    /// The kind of input this tool sends, for the three tools a run-scoped
+    /// control grant can ever cover. Click, scroll and drag have no target:
+    /// a drag always asks.
     fn control_kind(&self) -> Option<ControlKind> {
         match self.op {
             Op::Type => Some(ControlKind::Type),
             Op::SetValue => Some(ControlKind::SetValue),
             Op::Key => Some(ControlKind::Key),
-            Op::Drag => Some(ControlKind::Drag),
             _ => None,
         }
     }
@@ -1101,13 +1100,6 @@ impl DesktopTool {
                 if input.get("index").is_some_and(secure_ref) {
                     refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
                 }
-            }
-            Op::Drag
-                if ["from", "to"]
-                    .iter()
-                    .any(|k| input.get(k).is_some_and(secure_ref)) =>
-            {
-                refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
             }
             _ => {}
         }
@@ -1513,7 +1505,7 @@ impl DesktopTool {
                     ));
                 }
                 let head = sh
-                    .act(run_id, Action::Drag { from, to, method }, &permit, guard)
+                    .act(run_id, Action::Drag { from, to, method }, &permit, None)
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
@@ -1629,6 +1621,7 @@ pub(crate) mod fake {
                 },
                 elevated: Some(false),
                 password_focus: false,
+                owned: false,
             }
         }
     }
@@ -1973,7 +1966,6 @@ mod tests {
                 json!({"index": 3, "gen": 1, "value": "x"}),
             ),
             ("desktop_key", json!({"keys": "ctrl+a"})),
-            ("desktop_drag", json!({"from": 1, "to": 2, "gen": 1})),
         ] {
             let target = get(&t, tool)
                 .control_target(&ctx, &input)
@@ -2017,6 +2009,7 @@ mod tests {
         let ctx = ctx_for("r1");
         observed(&t, &ctx).await;
         for tool in [
+            "desktop_drag",
             "desktop_click",
             "desktop_scroll",
             "desktop_launch",
@@ -2040,7 +2033,21 @@ mod tests {
         let (_d, t) = build(fake, None);
         let ctx = ctx_for("r1");
         observed(&t, &ctx).await;
-        for keys in ["win+r", "super+r", "cmd+r", "meta", "Windows+e"] {
+        for keys in [
+            "win+r",
+            "super+r",
+            "cmd+r",
+            "meta",
+            "Windows+e",
+            "alt+space",
+            "alt+f2",
+            "alt+f4",
+            "f4",
+            "f1",
+            "ctrl+n",
+            "ctrl+esc",
+            "alt+tab",
+        ] {
             let target = get(&t, "desktop_key")
                 .control_target(&ctx, &json!({"keys": keys}))
                 .await
@@ -2119,8 +2126,10 @@ mod tests {
                 "desktop_set_value",
                 json!({"index": 3, "gen": 1, "value": "x"}),
             ),
-            ("desktop_key", json!({"keys": "a", "index": 3, "gen": 1})),
-            ("desktop_drag", json!({"from": 3, "to": 1, "gen": 1})),
+            (
+                "desktop_key",
+                json!({"keys": "enter", "index": 3, "gen": 1}),
+            ),
         ] {
             let target = get(&t, tool).control_target(&ctx, &input).await.unwrap();
             assert_eq!(target.refusal.as_deref(), Some("password_field"), "{tool}");

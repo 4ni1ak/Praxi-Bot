@@ -134,7 +134,7 @@ impl DesktopBackend for WindowsBackend {
     }
 
     fn key_chord_refusal(&self, keys: &[String]) -> Option<Refusal> {
-        crate::pure::chord_opens_launcher_or_switches(keys).then_some(Refusal::Chord)
+        (!desktop_api::guarded::chord_allowed(keys)).then_some(Refusal::Chord)
     }
 
     async fn screenshot(&self, region: Region, quality: Quality) -> Result<Image, DesktopError> {

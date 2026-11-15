@@ -185,12 +185,18 @@ export function controlGrantDetails(details: unknown): ControlGrantDetails | nul
   const c = details.control_grant;
   const program = plain(c.program, 60);
   if (!program) return null;
+  // The program path is shown whole or the task-wide option is not offered: a
+  // path that hiding or cutting would change cannot be approved from this card.
+  const rawPath = typeof c.image_path === "string" ? c.image_path : "";
+  const wholePath = [...rawPath].filter((ch) => !isHidden(ch)).join("");
+  const pathShownWhole = rawPath.trim() !== "" && wholePath === rawPath;
+  const title = plain(c.window_title, 1000);
   return {
-    offered: c.offered === true,
+    offered: c.offered === true && pathShownWhole,
     refusal: plain(c.refusal, 40),
     program,
-    imagePath: plain(c.image_path, 200),
-    windowTitle: plain(c.window_title, 80)
+    imagePath: wholePath,
+    windowTitle: [...title].length > 80 ? `${[...title].slice(0, 80).join("")}... (cut)` : title
   };
 }
 

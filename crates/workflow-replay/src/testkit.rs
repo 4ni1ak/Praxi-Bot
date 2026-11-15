@@ -90,6 +90,7 @@ impl FakeDesktop {
             },
             elevated: Some(false),
             password_focus: false,
+            owned: false,
         }
     }
 }

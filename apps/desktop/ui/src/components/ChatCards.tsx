@@ -329,7 +329,9 @@ function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
       {d.imagePath ? <p className={styles.controlPath}>{d.imagePath}</p> : null}
       {d.offered ? (
         <>
-          <p className={styles.bodyText}>{t("chat.approval.control.covers")}</p>
+          <p className={styles.bodyText}>
+            {t("chat.approval.control.covers", { program: d.program, path: d.imagePath })}
+          </p>
           <p className={styles.bodyText}>{t("chat.approval.control.risk")}</p>
           <p className={styles.bodyText}>{t("chat.approval.control.stillAsks")}</p>
         </>

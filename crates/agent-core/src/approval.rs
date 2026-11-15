@@ -102,6 +102,14 @@ impl Drop for PendingGuard {
     }
 }
 
+/// The full image path can be shown unchanged on every renderer.
+fn path_fits_card(path: &str) -> bool {
+    !path.trim().is_empty()
+        && path.chars().count() <= 1024
+        && !protocol::approval_text::hides_characters(path)
+        && !path.chars().any(char::is_control)
+}
+
 /// What the card says about a run-scoped control grant: which program it
 /// would cover, what it covers and what still asks. Daemon-authored.
 fn attach_control_card(details: &mut Option<Value>, t: &ControlTarget, offered: bool) {
@@ -117,11 +125,9 @@ fn attach_control_card(details: &mut Option<Value>, t: &ControlTarget, offered: 
             "image_path": t.identity.image_path,
             "pid": t.identity.pid,
             "window_title": t.window_title,
-            "covers": ["type", "set_value", "key", "drag"],
-            "still_asks": [
-                "other_programs", "launching", "commands", "scripts", "file_dialogs",
-                "password_fields", "terminals", "browsers", "elevated"
-            ],
+            "covers": ["type", "set_value", "key"],
+            // The program deny list is a heuristic by file name; the card says so.
+            "heuristic": true,
         }),
     );
 }
@@ -756,7 +762,12 @@ impl Shared {
                 && !self.always_ask(name)
                 && ctx.tool_grant_scope(name, category).is_some()
         });
-        let grantable = target.as_ref().is_some_and(ControlTarget::eligible);
+        // The task-wide option exists only when the card can show the whole
+        // program path: a path with hidden or control characters, or an absurd
+        // length, is not offered (the call then asks once, as in #89).
+        let grantable = target
+            .as_ref()
+            .is_some_and(|t| t.eligible() && path_fits_card(&t.identity.image_path));
         if let Some(t) = &target {
             attach_control_card(details, t, grantable);
         }

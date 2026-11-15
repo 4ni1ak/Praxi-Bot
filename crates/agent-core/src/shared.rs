@@ -674,7 +674,7 @@ pub(crate) struct ControlGrant {
     pub identity: tool_registry::ControlIdentity,
 }
 
-/// The control kind a built-in tool sends, for the four tools a run-scoped
+/// The control kind a built-in tool sends, for the three tools a run-scoped
 /// grant can ever cover. `desktop_launch`, `shell_run`, `script_run` and every
 /// other tool return `None`: nothing covers them.
 pub(crate) fn control_kind_of(name: &str) -> Option<tool_registry::ControlKind> {
@@ -683,7 +683,6 @@ pub(crate) fn control_kind_of(name: &str) -> Option<tool_registry::ControlKind> 
         "desktop_type" => Some(K::Type),
         "desktop_set_value" => Some(K::SetValue),
         "desktop_key" => Some(K::Key),
-        "desktop_drag" => Some(K::Drag),
         _ => None,
     }
 }

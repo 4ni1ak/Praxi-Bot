@@ -1212,6 +1212,7 @@ impl TurnExecutor {
             content_tainted: ctx.taint.lock().exposure.is_tainted(),
             control_guard,
         };
+        let guarded = tctx.control_guard.is_some();
         // Approval (if any) happened before this point, so the clock only
         // covers the tool itself.
         let started = std::time::Instant::now();
@@ -1233,6 +1234,13 @@ impl TurnExecutor {
             },
         )
         .await;
+        // A guarded call that did not complete cleanly (the guard refused, a
+        // send failed part-way, a key could not be confirmed released, a
+        // timeout) withdraws every task-wide permission of this run: the next
+        // call asks again, and nothing is assumed about what was delivered.
+        if guarded && !matches!(outcome, Ok(Ok(_))) {
+            ctx.control_grants.lock().clear();
+        }
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let mut own_spill: Option<String> = None;
         let exposure = match &outcome {

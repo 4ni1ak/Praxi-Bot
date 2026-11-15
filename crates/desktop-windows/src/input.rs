@@ -4,8 +4,8 @@
 use desktop_api::DesktopError;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS,
+        GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS,
+        KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS,
         MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
         MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VIRTUAL_KEY,
     },
@@ -169,34 +169,45 @@ pub fn type_text(text: &str) -> Result<(), DesktopError> {
     send(&events)
 }
 
-/// Type text in short chunks, running `check` immediately before each
-/// `SendInput`. A window that takes the focus mid-text then receives at most
-/// one chunk. Surrogate pairs are never split.
-pub fn type_text_checked(
-    text: &str,
-    check: &mut dyn FnMut() -> Result<(), DesktopError>,
-) -> Result<(), DesktopError> {
-    const CHUNK_UNITS: usize = 24;
-    let units: Vec<u16> = text.encode_utf16().collect();
-    if units.is_empty() {
-        return check();
+/// Type UTF-16 units as Unicode key events (one `SendInput`).
+pub fn type_units(units: &[u16]) -> Result<(), DesktopError> {
+    let mut events = Vec::with_capacity(units.len() * 2);
+    for unit in units {
+        events.push(kbd(0, *unit, KEYEVENTF_UNICODE));
+        events.push(kbd(0, *unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
     }
-    let mut i = 0;
-    while i < units.len() {
-        let mut end = (i + CHUNK_UNITS).min(units.len());
-        if end < units.len() && (0xD800..0xDC00).contains(&units[end - 1]) {
-            end += 1;
-        }
-        let mut events = Vec::with_capacity((end - i) * 2);
-        for unit in &units[i..end] {
-            events.push(kbd(0, *unit, KEYEVENTF_UNICODE));
-            events.push(kbd(0, *unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
-        }
-        check()?;
-        send(&events)?;
-        i = end;
-    }
-    Ok(())
+    send(&events)
+}
+
+/// Virtual keys that can change what the next key means.
+const MODIFIER_VKS_ALL: [u16; 11] = [
+    0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5,
+];
+
+fn key_is_down(vk: u16) -> bool {
+    // SAFETY: plain query by value.
+    unsafe { GetAsyncKeyState(i32::from(vk)) < 0 }
+}
+
+/// Ctrl, Alt, Shift or Win (either side) is down right now.
+pub fn modifiers_down() -> bool {
+    MODIFIER_VKS_ALL.iter().any(|vk| key_is_down(*vk))
+}
+
+/// Release every modifier and the left mouse button, then verify with the
+/// async key state that no modifier is left down. `true` = confirmed clean.
+/// A key the user is holding also makes this `false`: the grant then asks.
+pub fn release_all() -> bool {
+    let mut ups: Vec<INPUT> = MODIFIER_VKS_ALL
+        .iter()
+        .map(|vk| vk_event(*vk, true))
+        .collect();
+    ups.push(mouse(0, 0, MOUSEEVENTF_LEFTUP));
+    // SAFETY: a valid slice of initialised INPUT structs. The result is not
+    // trusted: the key state below is what decides.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let _ = unsafe { SendInput(&ups, std::mem::size_of::<INPUT>() as i32) };
+    !modifiers_down()
 }
 
 fn vk_event(vk: u16, up: bool) -> INPUT {
@@ -282,17 +293,5 @@ mod tests {
             vk_event(0x11, true),
         ];
         assert!(stuck_key_ups(&done).is_empty());
-    }
-
-    #[test]
-    fn text_is_checked_before_every_chunk_and_stops_at_the_first_refusal() {
-        // No SendInput is reached when the very first check refuses.
-        let mut calls = 0;
-        let r = type_text_checked(&"a".repeat(100), &mut || {
-            calls += 1;
-            Err(DesktopError::GuardRefused("moved".into()))
-        });
-        assert!(matches!(r, Err(DesktopError::GuardRefused(_))));
-        assert_eq!(calls, 1);
     }
 }

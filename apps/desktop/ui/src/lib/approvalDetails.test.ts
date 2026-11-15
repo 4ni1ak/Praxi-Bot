@@ -18,6 +18,25 @@ test("a control grant block is parsed and its text is made plain", () => {
   assert.equal(d.windowTitle, "Untitled - Notepad");
 });
 
+test("a long program path is kept whole and a path that would change is not offered", () => {
+  const deep = `C:\\${"d".repeat(400)}\\app.exe`;
+  const whole = controlGrantDetails({
+    control_grant: { offered: true, program: "app.exe", image_path: deep, window_title: "t".repeat(200) }
+  });
+  assert.ok(whole);
+  assert.equal(whole.imagePath, deep);
+  assert.equal(whole.offered, true);
+  assert.ok(whole.windowTitle.endsWith("... (cut)"));
+  const hidden = controlGrantDetails({
+    control_grant: { offered: true, program: "a.exe", image_path: "C:\\x\\a\u202eexe.txt", window_title: "" }
+  });
+  assert.ok(hidden);
+  assert.equal(hidden.offered, false);
+  const empty = controlGrantDetails({ control_grant: { offered: true, program: "a.exe", image_path: "" } });
+  assert.ok(empty);
+  assert.equal(empty.offered, false);
+});
+
 test("a refused control target says why and offers nothing", () => {
   const d = controlGrantDetails({
     control_grant: { offered: false, refusal: "terminal", program: "cmd.exe", image_path: "", window_title: "" }

@@ -304,11 +304,18 @@ pub fn describe_details(details: &Value) -> Option<String> {
 /// approval button only when this is true and the whole card fits.
 #[must_use]
 pub fn control_grant_offered(details: &Value) -> bool {
-    details
-        .get("control_grant")
-        .and_then(|c| c.get("offered"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    let Some(c) = details.get("control_grant") else {
+        return false;
+    };
+    // Offered only when the whole program path can be shown unchanged: a path
+    // that scrubbing would shorten or alter is never offered a task-wide option.
+    let path = c
+        .get("image_path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    c.get("offered").and_then(Value::as_bool).unwrap_or(false)
+        && !path.trim().is_empty()
+        && scrub(path, false) == path
 }
 
 /// The program name of an offered control grant, one short scrubbed line
@@ -330,6 +337,17 @@ fn control_field(c: &Value, key: &str, max: usize) -> String {
         .replace("DAEMON SUMMARY", "")
         .trim()
         .to_owned()
+}
+
+/// A short text field with a visible marker when it had to be cut.
+fn control_field_marked(c: &Value, key: &str, max: usize) -> String {
+    let full = control_field(c, key, usize::MAX);
+    if full.chars().count() > max {
+        let cut: String = full.chars().take(max).collect();
+        format!("{cut}... (cut)")
+    } else {
+        full
+    }
 }
 
 /// Both-language reason a control grant is not offered, from the stable code
@@ -366,6 +384,10 @@ fn refusal_reason(code: &str) -> (String, String) {
             "these keys open a launcher or switch windows",
             "bu tuşlar bir başlatıcı açar veya pencere değiştirir",
         ),
+        "remote_control" => (
+            "this is a remote-desktop or virtual-machine viewer",
+            "bu bir uzak masaüstü veya sanal makine görüntüleyicisi",
+        ),
         "elevated" => (
             "this program runs elevated or could not be checked",
             "bu program yükseltilmiş çalışıyor veya denetlenemedi",
@@ -389,15 +411,17 @@ fn refusal_reason(code: &str) -> (String, String) {
 fn control_grant_text(details: &Value) -> Option<String> {
     let c = details.get("control_grant")?;
     let program = control_field(c, "program", 60);
-    let path = control_field(c, "image_path", 200);
-    let window = control_field(c, "window_title", 80);
+    // The full program path, never cut: when it cannot be shown whole the
+    // daemon does not offer the task-wide option at all.
+    let path = control_field(c, "image_path", usize::MAX);
+    let window = control_field_marked(c, "window_title", 80);
     let (en, tr) = if control_grant_offered(details) {
         (
             format!(
-                "CONTROL GRANT OFFERED: \"This task: {program}\" lets Praxi type, press keys, set values and drag inside {program} ({path}, window \"{window}\") until this task ends, and only there. It may type things it has read into this app. It still asks for any other program, launching a program, commands, scripts, file dialogs, password fields, terminals, browsers and elevated windows.\n"
+                "CONTROL GRANT OFFERED: \"This task: {program}\". Praxi may type into {program} ({path}) for this task: text, a few editing keys (Enter, Tab, arrows, Esc, Ctrl+A/C/X/V/Z/Y/S/F) and values. The window now is \"{window}\". It may type things it has read into this program. It asks again for another program, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send.\n"
             ),
             format!(
-                "KONTROL İZNİ SUNULDU: \"Bu görev: {program}\" Praxi'nin bu görev bitene kadar yalnızca {program} ({path}, pencere \"{window}\") içinde yazmasına, tuşlara basmasına, değer girmesine ve sürüklemesine izin verir. Okuduğu şeyleri bu uygulamaya yazabilir. Başka her program, program başlatma, komutlar, betikler, dosya iletişim kutuları, parola alanları, terminaller, tarayıcılar ve yükseltilmiş pencereler için yine sorar.\n"
+                "KONTROL İZNİ SUNULDU: \"Bu görev: {program}\". Praxi bu görev boyunca {program} ({path}) içine yazabilir: metin, birkaç düzenleme tuşu (Enter, Tab, oklar, Esc, Ctrl+A/C/X/V/Z/Y/S/F) ve değerler. Pencere şu an \"{window}\". Okuduğu şeyleri bu programa yazabilir. Başka program, program başlatma, komutlar, betikler, sürükleme, dosya iletişim kutuları, parola alanları ve diğer tüm tuşlar için yine sorar. Terminaller, tarayıcılar, başlatıcılar ve uzak masaüstü görüntüleyicileri yalnızca dosya adına göre tanınır; bu bir sezgiseldir, adı değiştirilmiş kopya tanınmaz. İzin görevle biter ve durdurulan veya başarısız olan her gönderimden sonra geri alınır.\n"
             ),
         )
     } else {
@@ -753,8 +777,35 @@ mod tests {
         let text = super::control_grant_text(&details).unwrap();
         assert!(text.contains("This task: notepad.exe"), "{text}");
         assert!(text.contains("Bu görev: notepad.exe"), "{text}");
-        assert!(text.contains("It still asks"), "{text}");
+        assert!(text.contains("It asks again"), "{text}");
         assert!(text.contains("yine sorar"), "{text}");
+        assert!(text.contains("heuristic"), "{text}");
+        assert!(text.contains("C:\\Windows\\notepad.exe"), "{text}");
+    }
+
+    #[test]
+    fn a_long_path_is_shown_whole_and_a_long_title_is_marked_as_cut() {
+        let deep = format!("C:\\{}\\app.exe", "d".repeat(400));
+        let title = "t".repeat(200);
+        let details = serde_json::json!({
+            "control_grant": {"offered": true, "program": "app.exe", "image_path": deep,
+                "window_title": title}
+        });
+        assert!(super::control_grant_offered(&details));
+        let text = super::control_grant_text(&details).unwrap();
+        assert!(text.contains(&deep), "the whole path, uncut");
+        assert!(text.contains("... (cut)"), "the cut title is marked");
+    }
+
+    #[test]
+    fn a_path_that_cannot_be_shown_unchanged_is_not_offered() {
+        let details = serde_json::json!({
+            "control_grant": {"offered": true, "program": "a.exe",
+                "image_path": "C:\\x\\a\u{202e}exe.txt", "window_title": "w"}
+        });
+        assert!(!super::control_grant_offered(&details));
+        let empty = serde_json::json!({"control_grant": {"offered": true, "program": "a", "image_path": ""}});
+        assert!(!super::control_grant_offered(&empty));
     }
 
     #[test]

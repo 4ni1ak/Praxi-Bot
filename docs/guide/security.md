@@ -234,60 +234,91 @@ standing grant, the read shortcut, a Full preset and `allow_egress_after_reads`
 do not cover that ask. Shell, script and launch always ask, on every platform.
 
 Desktop input has one exception, and only where the computer can name the
-program it is typing into: the **run-scoped control grant**.
+program it is typing into: the **run-scoped control grant**. Read what it is
+before you tick it: it is narrow, but it is **a heuristic, not a guarantee**.
 
-- **What it is.** On a desktop input card the app may offer "This task:
-  <program>". The card names the program, its full path and the window. Approving
-  it lets this one run type, press keys, set values and drag inside that one
-  program (the executable path, the process id and the process start time, so a
-  second copy of the program, or a recycled process id, is another program) on
-  that one computer, until the run ends. It lives in memory only: it is not saved,
-  not shared with other runs, not inherited by a sub-agent, not kept for the next
-  message, and gone when the app restarts.
+- **What it is.** On a typing, key or set-value card the app may offer "This task:
+  <program>". The card says: Praxi may type into <program> (its **full path**,
+  never shortened) for this task. If the path cannot be shown whole on a surface,
+  that surface does not offer the task-wide option at all and the call asks once.
+  Approving lets this one run send those three kinds of input into that one
+  program (executable path, process id and process start time, so a second copy or
+  a recycled process id is another program) on that one computer, until the run
+  ends. It lives in memory only: not saved, not shared with other runs, not
+  inherited by a sub-agent, not kept for the next message, gone on restart.
 - **What it satisfies.** Both the untrusted-content ask and a plain "ask first"
-  policy for those calls, exactly as "this chat" would for an ordinary tool. A
-  deny, an "always ask" tool, usage limits and the absolute floors (money, the
-  never-list) are decided first and still win.
-- **What it never covers.** Launching a program, a shell and a script (they ask
-  every time, and their card never offers the grant); Win/Super key combinations
-  and the other launcher or window-switching shortcuts (Ctrl+Esc, Alt+Tab, Alt+Esc,
-  Ctrl+Alt+Del), under any spelling the backend accepts; typing into any other
-  program; terminals and shells; apps with a built-in command line (editors with a
-  terminal, IDEs, Explorer, Task Manager, registry and management consoles);
-  browsers driven as desktop apps (use the browser tools); password managers;
-  password fields; dialogs of any kind, including file dialogs, the Run box and
-  message boxes; elevated programs; packaged-app frames that cannot be bound to
-  one program; and system launcher and sign-in surfaces. Each of these is an
-  ordinary once-only card that says why no grant is offered.
-- **Checked again right before the input is sent.** The decision happens before
-  the input is sent, so the Windows backend checks, inside its own input thread
-  immediately before the operating-system call, that the window that would
-  receive the input is still the granted program and still not on the lists above.
-  Typed text is sent in short pieces with the same check before each piece. A
-  mismatch, an unknown window, an unreadable process or a failed lookup sends
-  nothing; the call returns "not sent" and the next attempt asks again. This
-  applies to a saved workflow's replay too. The check narrows but cannot close
-  the gap between the check and the keystroke: a window can still take the focus
-  in the milliseconds between them.
-- **What it still lets through.** Anything the granted program does with
-  keyboard input, including the program's own shortcuts and any command or macro
-  feature it has that is not on the lists above. The card says that Praxi may type
-  things it has read into the app. Approve it for programs you would let a
-  stranger type into.
+  policy for those calls, as "this chat" does for an ordinary tool. A deny, an
+  "always ask" tool, usage limits and the absolute floors (money, the never-list)
+  are decided first and still win.
+- **Keys are an allowlist, one shape per call.** Enter, Tab, Esc, Backspace,
+  Delete, the arrows, Home, End, PageUp, PageDown; Shift with Tab, an arrow, Home,
+  End, PageUp or PageDown; Ctrl with A, C, X, V, Z, Y, S or F. Everything else
+  asks: any Alt combination (Alt+Space and Alt+F4 act outside the program), F-keys,
+  Win/Super/Cmd, Ctrl+Esc, Alt+Tab, Ctrl+N/O/W, and any list of several keys.
+  A global hotkey that another program registered for one of the allowed keys is
+  not excluded: if you run such a program, do not use the task-wide option.
+- **Never covered.** `desktop_launch`, `shell_run`, `script_run` (their cards never
+  offer the grant, and the loop also refuses to cover them by tool kind) and
+  `desktop_drag` (always asks, one card per drag). Clicks never needed it.
+- **Checked on the real receiver right before every send (Windows).** The backend
+  does not trust the window it saw earlier. Before each send it reads, live, the
+  foreground window **and the focused element**, which can belong to another
+  process (an embedded browser or terminal inside a granted host): both must be the
+  granted program, not elevated, not a password field (live state, not the
+  snapshot), not a dialog, not an owned popup (custom-class dialogs included), and
+  the window class lookup must have succeeded. A held modifier key refuses. The
+  focusing click before typing checks the hit window and its top-level window and
+  has no fallback. `set_value` is checked the same way before it writes and does
+  not fall back to typing. Text goes out in short pieces with a fresh check before
+  each. Any unavailable fact refuses.
+- **Any stop withdraws the grant.** A refusal, a failed or partial send, an
+  unconfirmed key release (the keys are released on every exit and the key state
+  is verified) or a timeout removes every task-wide permission of the run: the
+  next call asks again. The error says how many characters were already typed
+  before the stop, so a retry does not duplicate them. The check narrows but cannot
+  close the gap between the check and the keystroke.
+- **The deny list is a heuristic.** The grant is not offered for programs whose
+  **file name** is on a list: terminals and shells, editors and IDEs, Explorer,
+  Task Manager and management consoles, Office applications (macro hosts) and
+  script hosts, browsers, password managers, hotkey launchers (PowerToys, Everything
+  and similar), remote-desktop and virtual-machine viewers, packaged-app frames and
+  system sign-in surfaces; nor for elevated programs, nor when the window is a
+  standard dialog or an owned popup. A renamed or copied binary of a listed
+  program is **not** recognised, and a program that is not listed but has its own
+  command line, plugin or macro feature gets the grant like any other. The list
+  cannot be complete. Approve it for programs you would let a stranger type into.
+- **What it still lets through.** Anything the granted program does with those keys
+  and text, including its own shortcuts and commands. The card says that Praxi may
+  type things it has read into the program.
 
 Where the grant exists:
 
 | Computer | Desktop input after untrusted content |
 |---|---|
-| Windows (this PC) | Asks once for "This task: <program>", then free inside that program until the run ends. Everything in the "never covers" list still asks. |
+| Windows (this PC) | Asks once for "This task: <program>", then typing, the allowed keys and `set_value` are free in that program until the run ends or a send is stopped. |
 | Windows, another computer (paired PC) | Asks on every call. A remote computer does not report process identity yet. |
 | Linux (X11) | Asks on every call. The window's process id is set by the window's own program, so it cannot name a program reliably. |
-| Linux (Wayland), macOS | Asks on every call. No desktop backend can name a program yet. |
+| Linux (Wayland), macOS | There is no desktop backend on these yet, so the desktop tools are not available there at all. |
 
 Where no grant is offered the behaviour is exactly the earlier one: each call
 asks, once, with the input on the card.
 
-What counts as untrusted here is wider than web pages. Any file read, listing or
+**What it saves, measured.** Every dialog call asks: a standard or custom dialog
+(Save, Open, Run, message boxes) is never covered, the keys Enter/Tab/Esc inside a
+dialog included, and a Save filename that points at a startup folder, a profile
+or a script is not specially flagged (it shows as ordinary typed text on its card).
+For the ten desktop calls of a Notepad task after one file read (observe, launch,
+type, key, type, key, set value, Ctrl+S, filename in the Save dialog, Enter in the
+Save dialog) Windows asks **4** times (launch, the first typing call that carries
+the grant, the filename, Enter in the dialog); without process identity the same
+sequence asks 9 times. A 30-step recorded replay (one launch, 26 typing or key
+steps in one program, three steps in a dialog) asks 5 times; many dialog steps or
+steps in excluded programs cost one card each, so there is no small fixed bound.
+Replay steps recorded as a generic tool step carry no target and always ask.
+
+What counts as untrusted here is wider than web pages. A desktop observation
+(`desktop_get_state`, `desktop_list_apps`) and a desktop click result count as well, so a desktop
+task taints itself without any file read. Any file read, listing or
 search (`fs_read`, `fs_list`, `fs_search`), any git read (`git_status`,
 `git_diff`, `git_log`, `git_show`, `git_branch`), every document reader, and any
 web, mail, MCP, skill or workflow read counts, including a read of your own

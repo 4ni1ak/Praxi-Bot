@@ -332,9 +332,9 @@
         "button": "Bu görev: {{program}}",
         "offered": "Yalnızca bu görev için {{program}} içine yazmaya izin verilsin mi?",
         "refused": "{{program}} için görev boyunca izin yok: bu çağrıyı bir kez onaylayın.",
-        "covers": "Görev bitene kadar yalnızca bu tek programın içinde yazmayı, tuşlara basmayı, değer girmeyi ve sürüklemeyi kapsar. Başka hiçbir şeyi değil.",
+        "covers": "Praxi bu görev boyunca {{program}} ({{path}}) içine yazabilir: metin, birkaç düzenleme tuşu (Enter, Tab, oklar, Esc, Ctrl+A/C/X/V/Z/Y/S/F) ve değerler. Başka hiçbir şey değil.",
         "risk": "Praxi okuduğu şeyleri bu uygulamaya yazabilir.",
-        "stillAsks": "Şunlar için yine sorar: başka programlar, program başlatma, komutlar, betikler, dosya iletişim kutuları, parola alanları, terminaller, tarayıcılar ve yükseltilmiş pencereler.",
+        "stillAsks": "Şunlar için yine sorar: başka programlar, program başlatma, komutlar, betikler, sürükleme, dosya iletişim kutuları, parola alanları ve diğer tüm tuşlar. Terminaller, tarayıcılar, başlatıcılar ve uzak masaüstü görüntüleyicileri yalnızca dosya adına göre tanınır; bu bir sezgiseldir, adı değiştirilmiş kopya tanınmaz. İzin görevle biter ve durdurulan veya başarısız olan her gönderimden sonra geri alınır.",
         "reason": {
           "terminal": "Bu pencere bir terminal veya kabuk.",
           "command_app": "Bu uygulamanın yerleşik bir komut satırı var.",
@@ -347,7 +347,8 @@
           "chord": "Bu tuşlar bir başlatıcı açar veya pencere değiştirir.",
           "elevated": "Bu program yükseltilmiş çalışıyor veya denetlenemedi.",
           "no_identity": "Bu pencerenin arkasındaki program belirlenemedi.",
-          "unknown": "Bu çağrı görev boyunca geçerli bir izinle kapsanamaz."
+          "unknown": "Bu çağrı görev boyunca geçerli bir izinle kapsanamaz.",
+          "remote_control": "Bu bir uzak masaüstü veya sanal makine görüntüleyicisi."
         }
       },
       "schedule": {

@@ -5,7 +5,7 @@
 use desktop_api::{
     ActGuard, DesktopError, InputTarget, Refusal,
     action::{Action, ActionResult, ClickMethod, CoordinateSpace, Target},
-    guard,
+    guarded,
     snapshot::{Fingerprint, Rect, Snapshot, TreeQuality, UiNode},
 };
 use windows::{
@@ -43,29 +43,6 @@ use crate::{
 };
 
 type Res<T> = Result<T, DesktopError>;
-
-/// The error for a guard that stopped an action; nothing was sent.
-fn refused(r: Refusal) -> DesktopError {
-    let why = match r {
-        Refusal::NoIdentity => "the window's program could not be identified",
-        Refusal::Elevated => "the window runs elevated or its elevation could not be read",
-        Refusal::Terminal => "the window is a terminal or shell",
-        Refusal::CommandApp => "the window belongs to an app with a built-in command line",
-        Refusal::Browser => "the window is a browser",
-        Refusal::PasswordManager => "the window belongs to a password manager",
-        Refusal::SystemSurface => "the window is a system launcher or credential surface",
-        Refusal::UwpFrame => {
-            "the window is a packaged-app frame that cannot be bound to one program"
-        }
-        Refusal::Dialog => "the window is a dialog (file dialog, Run, message box)",
-        Refusal::PasswordField => "the focused element is a password field",
-        Refusal::Chord => "this key combination opens a launcher or switches windows",
-        Refusal::ForegroundChanged => {
-            "the window that would receive the input is not the program that was approved"
-        }
-    };
-    DesktopError::GuardRefused(format!("{r}: {why}; ask again"))
-}
 
 /// How long UIA waits to reach a target process (the system default).
 const CONNECTION_TIMEOUT_MS: u32 = 2_000;
@@ -340,11 +317,7 @@ impl Worker {
         Ok((false, None))
     }
 
-    fn set_value(
-        el: &IUIAutomationElement,
-        value: &str,
-        mut check: Option<&mut dyn FnMut() -> Res<()>>,
-    ) -> Res<Option<bool>> {
+    fn set_value(el: &IUIAutomationElement, value: &str) -> Res<Option<bool>> {
         // SAFETY: pattern queries and calls on a live element.
         unsafe {
             if let Ok(p) = el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
@@ -357,14 +330,8 @@ impl Worker {
             // Fallback: focus, select all, type.
             el.SetFocus().map_err(acc("SetFocus"))?;
         }
-        if let Some(check) = check.as_mut() {
-            check()?;
-        }
         input::key_chord(&["ctrl".to_string(), "a".to_string()])?;
-        match check {
-            Some(check) => input::type_text_checked(value, check)?,
-            None => input::type_text(value)?,
-        }
+        input::type_text(value)?;
         // SAFETY: optional read-back if ValuePattern is exposed.
         let actual = unsafe {
             el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
@@ -373,6 +340,23 @@ impl Worker {
                 .map(|b| b.to_string())
         };
         Ok(Some(verify_value(value, actual.as_deref())))
+    }
+
+    /// `ValuePattern.SetValue` only, no typing fallback: the guarded path sends
+    /// nothing through the keyboard for a value it cannot set directly.
+    fn set_value_pattern_only(el: &IUIAutomationElement, value: &str) -> Result<bool, String> {
+        // SAFETY: pattern queries and calls on a live element.
+        unsafe {
+            let p = el
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .map_err(|e| format!("this element has no value pattern: {e}"))?;
+            if p.CurrentIsReadOnly().map_err(|e| e.to_string())?.as_bool() {
+                return Err("this element is read-only".into());
+            }
+            p.SetValue(&BSTR::from(value)).map_err(|e| e.to_string())?;
+            let actual = p.CurrentValue().ok().map(|b| b.to_string());
+            Ok(verify_value(value, actual.as_deref()))
+        }
     }
 
     /// Fallback when `SendInput` is blocked (e.g. UIPI / non-interactive desktop):
@@ -543,55 +527,53 @@ impl Worker {
         self.act_with(action, None)
     }
 
-    // ── run-scoped control grant: the check right before input is sent ───────
+    // ── run-scoped control grant: facts about the real receiver ──────────────
 
-    /// Facts about the window `hwnd` (default: the foreground window), with a
-    /// live read of whether the focused element is a password field.
-    fn target_now(&self, hwnd: Option<HWND>) -> Res<InputTarget> {
-        let h = hwnd
-            .or_else(winlist::foreground_hwnd)
-            .ok_or_else(|| refused(Refusal::NoIdentity))?;
-        let mut t = identity::window_target(h).ok_or_else(|| refused(Refusal::NoIdentity))?;
-        t.password_focus = self.focus_is_password();
+    /// Facts about one UIA element, all read live (never from the snapshot
+    /// cache): its own process, elevation, password state, and the class and
+    /// ownership of its top-level window. Any unavailable fact is a refusal.
+    fn element_fact(&self, el: &IUIAutomationElement) -> Result<InputTarget, Refusal> {
+        // SAFETY: live COM property reads on an element owned by this thread.
+        let (pid, password, native) = unsafe {
+            (
+                el.CurrentProcessId().map_err(|_| Refusal::NoIdentity)?,
+                el.CurrentIsPassword()
+                    .map_err(|_| Refusal::PasswordField)?
+                    .as_bool(),
+                el.CurrentNativeWindowHandle()
+                    .map_err(|_| Refusal::NoIdentity)?,
+            )
+        };
+        let pid = u32::try_from(pid).map_err(|_| Refusal::NoIdentity)?;
+        let top = if native.0.is_null() {
+            winlist::foreground_hwnd().ok_or(Refusal::NoIdentity)?
+        } else {
+            identity::root_of(native).ok_or(Refusal::NoIdentity)?
+        };
+        let mut t = identity::top_level_facts(top).ok_or(Refusal::NoIdentity)?;
+        // The element's own program, not its window's: they differ for an
+        // embedded child that belongs to another process.
+        t.identity = identity::process_identity(pid).ok_or(Refusal::NoIdentity)?;
+        t.elevated = identity::process_elevated(pid);
+        t.password_focus = password;
         Ok(t)
     }
 
-    /// Live, uncached: the element that has the keyboard focus right now is a
-    /// password field. A failed query counts as a password field (refuse).
-    fn focus_is_password(&self) -> bool {
-        // SAFETY: COM calls on the STA thread's IUIAutomation instance.
-        unsafe {
-            self.uia
-                .GetFocusedElement()
-                .and_then(|el| el.CurrentIsPassword())
-                .map_or(true, windows::core::BOOL::as_bool)
-        }
-    }
-
-    /// The window that would receive keyboard input is the granted program.
-    fn check_foreground(&self, g: &ActGuard) -> Res<()> {
-        guard::check_guard(g, &self.target_now(None)?).map_err(refused)
-    }
-
-    /// The top-level window at a screen point is the granted program (mouse
-    /// input lands there, whatever has the focus).
-    fn check_point(g: &ActGuard, (x, y): (f64, f64)) -> Res<()> {
-        let hwnd = identity::root_window_at(x, y).ok_or_else(|| refused(Refusal::NoIdentity))?;
-        let t = identity::window_target(hwnd).ok_or_else(|| refused(Refusal::NoIdentity))?;
-        guard::check_guard(g, &t).map_err(refused)
-    }
-
-    /// The window of the last snapshot is the granted program (for actions
-    /// that act inside that window without a `SendInput`).
-    fn check_snapshot_window(&self, g: &ActGuard) -> Res<()> {
-        let h = self.hwnd.ok_or_else(|| refused(Refusal::NoIdentity))?;
-        let t = identity::window_target(h).ok_or_else(|| refused(Refusal::NoIdentity))?;
-        guard::check_guard(g, &t).map_err(refused)
+    /// The facts that must all pass the guard before keyboard input: the
+    /// foreground window and the live focused element.
+    fn keyboard_facts(&self) -> Result<Vec<InputTarget>, Refusal> {
+        let fg = winlist::foreground_hwnd().ok_or(Refusal::NoIdentity)?;
+        let window = identity::top_level_facts(fg).ok_or(Refusal::NoIdentity)?;
+        // SAFETY: COM call on the STA thread's IUIAutomation instance.
+        let focused = unsafe { self.uia.GetFocusedElement() }.map_err(|_| Refusal::NoIdentity)?;
+        Ok(vec![window, self.element_fact(&focused)?])
     }
 
     /// The window and program keyboard input would reach now. Mirrors
     /// [`Self::focus_target`]: another program's foreground is replaced by the
-    /// last snapshot's window, the same program's own dialog keeps it.
+    /// last snapshot's window, the same program's own dialog keeps it. When the
+    /// foreground is the target, the live focused element must be the same
+    /// program too, otherwise no identity is reported (no grant is offered).
     pub fn input_target(&self) -> Option<InputTarget> {
         let fg = winlist::foreground_hwnd();
         let (hwnd, is_fg) = match (fg, self.hwnd) {
@@ -602,33 +584,31 @@ impl Worker {
             (Some(f), None) => (f, true),
             (None, None) => return None,
         };
-        let mut t = identity::window_target(hwnd)?;
-        t.password_focus = is_fg && self.focus_is_password();
+        let mut t = identity::top_level_facts(hwnd)?;
+        if is_fg {
+            let facts = self.keyboard_facts().ok()?;
+            let element = facts.into_iter().nth(1)?;
+            if !t.identity.same_program(&element.identity) || element.owned != t.owned {
+                return None;
+            }
+            t.password_focus = element.password_focus;
+        }
         Some(t)
     }
 
     #[allow(clippy::too_many_lines)] // one arm per action kind
     pub fn act_with(&mut self, action: &Action, guard: Option<&ActGuard>) -> Res<ActionResult> {
+        if let Some(g) = guard {
+            return self.act_guarded_flow(action, g);
+        }
         let mut verified = None;
         match action {
             Action::Click { target, method } => {
-                if let Some(g) = guard {
-                    if *method == ClickMethod::Global {
-                        let p = self.point(target)?;
-                        Self::check_point(g, p)?;
-                    } else {
-                        self.check_snapshot_window(g)?;
-                    }
-                }
                 verified = self.click(target, *method)?;
             }
             Action::TypeText { text } => {
                 self.focus_target();
-                if let Some(g) = guard {
-                    // No UIA fallback here: it would write into whatever has
-                    // the focus without the per-chunk check.
-                    input::type_text_checked(text, &mut || self.check_foreground(g))?;
-                } else if let Err(e) = input::type_text(text) {
+                if let Err(e) = input::type_text(text) {
                     self.uia_type_fallback(text).map_err(|_| e)?;
                 }
             }
@@ -636,20 +616,7 @@ impl Worker {
                 Target::ByIndex { index, generation } => {
                     let r = self.resolve(*index, *generation)?;
                     let el = r.element.clone();
-                    if let Some(g) = guard {
-                        self.check_snapshot_window(g)?;
-                        // SAFETY: cached property read on a retained live element.
-                        if unsafe { el.CachedIsPassword() }
-                            .map_or(true, windows::core::BOOL::as_bool)
-                        {
-                            return Err(refused(Refusal::PasswordField));
-                        }
-                        let this = &*self;
-                        verified =
-                            Self::set_value(&el, value, Some(&mut || this.check_foreground(g)))?;
-                    } else {
-                        verified = Self::set_value(&el, value, None)?;
-                    }
+                    verified = Self::set_value(&el, value)?;
                     self.last_focused = Some(el);
                 }
                 Target::ByCoordinate { .. } => {
@@ -664,9 +631,6 @@ impl Worker {
                 delta_y,
             } => match target {
                 Target::ByIndex { index, generation } => {
-                    if let Some(g) = guard {
-                        self.check_snapshot_window(g)?;
-                    }
                     let r = self.resolve(*index, *generation)?;
                     Self::scroll(&r.element, *delta_x, *delta_y)?;
                 }
@@ -678,13 +642,7 @@ impl Worker {
             },
             Action::KeyPress { keys } => {
                 self.focus_target();
-                if let Some(g) = guard {
-                    if pure::chord_opens_launcher_or_switches(keys) {
-                        return Err(refused(Refusal::Chord));
-                    }
-                    self.check_foreground(g)?;
-                    input::key_chord(keys)?;
-                } else if let Err(e) = input::key_chord(keys) {
+                if let Err(e) = input::key_chord(keys) {
                     self.uia_key_fallback(keys).map_err(|_| e)?;
                 }
             }
@@ -696,10 +654,6 @@ impl Worker {
                 }
                 let a = self.point(from)?;
                 let b = self.point(to)?;
-                if let Some(g) = guard {
-                    Self::check_point(g, a)?;
-                    Self::check_point(g, b)?;
-                }
                 input::drag(a, b)?;
             }
         }
@@ -708,6 +662,106 @@ impl Worker {
             verified,
             new_snapshot: None,
         })
+    }
+
+    /// The run-scoped control grant's path: type, keys, the focusing click and
+    /// `SetValue` only, each through the platform-neutral guarded flow with the
+    /// real receivers and the real sink. No UIA fallback exists on this path.
+    fn act_guarded_flow(&mut self, action: &Action, g: &ActGuard) -> Res<ActionResult> {
+        let to_err = |f: desktop_api::GuardFailure| DesktopError::GuardRefused(f.message());
+        let mut verified = None;
+        match action {
+            Action::Click {
+                target,
+                method: ClickMethod::Global,
+            } => {
+                let p = self.point(target)?;
+                guarded::guarded_click(g, p, &mut WinProbe { w: self }, &mut WinSink)
+                    .map_err(to_err)?;
+            }
+            Action::TypeText { text } => {
+                self.focus_target();
+                guarded::guarded_type(g, text, &mut WinProbe { w: self }, &mut WinSink)
+                    .map_err(to_err)?;
+            }
+            Action::KeyPress { keys } => {
+                self.focus_target();
+                guarded::guarded_key(g, keys, &mut WinProbe { w: self }, &mut WinSink)
+                    .map_err(to_err)?;
+            }
+            Action::SetValue {
+                target: Target::ByIndex { index, generation },
+                value,
+            } => {
+                let el = self.resolve(*index, *generation)?.element.clone();
+                // Live facts of the very element, plus the foreground and focus
+                // facts the keyboard path uses, read right before the write.
+                let facts = self.element_fact(&el).and_then(|e| {
+                    let mut all = self.keyboard_facts()?;
+                    all.push(e);
+                    Ok(all)
+                });
+                guarded::guarded_write(g, facts, || {
+                    Self::set_value_pattern_only(&el, value).map(|v| verified = Some(v))
+                })
+                .map_err(to_err)?;
+                self.last_focused = Some(el);
+            }
+            _ => {
+                return Err(DesktopError::GuardRefused(
+                    "this action is not covered by a task-wide permission (drag, scroll, clicks other than the focusing click, and coordinate set_value always ask)"
+                        .into(),
+                ));
+            }
+        }
+        Ok(ActionResult {
+            dispatched: true,
+            verified,
+            new_snapshot: None,
+        })
+    }
+}
+
+/// The live receivers, read from the worker's UIA instance and the OS.
+struct WinProbe<'a> {
+    w: &'a Worker,
+}
+
+impl guarded::InputProbe for WinProbe<'_> {
+    fn keyboard_receivers(&mut self) -> Result<Vec<InputTarget>, Refusal> {
+        self.w.keyboard_facts()
+    }
+
+    fn point_receivers(&mut self, (x, y): (f64, f64)) -> Result<Vec<InputTarget>, Refusal> {
+        let (child, root) = identity::point_hit(x, y).ok_or(Refusal::NoIdentity)?;
+        let c = identity::child_facts(child).ok_or(Refusal::NoIdentity)?;
+        let r = identity::top_level_facts(root).ok_or(Refusal::NoIdentity)?;
+        Ok(vec![c, r])
+    }
+
+    fn modifiers_down(&mut self) -> Result<bool, Refusal> {
+        Ok(input::modifiers_down())
+    }
+}
+
+/// The real `SendInput` calls.
+struct WinSink;
+
+impl guarded::InputSink for WinSink {
+    fn type_units(&mut self, units: &[u16]) -> Result<(), String> {
+        input::type_units(units).map_err(|e| e.to_string())
+    }
+
+    fn key_chord(&mut self, keys: &[String]) -> Result<(), String> {
+        input::key_chord(keys).map_err(|e| e.to_string())
+    }
+
+    fn click(&mut self, (x, y): (f64, f64)) -> Result<(), String> {
+        input::click_at(x, y).map_err(|e| e.to_string())
+    }
+
+    fn release_all(&mut self) -> bool {
+        input::release_all()
     }
 }
 

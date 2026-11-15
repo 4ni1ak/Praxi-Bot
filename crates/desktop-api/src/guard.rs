@@ -5,6 +5,14 @@
 //! Nothing here talks to the OS. A backend fills an [`InputTarget`] from its own
 //! window and process APIs; these functions only judge it. Every check fails
 //! closed: a missing fact is a refusal, never a pass.
+//!
+//! **This is a heuristic, not a program-class boundary.** The deny lists match
+//! the executable's file name, and the dialog test looks at the window class and
+//! at whether the window is owned. A renamed or copied binary of a listed
+//! program is not recognised, and a program that is not listed but has its own
+//! command line, macro host or launcher can still receive a grant. The grant is
+//! therefore described to the user as "Praxi may type into this program", with
+//! its full path, never as a promise that dangerous programs are excluded.
 
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +86,10 @@ pub struct InputTarget {
     pub elevated: Option<bool>,
     /// The focused element is a password field.
     pub password_focus: bool,
+    /// The top-level window has an owner window (an owned popup: custom-class
+    /// dialogs and modal boxes included).
+    #[serde(default)]
+    pub owned: bool,
 }
 
 /// Condition the OS backend must verify immediately before it sends input.
@@ -115,6 +127,14 @@ pub enum Refusal {
     Chord,
     /// The window that would receive input is not the granted program.
     ForegroundChanged,
+    /// A modifier key is held down, so the next key would not be what was approved.
+    ModifierHeld,
+    /// A remote-desktop or virtual-machine viewer: keystrokes operate another computer.
+    RemoteControl,
+    /// `desktop_drag` is never covered by a task-wide permission.
+    Drag,
+    /// A key could not be confirmed released after a send.
+    ReleaseUnconfirmed,
 }
 
 impl Refusal {
@@ -134,6 +154,41 @@ impl Refusal {
             Self::PasswordField => "password_field",
             Self::Chord => "chord",
             Self::ForegroundChanged => "foreground_changed",
+            Self::ModifierHeld => "modifier_held",
+            Self::RemoteControl => "remote_control",
+            Self::Drag => "drag",
+            Self::ReleaseUnconfirmed => "release_unconfirmed",
+        }
+    }
+
+    /// One plain sentence for an error message.
+    #[must_use]
+    pub const fn why(self) -> &'static str {
+        match self {
+            Self::NoIdentity => "the program or window could not be identified",
+            Self::Elevated => "the program runs elevated or its elevation could not be read",
+            Self::Terminal => "the window is a terminal or shell",
+            Self::CommandApp => {
+                "the program has a built-in command line, macro host or command palette"
+            }
+            Self::Browser => "the window is a browser",
+            Self::PasswordManager => "the program is a password manager",
+            Self::SystemSurface => "the window is a system launcher or sign-in surface",
+            Self::UwpFrame => {
+                "the window is a packaged-app frame that cannot be bound to one program"
+            }
+            Self::Dialog => "the window is a dialog or an owned popup",
+            Self::PasswordField => "the focused element is a password field",
+            Self::Chord => {
+                "this key combination is not on the short list of keys a task-wide permission may send"
+            }
+            Self::ForegroundChanged => {
+                "the element that would receive the input is not the program that was approved"
+            }
+            Self::ModifierHeld => "a modifier key is held down",
+            Self::RemoteControl => "the program is a remote-desktop or virtual-machine viewer",
+            Self::Drag => "dragging is never covered by a task-wide permission",
+            Self::ReleaseUnconfirmed => "a key could not be confirmed released",
         }
     }
 }
@@ -143,6 +198,50 @@ impl std::fmt::Display for Refusal {
         f.write_str(self.code())
     }
 }
+
+/// Hotkey launchers and command surfaces. `powertoys*` is matched by prefix.
+const LAUNCHERS: &[&str] = &[
+    "everything",
+    "everything64",
+    "flow.launcher",
+    "wox",
+    "keypirinha",
+    "ueli",
+    "launchy",
+    "listary",
+    "raycast",
+    "alfred",
+    "albert",
+    "autohotkey",
+    "autohotkey64",
+    "autohotkeyu64",
+];
+
+/// Remote-desktop clients and virtual-machine viewers: local process, remote effect.
+const REMOTE: &[&str] = &[
+    "mstsc",
+    "msrdc",
+    "rdcman",
+    "vmconnect",
+    "vmware",
+    "vmplayer",
+    "vmware-view",
+    "virtualbox",
+    "virtualboxvm",
+    "vboxmanage",
+    "anydesk",
+    "teamviewer",
+    "rustdesk",
+    "parsecd",
+    "vncviewer",
+    "tvnviewer",
+    "wfica32",
+    "cdviewer",
+    "mremoteng",
+    "qemu-system-x86_64",
+    "utm",
+    "parallels",
+];
 
 const TERMINALS: &[&str] = &[
     "cmd",
@@ -205,6 +304,25 @@ const COMMAND_APPS: &[&str] = &[
     "datagrip64",
     "studio",
     "studio64",
+    "notepad++",
+    "sublime_text",
+    "atom",
+    "emacs",
+    "gvim",
+    "nvim-qt",
+    "winword",
+    "excel",
+    "powerpnt",
+    "outlook",
+    "msaccess",
+    "visio",
+    "mspub",
+    "onenote",
+    "soffice",
+    "cscript",
+    "wscript",
+    "mshta",
+    "windbg",
     "explorer",
     "taskmgr",
     "mmc",
@@ -267,6 +385,10 @@ pub fn program_refusal(image_path: &str) -> Option<Refusal> {
     let listed = |list: &[&str]| list.iter().any(|n| n.eq_ignore_ascii_case(&stem));
     if listed(TERMINALS) {
         Some(Refusal::Terminal)
+    } else if listed(REMOTE) {
+        Some(Refusal::RemoteControl)
+    } else if listed(LAUNCHERS) || stem.starts_with("powertoys") {
+        Some(Refusal::SystemSurface)
     } else if stem == "applicationframehost" {
         Some(Refusal::UwpFrame)
     } else if listed(SYSTEM_SURFACES) {
@@ -305,8 +427,15 @@ pub fn judge(target: &InputTarget) -> Option<Refusal> {
     if !target.identity.is_complete() {
         return Some(Refusal::NoIdentity);
     }
+    // A failed class lookup is not a class: refuse, never accept an empty one.
+    if target.class.trim().is_empty() {
+        return Some(Refusal::NoIdentity);
+    }
     if target.elevated != Some(false) {
         return Some(Refusal::Elevated);
+    }
+    if target.owned {
+        return Some(Refusal::Dialog);
     }
     if let Some(r) = program_refusal(&target.identity.image_path) {
         return Some(r);
@@ -356,7 +485,40 @@ mod tests {
             identity: ident(path, 10, 99),
             elevated: Some(false),
             password_focus: false,
+            owned: false,
         }
+    }
+
+    #[test]
+    fn an_empty_class_or_an_owned_window_is_refused() {
+        let mut t = target("C:\\Windows\\notepad.exe", "");
+        assert_eq!(judge(&t), Some(Refusal::NoIdentity), "class lookup failed");
+        t.class = "MyCustomDialog".into();
+        t.owned = true;
+        assert_eq!(judge(&t), Some(Refusal::Dialog), "owned custom-class popup");
+    }
+
+    #[test]
+    fn launchers_remote_viewers_and_office_hosts_are_refused_by_name() {
+        for (path, want) in [
+            ("C:\\x\\mstsc.exe", Refusal::RemoteControl),
+            ("C:\\x\\vmconnect.exe", Refusal::RemoteControl),
+            ("C:\\x\\AnyDesk.exe", Refusal::RemoteControl),
+            ("C:\\x\\Everything.exe", Refusal::SystemSurface),
+            ("C:\\x\\PowerToys.PowerLauncher.exe", Refusal::SystemSurface),
+            ("C:\\x\\WINWORD.EXE", Refusal::CommandApp),
+            ("C:\\x\\EXCEL.EXE", Refusal::CommandApp),
+            ("C:\\x\\notepad++.exe", Refusal::CommandApp),
+            ("C:\\x\\wscript.exe", Refusal::CommandApp),
+        ] {
+            assert_eq!(program_refusal(path), Some(want), "{path}");
+        }
+    }
+
+    #[test]
+    fn a_renamed_copy_of_a_listed_program_is_not_recognised() {
+        // Documented limit of the heuristic: only the file name is looked at.
+        assert_eq!(program_refusal("C:\\tmp\\totally-innocent.exe"), None);
     }
 
     #[test]

@@ -12,7 +12,9 @@ use windows::{
             GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
             PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
         },
-        UI::WindowsAndMessaging::{GA_ROOT, GetAncestor, GetClassNameW, WindowFromPoint},
+        UI::WindowsAndMessaging::{
+            GA_ROOT, GW_OWNER, GetAncestor, GetClassNameW, GetWindow, WindowFromPoint,
+        },
     },
     core::PWSTR,
 };
@@ -109,49 +111,73 @@ pub fn process_elevated(pid: u32) -> Option<bool> {
     Some(elevation.TokenIsElevated != 0)
 }
 
-/// Window class name, empty when unknown.
-pub fn window_class(hwnd: HWND) -> String {
+/// Window class name. `None` when the lookup fails or returns nothing: a failed
+/// lookup must never look like an ordinary class.
+pub fn window_class(hwnd: HWND) -> Option<String> {
     let mut buf = [0u16; 256];
     // SAFETY: the buffer is writable for its whole length.
     let n = unsafe { GetClassNameW(hwnd, &mut buf) };
-    usize::try_from(n)
-        .ok()
-        .and_then(|n| buf.get(..n))
-        .map(String::from_utf16_lossy)
-        .unwrap_or_default()
+    let n = usize::try_from(n).ok().filter(|n| *n > 0)?;
+    Some(String::from_utf16_lossy(buf.get(..n)?))
 }
 
-/// Top-level window under a screen point.
-pub fn root_window_at(x: f64, y: f64) -> Option<HWND> {
+/// Top-level window of `hwnd`. `None` when the OS returns none (no fallback to
+/// the child: the ancestry is part of what is being checked).
+pub fn root_of(hwnd: HWND) -> Option<HWND> {
+    // SAFETY: plain query on a handle.
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    (!root.0.is_null()).then_some(root)
+}
+
+/// The window under a screen point and its top-level window.
+pub fn point_hit(x: f64, y: f64) -> Option<(HWND, HWND)> {
     #[allow(clippy::cast_possible_truncation)]
     let pt = POINT {
         x: x.round() as i32,
         y: y.round() as i32,
     };
-    // SAFETY: plain queries by value.
+    // SAFETY: plain query by value.
     let hit = unsafe { WindowFromPoint(pt) };
     if hit.0.is_null() {
         return None;
     }
-    // SAFETY: plain query on a handle the OS just returned.
-    let root = unsafe { GetAncestor(hit, GA_ROOT) };
-    Some(if root.0.is_null() { hit } else { root })
+    Some((hit, root_of(hit)?))
 }
 
-/// Facts about the window `hwnd` and its program. `None` when the program
-/// cannot be identified. `password_focus` is filled in by the caller.
-pub fn window_target(hwnd: HWND) -> Option<InputTarget> {
+/// Whether a top-level window has an owner (an owned popup: modal and custom
+/// dialogs included). `None`-free: a window without an owner is `false`.
+fn is_owned(top: HWND) -> bool {
+    // SAFETY: plain query on a handle.
+    unsafe { GetWindow(top, GW_OWNER) }
+        .map(|o| !o.0.is_null())
+        .unwrap_or(false)
+}
+
+fn facts(hwnd: HWND, owned: bool) -> Option<InputTarget> {
     let pid = winlist::window_pid(hwnd);
     let identity = process_identity(pid)?;
     let info = winlist::window_info(hwnd)?;
     Some(InputTarget {
         window_id: info.id,
         title: info.title,
-        class: window_class(hwnd),
+        class: window_class(hwnd)?,
         identity,
         elevated: process_elevated(pid),
         password_focus: false,
+        owned,
     })
+}
+
+/// Facts about a top-level window and its program. `None` when the program or
+/// the class cannot be read. `password_focus` is filled in by the caller.
+pub fn top_level_facts(hwnd: HWND) -> Option<InputTarget> {
+    facts(hwnd, is_owned(hwnd))
+}
+
+/// Facts about a child window (the receiver under a click): its own program
+/// and class; ownership belongs to the top-level window.
+pub fn child_facts(hwnd: HWND) -> Option<InputTarget> {
+    facts(hwnd, false)
 }
 
 #[cfg(test)]

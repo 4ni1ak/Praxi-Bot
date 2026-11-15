@@ -35,6 +35,9 @@ pub(crate) struct ControlTool {
     last: Mutex<Option<ControlTarget>>,
     pub guards: Mutex<Vec<Option<ControlIdentity>>>,
     always_ask: bool,
+    /// Fail the nth call (1-based, 0 = never) when it carries a guard: a guard
+    /// refusal at the backend.
+    pub fail_call: AtomicUsize,
 }
 
 impl ControlTool {
@@ -54,6 +57,7 @@ impl ControlTool {
             last: Mutex::new(None),
             guards: Mutex::new(Vec::new()),
             always_ask: false,
+            fail_call: AtomicUsize::new(0),
         })
     }
 
@@ -84,8 +88,14 @@ impl Tool for ControlTool {
     }
 
     async fn call(&self, ctx: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
-        self.count.fetch_add(1, Ordering::SeqCst);
+        let n = self.count.fetch_add(1, Ordering::SeqCst) + 1;
         self.guards.lock().push(ctx.control_guard.clone());
+        if ctx.control_guard.is_some() && self.fail_call.load(Ordering::SeqCst) == n {
+            return Err(ToolError::Execution(
+                "stopped by the guard (foreground_changed); 24 of 60 text units had already been typed"
+                    .into(),
+            ));
+        }
         Ok(ToolOutput::text("ok"))
     }
 }
@@ -136,6 +146,14 @@ fn control_loop(env: &Env, fake: &Arc<Fake>, waiver: bool, with_computer: bool) 
         cfg(Policy::full()),
     );
     lp.sh.tools.register(read_tool() as Arc<dyn Tool>);
+    // A desktop observation reads untrusted text too (card 238's class).
+    lp.sh.tools.register(Arc::new(with_class(
+        "desktop_get_state",
+        Effect::Read,
+        PermissionCategory::Desktop,
+        builtin_tools::classify("desktop_get_state").unwrap(),
+        "window text",
+    )) as Arc<dyn Tool>);
     // A computer whose id is not a machine fingerprint has no identity the
     // grant could be scoped to.
     let id = if with_computer {
@@ -218,15 +236,13 @@ async fn granted_app_types_and_presses_keys_without_cards_with_the_waiver_off() 
         ("c2", "desktop_key"),
         ("c3", "desktop_type"),
         ("c4", "desktop_set_value"),
-        ("c5", "desktop_drag"),
         ("c6", "desktop_key"),
     ]);
     let lp = control_loop(&env, &fake, false, true);
     let ty = ControlTool::new("desktop_type", vec![ok(ControlKind::Type)]);
     let key = ControlTool::new("desktop_key", vec![ok(ControlKind::Key)]);
     let set = ControlTool::new("desktop_set_value", vec![ok(ControlKind::SetValue)]);
-    let drag = ControlTool::new("desktop_drag", vec![ok(ControlKind::Drag)]);
-    register(&lp, &[&ty, &key, &set, &drag]);
+    register(&lp, &[&ty, &key, &set]);
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "go").unwrap();
     let cards = drive(&lp, &env, &mut rx, run, |_| ApprovalScope::RunControl).await;
@@ -243,20 +259,22 @@ async fn granted_app_types_and_presses_keys_without_cards_with_the_waiver_off() 
     assert_eq!(ty.count.load(Ordering::SeqCst), 2);
     assert_eq!(key.count.load(Ordering::SeqCst), 2);
     assert_eq!(set.count.load(Ordering::SeqCst), 1);
-    assert_eq!(drag.count.load(Ordering::SeqCst), 1);
     // Every covered call, the first (approved with the grant) included, carries
     // the guard the backend checks right before it sends.
-    for guards in [&ty.guards, &key.guards, &set.guards, &drag.guards] {
+    for guards in [&ty.guards, &key.guards, &set.guards] {
         for g in guards.lock().iter() {
             assert_eq!(g.as_ref(), Some(&identity(10, 99)));
         }
     }
 }
 
-/// The 10-call Notepad task after one `fs_read`.
+/// The ten desktop calls of the card's Notepad example after one `fs_read`:
+/// an observation, launch, then type/key/type/key/set_value/key/type/key (the
+/// last two land in the Save dialog).
 fn notepad_script() -> Arc<Fake> {
     let mut replies = vec![calls(&[("c0", "fs_read", json!({"path": "page.html"}))])];
     for (id, name) in [
+        ("c00", "desktop_get_state"),
         ("c1", "desktop_launch"),
         ("c2", "desktop_type"),
         ("c3", "desktop_key"),
@@ -707,4 +725,292 @@ async fn a_waived_bot_keeps_asking_for_every_executor_call_without_a_grant() {
     let run = lp.run_turn(env.chat, "go").unwrap();
     let cards = drive(&lp, &env, &mut rx, run, |_| ApprovalScope::Once).await;
     assert_eq!(cards.len(), 2);
+}
+
+// ------------------------------------------------ review round (r-96) tests
+
+/// A run that read, typed (and was granted), then parks on an egress card, so a
+/// test can inspect and probe the live context.
+async fn parked_with_grant() -> (
+    AgentLoop,
+    Env,
+    protocol::RunId,
+    Arc<crate::shared::RunCtx>,
+    tokio::sync::broadcast::Receiver<crate::StreamItem>,
+) {
+    let env = setup();
+    let fake = script_type_then(&[("c1", "desktop_type"), ("c2", "web_extract")]);
+    let lp = control_loop(&env, &fake, false, true);
+    let ty = ControlTool::new("desktop_type", vec![ok(ControlKind::Type)]);
+    let fetch = Arc::new(with_class(
+        "web_extract",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted_egress(),
+        "x",
+    ));
+    register(&lp, &[&ty]);
+    lp.sh.tools.register(Arc::clone(&fetch) as Arc<dyn Tool>);
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let first = next_card(&mut rx).await;
+    lp.approve(first.call_id, ApprovalScope::RunControl, env.user)
+        .unwrap();
+    let _parked = next_card(&mut rx).await;
+    let ctx = lp.sh.runs.lock().get(&run).cloned().unwrap();
+    (lp, env, run, ctx, rx)
+}
+
+#[tokio::test]
+async fn launch_shell_script_and_other_kinds_are_never_covered_even_with_a_matching_target() {
+    let (lp, _env, run, ctx, _rx) = parked_with_grant().await;
+    let typed = ok(ControlKind::Type).unwrap();
+    // The grant is real: the typing call it was given for is covered.
+    assert!(ctx.control_covers("desktop_type", PermissionCategory::Desktop, &typed));
+    // The same eligible target, offered under another tool name, is not.
+    for (name, category) in [
+        ("desktop_launch", PermissionCategory::Desktop),
+        ("desktop_drag", PermissionCategory::Desktop),
+        ("shell_run", PermissionCategory::Shell),
+        ("script_run", PermissionCategory::Script),
+    ] {
+        assert!(
+            !ctx.control_covers(name, category, &typed),
+            "{name} must never be covered"
+        );
+        let input = json!({"command": "echo x", "code": "1", "executable": "x"});
+        let effect = if name == "shell_run" {
+            Effect::Destructive
+        } else {
+            Effect::Write
+        };
+        let d = lp
+            .sh
+            .decide_with_target(&ctx, name, effect, category, &input, Some(&typed));
+        assert!(d.is_ask(), "{name} still asks: {d:?}");
+    }
+    // A click is not an executor and never covered either.
+    assert!(!ctx.control_covers("desktop_click", PermissionCategory::Desktop, &typed));
+    // A target of another input kind does not cover the call either.
+    let mut key = typed.clone();
+    key.kind = ControlKind::Key;
+    assert!(!ctx.control_covers("desktop_type", PermissionCategory::Desktop, &key));
+    let mut set = typed.clone();
+    set.kind = ControlKind::SetValue;
+    assert!(!ctx.control_covers("desktop_key", PermissionCategory::Desktop, &set));
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn ask_first_policy_is_waived_but_limits_and_floors_still_win_over_a_grant() {
+    let (lp, _env, run, ctx, _rx) = parked_with_grant().await;
+    let t = ok(ControlKind::Type).unwrap();
+    let input = json!({"text": "a"});
+    let decide = |lp: &AgentLoop| {
+        lp.sh.decide_with_target(
+            &ctx,
+            "desktop_type",
+            Effect::Write,
+            PermissionCategory::Desktop,
+            &input,
+            Some(&t),
+        )
+    };
+    // Plain ask-first for the Desktop category: the grant stands in for the ask.
+    let mut ask = Policy::full();
+    ask.categories
+        .insert(PermissionCategory::Desktop, Rule::new(Level::Ask));
+    lp.set_global_policy(ask);
+    assert_eq!(decide(&lp), permission_engine::Decision::Allow);
+    // Unevaluated limits are a floor: the grant does not waive them.
+    let mut limited = Policy::full();
+    limited.categories.insert(
+        PermissionCategory::Desktop,
+        Rule::new(Level::AllowWithLimits(permission_engine::Limits {
+            max_per_hour: Some(1),
+            max_amount_minor: None,
+            path_patterns: vec![],
+        })),
+    );
+    lp.set_global_policy(limited);
+    assert!(decide(&lp).is_ask(), "limits still ask");
+    // Deny wins.
+    let mut deny = Policy::full();
+    deny.categories
+        .insert(PermissionCategory::Desktop, Rule::new(Level::Deny));
+    lp.set_global_policy(deny);
+    assert_eq!(decide(&lp), permission_engine::Decision::Deny);
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn desktop_drag_is_never_covered_by_the_grant() {
+    let env = setup();
+    let fake = script_type_then(&[("c1", "desktop_type"), ("c2", "desktop_drag")]);
+    let lp = control_loop(&env, &fake, false, true);
+    let ty = ControlTool::new("desktop_type", vec![ok(ControlKind::Type)]);
+    let drag = ControlTool::new("desktop_drag", vec![ok(ControlKind::Type)]);
+    register(&lp, &[&ty, &drag]);
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let first = next_card(&mut rx).await;
+    lp.approve(first.call_id, ApprovalScope::RunControl, env.user)
+        .unwrap();
+    let second = next_card(&mut rx).await;
+    assert_eq!(
+        second.tool_name, "desktop_drag",
+        "a drag asks despite the grant"
+    );
+    assert_eq!(
+        control_card(&second),
+        Value::Null,
+        "and offers no task-wide option"
+    );
+    assert!(matches!(
+        lp.approve(second.call_id, ApprovalScope::RunControl, env.user),
+        Err(LoopError::OnceOnly(_))
+    ));
+    lp.approve(second.call_id, ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(drag.guards.lock().as_slice(), &[None]);
+}
+
+#[tokio::test]
+async fn a_guarded_failure_withdraws_the_grant_and_the_next_call_asks_again() {
+    let env = setup();
+    let fake = script_type_then(&[
+        ("c1", "desktop_type"),
+        ("c2", "desktop_type"),
+        ("c3", "desktop_type"),
+    ]);
+    let lp = control_loop(&env, &fake, false, true);
+    let ty = ControlTool::new("desktop_type", vec![ok(ControlKind::Type)]);
+    ty.fail_call.store(2, Ordering::SeqCst);
+    register(&lp, &[&ty]);
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    // First call: approved with the grant, covered, succeeds.
+    let first = next_card(&mut rx).await;
+    lp.approve(first.call_id, ApprovalScope::RunControl, env.user)
+        .unwrap();
+    // The second call is covered, but the backend guard stops it part-way.
+    // The third call must ask again: the failure withdrew the grant.
+    let third = next_card(&mut rx).await;
+    assert_eq!(third.tool_name, "desktop_type");
+    assert_eq!(
+        control_card(&third)["offered"],
+        true,
+        "a fresh offer, not a silent pass"
+    );
+    lp.approve(third.call_id, ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(ty.count.load(Ordering::SeqCst), 3);
+}
+
+/// A tool that replays a recorded workflow through the loop gate, as
+/// `workflow_run` does: one `authorize_control` per step.
+struct ReplayLike {
+    spec: ToolSpec,
+    gate: crate::approval::LoopGate,
+    steps: Vec<(&'static str, Option<ControlTarget>)>,
+    covered: AtomicUsize,
+}
+
+#[async_trait]
+impl Tool for ReplayLike {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn call(&self, ctx: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
+        use builtin_tools::{GateRequest, ToolGate};
+        for (tool, control) in &self.steps {
+            let req = GateRequest {
+                run_id: ctx.run_id.clone(),
+                tool: (*tool).to_owned(),
+                category: PermissionCategory::Desktop,
+                effect: Effect::Write,
+                raw_command: String::new(),
+                input: json!({"index": 1, "text": "a", "keys": "enter"}),
+                content: builtin_tools::classify(tool).unwrap(),
+                control: control.clone(),
+            };
+            let guard = self
+                .gate
+                .authorize_control(&req)
+                .await
+                .map_err(ToolError::Execution)?;
+            if guard.is_some() {
+                self.covered.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        Ok(ToolOutput::text("replayed"))
+    }
+}
+
+#[tokio::test]
+async fn a_thirty_step_replay_costs_one_card_per_launch_grant_and_excluded_step() {
+    let env = setup();
+    let fake = Fake::new(vec![
+        calls(&[("c0", "fs_read", json!({}))]),
+        calls(&[("c1", "replay_like", json!({}))]),
+        text("done"),
+    ]);
+    let lp = control_loop(&env, &fake, false, true);
+    // launch, 26 typing/key steps into one program, then 3 steps in a Save dialog.
+    let mut steps: Vec<(&'static str, Option<ControlTarget>)> = vec![("desktop_launch", None)];
+    for i in 0..26 {
+        let (tool, kind) = if i % 2 == 0 {
+            ("desktop_type", ControlKind::Type)
+        } else {
+            ("desktop_key", ControlKind::Key)
+        };
+        steps.push((tool, target_for(kind, None)));
+    }
+    steps.push((
+        "desktop_type",
+        target_for(ControlKind::Type, Some("dialog")),
+    ));
+    steps.push((
+        "desktop_type",
+        target_for(ControlKind::Type, Some("dialog")),
+    ));
+    steps.push(("desktop_key", target_for(ControlKind::Key, Some("dialog"))));
+    assert_eq!(steps.len(), 30);
+    let tool = Arc::new(ReplayLike {
+        spec: ToolSpec {
+            name: "replay_like".into(),
+            description: "replay".into(),
+            input_schema: json!({"type": "object"}),
+            effect: Effect::Read,
+            category: PermissionCategory::Fs,
+            platforms: vec![Platform::All],
+            content: ContentClass::none(),
+        },
+        gate: crate::approval::LoopGate {
+            sh: Arc::downgrade(&lp.sh),
+        },
+        steps,
+        covered: AtomicUsize::new(0),
+    });
+    lp.sh.tools.register(Arc::clone(&tool) as Arc<dyn Tool>);
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let cards = drive(&lp, &env, &mut rx, run, |a| {
+        if control_card(a)["offered"] == true {
+            ApprovalScope::RunControl
+        } else {
+            ApprovalScope::Once
+        }
+    })
+    .await;
+    // launch + the one grant + three dialog steps: measured, there is no 1-3 bound.
+    assert_eq!(cards.len(), 5);
+    assert_eq!(
+        tool.covered.load(Ordering::SeqCst),
+        26,
+        "all 26 steps ran under the one grant"
+    );
 }

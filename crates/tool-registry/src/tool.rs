@@ -84,7 +84,7 @@ pub struct ControlIdentity {
     pub start_time: u64,
 }
 
-/// Which kind of input a control call sends. Only these four can ever be
+/// Which kind of input a control call sends. Only these three can ever be
 /// covered by a run-scoped control grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,8 +95,6 @@ pub enum ControlKind {
     SetValue,
     /// `desktop_key`.
     Key,
-    /// `desktop_drag`.
-    Drag,
 }
 
 /// The program and window a desktop input call would reach, resolved by the
