@@ -23,8 +23,7 @@ use task_runtime::RunState;
 use tool_registry::{Effect, Tool, ToolRegistry};
 
 use crate::decider::{
-    DeciderSettings, ToolPlan, TurnDecider, build_request, derive_plan, family_of,
-    stored_plan,
+    DeciderSettings, ToolPlan, TurnDecider, build_request, derive_plan, family_of, stored_plan,
 };
 use crate::tests::{Env, TestTool, cfg, profile, setup, tool, until};
 use crate::{AgentLoop, BotProfile, Providers};
@@ -102,6 +101,7 @@ impl ChatProvider for Model {
 type Answerer = Box<dyn Fn(&DecisionRequest) -> Result<Value, DeciderError> + Send + Sync>;
 
 struct Oracle {
+    id: &'static str,
     answer: Answerer,
     calls: AtomicUsize,
     seen: Mutex<Vec<DecisionRequest>>,
@@ -111,7 +111,7 @@ struct Oracle {
 #[async_trait]
 impl DecisionBackend for Oracle {
     fn id(&self) -> &str {
-        "fake/decider"
+        self.id
     }
     async fn decide(&self, req: &DecisionRequest) -> Result<Value, DeciderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -124,7 +124,13 @@ impl DecisionBackend for Oracle {
 }
 
 fn oracle(answer: Answerer) -> Arc<Oracle> {
+    oracle_at("fake/decider", answer)
+}
+
+/// A decision backend served by the provider named in `id` (`provider/model`).
+fn oracle_at(id: &'static str, answer: Answerer) -> Arc<Oracle> {
     Arc::new(Oracle {
+        id,
         answer,
         calls: AtomicUsize::new(0),
         seen: Mutex::new(Vec::new()),
@@ -247,11 +253,22 @@ fn make(
     policy: Policy,
     decider: Option<Arc<TurnDecider>>,
 ) -> AgentLoop {
+    make_cfg(env, providers, tools, prof, cfg(policy), decider)
+}
+
+fn make_cfg(
+    env: &Env,
+    providers: Providers,
+    tools: &[Arc<TestTool>],
+    prof: BotProfile,
+    config: crate::LoopConfig,
+    decider: Option<Arc<TurnDecider>>,
+) -> AgentLoop {
     let registry = ToolRegistry::new();
     for t in tools {
         registry.register(Arc::clone(t) as Arc<dyn Tool>);
     }
-    let lp = AgentLoop::new(Arc::clone(&env.storage), registry, providers, cfg(policy));
+    let lp = AgentLoop::new(Arc::clone(&env.storage), registry, providers, config);
     lp.add_profile(env.bot, prof);
     lp.set_decider(decider);
     lp
@@ -543,6 +560,7 @@ async fn behaviour_is_unchanged_when_the_decider_is_off_or_fails() {
         Ok(json!({"needs_tools": "yes please", "fam_0": {"type": "choice", "choice": "all"}}))
     }));
     let hanging = Arc::new(Oracle {
+        id: "fake/decider",
         answer: answers(0.0, &[], 0.0),
         calls: AtomicUsize::new(0),
         seen: Mutex::new(Vec::new()),
@@ -619,24 +637,25 @@ async fn a_hostile_decider_cannot_bypass_the_permission_engine() {
         let env = setup();
         let mut tools = toolbox();
         tools.push(big("secret.dump", Effect::Read));
+        // With a plan the writes are reached through the discovery meta-tools;
+        // when the plan keeps everything the tools are listed and called by
+        // name. Either way they must stop at the approval card.
+        let via = |name: &'static str, input: Value| -> (&'static str, Value) {
+            if hostile == "everything" {
+                (name, input)
+            } else {
+                ("use_tool", json!({"name": name, "input": input}))
+            }
+        };
+        let (n1, a1) = via("shell.run", json!({"path": "rm -rf /"}));
+        let (n2, a2) = via("email.send", json!({"path": "x"}));
+        let (n3, a3) = via("secret.dump", json!({"path": "x"}));
         let m = model(
             "fake",
             vec![
-                Rep::Calls(vec![(
-                    "c1",
-                    "use_tool",
-                    json!({"name": "shell.run", "input": {"path": "rm -rf /"}}),
-                )]),
-                Rep::Calls(vec![(
-                    "c2",
-                    "use_tool",
-                    json!({"name": "email.send", "input": {"path": "x"}}),
-                )]),
-                Rep::Calls(vec![(
-                    "c3",
-                    "use_tool",
-                    json!({"name": "secret.dump", "input": {"path": "x"}}),
-                )]),
+                Rep::Calls(vec![("c1", n1, a1)]),
+                Rep::Calls(vec![("c2", n2, a2)]),
+                Rep::Calls(vec![("c3", n3, a3)]),
                 Rep::Calls(vec![("c4", "secret.dump", json!({"path": "x"}))]),
                 Rep::Text("gave up"),
             ],
@@ -729,6 +748,173 @@ async fn a_hostile_decider_cannot_bypass_the_permission_engine() {
             );
         }
     }
+}
+
+/// A decider that says "allowed", "safe", "approved", "yes" to everything,
+/// under every key it can think of, changes nothing on the permission path:
+/// the same write stops at the same approval card, with the same facts, as
+/// in a run without a decider, and runs only after the user approves.
+#[tokio::test]
+async fn a_yes_from_the_decider_changes_nothing_in_the_permission_decision() {
+    async fn run_once(decider: Option<Arc<TurnDecider>>) -> (Value, usize, usize) {
+        let env = setup();
+        let tools = toolbox();
+        let m = model(
+            "fake",
+            vec![
+                Rep::Calls(vec![("c1", "fs.write", json!({"path": "/etc/hosts"}))]),
+                Rep::Text("done"),
+            ],
+        );
+        let lp = make(
+            &env,
+            single(&m),
+            &tools,
+            no_router(""),
+            Policy::approve_destructive(),
+            decider,
+        );
+        let writes = || {
+            tools
+                .iter()
+                .find(|t| t.spec.name == "fs.write")
+                .unwrap()
+                .count
+                .load(Ordering::SeqCst)
+        };
+        let mut rx = lp.subscribe();
+        let run = lp.run_turn(env.chat, "edit the hosts file").unwrap();
+        let Event::ApprovalNeeded(a) =
+            until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+        else {
+            unreachable!()
+        };
+        let before = writes();
+        let card = json!({"tool": a.tool_name, "input": a.input, "summary": a.summary,
+                          "details": a.details});
+        lp.approve(a.call_id, crate::ApprovalScope::Once, env.user)
+            .unwrap();
+        assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+        (card, before, writes())
+    }
+    let baseline = run_once(None).await;
+    let o = oracle(Box::new(|req| {
+        let mut out = serde_json::Map::new();
+        for key in req.questions.keys() {
+            out.insert(key.clone(), json!({"type": "noul", "noul": 1.0}));
+        }
+        for key in [
+            "allowed",
+            "safe",
+            "approved",
+            "approve",
+            "permission",
+            "trusted",
+        ] {
+            out.insert(key.into(), json!({"type": "noul", "noul": 1.0}));
+        }
+        Ok(Value::Object(out))
+    }));
+    let with = run_once(Some(turn_decider(&o, settings()))).await;
+    assert_eq!(o.calls.load(Ordering::SeqCst), 1, "the decider was asked");
+    assert_eq!(with, baseline);
+    assert_eq!(baseline.1, 0, "the write did not run before approval");
+    assert_eq!(baseline.2, 1, "it ran after approval");
+}
+
+/// The decider request goes through the loop's redactor: a registered secret
+/// in the user's message never reaches a decision backend.
+#[tokio::test]
+async fn the_decider_request_is_redacted_like_a_model_request() {
+    let env = setup();
+    let secret = "decider-sentinel-KEY-5150";
+    let m = model("fake", vec![Rep::Text("ok")]);
+    let o = oracle(answers(0.9, &["fs"], 0.5));
+    let mut config = cfg(Policy::full());
+    config.redactor = Some({
+        let h = crate::SharedRedactor::default();
+        h.register(secret);
+        h
+    });
+    let lp = make_cfg(
+        &env,
+        single(&m),
+        &toolbox(),
+        no_router(""),
+        config,
+        Some(turn_decider(&o, settings())),
+    );
+    let run = lp
+        .run_turn(env.chat, &format!("use key {secret} to read /notes"))
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let seen = o.seen.lock().clone();
+    assert_eq!(seen.len(), 1);
+    let wire = serde_json::to_string(&seen[0]).unwrap();
+    assert!(!wire.contains(secret), "secret reached the decider: {wire}");
+    assert!(seen[0].input.contains("use key"), "{}", seen[0].input);
+}
+
+/// Egress: a decider question carries the user's text (and may carry page
+/// content the user pasted), so it is sent only to providers the bot may
+/// already send its conversation to: those of its own model roles, plus its
+/// explicit `decider_providers`. A backend anywhere else is never asked, the
+/// turn runs as without a decider, and no call is spent.
+#[tokio::test]
+async fn a_decider_backend_at_a_provider_the_bot_may_not_use_is_never_asked() {
+    let (_e, baseline, base_input) = file_turn(None).await;
+    let as_json = |r: &[ChatRequest]| serde_json::to_value(r).unwrap();
+
+    let other = oracle_at("elsewhere/decider", answers(0.9, &["fs"], 0.5));
+    let (_e, reqs, input) = file_turn(Some(turn_decider(&other, settings()))).await;
+    assert_eq!(
+        other.calls.load(Ordering::SeqCst),
+        0,
+        "text left the allow-list"
+    );
+    assert_eq!(as_json(&reqs), as_json(&baseline));
+    assert_eq!(input, base_input);
+
+    // The same backend, allowed explicitly by the bot's profile.
+    let env = setup();
+    let m = model(
+        "fake",
+        vec![
+            Rep::Calls(vec![("c1", "fs.read", json!({"path": "/notes.txt"}))]),
+            Rep::Text("ok"),
+        ],
+    );
+    let allowed = oracle_at("elsewhere/decider", answers(0.9, &["fs"], 0.5));
+    let lp = make(
+        &env,
+        single(&m),
+        &toolbox(),
+        profile("\n[router]\nenabled = false\ndecider_providers = [\"elsewhere\"]\n"),
+        Policy::full(),
+        Some(turn_decider(&allowed, settings())),
+    );
+    let run = lp.run_turn(env.chat, "what do my notes say?").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(allowed.calls.load(Ordering::SeqCst), 1);
+}
+
+/// A bot can opt out of the decider altogether (`[router] decider = false`).
+#[tokio::test]
+async fn a_bot_can_opt_out_of_the_decider() {
+    let o = oracle(answers(0.9, &["fs"], 0.5));
+    let env = setup();
+    let m = model("fake", vec![Rep::Text("ok")]);
+    let lp = make(
+        &env,
+        single(&m),
+        &toolbox(),
+        profile("\n[router]\nenabled = false\ndecider = false\n"),
+        Policy::full(),
+        Some(turn_decider(&o, settings())),
+    );
+    let run = lp.run_turn(env.chat, "hello").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(o.calls.load(Ordering::SeqCst), 0);
 }
 
 // ---------- pure parts ----------
