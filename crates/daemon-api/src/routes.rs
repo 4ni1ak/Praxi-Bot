@@ -1130,7 +1130,14 @@ pub(crate) async fn list_providers(
             has_key: p.key.is_some(),
             custom: p.custom.is_some(),
             active: active.contains(&p.id),
-            models,
+            models: if p.cli.is_some() {
+                cli_provider::engine_spec(p.id.strip_prefix("cli:").unwrap_or(""))
+                    .map_or_else(Vec::new, |spec| {
+                        spec.models.iter().map(|m| (*m).to_owned()).collect()
+                    })
+            } else {
+                models
+            },
             models_error,
         })
         .collect();
@@ -1285,8 +1292,10 @@ pub(crate) async fn reload_from_host(s: &AppState) -> Result<ReloadResponse, Api
               (status = 400, body = ErrorBody, description = "engine is not runnable or unknown")))]
 pub(crate) async fn enable_cli_provider(
     State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     ApiJson(body): ApiJson<EnableCliProviderInput>,
 ) -> Result<Json<ConfiguredProviderDto>, ApiError> {
+    crate::cli_engines::local_owner(&actor)?;
     let Some(spec) = cli_provider::engine_spec(&body.id).filter(|spec| spec.runnable) else {
         return Err(ApiError::bad_request(cli_provider::enable_refusal_message(
             &body.id,

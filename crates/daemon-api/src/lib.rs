@@ -14,6 +14,7 @@
 
 pub mod auth;
 pub mod changes;
+mod cli_engines;
 pub mod control;
 pub mod doctor;
 mod doctor_routes;
@@ -209,6 +210,7 @@ struct Inner {
     policy_load_error: parking_lot::Mutex<Option<String>>,
     /// CLI provider detector (`GET /v1/providers/detected`).
     detector: parking_lot::RwLock<Arc<cli_provider::Detector>>,
+    cli_installs: cli_engines::InstallBook,
     /// The running scheduler (see [`AppState::start_scheduler`]).
     scheduler: parking_lot::Mutex<Option<Scheduler>>,
     leader: OnceLock<host::LeaderControl>,
@@ -355,6 +357,7 @@ impl AppState {
             providers_lock: parking_lot::Mutex::new(()),
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
+            cli_installs: cli_engines::InstallBook::default(),
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
             doctor_host: OnceLock::new(),
@@ -909,6 +912,12 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers", get(r::list_providers))
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/providers/cli/enable", post(r::enable_cli_provider))
+        .route("/v1/providers/cli", get(cli_engines::list))
+        .route("/v1/providers/cli/install", post(cli_engines::preview))
+        .route(
+            "/v1/providers/cli/install/{approval_id}/decision",
+            post(cli_engines::decide),
+        )
         .route("/v1/providers/reload", post(r::reload_providers))
         .route("/v1/doctor", get(doctor_routes::get_doctor))
         .route("/v1/doctor/report", get(doctor_routes::report))
@@ -995,6 +1004,14 @@ pub async fn serve(
         .start()
         .await
         .map_err(std::io::Error::other)?;
+    // Fake-provider/test embedders have no host provider configuration and
+    // must never probe the real machine's credentialed CLIs as a side effect.
+    if state.provider_host().is_some() {
+        let detector = state.detector();
+        tokio::spawn(async move {
+            let _ = detector.detect(false).await;
+        });
+    }
     let cancel = state.shutdown_token();
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(async move {
