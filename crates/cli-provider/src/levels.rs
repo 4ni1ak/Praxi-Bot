@@ -221,7 +221,7 @@ const fn plan(requested: ApprovalLevel, applied: ApprovalLevel, native: &'static
     }
 }
 
-/// The mapping table (OpenMausBot `approval-levels.md`, "Provider mappings",
+/// The mapping table (the reference project's approval-level provider mappings,
 /// adapted: the default is Ask and Full is never implied).
 #[must_use]
 pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
@@ -296,12 +296,11 @@ pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
             },
         },
         Driver::Gemini => match level {
-            Ask => plan(level, Ask, "default"),
+            Ask | Auto => plan(level, Ask, "default"),
             AcceptEdits => LevelPlan {
                 flags: &["--approval-mode", "auto_edit"],
                 ..plan(level, AcceptEdits, "--approval-mode auto_edit")
             },
-            Auto => plan(level, Ask, "default"),
             Full => LevelPlan {
                 flags: &["--yolo"],
                 acp_allow_all: true,
@@ -344,6 +343,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::too_many_lines)] // One table, one test.
     fn level_mapping_per_cli() {
         use ApprovalLevel::{AcceptEdits, Ask, Auto, Full};
         // (driver, level) -> (applied level, native setting, ACP argv)

@@ -106,10 +106,10 @@ async fn claude_stream_json_runs_in_workspace_with_its_own_tools() {
     for allow in [true, false] {
         let (dir, workspace, host) = run(Driver::Claude, ApprovalLevel::AcceptEdits, allow).await;
         let argv = log(&dir, "argv");
-        let args: Vec<&str> = argv.lines().collect();
-        let at = |flag: &str| args.iter().position(|a| *a == flag).map(|i| args[i + 1]);
+        let flags: Vec<&str> = argv.lines().collect();
+        let at = |flag: &str| flags.iter().position(|a| *a == flag).map(|i| flags[i + 1]);
         // The CLI's own tools stay on: no `--tools ""`, mode from the bot's level.
-        assert!(!args.contains(&"--tools"));
+        assert!(!flags.contains(&"--tools"));
         assert_eq!(at("--permission-mode"), Some("acceptEdits"));
         assert_eq!(at("--permission-prompt-tool"), Some("mcp__praxi__approve"));
         assert!(!argv.contains("private prompt"));

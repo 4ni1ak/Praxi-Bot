@@ -82,7 +82,7 @@ pub enum CliSettings {
 pub enum CliEngine {
     Claude,
     Codex,
-    /// Native-tools engines (no confined mode): Cursor, OpenCode, Gemini CLI.
+    /// Native-tools engines (no confined mode): Cursor, `OpenCode`, Gemini CLI.
     Cursor,
     #[serde(rename = "opencode")]
     OpenCode,

@@ -243,6 +243,7 @@ impl TurnExecutor {
         })
     }
 
+    #[allow(clippy::too_many_lines)] // Governed and native branches share the request assembly.
     pub(crate) async fn exec_cli(
         &self,
         run: &Run,
@@ -358,7 +359,7 @@ impl TurnExecutor {
                 command: command.into(),
                 env: cli_provider::PathEnv::from_ambient(),
             };
-            let usage = tokio::time::timeout(
+            tokio::time::timeout(
                 self.sh.cfg.guards.model_timeout,
                 runtime.run_turn(
                     Turn {
@@ -373,8 +374,7 @@ impl TurnExecutor {
             )
             .await
             .map_err(|_| xe("CLI turn timed out"))?
-            .map_err(|e| cli_exec_error(engine, &e))?;
-            usage
+            .map_err(|e| cli_exec_error(engine, &e))?
         };
         Ok(ModelOut {
             text: self.sh.redact(host.text.lock().clone()),

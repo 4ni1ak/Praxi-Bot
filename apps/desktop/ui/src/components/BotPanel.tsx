@@ -19,6 +19,7 @@ export interface BotPanelChat {
 export function BotPanel({
   bot,
   model,
+  engineCli,
   state,
   chats,
   activeChatId,
@@ -30,6 +31,8 @@ export function BotPanel({
   bot: BotIdentity;
   /** `provider/model` the bot runs on. */
   model?: string;
+  /** Name of the CLI that runs this bot's files and shell (native-tools engine), if any. */
+  engineCli?: string | null;
   state?: BotAvatarState;
   chats: readonly BotPanelChat[];
   activeChatId?: string;
@@ -48,6 +51,7 @@ export function BotPanel({
         <BotAvatar bot={bot} size="hero" state={state ?? "idle"} decorative />
         <h2 className={styles.name}>{bot.name}</h2>
         {model ? <p className={styles.model}>{model.split("/").pop()}</p> : null}
+        {engineCli ? <p className={styles.model} data-testid="bot-engine-label">{t("botEngine.label", { cli: engineCli })}</p> : null}
         <div className={styles.actions}>
           <button type="button" className={styles.pill} onClick={onOpenProfile}>
             <UserRound />

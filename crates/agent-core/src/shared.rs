@@ -404,7 +404,9 @@ pub fn build_providers(
     let mut cli_built: Vec<String> = Vec::new();
     for s in cfg.providers.iter().filter(|p| p.enabled) {
         if let Some(CliSettings::Cli { engine, .. }) = &s.cli {
-            if cli_provider::engine_spec(engine.as_str()).is_some_and(|spec| spec.can_enable()) {
+            if cli_provider::engine_spec(engine.as_str())
+                .is_some_and(cli_provider::CliEngineSpec::can_enable)
+            {
                 cli_built.push(s.id.clone());
             } else {
                 warn(&format!(

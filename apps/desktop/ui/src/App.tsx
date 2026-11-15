@@ -45,6 +45,7 @@ import { AccountMenu, type AccountAction } from "./components/AccountMenu";
 import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
+import { nativeEngineName } from "./lib/botEngine";
 import { BOT_COLORS, botView } from "./lib/botProfile";
 import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
@@ -569,6 +570,7 @@ function AppShell() {
             <BotPanel
               bot={panelBotView}
               model={panelBotView.executor}
+              engineCli={nativeEngineName(selectedBot.config)}
               chats={panelChats}
               activeChatId={route.kind === "chat" ? route.chatId : undefined}
               onClose={() => {

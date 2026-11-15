@@ -311,6 +311,7 @@ impl AgentLoop {
 
     /// Owner kill switch: end every running native-tools engine process of
     /// `bot_id` (the whole process tree). Returns how many were signalled.
+    #[allow(clippy::must_use_candidate)] // Callers may ignore the count.
     pub fn kill_native_runs(&self, bot_id: BotId) -> usize {
         let runs = self
             .sh

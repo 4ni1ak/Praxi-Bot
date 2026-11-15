@@ -2844,14 +2844,8 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
     let t = setup();
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
 
-    for id in [
-        "codex",
-        "chatgpt-plan",
-        "cursor",
-        "opencode",
-        "gemini",
-        "unknown",
-    ] {
+    // CLIs with a native-tools driver can be enabled; they only run with their own tools.
+    for id in ["chatgpt-plan", "unknown"] {
         let r = call(
             &t,
             Method::POST,
@@ -2887,6 +2881,15 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
         !cfg_path.exists(),
         "no providers.toml should be written when all enables were refused"
     );
+    let native = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/enable",
+        Some(json!({ "id": "opencode" })),
+    )
+    .await;
+    assert_eq!(native.status, StatusCode::OK, "{:?}", native.json());
+    assert_eq!(native.json()["id"], "cli:opencode");
 }
 
 #[test]

@@ -365,6 +365,142 @@
         ]
       }
     },
+    "/v1/bots/{id}/engine": {
+      "put": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Set a bot's engine mode, approval level and workspace (local owner only).",
+        "operationId": "put_engine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotEngineInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/engine/kill": {
+      "post": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Kill switch: back to Praxi-governed and end the bot's running CLI processes.",
+        "operationId": "kill_engine",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{id}/grants": {
       "get": {
         "tags": [
@@ -4810,6 +4946,42 @@
           }
         }
       },
+      "BotEngineInput": {
+        "type": "object",
+        "description": "New engine settings for one bot.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "approval_level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ask` (default), `accept_edits`, `auto` or `full`."
+          },
+          "consent_full_access": {
+            "type": "boolean",
+            "description": "The owner confirms Full access (no approval prompts) for this bot."
+          },
+          "consent_native_tools": {
+            "type": "boolean",
+            "description": "The owner confirms that a CLI runs this bot's file and shell actions."
+          },
+          "mode": {
+            "type": "string",
+            "description": "`praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does)."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute workspace folder; required for `native_tools`."
+          }
+        },
+        "additionalProperties": false
+      },
       "BotInput": {
         "type": "object",
         "description": "Create (`POST /v1/bots`) or replace (`PUT /v1/bots/{id}`) a bot.  Exactly\none of `config` / `profile_toml` is required.",
@@ -5318,6 +5490,17 @@
               "null"
             ]
           },
+          "native": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CliNativeDto",
+                "description": "Present when bots can use this CLI with its own tools."
+              }
+            ]
+          },
           "outdated": {
             "type": "boolean"
           },
@@ -5413,6 +5596,53 @@
           }
         },
         "additionalProperties": false
+      },
+      "CliLevelDto": {
+        "type": "object",
+        "description": "One approval level for a CLI that runs with its own tools.",
+        "required": [
+          "level",
+          "offered",
+          "applied",
+          "native_setting"
+        ],
+        "properties": {
+          "applied": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "description": "`ask`, `accept_edits`, `auto` or `full`."
+          },
+          "native_setting": {
+            "type": "string",
+            "description": "The CLI's own setting this level maps to (shown to the owner)."
+          },
+          "offered": {
+            "type": "boolean",
+            "description": "`false` when the CLI has no such mode: it would run as `applied`."
+          }
+        }
+      },
+      "CliNativeDto": {
+        "type": "object",
+        "description": "Native-tools mode of a CLI: the CLI runs files and shell itself.",
+        "required": [
+          "support",
+          "levels"
+        ],
+        "properties": {
+          "levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CliLevelDto"
+            }
+          },
+          "support": {
+            "type": "string",
+            "description": "`verified` (flags confirmed in the installed CLI) or `experimental`."
+          }
+        }
       },
       "Codec": {
         "type": "string",

@@ -5,6 +5,8 @@
 //! environment, kill-on-close process tree), the workspace folder, Praxi's own
 //! tools served over the per-turn MCP bridge, and the approval cards for every
 //! permission request the CLI forwards. Everything the CLI prints is untrusted.
+#[allow(clippy::wildcard_imports)]
+// A child module of `runtime`: it shares the bridge and frame helpers.
 use super::*;
 use crate::levels::{ApprovalLevel, Driver, LevelPlan, Transport, acp_args, level_plan};
 use std::path::PathBuf;
@@ -145,11 +147,8 @@ async fn session(
     stop: CancellationToken,
 ) -> Result<TurnUsage, CliError> {
     let driver = nt.driver;
-    let spec = crate::registry::engine_spec(driver.id()).ok_or(CliError::NotInstalled)?;
-    let candidate = std::iter::once(command)
-        .chain(spec.aliases.iter().copied())
-        .find_map(|name| find_candidate(name, env))
-        .ok_or(CliError::NotInstalled)?;
+    // Only the configured command: the generic `agent` alias is not proof of Cursor.
+    let candidate = find_candidate(command, env).ok_or(CliError::NotInstalled)?;
     let resolved = resolve_spawn(&candidate, env).map_err(|_| CliError::ShimRefused)?;
     if !nt.workspace.is_dir() {
         return Err(CliError::WorkspaceUnavailable);
@@ -428,6 +427,7 @@ impl Run<'_> {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // One linear JSON-RPC state machine, like the confined Codex path.
     async fn codex(
         &self,
         stdin: &mut tokio::process::ChildStdin,

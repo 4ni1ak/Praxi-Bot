@@ -58,3 +58,18 @@ export function consentMissing(
   const needFull = next.approvalLevel === "full" && !(current.mode === "native_tools" && current.approvalLevel === "full");
   return (needNative && !consent.native) || (needFull && !consent.full);
 }
+
+const CLI_NAMES: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  gemini: "Gemini CLI"
+};
+
+/** Name of the CLI that runs this bot's files and shell, or `null` when Praxi does. */
+export function nativeEngineName(config: unknown): string | null {
+  if (engineOf(config).mode !== "native_tools") { return null; }
+  const id = executorCli(config);
+  return id ? (CLI_NAMES[id] ?? id) : null;
+}

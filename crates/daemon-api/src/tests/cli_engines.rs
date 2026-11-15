@@ -21,13 +21,23 @@ async fn registry_is_authenticated_and_preserves_confinement() {
         .iter()
         .find(|r| r["detected"]["id"] == "codex")
         .unwrap();
-    assert_eq!(codex["limitation"], "codex_unconfinable");
+    assert_eq!(codex["limitation"], "native_only");
+    assert_eq!(codex["native"]["support"], "verified");
     let opencode = rows
         .iter()
         .find(|r| r["detected"]["id"] == "opencode")
         .unwrap();
     assert_eq!(opencode["detected"]["runnable"], false);
-    assert_eq!(opencode["limitation"], "native_tools_not_confined");
+    assert_eq!(opencode["limitation"], "native_only");
+    let levels = opencode["native"]["levels"].as_array().unwrap();
+    assert_eq!(levels.len(), 4);
+    assert_eq!(levels[2]["offered"], false, "OpenCode has no Auto reviewer");
+    assert_eq!(levels[2]["applied"], "ask");
+    let gemini = rows
+        .iter()
+        .find(|r| r["detected"]["id"] == "gemini")
+        .unwrap();
+    assert_eq!(gemini["native"]["support"], "experimental");
     assert_eq!(
         opencode["install"]["args"],
         json!(["install", "-g", "opencode-ai"])
