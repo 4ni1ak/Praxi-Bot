@@ -9,6 +9,7 @@ import type {
   ReleaseRequest,
   Run
 } from "../api/types.ts";
+import { BridgeSession } from "./bridgeSession.ts";
 import {
   type BotMeta,
   type BridgeDeps,
@@ -17,6 +18,7 @@ import {
   type PanelActionHighlight,
   planNativeReplay,
   type Rect,
+  StopLedger,
   refusalReason,
   resolveTargetScope,
   type TargetScope,
@@ -981,23 +983,6 @@ test("a same-generation idle (hotkey applied/edited, step, overlay clear) is not
   assert.deepEqual(t.calls.cancel.sort(), ["paused", "queued", "running"]);
 });
 
-test("a Stop survives a bridge swap: it cancels the runs and the new bridge does not re-track them", async () => {
-  const cancelled = new Set<string>();
-  const old = setup(true, undefined, { cancelled });
-  await old.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
-  await old.bridge.initializeNativeState("bot_driving", 1);
-  void old.bridge.onNativeState("idle", 2); // Stop, queued on the old bridge
-  old.bridge.dispose(); // the daemon client is replaced before it runs
-  await old.bridge.drain();
-  assert.deepEqual(old.calls.cancel, ["r1"], "the Stop still cancels");
-
-  const fresh = setup(true, undefined, { cancelled });
-  fresh.snapshot(async () => [{ id: "r1", bot_id: "b1", state: "running" }]);
-  await fresh.bridge.restoreRuns();
-  assert.deepEqual(fresh.bridge.liveRuns(), [], "not re-tracked");
-  assert.deepEqual(fresh.calls.cancel, []);
-});
-
 test("restored runs resolve their scope by run id; a browser run with no bot id never opens the local overlay", async () => {
   const seen: { runId?: string; botId?: string }[] = [];
   const t = setup(true, (info) => {
@@ -1108,27 +1093,6 @@ test("a Stop already contained in the initial snapshot is recognised via the buf
   assert.equal(plain.baseline, 6);
 });
 
-test("a Stop flushed while the host is torn down during init reaches the next bridge", async () => {
-  const carry: { stopAt: number | null } = { stopAt: null };
-  const cancelled = new Set<string>();
-  const old = setup(true, undefined, { carry, cancelled });
-  const plan = planNativeReplay(
-    { mode: "idle", generation: 6 },
-    [{ mode: "bot_driving", generation: 5 }, { mode: "idle", generation: 6 }]
-  );
-  await old.bridge.initializeNativeState("idle", plan.baseline);
-  for (const ev of plan.replay) void old.bridge.onNativeState(ev.mode, ev.generation);
-  old.bridge.dispose(); // cleanup right after the flush
-  await old.bridge.drain();
-  assert.notEqual(carry.stopAt, null, "the Stop is carried");
-
-  const fresh = setup(true, undefined, { carry, cancelled });
-  fresh.snapshot(async () => [{ id: "live", bot_id: "b1", state: "running" }]);
-  await fresh.bridge.restoreRuns();
-  assert.deepEqual(fresh.calls.cancel, ["live"], "the next bridge cancels what it finds");
-  assert.equal(carry.stopAt, null, "consumed once restored");
-});
-
 test("unknown scope never becomes the local overlay: no startRun before targets and settings settled", async () => {
   let settled = false;
   const t = setup(true, () => "local_desktop", { targetsLoaded: () => settled });
@@ -1162,19 +1126,6 @@ test("a settled fetch with the browser target present still keeps the local over
   assert.equal(t.calls.start.length, 0);
 });
 
-test("the shared cancelled set is filled at the Stop decision, before the heartbeat completes", async () => {
-  const cancelled = new Set<string>();
-  const t = setup(true, undefined, { cancelled });
-  await t.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
-  let release!: () => void;
-  t.hold.current = new Promise<void>((r) => { release = r; }); // the PUT /control/state hangs
-  const stopping = t.bridge.onNativeState("idle", 2);
-  await new Promise((r) => setTimeout(r, 5));
-  assert.ok(cancelled.has("r1"), "recorded while the heartbeat is still pending");
-  release();
-  await stopping;
-});
-
 test("a bounded wait lets the next bridge restore although the retired client hangs", async () => {
   const never = new Promise<void>(() => undefined);
   const started = Date.now();
@@ -1183,28 +1134,176 @@ test("a bounded wait lets the next bridge restore although the retired client ha
   await waitBounded(Promise.reject(new Error("x")), 1000); // a rejection also releases the wait
 });
 
-test("a cancel that rejects is not recorded: the run is tracked again and a later bridge tracks it too", async () => {
-  const cancelled = new Set<string>();
-  const old = setup(true, undefined, { cancelled });
-  await old.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
-  old.cancelFail.current = true;
-  await old.bridge.onNativeState("idle", 2);
-  assert.ok(!cancelled.has("r1"), "not suppressed");
-  assert.deepEqual(old.bridge.liveRuns(), ["r1"], "tracked again so Stop can retry");
-  old.cancelFail.current = false;
-  await old.bridge.onNativeState("idle", 3);
-  assert.deepEqual(old.calls.cancel, ["r1"], "the retry cancels it");
 
-  const other = setup(true, undefined, { cancelled: new Set<string>() });
-  other.cancelFail.current = true;
-  const swapped = new Set<string>();
-  const a = setup(true, undefined, { cancelled: swapped });
-  await a.feed({ type: "run_started", run_id: "r2", chat_id: "c", bot_id: "b1" });
-  a.cancelFail.current = true;
+// ---- invariants (third look at #62) -------------------------------------------
+// I1 a Stop applies to exactly the runs that existed when it was decided
+// I2 the local overlay / input is never started for a run whose scope is unknown
+// I3 after a Stop every targeted run is confirmed cancelled or tracked by the CURRENT bridge
+// I4 no native event is ever dropped (applied in order or provably superseded)
+
+test("I3: a Stop survives a bridge swap: the cancel is sent, the new bridge does not re-track a confirmed run", async () => {
+  const ledger = new StopLedger();
+  const old = setup(true, undefined, { ledger });
+  await old.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
+  await old.bridge.initializeNativeState("bot_driving", 1);
+  void old.bridge.onNativeState("idle", 2); // Stop, queued on the old bridge
+  old.bridge.dispose(); // the daemon client is replaced before it runs
+  await old.bridge.drain();
+  assert.deepEqual(old.calls.cancel, ["r1"], "the Stop still cancels");
+
+  const fresh = setup(true, undefined, { ledger });
+  fresh.snapshot(async () => [{ id: "r1", bot_id: "b1", state: "running" }]);
+  await fresh.bridge.restoreRuns();
+  assert.deepEqual(fresh.bridge.liveRuns(), [], "confirmed cancelled: not re-tracked");
+  assert.deepEqual(fresh.calls.cancel, []);
+});
+
+test("I1: a Stop decided before the restore sweep applies only to runs created before it, on any later bridge", async () => {
+  const ledger = new StopLedger();
+  const old = setup(true, undefined, { ledger });
+  const plan = planNativeReplay(
+    { mode: "idle", generation: 6 },
+    [{ mode: "bot_driving", generation: 5 }, { mode: "idle", generation: 6 }]
+  );
+  await old.bridge.initializeNativeState("idle", plan.baseline);
+  for (const ev of plan.replay) void old.bridge.onNativeState(ev.mode, ev.generation);
+  old.bridge.dispose();
+  await old.bridge.drain();
+  assert.notEqual(ledger.pendingCutoff, null, "carried until a sweep applies it");
+
+  const fresh = setup(true, undefined, { ledger });
+  fresh.snapshot(async () => [
+    { id: "before", bot_id: "b1", state: "running", created_at_ms: NOW - 1000 },
+    { id: "after", bot_id: "b1", state: "running", created_at_ms: NOW + 1000 }
+  ]);
+  await fresh.bridge.restoreRuns();
+  assert.deepEqual(fresh.calls.cancel, ["before"], "only the run that existed at the Stop");
+  assert.deepEqual(fresh.bridge.liveRuns(), ["after"], "a later run is left alone and tracked");
+  assert.equal(ledger.pendingCutoff, null, "cleared once the sweep ran");
+});
+
+test("I1: a Stop decided after the restore sweep is not carried to a later bridge", async () => {
+  const ledger = new StopLedger();
+  const a = setup(true, undefined, { ledger });
+  a.snapshot(async () => []);
+  await a.bridge.restoreRuns();
+  await a.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
   await a.bridge.onNativeState("idle", 2);
-  const next = setup(true, undefined, { cancelled: swapped });
-  next.snapshot(async () => [{ id: "r2", bot_id: "b1", state: "running" }]);
-  await next.bridge.restoreRuns();
-  assert.deepEqual(next.bridge.liveRuns(), ["r2"], "a later bridge still tracks the live run");
-  void other;
+  assert.deepEqual(a.calls.cancel, ["r1"]);
+  assert.equal(ledger.pendingCutoff, null);
+  const b = setup(true, undefined, { ledger });
+  b.snapshot(async () => [{ id: "new", bot_id: "b1", state: "running", created_at_ms: NOW + 500 }]);
+  await b.bridge.restoreRuns();
+  assert.deepEqual(b.calls.cancel, [], "a run started after the Stop survives the swap");
+});
+
+test("I3: the cancel is sent before a hung heartbeat, and a hung heartbeat does not hold the chain", async () => {
+  const t = setup(true, undefined, { heartbeatBoundMs: 20 });
+  await t.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
+  t.hold.current = new Promise<void>(() => undefined); // PUT /control/state never answers
+  const stopping = t.bridge.onNativeState("idle", 2);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(t.calls.cancel, ["r1"], "sent while the heartbeat is still pending");
+  await stopping; // bounded: the chain is not stuck behind the hang
+});
+
+test("I3: a cancel that fails after the swap re-tracks the run on the CURRENT bridge; one that succeeds untracks it", async () => {
+  const ledger = new StopLedger();
+  const old = setup(true, undefined, { ledger });
+  await old.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
+  await old.feed({ type: "run_started", run_id: "r2", chat_id: "c", bot_id: "b1" });
+  const fresh = setup(true, undefined, { ledger }); // now the current bridge
+  old.bridge.dispose();
+  fresh.snapshot(async () => [
+    { id: "r1", bot_id: "b1", state: "running" },
+    { id: "r2", bot_id: "b1", state: "running" }
+  ]);
+  await fresh.bridge.restoreRuns();
+  assert.deepEqual(fresh.bridge.liveRuns().sort(), ["r1", "r2"], "tracked while no cancel has settled");
+  ledger.settle("r1", true); // a retired cancel confirms
+  ledger.settle("r2", false); // another one fails
+  assert.deepEqual(fresh.bridge.liveRuns(), ["r2"], "confirmed run dropped, failed run stays cancellable");
+  assert.ok(ledger.done.has("r1") && !ledger.done.has("r2"));
+});
+
+test("I2: a control request for a run whose scope is unknown never reaches the local overlay or input", async () => {
+  const t = setup(true, () => "local_desktop", { targetsLoaded: () => false, scopeWaitMs: 20 });
+  await t.feed(request("req-unknown", { x: 10, y: 10, width: 4, height: 4 }));
+  assert.equal(t.calls.start.length, 0, "no startRun");
+  assert.equal(t.calls.begin.length, 0, "no beginAction");
+  assert.equal(t.calls.clicks.length, 0, "no click on this PC");
+  assert.equal(t.calls.decide.at(-1)?.decision, "refuse");
+
+  // a run that starts before the scope is known is deferred, not started locally
+  await t.feed({ type: "run_started", run_id: "run-x", chat_id: "c", bot_id: "b1" });
+  assert.equal(t.calls.start.length, 0);
+});
+
+test("I2: once the scope is known the same request is handled by its scope", async () => {
+  let known = false;
+  const t = setup(true, () => "browser", { targetsLoaded: () => known, scopeWaitMs: 500 });
+  const pending = t.feed(request("req-late", { x: 1, y: 1, width: 2, height: 2 }));
+  setTimeout(() => { known = true; }, 30);
+  await pending;
+  assert.equal(t.calls.begin.length, 0, "browser scope: never the local overlay");
+  assert.equal(t.calls.panelOverlay.length, 1);
+});
+
+function sessionFor(
+  t: ReturnType<typeof setup>,
+  ledger: StopLedger,
+  snapshot: () => Promise<{ mode: ControlModeName; runGeneration: number }>
+) {
+  return new BridgeSession(t.bridge, {
+    getNativeSnapshot: snapshot,
+    retiring: Promise.resolve(),
+    ledger
+  });
+}
+
+test("I4: a Stop arriving after the snapshot is planned and before init resolves is queued, not dropped", async () => {
+  const ledger = new StopLedger();
+  const t = setup(true, undefined, { ledger, heartbeatBoundMs: 40 });
+  await t.feed({ type: "run_started", run_id: "r", chat_id: "c", bot_id: "b1" });
+  t.hold.current = new Promise<void>(() => undefined); // the first PUT is slow
+  const session = sessionFor(t, ledger, async () => ({ mode: "bot_driving", runGeneration: 5 }));
+  const ticking = session.tick();
+  await new Promise((r) => setTimeout(r, 10)); // snapshot planned, init heartbeat pending
+  session.onNativeEvent("idle", 6); // the user presses Stop right now
+  await ticking;
+  await t.bridge.drain();
+  assert.deepEqual(t.calls.cancel, ["r"], "the Stop was applied");
+});
+
+test("I4: a session torn down while the snapshot is in flight flushes its buffer before retiring", async () => {
+  const ledger = new StopLedger();
+  const t = setup(true, undefined, { ledger });
+  await t.feed({ type: "run_started", run_id: "r", chat_id: "c", bot_id: "b1" });
+  let resolve!: (s: { mode: ControlModeName; runGeneration: number }) => void;
+  const session = sessionFor(t, ledger, () => new Promise((r) => { resolve = r; }));
+  const ticking = session.tick();
+  session.onNativeEvent("bot_driving", 5);
+  session.onNativeEvent("idle", 6);
+  session.dispose(); // client replaced mid-init
+  resolve({ mode: "idle", runGeneration: 6 });
+  await ticking;
+  await session.retiredDone;
+  assert.deepEqual(t.calls.cancel, ["r"], "the Stop reached the cancel before the bridge retired");
+});
+
+test("I4: a buffer that never met a snapshot carries a generation rise as a pending Stop", async () => {
+  const ledger = new StopLedger();
+  const t = setup(true, undefined, { ledger });
+  const session = sessionFor(t, ledger, () => new Promise(() => undefined));
+  session.onNativeEvent("bot_driving", 5);
+  session.onNativeEvent("idle", 6);
+  session.dispose();
+  await session.retiredDone;
+  assert.notEqual(ledger.pendingCutoff, null);
+  const lone = new StopLedger();
+  const s2 = sessionFor(setup(true, undefined, { ledger: lone }), lone, () => new Promise(() => undefined));
+  s2.onNativeEvent("idle", 6); // a lone sample is not a provable Stop
+  s2.dispose();
+  await s2.retiredDone;
+  assert.equal(lone.pendingCutoff, null);
 });

@@ -298,6 +298,9 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   // Refresh targets & control snapshot on client connect and when panel/viewer opens.
   useEffect(() => {
+    // Targets are per daemon client: until THIS client's fetch settles the scope
+    // of a run is unknown (a replacement bridge must not reuse the old answer).
+    setTargetsSettled(false);
     if (!client) {
       setTargets([]);
       setControlState(null);

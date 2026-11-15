@@ -113,7 +113,7 @@ export interface BotMeta {
 
 export interface BridgeDeps {
   client: {
-    listRuns(): Promise<Pick<Run, "id" | "bot_id" | "state">[]>;
+    listRuns(): Promise<(Pick<Run, "id" | "bot_id" | "state"> & { created_at_ms?: number })[]>;
     putControlState(mode: ControlModeName, release?: boolean): Promise<unknown>;
     decideControl(
       requestId: string,
@@ -140,16 +140,16 @@ export interface BridgeDeps {
    * fetched (settled): a restored run's scope is never guessed before that.
    */
   targetsLoaded?(): boolean;
-  /**
-   * Shared across bridge replacements: when the last Stop was decided. A bridge
-   * created while that Stop is fresh starts with `stopRequested` set.
-   */
-  carry?: { stopAt: number | null };
-  /**
-   * Run ids a Stop already sent a cancel for, shared across bridge replacements:
-   * a new bridge never re-tracks them while the daemon still lists them.
-   */
-  cancelled?: Set<string>;
+  /** Shared across bridge replacements: what every Stop decided so far targets. */
+  ledger?: StopLedger;
+  /** How long a control request waits for the run's scope to become known (ms). */
+  scopeWaitMs?: number;
+  /** A heartbeat that does not answer within this many ms no longer blocks the chain. */
+  heartbeatBoundMs?: number;
+  /** A cancel that does not settle within this many ms no longer blocks the chain. */
+  cancelBoundMs?: number;
+  /** Bounded wait (injectable for tests; defaults to a timer). */
+  wait?: (p: Promise<unknown>, ms: number) => Promise<void>;
   /** Optional hook to render non-local action highlights inside the live-view panel. */
   panelOverlay?: {
     showAction(highlight: PanelActionHighlight): void;
@@ -177,32 +177,51 @@ export const HEARTBEAT_MS = 5000;
 export const STALE_REQUEST_MS = 15_000;
 /** Events older than the bridge (a replay of history) are ignored, minus skew. */
 const REPLAY_SLACK_MS = 2000;
-/** A Stop decided on a retired bridge still applies to the next bridge for this long. */
-const STOP_CARRY_MS = 15_000;
+/** Longest the bridge chain waits for one heartbeat (a hung daemon must not block a Stop). */
+const HEARTBEAT_BOUND_MS = 2000;
+/** Longest the chain waits for the cancels of one Stop to settle. */
+const CANCEL_BOUND_MS = 3000;
+/** Longest a control request waits for its run's scope to become known. */
+const SCOPE_WAIT_MS = 5000;
 
 /** A native `control:state_changed` as the host sees it. */
 export interface NativeEvent {
   mode: ControlModeName;
   generation: number;
+  /** When the event reached the app (a Stop's cutoff for I1). */
+  at?: number;
 }
 
 /**
- * Judge native events buffered behind the initial snapshot. Events older than
- * the snapshot are never applied; the generation walk starts at the LOWEST
- * generation seen so an idle that the snapshot already contains is still
- * recognised as a Stop (generation rose from the buffered earlier one).
+ * Judge native events buffered behind the initial snapshot.
+ *  - the generation walk starts at the LOWEST generation seen, so an idle the
+ *    snapshot already contains is still recognised as a Stop;
+ *  - an event older than the snapshot never changes the mode, BUT an idle among
+ *    them that was a generation rise is a Stop whose runs still have to be
+ *    cancelled (`historicStops`): superseded only in mode, not in effect.
  */
 export function planNativeReplay(
   snapshot: NativeEvent,
-  buffered: readonly NativeEvent[]
-): { baseline: number; replay: NativeEvent[] } {
+  buffered: readonly NativeEvent[],
+  /** Highest generation received before the buffer started (a previous session's). */
+  floor: number | null = null
+): { baseline: number; replay: NativeEvent[]; historicStops: NativeEvent[] } {
   const lowest = buffered.reduce(
     (min, ev) => Math.min(min, ev.generation),
-    snapshot.generation
+    floor === null ? snapshot.generation : Math.min(snapshot.generation, floor)
   );
+  const historicStops: NativeEvent[] = [];
+  let high = lowest;
+  for (const ev of buffered) {
+    if (ev.generation < snapshot.generation && ev.mode === "idle" && ev.generation > high) {
+      historicStops.push(ev);
+    }
+    high = Math.max(high, ev.generation);
+  }
   return {
     baseline: lowest,
-    replay: buffered.filter((ev) => ev.generation >= snapshot.generation)
+    replay: buffered.filter((ev) => ev.generation >= snapshot.generation),
+    historicStops
   };
 }
 
@@ -223,6 +242,90 @@ export function waitBounded(p: Promise<unknown>, ms: number): Promise<void> {
   });
 }
 
+/**
+ * Shared by every bridge of one host (a bridge is replaced when the daemon
+ * client changes). It is what makes a Stop outlive the bridge that decided it.
+ *
+ * Invariants the bridge enforces through it:
+ *  I1 a Stop applies to exactly the runs that existed when it was decided
+ *     (tracked ids, plus runs a pending restore finds that were created at or
+ *     before `pendingCutoff`), never to a run created later;
+ *  I3 after a Stop every targeted run is either confirmed cancelled (`done`) or
+ *     tracked-and-cancellable by the CURRENT bridge: a cancel is sent before any
+ *     other await, and its failure re-tracks the run on whichever bridge is current.
+ */
+export class StopLedger {
+  /** Runs whose cancel succeeded (until the daemon stops listing them). */
+  readonly done = new Set<string>();
+  /** Cutoff (ms) of the newest Stop whose restore sweep has not run yet. */
+  pendingCutoff: number | null = null;
+  /** Highest native `run_generation` any session RECEIVED (baseline for the next session). */
+  lastGeneration: number | null = null;
+  private current: ControlBridge | null = null;
+  /**
+   * Generations that a bridge-initiated native stop (a finished run) caused: the
+   * echo event may reach a DIFFERENT bridge than the one whose invoke returns.
+   */
+  readonly autoGenerations = new Set<number>();
+  private autoPending = 0;
+  private autoWaiters: (() => void)[] = [];
+
+  beginAutoStop(): void {
+    this.autoPending += 1;
+  }
+
+  endAutoStop(generation?: number): void {
+    if (generation !== undefined) this.autoGenerations.add(generation);
+    this.autoPending = Math.max(0, this.autoPending - 1);
+    if (this.autoPending === 0) {
+      for (const w of this.autoWaiters.splice(0)) w();
+    }
+  }
+
+  /** Resolves when no bridge-initiated native stop is still waiting for its generation. */
+  whenAutoSettled(): Promise<void> {
+    if (this.autoPending === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => this.autoWaiters.push(resolve));
+  }
+
+  /**
+   * A Stop was decided before its deciding bridge swept the daemon's run list.
+   * If the current bridge already swept, it applies the Stop to its tracked runs;
+   * otherwise the cutoff waits for whichever bridge sweeps.
+   */
+  noteStop(cutoff: number, origin: ControlBridge): void {
+    const cur = this.current;
+    if (cur && cur !== origin && cur.hasRestored()) {
+      cur.applyStopTo(cutoff);
+      return;
+    }
+    this.pendingCutoff = Math.max(this.pendingCutoff ?? cutoff, cutoff);
+  }
+
+  attach(bridge: ControlBridge): void {
+    this.current = bridge;
+  }
+
+  detach(bridge: ControlBridge): void {
+    if (this.current === bridge) this.current = null;
+  }
+
+  settle(id: string, ok: boolean): void {
+    if (ok) {
+      this.done.add(id);
+      this.current?.untrack(id);
+    } else {
+      this.current?.track(id);
+    }
+  }
+
+  prune(listed: ReadonlySet<string>): void {
+    for (const id of [...this.done]) {
+      if (!listed.has(id)) this.done.delete(id);
+    }
+  }
+}
+
 export function refusalReason(mode: ControlModeName): string {
   switch (mode) {
     case "human_driving":
@@ -241,6 +344,8 @@ function centre(r: Rect): { x: number; y: number } {
 export class ControlBridge {
   mode: ControlModeName = "idle";
   private readonly active = new Set<string>();
+  /** When each tracked run was created/first seen (ms): a Stop targets only older runs (I1). */
+  private readonly startedAt_ = new Map<string, number>();
   private readonly handled = new Set<string>();
   private readonly startedAt: number;
   private readonly deps: BridgeDeps;
@@ -249,7 +354,8 @@ export class ControlBridge {
   private restored = false;
   private restoring: Promise<void> | null = null;
   private snapshot: { finished: Set<string> } | null = null;
-  private stopRequested = false;
+  /** Cutoff (ms) of a Stop decided before the restore sweep ran; null = none. */
+  private stopCutoff: number | null = null;
   private automaticIdleGeneration: number | null = null;
   /** Highest native `run_generation` seen (initial snapshot or event). */
   private nativeGeneration: number | null = null;
@@ -264,11 +370,34 @@ export class ControlBridge {
   constructor(deps: BridgeDeps) {
     this.deps = deps;
     this.startedAt = deps.now();
-    const stopAt = deps.carry?.stopAt ?? null;
-    if (stopAt !== null && deps.now() - stopAt < STOP_CARRY_MS) {
-      // A Stop decided on the bridge this one replaces is still in flight.
-      this.stopRequested = true;
-    }
+    deps.ledger?.attach(this);
+  }
+
+  private bounded(p: Promise<unknown>, ms: number): Promise<void> {
+    return (this.deps.wait ?? waitBounded)(p, ms);
+  }
+
+  /** True once the restore sweep has run (a later Stop is handled by the tracked ids). */
+  hasRestored(): boolean {
+    return this.restored;
+  }
+
+  /** A Stop decided elsewhere (a retiring bridge) that applies to what this bridge tracks. */
+  applyStopTo(cutoff: number): void {
+    void this.bounded(
+      this.cancelIds(this.takeRuns(cutoff)),
+      this.deps.cancelBoundMs ?? CANCEL_BOUND_MS
+    );
+  }
+
+  /** Track a run again (a cancel failed); never a confirmed-cancelled one. */
+  track(id: string): void {
+    if (!this.disposed && !this.deps.ledger?.done.has(id)) this.active.add(id);
+  }
+
+  /** Forget a run whose cancel was confirmed. */
+  untrack(id: string): void {
+    this.active.delete(id);
   }
 
   /** Run ids the bridge believes are live (for tests / diagnostics). */
@@ -283,6 +412,7 @@ export class ControlBridge {
     // event arriving after this point is ignored.
     this.retired = [...this.active];
     this.disposed = true;
+    this.deps.ledger?.detach(this);
     this.active.clear();
     this.handled.clear();
     this.deferredStarts = [];
@@ -313,36 +443,61 @@ export class ControlBridge {
     this.restoring = (async () => {
       try {
         const rows = await this.deps.client.listRuns();
-        // Ids the daemon no longer lists are done: forget them.
-        if (this.deps.cancelled) {
-          const listed = new Set(rows.map((r) => r.id));
-          for (const id of [...this.deps.cancelled]) {
-            if (!listed.has(id)) this.deps.cancelled.delete(id);
-          }
-        }
+        this.deps.ledger?.prune(new Set(rows.map((r) => r.id)));
         this.chain = this.chain.then(async () => {
           if (this.disposed) return;
           const live = rows.filter(
             (run) =>
               isCancellableRunState(run.state) &&
               !snapshot.finished.has(run.id) &&
-              !this.deps.cancelled?.has(run.id)
+              !this.deps.ledger?.done.has(run.id)
           );
-          if (this.stopRequested) {
-            await this.cancelIds(live.map((run) => run.id));
-          } else {
-            for (const run of live) this.active.add(run.id);
-            const processing = live.filter((run) => isProcessingRunState(run.state));
-            for (const run of processing) {
-              await this.startRestored(run.bot_id, run.id);
-            }
-            if (processing.length === 0 && this.active.size === 0 && this.mode === "bot_driving") {
-              await this.stopNativeRun();
+          // I1: a pending Stop targets only runs that existed when it was decided.
+          // Read at sweep time: a Stop noted by a retiring bridge after this one was
+          // created must still count.
+          const pendingNow = this.deps.ledger?.pendingCutoff ?? null;
+          const cutoff =
+            this.stopCutoff === null
+              ? pendingNow
+              : pendingNow === null
+                ? this.stopCutoff
+                : Math.max(this.stopCutoff, pendingNow);
+          const targeted =
+            cutoff === null
+              ? []
+              : live.filter((run) => (run.created_at_ms ?? -Infinity) <= cutoff);
+          const targetedIds = new Set(targeted.map((run) => run.id));
+          const keep = live.filter((run) => !targetedIds.has(run.id));
+          const cancelling = this.cancelIds(targeted.map((run) => run.id));
+          for (const run of keep) {
+            this.active.add(run.id);
+            this.noteStarted(run.id, run.created_at_ms ?? -Infinity);
+          }
+          const processing = keep.filter((run) => isProcessingRunState(run.state));
+          for (const run of processing) {
+            await this.ensureDriving(run.bot_id, run.id);
+          }
+          if (processing.length === 0 && this.active.size === 0 && this.mode === "bot_driving") {
+            await this.stopNativeRun();
+          }
+          await this.bounded(cancelling, this.deps.cancelBoundMs ?? CANCEL_BOUND_MS);
+          this.restored = true;
+          const ledger = this.deps.ledger;
+          // A bridge retired mid-sweep must not consume the pending Stop: its
+          // tracked set is stale; the next bridge's sweep still has to apply it.
+          if (ledger && ledger.pendingCutoff !== null && !this.disposed) {
+            // A Stop noted while the sweep ran (or after the list was read) applies
+            // to the runs this bridge now tracks.
+            const late = ledger.pendingCutoff;
+            ledger.pendingCutoff = null;
+            if (cutoff === null || late > cutoff) {
+              await this.bounded(
+                this.cancelIds(this.takeRuns(late)),
+                this.deps.cancelBoundMs ?? CANCEL_BOUND_MS
+              );
             }
           }
-          this.restored = true;
-          if (this.stopRequested && this.deps.carry) this.deps.carry.stopAt = null;
-          this.stopRequested = false;
+          this.stopCutoff = null;
         }).catch(() => undefined);
         await this.chain;
       } catch {
@@ -403,12 +558,44 @@ export class ControlBridge {
   }
 
   /** The native state machine changed (Tauri `control:state_changed`). */
-  onNativeState(mode: ControlModeName, generation?: number): Promise<void> {
+  onNativeState(mode: ControlModeName, generation?: number, at?: number): Promise<void> {
     if (this.disposed) return Promise.resolve();
+    // The moment the event reached the app, not the moment the chain gets to it:
+    // runs created in between are NOT targeted by a Stop (I1).
+    const receivedAt = at ?? this.deps.now();
     // Queued while this bridge was still current: if it is retired before the
     // event runs, a Stop must still cancel what the bridge tracked.
     this.chain = this.chain
-      .then(() => this.nativeState(mode, generation, true))
+      .then(() => this.nativeState(mode, generation, true, receivedAt))
+      .catch(() => undefined);
+    return this.chain;
+  }
+
+  /**
+   * A Stop that happened before the initial snapshot (so it never changes the
+   * mode) but whose effect still applies to the runs that existed then.
+   */
+  applyHistoricStop(generation: number, at: number): Promise<void> {
+    if (this.disposed) {
+      this.deps.ledger?.noteStop(at, this);
+      return Promise.resolve();
+    }
+    this.chain = this.chain
+      .then(async () => {
+        if (this.deps.ledger) {
+          await this.bounded(
+            this.deps.ledger.whenAutoSettled(),
+            this.deps.heartbeatBoundMs ?? HEARTBEAT_BOUND_MS
+          );
+          if (this.deps.ledger.autoGenerations.has(generation)) return; // our own finish
+        }
+        if (generation === this.automaticIdleGeneration) return;
+        this.markStopRequested(at);
+        await this.bounded(
+          this.cancelIds(this.takeRuns(at)),
+          this.deps.cancelBoundMs ?? CANCEL_BOUND_MS
+        );
+      })
       .catch(() => undefined);
     return this.chain;
   }
@@ -442,13 +629,13 @@ export class ControlBridge {
   /** Explicit user Stop override: pauses any active takeover and cancels live runs. */
   emergencyStop(): Promise<ControlStateDto | null> {
     let result: ControlStateDto | null = null;
+    const stopAt = this.deps.now();
     this.chain = this.chain
       .then(async () => {
-        // An explicit Stop also covers runs a pending restore has not found yet.
-        // Decide which runs to cancel NOW, before any await (a bridge swap must
-        // not lose them).
-        this.markStopRequested();
-        const runs = this.takeRuns();
+        // Decide which runs to cancel NOW, and send the cancels before any other
+        // await (override / native stop can hang): the Stop must not be lost.
+        this.markStopRequested(stopAt);
+        const cancelling = this.cancelIds(this.takeRuns(stopAt));
         if (this.deps.client.overrideControl) {
           try {
             result = await this.deps.client.overrideControl();
@@ -459,7 +646,10 @@ export class ControlBridge {
         }
         await this.deps.native.stopRun().catch(() => undefined);
         this.mode = "idle";
-        await this.cancelIds([...runs, ...this.takeRuns()]);
+        await this.bounded(
+          Promise.all([cancelling, this.cancelIds(this.takeRuns(stopAt))]),
+          this.deps.cancelBoundMs ?? CANCEL_BOUND_MS
+        );
       })
       .catch(() => undefined);
     return this.chain.then(() => result);
@@ -471,9 +661,10 @@ export class ControlBridge {
     // Heartbeats and reopens never release an owned takeover latch.
     const effectiveRelease = release && !this.hasOwnedTakeover();
     try {
-      await this.deps.client.putControlState(
-        this.mode,
-        effectiveRelease || undefined
+      // Bounded: a hung PUT must not hold the chain (and with it a queued Stop).
+      await this.bounded(
+        this.deps.client.putControlState(this.mode, effectiveRelease || undefined),
+        this.deps.heartbeatBoundMs ?? HEARTBEAT_BOUND_MS
       );
     } catch {
       // daemon unreachable or 409 because owned takeover holds the latch
@@ -517,34 +708,64 @@ export class ControlBridge {
     return this.deps.resolveTargetScope?.(info) ?? "local_desktop";
   }
 
-  /** Copy and clear the tracked run ids (the Stop decision point). */
-  private takeRuns(): string[] {
-    const runs = [...this.active];
-    this.active.clear();
-    // Recorded at the decision, before any await, so a new bridge never re-tracks
-    // them while the cancel is still in flight.
-    for (const id of runs) this.deps.cancelled?.add(id);
-    return runs;
+  /** Retired bridge: take only the runs that existed at the Stop; later Stops still see the rest. */
+  private takeRetired(cutoff: number): string[] {
+    const taken = this.upTo(this.retired, cutoff);
+    this.retired = this.retired.filter((id) => !taken.includes(id));
+    return taken;
   }
 
-  private async cancelIds(ids: string[]): Promise<void> {
-    for (const id of ids) this.deps.cancelled?.add(id);
-    await Promise.all(
-      ids.map((id) =>
-        this.deps.client.cancelRun(id).then(
-          () => undefined,
-          () => {
-            // The cancel did not succeed: the run is live again, so it is tracked
-            // again (and a later Stop can retry it) and not suppressed.
-            this.deps.cancelled?.delete(id);
-            if (!this.disposed) this.active.add(id);
-          }
-        )
-      )
+  private noteStarted(id: string, at: number): void {
+    const known = this.startedAt_.get(id);
+    // An authoritative time (event / daemon row) replaces an unknown one.
+    if (known === undefined || (known === -Infinity && at !== -Infinity)) {
+      this.startedAt_.set(id, at);
+    }
+  }
+
+  /** The ids that existed at `cutoff` (everything when undefined). */
+  private upTo(ids: Iterable<string>, cutoff?: number): string[] {
+    return [...ids].filter(
+      (id) => cutoff === undefined || (this.startedAt_.get(id) ?? -Infinity) <= cutoff
     );
   }
 
+  /**
+   * Copy and clear the tracked run ids that existed when the Stop was decided
+   * (I1): a run created after `cutoff` stays tracked and untouched.
+   */
+  private takeRuns(cutoff?: number): string[] {
+    const runs = this.upTo(this.active, cutoff);
+    for (const id of runs) this.active.delete(id);
+    return runs;
+  }
+
+  /**
+   * Send the cancels now; each outcome settles in the shared ledger: confirmed
+   * ones are never re-tracked, failed ones are tracked again on whichever bridge
+   * is current (this one may already be disposed).
+   */
+  private cancelIds(ids: string[]): Promise<void> {
+    return Promise.all(
+      ids.map((id) =>
+        this.deps.client.cancelRun(id).then(
+          () => this.settleCancel(id, true),
+          () => this.settleCancel(id, false)
+        )
+      )
+    ).then(() => undefined);
+  }
+
+  private settleCancel(id: string, ok: boolean): void {
+    if (this.deps.ledger) {
+      this.deps.ledger.settle(id, ok);
+    } else if (!ok && !this.disposed) {
+      this.active.add(id);
+    }
+  }
+
   private noteGeneration(generation: number): void {
+
     if (this.nativeGeneration === null || generation > this.nativeGeneration) {
       this.nativeGeneration = generation;
     }
@@ -558,19 +779,26 @@ export class ControlBridge {
   private isStopIdle(generation: number | undefined): boolean {
     if (generation === undefined) return true;
     if (generation === this.automaticIdleGeneration) return false;
+    if (this.deps.ledger?.autoGenerations.has(generation)) return false;
     return this.nativeGeneration === null || generation > this.nativeGeneration;
   }
 
-  /** Start the local overlay for a restored run, or wait until its scope is known. */
-  private async startRestored(botId: string, runId: string): Promise<void> {
-    if (this.deps.targetsLoaded && !this.deps.targetsLoaded()) {
-      this.deferredStarts.push({ botId, runId });
-      return;
-    }
-    await this.ensureDriving(botId, runId);
+  /** The scope of a run is known only once the targets (and settings) of THIS client settled. */
+  private scopeKnown(): boolean {
+    return this.deps.targetsLoaded ? this.deps.targetsLoaded() : true;
   }
 
-  /** Retry restored-run overlays that were waiting for the targets (call each tick). */
+  /** Wait (bounded) for the scope to become known; null = still unknown. */
+  private async awaitScope(info: { runId?: string; botId?: string }): Promise<TargetScope | null> {
+    const deadline = Date.now() + (this.deps.scopeWaitMs ?? SCOPE_WAIT_MS);
+    while (!this.scopeKnown()) {
+      if (this.disposed || Date.now() >= deadline) return null;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return this.scopeFor(info);
+  }
+
+  /** Retry overlays that were waiting for the scope to be known (call each tick). */
   retryDeferredStarts(): Promise<void> {
     if (this.deferredStarts.length === 0) return Promise.resolve();
     this.chain = this.chain
@@ -579,11 +807,7 @@ export class ControlBridge {
         this.deferredStarts = [];
         for (const d of waiting) {
           if (this.disposed || !this.active.has(d.runId)) continue;
-          if (this.deps.targetsLoaded?.() === false) {
-            this.deferredStarts.push(d); // keep waiting: never guess the scope
-            continue;
-          }
-          await this.ensureDriving(d.botId, d.runId);
+          await this.ensureDriving(d.botId, d.runId); // re-defers while unknown
         }
       })
       .catch(() => undefined);
@@ -593,16 +817,28 @@ export class ControlBridge {
   private async nativeState(
     mode: ControlModeName,
     generation?: number,
-    queuedWhileCurrent = false
+    queuedWhileCurrent = false,
+    receivedAt: number = this.deps.now()
   ): Promise<void> {
+    if (mode === "idle" && generation !== undefined && this.deps.ledger) {
+      // The echo of a stop another bridge caused may arrive before that bridge's
+      // invoke returns with its generation: wait (bounded) before judging.
+      await this.bounded(
+        this.deps.ledger.whenAutoSettled(),
+        this.deps.heartbeatBoundMs ?? HEARTBEAT_BOUND_MS
+      );
+    }
     const stop = mode === "idle" && this.isStopIdle(generation);
     if (generation !== undefined) this.noteGeneration(generation);
     if (this.disposed) {
       // A Stop queued on a retired bridge (the daemon client was replaced) still
       // cancels the runs it tracked; nothing else is applied.
       if (stop && queuedWhileCurrent) {
-        if (this.deps.carry) this.deps.carry.stopAt = this.deps.now();
-        await this.cancelIds(this.retired.splice(0));
+        this.markStopRequested(receivedAt);
+        await this.bounded(
+          this.cancelIds(this.takeRetired(receivedAt)),
+          this.deps.cancelBoundMs ?? CANCEL_BOUND_MS
+        );
       }
       return;
     }
@@ -614,12 +850,13 @@ export class ControlBridge {
     }
     const previous = this.mode;
     this.mode = mode;
-    let runs: string[] = [];
+    let cancelling: Promise<void> | null = null;
     if (stop) {
-      // Decide now, before any await: a Stop must survive a bridge swap, and it
-      // also covers runs a pending restore has not found yet.
-      this.markStopRequested();
-      runs = this.takeRuns();
+      // Decide now and send the cancels before any other await: a Stop must
+      // survive a bridge swap and a hung heartbeat, and it also covers runs a
+      // pending restore has not found yet (see StopLedger, I1/I3).
+      this.markStopRequested(receivedAt);
+      cancelling = this.cancelIds(this.takeRuns(receivedAt));
     }
 
     // While an owned takeover controls the daemon latch, a local Pause overrides
@@ -639,8 +876,8 @@ export class ControlBridge {
       await this.heartbeat(resumed);
     }
 
-    if (stop) {
-      await this.cancelIds(runs);
+    if (cancelling) {
+      await this.bounded(cancelling, this.deps.cancelBoundMs ?? CANCEL_BOUND_MS);
     }
   }
 
@@ -652,18 +889,39 @@ export class ControlBridge {
   }
 
   private async stopNativeRun(): Promise<void> {
-    this.automaticIdleGeneration = await this.deps.native.stopRun();
+    this.deps.ledger?.beginAutoStop();
+    let generation: number | undefined;
+    try {
+      generation = await this.deps.native.stopRun();
+      this.automaticIdleGeneration = generation;
+    } finally {
+      this.deps.ledger?.endAutoStop(generation);
+    }
     if (!this.disposed) this.mode = "idle";
   }
 
-  private markStopRequested(): void {
-    this.stopRequested = true;
-    if (this.deps.carry) this.deps.carry.stopAt = this.deps.now();
+  private markStopRequested(at?: number): void {
+    const cutoff = at ?? this.deps.now();
+    this.stopCutoff = Math.max(this.stopCutoff ?? cutoff, cutoff);
+    // A Stop decided before the restore sweep ran is carried to whichever bridge
+    // sweeps; one decided after it is fully handled by the tracked ids.
+    // A retired bridge's tracked set is stale (events queued behind a hung step
+    // never reached it), so its Stop always goes through the ledger to whichever
+    // bridge is current; so does one decided before the sweep.
+    if (!this.restored || this.disposed) this.deps.ledger?.noteStop(cutoff, this);
     for (const id of this.active) this.snapshot?.finished.add(id);
   }
 
   private async ensureDriving(botId: string, runId?: string): Promise<void> {
-    if (this.disposed || this.scopeFor({ botId, runId }) !== "local_desktop") {
+    if (this.disposed) return;
+    if (!this.scopeKnown()) {
+      // I2: never start the local overlay for a run whose scope is unknown.
+      if (runId && !this.deferredStarts.some((d) => d.runId === runId)) {
+        this.deferredStarts.push({ botId, runId });
+      }
+      return;
+    }
+    if (this.scopeFor({ botId, runId }) !== "local_desktop") {
       return;
     }
     if (this.mode === "idle") {
@@ -712,6 +970,7 @@ export class ControlBridge {
         return;
       case "run_started":
         this.active.add(e.run_id);
+        this.noteStarted(e.run_id, env.ts_ms);
         await this.ensureDriving(e.bot_id, e.run_id);
         return;
       case "run_finished":
@@ -730,6 +989,9 @@ export class ControlBridge {
         }
         this.handled.add(e.request_id);
         this.active.add(e.run_id);
+        // Creation time unknown (the restore sweep corrects it): treated as
+        // pre-existing, so a Stop never misses a run that was already going.
+        this.noteStarted(e.run_id, -Infinity);
         await this.answer(e);
         return;
       default:
@@ -740,7 +1002,20 @@ export class ControlBridge {
   private async answer(
     e: Extract<DaemonEvent, { type: "control_requested" }>
   ): Promise<void> {
-    const scope = this.scopeFor({ runId: e.run_id, botId: e.bot_id });
+    // I2: no local overlay and no local input for a run whose scope is unknown.
+    const scope = await this.awaitScope({ runId: e.run_id, botId: e.bot_id });
+    if (scope === null) {
+      try {
+        await this.deps.client.decideControl(
+          e.request_id,
+          "refuse",
+          "The app has not identified which screen this action targets yet, so it was not performed. Retry the action in a moment."
+        );
+      } catch {
+        // 404: the daemon already timed out
+      }
+      return;
+    }
     if (scope !== "local_desktop") {
       // Browser and remote targets MUST NEVER highlight or click the local PC desktop.
       const takeoverBlocks =

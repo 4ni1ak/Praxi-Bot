@@ -205,17 +205,18 @@ test("Clear pause goes through the verifying runClearPause and the dock uses the
 
 // ---- #62 reconciliation: the host buffers native events behind the snapshot ----
 
-test("ControlBridgeHost judges native events against the snapshot walk, flushes before retiring and never blocks on a hung client", () => {
-  assert.match(host, /planNativeReplay\(/);
-  assert.match(host, /initializeNativeState\(snap\.mode as ControlMode, plan\.baseline\)/);
-  assert.match(host, /buffered\.push\(/);
-  assert.match(host, /carry: carryRef\.current/);
-  assert.match(host, /cancelled: cancelledRef\.current/);
-  assert.match(host, /retiringRef\.current = bridge\.drain\(\)/);
-  assert.match(host, /await waitBounded\(retiringRef\.current, RETIRING_WAIT_MS\)/);
+test("ControlBridgeHost delegates start-up to BridgeSession and shares one StopLedger across bridges", () => {
+  assert.match(host, /new BridgeSession\(bridge,/);
+  assert.match(host, /session\.onNativeEvent\(/);
+  assert.match(host, /retiring: retiringRef\.current/);
+  assert.match(host, /retiringRef\.current = session\.retiredDone/);
+  assert.match(host, /ledger: ledgerRef\.current/);
   assert.match(host, /targetsSettledRef\.current && settingsLoadedRef\.current/);
-  assert.match(host, /retryDeferredStarts\(\)/);
-  // cleanup during init: the tick flushes the buffer, then retires
-  assert.match(host, /if \(!initializing\) retire\(\)/);
-  assert.match(host, /await applyInitial\(snap\);[\s\S]*retire\(\);/);
+  assert.match(host, /session\.dispose\(\)/);
+  const sess = read("../state/bridgeSession.ts");
+  assert.match(sess, /this\.ready = true;[\s\S]*for \(const ev of plan\.replay\)[\s\S]*await init;/);
+  assert.match(sess, /initializeNativeState\(snap\.mode, plan\.baseline\)/);
+  assert.match(sess, /await wait\(this\.opt\.retiring/);
+  const ctx = read("../state/LiveViewContext.tsx");
+  assert.match(ctx, /setTargetsSettled\(false\);\s*if \(!client\)/);
 });
