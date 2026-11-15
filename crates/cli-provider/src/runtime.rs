@@ -376,7 +376,7 @@ async fn restrict_sidecar(_: &std::path::Path) -> Result<(), CliError> {
 }
 
 /// Minimum supported versions for CLI providers. Below these floors, we refuse to spawn.
-const MIN_CLAUDE_VERSION: (u32, u32, u32) = (2, 1, 257);
+use crate::registry::CLAUDE_SECURITY_FLOOR as MIN_CLAUDE_VERSION;
 const MIN_CLAUDE_VERSION_STRIC_MCP: (u32, u32, u32) = (1, 0, 60);
 const MIN_CLAUDE_VERSION_SETTING_SOURCES: (u32, u32, u32) = (1, 0, 122);
 

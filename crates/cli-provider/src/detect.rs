@@ -8,6 +8,26 @@ use tokio::io::AsyncReadExt;
 
 use crate::runtime::CliError;
 
+const ENGINE_ENV: &[&str] = &[
+    "SYSTEMROOT",
+    "WINDIR",
+    "USERPROFILE",
+    "HOME",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "PATHEXT",
+    "COMSPEC",
+    "LANG",
+    "LC_ALL",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+];
+
 #[cfg(windows)]
 #[path = "winjob.rs"]
 mod winjob;
@@ -25,64 +45,7 @@ pub const UNRUNNABLE_CLI_MESSAGE: &str =
 /// Shown when enabling an unrecognized CLI engine id.
 pub const UNKNOWN_CLI_MESSAGE: &str = "Unknown coding CLI provider id.";
 
-/// Fixed catalogue specification for a supported coding CLI engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CliEngineSpec {
-    /// Engine identifier (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`).
-    pub id: &'static str,
-    /// Display name shown in the UI.
-    pub display_name: &'static str,
-    /// Fixed server-side `argv0` executable name (never supplied by clients).
-    pub command: &'static str,
-    /// Whether Praxi can currently enable and run turns on this engine.
-    pub runnable: bool,
-}
-
-/// Single source of truth for CLI engines and whether they are runnable in this version.
-pub const CLI_ENGINES: &[CliEngineSpec] = &[
-    CliEngineSpec {
-        id: "claude",
-        display_name: "Claude Code",
-        command: "claude",
-        runnable: true,
-    },
-    CliEngineSpec {
-        id: "codex",
-        display_name: "Codex",
-        command: "codex",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "cursor",
-        display_name: "Cursor",
-        command: "cursor-agent",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "opencode",
-        display_name: "OpenCode",
-        command: "opencode",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "gemini",
-        display_name: "Gemini CLI",
-        command: "gemini",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "chatgpt-plan",
-        display_name: "ChatGPT plan",
-        command: "codex",
-        runnable: false,
-    },
-];
-
-/// Look up the fixed specification for a coding CLI engine id.
-#[must_use]
-pub fn engine_spec(id: &str) -> Option<&'static CliEngineSpec> {
-    CLI_ENGINES.iter().find(|spec| spec.id == id)
-}
+pub use crate::registry::{CLI_ENGINES, CliEngineSpec, engine_spec};
 
 /// Stable user-readable refusal message when an engine cannot be enabled/run.
 #[must_use]
@@ -142,6 +105,7 @@ pub struct PathEnv {
     pub xdg_data_home: Option<PathBuf>,
     /// Environment variables (for checking non-empty API keys, and test flags).
     pub env_vars: HashMap<String, String>,
+    sealed_fixture: bool,
 }
 
 impl Default for PathEnv {
@@ -174,16 +138,29 @@ impl PathEnv {
         let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
         let xdg_data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from);
 
-        let env_vars = std::env::vars().collect();
+        // Do not even retain Praxi/provider secrets in the detector snapshot.
+        let env_vars = std::env::vars()
+            .map(|(key, value)| (key.to_ascii_uppercase(), value))
+            .filter(|(key, _)| {
+                ENGINE_ENV.contains(&key.as_str())
+                    || matches!(
+                        key.as_str(),
+                        "NPM_CONFIG_PREFIX" | "NVM_SYMLINK" | "PROGRAMFILES"
+                    )
+            })
+            .collect();
 
-        Self {
+        let mut env = Self {
             path_dirs,
             pathext,
             home_dir,
             local_app_data,
             xdg_data_home,
             env_vars,
-        }
+            sealed_fixture: false,
+        };
+        crate::search::augment(&mut env);
+        env
     }
 
     /// Construct a sealed test environment pointing only to `bin_dir`.
@@ -208,6 +185,7 @@ impl PathEnv {
             local_app_data: None,
             xdg_data_home: None,
             env_vars: HashMap::new(),
+            sealed_fixture: true,
         }
     }
 
@@ -262,19 +240,27 @@ pub fn find_candidate(argv0: &str, env: &PathEnv) -> Option<PathBuf> {
     }
 
     for dir in &env.path_dirs {
+        if !crate::search::trusted_directory(dir) {
+            continue;
+        }
         for ext in &env.pathext {
+            if !ext.is_empty()
+                && (!ext.starts_with('.') || !ext[1..].chars().all(|c| c.is_ascii_alphanumeric()))
+            {
+                continue;
+            }
             let candidate = if ext.is_empty() {
                 dir.join(argv0)
             } else {
                 dir.join(format!("{argv0}{ext}"))
             };
-            if candidate.is_file() {
-                return Some(candidate);
+            if candidate.is_file() && crate::search::trusted_candidate(&candidate) {
+                return std::fs::canonicalize(candidate).ok();
             }
         }
         let direct = dir.join(argv0);
-        if direct.is_file() {
-            return Some(direct);
+        if direct.is_file() && crate::search::trusted_candidate(&direct) {
+            return std::fs::canonicalize(direct).ok();
         }
     }
     None
@@ -303,6 +289,9 @@ pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand,
     // reference is decided first: a native `.exe` named by package.json is
     // used, and a `.js` bin stays refused. The `.cmd` is never passed to cmd.exe.
     if let Ok(text) = std::fs::read_to_string(candidate) {
+        if let Some(resolved) = cursor_file_shim(candidate, &text, env) {
+            return Ok(resolved);
+        }
         if let Some(decision) = npm_native_exe(candidate, &text) {
             return decision;
         }
@@ -343,6 +332,53 @@ pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand,
 
     // Refuse unwrapping rather than passing to cmd.exe
     Err(ShimError::Refused)
+}
+
+/// Cursor's documented native Windows launcher. Resolve only its literal
+/// sibling script, with -File, never arbitrary `PowerShell` command text.
+fn cursor_file_shim(candidate: &Path, text: &str, env: &PathEnv) -> Option<ResolvedCommand> {
+    let stem = candidate.file_stem()?.to_str()?;
+    if !matches!(stem, "cursor-agent" | "agent") {
+        return None;
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("-command")
+        || lower.contains("-encodedcommand")
+        || !lower.contains("powershell.exe")
+    {
+        return None;
+    }
+    let script_name = if lower.contains("-file \"%script_dir%\\cursor-agent.ps1\"")
+        || lower.contains("-file \"%~dp0cursor-agent.ps1\"")
+    {
+        "cursor-agent.ps1"
+    } else {
+        return None;
+    };
+    let dir = std::fs::canonicalize(candidate.parent()?).ok()?;
+    let script = std::fs::canonicalize(dir.join(script_name)).ok()?;
+    if script.parent() != Some(dir.as_path()) || !crate::search::trusted_candidate(&script) {
+        return None;
+    }
+    let root = env
+        .env_vars
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("SYSTEMROOT"))?
+        .1;
+    let program = Path::new(root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    if !program.is_absolute() || !program.is_file() || !crate::search::trusted_candidate(&program) {
+        return None;
+    }
+    Some(ResolvedCommand {
+        program,
+        args: vec![
+            "-NoProfile".into(),
+            "-ExecutionPolicy".into(),
+            "Bypass".into(),
+            "-File".into(),
+            script.to_string_lossy().into_owned(),
+        ],
+    })
 }
 
 fn is_js_extension(target: &str) -> bool {
@@ -772,7 +808,12 @@ pub(crate) fn binary_pin(path: &Path) -> Option<BinaryPin> {
 pub(crate) fn apply_sanitized_env(cmd: &mut tokio::process::Command, env: &PathEnv) {
     cmd.env_clear();
 
-    let path_val = std::env::join_paths(&env.path_dirs).unwrap_or_default();
+    let path_val = std::env::join_paths(
+        env.path_dirs
+            .iter()
+            .filter(|dir| crate::search::trusted_directory(dir)),
+    )
+    .unwrap_or_default();
     cmd.env("PATH", path_val);
 
     let safe_passthrough = [
@@ -797,18 +838,26 @@ pub(crate) fn apply_sanitized_env(cmd: &mut tokio::process::Command, env: &PathE
         }
     }
 
-    // Preserve the user's non-secret environment, including CLI home overrides.
-    for (k, v) in &env.env_vars {
-        let upper = k.to_ascii_uppercase();
-        if upper == "PATH"
-            || upper.contains("KEY")
-            || upper.contains("TOKEN")
-            || upper.contains("SECRET")
-            || upper.contains("CREDENTIAL")
-        {
-            continue;
+    if env.sealed_fixture {
+        for (key, value) in &env.env_vars {
+            if key.starts_with("FAKE_") || key.starts_with("PROBE_TREE_") {
+                cmd.env(key, value);
+            }
         }
-        cmd.env(k, v);
+    }
+    // Explicit allowlist: names without KEY/TOKEN can still carry secrets or
+    // inject code (NODE_OPTIONS, BASH_ENV, LD_PRELOAD, proxy URLs, etc.).
+    for key in [
+        "LANG",
+        "LC_ALL",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+    ] {
+        if let Some(value) = env.env_vars.get(key) {
+            cmd.env(key, value);
+        }
     }
 }
 
@@ -1002,23 +1051,24 @@ impl Detector {
         }
     }
 
+    #[must_use]
+    pub fn environment(&self) -> &PathEnv {
+        &self.env
+    }
+
     /// Detect installed, signed-in coding CLIs.
     ///
     /// Caches successful probes for 60 seconds unless `refresh` is true.
     pub async fn detect(&self, refresh: bool) -> Vec<DetectedCli> {
-        if !refresh {
-            let guard = self.cache.lock().await;
-            let valid_cache = guard
-                .as_ref()
-                .filter(|(t, _)| t.elapsed() < Duration::from_secs(60));
-            if let Some((_, cached)) = valid_cache {
-                return cached.clone();
-            }
-        }
-
-        let fresh = Box::pin(self.detect_fresh()).await;
-
         let mut guard = self.cache.lock().await;
+        if !refresh
+            && let Some((_, cached)) = guard
+                .as_ref()
+                .filter(|(t, _)| t.elapsed() < Duration::from_secs(60))
+        {
+            return cached.clone();
+        }
+        let fresh = Box::pin(self.detect_fresh()).await;
         *guard = Some((Instant::now(), fresh.clone()));
         fresh
     }
@@ -1051,12 +1101,9 @@ impl Detector {
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn probe_engine_version(
-        &self,
-        id: &str,
-        display_name: &str,
-        argv0: &str,
-    ) -> (DetectedCli, Option<ResolvedCommand>) {
+    async fn probe_engine_version(&self, id: &str) -> (DetectedCli, Option<ResolvedCommand>) {
+        let spec = engine_spec(id).expect("registered engine");
+        let display_name = spec.display_name;
         let not_found = DetectedCli {
             id: id.to_owned(),
             display_name: display_name.to_owned(),
@@ -1069,7 +1116,9 @@ impl Detector {
             message: None,
         };
 
-        let Some(candidate) = find_candidate(argv0, &self.env) else {
+        let Some(candidate) =
+            crate::search::find_engine(engine_spec(id).expect("registered engine"), &self.env)
+        else {
             return (not_found, None);
         };
 
@@ -1093,7 +1142,13 @@ impl Detector {
             }
         };
 
-        match run_process_probe(&resolved, &["--version"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec(id).expect("registered").version_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((status, stdout, _stderr)) => {
                 if status.success() {
                     let version = parse_version_string(&stdout);
@@ -1176,15 +1231,19 @@ impl Detector {
     }
 
     async fn probe_claude(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("claude", "Claude Code", "claude")
-            .await;
+        let (mut cli, resolved) = self.probe_engine_version("claude").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
         let resolved = resolved.unwrap();
 
-        match run_process_probe(&resolved, &["auth", "status", "--json"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec("claude").unwrap().auth_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((_status, stdout, _stderr)) => {
                 #[derive(Deserialize)]
                 struct ClaudeAuth {
@@ -1239,13 +1298,19 @@ impl Detector {
     }
 
     async fn probe_codex(&self) -> DetectedCli {
-        let (mut cli, resolved) = self.probe_engine_version("codex", "Codex", "codex").await;
+        let (mut cli, resolved) = self.probe_engine_version("codex").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
         let resolved = resolved.unwrap();
 
-        match run_process_probe(&resolved, &["login", "status"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec("codex").unwrap().auth_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((_status, stdout, stderr)) => {
                 let (auth, detail) = classify_codex_status(&stdout, &stderr);
                 cli.auth = auth;
@@ -1275,16 +1340,20 @@ impl Detector {
     }
 
     async fn probe_cursor(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("cursor", "Cursor", "cursor-agent")
-            .await;
+        let (mut cli, resolved) = self.probe_engine_version("cursor").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
         let resolved = resolved.unwrap();
 
         // 1. Try `status --format json`
-        match run_process_probe(&resolved, &["status", "--format", "json"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec("cursor").unwrap().auth_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((status, stdout, _stderr)) => {
                 if let Some(auth_bool) = parse_cursor_json(&stdout) {
                     let auth = if auth_bool {
@@ -1339,22 +1408,8 @@ impl Detector {
     }
 
     async fn probe_opencode(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("opencode", "OpenCode", "opencode")
-            .await;
+        let (mut cli, resolved) = self.probe_engine_version("opencode").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
-            return cli;
-        }
-
-        // Check non-empty OPENCODE_API_KEY in probe env
-        if self
-            .env
-            .env_vars
-            .get("OPENCODE_API_KEY")
-            .is_some_and(|v| !v.trim().is_empty())
-        {
-            cli.auth = AuthState::SignedIn;
-            cli.detail = None;
             return cli;
         }
 
@@ -1391,39 +1446,22 @@ impl Detector {
             }
         }
 
-        cli.auth = if file_found {
-            AuthState::Unknown
-        } else {
-            AuthState::SignedOut
-        };
-        cli.detail = None;
+        cli.auth = AuthState::Unknown;
+        cli.detail = Some(
+            if file_found {
+                "auth_metadata_only"
+            } else {
+                "auth_unverified"
+            }
+            .to_owned(),
+        );
 
         cli
     }
 
     async fn probe_gemini(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("gemini", "Gemini CLI", "gemini")
-            .await;
+        let (mut cli, resolved) = self.probe_engine_version("gemini").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
-            return cli;
-        }
-
-        // Check non-empty GEMINI_API_KEY or GOOGLE_API_KEY in probe env
-        let has_key = self
-            .env
-            .env_vars
-            .get("GEMINI_API_KEY")
-            .is_some_and(|v| !v.trim().is_empty())
-            || self
-                .env
-                .env_vars
-                .get("GOOGLE_API_KEY")
-                .is_some_and(|v| !v.trim().is_empty());
-
-        if has_key {
-            cli.auth = AuthState::SignedIn;
-            cli.detail = None;
             return cli;
         }
 
@@ -1435,12 +1473,15 @@ impl Detector {
             .map(|h| h.join(".gemini").join("oauth_creds.json"))
             .is_some_and(|p| std::fs::metadata(&p).is_ok_and(|m| m.is_file()));
 
-        cli.auth = if exists {
-            AuthState::Unknown
-        } else {
-            AuthState::SignedOut
-        };
-        cli.detail = None;
+        cli.auth = AuthState::Unknown;
+        cli.detail = Some(
+            if exists {
+                "auth_metadata_only"
+            } else {
+                "auth_unverified"
+            }
+            .to_owned(),
+        );
 
         cli
     }
@@ -1673,6 +1714,72 @@ fn parse_cursor_json(stdout: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_batch_launcher_resolves_only_literal_sibling_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = dir
+            .path()
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        std::fs::create_dir_all(shell.parent().unwrap()).unwrap();
+        std::fs::write(&shell, "fixture").unwrap();
+        let shim = dir.path().join("cursor-agent.cmd");
+        std::fs::write(&shim, "fixture").unwrap();
+        let script = dir.path().join("cursor-agent.ps1");
+        std::fs::write(&script, "fixture").unwrap();
+        let env = PathEnv::for_test(dir.path().into())
+            .with_env_var("SYSTEMROOT", dir.path().to_string_lossy());
+        let text = r#"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\cursor-agent.ps1" %*"#;
+        let resolved = cursor_file_shim(&shim, text, &env).unwrap();
+        assert_eq!(resolved.program, shell);
+        assert_eq!(
+            resolved.args.last().unwrap(),
+            &std::fs::canonicalize(script).unwrap().to_string_lossy()
+        );
+        assert!(cursor_file_shim(&shim, &format!("{text} -Command evil"), &env).is_none());
+        assert!(
+            cursor_file_shim(
+                &shim,
+                &text.replace("cursor-agent.ps1", "../evil.ps1"),
+                &env
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn production_environment_is_an_allowlist_not_a_secret_name_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = PathEnv::for_test(dir.path().into());
+        env.sealed_fixture = false;
+        for key in [
+            "PRAXI_PASSWORD",
+            "DATABASE_URL",
+            "NODE_OPTIONS",
+            "BASH_ENV",
+            "LD_PRELOAD",
+            "HTTPS_PROXY",
+            "FAKE_MODE",
+        ] {
+            env.env_vars.insert(key.into(), "secret".into());
+        }
+        env.env_vars.insert("LANG".into(), "C.UTF-8".into());
+        let mut cmd = tokio::process::Command::new("unused");
+        apply_sanitized_env(&mut cmd, &env);
+        let vars: std::collections::HashMap<_, _> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert!(!vars.values().flatten().any(|value| value == "secret"));
+        assert_eq!(vars.get("LANG"), Some(&Some("C.UTF-8".into())));
+    }
+
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Poll};

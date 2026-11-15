@@ -172,23 +172,23 @@ async fn test_opencode_variants() {
     let temp = fixture_dir();
     install_fake(temp.path(), "opencode");
 
-    // Signed in via OPENCODE_API_KEY
+    // An ambient key is not forwarded and cannot prove CLI sign-in.
     let env = PathEnv::for_test(temp.path().to_path_buf())
         .with_env_var("OPENCODE_API_KEY", "some_key_value");
     let detector = Detector::with_env(env);
     let detected = detector.detect(false).await;
     let opencode = detected.iter().find(|c| c.id == "opencode").unwrap();
     assert!(opencode.installed);
-    assert_eq!(opencode.auth, AuthState::SignedIn);
+    assert_eq!(opencode.auth, AuthState::Unknown);
     let debug_str = format!("{opencode:?}");
     assert!(!debug_str.contains("some_key_value"));
 
-    // Signed out when no key and no auth.json
+    // No verified status command: missing files cannot rule out a keychain.
     let env = PathEnv::for_test(temp.path().to_path_buf());
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let opencode = detected.iter().find(|c| c.id == "opencode").unwrap();
-    assert_eq!(opencode.auth, AuthState::SignedOut);
+    assert_eq!(opencode.auth, AuthState::Unknown);
 
     // Unknown when auth.json exists
     let auth_dir = temp.path().join("local_app").join("opencode");
@@ -210,30 +210,30 @@ async fn test_gemini_variants() {
     let temp = fixture_dir();
     install_fake(temp.path(), "gemini");
 
-    // Signed in via GEMINI_API_KEY
+    // Ambient provider keys are not forwarded.
     let env = PathEnv::for_test(temp.path().to_path_buf())
         .with_env_var("GEMINI_API_KEY", "gemini_secret_key");
     let detector = Detector::with_env(env);
     let detected = detector.detect(false).await;
     let gemini = detected.iter().find(|c| c.id == "gemini").unwrap();
     assert!(gemini.installed);
-    assert_eq!(gemini.auth, AuthState::SignedIn);
+    assert_eq!(gemini.auth, AuthState::Unknown);
     assert!(!format!("{gemini:?}").contains("gemini_secret_key"));
 
-    // Signed in via GOOGLE_API_KEY
+    // Ambient provider keys are not forwarded.
     let env = PathEnv::for_test(temp.path().to_path_buf())
         .with_env_var("GOOGLE_API_KEY", "google_secret_key");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let gemini = detected.iter().find(|c| c.id == "gemini").unwrap();
-    assert_eq!(gemini.auth, AuthState::SignedIn);
+    assert_eq!(gemini.auth, AuthState::Unknown);
 
-    // Signed out when no key and no oauth_creds.json
+    // No verified status command: missing files cannot rule out a keychain.
     let env = PathEnv::for_test(temp.path().to_path_buf());
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let gemini = detected.iter().find(|c| c.id == "gemini").unwrap();
-    assert_eq!(gemini.auth, AuthState::SignedOut);
+    assert_eq!(gemini.auth, AuthState::Unknown);
 
     // Unknown when oauth_creds.json exists
     let gemini_dir = temp.path().join("home").join(".gemini");
