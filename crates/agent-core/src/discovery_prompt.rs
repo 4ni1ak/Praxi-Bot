@@ -39,7 +39,7 @@ const FAMILIES: &[(&[&str], &str)] = &[
 const FS_FAMILY: usize = 2;
 /// The one added line about file reach (fixed text, cache-stable).
 const FILES_LINE: &str = "
-File tools take absolute paths and can read anywhere on this computer this bot's file access allows, not only a working folder.";
+File tools take absolute paths and can read anywhere this bot's file access allows, not only a working folder.";
 
 /// Most connected apps (MCP server ids) named in the block.
 const MAX_SERVERS: usize = 8;
