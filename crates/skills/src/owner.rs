@@ -504,5 +504,8 @@ mod version;
 #[cfg(test)]
 mod tests;
 
+#[cfg(all(test, windows))]
+mod windows_tests;
+
 #[cfg(unix)]
 mod snapshot;
