@@ -107,6 +107,7 @@ impl AgentLoop {
                 skills: OnceLock::new(),
                 skill_hints: RwLock::new(None),
                 router: crate::router::Router::default(),
+                decider: RwLock::new(None),
                 directives: Mutex::new(HashMap::new()),
                 approval_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
@@ -229,6 +230,19 @@ impl AgentLoop {
         *self.sh.providers.write() = providers.with_redactor(self.sh.cfg.redactor.clone());
         // The K2 embedder and the K3 classifier come from the providers.
         self.sh.router.reset();
+    }
+
+    /// Install (or remove) the decider: the cheap decision model that plans
+    /// each turn (tool pre-selection, trivial-turn routing, history
+    /// trimming). Turns already started keep the plan they have.
+    pub fn set_decider(&self, decider: Option<Arc<crate::TurnDecider>>) {
+        *self.sh.decider.write() = decider;
+    }
+
+    /// The installed decider, if any.
+    #[must_use]
+    pub fn decider(&self) -> Option<Arc<crate::TurnDecider>> {
+        self.sh.turn_decider()
     }
 
     /// The workspace-wide default permission policy.

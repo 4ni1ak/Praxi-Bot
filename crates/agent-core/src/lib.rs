@@ -16,6 +16,7 @@ mod cli;
 mod config;
 mod control;
 pub mod control_note;
+mod decider;
 mod exec;
 mod history;
 mod memory;
@@ -24,6 +25,8 @@ mod router;
 mod shared;
 mod subagent;
 
+#[cfg(test)]
+mod decider_tests;
 #[cfg(test)]
 mod router_tests;
 #[cfg(test)]
@@ -37,6 +40,10 @@ pub use config::{
     MemoryConfig, ModelPrice, RedactorRefreshFn, SharedRedactor, secret_variants,
 };
 pub use control::{ControlGate, ControlRequest};
+pub use decider::{
+    DECIDER_FILE, DeciderApi, DeciderBackendSettings, DeciderSavings, DeciderSettings, TurnDecider,
+    build_decider,
+};
 pub use permission_engine::Decision as PolicyDecision;
 pub use profile::{
     BotProfile, ModelsConfig, PermissionsConfig, ProfileError, RouterSettings, ToolFilter,

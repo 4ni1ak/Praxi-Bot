@@ -649,6 +649,8 @@ pub(crate) struct Shared {
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.
     pub router: crate::router::Router,
+    /// The decider (cheap decision model) of this loop; `None` = off.
+    pub decider: RwLock<Option<Arc<crate::decider::TurnDecider>>>,
     /// What a schedule-started run does instead of asking the model, until its
     /// first step has been planned (afterwards it lives in the step's input).
     pub directives: Mutex<HashMap<RunId, ScheduleWork>>,
@@ -969,8 +971,9 @@ impl Shared {
             let narrowed = self
                 .surface
                 .hinted_specs(hints, &|s| self.spec_visible(profile, bot, s));
-            // Only the meta-tools left: every hint was unknown or hidden.
-            if narrowed.len() > 3 {
+            // Only the meta-tools left: every hint was unknown or hidden,
+            // unless the turn was planned as meta-only on purpose.
+            if narrowed.len() > 3 || crate::router::is_meta_only(hints) {
                 return narrowed;
             }
         }

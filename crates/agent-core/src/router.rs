@@ -105,9 +105,9 @@ fn fnv(bytes: &[u8]) -> u64 {
 
 /// K3 classifier backed by any [`ChatProvider`](provider_catalog::ChatProvider)
 /// of the registry (the bot profile's `classifier` model role).
-struct ProviderClassifier {
-    providers: Providers,
-    model: String,
+pub(crate) struct ProviderClassifier {
+    pub(crate) providers: Providers,
+    pub(crate) model: String,
 }
 
 #[async_trait]
@@ -151,9 +151,34 @@ pub(crate) fn stored_decision(steps: &[RunStep]) -> Option<Decision> {
     serde_json::from_value(first.input.get("route")?.clone()).ok()
 }
 
-/// Tool / skill hints of the turn, from the stored decision.
+/// Hint list that means "the discovery meta-tools only" (a turn the decider
+/// planned as needing no tools). `hinted_specs` drops meta names from the
+/// hinted part and appends the meta-tools, so this yields exactly those.
+pub(crate) fn meta_only_hint() -> Vec<String> {
+    vec![FIND_TOOL.to_owned()]
+}
+
+/// Whether `hints` is [`meta_only_hint`].
+pub(crate) fn is_meta_only(hints: &[String]) -> bool {
+    hints.len() == 1 && hints[0] == FIND_TOOL
+}
+
+/// Tool / skill hints of the turn: the ladder's stored decision, or else the
+/// decider's stored plan.
 pub(crate) fn route_hints(steps: &[RunStep]) -> Hints {
+    use crate::decider::{ToolPlan, stored_plan};
     match stored_decision(steps).map(|d| d.route) {
+        Some(Route::Agent) | None => match stored_plan(steps).map(|p| p.tools) {
+            Some(ToolPlan::Only(tools)) if !tools.is_empty() => Hints {
+                tools,
+                skills: Vec::new(),
+            },
+            Some(ToolPlan::MetaOnly) => Hints {
+                tools: meta_only_hint(),
+                skills: Vec::new(),
+            },
+            _ => Hints::default(),
+        },
         Some(Route::ToolHint { tools }) => Hints {
             tools,
             skills: Vec::new(),
