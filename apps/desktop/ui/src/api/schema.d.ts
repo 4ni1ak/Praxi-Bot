@@ -68,7 +68,7 @@ export interface paths {
          *     the persisted grants).
          */
         get: operations["get_bot"];
-        /** Replace a bot's name and profile. */
+        /** Replace a bot profile using its loaded `expected_version` (required; missing is 428). */
         put: operations["update_bot"];
         post?: never;
         /** Delete a bot that has no chats or runs. */
@@ -1511,8 +1511,9 @@ export interface components {
             runtime?: null | components["schemas"]["RuntimeConfigDto"];
             /**
              * Format: int64
-             * @description Profile version: starts at 1 and is bumped by every write to the name or
-             *     profile (`PUT` or `PATCH`).  Send it back as `expected_version` to `PATCH`.
+             * @description Bot revision: starts at 1; profile writes and skill assignment changes
+             *     advance it in the write transaction. Send the loaded value back as
+             *     `expected_version` to both PUT and PATCH.
              */
             version: number;
         };
@@ -1523,6 +1524,12 @@ export interface components {
         BotInput: {
             /** @description Profile as a JSON object. */
             config?: unknown;
+            /**
+             * Format: int64
+             * @description Required for PUT: version of the profile being replaced. Missing is 428;
+             *     stale is 409 with the current bot. Not used when creating a bot.
+             */
+            expected_version?: number | null;
             /** @description Display name (defaults to the profile's `[bot].name`). */
             name?: string | null;
             /** @description Profile as TOML text (the contents of a bot profile file). */
@@ -1542,7 +1549,10 @@ export interface components {
             expected_version: number;
             /** @description New display name. */
             name?: string | null;
-            /** @description Profile changes, applied in order. */
+            /**
+             * @description Profile changes, applied in order (at most 128). Values/result use a
+             *     conservative 1 MiB escaped JSON budget; excessive input is 400.
+             */
             ops?: components["schemas"]["BotPatchOp"][];
         };
         /**
@@ -1557,7 +1567,8 @@ export interface components {
             /**
              * @description RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,
              *     `/permissions/categories/fs/level`, `/runtime/computer`.  Object keys
-             *     only: a path through an array or a scalar is refused.
+             *     only: a path through an array or a scalar is refused. At most 32 segments
+             *     and 4096 bytes; resulting profile depth at most 32.
              */
             path: string;
             /** @description The new value (`set` only). */
@@ -3750,7 +3761,23 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotConflictBody"];
+                };
+            };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3818,6 +3845,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BotDto"];
+                };
+            };
+            /** @description patch exceeds depth, size or operation limits */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             404: {

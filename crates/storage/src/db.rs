@@ -1727,7 +1727,7 @@ mod tests {
             assert_eq!(
                 f.st.get_bot_versioned(f.bot.id).unwrap().unwrap().1,
                 expected
-            )
+            );
         };
         assert_revision(1);
         f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["one".into()])

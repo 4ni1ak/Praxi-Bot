@@ -35,12 +35,7 @@ import { ModelPicker } from "../components/ModelPicker";
 import { RunChangesSection } from "../components/RunChangesSection";
 import { ThinkingChain } from "../components/ThinkingChain";
 import { useToast } from "../components/Toast";
-import {
-  botView,
-  configFromDraft,
-  draftFromBot,
-  parseModelRef
-} from "../lib/botProfile";
+import { botView } from "../lib/botProfile";
 import { modelGroups } from "../lib/modelPicker";
 import { type Chain, chainOrderTs, groupRunItems } from "../lib/thinkingChain";
 import { type SendWith, shouldSend } from "../lib/settingsPrefs";
@@ -184,11 +179,11 @@ export function ChatView({
       return;
     }
     try {
-      const draft = draftFromBot(bot);
-      draft.executor = parseModelRef(ref);
-      await client.updateBot(bot.id, {
-        name: bot.name,
-        config: configFromDraft(draft, bot)
+      // One field, conditional on the loaded revision: the legacy full-profile PUT now
+      // requires `expected_version`, and a header switch must not rewrite anything else.
+      await client.patchBot(bot.id, {
+        expected_version: bot.version,
+        ops: [{ op: "set", path: "/models/executor", value: ref }]
       });
       await refreshBots();
       toast.show(t("modelPicker.switched", { model: ref }), "success");

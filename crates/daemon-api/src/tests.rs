@@ -27,6 +27,7 @@ mod doctor;
 mod email;
 mod host;
 mod mcp;
+mod peer_knowledge;
 mod schedules;
 mod skills;
 mod web;

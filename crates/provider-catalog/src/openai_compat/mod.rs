@@ -9,6 +9,7 @@
 //! (honouring `Retry-After`, capped at `max_delay`) before any body is
 //! streamed; timeouts and other errors are not retried.
 
+mod embedding;
 mod request;
 pub(crate) mod sse;
 #[cfg(test)]

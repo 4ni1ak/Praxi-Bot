@@ -331,6 +331,27 @@ async fn peer_roles_treat_patch_like_put() {
 }
 
 #[tokio::test]
+async fn review95_patch_cannot_change_knowledge_settings_for_paired_peers() {
+    let t = setup();
+    let (path, bot) = make_bot(&t).await;
+    let body = json!({"expected_version": bot["version"],
+        "ops": [set("/knowledge/auto_retrieve", json!(true))]});
+    for role in [PeerRole::Desktop, PeerRole::Phone] {
+        assert_eq!(
+            peer(&t, role, Method::PATCH, &path, body.clone()).await,
+            StatusCode::FORBIDDEN,
+            "{role:?}"
+        );
+    }
+    let after = call(&t, Method::GET, &path, None).await.json();
+    assert_eq!(after["version"], bot["version"]);
+    assert!(after["config"].get("knowledge").is_none());
+    // The local owner may.
+    let r = call(&t, Method::PATCH, &path, Some(body)).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn review95_legacy_put_requires_the_loaded_revision_and_never_reverts_a_patch() {
     let t = setup();
     let (path, before) = make_bot(&t).await;

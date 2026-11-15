@@ -253,7 +253,7 @@
         "tags": [
           "bots"
         ],
-        "summary": "Replace a bot's name and profile.",
+        "summary": "Replace a bot profile using its loaded `expected_version` (required; missing is 428).",
         "operationId": "update_bot",
         "parameters": [
           {
@@ -298,7 +298,27 @@
               }
             }
           },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotConflictBody"
+                }
+              }
+            }
+          },
           "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "428": {
             "description": "",
             "content": {
               "application/json": {
@@ -399,6 +419,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BotDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "patch exceeds depth, size or operation limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -4785,7 +4815,7 @@
           "version": {
             "type": "integer",
             "format": "int64",
-            "description": "Profile version: starts at 1 and is bumped by every write to the name or\nprofile (`PUT` or `PATCH`).  Send it back as `expected_version` to `PATCH`."
+            "description": "Bot revision: starts at 1; profile writes and skill assignment changes\nadvance it in the write transaction. Send the loaded value back as\n`expected_version` to both PUT and PATCH."
           }
         }
       },
@@ -4795,6 +4825,14 @@
         "properties": {
           "config": {
             "description": "Profile as a JSON object."
+          },
+          "expected_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Required for PUT: version of the profile being replaced. Missing is 428;\nstale is 409 with the current bot. Not used when creating a bot."
           },
           "name": {
             "type": [
@@ -4847,7 +4885,7 @@
             "items": {
               "$ref": "#/components/schemas/BotPatchOp"
             },
-            "description": "Profile changes, applied in order."
+            "description": "Profile changes, applied in order (at most 128). Values/result use a\nconservative 1 MiB escaped JSON budget; excessive input is 400."
           }
         }
       },
@@ -4873,7 +4911,7 @@
           },
           "path": {
             "type": "string",
-            "description": "RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,\n`/permissions/categories/fs/level`, `/runtime/computer`.  Object keys\nonly: a path through an array or a scalar is refused."
+            "description": "RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,\n`/permissions/categories/fs/level`, `/runtime/computer`.  Object keys\nonly: a path through an array or a scalar is refused. At most 32 segments\nand 4096 bytes; resulting profile depth at most 32."
           },
           "value": {
             "description": "The new value (`set` only)."

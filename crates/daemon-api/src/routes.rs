@@ -317,9 +317,11 @@ pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotD
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn create_bot(
     State(s): State<AppState>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
-    let (name, config) = resolve_bot(input)?;
+    let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -391,7 +393,7 @@ pub(crate) async fn revoke_grant(
     }
 }
 
-/// Replace a bot profile using its loaded expected_version (required; missing is 428).
+/// Replace a bot profile using its loaded `expected_version` (required; missing is 428).
 #[utoipa::path(put, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Bot id")),
     request_body = BotInput,
@@ -401,6 +403,7 @@ pub(crate) async fn revoke_grant(
 pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, BotPatchError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
@@ -408,8 +411,18 @@ pub(crate) async fn update_bot(
         StatusCode::PRECONDITION_REQUIRED, "precondition_required",
         "PUT requires expected_version from the profile being replaced; reload and retry explicitly",
     ))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    let bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
+    crate::peer::protect_knowledge_config(
+        peer.as_ref().map(|peer| &peer.0),
+        bot.config.get("knowledge"),
+        &mut config,
+    )?;
+    revoke_if_embedding_changes(&s, &bot, &config)?;
     let outcome = s.storage().patch_bot(bot.id, expected, |_, stored| {
         if preserve_runtime
             && config.get("runtime").is_none()
@@ -573,9 +586,14 @@ fn apply_patch_ops(config: &mut Value, ops: &[BotPatchOp]) -> Result<(), String>
 pub(crate) async fn patch_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
+    peer: Option<axum::Extension<crate::PeerIdentity>>,
     ApiJson(input): ApiJson<BotPatchInput>,
 ) -> Result<Json<BotDto>, BotPatchError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    let bot = s.bot_of_user(bot.id)?;
     let new_name = input.name.map(|n| n.trim().to_owned());
     if new_name.as_deref() == Some("") {
         return Err(ApiError::bad_request("bot name must not be empty").into());
@@ -596,6 +614,20 @@ pub(crate) async fn patch_bot(
         let depth = op.path.bytes().filter(|b| *b == b'/').count();
         check_profile_bounds(&op.value, depth).map_err(ApiError::bad_request)?;
     }
+    {
+        // Dry run on the profile read under the authority lock: knowledge
+        // settings stay owner-only for paired peers, and an embedding change
+        // revokes grants BEFORE the new profile is committed.
+        let mut next = bot.config.clone();
+        if apply_patch_ops(&mut next, &ops).is_ok() {
+            crate::peer::protect_knowledge_config(
+                peer.as_ref().map(|peer| &peer.0),
+                bot.config.get("knowledge"),
+                &mut next,
+            )?;
+            revoke_if_embedding_changes(&s, &bot, &next)?;
+        }
+    }
     let outcome = s
         .storage()
         .patch_bot(bot.id, input.expected_version, |name, config| {
@@ -608,12 +640,22 @@ pub(crate) async fn patch_bot(
     profile_write_response(&s, outcome)
 }
 
+/// Raw profile edits cannot revive a knowledge grant after disable/restore:
+/// revoke first, so a failed write leaves authority closed.
+fn revoke_if_embedding_changes(s: &AppState, bot: &Bot, next: &Value) -> Result<(), ApiError> {
+    if bot.config.pointer("/knowledge/embedding") != next.pointer("/knowledge/embedding") {
+        crate::knowledge_runtime::revoke_bot_grants(s, bot.id)?;
+    }
+    Ok(())
+}
+
 fn profile_write_response(
     s: &AppState,
     outcome: storage::BotPatch,
 ) -> Result<Json<BotDto>, BotPatchError> {
     match outcome {
         storage::BotPatch::Applied { bot, version } => {
+            crate::knowledge_runtime::invalidate_bot(s, bot.id);
             s.refresh_profile(&bot);
             Ok(Json(bot_dto(bot, version)))
         }
@@ -642,9 +684,14 @@ pub(crate) async fn delete_bot(
     Path(bid): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    let _knowledge_guard = crate::knowledge_runtime::authority_lock(&s, bot.id)
+        .lock_owned()
+        .await;
+    crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
     s.storage()
         .delete_bot(bot.id)
         .map_err(|_| ApiError::conflict("bot still has chats or runs"))?;
+    crate::knowledge_runtime::revoke_bot_grants(&s, bot.id)?;
     // The bot's id must not linger in any MCP server's `bots` list.  Ids are
     // never reused, so a failure here cannot widen access; it is retried by
     // the next edit of the list.
