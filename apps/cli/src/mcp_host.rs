@@ -1736,6 +1736,7 @@ mod tests {
             daemon_api::DaemonConfig::new(TOKEN),
         )
         .unwrap();
+        state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
         state.set_mcp(Arc::clone(&host) as Arc<dyn McpControl>);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1766,6 +1767,7 @@ mod tests {
             let r = http
                 .post(format!("{url}/v1/mcp/servers/remote/auth/start"))
                 .header("authorization", &bearer)
+                .header("x-praxi-owner-key", crate::client::TEST_OWNER_KEY)
                 .send()
                 .await
                 .unwrap();

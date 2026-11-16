@@ -41,6 +41,8 @@ mod skills;
 mod web;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+/// The owner key of the test daemon; `call()` presents it like the desktop app does.
+pub(crate) const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
 
 const PROFILE: &str = r#"
 [bot]
@@ -98,6 +100,7 @@ fn setup_with(prepare: impl FnOnce(&std::path::Path)) -> T {
         LoopConfig::default(),
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     state.set_detector(Arc::new(cli_provider::Detector::with_env(
         cli_provider::PathEnv::for_test(dir.path().join("sealed-cli-path")),
     )));
@@ -130,7 +133,21 @@ async fn send(
 ) -> Resp {
     let mut b = Request::builder().method(method).uri(path);
     let mut has_host = false;
+    // The test daemon's "desktop app": a bearer request carries the owner key
+    // unless the test says it is a token-only caller or sets the header itself.
+    let bearer = extra
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+    let marked = extra.iter().any(|(k, _)| {
+        k.eq_ignore_ascii_case("x-test-token-only") || k.eq_ignore_ascii_case("x-praxi-owner-key")
+    });
+    if bearer && !marked {
+        b = b.header("x-praxi-owner-key", OWNER_KEY);
+    }
     for (k, v) in extra {
+        if k.eq_ignore_ascii_case("x-test-token-only") {
+            continue;
+        }
         has_host |= k.eq_ignore_ascii_case("host");
         b = b.header(*k, *v);
     }
@@ -160,6 +177,19 @@ fn auth() -> (&'static str, String) {
 async fn call(t: &T, method: Method, path: &str, body: Option<Value>) -> Resp {
     let (k, v) = auth();
     send(&t.app, method, path, body, &[(k, v.as_str())]).await
+}
+
+/// A caller that holds only the general API token (a CLI engine, a script).
+async fn call_token_only(t: &T, method: Method, path: &str, body: Option<Value>) -> Resp {
+    let (k, v) = auth();
+    send(
+        &t.app,
+        method,
+        path,
+        body,
+        &[(k, v.as_str()), ("x-test-token-only", "1")],
+    )
+    .await
 }
 
 async fn make_chat(t: &T) -> (String, String) {
@@ -1495,6 +1525,7 @@ fn setup_desktop() -> (T, Arc<crate::fake::FakeDesktop>) {
         latch_wait: Duration::from_secs(30 * 60),
     };
     let state = AppState::new(agent.clone(), storage, cfg).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     (
         T {
             app: router(state.clone()),
@@ -2292,6 +2323,7 @@ async fn usage_carries_cost_only_when_a_price_is_known() {
         config,
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let priced = T {
         app: router(state.clone()),
         state,
@@ -2332,6 +2364,7 @@ async fn usage_cost_uses_the_providers_catalog_prices_and_follows_a_reload() {
         LoopConfig::default(),
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let t = T {
         app: router(state.clone()),
         state,
@@ -2568,6 +2601,7 @@ async fn latched_pause_survives_a_daemon_restart() {
         LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     assert_eq!(state.hub().latched(), Some(crate::dto::ControlMode::Paused));
 }
 

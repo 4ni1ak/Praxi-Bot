@@ -96,6 +96,8 @@ impl Tool for FakeComputer {
     }
 }
 
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
+
 struct Fixture {
     _dir: tempfile::TempDir,
     state: AppState,
@@ -118,6 +120,7 @@ async fn request(
         .uri(path)
         .header("host", "127.0.0.1")
         .header("authorization", format!("Bearer {token}"))
+        .header("x-praxi-owner-key", OWNER_KEY)
         .header("content-type", "application/json")
         .body(body.map_or_else(Body::empty, |v| Body::from(v.to_string())))
         .unwrap();
@@ -175,6 +178,7 @@ impl Fixture {
             config,
         );
         let state = AppState::new(agent, storage, DaemonConfig::new(OWNER)).unwrap();
+        state.set_owner_key(OWNER_KEY.into());
         state.set_secret_store(store.clone());
         let app = crate::router(state.clone());
         let (status, body) = request(

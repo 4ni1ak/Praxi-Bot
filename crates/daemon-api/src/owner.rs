@@ -18,7 +18,12 @@
 //! (the same standing as the shell never-list); it is a boundary against bots
 //! without shell, CLI engines, the MCP mode and any holder of only the token.
 
-use axum::http::HeaderMap;
+use axum::{
+    extract::{Request, State},
+    http::HeaderMap,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 
 use crate::{ApiError, AppState};
 
@@ -59,5 +64,237 @@ impl AppState {
                 "this needs the owner key: start Praxi from the desktop app, or run it on the host with its owner key",
             ))
         }
+    }
+}
+
+/// `(method, pattern)` of every route that changes authority, secrets,
+/// providers or keys, installs or runs software, pairs devices, takes over
+/// control or DECIDES an approval (card 262). One table, one middleware
+/// ([`owner_gate`]): a holder of only the general API token (a CLI engine, an
+/// MCP client, a script) is refused with `owner_key_required`.
+///
+/// Pattern segments: `{}` is one segment, a trailing `*` is the rest of the
+/// path. Paired peers never reach the local router: their roles are enforced
+/// by the peer router (`peer.rs`), which this table does not change.
+pub const OWNER_ROUTES: &[(&str, &str)] = &[
+    // approvals and questions: a token must not approve its own tool calls
+    ("POST", "/v1/approvals/{}"),
+    ("POST", "/v1/questions/{}"),
+    ("POST", "/v1/control/{}"),
+    ("POST", "/v1/control/takeover"),
+    ("POST", "/v1/control/override"),
+    ("POST", "/v1/control/recover"),
+    ("POST", "/v1/control/release"),
+    ("PUT", "/v1/view/privileges/{}"),
+    // policy, bot authority
+    ("PUT", "/v1/policy"),
+    ("PUT", "/v1/bots/{}/files"),
+    ("PUT", "/v1/bots/{}/engine"),
+    ("POST", "/v1/bots/{}/engine/kill"),
+    ("DELETE", "/v1/bots/{}/grants"),
+    ("PUT", "/v1/bots/{}/skills"),
+    ("POST", "/v1/bots/{}/knowledge/sources"),
+    ("PUT", "/v1/bots/{}/knowledge/sources/{}"),
+    ("DELETE", "/v1/bots/{}/knowledge/sources/{}"),
+    ("POST", "/v1/bots/{}/knowledge/sources/{}/reindex"),
+    ("POST", "/v1/bots/{}/knowledge/sources/{}/embed"),
+    ("PUT", "/v1/bots/{}/knowledge/settings"),
+    ("POST", "/v1/bots/{}/knowledge/embedding-approvals"),
+    (
+        "POST",
+        "/v1/bots/{}/knowledge/embedding-approvals/{}/confirm",
+    ),
+    ("DELETE", "/v1/bots/{}/knowledge/embedding-grants"),
+    ("POST", "/v1/bots/{}/knowledge/embedding-cooldown/reset"),
+    ("POST", "/v1/skills"),
+    ("POST", "/v1/skills/import"),
+    ("PUT", "/v1/skills/{}"),
+    ("DELETE", "/v1/skills/{}"),
+    ("POST", "/v1/schedules"),
+    ("PUT", "/v1/schedules/{}"),
+    ("DELETE", "/v1/schedules/{}"),
+    ("POST", "/v1/schedules/{}/run-now"),
+    ("POST", "/v1/channels/telegram/pair-code"),
+    // providers, tool servers, installs
+    ("POST", "/v1/providers/cli/install"),
+    ("POST", "/v1/providers/cli/install/{}/decision"),
+    ("POST", "/v1/providers/cli/enable"),
+    ("POST", "/v1/providers/cli/disable"),
+    ("POST", "/v1/providers/cli/{}/models/refresh"),
+    ("POST", "/v1/providers/reload"),
+    ("POST", "/v1/components/{}/install"),
+    ("POST", "/v1/mcp/servers"),
+    ("PUT", "/v1/mcp/servers/{}"),
+    ("DELETE", "/v1/mcp/servers/{}"),
+    ("POST", "/v1/mcp/servers/{}/reconnect"),
+    ("POST", "/v1/mcp/servers/{}/auth/start"),
+    ("POST", "/v1/mcp/servers/{}/auth/callback"),
+    ("POST", "/v1/mcp/servers/{}/auth/cancel"),
+    ("POST", "/v1/mcp/servers/{}/auth/logout"),
+    ("POST", "/v1/mcp-server/tokens"),
+    ("DELETE", "/v1/mcp-server/tokens/{}"),
+    ("POST", "/v1/doctor/repair/{}"),
+    // secrets and credentials
+    ("POST", "/v1/secrets/*"),
+    ("POST", "/v1/fill-secrets"),
+    ("PUT", "/v1/fill-secrets/*"),
+    ("DELETE", "/v1/fill-secrets/*"),
+    ("POST", "/v1/fill-grants"),
+    ("DELETE", "/v1/fill-grants/{}"),
+    ("POST", "/v1/email/accounts"),
+    ("PUT", "/v1/email/accounts/{}"),
+    ("DELETE", "/v1/email/accounts/{}"),
+    ("PUT", "/v1/web/search"),
+    ("PUT", "/v1/composio/key"),
+    ("DELETE", "/v1/composio/key"),
+    ("POST", "/v1/composio/login"),
+    ("DELETE", "/v1/composio/apps/{}"),
+    ("POST", "/v1/composio/apps/{}/connect"),
+    ("PUT", "/v1/composio/apps/{}/enabled"),
+    // pairing, hosts, host lifecycle
+    ("POST", "/v1/hosts/pair"),
+    ("DELETE", "/v1/hosts/{}"),
+    ("POST", "/v1/hosts/{}/connect"),
+    ("DELETE", "/v1/hosts/{}/connect"),
+    ("POST", "/v1/hosts/{}/copy-setup"),
+    ("PUT", "/v1/hosts/{}/computer-access"),
+    ("GET", "/v1/hosts/computer-requests"),
+    ("POST", "/v1/hosts/computer-requests/{}"),
+    ("POST", "/v1/hosts/setup"),
+    ("POST", "/v1/hosts/setup/{}/host-key"),
+    ("POST", "/v1/hosts/setup/{}/cancel"),
+    ("POST", "/v1/host/invite"),
+    ("DELETE", "/v1/host/devices/{}"),
+    ("PUT", "/v1/host/devices/{}/admin"),
+    ("POST", "/v1/host/standby"),
+    ("POST", "/v1/host/activate"),
+    ("POST", "/v1/host/update"),
+];
+
+/// Mutating routes an ordinary client may call with the general token: chat,
+/// runs, live-view sessions, bot create/edit/delete (execution authority inside
+/// a profile is checked by the handlers, see [`execution_changed`]), previews and
+/// connection tests, the peer-only `/v1/admin/*` (refused without a paired
+/// identity) and the routes with their own credential (webhook HMAC, scoped MCP
+/// token). A test requires every documented mutating route to be in one of the
+/// two tables, so a new route cannot ship unclassified.
+pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
+    ("POST", "/v1/bots"),
+    ("PUT", "/v1/bots/{}"),
+    ("PATCH", "/v1/bots/{}"),
+    ("DELETE", "/v1/bots/{}"),
+    ("POST", "/v1/chats"),
+    ("POST", "/v1/chats/{}/messages"),
+    ("POST", "/v1/runs/stop"),
+    ("POST", "/v1/runs/{}/cancel"),
+    ("POST", "/v1/runs/{}/resume"),
+    ("POST", "/v1/runs/{}/remember"),
+    ("POST", "/v1/runs/{}/changes/{}/restore"),
+    ("PUT", "/v1/control/state"),
+    ("POST", "/v1/schedules/parse"),
+    ("POST", "/v1/view/sessions"),
+    ("PATCH", "/v1/view/sessions/{}"),
+    ("DELETE", "/v1/view/sessions/{}"),
+    ("PUT", "/v1/view/sessions/{}/heartbeat"),
+    ("POST", "/v1/view/sessions/{}/input"),
+    ("POST", "/v1/email/accounts/{}/test"),
+    ("POST", "/v1/email/test"),
+    ("POST", "/v1/web/search/test"),
+    ("POST", "/v1/webhooks/{}"),
+    ("POST", "/v1/mcp-server/call"),
+    ("PUT", "/v1/admin/default-provider"),
+    ("PUT", "/v1/admin/home"),
+    ("PUT", "/v1/admin/providers/{}"),
+    ("DELETE", "/v1/admin/providers/{}"),
+];
+
+fn pattern_matches(pattern: &str, path: &str) -> bool {
+    let mut want = pattern.split('/');
+    let mut have = path.split('/');
+    loop {
+        match (want.next(), have.next()) {
+            (Some("*"), Some(rest)) => return !rest.is_empty(),
+            (Some("{}"), Some(seg)) if !seg.is_empty() => {}
+            (Some(w), Some(h)) if w == h => {}
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+}
+
+fn in_table(table: &[(&str, &str)], method: &str, path: &str) -> bool {
+    let path = path
+        .strip_suffix('/')
+        .filter(|p| !p.is_empty())
+        .unwrap_or(path);
+    table
+        .iter()
+        .any(|(m, pattern)| m.eq_ignore_ascii_case(method) && pattern_matches(pattern, path))
+}
+
+/// Whether `method path` needs the owner key.
+#[must_use]
+pub fn is_owner_route(method: &str, path: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(path)
+        .decode_utf8()
+        .map_or_else(|_| path.to_owned(), std::borrow::Cow::into_owned);
+    let mut collapsed = String::with_capacity(decoded.len());
+    for ch in decoded.chars() {
+        if !(ch == '/' && collapsed.ends_with('/')) {
+            collapsed.push(ch);
+        }
+    }
+    in_table(OWNER_ROUTES, method, path) || in_table(OWNER_ROUTES, method, &collapsed)
+}
+
+/// Whether the table lists `method path` as an ordinary token route.
+#[must_use]
+pub fn is_token_ok_route(method: &str, path: &str) -> bool {
+    in_table(TOKEN_OK_ROUTES, method, path)
+}
+
+/// The one guard of every owner route: runs after bearer authentication on the
+/// local router, so a request that reaches a handler of an owner route has
+/// presented the owner key. The handlers do not repeat the check.
+pub(crate) async fn owner_gate(State(s): State<AppState>, req: Request, next: Next) -> Response {
+    if req.extensions().get::<crate::PeerIdentity>().is_none()
+        && is_owner_route(req.method().as_str(), req.uri().path())
+        && let Err(e) = s.require_owner(req.headers())
+    {
+        return e.into_response();
+    }
+    next.run(req).await
+}
+
+/// Whether a bot profile edit changes what the bot may do without asking: the
+/// permission preset and levels, the tool lists, file access or a switch to an
+/// external CLI engine. Such an edit needs the owner key even though plain
+/// profile edits (name, persona, model choice) do not.
+#[must_use]
+pub fn execution_changed(current: Option<&serde_json::Value>, next: &serde_json::Value) -> bool {
+    let cli_executor = |v: &serde_json::Value| {
+        v.pointer("/models/executor")
+            .and_then(serde_json::Value::as_str)
+            .filter(|e| e.starts_with("cli:"))
+            .map(str::to_owned)
+    };
+    ["permissions", "tools", "files"]
+        .iter()
+        .any(|k| next.get(k).is_some() && next.get(k) != current.and_then(|c| c.get(k)))
+        || cli_executor(next) != current.and_then(cli_executor)
+}
+
+impl AppState {
+    /// The owner key of this daemon, for its own in-process clients (the
+    /// Telegram channel decides approvals for the owner's chat). Never logged.
+    #[must_use]
+    pub fn owner_key(&self) -> Option<String> {
+        self.0.owner_key.get().cloned()
+    }
+
+    /// Whether `headers` carry the owner key (for handler-level checks of
+    /// edits that are only sometimes owner-only).
+    pub(crate) fn has_owner(&self, headers: &HeaderMap) -> bool {
+        self.owner_ok(headers)
     }
 }

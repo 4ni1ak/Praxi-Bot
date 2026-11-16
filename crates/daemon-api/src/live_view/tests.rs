@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
 const PIXEL_SECRET: &[u8] = b"pixel-password-OTP-never-persist-4815162342";
 const TEXT_SECRET: &str = "human-input-secret-never-persist-7654321";
 #[derive(Default)]
@@ -208,6 +209,7 @@ impl Test {
             agent_core::LoopConfig::default(),
         );
         let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(OWNER_KEY.into());
         let target = Arc::new(Target::new());
         state.live_view().registry.register(target.clone());
         Self {
@@ -228,6 +230,7 @@ impl Test {
             agent_core::LoopConfig::default(),
         );
         let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(OWNER_KEY.into());
         state.live_view().registry.register(self.target.clone());
         Self {
             state,
@@ -265,6 +268,7 @@ impl Test {
             .uri(path)
             .header("host", "localhost")
             .header("authorization", format!("Bearer {TOKEN}"))
+            .header("x-praxi-owner-key", OWNER_KEY)
             .header("accept", MEDIA_TYPE)
             .header("content-type", "application/json")
             .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
@@ -4424,6 +4428,7 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
         agent_core::LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     state.live_view().registry.register(desktop_target.clone());
     let t = Test {
         state,

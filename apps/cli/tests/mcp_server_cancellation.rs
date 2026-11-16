@@ -92,6 +92,7 @@ impl Fixture {
             DaemonConfig::new(OWNER),
         )
         .unwrap();
+        state.set_owner_key("ownerkey0123456789abcdef0123456789abcdef0123456789abcdef".into());
         let store = EncryptedFileStore::new(dir.path().join("secrets.enc"), PASSPHRASE).with_kdf(
             KdfParams {
                 m_cost: 8,
@@ -170,6 +171,10 @@ async fn owner_post(base: &str, path: &str, body: Value) -> Value {
         .unwrap()
         .post(format!("{base}{path}"))
         .bearer_auth(OWNER)
+        .header(
+            "x-praxi-owner-key",
+            "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
         .json(&body)
         .send()
         .await

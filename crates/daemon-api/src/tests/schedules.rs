@@ -42,6 +42,7 @@ fn setup_with(policy: Policy) -> T {
         },
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(crate::tests::OWNER_KEY.into());
     T {
         app: router(state.clone()),
         state,

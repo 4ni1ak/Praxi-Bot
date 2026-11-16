@@ -4,7 +4,7 @@ use crate::host::{HostConfig, HostMode, HostState};
 use peer_network::{PairTicket, PeerConfig, PeerNetwork, RelayConfig, Role};
 
 const KEY: &str = "sk-SECRET-VALUE-0123456789";
-const OWNER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const OWNER: &str = super::OWNER_KEY;
 
 struct Rig {
     t: T,
@@ -249,7 +249,7 @@ async fn copy_setup_is_local_owner_only_and_sends_only_ticked_keys() {
     assert!(!crate::mcp_server::scoped_path_allowed(&Method::POST, url));
     assert!(rec.0.lock().is_empty());
     // The general API token alone cannot start an export.
-    let r = call(&t, Method::POST, url, Some(json!({"providers":["alpha"]}))).await;
+    let r = call_token_only(&t, Method::POST, url, Some(json!({"providers":["alpha"]}))).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     assert_eq!(r.json()["error"]["code"], "owner_key_required");
     assert!(rec.0.lock().is_empty());
@@ -284,7 +284,7 @@ async fn copy_setup_is_local_owner_only_and_sends_only_ticked_keys() {
 async fn the_general_token_cannot_issue_admin_invites_or_grants() {
     let r = rig().await;
     let (k, v) = auth();
-    let bearer = [(k, v.as_str())];
+    let bearer = [(k, v.as_str()), ("x-test-token-only", "1")];
     let owner = [(k, v.as_str()), ("x-praxi-owner-key", OWNER)];
     let grant = format!("/v1/host/devices/{}/admin", r.legacy_key);
     let body = || Some(json!({"enabled": true}));
@@ -309,13 +309,22 @@ async fn the_general_token_cannot_issue_admin_invites_or_grants() {
         denied.status,
         String::from_utf8_lossy(&denied.body)
     );
-    // An ordinary invite is still fine with the token alone.
-    let plain = send(
+    // Since card 262 every invite (pairing a device) needs the owner key.
+    let plain_denied = send(
         &r.t.app,
         Method::POST,
         "/v1/host/invite",
         Some(json!({"role": "desktop"})),
         &bearer,
+    )
+    .await;
+    assert_eq!(plain_denied.status, StatusCode::FORBIDDEN);
+    let plain = send(
+        &r.t.app,
+        Method::POST,
+        "/v1/host/invite",
+        Some(json!({"role": "desktop"})),
+        &owner,
     )
     .await;
     assert_eq!(plain.status, StatusCode::OK);

@@ -907,7 +907,9 @@ fn make_client(cli: &Cli, data_dir: &std::path::Path) -> Result<Client> {
         .url
         .clone()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", cli.port));
-    Ok(Client::new(&base, token))
+    // The owner key of this data dir: present when the daemon is a terminal
+    // `bot serve` or a host, absent for a daemon the app started (memory only).
+    Ok(Client::new(&base, token).with_owner_key(daemon_api::read_owner_key(data_dir).ok()))
 }
 
 fn current_thread_runtime() -> Result<tokio::runtime::Runtime> {
