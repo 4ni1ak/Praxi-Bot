@@ -422,6 +422,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Components local apps may need and whether each is installed. */
+        get: operations["list_components"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/components/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One component (poll this while an install runs). */
+        get: operations["get_component"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/components/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the official installer for a component (the client confirmed the
+         *     command first).  Returns at once; poll `GET /v1/components/{id}`.
+         */
+        post: operations["install_component"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/composio": {
         parameters: {
             query?: never;
@@ -536,6 +590,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/composio/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** State of the browser login (poll while it is `pending`). */
+        get: operations["composio_login_status"];
+        put?: never;
+        /**
+         * Start the one-time browser login: Composio makes a session, the caller
+         *     opens `login_url` in the system browser and polls `GET /v1/composio/login`.
+         *     No key is typed or copied.
+         */
+        post: operations["composio_login_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/composio/toolkits": {
         parameters: {
             query?: never;
@@ -544,8 +620,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Composio's toolkit catalog (searchable, paged, cached), with this
-         *     installation's state per toolkit.
+         * Composio's toolkit catalog (searchable, paged), with this installation's
+         *     state per toolkit.  Served from the local cache and the bundled popular
+         *     apps: it never waits for the network, a stale cache is refreshed in the
+         *     background.
          */
         get: operations["composio_catalog"];
         put?: never;
@@ -2695,6 +2773,35 @@ export interface components {
         };
         /** @enum {string} */
         Codec: "jpeg" | "webp";
+        /** @description One component. */
+        ComponentDto: {
+            /** @description The app can run an official installer here. */
+            can_install: boolean;
+            /** @description The exact command that would run (display only; empty when not possible). */
+            command: string;
+            /** @description Why the last install failed: `exit`, `not_detected`, `timeout` or `unavailable`. */
+            error?: string | null;
+            /** @description Id. */
+            id: components["schemas"]["ComponentId"];
+            /** @description The launcher is found (checked now, without restarting the app). */
+            installed: boolean;
+            /** @description What to run by hand when `can_install` is false. */
+            manual_command: string;
+            /** @description Where it comes from (shown in the confirm dialog). */
+            source: string;
+            /** @description Install progress. */
+            state: components["schemas"]["ComponentInstallState"];
+        };
+        /**
+         * @description A component Praxi can install (fixed list).
+         * @enum {string}
+         */
+        ComponentId: "uv" | "node";
+        /**
+         * @description Progress of an install.
+         * @enum {string}
+         */
+        ComponentInstallState: "idle" | "installing" | "done" | "failed";
         /** @description A connected (or connecting) app. */
         ComposioAppDto: {
             /** @description Bots allowed; `null` = all. */
@@ -2717,18 +2824,30 @@ export interface components {
         };
         /** @description `GET /v1/composio/toolkits`. */
         ComposioCatalogDto: {
-            /** @description The page, in Composio's popularity order. */
+            /**
+             * @description Why the last refresh failed: `offline`, `unauthorized`,
+             *     `rate_limited` or `failed`.  The list above is still usable.
+             */
+            error?: string | null;
+            /** @description The page: popular apps first, then Composio's popularity order. */
             items: components["schemas"]["ComposioToolkitDto"][];
             /** @description Cursor of the next page. */
             next_cursor?: string | null;
-            /** @description Pinned popular row (first page without filters only; empty otherwise). */
-            popular: components["schemas"]["ComposioToolkitDto"][];
+            /** @description A background refresh is running. */
+            refreshing: boolean;
+            /** @description `bundled` (only the apps shipped with Praxi so far) or `cache`. */
+            source: string;
+            /**
+             * Format: int64
+             * @description Unix seconds of the disk cache, when there is one.
+             */
+            updated_at?: number | null;
         };
         /**
          * @description Connection state of an app.
          * @enum {string}
          */
-        ComposioConnState: "not_connected" | "pending" | "active" | "expired";
+        ComposioConnState: "not_connected" | "pending" | "active" | "expired" | "failed";
         /** @description `POST /v1/composio/apps/{slug}/connect`: the one-time consent link. */
         ComposioConnectDto: {
             /** @description When the link expires (ISO timestamp, may be empty). */
@@ -2754,12 +2873,36 @@ export interface components {
             /** @description The Composio project API key. */
             value: string;
         };
+        /**
+         * @description How Praxi is linked to Composio.
+         * @enum {string}
+         */
+        ComposioLinkMode: "none" | "login" | "project_key";
+        /** @description `POST /v1/composio/login`: the one-time browser login. */
+        ComposioLoginDto: {
+            /** @description When the login expires (ISO timestamp, may be empty). */
+            expires_at: string;
+            /** @description https URL on Composio's dashboard; open it in the system browser. */
+            login_url: string;
+        };
+        /**
+         * @description State of the one-time browser login.
+         * @enum {string}
+         */
+        ComposioLoginState: "idle" | "pending" | "linked" | "failed";
+        /** @description `GET /v1/composio/login`. */
+        ComposioLoginStatusDto: {
+            /** @description State of the login. */
+            state: components["schemas"]["ComposioLoginState"];
+        };
         /** @description `GET /v1/composio`. */
         ComposioStatusDto: {
-            /** @description A key is stored (the key itself is never returned). */
+            /** @description Praxi is linked to Composio (the credential itself is never returned). */
             configured: boolean;
-            /** @description Where the owner creates the key (https, on Composio's domain). */
+            /** @description Where an owner who wants their own project key creates it (advanced). */
             key_setup_url: string;
+            /** @description How it is linked. */
+            mode: components["schemas"]["ComposioLinkMode"];
         };
         /** @description One toolkit of the Composio catalog. */
         ComposioToolkitDto: {
@@ -2769,6 +2912,13 @@ export interface components {
             description: string;
             /** @description The owner enabled it. */
             enabled: boolean;
+            /**
+             * @description Chip group: `communication`, `social`, `productivity`, `dev`,
+             *     `finance`, `business` or `other`.
+             */
+            group: string;
+            /** @description Logo URL (https), when Composio gives one. */
+            logo?: string | null;
             /** @description Display name. */
             name: string;
             /**
@@ -6513,6 +6663,93 @@ export interface operations {
             };
         };
     };
+    list_components: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"][];
+                };
+            };
+        };
+    };
+    get_component: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `uv` or `node` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    install_component: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `uv` or `node` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     composio_status: {
         parameters: {
             query?: never;
@@ -6752,13 +6989,60 @@ export interface operations {
             };
         };
     };
+    composio_login_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioLoginStatusDto"];
+                };
+            };
+        };
+    };
+    composio_login_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioLoginDto"];
+                };
+            };
+            /** @description Composio unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     composio_catalog: {
         parameters: {
             query?: {
                 /** @description Text matched against name, slug and description. */
                 search?: string;
-                /** @description Category. */
-                category?: string;
+                /** @description Chip group (`all` or empty = every group). */
+                group?: string;
                 /** @description Cursor from the previous page. */
                 cursor?: string;
                 /** @description Page size, 1 to 100 (default 48). */
@@ -6776,15 +7060,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComposioCatalogDto"];
-                };
-            };
-            /** @description no key yet */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             502: {

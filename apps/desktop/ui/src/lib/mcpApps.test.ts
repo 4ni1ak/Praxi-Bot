@@ -45,7 +45,7 @@ const entry = (id: string): McpCatalogEntry => {
 };
 
 test("catalog fixture carries the ~20 curated servers", () => {
-  assert.equal(MOCK_MCP_CATALOG.length, 21);
+  assert.equal(MOCK_MCP_CATALOG.length, 24);
   for (const id of ["filesystem", "github", "slack", "context7", "home-assistant"]) {
     entry(id);
   }
@@ -79,9 +79,8 @@ test("configFromCatalog references secrets by name, never by value", () => {
   const linear = configFromCatalog(entry("linear"));
   assert.equal(linear.transport, "http");
   assert.equal(linear.url, "https://mcp.linear.app/mcp");
-  assert.deepEqual(linear.secret_headers, {
-    Authorization: "mcp_linear_linear_api_key"
-  });
+  // Linear signs in with OAuth now: no secret to reference.
+  assert.equal(linear.secret_headers, undefined);
 
   const fs = configFromCatalog(entry("filesystem"));
   assert.equal(fs.secret_env, undefined);

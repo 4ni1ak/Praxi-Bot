@@ -1230,8 +1230,8 @@
       "stderr": "What the server printed",
       "noStderr": "The server printed nothing before it stopped.",
       "hint": {
-        "runtime_node": "Node.js was not found on PATH. Install the LTS version from https://nodejs.org (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
-        "runtime_uv": "uv was not found on PATH. Install it (Windows: winget install --id=astral-sh.uv -e, or https://docs.astral.sh/uv/) or add its folder to PATH, restart Praxi-Bot, then press Reconnect.",
+        "runtime_node": "Node.js was not found on PATH. Install it from the button above, or from https://nodejs.org, then press Reconnect.",
+        "runtime_uv": "uv was not found on PATH. Install it from the button above, or from https://docs.astral.sh/uv/, then press Reconnect.",
         "runtime_pipx": "pipx was not found on PATH. Install it from https://pipx.pypa.io (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
         "runtime_docker": "The docker command was not found on PATH. Install Docker (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
         "runtime_other": "The program that starts this server was not found on PATH. Install it, add its folder to PATH or give its full path in the server settings, restart Praxi-Bot, then press Reconnect.",
@@ -1240,7 +1240,8 @@
         "needs_folder": "Choose the one folder this app may read and write, then press Save and connect.",
         "timeout": "The server did not answer in time. The first start can be slow while packages download; press Reconnect to try again.",
         "config": "The server settings or a required secret are missing or invalid. Fix them and press Reconnect."
-      }
+      },
+      "generic": "This app could not start. Open the details to see why."
     },
     "folder": {
       "label": "Folder the bot may read and write",
@@ -1287,41 +1288,93 @@
     "advanced": {
       "title": "Custom MCP server",
       "tokenCards": "Services with an access token",
-      "tokenHint": "These ask for a personal token you create yourself. Most services connect without one through Composio on the main screen."
+      "tokenHint": "These ask for a personal token you create yourself. Most services connect without one through Composio on the main screen.",
+      "localTitle": "Local developer servers"
     },
     "composio": {
       "title": "Composio",
-      "via": "via Composio",
-      "setupTitle": "Connect apps without tokens",
-      "setupBody": "Composio signs you in to Instagram, LinkedIn, Gmail and hundreds more. Create a free project API key once, paste it here, and you never enter another token.",
       "getKey": "Open the Composio key page",
       "keyLabel": "Composio API key",
       "keyHint": "Checked immediately, then kept in your system keychain. It is never shown again.",
       "keySave": "Save key",
-      "dataNotice": "Inputs and results of these apps pass through Composio's servers and are logged there by default. Praxi asks you before every action.",
-      "dataNoticeSensitive": "Your mail, documents or messages from this app pass through Composio's servers and are logged there by default. Praxi asks you before every action.",
-      "continue": "Continue to sign-in",
-      "nativeNote": "Praxi also connects this one directly",
-      "popular": "Popular",
-      "catalog": "All apps",
       "connectedSection": "Connected",
       "loadMore": "Show more",
       "loading": "Loading apps…",
       "noResults": "No matching apps.",
-      "waiting": "Waiting for sign-in in your browser…",
+      "waiting": "Waiting for you in the browser…",
       "state": {
         "not_connected": "Not connected",
         "pending": "Signing in",
         "active": "Connected",
-        "expired": "Sign-in expired"
+        "expired": "Sign-in expired",
+        "failed": "Not finished"
       },
       "enable": "Turn on",
       "disable": "Turn off",
-      "removeKey": "Remove key",
-      "removeKeyConfirm": "Remove the key",
       "openFailed": "The sign-in link was not opened because it is not a Composio link.",
       "disconnectedLocal": "{{name}} was removed here. Remove it in the Composio dashboard too.",
-      "retryOpen": "Retry opening sign-in"
+      "link": {
+        "title": "Link Composio (free) — one time",
+        "body": "A free Composio account connects your apps. Press the button, sign in in your browser and come back. There is nothing to copy.",
+        "open": "Open Composio",
+        "waiting": "Waiting for you in the browser…",
+        "failed": "The sign-in did not finish. Try again.",
+        "privacy": "Inputs and results pass through Composio's servers. Praxi asks you before every action."
+      },
+      "advanced": {
+        "title": "Composio",
+        "mode": {
+          "none": "Not linked yet. The first Connect on an app asks you to sign in once.",
+          "login": "Linked through your Composio sign-in.",
+          "project_key": "Using your own Composio project key."
+        },
+        "signOut": "Sign out of Composio",
+        "ownKey": "Use my own project key"
+      },
+      "retry": "Try again",
+      "failedHint": "The sign-in did not finish. Try again.",
+      "expiredHint": "The sign-in ran out. Reconnect to continue.",
+      "loadFailed": "The app list could not be loaded.",
+      "catalogError": {
+        "offline": "No connection: showing the saved app list.",
+        "unauthorized": "Composio sign-in ran out: showing the saved app list.",
+        "rate_limited": "Composio is busy: showing the saved app list.",
+        "failed": "The app list could not be refreshed: showing the saved one."
+      }
+    },
+    "group": {
+      "label": "Categories",
+      "all": "All",
+      "communication": "Communication",
+      "social": "Social",
+      "productivity": "Productivity",
+      "dev": "Dev",
+      "finance": "Finance",
+      "business": "Business",
+      "other": "Other"
+    },
+    "component": {
+      "name": {
+        "uv": "uv",
+        "node": "Node.js"
+      },
+      "needs": {
+        "uv": "This app needs uv, a small Python tool runner.",
+        "node": "This app needs Node.js, which runs JavaScript tools."
+      },
+      "install": "Install {{name}}",
+      "confirm": "Praxi will run this command to install {{name}}:",
+      "source": "Source: {{source}}",
+      "run": "Install",
+      "installing": "Installing {{name}}… this can take a minute.",
+      "manual": "Installing it from here is not possible on this computer. The official page shows how:",
+      "openPage": "Open the official page",
+      "failed": {
+        "exit": "The installer did not finish. Try again, or install it yourself from the official page.",
+        "not_detected": "The installer finished but the program was not found yet. Press Reconnect, or restart Praxi-Bot once.",
+        "timeout": "The installer took too long and was stopped.",
+        "unavailable": "The installer could not be started."
+      }
     }
   },
   "help": {
@@ -1993,7 +2046,11 @@
     "edit": "Edit bot",
     "runsOnHost": "Runs on {{name}} (host)",
     "runsOnLocal": "Runs on this computer",
-    "tabs": { "label": "Panel sections", "activity": "Activity", "library": "Library" },
+    "tabs": {
+      "label": "Panel sections",
+      "activity": "Activity",
+      "library": "Library"
+    },
     "subagents": {
       "title": "Sub-agents",
       "noTask": "Sub-agent",
@@ -2002,10 +2059,28 @@
       "open": "Open details: {{task}}",
       "stop": "Stop",
       "stopLabel": "Stop sub-agent: {{task}}",
-      "state": { "running": "Running", "waiting": "Needs approval", "done": "Done", "failed": "Failed", "stopped": "Stopped", "paused": "Paused" },
-      "detail": { "title": "Sub-agent details", "task": "Task", "steps": "Steps", "result": "Result", "approval": "Waiting for your approval. Decide in the chat." }
+      "state": {
+        "running": "Running",
+        "waiting": "Needs approval",
+        "done": "Done",
+        "failed": "Failed",
+        "stopped": "Stopped",
+        "paused": "Paused"
+      },
+      "detail": {
+        "title": "Sub-agent details",
+        "task": "Task",
+        "steps": "Steps",
+        "result": "Result",
+        "approval": "Waiting for your approval. Decide in the chat."
+      }
     },
-    "upcoming": { "title": "Upcoming", "paused": "Paused", "trigger": "When something happens", "toggle": "Turn {{name}} on or off" }
+    "upcoming": {
+      "title": "Upcoming",
+      "paused": "Paused",
+      "trigger": "When something happens",
+      "toggle": "Turn {{name}} on or off"
+    }
   },
   "knowledge": {
     "title": "Knowledge and shared brain",

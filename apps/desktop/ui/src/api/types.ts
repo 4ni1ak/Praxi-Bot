@@ -334,6 +334,10 @@ export type ComposioToolkit = S["ComposioToolkitDto"];
 export type ComposioCatalog = S["ComposioCatalogDto"];
 export type ComposioApp = S["ComposioAppDto"];
 export type ComposioConnect = S["ComposioConnectDto"];
+export type ComposioLogin = S["ComposioLoginDto"];
+export type ComposioLoginStatus = S["ComposioLoginStatusDto"];
+export type Component = S["ComponentDto"];
+export type ComponentId = S["ComponentId"];
 export type ComposioDisconnect = S["ComposioDisconnectDto"];
 
 // ---- E-mail accounts (`/v1/email/*`) ---------------------------------------
