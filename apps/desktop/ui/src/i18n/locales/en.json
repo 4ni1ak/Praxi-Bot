@@ -239,6 +239,7 @@
     "details": "Daemon {{version}} · up {{uptime}} s {{mode}}"
   },
   "bots": {
+    "writeConflict": "This bot was changed somewhere else while you were saving. Reload it and try again.",
     "notFound": "This bot no longer exists.",
     "noModel": "No model",
     "newChat": "New chat",
@@ -911,127 +912,132 @@
   "control": {
     "starting": "Working…"
   },
-  "onboarding": {
-    "badge": "First-run setup",
-    "stepCounter": "Step {{current}} of {{total}}",
+  "firstRun": {
+    "badge": "Setup",
     "skip": "Skip for now",
     "back": "Back",
     "next": "Continue",
-    "finish": "Finish setup",
+    "start": "Start",
+    "creating": "Creating…",
+    "language": "Language",
+    "progress": "Step {{current}} of {{total}}",
     "steps": {
-      "1": "Welcome",
-      "2": "Provider",
-      "3": "Safety",
-      "4": "First bot",
-      "5": "Try it"
+      "brain": "Brain",
+      "freedom": "Freedom",
+      "bot": "Your bot"
     },
-    "daemonBanner": {
-      "offlineTitle": "Local daemon is not responding",
-      "offlineHint": "You can still choose preferences and save your provider key, or retry starting the local daemon now.",
-      "retry": "Retry daemon"
+    "finishHint": "Finish setup",
+    "service": {
+      "title": "Praxi's background service is not running yet",
+      "body": "Praxi starts it automatically. Wait a few seconds and try again; if it keeps failing, restart the app.",
+      "retry": "Try again"
     },
-    "step1": {
-      "title": "Welcome to Praxi-Bot",
-      "subtitle": "Your personal, local-first computer-use assistant. Let’s get you set up in a couple of minutes — no terminal required.",
-      "languageTitle": "Interface language",
-      "languageHint": "You can switch between English and Turkish at any time.",
-      "themeTitle": "Appearance theme",
-      "themeHint": "Pick light, dark, or follow your Windows system theme.",
-      "privacyTitle": "100% local-first & zero telemetry",
-      "privacyBody": "Your chats, permissions, and bot profiles stay on your computer. Praxi-Bot collects no telemetry or analytics; data is sent only to the model provider you configure."
-    },
-    "step2": {
-      "title": "Connect a model provider",
-      "subtitle": "Pick where your bot’s intelligence runs. Your API key is stored in the Windows Credential Manager and is never shown again.",
-      "presets": {
+    "brain": {
+      "title": "Choose a brain",
+      "subtitle": "This is the model that thinks for your bot. You can change it any time.",
+      "looking": "Looking for what is already on this computer…",
+      "foundTitle": "Already on this computer",
+      "useCli": "Use {{name}}",
+      "cliSub": "Your subscription · no key needed",
+      "cliSubAccount": "{{account}} · no key needed",
+      "apiTitleAfter": "or connect an API",
+      "apiTitle": "Connect an API",
+      "providers": {
         "gemini": {
-          "title": "Google Gemini",
-          "badge": "Free tier available",
-          "description": "Fast multimodal & computer-use models from Google.",
-          "freeTierLine": "Google AI Studio offers a free Gemini API tier — get an API key in seconds with no credit card required."
+          "name": "Google Gemini",
+          "badge": "Free tier",
+          "sub": "Fast, with a generous free quota"
         },
         "anthropic": {
-          "title": "Anthropic Claude",
-          "badge": "Cloud API",
-          "description": "Claude Sonnet, Opus, and Haiku models for reasoning and computer use."
+          "name": "Anthropic",
+          "badge": "",
+          "sub": "Claude models"
         },
-        "openai_compatible": {
-          "title": "OpenAI-compatible",
-          "badge": "OpenRouter / DeepSeek / Custom",
-          "description": "Any OpenAI-compatible endpoint such as OpenRouter, DeepSeek, or LM Studio."
+        "openai": {
+          "name": "OpenAI-compatible",
+          "badge": "",
+          "sub": "OpenAI, OpenRouter, DeepSeek"
         },
         "ollama": {
-          "title": "Local Ollama",
-          "badge": "Runs on this PC",
-          "description": "Run open-weights models locally on your machine with no API key needed."
-        },
-        "fake": {
-          "title": "Built-in Demo Provider",
-          "badge": "Offline test mode",
-          "description": "Deterministic local echo & tool-call simulator for testing onboarding without an API key."
+          "name": "Ollama",
+          "badge": "",
+          "sub": "Models on this computer, no key",
+          "found": "Running here"
         }
       },
-      "providerId": "Catalog preset",
-      "customOption": "Custom OpenAI-compatible URL",
-      "customId": "Provider ID",
-      "baseUrl": "Base URL",
-      "apiKey": "API key",
-      "apiKeyPlaceholder": "Paste your API key here…",
-      "keyStoredBadge": "API key saved in OS keychain (hidden for security)",
-      "replaceKey": "Replace API key",
-      "noKeyNeeded": "No API key is required for this local provider.",
-      "defaultModel": "Default model",
-      "saveProvider": "Save provider",
-      "saving": "Saving…",
-      "testButton": "Test connection",
-      "testing": "Testing…",
-      "retryTest": "Retry test",
-      "savedOk": "Provider {{id}} saved to your configuration.",
-      "testOk": "Connection test succeeded: {{detail}}",
-      "testFailedTitle": "Provider test failed",
-      "testFailedHint": "Check that your API key is valid, you have network access (or Ollama is running locally), and try again.",
-      "nativeWarning": "Provider keychain storage requires running inside the desktop app."
-    },
-    "step3": {
-      "title": "Choose your safety defaults",
-      "subtitle": "Decide what your bot is allowed to do on this computer by default. You can change this per bot or per category at any time.",
+      "keyLabel": "{{name}} API key",
+      "keyPlaceholder": "Paste your key here",
+      "getFreeKey": "Get a free key",
+      "getKey": "Get a key",
+      "paste": "Paste",
+      "show": "Show key",
+      "hide": "Hide key",
+      "connect": "Connect",
+      "keyHint": "Saved in your system keychain. It is never shown again.",
+      "checking": "Checking…",
+      "connected": "Connected",
+      "connectedModel": "Connected · {{count}} model",
+      "connectedModels": "Connected · {{count}} models",
+      "cliReady": "{{name}} is ready",
+      "model": "Model",
       "recommended": "Recommended",
-      "whatItMeansTitle": "What the bot can do on your computer",
-      "explain": {
-        "read-only": "The bot can inspect your screen, read files, and look at web pages, but it can never click, type, edit files, or run commands.",
-        "read-and-draft": "The bot can read files, search the web, and inspect your screen freely, and asks before drafting, changing or deleting files, fetching pages, clicking, typing, running commands, or sending messages (same effective policy as Approve destructive).",
-        "approve-destructive": "The bot can read files and inspect your screen freely, and shows you a live approval card before clicking, typing, editing files, running shell commands, or sending messages.",
-        "full": "The bot can read, click, type, edit or delete ordinary files, run shell commands, and send messages without asking first (except the hard safety floors below)."
+      "change": "Change",
+      "another": "Pick a different brain"
+    },
+    "errors": {
+      "badKey": "{{name}} did not accept this key. Check that you copied all of it, then paste it again.",
+      "offline": "Could not reach {{name}}. Check your internet connection and try again.",
+      "ollamaDown": "Ollama does not seem to be running. Start Ollama on this computer, then choose it again.",
+      "noModels": "{{name}} accepted the key but listed no models. Try again in a moment.",
+      "unavailable": "Keys can only be saved from the desktop app on this computer.",
+      "unknown": "Something went wrong while connecting {{name}}. Try again, or add the key later in Settings → AI."
+    },
+    "freedom": {
+      "title": "How much freedom?",
+      "subtitle": "Decide how much your bot may do without asking. Every bot can have its own level later.",
+      "recommended": "Recommended",
+      "levels": {
+        "ask": {
+          "pitch": "Checks with you before it changes anything. Good while you get to know it.",
+          "examples": [
+            "Asks before saving or editing a file",
+            "Asks before clicking or typing for you",
+            "Asks before running a command"
+          ]
+        },
+        "balanced": {
+          "pitch": "Looks around on its own, asks before it changes or sends anything.",
+          "examples": [
+            "Reads files and checks your screen without asking",
+            "Asks before deleting or sending",
+            "Shows you what it wants to do first"
+          ]
+        },
+        "auto": {
+          "pitch": "Gets on with it. Stops only for payments and a short never-list.",
+          "examples": [
+            "Edits and deletes ordinary files on its own",
+            "Runs commands and sends messages on its own",
+            "Always stops for payments"
+          ]
+        }
       },
-      "floorsTitle": "Always-on safety protections",
-      "floorMoney": "Financial & payment actions always require your explicit confirmation.",
-      "floorNever": "Built-in never-list: credential stores, SSH/GPG private keys, and critical OS boot files are always blocked.",
-      "floorHotkey": "Press {{hotkey}} with Praxi-Bot focused, or click “Stop” in the floating widget. In the Windows desktop app, the shortcut also works while another app has focus.",
-      "saving": "Saving safety policy…",
-      "saveError": "Could not save workspace policy: {{message}}"
+      "alwaysTitle": "Always on, whatever you pick",
+      "alwaysMoney": "Payments always need your confirmation.",
+      "alwaysStop": "Press {{hotkey}} with Praxi-Bot focused, or click “Stop” in the floating widget. In the Windows desktop app, the shortcut also works while another app has focus."
     },
-    "step4": {
-      "title": "Create your first bot",
-      "subtitle": "Give your assistant a name, look, and role models pre-filled from your chosen provider.",
-      "defaultBotName": "Atlas",
-      "defaultPersona": "Helpful, careful personal assistant that explains its plan clearly before acting on my computer.",
-      "rolesTitle": "Model role defaults (from {{provider}})",
-      "rolesHint": "Executor handles actions and tools, Planner breaks down multi-step goals, and Classifier routes requests.",
-      "creating": "Creating bot…",
-      "createdBadge": "Bot “{{name}}” is ready."
+    "bot": {
+      "title": "Meet your bot",
+      "subtitle": "Give it a name and a look. You can change both later.",
+      "defaultName": "Praxi",
+      "recap": "Brain: {{model}} · Freedom: {{level}}",
+      "createFailed": "Your bot could not be created. Nothing was saved. Try again in a moment.",
+      "noService": "Praxi's background service is not running yet. Wait a few seconds and try again."
     },
-    "step5": {
-      "title": "Try your bot live",
-      "subtitle": "Click a sample prompt below to see your bot respond and how live approval cards work before any desktop action runs.",
-      "promptScreen": "What's on my screen?",
-      "promptNotepad": "Open Notepad and write hello",
-      "customPlaceholder": "Or type another prompt to try…",
-      "send": "Send",
-      "sending": "Running…",
-      "emptyHint": "Pick one of the sample prompts above to start a live test run right here.",
-      "approvalHint": "When a tool needs permission (like launching Notepad), the approval card appears live below so you can Allow once or Deny.",
-      "openFullChat": "Open in full chat",
-      "retryPrompt": "Retry prompt"
+    "prompts": {
+      "screen": "What is on my screen right now?",
+      "folder": "Summarise this folder",
+      "news": "Find today's top AI news"
     }
   },
   "notify": {
@@ -1341,6 +1347,11 @@
     },
     "otherId": "Use \"{{id}}\" with {{provider}}",
     "recommended": "Recommended",
+    "listBundled": "Built-in fallback list: the CLI could not be asked.",
+    "listFresh": "Updated just now",
+    "listAge": "Updated {{hours}} h ago",
+    "refresh": "Refresh",
+    "refreshList": "Ask the CLI for its models again",
     "showAll": "All models ({{count}})",
     "noModels": "Type a model id in the search to use one.",
     "sectionCli": "Coding CLIs (your subscription)",
@@ -2223,7 +2234,8 @@
   },
   "botEmpty": {
     "title": "Start a chat with {{name}}",
-    "body": "Nothing here yet. Ask for something, and the conversation will open in this space."
+    "body": "Nothing here yet. Ask for something, and the conversation will open in this space.",
+    "suggestionsTitle": "Try one of these"
   },
   "botProfile": {
     "facts": "Created {{date}} · {{chats}} chats",
@@ -2624,6 +2636,10 @@
       "hostkey_changed": {
         "msg": "This is not the server you set up before.",
         "fix": "Its identity changed and nothing was sent. If you rebuilt the server on purpose, remove it and add it again."
+      },
+      "hostkey_unreadable": {
+        "msg": "Praxi reached the server but could not read its identity.",
+        "fix": "This computer's SSH program may be older than the server's. Update the OpenSSH client (Windows: Settings > Optional features, or install Git for Windows), then try again."
       },
       "hostkey_declined": {
         "msg": "You did not trust this server.",

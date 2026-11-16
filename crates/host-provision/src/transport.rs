@@ -125,12 +125,17 @@ pub enum TransportError {
     Network(String),
     #[error("the command timed out")]
     Timeout,
+    /// The TCP connection worked but no host key could be read (for example
+    /// the two sides share no key exchange method).
+    #[error("connected, but could not read the server's host key: {0}")]
+    NoHostKey(String),
     #[error("{0}")]
     Other(String),
 }
 
 pub trait Transport {
-    /// Host keys the server offers right now (`ssh-keyscan`, fixed argv).
+    /// The host key the server offers right now, read by `ssh` itself without
+    /// offering any credential.
     fn scan_host_keys(&self) -> Result<Vec<ScannedKey>, TransportError>;
 
     /// Run one fixed remote command with `stdin`, output capped, bounded time.

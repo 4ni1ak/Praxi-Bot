@@ -88,6 +88,7 @@ export function stageStates(job: HostSetupJob): Record<Stage, StageState> {
 export type FailureCode =
   | "hostkey_changed"
   | "hostkey_declined"
+  | "hostkey_unreadable"
   | "ssh_client"
   | "auth"
   | "network"
@@ -112,7 +113,9 @@ export function failure(job: HostSetupJob): { step: HostSetupStep; code: Failure
         ? "hostkey_changed"
         : d.startsWith("not accepted")
           ? "hostkey_declined"
-          : d.includes("no usable") || d.includes("no ssh host key") || d.includes("could not reach")
+          : d.includes("could not read the server")
+            ? "hostkey_unreadable"
+            : d.includes("no usable") || d.includes("no ssh host key") || d.includes("could not reach")
             ? "network"
             : "generic";
       break;

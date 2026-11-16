@@ -280,6 +280,11 @@ export class ApiClient {
     return this.request("GET", "/providers/cli", { query: { refresh: refresh ? "1" : null } });
   }
 
+  /** Ask a coding CLI for its model list again now (the picker otherwise refreshes it once a day). */
+  refreshCliModels(id: string): Promise<void> {
+    return this.request("POST", `/providers/cli/${encodeURIComponent(id)}/models/refresh`);
+  }
+
   previewCliInstall(id: string): Promise<CliInstallApproval> {
     return this.request("POST", "/providers/cli/install", { body: { id } });
   }

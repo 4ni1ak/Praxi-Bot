@@ -46,9 +46,12 @@ export function displayPath(path: string): string {
   return /^\\\\\?\\[a-zA-Z]:/.test(path) ? path.slice(4) : path;
 }
 
-/** Brand mark of an engine (Antigravity has no mark of its own: Google's). */
+/**
+ * Brand mark of an engine/product header: the tool's own maker (Claude Code: Anthropic; Antigravity
+ * has no mark of its own: Google's). Model rows use `productBrandKey` instead (the model's logo).
+ */
 export function brandOf(id: string): string {
-  return id === "agy" ? "gemini" : id;
+  return id === "agy" ? "gemini" : id === "claude" ? "anthropic" : id;
 }
 
 /** Version for display: `claude 2.1.325 (Claude Code)` and `v2.3.0` read as the number. */

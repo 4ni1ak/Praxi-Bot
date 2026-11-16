@@ -5635,6 +5635,46 @@
         ]
       }
     },
+    "/v1/providers/cli/{id}/models/refresh": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "`POST /v1/providers/cli/{id}/models/refresh`: ask the CLI again now.",
+        "operationId": "refresh_models_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "engine id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "list refreshed (or kept)"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/providers/detected": {
       "get": {
         "tags": [
@@ -9051,6 +9091,21 @@
               "null"
             ],
             "description": "Why the model list could not be fetched."
+          },
+          "models_fetched_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Coding CLIs only: when the list was fetched (ms since the epoch; absent for `bundled`)."
+          },
+          "models_source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Coding CLIs only: where the list came from (`cli`, `local_cache` or `bundled`, the\nlast-resort fallback the UI marks as such)."
           }
         }
       },
