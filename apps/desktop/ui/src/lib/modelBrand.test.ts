@@ -21,7 +21,9 @@ test("unknown providers keep their id as name and as logo key", () => {
 
 test("rows show the product logo, not the company's", () => {
   assert.equal(productBrandKey("anthropic", "claude-sonnet-5-5"), "claude");
-  assert.equal(productBrandKey("claude-code", "default"), "anthropic");
+  assert.equal(productBrandKey("claude-code", "default"), "claude");
+  assert.equal(productBrandKey("cli:claude", "sonnet"), "claude");
+  assert.equal(providerBrand("cli:claude").company, "anthropic", "the engine header keeps the Anthropic logo");
   assert.equal(productBrandKey("openai", "gpt-4.1"), "openai");
   assert.equal(productBrandKey("openai", "o3"), "openai");
   assert.equal(productBrandKey("gemini", "gemini-2.5-flash"), "googlegemini");

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProvidersDto } from "../api/types";
+import { createScopedLoader } from "../lib/scopedLoader";
 import { useDaemon } from "./DaemonContext";
 import { humanLine } from "../lib/humanError";
 
@@ -12,7 +13,10 @@ export function notifyProvidersChanged() {
   }
 }
 
-/** `GET /v1/providers`, loaded once and on `reload()`; `null` until known. */
+/**
+ * `GET /v1/providers` of the SELECTED computer, loaded once and on `reload()`; `null` until
+ * known. Switching computers clears it and drops answers of the previous target.
+ */
 export function useProviders(): {
   dto: ProvidersDto | null;
   error: string | null;
@@ -21,16 +25,19 @@ export function useProviders(): {
   const { client } = useDaemon();
   const [dto, setDto] = useState<ProvidersDto | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const loader = useRef(
+    createScopedLoader<ProvidersDto>(setDto, (e) =>
+      setError(humanLine(e))
+    )
+  );
 
   const reload = useCallback(async () => {
     if (!client) {
+      loader.current.switchTo(null);
       return;
     }
-    try {
-      setDto(await client.providers());
+    if (await loader.current.load(client, () => client.providers())) {
       setError(null);
-    } catch (e) {
-      setError(humanLine(e));
     }
   }, [client]);
 

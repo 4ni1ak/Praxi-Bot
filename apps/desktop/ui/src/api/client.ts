@@ -89,14 +89,21 @@ import type {
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 
 /** An error response of the daemon (`{"error": {"code", "message"}}`) or a network failure. */
+
+/** A request that gets no answer for this long fails instead of hanging its screen forever. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   /** The parsed JSON body of the error response, when it had one (a `409` carries `current`). */
   readonly body?: unknown;
+  /** Name of the paired host the request went to, when it was not this computer (see `humanError`). */
+  readonly host?: string;
 
-  constructor(status: number, code: string, message: string, body?: unknown) {
+  constructor(status: number, code: string, message: string, body?: unknown, host?: string) {
     super(message);
+    this.host = host;
     this.name = "ApiError";
     this.status = status;
     this.code = code;
@@ -162,10 +169,19 @@ export class ApiClient {
   }
   readonly baseUrl: string;
   private readonly token: string;
+  /** Name of the paired host this client talks to (null for this computer). */
+  hostName: string | null = null;
+  /** Aborts every request of this client when its computer is dropped (`dispose`). */
+  private readonly life = new AbortController();
 
   constructor(conn: Pick<Connection, "base_url" | "token">) {
     this.baseUrl = conn.base_url.replace(/\/$/, "");
     this.token = conn.token;
+  }
+
+  /** The computer this client talked to is no longer selected: drop what is in flight. */
+  dispose(): void {
+    this.life.abort();
   }
 
   /** Headers for a request, also used by the SSE reader. */
@@ -195,7 +211,14 @@ export class ApiClient {
   private async send(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
+    opts: {
+      body?: unknown;
+      query?: Query;
+      auth?: boolean;
+      signal?: AbortSignal;
+      /** Streaming answers (install output) must not be cut by the request timeout. */
+      noTimeout?: boolean;
+    } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -216,7 +239,11 @@ export class ApiClient {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        signal: opts.signal
+        signal: AbortSignal.any([
+          this.life.signal,
+          ...(opts.signal ? [opts.signal] : []),
+          ...(opts.noTimeout ? [] : [AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        ])
       });
     } catch (e) {
       throw new ApiError(
@@ -237,7 +264,7 @@ export class ApiClient {
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message, parsed);
+      throw new ApiError(res.status, code, message, parsed, this.hostName ?? undefined);
     }
     return res;
   }
@@ -246,12 +273,17 @@ export class ApiClient {
     return this.request("GET", "/providers/cli", { query: { refresh: refresh ? "1" : null } });
   }
 
+  /** Ask a coding CLI for its model list again now (the picker otherwise refreshes it once a day). */
+  refreshCliModels(id: string): Promise<void> {
+    return this.request("POST", `/providers/cli/${encodeURIComponent(id)}/models/refresh`);
+  }
+
   previewCliInstall(id: string): Promise<CliInstallApproval> {
     return this.request("POST", "/providers/cli/install", { body: { id } });
   }
 
   async decideCliInstall(id: string, decision: "approve" | "deny", onOutput: (text: string) => void): Promise<void> {
-    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision } });
+    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision }, noTimeout: true });
     const reader = res.body?.getReader();
     if (!reader) { throw new Error("Missing install stream"); }
     let done = false;

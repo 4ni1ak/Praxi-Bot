@@ -53,7 +53,7 @@ export function ErrorNotice({
       <TriangleAlert className={styles.icon} aria-hidden="true" />
       <div className={styles.text}>
         <p className={styles.title}>{h.title}</p>
-        <p className={styles.hint}>{h.hint}</p>
+        {h.hint ? <p className={styles.hint}>{h.hint}</p> : null}
         {h.details ? (
           <details className={styles.details}>
             <summary>{t("errors.details")}</summary>

@@ -239,6 +239,7 @@
     "details": "Daemon {{version}} · {{uptime}} sn çalışıyor {{mode}}"
   },
   "bots": {
+    "writeConflict": "Bu bot siz kaydederken başka bir yerden değiştirildi. Yeniden yükleyip tekrar deneyin.",
     "notFound": "Bu bot artık yok.",
     "noModel": "Model yok",
     "newChat": "Yeni sohbet",
@@ -1648,6 +1649,11 @@
     },
     "otherId": "\"{{id}}\" modelini {{provider}} ile kullan",
     "recommended": "Önerilen",
+    "listBundled": "Yerleşik yedek liste: CLI'ya sorulamadı.",
+    "listFresh": "Az önce güncellendi",
+    "listAge": "{{hours}} sa önce güncellendi",
+    "refresh": "Yenile",
+    "refreshList": "Modelleri CLI'ya yeniden sor",
     "showAll": "Tüm modeller ({{count}})",
     "noModels": "Kullanmak için aramaya model kimliği yazın.",
     "sectionCli": "Kodlama CLI'ları (aboneliğiniz)",
@@ -2783,6 +2789,48 @@
     "pair": "Eşleştir",
     "pairing": "Eşleştiriliyor…",
     "failed": "Eşleştirme olmadı. Sunucunun açık ve biletin yeni olduğunu kontrol et."
+  },
+  "hostMode": {
+    "state": {
+      "connected": "Bağlı",
+      "connecting": "Bağlanıyor…",
+      "offline": "Yanıt vermiyor. Kendiliğinden yeniden dener.",
+      "notPaired": "Bu bilgisayarı artık kabul etmiyor. Yeniden eşleştir.", "mismatch": "Bu uygulamadan farklı bir sürümde çalışıyor. İkisini aynı sürüme güncelle."
+    },
+    "missing": {
+      "model": "Bu sunucuda henüz bağlı bir model yok.",
+      "bots": "Bu sunucuda henüz bot yok."
+    },
+    "have": {
+      "model": "Bir model bağlı.",
+      "bots": "Botlar bu sunucuda hazır."
+    },
+    "viewScreen": "Ekranı izle",
+    "managedOnServer": "Anahtarlar, izinler, araçlar ve eşleştirme {{name}} üzerinde yönetilir. Buradan bot oluşturup düzenleyebilir, sohbet edebilir ve ekranını izleyebilirsin.",
+    "newBotNeedsModel": "{{name}} sunucusunda henüz model yok, bu yüzden orada bot oluşturulamaz. Önce sunucuya bir model bağla.",
+    "model": {
+      "action": "{{name}} sunucusuna model bağla",
+      "title": "Bu sunucuya model bağla",
+      "onServer": "Şimdilik anahtarlar bu uygulamadan değil, sunucunun kendisinde eklenir. {{name}} üzerinde bir terminal aç ve şunu çalıştır:",
+      "fromApp": "{{name}} için anahtarı buraya ekle.",
+      "copy": "Komutu kopyala",
+      "afterwards": "Bu uygulama birkaç saniye sonra bunu kendiliğinden fark eder."
+    },
+    "refusal": {
+      "policy": "Çalıştırma politikası bu uygulamadan değil, {{name}} üzerinde ayarlanır.",
+      "secrets": "Anahtarlar ve gizli bilgiler bu uygulamadan değil, {{name}} üzerinde eklenir.",
+      "tools": "Araç sunucuları ve beceriler {{name}} üzerinde yönetilir.",
+      "credentials": "E-posta ve arama hesapları {{name}} üzerinde bağlanır.",
+      "hostTransfer": "Sunucuyu taşıma ve kanal eşleştirme {{name}} üzerinde yapılır.",
+      "lifecycle": "Eşleştirme ve sunucu güncellemeleri {{name}} üzerinde yapılır.",
+      "botPermissions": "Bir botun izinleri ve araçları {{name}} üzerinde yönetilir. Ad, kişilik ve model buradan değiştirilebilir.",
+      "knowledge": "Bilgi ayarları {{name}} üzerinde yönetilir.",
+      "composio": "Uygulama bağlantıları {{name}} üzerinde değil, bu bilgisayarın sahibi tarafında yönetilir.",
+      "overlay": "Bu soruyu yalnızca {{name}} başındaki kişi yanıtlayabilir.",
+      "ownerOnly": "Bu yalnızca {{name}} üzerinde yapılabilir.",
+      "role": "{{name}} bu bilgisayarın bunu yapmasına izin vermiyor.",
+      "generic": "{{name}} buna izin vermedi. Bu yalnızca {{name}} üzerinde yapılabilir."
+    }
   },
   "hostState": {
     "connecting": "{{name}} sunucusuna bağlanılıyor…",

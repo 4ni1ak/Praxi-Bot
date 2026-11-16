@@ -32,11 +32,11 @@ import {
 } from "../lib/botProfile";
 import { invalidCustomRoles } from "../lib/botEditor";
 import { botHasAccess, changedApps, saveBotAndApps } from "../lib/mcpApps";
+import { botWriteMessage } from "../lib/botWrite";
 import { modelGroups } from "../lib/modelPicker";
-import { useDaemon } from "../state/DaemonContext";
+import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
 import { useCustomText } from "../state/useCustomText";
 import styles from "./NewBotModal.module.css";
-import { humanLine } from "../lib/humanError";
 
 function NewBotDialogContent({
   onDone,
@@ -46,7 +46,8 @@ function NewBotDialogContent({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const { client, bots, conn, refreshBots } = useDaemon();
+  const { client, bots, conn, refreshBots, activeComputerId, activeHostName } = useDaemon();
+  const host = activeComputerId === LOCAL_COMPUTER ? null : { name: activeHostName ?? t("computerPicker.host") };
   const {
     providersDto,
     servers,
@@ -178,7 +179,7 @@ function NewBotDialogContent({
       }
       onDone(bot.id);
     } catch (err) {
-      setError(humanLine(err));
+      setError(botWriteMessage(err, t));
     } finally {
       setSaving(false);
     }
@@ -380,6 +381,11 @@ function NewBotDialogContent({
           </div>
         ) : null}
 
+        {host && executorMissing ? (
+          <p className={styles.alert} role="status" data-testid="new-bot-host-needs-model">
+            {t("hostMode.newBotNeedsModel", { name: host.name })}
+          </p>
+        ) : null}
         {error ? (
           <p className={styles.alert} role="alert">
             {error}

@@ -125,13 +125,17 @@ pub(crate) async fn list(
 ) -> Result<Json<Vec<CliEngineDto>>, ApiError> {
     local_owner(&actor)?;
     let detector = s.detector();
-    let rows = detector
-        .detect(
-            q.refresh
-                .as_deref()
-                .is_some_and(|r| r == "1" || r == "true"),
-        )
-        .await;
+    let force = q
+        .refresh
+        .as_deref()
+        .is_some_and(|r| r == "1" || r == "true");
+    // Cached detection is served at once and refreshed in the background; only `refresh=1`
+    // (and the very first call) waits for the probes.
+    let rows = if force {
+        detector.detect(true).await
+    } else {
+        detector.detect_cached().await
+    };
     let auto_enabled = auto_enable_new(&s, &rows).await?;
     let configured =
         provider_catalog::ProviderConfig::load(&provider_catalog::config_path(&s.data_dir())).ok();
@@ -438,4 +442,63 @@ pub(crate) fn expire_for_test(s: &AppState, id: &str) {
         .get_mut(&Uuid::parse_str(id).unwrap())
         .unwrap()
         .expires = 0;
+}
+
+/// Refresh one engine's model list now (CLI, then its local cache; the bundled list only
+/// when both fail and nothing better is stored). One refresh per engine at a time.
+pub(crate) async fn refresh_models(s: &AppState, engine: &str) -> cli_provider::models::ModelList {
+    let cache = s.cli_models();
+    if !cache.begin_refresh(engine) {
+        return cache.get_or_bundled(engine);
+    }
+    let fetched = s.detector().fetch_models(engine).await;
+    let list = match fetched {
+        Some(list) => {
+            cache.put(engine, list.clone());
+            list
+        }
+        // Keep an earlier good list; never replace it with the bundled one.
+        None => cache.get_or_bundled(engine),
+    };
+    cache.end_refresh(engine);
+    list
+}
+
+/// Background refresh when the stored list is missing or older than 24 h.
+pub(crate) async fn refresh_models_if_stale(s: &AppState, engine: &str) {
+    if s.cli_models()
+        .is_stale(engine, cli_provider::models::now_ms())
+    {
+        refresh_models(s, engine).await;
+    }
+}
+
+/// Start a stale refresh without waiting for it (the picker never blocks on a CLI).
+pub(crate) fn spawn_models_refresh(s: &AppState, engine: &str) {
+    if s.provider_host().is_none()
+        || !s
+            .cli_models()
+            .should_auto_refresh(engine, cli_provider::models::now_ms())
+    {
+        return;
+    }
+    let (st, id) = (s.clone(), engine.to_owned());
+    tokio::spawn(async move { refresh_models(&st, &id).await });
+}
+
+/// `POST /v1/providers/cli/{id}/models/refresh`: ask the CLI again now.
+#[utoipa::path(post, path = "/v1/providers/cli/{id}/models/refresh", tag = "providers", security(("bearer" = [])),
+    params(("id" = String, Path, description = "engine id")),
+    responses((status = 204, description = "list refreshed (or kept)"), (status = 404, body = crate::error::ErrorBody)))]
+pub(crate) async fn refresh_models_route(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    local_owner(&actor)?;
+    if cli_provider::engine_spec(&id).is_none() {
+        return Err(ApiError::not_found("unknown CLI engine"));
+    }
+    refresh_models(&s, &id).await;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }

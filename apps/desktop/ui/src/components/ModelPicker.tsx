@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Download, Plug, Search, Sparkles } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Download, Plug, RefreshCw, Search, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { isMockMode } from "../api/mockMode";
@@ -16,7 +16,9 @@ import { productBrandKey, providerBrand, sourceLabel } from "../lib/modelBrand";
 import { modelDisplayName } from "../lib/modelName";
 import { matchesQuery } from "../lib/searchText";
 import { THINKING_LEVELS, useThinkingLevel } from "../lib/thinkingLevel";
+import { useDaemon } from "../state/DaemonContext";
 import { useCliEngineRows } from "../state/useCliEngineRows";
+import { useProviders } from "../state/useProviders";
 import { BrandMark } from "./BrandMark";
 import styles from "./ModelPicker.module.css";
 import { Popover, type PopoverPlacement } from "./Popover";
@@ -97,6 +99,63 @@ function EngineSection({
  * Last come rows that connect or install coding CLIs.
  * `value` and the picked option use the `provider/model` form.
  */
+/**
+ * Under an open coding-CLI group: where its list came from and a Refresh button. The list is the
+ * CLI's own (kept on disk, refreshed in the background); a built-in fallback is marked as such.
+ */
+function CliListNote({ provider, testId }: { provider: string; testId: string }) {
+  const { t } = useTranslation();
+  const { client } = useDaemon();
+  const { dto, reload } = useProviders();
+  const [busy, setBusy] = useState(false);
+  const row = dto?.configured.find((p) => p.id === provider);
+  const source = row?.models_source ?? null;
+  const fetched = row?.models_fetched_at_ms ?? null;
+  // The daemon refreshes a stale list in the background when the picker reads it: look again shortly.
+  useEffect(() => {
+    if (source === null) return;
+    const timer = window.setTimeout(() => void reload(), 6000);
+    return () => window.clearTimeout(timer);
+  }, [source, reload]);
+  if (source === null) return null;
+  const hours = fetched ? Math.max(0, Math.round((Date.now() - fetched) / 3_600_000)) : null;
+  const text = source === "bundled"
+    ? t("modelPicker.listBundled")
+    : hours === null || hours < 1
+      ? t("modelPicker.listFresh")
+      : t("modelPicker.listAge", { hours });
+  const refresh = async () => {
+    if (!client || busy) return;
+    setBusy(true);
+    try {
+      await client.refreshCliModels(provider.replace(/^cli:/, ""));
+      await reload();
+    } catch {
+      // The list stays as it was; the note keeps saying where it came from.
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={styles.listNote} data-source={source}>
+      <span>{text}</span>
+      <button
+        type="button"
+        data-picker-row
+        className={styles.refresh}
+        disabled={busy}
+        aria-label={t("modelPicker.refreshList")}
+        title={t("modelPicker.refreshList")}
+        data-testid={`${testId}-refresh-${provider}`}
+        onClick={() => void refresh()}
+      >
+        <RefreshCw aria-hidden="true" className={busy ? styles.spin : undefined} />
+        {t("modelPicker.refresh")}
+      </button>
+    </div>
+  );
+}
+
 export function ModelPicker({
   groups,
   value,
@@ -288,6 +347,7 @@ export function ModelPicker({
               <p className={styles.noModels}>{t("modelPicker.noModels")}</p>
             ) : null}
             {isFull ? g.rest.map((m) => optionRow(m, { raw: true })) : null}
+            {g.cli ? <CliListNote provider={g.provider} testId={testId} /> : null}
             {!isFull && g.rest.length > 0 ? (
               <button
                 type="button"

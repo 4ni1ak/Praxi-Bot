@@ -1,4 +1,5 @@
 import i18n from "i18next";
+import { hostRefusalKey } from "./hostMode.ts";
 
 /**
  * The one place that turns "anything that went wrong" into words a person can act on:
@@ -84,6 +85,12 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) =>
   [/timed? ?out|etimedout/i, "timeout"]
 ];
 
+/** `t` that still returns a string before i18next is initialised (plain-node tests). */
+function tr(key: string, params?: Record<string, string>): string {
+  const v = i18n.t(key, params);
+  return typeof v === "string" ? v : key;
+}
+
 function hasKey(key: string): boolean {
   return i18n.exists(`errors.${key}`);
 }
@@ -92,14 +99,15 @@ function pack(key: string, code: string, details: string, params?: Record<string
   const base = key.startsWith("codes.") || hasKey(`${key}.title`) ? key : "generic";
   return {
     code,
-    title: i18n.t(`errors.${base}.title`, params),
-    hint: i18n.t(`errors.${base}.hint`, params),
+    title: tr(`errors.${base}.title`, params),
+    hint: tr(`errors.${base}.hint`, params),
     action: ACTIONS[code] ?? ACTIONS[base.replace("codes.", "")],
     details
   };
 }
 
 interface Envelope {
+  host?: unknown;
   status?: unknown;
   code?: unknown;
   message?: unknown;
@@ -126,6 +134,17 @@ export function humanError(err: unknown): HumanError {
   const code = typeof env.code === "string" ? env.code : undefined;
   const details = [status ? `HTTP ${status}` : "", code ?? "", raw].filter(Boolean).join(" · ");
 
+  // A paired host's refusal: one sentence naming the server (the raw daemon text stays in details).
+  const host = typeof env.host === "string" ? env.host : undefined;
+  const refusal = host ? hostRefusalKey(status, raw) : null;
+  if (host && refusal) {
+    return {
+      code: "host_refusal",
+      title: tr(`hostMode.refusal.${refusal}`, { name: host }),
+      hint: "",
+      details
+    };
+  }
   if (code === "network") {
     return pack("network", "network", details);
   }
@@ -153,7 +172,7 @@ export function humanError(err: unknown): HumanError {
 /** One line for toasts: "Title. Hint". */
 export function humanLine(err: unknown): string {
   const h = humanError(err);
-  return `${h.title}. ${h.hint}`;
+  return h.hint ? `${h.title}. ${h.hint}` : h.title;
 }
 
 /**
@@ -172,8 +191,8 @@ export function humanService(problem: ServiceProblem, raw = ""): HumanError {
   const key = problem === "starting" ? "serviceStarting" : problem === "down" ? "serviceDown" : "serviceWrongTarget";
   return {
     code: key,
-    title: i18n.t(`errors.${key}.title`),
-    hint: i18n.t(`errors.${key}.hint`),
+    title: tr(`errors.${key}.title`),
+    hint: tr(`errors.${key}.hint`),
     action: problem === "starting" ? undefined : "restartService",
     details: raw
   };

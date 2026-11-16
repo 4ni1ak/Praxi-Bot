@@ -499,7 +499,7 @@
 }
 
 /* Colour only: any change of glyph width would drift away from the caret. */
-.mention {
+.typedMention {
   text-decoration: none;
 }
 
@@ -715,9 +715,23 @@
 }
 
 .authorName {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-bottom: var(--space-1);
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-text-muted);
+}
+
+.authorLabel {
+  color: color-mix(in srgb, var(--mention-color, var(--color-text-muted)) 70%, var(--color-text));
+}
+
+.mention {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background-color: color-mix(in srgb, var(--mention-color) 22%, transparent);
+  color: color-mix(in srgb, var(--mention-color) 55%, var(--color-text));
+  font-weight: 600;
 }

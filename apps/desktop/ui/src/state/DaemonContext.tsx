@@ -12,6 +12,7 @@ import {
 import { ApiClient } from "../api/client";
 import { type Connection, connectDaemon } from "../api/connection";
 import { subscribeEvents } from "../api/events";
+import { MOCK_HOST_ID, mockHostScenario } from "../api/mockHostScenario";
 import { MOCK_BASE_URL } from "../api/mockMode";
 import type {
   Bot,
@@ -24,8 +25,11 @@ import type {
 } from "../api/types";
 import {
   deriveHostState,
+  giveUpConnecting,
+  type HostStateMemory,
   type HostUiState,
-  liveRunIds
+  liveRunIds,
+  settleHostState
 } from "../lib/hostState";
 import { markRemoteBaseUrl } from "../lib/liveViewState";
 import { orderBots } from "../lib/botOrder";
@@ -182,8 +186,10 @@ function useDaemonData(conn: Connection | null): DaemonData {
       return undefined;
     }
     if (conn.base_url !== MOCK_BASE_URL) {
-      setClient(new ApiClient(conn));
-      return undefined;
+      const made = new ApiClient(conn);
+      setClient(made);
+      // Switching computers (or leaving the host) drops this connection's requests in flight.
+      return () => made.dispose();
     }
     // Mock code is only reachable in dev builds or with VITE_MOCK=1.
     if (!(import.meta.env.DEV || import.meta.env.VITE_MOCK === "1")) {
@@ -374,6 +380,32 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   localClientRef.current = localClient;
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+
+  // Review states of a selected host in mock mode (`?host=empty|bots|offline`).
+  useEffect(() => {
+    const scenario = mockHostScenario();
+    if (!scenario || !localConn) {
+      return;
+    }
+    activeIdRef.current = MOCK_HOST_ID;
+    setActiveId(MOCK_HOST_ID);
+    setHostList({
+      local_version: "0.1.0-mock",
+      local_api_version: "1",
+      hosts: [
+        {
+          id: MOCK_HOST_ID,
+          name: "Praxi host",
+          state: scenario === "offline" ? "offline" : "connected"
+        } as HostLinkInfo
+      ]
+    } as HostLinkList);
+    if (scenario === "offline") {
+      setHostError("host did not answer");
+    } else {
+      setHostConn(localConn);
+    }
+  }, [localConn]);
 
   // 1. find / start the daemon
   useEffect(() => {
@@ -572,7 +604,7 @@ export function HostSession({ children }: { children: ReactNode }) {
   const data = useDaemonData(hostConn);
   const link =
     hostList?.hosts.find((h) => h.id === activeComputerId) ?? null;
-  const hostState = useMemo<HostUiState>(() => {
+  const rawHostState = useMemo<HostUiState>(() => {
     if (hostError && !hostConn) {
       return { kind: "offline" };
     }
@@ -588,9 +620,21 @@ export function HostSession({ children }: { children: ReactNode }) {
       localApiVersion: hostList?.local_api_version ?? null
     });
   }, [activeComputerId, data.health, hostConn, hostError, hostList, link]);
+  // One stable state per connection: no flicker between connecting / connected / offline.
+  const memory = useRef<HostStateMemory | null>(null);
+  const [, setTick] = useState(0);
+  memory.current = settleHostState(memory.current, rawHostState, Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const hostState = giveUpConnecting(memory.current, Date.now());
 
   const clientRef = useRef(data.client);
   clientRef.current = data.client;
+  if (data.client) {
+    data.client.hostName = link?.name ?? local.activeHostName ?? "";
+  }
   const stopHostRuns = useCallback(async () => {
     const c = clientRef.current;
     if (!c) {

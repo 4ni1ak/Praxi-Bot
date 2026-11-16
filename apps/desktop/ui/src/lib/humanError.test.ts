@@ -78,6 +78,15 @@ test("unknown codes and raw strings fall back to a human sentence; raw text only
   const uv = layer.humanToolError("cannot start MCP server `sqlite`: `uvx` was not found on PATH. Install uv");
   assert.match(uv.title, /uvx is not installed/);
 
+  // A paired host's refusal: one sentence naming the server (the former client-side formatter, now here).
+  for (const lng of ["en", "tr"]) {
+    await i18n.changeLanguage(lng);
+    const refused = layer.humanError({ status: 403, code: "forbidden", host: "Praxi host", message: "the execution policy is managed on the host itself" });
+    assert.equal(refused.code, "host_refusal");
+    assert.match(refused.title, /Praxi host/);
+    assert.doesNotMatch(refused.title, /execution policy is managed/);
+  }
+
   await i18n.changeLanguage("tr");
   assert.doesNotMatch(layer.humanError({ status: 409, code: "version_conflict", message: "PUT requires expected_version" }).title, /expected_version/);
   await i18n.changeLanguage("en");
