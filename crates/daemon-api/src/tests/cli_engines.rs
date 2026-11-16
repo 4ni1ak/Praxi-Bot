@@ -419,12 +419,12 @@ async fn switching_an_engine_off_is_remembered_in_providers_toml() {
         .unwrap();
     assert_eq!(claude["user_disabled"], true);
     assert_eq!(claude["enabled"], false);
-    // Engines that are not providers cannot be switched.
+    // Unknown engines cannot be switched.
     let agy = call(
         &t,
         Method::POST,
         "/v1/providers/cli/disable",
-        Some(json!({ "id": "agy" })),
+        Some(json!({ "id": "unknown" })),
     )
     .await;
     assert_eq!(agy.status, StatusCode::BAD_REQUEST);

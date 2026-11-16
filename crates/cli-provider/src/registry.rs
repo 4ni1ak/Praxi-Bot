@@ -181,8 +181,8 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         login: "gemini",
         docs_url: "https://github.com/google-gemini/gemini-cli",
     },
-    // Antigravity CLI. Headless mode exists (`agy -p <prompt> --output-format stream-json`,
-    // `--model`, `--mode`) but no driver parses it yet, so it is detected only.
+    // Antigravity CLI. Runs with its own tools through `agy acp` (Agent Client Protocol),
+    // like Cursor/OpenCode/Gemini. Sign-in has no status command: it shows at the first turn.
     CliEngineSpec {
         id: "agy",
         display_name: "Antigravity",
@@ -194,7 +194,14 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: None,
         install_windows: None,
         install_unix: None,
-        models: &[],
+        // From `agy models`; the CLI's own list is account-specific and not probed.
+        models: &[
+            "default",
+            "gemini-4-argon-medium",
+            "gemini-3.8-flash-medium",
+            "claude-sonnet-5-5-medium",
+            "claude-opus-5-5-medium",
+        ],
         login: "agy",
         docs_url: "https://antigravity.google/docs",
     },

@@ -1677,6 +1677,7 @@ pub(crate) fn cli_engine_kind(id: &str) -> Option<provider_catalog::config::CliE
         "cursor" => CliEngine::Cursor,
         "opencode" => CliEngine::OpenCode,
         "gemini" => CliEngine::Gemini,
+        "agy" => CliEngine::Agy,
         _ => return None,
     })
 }

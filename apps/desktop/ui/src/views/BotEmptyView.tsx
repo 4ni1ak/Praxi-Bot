@@ -1,6 +1,7 @@
 import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, type BotIdentity, Button } from "ui";
+import { FIRST_PROMPT_KEYS } from "../lib/firstRun";
 import styles from "./BotEmptyView.module.css";
 
 /**
@@ -11,12 +12,15 @@ export function BotEmptyView({
   bot,
   busy,
   error,
-  onNewChat
+  onNewChat,
+  onSuggest
 }: {
   bot: BotIdentity | undefined;
   busy: boolean;
   error: string | null;
   onNewChat: () => void;
+  /** Starts a chat with this prompt already sent; omitted where suggestions make no sense. */
+  onSuggest?: (prompt: string) => void;
 }) {
   const { t } = useTranslation();
   if (!bot) {
@@ -42,6 +46,25 @@ export function BotEmptyView({
           <Plus aria-hidden="true" />
           {t("bots.newChat")}
         </Button>
+        {onSuggest ? (
+          <section className={styles.suggest} aria-label={t("botEmpty.suggestionsTitle")}>
+            <h2 className={styles.suggestTitle}>{t("botEmpty.suggestionsTitle")}</h2>
+            <div className={styles.suggestList}>
+              {FIRST_PROMPT_KEYS.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={styles.suggestChip}
+                  disabled={busy}
+                  data-testid={`first-prompt-${key}`}
+                  onClick={() => onSuggest(t(`firstRun.prompts.${key}`))}
+                >
+                  {t(`firstRun.prompts.${key}`)}
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
         {error ? (
           <p className={styles.error} role="alert">
             {error}

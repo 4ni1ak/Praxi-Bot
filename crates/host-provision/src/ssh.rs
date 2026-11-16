@@ -13,7 +13,7 @@ use std::{
 
 use crate::{
     Error,
-    known_hosts::{ScannedKey, parse_scan},
+    known_hosts::{KnownHosts, ScannedKey, parse_known_hosts_scan},
     transport::{Output, RemoteCmd, Transport, TransportError, sanitize},
 };
 
@@ -31,14 +31,13 @@ pub struct SshTarget {
 #[derive(Debug, Clone)]
 pub struct SshPaths {
     pub ssh: PathBuf,
-    pub keyscan: PathBuf,
     /// Praxi's own known_hosts.
     pub known_hosts: PathBuf,
     /// An (empty) ssh_config so `~/.ssh/config` is never read.
     pub ssh_config: PathBuf,
 }
 
-/// Find `ssh` / `ssh-keyscan` as absolute paths (Windows: System32\OpenSSH
+/// Find `ssh` as an absolute path (Windows: System32\OpenSSH
 /// first, then PATH; elsewhere PATH).
 pub fn resolve_binary(name: &str) -> Result<PathBuf, Error> {
     let exe = if cfg!(windows) {
@@ -77,10 +76,15 @@ fn path_opt(key: &str, p: &Path) -> OsString {
 }
 
 fn common_options(paths: &SshPaths) -> Vec<OsString> {
+    options(paths, "yes", &paths.known_hosts)
+}
+
+fn options(paths: &SshPaths, strict: &str, known_hosts: &Path) -> Vec<OsString> {
     let mut a: Vec<OsString> = vec!["-F".into(), paths.ssh_config.as_os_str().to_owned()];
+    a.push("-o".into());
+    a.push(format!("StrictHostKeyChecking={strict}").into());
     for o in [
         "BatchMode=yes",
-        "StrictHostKeyChecking=yes",
         "GlobalKnownHostsFile=none",
         "HashKnownHosts=no",
         "UpdateHostKeys=no",
@@ -102,8 +106,66 @@ fn common_options(paths: &SshPaths) -> Vec<OsString> {
         a.push(o.into());
     }
     a.push("-o".into());
-    a.push(path_opt("UserKnownHostsFile", &paths.known_hosts));
+    a.push(path_opt("UserKnownHostsFile", known_hosts));
     a
+}
+
+/// Argv for the host-key fetch: `ssh` connects, learns the key into a
+/// throw-away known_hosts file and stops at authentication. No identity,
+/// agent or password is offered to the still-unconfirmed server.
+pub fn hostkey_argv(
+    paths: &SshPaths,
+    target: &SshTarget,
+    scratch: &Path,
+    pinned_types: &[String],
+) -> Vec<OsString> {
+    let mut a = options(paths, "accept-new", scratch);
+    for o in [
+        "PreferredAuthentications=none".to_owned(),
+        "IdentitiesOnly=yes".to_owned(),
+        "IdentityAgent=none".to_owned(),
+    ] {
+        a.push("-o".into());
+        a.push(o.into());
+    }
+    if !pinned_types.is_empty() {
+        let mut algs: Vec<&str> = pinned_types.iter().map(String::as_str).collect();
+        if algs.contains(&"ssh-rsa") {
+            algs.extend(["rsa-sha2-512", "rsa-sha2-256"]);
+        }
+        a.push("-o".into());
+        a.push(format!("HostKeyAlgorithms={}", algs.join(",")).into());
+    }
+    a.extend(["-T".into(), "-l".into(), target.user.clone().into()]);
+    a.extend(["-p".into(), target.port.to_string().into()]);
+    a.push("--".into());
+    a.push(target.host.clone().into());
+    a.push("true".into());
+    a
+}
+
+/// Classify a failed host-key fetch: a real network problem, or "connected
+/// but no key" (never reported as unreachable when TCP connected).
+pub fn classify_hostkey_failure(stderr: &str) -> TransportError {
+    let s = stderr.to_ascii_lowercase();
+    let network = [
+        "connection refused",
+        "timed out",
+        "no route to host",
+        "could not resolve",
+        "name or service not known",
+        "network is unreachable",
+        "host is unreachable",
+        "temporary failure in name resolution",
+    ];
+    if network.iter().any(|n| s.contains(n)) {
+        TransportError::Network(first_line(stderr))
+    } else if s.contains("host key verification failed") || s.contains("identification has changed")
+    {
+        TransportError::HostKeyChanged
+    } else {
+        TransportError::NoHostKey(first_line(stderr))
+    }
 }
 
 /// Full argv (without the program) for one remote command.
@@ -121,19 +183,6 @@ pub fn ssh_argv(paths: &SshPaths, target: &SshTarget, remote: &str) -> Vec<OsStr
     a.push(target.host.clone().into());
     a.push(remote.into());
     a
-}
-
-pub fn keyscan_argv(target: &SshTarget) -> Vec<OsString> {
-    vec![
-        "-T".into(),
-        "10".into(),
-        "-t".into(),
-        "ed25519,ecdsa,rsa".into(),
-        "-p".into(),
-        target.port.to_string().into(),
-        "--".into(),
-        target.host.clone().into(),
-    ]
 }
 
 fn drain(
@@ -269,17 +318,31 @@ impl OpenSshTransport {
 
 impl Transport for OpenSshTransport {
     fn scan_host_keys(&self) -> Result<Vec<ScannedKey>, TransportError> {
-        let out = run_capped(
-            &self.paths.keyscan,
-            &keyscan_argv(&self.target),
+        // A fresh scratch file inside the protected hosts dir, removed on every path.
+        let dir = self
+            .paths
+            .known_hosts
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let scratch = dir.join(format!("scan-{}-{nonce}.tmp", std::process::id()));
+        let _ = std::fs::remove_file(&scratch);
+        let pinned = KnownHosts::new(&self.paths.known_hosts)
+            .pinned_types(&self.target.host, self.target.port);
+        let result = run_capped(
+            &self.paths.ssh,
+            &hostkey_argv(&self.paths, &self.target, &scratch, &pinned),
             b"",
             Duration::from_secs(25),
-        )?;
-        let keys = parse_scan(&out.stdout);
+        );
+        let learned = std::fs::read_to_string(&scratch).unwrap_or_default();
+        let _ = std::fs::remove_file(&scratch);
+        let out = result?;
+        let keys = parse_known_hosts_scan(&learned, &self.target.host, self.target.port);
         if keys.is_empty() {
-            return Err(TransportError::Network(
-                "no SSH host key received (wrong address or port, or no SSH server)".into(),
-            ));
+            return Err(classify_hostkey_failure(&out.stderr));
         }
         Ok(keys)
     }
@@ -306,7 +369,6 @@ mod tests {
     fn paths() -> SshPaths {
         SshPaths {
             ssh: "/usr/bin/ssh".into(),
-            keyscan: "/usr/bin/ssh-keyscan".into(),
             known_hosts: "/data/hosts/known_hosts".into(),
             ssh_config: "/data/hosts/ssh_config".into(),
         }
@@ -355,6 +417,48 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_key_exchange_is_not_reported_as_unreachable() {
+        // Windows OpenSSH 9.5 against an OpenSSH 9.6 server: TCP worked.
+        let kex = "Unable to negotiate with 130.61.218.49 port 22: choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com";
+        assert!(matches!(
+            classify_hostkey_failure(kex),
+            TransportError::NoHostKey(_)
+        ));
+        for real in [
+            "ssh: connect to host 203.0.113.7 port 22: Connection refused",
+            "ssh: connect to host 203.0.113.7 port 22: Connection timed out",
+            "ssh: Could not resolve hostname nope.invalid: No such host is known.",
+        ] {
+            assert!(
+                matches!(classify_hostkey_failure(real), TransportError::Network(_)),
+                "{real}"
+            );
+        }
+        let argv: Vec<String> = hostkey_argv(
+            &paths(),
+            &SshTarget {
+                user: "ubuntu".into(),
+                host: "h".into(),
+                port: 22,
+                key: None,
+            },
+            Path::new("/data/hosts/scan.tmp"),
+            &[],
+        )
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+        for must in [
+            "StrictHostKeyChecking=accept-new",
+            "PreferredAuthentications=none",
+            "UserKnownHostsFile=/data/hosts/scan.tmp",
+            "GlobalKnownHostsFile=none",
+        ] {
+            assert!(argv.iter().any(|a| a == must), "missing {must}");
+        }
+    }
+
+    #[test]
     fn host_key_failures_are_a_hard_class() {
         assert_eq!(
             classify_ssh_failure("@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@"),
@@ -371,7 +475,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = SshPaths {
             ssh: "ssh".into(),
-            keyscan: "ssh-keyscan".into(),
             known_hosts: dir.path().join("known_hosts"),
             ssh_config: dir.path().join("ssh_config"),
         };
