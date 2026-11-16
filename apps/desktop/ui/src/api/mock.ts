@@ -1,3 +1,4 @@
+import { MOCK_HOST_ID, mockHostScenario } from "./mockHostScenario.ts";
 import { applyPatchOps, type PatchOp } from "../lib/botPatch.ts";
 import { ApiClient, ApiError } from "./client.ts";
 import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
@@ -268,6 +269,45 @@ const PROVIDERS: ProvidersDto = {
       ]
     },
     {
+      id: "cli:codex",
+      active: true,
+      custom: false,
+      default_model: null,
+      enabled: true,
+      has_key: false,
+      is_default: false,
+      models: ["default", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol"],
+      models_source: "cli",
+      models_fetched_at_ms: Date.now() - 2 * 3_600_000,
+      model_details: [
+        mockModel("default", "Codex default", null),
+        mockModel("gpt-6.1-sol", "GPT-6.1 Sol", null),
+        mockModel("gpt-6.1-terra", "GPT-6.1 Terra", null),
+        mockModel("gpt-6-astra", "GPT-6 Astra", null),
+        mockModel("gpt-6-luna", "GPT-6 Luna", null),
+        mockModel("gpt-5.6-sol", "GPT-5.6 Sol", null)
+      ]
+    },
+    {
+      id: "cli:cursor",
+      active: true,
+      custom: false,
+      default_model: null,
+      enabled: true,
+      has_key: false,
+      is_default: false,
+      models: ["auto", "grok-4.7-medium", "composer-2.5", "claude-opus-5-medium", "gpt-5.6-sol-medium"],
+      models_source: "cli",
+      models_fetched_at_ms: Date.now() - 30 * 60_000,
+      model_details: [
+        mockModel("auto", "Auto", null),
+        mockModel("grok-4.7-medium", "Grok 4.7", null),
+        mockModel("composer-2.5", "Composer 2.5", null),
+        mockModel("claude-opus-5-medium", "Claude Opus 5 1M", null),
+        mockModel("gpt-5.6-sol-medium", "GPT-5.6 Sol 1M", null)
+      ]
+    },
+    {
       id: "cli:opencode",
       active: true,
       custom: false,
@@ -275,6 +315,7 @@ const PROVIDERS: ProvidersDto = {
       enabled: true,
       has_key: false,
       is_default: false,
+      models_source: "bundled",
       models: ["default", "opencode/big-pickle", "opencode/grok-code", "google/gemini-2.5-pro", "anthropic/claude-sonnet-4-5", "openai/gpt-5", "deepseek/deepseek-chat"],
       model_details: [
         mockModel("default", "OpenCode default", null),
@@ -744,16 +785,20 @@ export class MockApiClient extends ApiClient {
     }
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
-        return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+        return ok({ status: mockHostScenario() === "empty" ? "setup_required" : "ok", uptime_secs: 3600, version: "0.1.0-mock", api_version: "1" });
       case "GET /hosts":
-        return ok({ local_version: "0.1.0-mock", local_api_version: "1", hosts: [] });
+        return ok({
+          local_version: "0.1.0-mock",
+          local_api_version: "1",
+          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" ? "offline" : "connected", detail: null }] : []
+        });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":
         if (seg[1] && seg[2] === "skills") {
           return ok(this.getBotSkillsState(seg[1]));
         }
-        return ok(structuredClone(this.bots));
+        return ok(mockHostScenario() === "empty" ? [] : structuredClone(this.bots));
       case "GET /chats":
         if (seg[2] === "messages") {
           if (this.messages.has(seg[1])) return ok(this.messages.get(seg[1]));
@@ -767,6 +812,13 @@ export class MockApiClient extends ApiClient {
             "## A good week of progress.\n\nI reviewed the latest changes in GitHub and your workspace. Here is your weekly summary:\n\n| Workstream | Delivered | Status |\n| --- | --- | --- |\n| Desktop experience | Settings, chat and model selection | Ready |\n| Integrations | 5 connected apps | Ready |\n| Quality checks | Types and interface tests | Complete |\n\n### Next up\n\nAfter reviewing open tasks, we can run the release checks.\n\n```sh\npnpm typecheck\npnpm --dir apps/desktop/ui test\n```\n\nI can turn this into a report to share with your team.",
           ];
           const seeded = content.map((text, index): Message => ({ id: `mock-message-${index}`, chat_id: CHAT_ID, content: text, role: index % 2 === 0 ? "user" : "assistant", created_at_ms: NOW + index * 1000 }));
+          if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("screen") === "mention") {
+            // Review screen: an @mention and the mentioned bot's own reply.
+            seeded.push(
+              { id: "mock-message-m1", chat_id: CHAT_ID, content: tr ? "@Nova sen nasılsın?" : "@Nova how are you?", role: "user", created_at_ms: NOW + 5000 } as Message,
+              { id: "mock-message-m2", chat_id: CHAT_ID, content: tr ? "İyiyim, teşekkürler! Size yardımcı olmak için hazırım." : "Doing well, thanks! Ready to help.", role: "assistant", bot_id: NOVA, created_at_ms: NOW + 6000 } as Message
+            );
+          }
           this.messages.set(seg[1], seeded);
           return ok(seeded);
         }
@@ -898,6 +950,14 @@ export class MockApiClient extends ApiClient {
         }
         return ok(structuredClone(this.providersDto));
       case "POST /providers": {
+        if (seg[1] === "cli" && seg[3] === "models" && seg[4] === "refresh") {
+          const entry = this.providersDto.configured.find((p) => p.id === `cli:${seg[2]}`);
+          if (entry?.models_source) {
+            entry.models_source = "cli";
+            entry.models_fetched_at_ms = Date.now();
+          }
+          return ok(undefined);
+        }
         if (seg[1] === "cli" && seg[2] === "disable") {
           const id = ((opts.body ?? {}) as { id?: string }).id ?? "";
           const entry = this.providersDto.configured.find((p) => p.id === `cli:${id}`);

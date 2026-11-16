@@ -1568,6 +1568,7 @@ async fn models_of(
 #[utoipa::path(get, path = "/v1/providers", tag = "providers", security(("bearer" = [])),
     params(crate::provider_models::ProvidersQuery),
     responses((status = 200, body = ProvidersDto)))]
+#[allow(clippy::too_many_lines)] // one flat DTO mapping
 pub(crate) async fn list_providers(
     State(s): State<AppState>,
     Query(query): Query<crate::provider_models::ProvidersQuery>,
@@ -1594,9 +1595,23 @@ pub(crate) async fn list_providers(
         .iter()
         .zip(models)
         .map(|(p, (models, models_error))| {
+            let mut labels = std::collections::HashMap::new();
+            let (mut models_source, mut models_fetched_at_ms) = (None, None);
             let models = if p.cli.is_some() {
-                // Always the registry's list, whatever an older build stored.
-                cli_registry_models(p.id.strip_prefix("cli:").unwrap_or(""))
+                // The CLI's own list (disk-cached); never waits for the CLI.
+                let engine = p.id.strip_prefix("cli:").unwrap_or("");
+                let list = s.cli_models().get_or_bundled(engine);
+                crate::cli_engines::spawn_models_refresh(&s, engine);
+                if cli_provider::models::can_list(engine) {
+                    models_source = Some(list.source.as_str().to_owned());
+                    models_fetched_at_ms = (list.fetched_at_ms > 0).then_some(list.fetched_at_ms);
+                }
+                labels = list
+                    .models
+                    .iter()
+                    .filter_map(|m| m.label.clone().map(|l| (m.id.clone(), l)))
+                    .collect();
+                list.models.into_iter().map(|m| m.id).collect()
             } else {
                 models
             };
@@ -1604,6 +1619,7 @@ pub(crate) async fn list_providers(
                 s.agent(),
                 p,
                 models,
+                &labels,
                 query.chat_only.unwrap_or(true),
             );
             ConfiguredProviderDto {
@@ -1621,6 +1637,8 @@ pub(crate) async fn list_providers(
                     .get(&p.id)
                     .cloned()
                     .or_else(|| models_error.map(|e| s.agent().redact_host_text(e))),
+                models_source,
+                models_fetched_at_ms,
             }
         })
         .collect();
@@ -1698,14 +1716,6 @@ pub(crate) async fn detect_providers(
     Ok(Json(detected.into_iter().map(Into::into).collect()))
 }
 
-/// Models a coding CLI offers: the registry's short list (the CLI's own listing is
-/// account-specific and never probed).
-fn cli_registry_models(engine_id: &str) -> Vec<String> {
-    cli_provider::engine_spec(engine_id).map_or_else(Vec::new, |spec| {
-        spec.models.iter().map(|m| (*m).to_owned()).collect()
-    })
-}
-
 /// Registry id to the provider-catalog engine kind (`None`: never a provider).
 pub(crate) fn cli_engine_kind(id: &str) -> Option<provider_catalog::config::CliEngine> {
     use provider_catalog::config::CliEngine;
@@ -1771,8 +1781,19 @@ pub(crate) fn persist_cli_enable(
             &serde_json::json!({ "id": &provider_id, "engine": spec.id }),
         )
         .map_err(ApiError::internal)?;
-    let model_details =
-        crate::provider_models::for_picker(s.agent(), &saved, cli_registry_models(spec.id), true);
+    let list = s.cli_models().get_or_bundled(spec.id);
+    let labels = list
+        .models
+        .iter()
+        .filter_map(|m| m.label.clone().map(|l| (m.id.clone(), l)))
+        .collect();
+    let model_details = crate::provider_models::for_picker(
+        s.agent(),
+        &saved,
+        list.models.iter().map(|m| m.id.clone()).collect(),
+        &labels,
+        true,
+    );
     Ok(ConfiguredProviderDto {
         id: provider_id,
         enabled: saved.enabled,
@@ -1784,6 +1805,10 @@ pub(crate) fn persist_cli_enable(
         models: model_details.iter().map(|m| m.id.clone()).collect(),
         model_details,
         models_error: None,
+        models_source: cli_provider::models::can_list(spec.id)
+            .then(|| list.source.as_str().to_owned()),
+        models_fetched_at_ms: (cli_provider::models::can_list(spec.id) && list.fetched_at_ms > 0)
+            .then_some(list.fetched_at_ms),
     })
 }
 

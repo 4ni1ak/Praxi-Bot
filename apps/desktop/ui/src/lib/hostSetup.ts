@@ -164,6 +164,16 @@ export function copyDetails(job: HostSetupJob): string {
   return lines.join("\n");
 }
 
+/**
+ * The job as the page should show it right after the user answered the host
+ * key question, before the next poll: accepting keeps the progress page (the
+ * key card goes away, the setup continues); declining ends it.
+ */
+export function afterKeyAnswer(job: HostSetupJob, accept: boolean): HostSetupJob {
+  if (job.state !== "awaiting_host_key") return job;
+  return { ...job, state: accept ? "running" : "failed", host_key: null };
+}
+
 export type WizardView = "form" | "progress" | "done" | "failed";
 
 /** Which page of the modal to show for a job (null job means the form). */

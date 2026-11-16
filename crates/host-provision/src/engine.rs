@@ -363,10 +363,15 @@ impl Engine<'_> {
                         ),
                     }
                 } else {
+                    let why = if self.ui.cancelled() {
+                        "setup was cancelled"
+                    } else {
+                        "not accepted"
+                    };
                     StepResult::fail(
                         "hostkey",
                         T,
-                        format!("not accepted ({fp})"),
+                        format!("{why} ({fp})"),
                         "Compare the fingerprint with your provider's console, then run again and accept (or pass --yes).",
                     )
                 }
@@ -786,6 +791,19 @@ impl Engine<'_> {
         }
         let after = self.server_desktops("pair", title)?;
         let new: Vec<&String> = after.iter().filter(|k| !before.contains(k)).collect();
+        if new.is_empty() && known_before.contains(&paired.id) {
+            // This computer was already paired with this host (for example by
+            // ticket): the invite just confirmed it. No second device entry,
+            // nothing created, nothing to roll back, privileges left as they are.
+            self.params.record.paired_host_id = Some(paired.id.clone());
+            self.store
+                .save(self.rec())
+                .map_err(|e| fail(e.to_string(), "Could not save the local server record."))?;
+            return Ok(format!(
+                "already connected to {}; nothing changed",
+                sanitize(&paired.name, 60)
+            ));
+        }
         let [key] = new.as_slice() else {
             return Err(fail(
                 "paired, but this computer's key could not be identified on the host".into(),

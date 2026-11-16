@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createScopedLoader } from "../lib/scopedLoader";
 import type { CliEngineDto } from "../api/types";
 import { engineRows, type EngineRow } from "../lib/modelPicker";
 import { configuredCliIds } from "../lib/detectedAccounts";
@@ -20,18 +21,13 @@ export function useCliEngineRows(enabled: boolean): {
   const { dto } = useProviders();
   const [engines, setEngines] = useState<CliEngineDto[]>([]);
 
+  const loader = useRef(createScopedLoader<CliEngineDto[]>((v) => setEngines(v ?? [])));
   useEffect(() => {
     if (!enabled || !client) {
+      loader.current.switchTo(null);
       return;
     }
-    let live = true;
-    client
-      .cliEngines()
-      .then((found) => live && setEngines(found))
-      .catch(() => live && setEngines([]));
-    return () => {
-      live = false;
-    };
+    void loader.current.load(client, () => client.cliEngines());
   }, [client, enabled, dto]);
 
   const run = useCallback(

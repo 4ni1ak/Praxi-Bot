@@ -17,6 +17,7 @@ import { ApiError } from "../api/client";
 import { isMockMode } from "../api/mockMode";
 import type { HostSetupJob, SshKeyHint, StartHostSetupInput } from "../api/types";
 import {
+  afterKeyAnswer,
   copyDetails,
   failure,
   isActive,
@@ -34,6 +35,9 @@ import { Modal } from "./Modal";
 import { useToast } from "./Toast";
 
 const POLL_MS = 800;
+
+/** The running job survives this dialog being rebuilt (the app re-renders around it). */
+let resumeJobId: string | null = null;
 
 /**
  * "Add server": connect a rented server over SSH and pair it, with no ticket to
@@ -80,6 +84,30 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
   const input = useRef<StartHostSetupInput | null>(null);
   const jobId = job?.id ?? null;
   const active = job ? isActive(job) : false;
+  resumeJobId = jobId && active ? jobId : jobId ? null : resumeJobId;
+
+  // Whatever happens to the job, the form is never left in "starting".
+  useEffect(() => {
+    if (job) setBusy(false);
+  }, [job]);
+
+  // Picked up again after a rebuild: show the job that is still waiting or running.
+  useEffect(() => {
+    const id = resumeJobId;
+    if (!api || !id) return undefined;
+    let live = true;
+    api
+      .getHostSetup(id)
+      .then((j) => {
+        if (live) setJob(j);
+      })
+      .catch(() => {
+        resumeJobId = null;
+      });
+    return () => {
+      live = false;
+    };
+  }, [api]);
 
   useEffect(() => {
     let live = true;
@@ -163,13 +191,25 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
 
   const answerKey = (accept: boolean) => {
     if (!api || !jobId) return;
+    setError(null);
+    // Show the answer at once; the poll confirms it.
+    setJob((j) => (j ? afterKeyAnswer(j, accept) : j));
     api
       .answerHostSetupKey(jobId, accept)
       .then(setJob)
-      .catch(() => setError(t("addServer.startFailed")));
+      .catch(() => {
+        // The answer did not arrive (the job is gone or no longer waiting): say so
+        // on this page and show the job as the daemon has it.
+        setError(t("addServer.answerFailed"));
+        api
+          .getHostSetup(jobId)
+          .then(setJob)
+          .catch(() => setJob(null));
+      });
   };
 
   const cancelAndClose = () => {
+    resumeJobId = null;
     if (api && jobId && active) {
       void api.cancelHostSetup(jobId).catch(() => undefined);
     }
@@ -333,6 +373,11 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
                   </Button>
                 </div>
               </div>
+            ) : null}
+            {error ? (
+              <p className={form.error} role="alert">
+                {error}
+              </p>
             ) : null}
             {view === "failed" ? <Failure job={job} /> : null}
             {view === "done" ? (

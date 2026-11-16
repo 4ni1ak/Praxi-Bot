@@ -483,4 +483,18 @@ mod tests {
         let text = std::fs::read_to_string(&paths.ssh_config).unwrap();
         assert!(!text.contains("Match") && text.lines().all(|l| l.starts_with('#')));
     }
+
+    #[test]
+    fn a_key_path_with_spaces_and_non_ascii_letters_stays_one_argument() {
+        let key = "C:\\Users\\emreo\\OneDrive\\Masa\u{fc}st\u{fc} oracle\\free-a1.key";
+        let target = SshTarget {
+            user: "ubuntu".into(),
+            host: "130.61.218.49".into(),
+            port: 22,
+            key: Some(key.into()),
+        };
+        let argv = ssh_argv(&paths(), &target, "true");
+        let at = argv.iter().position(|a| a == "-i").unwrap();
+        assert_eq!(argv[at + 1], std::ffi::OsString::from(key));
+    }
 }
