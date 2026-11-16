@@ -71,9 +71,9 @@ function StatusRow({ ok, label }: { ok: boolean; label: string }) {
  * The calm center of the chat area while a paired host is selected and has no bots (or
  * no model). Replaces the local first-run wizard, which only fits this computer.
  */
-export function HostEmptyState({ onNewBot }: { onNewBot: () => void }) {
+export function HostEmptyState({ onNewBot, onConnectModel }: { onNewBot: () => void; onConnectModel?: () => void }) {
   const { t } = useTranslation();
-  const { activeComputerId, activeHostName, hostState, bots, selectComputer } = useDaemon();
+  const { activeComputerId, activeHostName, hostState, bots, setWorkLocalNow } = useDaemon();
   const { targets, openViewer } = useLiveView();
   const [modelOpen, setModelOpen] = useState(false);
   if (activeComputerId === LOCAL_COMPUTER) {
@@ -115,7 +115,7 @@ export function HostEmptyState({ onNewBot }: { onNewBot: () => void }) {
         ) : null}
         <div className={styles.actions}>
           {reachable && noModel ? (
-            <Button variant="primary" onClick={() => setModelOpen(true)} data-testid="host-connect-model">
+            <Button variant="primary" onClick={() => (onConnectModel ? onConnectModel() : setModelOpen(true))} data-testid="host-connect-model">
               {t("hostMode.model.action", { name })}
             </Button>
           ) : null}
@@ -135,8 +135,8 @@ export function HostEmptyState({ onNewBot }: { onNewBot: () => void }) {
               {t("hostMode.viewScreen")}
             </Button>
           ) : null}
-          <Button variant="ghost" onClick={() => void selectComputer(LOCAL_COMPUTER)}>
-            {t("hostState.useThisComputer")}
+          <Button variant="ghost" onClick={() => setWorkLocalNow(true)}>
+            {t("home.banner.workHere")}
           </Button>
         </div>
         {reachable ? <p className={styles.note}>{t("hostMode.managedOnServer", { name })}</p> : null}
