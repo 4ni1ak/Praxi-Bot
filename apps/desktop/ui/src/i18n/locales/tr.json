@@ -2492,9 +2492,19 @@
     "allow": "{{name}} üzerindeki botlar bu bilgisayarı kullanabilsin",
     "askNote": "Bir şeyi değiştiren her işlem önce sana sorar.",
     "requestTitle": "Bir bot bu bilgisayarda işlem yapmak istiyor",
-    "requestBody": "{{name}} üzerindeki bir bot bu bilgisayarda şunu yapmak istiyor:",
+    "requestBody": "Bu sunucudaki bir bot bu bilgisayarda şunu yapmak istiyor:",
     "allowOnce": "Bir kez izin ver",
-    "deny": "Reddet"
+    "deny": "Reddet",
+    "alwaysRead": "{{name}} botları ekrana bakmadan önce sorma",
+    "alwaysReadNote": "Kapalıyken oturum başına bir kez sorulur. Praxi'nin kendi pencereleri asla gösterilmez.",
+    "looking": "{{name}} üzerindeki bir bot bu ekrana bakıyor",
+    "readTitle": "Bir sunucunun botları ekranına bakmak istiyor",
+    "fromServerName": "(sunucunun kendini adlandırdığı ad: {{name}})",
+    "fromServer": "Bu ad sunucudan gelir, bu bilgisayardan değil.",
+    "what": "İşlem",
+    "where": "Şuraya gider",
+    "details": "Tam olarak",
+    "allowSession": "Bu oturum için izin ver"
   },
   "hostMode": {
     "state": {

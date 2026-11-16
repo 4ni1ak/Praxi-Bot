@@ -6,6 +6,10 @@ use std::{path::Path, sync::Arc};
 pub(crate) fn config(data: &Path, host: bool) -> Result<(PeerConfig, Option<bool>)> {
     let mut cfg = PeerConfig::new(data.join("peer"));
     cfg.local_role = if host { Role::Host } else { Role::Desktop };
+    if !host {
+        // A desktop serves input requests that wait for its owner's card.
+        cfg.rpc_timeout = peer_network::ACTION_RPC_TIMEOUT;
+    }
     // The PC shows up on the server under its own name ("EMRE-PC"), not a generic label.
     cfg.display_name = if host {
         "Praxi host".to_owned()

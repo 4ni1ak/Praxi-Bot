@@ -50,6 +50,9 @@ pub struct HostLinkInfo {
     /// The owner lets this host's bots use THIS computer (off by default).
     #[serde(default)]
     pub computer_access: bool,
+    /// ... and may look at the screen without asking first each session.
+    #[serde(default)]
+    pub computer_access_always: bool,
 }
 
 /// `GET /v1/hosts`.
@@ -119,12 +122,21 @@ pub trait HostLinks: Send + Sync {
         false
     }
     /// Let (or stop letting) a paired host's bots use this computer.
-    async fn set_computer_access(&self, _id: &str, _enabled: bool) -> Result<(), HostLinkError> {
+    async fn set_computer_access(
+        &self,
+        _id: &str,
+        _enabled: bool,
+        _always_read: bool,
+    ) -> Result<(), HostLinkError> {
         Err(HostLinkError::NotFound)
     }
-    /// Requests of hosts to act on this computer, waiting for the owner.
-    fn computer_requests(&self) -> Vec<crate::pc_access::PcRequestInfo> {
-        Vec::new()
+    /// Requests of hosts to act on this computer, waiting for the owner, and
+    /// the hosts looking at the screen right now.
+    fn computer_requests(&self) -> crate::pc_access::PcRequestList {
+        crate::pc_access::PcRequestList {
+            requests: Vec::new(),
+            reading: Vec::new(),
+        }
     }
     /// Answer one request; `false` when it is gone.
     fn decide_computer_request(&self, _id: &str, _allow: bool) -> bool {
@@ -139,6 +151,29 @@ impl From<HostLinkError> for ApiError {
             HostLinkError::Invalid(m) => Self::bad_request(m),
             HostLinkError::Failed(m) => Self::new(StatusCode::BAD_GATEWAY, "host_link_failed", m),
         }
+    }
+}
+
+/// PLACEHOLDER owner-authority guard for the three computer-access routes (card
+/// 258-A, review blocker 1). The general API token is also held by the CLI, bot
+/// tools and CLI engines, so "no peer identity" is not "the owner". Until the
+/// owner-key mechanism of PR #133 (`AppState::require_owner`, header
+/// `x-praxi-owner-key`) is on main, this requires the request to come from the
+/// desktop app's web view: an `Origin` header that is one of the app's allowed
+/// origins (non-browser clients, bot tools and the CLI send none). A process
+/// that forges the header passes, so this is damping, not a boundary: SWAP THE
+/// BODY FOR `s.require_owner(headers)` once #133 is merged.
+fn require_owner_authority(s: &AppState, headers: &axum::http::HeaderMap) -> Result<(), ApiError> {
+    let from_app = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|o| o.to_str().ok())
+        .is_some_and(|o| s.origin_allowed(o));
+    if from_app {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "this is the owner's decision: use the desktop app on this computer",
+        ))
     }
 }
 
@@ -253,18 +288,23 @@ pub(crate) async fn disconnect(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(get, operation_id = "hosts_computer_requests", path = "/v1/hosts/computer-requests", tag = "host", security(("bearer" = [])), responses((status = 200, body = Vec<crate::pc_access::PcRequestInfo>)))]
+#[utoipa::path(get, operation_id = "hosts_computer_requests", path = "/v1/hosts/computer-requests", tag = "host", security(("bearer" = [])), responses((status = 200, body = crate::pc_access::PcRequestList)))]
 pub(crate) async fn computer_requests(
     State(s): State<AppState>,
     peer: Option<Extension<crate::PeerIdentity>>,
-) -> Result<Json<Vec<crate::pc_access::PcRequestInfo>>, ApiError> {
+    headers: axum::http::HeaderMap,
+) -> Result<Json<crate::pc_access::PcRequestList>, ApiError> {
     if peer.is_some() {
         return Err(ApiError::forbidden("host links are local only"));
     }
+    require_owner_authority(&s, &headers)?;
     Ok(Json(
         s.host_links()
             .map(|l| l.computer_requests())
-            .unwrap_or_default(),
+            .unwrap_or(crate::pc_access::PcRequestList {
+                requests: Vec::new(),
+                reading: Vec::new(),
+            }),
     ))
 }
 
@@ -272,12 +312,14 @@ pub(crate) async fn computer_requests(
 pub(crate) async fn decide_computer_request(
     State(s): State<AppState>,
     peer: Option<Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
     Path(rid): Path<String>,
     ApiJson(input): ApiJson<crate::pc_access::PcRequestDecision>,
 ) -> Result<StatusCode, ApiError> {
     if peer.is_some() {
         return Err(ApiError::forbidden("host links are local only"));
     }
+    require_owner_authority(&s, &headers)?;
     let links = links(&s)?;
     audit(
         &s,
@@ -295,12 +337,14 @@ pub(crate) async fn decide_computer_request(
 pub(crate) async fn set_computer_access(
     State(s): State<AppState>,
     peer: Option<Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     ApiJson(input): ApiJson<crate::pc_access::ComputerAccessInput>,
 ) -> Result<StatusCode, ApiError> {
     if peer.is_some() {
         return Err(ApiError::forbidden("host links are local only"));
     }
+    require_owner_authority(&s, &headers)?;
     if !valid_id(&id) {
         return Err(ApiError::bad_request("invalid host id"));
     }
@@ -308,8 +352,10 @@ pub(crate) async fn set_computer_access(
     audit(
         &s,
         "host_link.computer_access",
-        &serde_json::json!({"host":id,"enabled":input.enabled}),
+        &serde_json::json!({"host":id,"enabled":input.enabled,"always_read":input.always_read}),
     )?;
-    links.set_computer_access(&id, input.enabled).await?;
+    links
+        .set_computer_access(&id, input.enabled, input.always_read)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }

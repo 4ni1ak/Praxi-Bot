@@ -2492,9 +2492,19 @@
     "allow": "Let the bots on {{name}} use this computer",
     "askNote": "Every action that changes something asks you first.",
     "requestTitle": "A bot wants to act on this computer",
-    "requestBody": "A bot on {{name}} asks to do this on this computer:",
+    "requestBody": "A bot on this server asks to do this on this computer:",
     "allowOnce": "Allow once",
-    "deny": "Deny"
+    "deny": "Deny",
+    "alwaysRead": "Don't ask before {{name}}'s bots look at the screen",
+    "alwaysReadNote": "Otherwise you are asked once per session. Praxi's own windows are never shown.",
+    "looking": "A bot on {{name}} is looking at this screen",
+    "readTitle": "A server's bots want to look at your screen",
+    "fromServerName": "(server name, as it calls itself: {{name}})",
+    "fromServer": "This name comes from the server, not from this computer.",
+    "what": "Action",
+    "where": "Goes to",
+    "details": "Exactly",
+    "allowSession": "Allow for this session"
   },
   "hostMode": {
     "state": {

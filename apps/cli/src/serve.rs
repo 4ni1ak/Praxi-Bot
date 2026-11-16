@@ -1024,14 +1024,21 @@ pub fn serve(
             let requests = Arc::new(daemon_api::pc_access::PcRequests::new());
             let handler = local_desktop.clone().map(|backend| {
                 let audit = state.audit_writer_as("pc-target");
+                let hub = state.control_hub();
+                let live_hub = state.control_hub();
+                let masker = redactor.clone();
                 Arc::new(crate::pc_target::HostDesktopHandler::new(
-                    peer_network::DesktopRpcHandler::new(backend),
-                    access.clone(),
-                    requests.clone(),
-                    state.control_hub(),
-                    Arc::new(move |action, detail| {
-                        let _ = audit(action, &detail);
-                    }),
+                    crate::pc_target::PcTargetDeps {
+                        raw: backend,
+                        data: data_dir.join(""),
+                        access: access.clone(),
+                        requests: requests.clone(),
+                        gate: hub,
+                        owner_ui_live: Arc::new(move || live_hub.owner_ui_live()),
+                        audit: Arc::new(move |action, detail| audit(action, &detail)),
+                        redact: Arc::new(move |text| masker.redact(text)),
+                        own_pid: std::process::id(),
+                    },
                 ))
             });
             crate::host_links::PcTarget {

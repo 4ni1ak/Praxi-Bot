@@ -2834,8 +2834,10 @@ export interface components {
              */
             tools_count?: number | null;
         };
-        /** @description Switch for one host. */
+        /** @description Switches for one host. */
         ComputerAccessInput: {
+            /** @description Do not ask before the first look at the screen each session. */
+            always_read?: boolean;
             /** @description Let this host's bots use this computer. */
             enabled: boolean;
         };
@@ -3565,6 +3567,8 @@ export interface components {
         HostLinkInfo: {
             /** @description The owner lets this host's bots use THIS computer (off by default). */
             computer_access?: boolean;
+            /** @description ... and may look at the screen without asking first each session. */
+            computer_access_always?: boolean;
             /** @description One short, path-free sentence for `offline` / `unreachable`. */
             detail?: string | null;
             /** @description Paired device key (public, not a secret). */
@@ -4381,12 +4385,23 @@ export interface components {
             action: string;
             /** Format: int64 */
             created_ms: number;
-            /** @description Short single-line description of the target / input. */
-            detail: string;
             /** @description Paired host the request comes from (public key). */
             host_id: string;
+            /** @description Name the host announced (untrusted text, shown as "from the server"). */
             host_name: string;
             id: string;
+            /** @description `session_read` (first look at the screen this session) or `act`. */
+            kind: string;
+            /** @description The complete, masked payload (text to type, keys, launch command). */
+            payload: string;
+            /** @description What the input would reach, resolved by this computer's OS. */
+            target: string;
+        };
+        /** @description Pending requests and who is looking at the screen right now. */
+        PcRequestList: {
+            /** @description Names of hosts whose bots read this screen in the last few seconds. */
+            reading: string[];
+            requests: components["schemas"]["PcRequestInfo"][];
         };
         /** @enum {string} */
         PointerPhase: "move" | "down" | "up";
@@ -8125,7 +8140,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PcRequestInfo"][];
+                    "application/json": components["schemas"]["PcRequestList"];
                 };
             };
         };

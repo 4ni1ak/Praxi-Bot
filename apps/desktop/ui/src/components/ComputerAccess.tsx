@@ -35,7 +35,7 @@ export function ComputerAccessCard() {
             onChange={(enabled) => {
               setError(null);
               void localApi
-                ?.setComputerAccess(h.id, enabled)
+                ?.setComputerAccess(h.id, enabled, enabled && h.computer_access_always === true)
                 .then(() => refreshHosts())
                 .catch((e: unknown) =>
                   setError(e instanceof Error ? e.message : String(e))
@@ -44,6 +44,29 @@ export function ComputerAccessCard() {
           />
         </SettingRow>
       ))}
+      {hosts
+        .filter((h) => h.computer_access === true)
+        .map((h) => (
+          <SettingRow
+            key={`${h.id}-always`}
+            title={t("computerAccess.alwaysRead", { name: h.name })}
+            description={t("computerAccess.alwaysReadNote")}
+          >
+            <Switch
+              checked={h.computer_access_always === true}
+              label={t("computerAccess.alwaysRead", { name: h.name })}
+              onChange={(always) => {
+                setError(null);
+                void localApi
+                  ?.setComputerAccess(h.id, true, always)
+                  .then(() => refreshHosts())
+                  .catch((e: unknown) =>
+                    setError(e instanceof Error ? e.message : String(e))
+                  );
+              }}
+            />
+          </SettingRow>
+        ))}
       {error ? (
         <p className={styles.error} role="alert">
           {error}
@@ -58,10 +81,12 @@ export function ComputerRequestModal() {
   const { t } = useTranslation();
   const { hostList, localApi } = useDaemon();
   const [pending, setPending] = useState<PcRequestInfo[]>([]);
+  const [reading, setReading] = useState<string[]>([]);
   const watching = (hostList?.hosts ?? []).some((h) => h.computer_access);
   useEffect(() => {
     if (!watching || !localApi) {
       setPending([]);
+      setReading([]);
       return undefined;
     }
     let stopped = false;
@@ -69,7 +94,9 @@ export function ComputerRequestModal() {
       localApi
         .computerRequests()
         .then((list) => {
-          if (!stopped) setPending(list);
+          if (stopped) return;
+          setPending(list.requests);
+          setReading(list.reading);
         })
         .catch(() => {});
     };
@@ -87,31 +114,53 @@ export function ComputerRequestModal() {
     void localApi.decideComputerRequest(current.id, allow).catch(() => {});
   };
   return (
-    <Modal
-      open={Boolean(current)}
-      onClose={() => answer(false)}
-      label={t("computerAccess.requestTitle")}
-      size="sm"
-    >
-      {current ? (
-        <div className={styles.request} data-testid="computer-request">
-          <h2 className={styles.title}>{t("computerAccess.requestTitle")}</h2>
-          <p className={styles.hint}>
-            {t("computerAccess.requestBody", { name: current.host_name })}
-          </p>
-          <p className={styles.detail}>
-            <strong>{current.action}</strong> {current.detail}
-          </p>
-          <div className={styles.actions}>
-            <Button variant="ghost" onClick={() => answer(false)}>
-              {t("computerAccess.deny")}
-            </Button>
-            <Button variant="primary" onClick={() => answer(true)}>
-              {t("computerAccess.allowOnce")}
-            </Button>
-          </div>
+    <>
+      {reading.length > 0 ? (
+        <div className={styles.looking} role="status" data-testid="computer-looking">
+          <i aria-hidden="true" />
+          {t("computerAccess.looking", { name: reading.join(", ") })}
         </div>
       ) : null}
-    </Modal>
+      <Modal
+        open={Boolean(current)}
+        onClose={() => answer(false)}
+        label={t("computerAccess.requestTitle")}
+        size="sm"
+      >
+        {current ? (
+          <div className={styles.request} data-testid="computer-request">
+            <h2 className={styles.title}>
+              {current.kind === "session_read"
+                ? t("computerAccess.readTitle")
+                : t("computerAccess.requestTitle")}
+            </h2>
+            <p className={styles.hint}>
+              {t("computerAccess.requestBody")}{" "}
+              <span className={styles.untrusted} title={t("computerAccess.fromServer")}>
+                {t("computerAccess.fromServerName", { name: current.host_name })}
+              </span>
+            </p>
+            <dl className={styles.facts}>
+              <dt>{t("computerAccess.what")}</dt>
+              <dd>{current.action}</dd>
+              <dt>{t("computerAccess.where")}</dt>
+              <dd>{current.target}</dd>
+              <dt>{t("computerAccess.details")}</dt>
+              <dd className={styles.payload}>{current.payload}</dd>
+            </dl>
+            <div className={styles.actions}>
+              <Button variant="ghost" onClick={() => answer(false)}>
+                {t("computerAccess.deny")}
+              </Button>
+              <Button variant="primary" onClick={() => answer(true)}>
+                {current.kind === "session_read"
+                  ? t("computerAccess.allowSession")
+                  : t("computerAccess.allowOnce")}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+    </>
   );
 }

@@ -4138,10 +4138,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PcRequestInfo"
-                  }
+                  "$ref": "#/components/schemas/PcRequestList"
                 }
               }
             }
@@ -9153,11 +9150,15 @@
       },
       "ComputerAccessInput": {
         "type": "object",
-        "description": "Switch for one host.",
+        "description": "Switches for one host.",
         "required": [
           "enabled"
         ],
         "properties": {
+          "always_read": {
+            "type": "boolean",
+            "description": "Do not ask before the first look at the screen each session."
+          },
           "enabled": {
             "type": "boolean",
             "description": "Let this host's bots use this computer."
@@ -11034,6 +11035,10 @@
           "computer_access": {
             "type": "boolean",
             "description": "The owner lets this host's bots use THIS computer (off by default)."
+          },
+          "computer_access_always": {
+            "type": "boolean",
+            "description": "... and may look at the screen without asking first each session."
           },
           "detail": {
             "type": [
@@ -13462,8 +13467,10 @@
           "id",
           "host_id",
           "host_name",
+          "kind",
           "action",
-          "detail",
+          "target",
+          "payload",
           "created_ms"
         ],
         "properties": {
@@ -13475,19 +13482,51 @@
             "type": "integer",
             "format": "int64"
           },
-          "detail": {
-            "type": "string",
-            "description": "Short single-line description of the target / input."
-          },
           "host_id": {
             "type": "string",
             "description": "Paired host the request comes from (public key)."
           },
           "host_name": {
-            "type": "string"
+            "type": "string",
+            "description": "Name the host announced (untrusted text, shown as \"from the server\")."
           },
           "id": {
             "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`session_read` (first look at the screen this session) or `act`."
+          },
+          "payload": {
+            "type": "string",
+            "description": "The complete, masked payload (text to type, keys, launch command)."
+          },
+          "target": {
+            "type": "string",
+            "description": "What the input would reach, resolved by this computer's OS."
+          }
+        }
+      },
+      "PcRequestList": {
+        "type": "object",
+        "description": "Pending requests and who is looking at the screen right now.",
+        "required": [
+          "requests",
+          "reading"
+        ],
+        "properties": {
+          "reading": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of hosts whose bots read this screen in the last few seconds."
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PcRequestInfo"
+            }
           }
         }
       },

@@ -25,7 +25,7 @@ import type {
   Health,
   HostLinkConnection,
   HostLinkInfo,
-  PcRequestInfo,
+  PcRequestList,
   HostSetupJob,
   SshKeyHint,
   StartHostSetupInput,
@@ -334,11 +334,13 @@ export class ApiClient {
     return this.request("POST", `/hosts/${encodeURIComponent(id)}/connect`);
   }
   /** Let (or stop letting) a paired server's bots use THIS computer (local owner only). */
-  setComputerAccess(id: string, enabled: boolean): Promise<void> {
-    return this.request("PUT", `/hosts/${encodeURIComponent(id)}/computer-access`, { body: { enabled } });
+  setComputerAccess(id: string, enabled: boolean, alwaysRead = false): Promise<void> {
+    return this.request("PUT", `/hosts/${encodeURIComponent(id)}/computer-access`, {
+      body: { enabled, always_read: alwaysRead }
+    });
   }
   /** Requests of a server to act on this computer, waiting for the owner. */
-  computerRequests(): Promise<PcRequestInfo[]> {
+  computerRequests(): Promise<PcRequestList> {
     return this.request("GET", "/hosts/computer-requests");
   }
   decideComputerRequest(id: string, allow: boolean): Promise<void> {

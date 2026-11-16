@@ -187,6 +187,10 @@ impl CliHostLinks {
                 .pc
                 .as_ref()
                 .is_some_and(|pc| pc.access.enabled(&device.id)),
+            computer_access_always: self
+                .pc
+                .as_ref()
+                .is_some_and(|pc| pc.access.always_read(&device.id)),
         }
     }
 }
@@ -270,7 +274,12 @@ impl HostLinks for CliHostLinks {
         Ok(connection)
     }
 
-    async fn set_computer_access(&self, id: &str, enabled: bool) -> Result<(), HostLinkError> {
+    async fn set_computer_access(
+        &self,
+        id: &str,
+        enabled: bool,
+        always_read: bool,
+    ) -> Result<(), HostLinkError> {
         let Some(pc) = &self.pc else {
             return Err(HostLinkError::Invalid(
                 "this computer cannot be used by a server".into(),
@@ -289,8 +298,12 @@ impl HostLinks for CliHostLinks {
             return Err(HostLinkError::NotFound);
         }
         pc.access
-            .set(id, enabled)
+            .set(id, enabled, always_read)
             .map_err(|e| HostLinkError::Failed(safe(e)))?;
+        if !enabled {
+            // Whatever the host had parked is denied now, not at its timeout.
+            pc.requests.cancel_host(id);
+        }
         if enabled {
             self.ensure_beat(id).await?;
         } else if let Some(beat) = self.beats.lock().remove(id) {
@@ -299,11 +312,14 @@ impl HostLinks for CliHostLinks {
         Ok(())
     }
 
-    fn computer_requests(&self) -> Vec<daemon_api::pc_access::PcRequestInfo> {
-        self.pc
-            .as_ref()
-            .map(|pc| pc.requests.list())
-            .unwrap_or_default()
+    fn computer_requests(&self) -> daemon_api::pc_access::PcRequestList {
+        self.pc.as_ref().map_or(
+            daemon_api::pc_access::PcRequestList {
+                requests: Vec::new(),
+                reading: Vec::new(),
+            },
+            |pc| pc.requests.snapshot(),
+        )
     }
 
     fn decide_computer_request(&self, id: &str, allow: bool) -> bool {
@@ -325,6 +341,14 @@ impl HostLinks for CliHostLinks {
             return false;
         };
         self.open.lock().remove(id);
+        if let Some(pc) = &self.pc {
+            // Removing the server ends its use of this computer.
+            let _ = pc.access.set(id, false, false);
+            pc.requests.cancel_host(id);
+        }
+        if let Some(beat) = self.beats.lock().remove(id) {
+            beat.abort();
+        }
         let (Ok(key), Ok(net)) = (device.public_key(), self.network().await) else {
             return false;
         };
