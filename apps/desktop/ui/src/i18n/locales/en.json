@@ -924,6 +924,10 @@
     "retrying": "Trying again in {{seconds}} s",
     "restarting": "Restarting…",
     "codes": {
+      "admin_rate_limit": {
+        "title": "Too many administration changes",
+        "hint": "Wait a minute and try again."
+      },
       "approval_once_only": {
         "title": "This approval can only be given once",
         "hint": "Allow it for this step only, or deny it."

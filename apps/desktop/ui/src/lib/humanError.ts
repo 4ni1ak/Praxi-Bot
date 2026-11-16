@@ -14,7 +14,7 @@ import { hostRefusalKey } from "./hostMode.ts";
 
 /** Every `code` the daemon can put in its error envelope (checked against the Rust sources by a test). */
 export const DAEMON_ERROR_CODES = [
-  "approval_once_only", "bad_composio_request", "bad_email_config", "bad_engine", "bad_mcp_config",
+  "admin_rate_limit", "approval_once_only", "bad_composio_request", "bad_email_config", "bad_engine", "bad_mcp_config",
   "bad_profile", "bad_request", "bad_schedule", "bad_web_config", "busy", "composio_error",
   "composio_not_configured", "composio_rate_limited", "conflict", "could_not_verify", "disabled",
   "email_provider_error", "engine_owner_only", "forbidden", "host_link_failed", "host_setup_conflict",
