@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Search, Server, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { upsertApp } from "../lib/composioApps";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, Button } from "ui";
 import { BrandIcon } from "../components/BrandIcon";
@@ -35,10 +36,18 @@ import {
 import { useDaemon } from "../state/DaemonContext";
 import { useMcp } from "../state/useMcp";
 import styles from "./AppsModal.module.css";
-import { ComposioSection } from "./ComposioSection";
+import { AppTile, ComposioCell, GroupChips, LinkStep, SkeletonTiles } from "./AppsGrid";
+import { ComposioAdvanced } from "./ComposioAdvanced";
+import { MissingComponent, componentFor } from "./MissingComponent";
+import { useComposio } from "../state/useComposio";
+import { composioTileState, directEntries, filterDirect, isRemoteServer, visibleToolkits } from "../lib/appTiles";
+import { openComposioLink } from "../lib/externalLink";
+import type { McpServer as McpServerT } from "../api/types";
+import own from "./AppsGrid.module.css";
+import { humanLine } from "../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 /** Most bot faces shown next to an app; the rest collapse into "+n". */
@@ -55,21 +64,28 @@ const MAX_FACES = 4;
 function McpErrorBlock({
   server,
   busy,
-  onChooseFolder
+  onChooseFolder,
+  onReconnect
 }: {
   server: McpServer;
   busy: boolean;
   onChooseFolder: (folder: string) => void;
+  onReconnect: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [folder, setFolder] = useState("");
   const hintKey = mcpErrorHintKey(server.error_kind, server.command);
+  const missing = server.error_kind === "runtime_missing" ? componentFor(server.command) : null;
   const stderr = server.stderr_tail ?? [];
   const id = `mcp-error-${server.name}`;
   return (
     <div className={styles.errorBlock} data-testid={`mcp-error-${server.name}`}>
-      {hintKey ? <p className={styles.errorHint}>{t(hintKey)}</p> : null}
+      {missing ? (
+        <MissingComponent id={missing} onReady={onReconnect} />
+      ) : (
+        <p className={styles.errorHint}>{hintKey ? t(hintKey) : t("apps.error.generic")}</p>
+      )}
       {server.error_kind === "needs_folder" ? (
         <form
           className={styles.folderForm}
@@ -97,7 +113,6 @@ function McpErrorBlock({
           </Button>
         </form>
       ) : null}
-      <p className={styles.errorText}>{server.error}</p>
       <button
         type="button"
         className={styles.errorToggle}
@@ -124,6 +139,8 @@ function McpErrorBlock({
 
 function ConnectedCell({
   server,
+  title,
+  icon,
   description,
   busy,
   signingIn,
@@ -137,6 +154,8 @@ function ConnectedCell({
   onChooseFolder
 }: {
   server: McpServer;
+  title?: string;
+  icon?: string;
   description?: string;
   busy: boolean;
   onChooseFolder: (folder: string) => void;
@@ -201,10 +220,10 @@ function ConnectedCell({
       data-testid={`mcp-server-${server.name}`}
     >
       <div className={styles.cellRow}>
-        <BrandIcon name={server.name} bare size={26} />
+        <BrandIcon name={icon ?? server.name} bare size={26} />
         <div className={styles.cellText}>
           <b className={styles.cellName}>
-            <span className={styles.cellTitle}>{known.known ? known.name : server.name}</span>
+            <span className={styles.cellTitle}>{title ?? (known.known ? known.name : server.name)}</span>
             <span className={styles.faces} title={usedBy}>
               {users.slice(0, MAX_FACES).map((b) => (
                 <BotAvatar key={b.id} bot={botView(b)} size="xs" decorative />
@@ -220,9 +239,9 @@ function ConnectedCell({
             {usedBy}
           </small>
         </div>
-        <span className={`${styles.state} ${styles[`tone_${tone}`]}`}>
-          {tone === "ok" ? <Check aria-hidden="true" /> : <span className={styles.dot} aria-hidden="true" />}
-          {t(`apps.status.${server.status}`)}
+        <span className={`${styles.state} ${styles[signingIn ? "tone_busy" : `tone_${tone}`]}`}>
+          {tone === "ok" && !signingIn ? <Check aria-hidden="true" /> : <span className={styles.dot} aria-hidden="true" />}
+          {signingIn ? t("apps.composio.waiting") : t(`apps.status.${server.status}`)}
         </span>
         <button
           type="button"
@@ -244,7 +263,7 @@ function ConnectedCell({
         </button>
       </div>
       {server.error ? (
-        <McpErrorBlock server={server} busy={busy} onChooseFolder={onChooseFolder} />
+        <McpErrorBlock server={server} busy={busy} onChooseFolder={onChooseFolder} onReconnect={onReconnect} />
       ) : null}
       {open ? (
         <div className={styles.panel} id={panelId}>
@@ -636,10 +655,14 @@ export function AppsModal({
   const { t } = useTranslation();
   const toast = useToast();
   const { client } = useDaemon();
-  const { servers, catalog, loading, error, reload } = useMcp(open);
+  const { servers, catalog, error, reload } = useMcp(open);
   const [query, setQuery] = useState("");
   const [advanced, setAdvanced] = useState(false);
+  const [group, setGroup] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
+  const c = useComposio(open, query, group);
+  const [wantLink, setWantLink] = useState<{ slug: string; name: string } | null>(null);
+  const [linking, setLinking] = useState<string | null>(null);
   // Pending sign-ins by server; the flag stops the poll and cancels the flow.
   const [signing, setSigning] = useState<Record<string, { aborted: boolean }>>({});
 
@@ -674,6 +697,8 @@ export function AppsModal({
   useEffect(() => {
     if (open) {
       setQuery("");
+      setGroup("all");
+      setWantLink(null);
       setAdvanced(false);
     }
   }, [open]);
@@ -686,16 +711,34 @@ export function AppsModal({
       ),
     [catalog, query, servers]
   );
-  // Local servers need nothing from the user; the token-paste cards live under
-  // Advanced (services are connected through Composio instead).
+  // Remote apps Praxi signs in to itself are tiles in the grid; local developer
+  // servers and token cards live under Advanced.
+  const allDirect = useMemo(
+    () => catalog.filter((e) => e.install.transport === "http" && e.install.required_secrets.length === 0),
+    [catalog]
+  );
+  const directShown = useMemo(
+    () => filterDirect(directEntries(catalog, servers), query, group),
+    [catalog, servers, query, group]
+  );
   const shownCatalog = useMemo(
-    () => available.filter((e) => e.install.required_secrets.length === 0),
+    () =>
+      available.filter(
+        (e) => e.install.required_secrets.length === 0 && e.install.transport !== "http"
+      ),
     [available]
   );
   const tokenCatalog = useMemo(
     () => available.filter((e) => e.install.required_secrets.length > 0),
     [available]
   );
+  const remoteServers = useMemo(() => shownServers.filter(isRemoteServer), [shownServers]);
+  const localServers = useMemo(() => shownServers.filter((s) => !isRemoteServer(s)), [shownServers]);
+  const toolkits = useMemo(
+    () => visibleToolkits(c.items, c.apps, allDirect, []),
+    [c.items, c.apps, allDirect]
+  );
+  const entryOf = (name: string) => catalog.find((e) => e.id === name);
   const describe = (name: string) => catalog.find((c) => c.id === name)?.description;
 
   const run = async (key: string, fn: () => Promise<void>) => {
@@ -733,6 +776,112 @@ export function AppsModal({
       throw e;
     }
   };
+
+  /** Open Composio's consent page for one app (Composio is already linked). */
+  const connectComposio = (slug: string, name: string) =>
+    run(slug, async () => {
+      if (!client) {
+        return;
+      }
+      setLinking(slug);
+      try {
+        const link = await client.composioConnect(slug);
+        if (!(await openComposioLink(link.redirect_url))) {
+          toast.show(t("apps.composio.openFailed"), "danger");
+          return;
+        }
+        c.setApps((prev) =>
+          upsertApp(prev, { slug, name, state: "pending", enabled: true, native_first: false, bots: null, tools: 0 })
+        );
+      } finally {
+        setLinking(null);
+      }
+    });
+
+  /** First Connect on a Composio app: the one-time browser link comes first. */
+  const pressComposio = (slug: string, name: string) => {
+    if (c.status?.configured) {
+      void connectComposio(slug, name);
+    } else {
+      setWantLink({ slug, name });
+    }
+  };
+
+  const connectDirect = async (entry: McpCatalogEntry) => {
+    try {
+      await connect(entry, {});
+    } catch {
+      return;
+    }
+    await signIn(entry.id);
+  };
+
+  const renderServer = (s: McpServerT) => (
+    <ConnectedCell
+      key={s.name}
+      server={s}
+      title={entryOf(s.name)?.name}
+      icon={entryOf(s.name)?.icon ?? undefined}
+      description={describe(s.name)}
+      busy={busy === s.name}
+      onChooseFolder={(folder) =>
+        void run(s.name, async () => {
+          await client?.updateMcpServer(s.name, { args: withFolder(s.args ?? [], folder) });
+          await reload();
+        })
+      }
+      signingIn={Boolean(signing[s.name])}
+      onSignIn={() => void signIn(s.name)}
+      onCancelSignIn={() => {
+        const signal = signing[s.name];
+        if (signal) {
+          signal.aborted = true;
+        }
+      }}
+      onPasteRedirect={(url) =>
+        void run(s.name, async () => {
+          await client?.completeMcpAuth(s.name, url);
+        })
+      }
+      onSignOut={() =>
+        void run(s.name, async () => {
+          await client?.logoutMcpAuth(s.name);
+          toast.show(t("apps.auth.signedOutToast", { name: s.name }), "info");
+          await reload();
+        })
+      }
+      onReconnect={() =>
+        void run(s.name, async () => {
+          await client?.reconnectMcpServer(s.name);
+          await reload();
+        })
+      }
+      onSaveBots={(from, to) =>
+        void run(s.name, async () => {
+          if (!client) {
+            return;
+          }
+          const { applied } = await saveServerScope(client, s.name, from, to);
+          if (applied) {
+            toast.show(t("apps.access.savedToast", { name: s.name }), "success");
+          } else {
+            toast.show(t("apps.access.notApplied", { name: s.name }), "danger");
+          }
+          await reload();
+        })
+      }
+      onDisconnect={() =>
+        void run(s.name, async () => {
+          await client?.deleteMcpServer(s.name);
+          toast.show(t("apps.disconnectedToast", { name: s.name }), "info");
+          await reload();
+        })
+      }
+    />
+  );
+
+  const firstLoad = c.items.length === 0 && c.loading && !c.error;
+  const catalogError = c.meta?.error ?? null;
 
   return (
     <Modal open={open} onClose={onClose} label={t("apps.title")} size="apps">
@@ -798,6 +947,21 @@ export function AppsModal({
                 });
               }}
             />
+            {localServers.length > 0 || shownCatalog.length > 0 ? (
+              <section className={styles.section} aria-labelledby="apps-local-h">
+                <h3 className={styles.sectionLabel} id="apps-local-h">{t("apps.advanced.localTitle")}</h3>
+                <ul className={styles.grid}>
+                  {localServers.map(renderServer)}
+                  {shownCatalog.map((entry) => (
+                    <DiscoverCell
+                      key={entry.id}
+                      entry={entry}
+                      onConnect={(values, folder) => connect(entry, values, folder)}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             {tokenCatalog.length > 0 ? (
               <section className={styles.section} aria-labelledby="apps-token-h">
                 <h3 className={styles.sectionLabel} id="apps-token-h">{t("apps.advanced.tokenCards")}</h3>
@@ -813,104 +977,125 @@ export function AppsModal({
                 </ul>
               </section>
             ) : null}
+            <ComposioAdvanced
+              status={c.status}
+              onChanged={async () => {
+                await c.reloadStatus();
+                await c.reloadApps();
+              }}
+            />
             </>
           ) : (
             <>
-              <ComposioSection active={open} query={query} />
-              {shownServers.length > 0 ? (
+              {c.apps.length > 0 || remoteServers.length > 0 ? (
                 <section className={styles.section} aria-labelledby="apps-connected-h">
                   <h3 className={styles.sectionLabel} id="apps-connected-h">{t("apps.connectedSection")}</h3>
                   <ul className={styles.grid}>
-                    {shownServers.map((s) => (
-                      <ConnectedCell
-                        key={s.name}
-                        server={s}
-                        description={describe(s.name)}
-                        busy={busy === s.name}
-                        onChooseFolder={(folder) =>
-                          void run(s.name, async () => {
-                            await client?.updateMcpServer(s.name, {
-                              args: withFolder(s.args ?? [], folder)
-                            });
-                            await reload();
-                          })
-                        }
-                        signingIn={Boolean(signing[s.name])}
-                        onSignIn={() => void signIn(s.name)}
-                        onCancelSignIn={() => {
-                          const signal = signing[s.name];
-                          if (signal) {
-                            signal.aborted = true;
-                          }
-                        }}
-                        onPasteRedirect={(url) =>
-                          void run(s.name, async () => {
-                            // The poll in signIn() sees the finished flow.
-                            await client?.completeMcpAuth(s.name, url);
-                          })
-                        }
-                        onSignOut={() =>
-                          void run(s.name, async () => {
-                            await client?.logoutMcpAuth(s.name);
-                            toast.show(t("apps.auth.signedOutToast", { name: s.name }), "info");
-                            await reload();
-                          })
-                        }
-                        onReconnect={() =>
-                          void run(s.name, async () => {
-                            await client?.reconnectMcpServer(s.name);
-                            await reload();
-                          })
-                        }
-                        onSaveBots={(from, to) =>
-                          void run(s.name, async () => {
-                            if (!client) {
-                              return;
+                    {c.apps.map((a) => (
+                      <ComposioCell
+                        key={a.slug}
+                        app={a}
+                        busy={busy === a.slug}
+                        onEnabled={(enabled) =>
+                          void run(a.slug, async () => {
+                            const next = await client?.composioSetEnabled(a.slug, enabled);
+                            if (next) {
+                              c.setApps((prev) => upsertApp(prev, next));
                             }
-                            const { applied } = await saveServerScope(client, s.name, from, to);
-                            if (applied) {
-                              toast.show(t("apps.access.savedToast", { name: s.name }), "success");
-                            } else {
-                              // The server is not in the state the user chose
-                              // (changed elsewhere meanwhile): say so, show the truth.
-                              toast.show(t("apps.access.notApplied", { name: s.name }), "danger");
-                            }
-                            await reload();
                           })
                         }
+                        onReconnect={() => pressComposio(a.slug, a.name)}
                         onDisconnect={() =>
-                          void run(s.name, async () => {
-                            await client?.deleteMcpServer(s.name);
-                            toast.show(t("apps.disconnectedToast", { name: s.name }), "info");
-                            await reload();
+                          void run(a.slug, async () => {
+                            const r = await client?.composioDisconnect(a.slug);
+                            toast.show(
+                              r && !r.remote_removed
+                                ? t("apps.composio.disconnectedLocal", { name: a.name })
+                                : t("apps.disconnectedToast", { name: a.name }),
+                              "info"
+                            );
+                            await c.reloadApps();
                           })
                         }
                       />
                     ))}
+                    {remoteServers.map(renderServer)}
                   </ul>
                 </section>
               ) : null}
 
-              {shownCatalog.length > 0 || loading ? (
-              <section className={styles.section} aria-labelledby="apps-discover-h">
-                <h3 className={styles.sectionLabel} id="apps-discover-h">{t("apps.localSection")}</h3>
-                {shownCatalog.length === 0 ? (
-                  <p className={styles.empty}><Search aria-hidden="true" />
-                    {loading ? t("apps.loading") : t("apps.noResults")}
+              <GroupChips value={group} onChange={setGroup} />
+
+              {wantLink ? (
+                <LinkStep
+                  phase={c.login}
+                  onCancel={() => {
+                    c.cancelLogin();
+                    setWantLink(null);
+                  }}
+                  onStart={() => {
+                    const w = wantLink;
+                    void c.startLogin(() => {
+                      setWantLink(null);
+                      void connectComposio(w.slug, w.name);
+                    });
+                  }}
+                />
+              ) : null}
+
+              <section className={styles.section} aria-labelledby="apps-all-h">
+                <h3 className={styles.sectionLabel} id="apps-all-h">{t("apps.catalogSection")}</h3>
+                {firstLoad ? (
+                  <SkeletonTiles />
+                ) : c.error && c.items.length === 0 && directShown.length === 0 ? (
+                  <p className={own.quiet} role="alert">
+                    {t("apps.composio.loadFailed")}
+                    <Button size="sm" variant="secondary" onClick={() => void c.retryCatalog()}>
+                      {t("apps.composio.retry")}
+                    </Button>
                   </p>
+                ) : toolkits.length === 0 && directShown.length === 0 ? (
+                  <p className={styles.empty}><Search aria-hidden="true" />{t("apps.composio.noResults")}</p>
                 ) : (
-                  <ul className={styles.grid}>
-                    {shownCatalog.map((entry) => (
-                      <DiscoverCell
-                        key={entry.id}
-                        entry={entry}
-                        onConnect={(values, folder) => connect(entry, values, folder)}
+                  <ul className={styles.grid} data-testid="apps-grid">
+                    {directShown.map((e) => (
+                      <AppTile
+                        key={e.id}
+                        testId={`mcp-catalog-${e.id}`}
+                        name={e.name}
+                        description={e.description}
+                        state={signing[e.id] ? "waiting" : busy === e.id ? "linking" : "idle"}
+                        onConnect={() => void connectDirect(e)}
+                      />
+                    ))}
+                    {toolkits.map((tk) => (
+                      <AppTile
+                        key={tk.slug}
+                        testId={`composio-tile-${tk.slug}`}
+                        name={tk.name}
+                        description={tk.description || tk.categories.join(", ")}
+                        state={composioTileState(undefined, linking === tk.slug)}
+                        onConnect={() => pressComposio(tk.slug, tk.name)}
                       />
                     ))}
                   </ul>
                 )}
+                {catalogError ? (
+                  <p className={own.quiet} data-testid="apps-catalog-notice">
+                    {t(`apps.composio.catalogError.${catalogError}`)}
+                    <Button size="sm" variant="ghost" onClick={() => void c.retryCatalog()}>
+                      {t("apps.composio.retry")}
+                    </Button>
+                  </p>
+                ) : null}
+                <div className={styles.actions}>
+                  {c.hasMore ? (
+                    <Button size="sm" variant="secondary" disabled={c.loading} onClick={() => void c.loadMore()}>
+                      {t("apps.composio.loadMore")}
+                    </Button>
+                  ) : null}
+                </div>
               </section>
-              ) : null}
             </>
           )}
         </div>

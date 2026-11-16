@@ -92,6 +92,8 @@ import {
 } from "../state/timeline";
 import ccStyles from "../components/ChatCards.module.css";
 import styles from "./ChatView.module.css";
+import { type HumanError, humanError, humanLine, humanToolError } from "../lib/humanError";
+import { ErrorNotice } from "../components/ErrorNotice";
 
 const LIVE_STATES = new Set(["pending", "running", "waiting_approval"]);
 
@@ -185,7 +187,8 @@ export function ChatView({
     recordAnswer,
     refreshRuns,
     refreshChats,
-    refreshBots
+    refreshBots,
+    restartDaemon
   } = useDaemon();
   const chat = chats.find((c) => c.id === chatId);
   const bot = bots.find((b) => b.id === chat?.bot_id);
@@ -222,7 +225,19 @@ export function ChatView({
   const [menuIdx, setMenuIdx] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [inputScroll, setInputScroll] = useState(0);
+  // One colour source for mentions: the bot's own colour, for typed text and for sent messages alike.
+  const mentionBots = useMemo(() => bots.map((b) => ({ name: b.name, color: botView(b).color })), [bots]);
+  const mentionParts = useMemo(() => splitMentions(text, mentionBots), [text, mentionBots]);
+  const paintsMentions = mentionParts.some((p) => p.color);
   const [error, setError] = useState<string | null>(null);
+  /** A message that did not go out: shown with Retry; the text stays in the composer. */
+  const [sendFailure, setSendFailure] = useState<HumanError | null>(() =>
+    // Design review (mock mode only): `?screen=errors-send` opens with a failed send.
+    isMockMode() && new URLSearchParams(window.location.search).get("screen") === "errors-send"
+      ? humanError({ status: 0, code: "network", message: "Failed to fetch" })
+      : null
+  );
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
   const [remember, setRemember] = useState<Record<string, RememberState>>({});
@@ -279,7 +294,7 @@ export function ChatView({
     try {
       setMessages(await client.listMessages(chatId));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   }, [client, chatId]);
 
@@ -563,6 +578,7 @@ export function ChatView({
     }
     setSending(true);
     setError(null);
+    setSendFailure(null);
     try {
       // "@Other do x": the daemon lets Other answer in THIS chat.
       const res = await client.sendMessage(
@@ -577,7 +593,7 @@ export function ChatView({
       scrollToEnd();
       await Promise.all([loadMessages(), refreshRuns()]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setSendFailure(humanError(e));
     } finally {
       setSending(false);
     }
@@ -641,7 +657,7 @@ export function ChatView({
     try {
       await refreshRuns();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   };
 
@@ -653,7 +669,7 @@ export function ChatView({
       await client.resumeRun(pausedRunId);
       await refreshRuns();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   };
 
@@ -702,7 +718,6 @@ export function ChatView({
     botId && botId !== chat?.bot_id ? bots.find((b) => b.id === botId) : undefined;
   const runGuest = (runId: string) => guestBot(runs.find((r) => r.id === runId)?.bot_id);
   const botAvatarFor = (decorative: boolean, size: "xs" | "sm" = "sm", guest?: Bot) => <BotAvatar bot={guest ? botView(guest) : (view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" })} size={size} state={guest ? undefined : avatarState} decorative={decorative} />;
-  const mentionBots = useMemo(() => bots.map((b) => ({ name: b.name, color: botView(b).color })), [bots]);
   // Another bot's reply: its own avatar (as in the sidebar) and its name in its colour above the bubble.
   const guestName = (guest?: Bot) => {
     if (!guest) return null;
@@ -733,7 +748,7 @@ export function ChatView({
         setRemember((m) => ({ ...m, [runId]: "idle" }));
         toast.show(
           t("chat.remember.failed", {
-            message: e instanceof Error ? e.message : String(e)
+            message: humanLine(e)
           }),
           "danger"
         );
@@ -921,9 +936,9 @@ export function ChatView({
                 );
               case "runError":
                 return (
-                  <p key={e.key} className={styles.runError} role="alert">
-                    {t("chat.runFailed", { message: e.message })}
-                  </p>
+                  <div key={e.key} className={styles.runError}>
+                    <ErrorNotice compact error={humanToolError(e.message)} />
+                  </div>
                 );
               case "route": {
                 const route = e.run.route;
@@ -1037,6 +1052,14 @@ export function ChatView({
             {error}
           </p>
         ) : null}
+        {sendFailure ? (
+          <ErrorNotice
+            compact
+            error={sendFailure}
+            busy={sending}
+            onAction={(a) => (a === "restartService" ? void restartDaemon() : void send())}
+          />
+        ) : null}
         <div className={styles.dockWrap}>
           <RunBar
             model={barModel}
@@ -1129,9 +1152,25 @@ export function ChatView({
             </div>
           ) : null}
           <div className={styles.box}>
+          <div className={styles.inputWrap}>
+          {paintsMentions ? (
+            <div className={styles.mirror} aria-hidden="true">
+              <div style={{ transform: `translateY(-${inputScroll}px)` }}>
+                {mentionParts.map((p, i) =>
+                  p.color ? (
+                    <span key={i} className={styles.typedMention} style={{ color: p.color }}>{p.text}</span>
+                  ) : (
+                    <span key={i}>{p.text}</span>
+                  )
+                )}
+                {"​"}
+              </div>
+            </div>
+          ) : null}
           <textarea
             ref={inputRef}
-            className={styles.input}
+            className={paintsMentions ? `${styles.input} ${styles.inputPainted}` : styles.input}
+            onScroll={(e) => setInputScroll(e.currentTarget.scrollTop)}
             value={text}
             rows={1}
             role="combobox"
@@ -1164,6 +1203,7 @@ export function ChatView({
               setMenuDismissed(dismissKey);
             }}
           />
+          </div>
           <div className={styles.tools}>
             <Button
               variant="ghost"

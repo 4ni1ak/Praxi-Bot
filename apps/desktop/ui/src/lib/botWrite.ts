@@ -1,6 +1,7 @@
 import type { ApiClient } from "../api/client.ts";
 import type { Bot, BotInput } from "../api/types.ts";
 import { conflictBot } from "./botPatch.ts";
+import { humanLine } from "./humanError.ts";
 
 /** A stale (`409 version_conflict`) or missing (`428`) profile version: reload and try again. */
 export function isVersionError(e: unknown): boolean {
@@ -35,5 +36,5 @@ export async function writeBotProfile(
 /** Human sentence for a failed bot write: never the daemon's raw version message. */
 export function botWriteMessage(e: unknown, t: (key: string) => string): string {
   if (isVersionError(e)) return t("bots.writeConflict");
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }

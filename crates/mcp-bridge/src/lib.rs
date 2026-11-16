@@ -52,6 +52,7 @@ mod manager;
 pub mod oauth;
 pub mod oauth_net;
 mod roots;
+pub mod runtime;
 mod session;
 mod tool;
 mod transport;

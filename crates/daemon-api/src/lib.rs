@@ -16,6 +16,7 @@ pub mod auth;
 mod bot_engine;
 pub mod changes;
 mod cli_engines;
+pub mod components;
 pub mod composio;
 mod composio_routes;
 pub mod control;
@@ -30,6 +31,8 @@ pub mod fake;
 mod file_access;
 mod fill_routes;
 pub mod host;
+pub mod host_admin;
+pub mod host_copy;
 pub mod host_links;
 pub mod host_setup;
 mod knowledge;
@@ -40,6 +43,7 @@ pub mod mcp;
 mod mcp_routes;
 pub mod mcp_server;
 pub mod openapi;
+pub mod owner;
 pub mod peer;
 pub mod policy;
 mod provider_models;
@@ -78,7 +82,11 @@ use tokio_util::sync::CancellationToken;
 /// Connection tests (`/v1/email/*/test`) that may run at the same time.
 const EMAIL_TESTS_AT_ONCE: usize = 2;
 
-pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
+pub use auth::{
+    OWNER_KEY_FILE_NAME, TOKEN_FILE_NAME, TokenInfo, load_or_create_owner_key,
+    load_or_create_token, read_owner_key, read_token, token_path,
+};
+pub use components::{ComponentControl, ComponentError};
 pub use composio::{ComposioControl, ComposioControlError};
 pub use control::{ControlConfig, ControlHub};
 pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
@@ -199,6 +207,8 @@ struct Inner {
     mcp_server: parking_lot::Mutex<mcp_server::McpServerBook>,
     /// Composio app connections (see [`AppState::set_composio`]).
     composio: OnceLock<Arc<dyn ComposioControl>>,
+    /// Missing-component installer (see [`AppState::set_components`]).
+    components: OnceLock<Arc<dyn ComponentControl>>,
     /// E-mail account management (see [`AppState::set_email`]).
     email: OnceLock<Arc<dyn EmailControl>>,
     /// Bounds concurrent "test connection" calls (see `email_routes`).
@@ -213,6 +223,7 @@ struct Inner {
     web_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
     secrets: OnceLock<Arc<dyn secret_store::SecretStore>>,
+    owner_key: OnceLock<String>,
     /// Owner-stored fill secrets (see [`AppState::set_fill_secrets`]).
     fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// `schedules.db`, opened on first use.
@@ -375,6 +386,7 @@ impl AppState {
             mcp: OnceLock::new(),
             mcp_server: parking_lot::Mutex::new(mcp_server::McpServerBook::default()),
             composio: OnceLock::new(),
+            components: OnceLock::new(),
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
@@ -382,6 +394,7 @@ impl AppState {
             skill_mutations: parking_lot::Mutex::new(()),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
+            owner_key: OnceLock::new(),
             fill_secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
@@ -541,6 +554,15 @@ impl AppState {
 
     pub(crate) fn mcp(&self) -> Option<Arc<dyn McpControl>> {
         self.0.mcp.get().cloned()
+    }
+
+    /// Enable `/v1/components/*` (call once, at startup).
+    pub fn set_components(&self, c: Arc<dyn ComponentControl>) {
+        let _ = self.0.components.set(c);
+    }
+
+    pub(crate) fn components(&self) -> Option<Arc<dyn ComponentControl>> {
+        self.0.components.get().cloned()
     }
 
     pub(crate) fn composio(&self) -> Option<Arc<dyn ComposioControl>> {
@@ -956,6 +978,11 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/hosts", get(host_links::list))
         .route("/v1/hosts/pair", post(host_links::pair))
         .route("/v1/hosts/{id}", axum::routing::delete(host_links::forget))
+        .route("/v1/hosts/home", get(host_copy::home))
+        .route(
+            "/v1/hosts/{id}/copy-setup",
+            get(host_copy::plan).post(host_copy::copy),
+        )
         .route("/v1/hosts/setup", post(host_setup::start))
         .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
         .route("/v1/hosts/setup/{job}", get(host_setup::get))
@@ -970,6 +997,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/host/devices/{key}",
             axum::routing::delete(host::revoke),
         )
+        .route("/v1/host/devices/{key}/admin", put(host::set_admin))
         .route("/v1/host/standby", post(host::standby))
         .route("/v1/host/activate", post(host::activate))
         .route("/v1/host/update", post(host::update))
@@ -1179,10 +1207,20 @@ fn api_routes() -> Router<AppState> {
             post(m::logout_mcp_auth),
         )
         .route("/v1/mcp/catalog", get(m::mcp_catalog))
+        .route("/v1/components", get(crate::components::list_components))
+        .route("/v1/components/{id}", get(crate::components::get_component))
+        .route(
+            "/v1/components/{id}/install",
+            post(crate::components::install_component),
+        )
         .route("/v1/composio", get(c::composio_status))
         .route(
             "/v1/composio/key",
             put(c::composio_set_key).delete(c::composio_remove_key),
+        )
+        .route(
+            "/v1/composio/login",
+            get(c::composio_login_status).post(c::composio_login_start),
         )
         .route("/v1/composio/toolkits", get(c::composio_catalog))
         .route("/v1/composio/apps", get(c::composio_list_apps))
@@ -1234,6 +1272,7 @@ fn api_routes() -> Router<AppState> {
             axum::routing::delete(f::revoke_fill_grant),
         )
         .route("/v1/events", get(sse::events))
+        .merge(host_admin::routes())
 }
 
 /// Serve the API on `listener` until `shutdown` completes.

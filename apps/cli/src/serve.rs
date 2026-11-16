@@ -821,6 +821,9 @@ pub struct ServeOptions {
     /// Secret store of the Telegram channel (`None` = no channels, e.g. the
     /// fake-provider demo).
     pub telegram_store: Option<Arc<dyn SecretStore>>,
+    /// Owner key handed over by the desktop app on stdin (never argv, a file
+    /// or the environment). A host without one creates the `owner-key` file.
+    pub owner_key: Option<String>,
 }
 
 /// Run the daemon on `listener` until `shutdown` resolves, with the Telegram
@@ -882,6 +885,7 @@ pub fn serve(
         telegram_store,
         host_mode,
         peer_enabled,
+        owner_key,
     } = opts;
     let (port, json, grace) = (*port, *json, *grace);
     let mut ownership = daemon_api::host::HostConfig::load(data_dir)?;
@@ -984,6 +988,16 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
+    if let Some(key) = owner_key.clone() {
+        state.set_owner_key(key);
+    } else if *host_mode {
+        match daemon_api::load_or_create_owner_key(data_dir) {
+            Ok(key) => state.set_owner_key(key),
+            Err(e) => {
+                eprintln!("warning: owner key unavailable, owner-only operations are off: {e}");
+            }
+        }
+    }
     state
         .set_skills(skill_index)
         .map_err(|e| format!("skills wiring: {e}"))?;
@@ -1105,6 +1119,7 @@ pub fn serve(
             Some(mcp_registrar),
         );
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
+        state.set_components(crate::components_host::ComponentHost::system());
         // Composio app connections: the key stays in the secret store (reserved
         // `composio/` prefix); without a store there is no key custody, so the
         // feature stays off.

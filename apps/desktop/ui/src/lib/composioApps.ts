@@ -19,7 +19,7 @@ export function isComposioLink(href: string, dashboard = false): boolean {
     url.password === "" &&
     url.port === "" &&
     !/[\p{Cc}\\]/u.test(href) &&
-    (dashboard ? host === "platform.composio.dev" : host === "connect.composio.dev" || host === "backend.composio.dev")
+    (dashboard ? host === "platform.composio.dev" || host === "dashboard.composio.dev" : host === "connect.composio.dev" || host === "backend.composio.dev")
   );
 }
 

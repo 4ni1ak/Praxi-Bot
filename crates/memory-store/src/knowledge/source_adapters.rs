@@ -187,6 +187,7 @@ fn safe_name(name: &str) -> bool {
         && !matches!(
             lowered.as_str(),
             "api-token"
+                | "owner-key"
                 | "praxi.env"
                 | "praxi-node.env"
                 | "secrets.enc"

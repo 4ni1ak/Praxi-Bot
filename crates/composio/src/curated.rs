@@ -23,6 +23,97 @@ pub struct Popular {
     pub slug: String,
     /// Display name (used until the live catalog gives one).
     pub name: String,
+    /// One-line description shown before the live catalog is loaded.
+    pub description: String,
+    /// Chip group (see [`GROUPS`]).
+    pub group: String,
+}
+
+/// Chip groups of the Apps grid, in display order (UI strings are keyed by these).
+pub const GROUPS: [&str; 6] = [
+    "communication",
+    "social",
+    "productivity",
+    "dev",
+    "finance",
+    "business",
+];
+
+/// The chip group of a toolkit: the shipped table first, then keywords of
+/// Composio's own categories.  `other` when nothing matches.
+#[must_use]
+pub fn group_of(curated: &Curated, slug: &str, categories: &[String]) -> &'static str {
+    if let Some(g) = curated
+        .popular
+        .iter()
+        .find(|p| p.slug == slug)
+        .and_then(|p| GROUPS.iter().find(|g| **g == p.group))
+    {
+        return g;
+    }
+    let text = categories.join(" ").to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| text.contains(w));
+    if has(&[
+        "communication",
+        "email",
+        "messag",
+        "chat",
+        "video conf",
+        "phone",
+        "sms",
+    ]) {
+        "communication"
+    } else if has(&["social", "media", "video", "music", "podcast", "community"]) {
+        "social"
+    } else if has(&[
+        "payment",
+        "financ",
+        "accounting",
+        "bank",
+        "crypto",
+        "invoice",
+        "billing",
+    ]) {
+        "finance"
+    } else if has(&[
+        "developer",
+        "devops",
+        "code",
+        "database",
+        "ci/cd",
+        "monitoring",
+        "cloud",
+        "version control",
+    ]) {
+        "dev"
+    } else if has(&[
+        "crm",
+        "sales",
+        "marketing",
+        "commerce",
+        "customer",
+        "support",
+        "hr",
+        "advertis",
+    ]) {
+        "business"
+    } else if has(&[
+        "productivity",
+        "project",
+        "task",
+        "document",
+        "note",
+        "calendar",
+        "storage",
+        "spreadsheet",
+        "file",
+        "collaboration",
+        "scheduling",
+    ]) {
+        "productivity"
+    } else {
+        "other"
+    }
 }
 
 #[derive(Deserialize)]

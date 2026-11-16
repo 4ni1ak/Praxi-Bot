@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { BotShapeId } from "ui";
 import { isMockMode } from "../api/mockMode";
+import type { Bot } from "../api/types";
+import { saveBotAndApps } from "../lib/mcpApps";
 import { DEFAULT_STOP_HOTKEY } from "../config/product";
 import type { SupportedLanguage } from "../i18n";
 import {
@@ -55,7 +57,7 @@ function reviewStep(): FirstRunStep | undefined {
  */
 export function OnboardingView({ settings, onLanguageChange, onSkip, onComplete, initialStep }: OnboardingViewProps) {
   const { t, i18n } = useTranslation();
-  const { phase, client, refreshBots, retry } = useDaemon();
+  const { phase, client, bots, refreshBots, retry } = useDaemon();
   const [state, dispatch] = useReducer(firstRunReducer, undefined, () => {
     const start = initialStep ?? reviewStep();
     if (!start || start === "brain") {
@@ -73,6 +75,7 @@ export function OnboardingView({ settings, onLanguageChange, onSkip, onComplete,
   const [botError, setBotError] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement | null>(null);
   const first = useRef(true);
+  const created = useRef<Bot | null>(null);
 
   // A new screen starts at its heading, so keyboard and screen-reader users follow the flow.
   useEffect(() => {
@@ -109,7 +112,17 @@ export function OnboardingView({ settings, onLanguageChange, onSkip, onComplete,
         executor: parseModelRef(state.model),
         preset: autonomyToPreset(state.level)
       };
-      const bot = await client.createBot({ name, config: configFromDraft(draft, undefined) });
+      // The same versioned write as the New-bot modal: a retry after a half-done start updates the
+      // bot created a moment ago instead of creating a second one.
+      const { bot } = await saveBotAndApps(
+        client,
+        created.current ?? undefined,
+        { name, config: configFromDraft(draft, created.current ?? undefined) },
+        {},
+        {},
+        bots.map((b) => b.id)
+      );
+      created.current = bot;
       await refreshBots().catch(() => {});
       dispatch({ type: "started" });
       onComplete({ botId: bot.id });

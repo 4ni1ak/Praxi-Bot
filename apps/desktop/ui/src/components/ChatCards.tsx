@@ -1,5 +1,4 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { humanToolError } from "../lib/toolError";
 import { AppWindow, CalendarClock, Clock, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -33,6 +32,8 @@ import { describeTool, isSendTool } from "../lib/toolLabels";
 import { StepIcon } from "./StepIcon";
 import formStyles from "./Form.module.css";
 import styles from "./ChatCards.module.css";
+import { humanLine, humanToolError } from "../lib/humanError";
+import { ErrorNotice } from "./ErrorNotice";
 
 const brandName = (name: string): string | null => {
   const b = brandIcon(name);
@@ -144,8 +145,7 @@ export function ToolBody({ tool }: { tool: ToolItem }) {
       ) : null}
       {tool.error ? (
         <>
-          <span className={styles.bodyLabel}>{t("chat.tool.result")}</span>
-          <pre className={styles.code}>{humanToolError(tool.error, t)}</pre>
+          <ErrorNotice compact error={humanToolError(tool.error)} />
         </>
       ) : null}
       {!tool.error && tool.outputPreview ? (
@@ -385,7 +385,7 @@ export function ApprovalCard({
     try {
       await onDecide(decision, scope, why);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
       setBusy(false);
     }
   };
@@ -567,7 +567,7 @@ export function QuestionCard({
     try {
       await onAnswer(answer.trim());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     } finally {
       setBusy(false);
     }
@@ -669,7 +669,7 @@ export function NoticeLine({ n }: { n: NoticeItem }) {
       className={[styles.notice, styles[`notice_${n.tone}`]].join(" ")}
       role="status"
     >
-      {t(n.i18nKey, n.values)}
+      {n.i18nKey === "chat.notice.error" ? humanLine(n.values?.message ?? "") : t(n.i18nKey, n.values)}
     </p>
   );
 }
@@ -708,7 +708,7 @@ export function SubagentCard({ run, renderItem, onCancel }: SubagentCardProps) {
     try {
       await onCancel(run.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     } finally {
       setBusy(false);
     }

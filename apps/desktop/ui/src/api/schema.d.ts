@@ -4,6 +4,86 @@
  */
 
 export interface paths {
+    "/v1/admin/cli-engines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_cli_engines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/default-provider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["admin_set_default_provider"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["admin_set_home"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/providers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["admin_put_provider"];
+        post?: never;
+        delete: operations["admin_delete_provider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_state"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/approvals": {
         parameters: {
             query?: never;
@@ -422,6 +502,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Components local apps may need and whether each is installed. */
+        get: operations["list_components"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/components/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One component (poll this while an install runs). */
+        get: operations["get_component"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/components/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the official installer for a component (the client confirmed the
+         *     command first).  Returns at once; poll `GET /v1/components/{id}`.
+         */
+        post: operations["install_component"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/composio": {
         parameters: {
             query?: never;
@@ -536,6 +670,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/composio/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** State of the browser login (poll while it is `pending`). */
+        get: operations["composio_login_status"];
+        put?: never;
+        /**
+         * Start the one-time browser login: Composio makes a session, the caller
+         *     opens `login_url` in the system browser and polls `GET /v1/composio/login`.
+         *     No key is typed or copied.
+         */
+        post: operations["composio_login_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/composio/toolkits": {
         parameters: {
             query?: never;
@@ -544,8 +700,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Composio's toolkit catalog (searchable, paged, cached), with this
-         *     installation's state per toolkit.
+         * Composio's toolkit catalog (searchable, paged), with this installation's
+         *     state per toolkit.  Served from the local cache and the bundled popular
+         *     apps: it never waits for the network, a stale cache is refreshed in the
+         *     background.
          */
         get: operations["composio_catalog"];
         put?: never;
@@ -1075,6 +1233,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/devices/{key}/admin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * The owner of this installation (not a paired peer) grants or withdraws host
+         *     administration for a paired desktop. This is the one confirmation step for a
+         *     desktop that was paired before the capability existed. Audited.
+         */
+        put: operations["host_set_admin"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/host/invite": {
         parameters: {
             query?: never;
@@ -1131,6 +1310,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["hosts_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_home"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1262,6 +1457,22 @@ export interface paths {
         put?: never;
         post: operations["hosts_connect"];
         delete: operations["hosts_disconnect"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}/copy-setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_copy_plan"];
+        put?: never;
+        post: operations["hosts_copy_setup"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2297,6 +2508,59 @@ export interface components {
         ActivateInput: {
             force: boolean;
         };
+        /** @description What the host reports about one CLI engine, as installed THERE. */
+        AdminCliEngineDto: {
+            docs_url: string;
+            id: string;
+            /** @description Command that installs it on the host, when one is known. */
+            install_command?: string | null;
+            installed: boolean;
+            /** @description How to sign in on the host. */
+            login: string;
+            name: string;
+            /** @description `None` when the CLI offers no safe way to check. */
+            signed_in?: boolean | null;
+            version?: string | null;
+        };
+        /** @description `PUT /v1/admin/default-provider`. */
+        AdminDefaultInput: {
+            id: string;
+            model?: string | null;
+        };
+        /** @description `PUT /v1/admin/home`. */
+        AdminHomeInput: {
+            adopted: boolean;
+        };
+        /** @description The provider as stored on the host. */
+        AdminProviderDto: {
+            has_key: boolean;
+            id: string;
+            is_default: boolean;
+            model?: string | null;
+        };
+        /** @description Add or update a provider. The key is write-only. */
+        AdminProviderInput: {
+            /** @description Never echoed, logged or audited. */
+            api_key?: string | null;
+            /** @description Only for a custom OpenAI-compatible endpoint. */
+            base_url?: string | null;
+            /** @description Make this the host's default provider. */
+            make_default?: boolean;
+            model?: string | null;
+        };
+        /** @description `GET /v1/admin/state`. */
+        AdminStateDto: {
+            /** @description The owner made this host the bots' home (setup moved here). */
+            adopted: boolean;
+            /** @description The command the owner runs on the host when `granted` is false. */
+            confirm_command?: string | null;
+            /** @description This desktop holds host administration. */
+            granted: boolean;
+            /** @description Whether the host can store an API key. */
+            secrets_available: boolean;
+            /** @description What to do when `secrets_available` is false. */
+            secrets_hint?: string | null;
+        };
         /** @description `POST /v1/questions/{call_id}`. */
         AnswerQuestion: {
             /** @description The user's answer (free text, or one of the offered options). */
@@ -2695,6 +2959,35 @@ export interface components {
         };
         /** @enum {string} */
         Codec: "jpeg" | "webp";
+        /** @description One component. */
+        ComponentDto: {
+            /** @description The app can run an official installer here. */
+            can_install: boolean;
+            /** @description The exact command that would run (display only; empty when not possible). */
+            command: string;
+            /** @description Why the last install failed: `exit`, `not_detected`, `timeout` or `unavailable`. */
+            error?: string | null;
+            /** @description Id. */
+            id: components["schemas"]["ComponentId"];
+            /** @description The launcher is found (checked now, without restarting the app). */
+            installed: boolean;
+            /** @description What to run by hand when `can_install` is false. */
+            manual_command: string;
+            /** @description Where it comes from (shown in the confirm dialog). */
+            source: string;
+            /** @description Install progress. */
+            state: components["schemas"]["ComponentInstallState"];
+        };
+        /**
+         * @description A component Praxi can install (fixed list).
+         * @enum {string}
+         */
+        ComponentId: "uv" | "node";
+        /**
+         * @description Progress of an install.
+         * @enum {string}
+         */
+        ComponentInstallState: "idle" | "installing" | "done" | "failed";
         /** @description A connected (or connecting) app. */
         ComposioAppDto: {
             /** @description Bots allowed; `null` = all. */
@@ -2717,18 +3010,30 @@ export interface components {
         };
         /** @description `GET /v1/composio/toolkits`. */
         ComposioCatalogDto: {
-            /** @description The page, in Composio's popularity order. */
+            /**
+             * @description Why the last refresh failed: `offline`, `unauthorized`,
+             *     `rate_limited` or `failed`.  The list above is still usable.
+             */
+            error?: string | null;
+            /** @description The page: popular apps first, then Composio's popularity order. */
             items: components["schemas"]["ComposioToolkitDto"][];
             /** @description Cursor of the next page. */
             next_cursor?: string | null;
-            /** @description Pinned popular row (first page without filters only; empty otherwise). */
-            popular: components["schemas"]["ComposioToolkitDto"][];
+            /** @description A background refresh is running. */
+            refreshing: boolean;
+            /** @description `bundled` (only the apps shipped with Praxi so far) or `cache`. */
+            source: string;
+            /**
+             * Format: int64
+             * @description Unix seconds of the disk cache, when there is one.
+             */
+            updated_at?: number | null;
         };
         /**
          * @description Connection state of an app.
          * @enum {string}
          */
-        ComposioConnState: "not_connected" | "pending" | "active" | "expired";
+        ComposioConnState: "not_connected" | "pending" | "active" | "expired" | "failed";
         /** @description `POST /v1/composio/apps/{slug}/connect`: the one-time consent link. */
         ComposioConnectDto: {
             /** @description When the link expires (ISO timestamp, may be empty). */
@@ -2754,12 +3059,36 @@ export interface components {
             /** @description The Composio project API key. */
             value: string;
         };
+        /**
+         * @description How Praxi is linked to Composio.
+         * @enum {string}
+         */
+        ComposioLinkMode: "none" | "login" | "project_key";
+        /** @description `POST /v1/composio/login`: the one-time browser login. */
+        ComposioLoginDto: {
+            /** @description When the login expires (ISO timestamp, may be empty). */
+            expires_at: string;
+            /** @description https URL on Composio's dashboard; open it in the system browser. */
+            login_url: string;
+        };
+        /**
+         * @description State of the one-time browser login.
+         * @enum {string}
+         */
+        ComposioLoginState: "idle" | "pending" | "linked" | "failed";
+        /** @description `GET /v1/composio/login`. */
+        ComposioLoginStatusDto: {
+            /** @description State of the login. */
+            state: components["schemas"]["ComposioLoginState"];
+        };
         /** @description `GET /v1/composio`. */
         ComposioStatusDto: {
-            /** @description A key is stored (the key itself is never returned). */
+            /** @description Praxi is linked to Composio (the credential itself is never returned). */
             configured: boolean;
-            /** @description Where the owner creates the key (https, on Composio's domain). */
+            /** @description Where an owner who wants their own project key creates it (advanced). */
             key_setup_url: string;
+            /** @description How it is linked. */
+            mode: components["schemas"]["ComposioLinkMode"];
         };
         /** @description One toolkit of the Composio catalog. */
         ComposioToolkitDto: {
@@ -2769,6 +3098,13 @@ export interface components {
             description: string;
             /** @description The owner enabled it. */
             enabled: boolean;
+            /**
+             * @description Chip group: `communication`, `social`, `productivity`, `dev`,
+             *     `finance`, `business` or `other`.
+             */
+            group: string;
+            /** @description Logo URL (https), when Composio gives one. */
+            logo?: string | null;
             /** @description Display name. */
             name: string;
             /**
@@ -2902,6 +3238,55 @@ export interface components {
          * @enum {string}
          */
         ControlVerdict: "proceed" | "refuse";
+        CopyBotRow: {
+            /** @description The bot cannot be copied (it runs on a CLI engine). */
+            blocked?: string | null;
+            id: string;
+            model?: string | null;
+            name: string;
+        };
+        CopyItemResult: {
+            code?: string | null;
+            id: string;
+            /** @description `provider`, `bot` or `default`. */
+            kind: string;
+            name: string;
+            /** @description `done`, `skipped` or `failed`. */
+            status: string;
+        };
+        /** @description What a copy could send. Names only; no secret value. */
+        CopyPlanDto: {
+            bots: components["schemas"]["CopyBotRow"][];
+            default_model?: string | null;
+            default_provider?: string | null;
+            /** @description What the host says about this computer: `true` when it may receive. */
+            host_accepts?: boolean | null;
+            /** @description Stable code from the host when it would refuse (`host_admin_required`, `secrets_unavailable`). */
+            host_code?: string | null;
+            /** @description Command for the owner to run on the host, when one is needed. */
+            host_command?: string | null;
+            providers: components["schemas"]["CopyProviderRow"][];
+        };
+        CopyProviderRow: {
+            custom: boolean;
+            has_key: boolean;
+            id: string;
+            model?: string | null;
+        };
+        CopyReport: {
+            items: components["schemas"]["CopyItemResult"][];
+        };
+        CopyRequest: {
+            bots?: string[];
+            /** @description Also set the host's default provider and model to this computer's. */
+            default_model?: boolean;
+            providers?: string[];
+            /**
+             * @description Record the host as the bots' home on both sides when something moved.
+             *     Nothing is deleted on this computer: it stays a working fallback.
+             */
+            set_home?: boolean;
+        };
         /** @description `POST /v1/chats`. */
         CreateChat: {
             /**
@@ -3419,6 +3804,14 @@ export interface components {
             /** Format: uuid */
             takeover_id?: string | null;
         };
+        /** @description `GET /v1/hosts/home`: the host adopted as the bots' home, if any. */
+        HomeDto: {
+            host_id?: string | null;
+        };
+        /** @description `PUT /v1/host/devices/{key}/admin`. */
+        HostAdminInput: {
+            enabled: boolean;
+        };
         HostConfig: {
             /**
              * Format: int64
@@ -3472,6 +3865,11 @@ export interface components {
             ticket: string;
         };
         HostInviteInput: {
+            /**
+             * @description Pair a desktop WITH host administration (default: yes for a desktop
+             *     invite created by the local owner; a paired peer can never set it).
+             */
+            admin?: boolean | null;
             role: components["schemas"]["InviteRole"];
             /** Format: int64 */
             ttl_secs?: number | null;
@@ -3534,6 +3932,8 @@ export interface components {
         /** @enum {string} */
         HostMode: "standalone" | "host" | "client";
         HostPeer: {
+            /** @description The device holds host administration (may send keys and settings here). */
+            admin: boolean;
             key: string;
             /** Format: int64 */
             last_seen_ms?: number | null;
@@ -5246,6 +5646,212 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    admin_cli_engines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliEngineDto"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_set_default_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminDefaultInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_set_home: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminHomeInput"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_put_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProviderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_delete_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStateDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_approvals: {
         parameters: {
             query?: {
@@ -6513,6 +7119,93 @@ export interface operations {
             };
         };
     };
+    list_components: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"][];
+                };
+            };
+        };
+    };
+    get_component: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `uv` or `node` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    install_component: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `uv` or `node` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     composio_status: {
         parameters: {
             query?: never;
@@ -6752,13 +7445,60 @@ export interface operations {
             };
         };
     };
+    composio_login_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioLoginStatusDto"];
+                };
+            };
+        };
+    };
+    composio_login_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioLoginDto"];
+                };
+            };
+            /** @description Composio unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     composio_catalog: {
         parameters: {
             query?: {
                 /** @description Text matched against name, slug and description. */
                 search?: string;
-                /** @description Category. */
-                category?: string;
+                /** @description Chip group (`all` or empty = every group). */
+                group?: string;
                 /** @description Cursor from the previous page. */
                 cursor?: string;
                 /** @description Page size, 1 to 100 (default 48). */
@@ -6776,15 +7516,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComposioCatalogDto"];
-                };
-            };
-            /** @description no key yet */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             502: {
@@ -7953,6 +8684,45 @@ export interface operations {
             };
         };
     };
+    host_set_admin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostAdminInput"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     host_invite: {
         parameters: {
             query?: never;
@@ -8035,6 +8805,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostLinkList"];
+                };
+            };
+        };
+    };
+    hosts_home: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeDto"];
                 };
             };
         };
@@ -8235,6 +9024,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    hosts_copy_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyPlanDto"];
+                };
+            };
+        };
+    };
+    hosts_copy_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyReport"];
+                };
             };
         };
     };

@@ -15,6 +15,7 @@ use super::{call, send, setup};
 use crate::composio::{
     ComposioAppDto, ComposioCatalogDto, ComposioCatalogQuery, ComposioConnState,
     ComposioConnectDto, ComposioControl, ComposioControlError, ComposioDisconnectDto,
+    ComposioLinkMode, ComposioLoginDto, ComposioLoginState, ComposioLoginStatusDto,
     ComposioStatusDto,
 };
 
@@ -53,8 +54,23 @@ impl ComposioControl for Fake {
     fn status(&self) -> ComposioStatusDto {
         ComposioStatusDto {
             configured: self.calls.load(Ordering::SeqCst) > 0,
+            mode: ComposioLinkMode::None,
             key_setup_url: "https://platform.composio.dev/".into(),
         }
+    }
+    async fn login_start(&self) -> Result<ComposioLoginDto, ComposioControlError> {
+        self.before("composio.login_started");
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ComposioLoginDto {
+            login_url: "https://dashboard.composio.dev/?cliKey=x".into(),
+            expires_at: String::new(),
+        })
+    }
+    async fn login_poll(&self) -> Result<ComposioLoginStatusDto, ComposioControlError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ComposioLoginStatusDto {
+            state: ComposioLoginState::Pending,
+        })
     }
     async fn set_key(&self, key: &str) -> Result<(), ComposioControlError> {
         self.before("composio.key_set");
@@ -77,9 +93,12 @@ impl ComposioControl for Fake {
     ) -> Result<ComposioCatalogDto, ComposioControlError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(ComposioCatalogDto {
-            popular: vec![],
             items: vec![],
             next_cursor: None,
+            source: "bundled".into(),
+            updated_at: None,
+            refreshing: false,
+            error: None,
         })
     }
     fn apps(&self) -> Vec<ComposioAppDto> {
@@ -119,6 +138,8 @@ impl ComposioControl for Fake {
 fn routes() -> Vec<(Method, &'static str, Option<serde_json::Value>)> {
     vec![
         (Method::GET, "/v1/composio", None),
+        (Method::POST, "/v1/composio/login", None),
+        (Method::GET, "/v1/composio/login", None),
         (Method::PUT, "/v1/composio/key", Some(json!({"value": KEY}))),
         (Method::DELETE, "/v1/composio/key", None),
         (Method::GET, "/v1/composio/toolkits?search=ins", None),
@@ -171,6 +192,7 @@ async fn mutations_write_an_audit_row_first_and_never_the_key() {
     for want in [
         "composio.key_set",
         "composio.key_removed",
+        "composio.login_started",
         "composio.connect_started",
         "composio.app_enabled",
         "composio.disconnected",

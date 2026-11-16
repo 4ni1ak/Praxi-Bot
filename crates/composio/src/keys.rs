@@ -15,8 +15,8 @@ use crate::error::{ComposioError, Result};
 /// (`SecretRef::new` refuses it, the secrets route refuses it, bundles skip it).
 pub const KEY_SECRET: &str = "composio/api-key";
 
-/// Where the owner creates the project API key (Composio dashboard; sign in,
-/// Settings, API Keys).
+/// Where an owner who wants their own Composio project creates a project API
+/// key (the advanced path; the normal path is the browser login, [`LOGIN_URL`]).
 ///
 /// UNVERIFIED: the docs describe the menu path (Settings, Project Settings or
 /// Platform > project > Settings > API Keys) but give no stable deep link; this
@@ -24,6 +24,46 @@ pub const KEY_SECRET: &str = "composio/api-key";
 /// The live spike should replace it with the
 /// exact page.
 pub const KEY_SETUP_URL: &str = "https://platform.composio.dev/";
+
+/// Where the browser login of Composio starts (the CLI's default web URL);
+/// `?cliKey=<session id>` is appended.  Opened in the system browser only.
+pub const LOGIN_URL: &str = "https://dashboard.composio.dev/";
+
+/// Stored value prefix of a user key obtained through the browser login.  A
+/// value without the prefix is a project API key the owner pasted.
+const LOGIN_PREFIX: &str = "user-login:";
+
+/// The stored credential, decoded.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Stored {
+    /// A pasted project API key.
+    Project(String),
+    /// A user key from the browser login.
+    User(String),
+}
+
+impl Stored {
+    /// Decode the secret-store value.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        value.strip_prefix(LOGIN_PREFIX).map_or_else(
+            || Self::Project(value.to_owned()),
+            |k| Self::User(k.to_owned()),
+        )
+    }
+
+    /// The secret-store value of a user key.
+    #[must_use]
+    pub fn encode_user(key: &str) -> String {
+        format!("{LOGIN_PREFIX}{key}")
+    }
+}
+
+impl std::fmt::Debug for Stored {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Stored(<key hidden>)")
+    }
+}
 
 /// Source of the API key.
 #[async_trait]

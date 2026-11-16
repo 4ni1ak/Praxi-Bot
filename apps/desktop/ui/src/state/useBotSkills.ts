@@ -7,6 +7,7 @@ import {
   skillsSaveFailure,
   syncSkillsDraft
 } from "../lib/botSkills";
+import { humanLine } from "../lib/humanError";
 
 export type SkillsSaveResult =
   | { ok: true; data: BotSkills }
@@ -48,7 +49,7 @@ export function useBotSkills(botId: string | null, client: ApiClient | null): Bo
       return next;
     } catch (e) {
       if (current.current === botId) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(humanLine(e));
       }
       return null;
     } finally {
@@ -83,7 +84,7 @@ export function useBotSkills(botId: string | null, client: ApiClient | null): Bo
         return {
           ok: false,
           failure,
-          message: e instanceof Error ? e.message : String(e)
+          message: humanLine(e)
         };
       }
     },

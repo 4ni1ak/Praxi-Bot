@@ -12,7 +12,7 @@ import { isTauriRuntime } from "../overlay/events";
 import formStyles from "../components/Form.module.css";
 import { botView } from "../lib/botProfile";
 import { addProvider, setDefaultProvider, testProvider } from "../lib/providers";
-import { canManageProviders, PROVIDERS_LOCAL_ONLY } from "../lib/providerConnection";
+import { canManageProviders } from "../lib/providerConnection";
 import {
   canTestProvider,
   isCliProvider,
@@ -21,6 +21,7 @@ import {
 import { useDaemon } from "../state/DaemonContext";
 import { notifyProvidersChanged, useProviders } from "../state/useProviders";
 import styles from "./SettingsSections.module.css";
+import { humanLine } from "../lib/humanError";
 
 const CUSTOM = "__custom__";
 
@@ -79,8 +80,7 @@ export function ProvidersSection() {
         setNeedsRestart(!reloaded);
       }
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setOutcome({ ok: false, text: message === PROVIDERS_LOCAL_ONLY ? t("settings.providers.localDaemonOnly") : message });
+      setOutcome({ ok: false, text: humanLine(e) });
     } finally {
       setBusy(false);
       await reload();
@@ -336,7 +336,7 @@ function BotPermissions({ bot }: { bot: Bot }) {
       setDetail(await client.getBot(bot.id));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   }, [client, bot.id]);
 
@@ -352,7 +352,7 @@ function BotPermissions({ bot }: { bot: Bot }) {
       await client.revokeGrant(bot.id, target);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   };
 
@@ -461,7 +461,7 @@ function WorkspacePolicy() {
       .getPolicy()
       .then(setPolicy)
       .catch((e: unknown) =>
-        setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) })
+        setMessage({ ok: false, text: humanLine(e) })
       );
   }, [client]);
 
@@ -475,7 +475,7 @@ function WorkspacePolicy() {
       setPolicy(await client.putPolicy(input));
       setMessage({ ok: true, text: t("settings.permissions.workspace.saved") });
     } catch (e) {
-      setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      setMessage({ ok: false, text: humanLine(e) });
     } finally {
       setBusy(false);
     }

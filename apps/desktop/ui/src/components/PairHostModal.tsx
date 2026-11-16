@@ -6,6 +6,7 @@ import { useDaemon } from "../state/DaemonContext";
 import form from "./Form.module.css";
 import { Modal } from "./Modal";
 import styles from "./PairHostModal.module.css";
+import { humanLine } from "../lib/humanError";
 
 /**
  * Pair this computer with an always-on host. The ticket comes from the host
@@ -46,7 +47,7 @@ function PairHostContent({ onClose }: { onClose: () => void }) {
       onClose();
       void selectComputer(info.id);
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 400 ? e.message : t("pairHost.failed"));
+      setError(e instanceof ApiError && e.status === 400 ? t("pairHost.failed") : humanLine(e));
     } finally {
       setBusy(false);
     }

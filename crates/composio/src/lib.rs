@@ -7,6 +7,7 @@
 //! a response, and nothing exposes Composio's meta, bash, workbench or
 //! connect-link tools to the model.
 
+mod catalog;
 mod client;
 mod curated;
 mod error;
@@ -17,16 +18,20 @@ mod state;
 mod surface;
 mod tool;
 
+pub use catalog::{CATALOG_FILE, CatalogFile, CatalogSource, CatalogView, STALE_AFTER_SECS};
 pub use client::{
-    API_BASE, API_ORIGIN, Account, ComposioClient, Link, Redact, RemoteTool, Toolkit, ToolkitPage,
-    is_composio_https_url,
+    API_BASE, API_ORIGIN, Account, Auth, CliPoll, CliSession, ComposioClient, Link, Redact,
+    RemoteTool, Toolkit, ToolkitPage, is_composio_https_url,
 };
-pub use curated::{Curated, Popular, display_class, short_name};
+pub use curated::{Curated, GROUPS, Popular, display_class, group_of, short_name};
 pub use error::{ComposioError, Result};
-pub use keys::{KEY_SECRET, KEY_SETUP_URL, KeySource, LocalKeySource};
+pub use keys::{KEY_SECRET, KEY_SETUP_URL, KeySource, LOGIN_URL, LocalKeySource, Stored};
 pub use schema::{clean_text, sanitize, validate};
-pub use service::{ActionInfo, AppView, Audit, ComposioService, ConnState, ServiceConfig};
-pub use state::{AppConfig, FILE_NAME, StateFile};
+pub use service::{
+    ActionInfo, AppView, Audit, ComposioService, ConnState, Linkage, LoginStart, LoginState,
+    ServiceConfig,
+};
+pub use state::{AppConfig, FILE_NAME, LoginIds, StateFile};
 
 #[cfg(test)]
 mod tests;

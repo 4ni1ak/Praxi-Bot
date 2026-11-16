@@ -25,9 +25,10 @@ import {
 } from "../lib/schedules";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./SchedulesView.module.css";
+import { humanLine } from "../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof ApiError || e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;

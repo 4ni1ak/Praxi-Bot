@@ -18,6 +18,11 @@ export function openExternal(href: string): boolean {
 /** Open a Composio link (connect page, key page) in the system browser; any other URL is refused. */
 export async function openComposioLink(href: string, dashboard = false): Promise<boolean> {
   if (!isComposioLink(href, dashboard)) return false;
+  if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
+    // Plain browser (dev server, design review): the page opens in a new tab.
+    window.open(href, "_blank", "noopener,noreferrer");
+    return true;
+  }
   try {
     await invoke("open_composio_link", { href, dashboard });
     return true;

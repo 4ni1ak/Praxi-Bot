@@ -106,7 +106,7 @@
       "keyStored": "anahtar kayıtlı",
       "noKey": "anahtar yok",
       "noKeyNeeded": "anahtar gerekmez",
-      "offline": "Daemon çevrimdışı — sağlayıcıları yönetmek için daemon'u başlatın.",
+      "offline": "Yerel servis çalışmıyor. Sağlayıcıları yönetmek için yeniden başlat.",
       "test": "Bağlantıyı sına",
       "makeDefault": "Varsayılan yap",
       "add": "Sağlayıcı ekle",
@@ -229,11 +229,11 @@
     "delete": "Sil"
   },
   "health": {
-    "connecting": "Daemon başlatılıyor…",
-    "failed": "Daemon kullanılamıyor",
-    "offline": "Daemon çevrimdışı",
+    "connecting": "Yerel servis başlatılıyor…",
+    "failed": "Yerel servis durdu",
+    "offline": "Yerel servis çevrimdışı",
     "reconnecting": "Yeniden bağlanılıyor…",
-    "connected": "Daemon bağlı",
+    "connected": "Yerel servis çalışıyor",
     "retry": "Yeniden dene",
     "fakeProvider": "Sahte sağlayıcı",
     "details": "Daemon {{version}} · {{uptime}} sn çalışıyor {{mode}}"
@@ -334,9 +334,6 @@
         "done": "Bitti",
         "error": "Başarısız",
         "expired": "Süresi doldu"
-      },
-      "errors": {
-        "observationPaused": "Şu an ekranı sen yönetiyorsun, bu yüzden bot ekrana bakmadı. “Kontrolü geri ver”e bas ve tekrar iste."
       }
     },
     "approval": {
@@ -927,6 +924,316 @@
   "control": {
     "starting": "Çalışıyor…"
   },
+  "errors": {
+    "details": "Ayrıntılar",
+    "copy": "Ayrıntıları kopyala",
+    "copied": "Kopyalandı",
+    "retry": "Yeniden dene",
+    "reload": "Yenile",
+    "restartService": "Yerel servisi yeniden başlat",
+    "restartApp": "Praxi'yi yeniden başlat",
+    "openSettings": "Ayarları aç",
+    "retrying": "{{seconds}} sn sonra yeniden denenecek",
+    "restarting": "Yeniden başlatılıyor…",
+    "codes": {
+      "admin_rate_limit": {
+        "title": "Çok fazla yönetim değişikliği",
+        "hint": "Bir dakika bekleyip yeniden dene."
+      },
+      "component_conflict": {
+        "title": "Şu an kurulacak bir şey yok",
+        "hint": "Zaten kurulu ya da kuruluyor olabilir veya bu bilgisayarda kurulum aracı yok."
+      },
+      "approval_once_only": {
+        "title": "Bu onay yalnızca bir kez verilebilir",
+        "hint": "Yalnızca bu adım için izin ver ya da reddet."
+      },
+      "bad_composio_request": {
+        "title": "Composio isteği anlamadı",
+        "hint": "Uygulamayı ve girdiğin değerleri kontrol edip yeniden dene."
+      },
+      "bad_email_config": {
+        "title": "E-posta ayarları geçerli değil",
+        "hint": "Adresi, sunucuyu ve parolayı kontrol edip yeniden kaydet."
+      },
+      "bad_engine": {
+        "title": "Bu motor ayarı geçerli değil",
+        "hint": "Listeden bir seçenek seçip yeniden kaydet."
+      },
+      "bad_mcp_config": {
+        "title": "Sunucu ayarları geçerli değil",
+        "hint": "Komutu ya da adresi kontrol edip yeniden dene."
+      },
+      "bad_profile": {
+        "title": "Botun ayarları geçerli değil",
+        "hint": "İşaretli alanları kontrol edip yeniden kaydet."
+      },
+      "bad_request": {
+        "title": "İşlem tamamlanamadı",
+        "hint": "Girdiğin bilgileri kontrol edip yeniden dene."
+      },
+      "bad_schedule": {
+        "title": "Bu zamanlama geçerli değil",
+        "hint": "Saati ya da tekrar kuralını kontrol edip yeniden dene."
+      },
+      "bad_web_config": {
+        "title": "Web arama ayarları geçerli değil",
+        "hint": "Anahtarı ya da adresi kontrol edip yeniden kaydet."
+      },
+      "busy": {
+        "title": "Praxi başka bir işle meşgul",
+        "hint": "Biraz bekleyip yeniden dene."
+      },
+      "composio_error": {
+        "title": "Composio bunu tamamlayamadı",
+        "hint": "Biraz sonra yeniden dene. Sürerse uygulamayı yeniden bağla."
+      },
+      "composio_not_configured": {
+        "title": "Composio henüz kurulmadı",
+        "hint": "Uygulamalar bölümünde Composio anahtarını ekleyip yeniden dene."
+      },
+      "composio_rate_limited": {
+        "title": "Composio yavaşlamanı istiyor",
+        "hint": "Bir dakika bekleyip yeniden dene."
+      },
+      "conflict": {
+        "title": "Bu öğe aynı anda başka yerde değişti",
+        "hint": "En son hâlini görmek için yenile, sonra yeniden dene."
+      },
+      "could_not_verify": {
+        "title": "Bazı dosyalar denetlenemedi",
+        "hint": "Bot dokunduktan sonra değişmiş olabilirler. Geri yüklemeden önce bak."
+      },
+      "disabled": {
+        "title": "Bu özellik kapalı",
+        "hint": "Ayarlardan açıp yeniden dene."
+      },
+      "email_provider_error": {
+        "title": "E-posta sağlayıcın isteği reddetti",
+        "hint": "Hesabı ve parolayı kontrol edip yeniden dene."
+      },
+      "engine_owner_only": {
+        "title": "Bunu yalnızca sahibi değiştirebilir",
+        "hint": "Botun çalıştığı bilgisayardaki uygulamayı kullan."
+      },
+      "forbidden": {
+        "title": "Burada buna izin yok",
+        "hint": "Bu işlem yalnızca botun çalıştığı bilgisayarda yapılabilir."
+      },
+      "host_link_failed": {
+        "title": "O bilgisayara ulaşılamadı",
+        "hint": "Açık ve çevrimiçi olduğundan emin olup yeniden dene."
+      },
+      "host_setup_conflict": {
+        "title": "O bilgisayar zaten kuruluyor",
+        "hint": "Süren kurulumun bitmesini bekleyip yeniden dene."
+      },
+      "input_busy": {
+        "title": "Ekranı şu an başkası kontrol ediyor",
+        "hint": "İşini bitirmesini bekle ya da canlı görünümden devral."
+      },
+      "input_rate_limited": {
+        "title": "Aynı anda çok fazla tuş vuruşu",
+        "hint": "Biraz yavaşlayıp yeniden dene."
+      },
+      "internal": {
+        "title": "Praxi'nin içinde bir sorun çıktı",
+        "hint": "Yeniden dene. Sürerse ayrıntıları kopyalayıp bildir."
+      },
+      "invalid_mcp_grant": {
+        "title": "Bu uygulama erişimi geçerli değil",
+        "hint": "Botun uygulamalarını açıp erişimi yeniden ver."
+      },
+      "invalid_signature": {
+        "title": "İstek doğrulanamadı",
+        "hint": "Bu tetikleyici için ayarlanan gizli anahtarı kontrol et."
+      },
+      "invalid_skill": {
+        "title": "Bu beceri geçerli değil",
+        "hint": "Becerinin dosyalarını kontrol edip yeniden dene."
+      },
+      "invalid_skill_name": {
+        "title": "Bu beceri adına izin verilmiyor",
+        "hint": "Yalnızca harf, rakam ve tire kullan."
+      },
+      "invite_rate_limit": {
+        "title": "Çok fazla davet gönderildi",
+        "hint": "Birkaç dakika bekleyip yeniden dene."
+      },
+      "knowledge_busy": {
+        "title": "Bilgi tabanı meşgul",
+        "hint": "Hâlâ dosyalarını okuyor. Biraz sonra yeniden dene."
+      },
+      "mcp_approval_timeout": {
+        "title": "Onay zamanında yanıtlanmadı",
+        "hint": "Yeniden iste ve onay kartını yanıtla."
+      },
+      "mcp_rate_limit": {
+        "title": "Bu uygulamaya çok sık istek gidiyor",
+        "hint": "Biraz bekleyip yeniden dene."
+      },
+      "modified_since": {
+        "title": "Bazı dosyalar bot dokunduktan sonra değişti",
+        "hint": "Geri yüklemek daha yeni değişikliklerinin üzerine yazar. Önce bak."
+      },
+      "not_found": {
+        "title": "Bu artık yok",
+        "hint": "Silinmiş olabilir. Geri dönüp başka birini seç."
+      },
+      "payload_too_large": {
+        "title": "Bu çok büyük",
+        "hint": "Daha küçük bir dosya ya da daha az öğe kullan."
+      },
+      "precondition_required": {
+        "title": "Bu sayfa güncel değil",
+        "hint": "En son hâli için yenile, sonra değişikliğini yeniden yap."
+      },
+      "reload_failed": {
+        "title": "Yeni ayarlar yüklenemedi",
+        "hint": "Hatalara bak ya da yerel servisi yeniden başlat."
+      },
+      "repair_failed": {
+        "title": "Otomatik düzeltme işe yaramadı",
+        "hint": "Sonraki adım için Tanılama'yı aç ya da Praxi'yi yeniden başlat."
+      },
+      "restore_in_progress": {
+        "title": "Zaten bir geri yükleme sürüyor",
+        "hint": "Bitmesini bekle."
+      },
+      "resync_required": {
+        "title": "Canlı görünüm ekranı kaybetti",
+        "hint": "Devam etmek için canlı görünümü yeniden aç."
+      },
+      "run_files_in_use": {
+        "title": "Bu dosyalar şu an kullanımda",
+        "hint": "Botun bitmesini bekleyip yeniden dene."
+      },
+      "session_expired": {
+        "title": "Canlı görünüm oturumu bitti",
+        "hint": "Canlı görünümü yeniden aç."
+      },
+      "setup_required": {
+        "title": "Önce Praxi'ye bir beyin gerekiyor",
+        "hint": "Ayarlardan bir model bağlayıp yeniden dene."
+      },
+      "skill_conflict": {
+        "title": "Bu adda bir beceri zaten var",
+        "hint": "Başka bir ad seç ya da eskisini değiştir."
+      },
+      "skill_contains_secret": {
+        "title": "Becerinin içinde parola ya da anahtar var gibi",
+        "hint": "Sırrı dosyalardan çıkarıp yeniden ekle."
+      },
+      "skill_not_found": {
+        "title": "Bu beceri artık yok",
+        "hint": "Listeyi yenile."
+      },
+      "skill_storage": {
+        "title": "Beceri kaydedilemedi",
+        "hint": "Diskte yer olduğundan emin olup yeniden dene."
+      },
+      "skill_too_large": {
+        "title": "Bu beceri çok büyük",
+        "hint": "İçinden büyük dosyaları çıkarıp yeniden dene."
+      },
+      "too_many_requests": {
+        "title": "Çok fazla istek",
+        "hint": "Biraz bekleyip yeniden dene."
+      },
+      "too_many_skills": {
+        "title": "Bu botun çok fazla becerisi var",
+        "hint": "Kullanmadığın birini kaldır."
+      },
+      "too_many_streams": {
+        "title": "Çok fazla canlı görünüm açık",
+        "hint": "Birini kapatıp yeniden dene."
+      },
+      "unauthorized": {
+        "title": "Praxi kim olduğunu doğrulayamadı",
+        "hint": "Yerel servisi yeniden başlat. Olmazsa Praxi'yi yeniden başlat."
+      },
+      "unavailable": {
+        "title": "Bu şu an kullanılamıyor",
+        "hint": "Biraz sonra yeniden dene."
+      },
+      "unsupported_media_type": {
+        "title": "Bu dosya türü desteklenmiyor",
+        "hint": "Başka bir dosya dene."
+      },
+      "version_conflict": {
+        "title": "Bu başka bir yerde değiştirildi",
+        "hint": "En son hâlini görmek için yenile, sonra değişikliğini yeniden yap."
+      },
+      "view_media_type": {
+        "title": "Canlı görünüm başlatılamadı",
+        "hint": "Praxi'yi güncelle, sonra canlı görünümü yeniden aç."
+      },
+      "view_quota": {
+        "title": "Çok fazla canlı görünüm açık",
+        "hint": "Birini kapatıp yeniden dene."
+      }
+    },
+    "network": {
+      "title": "Praxi yerel servisine ulaşamıyor",
+      "hint": "Servis hâlâ açılıyor olabilir. Praxi kendiliğinden yeniden dener; servisi yeniden de başlatabilirsin."
+    },
+    "http_error": {
+      "title": "Servis bir sorunla yanıt verdi",
+      "hint": "Yeniden dene. Sürerse ayrıntıları kopyalayıp bildir."
+    },
+    "timeout": {
+      "title": "Bu çok uzun sürdü",
+      "hint": "Bağlantını kontrol edip yeniden dene."
+    },
+    "events_disconnected": {
+      "title": "Canlı güncellemeler kesildi",
+      "hint": "Praxi yeniden bağlanıyor. Hiçbir şey kaybolmadı."
+    },
+    "desktop_only": {
+      "title": "Bu yalnızca masaüstü uygulamasında çalışır",
+      "hint": "Praxi'yi bu bilgisayarda açıp yeniden dene."
+    },
+    "generic": {
+      "title": "Bir sorun çıktı",
+      "hint": "Yeniden dene. Sürerse ayrıntıları kopyalayıp bildir."
+    },
+    "toolScreenControl": {
+      "title": "Bot ekrana bakamadı",
+      "hint": "Ekranı şu an sen kontrol ediyorsun. Kontrolü geri verip yeniden iste."
+    },
+    "toolMissingProgram": {
+      "title": "{{name}} kurulu değil",
+      "hint": "{{name}} programını kurup yeniden dene."
+    },
+    "toolDenied": {
+      "title": "Bu adıma izin vermedin",
+      "hint": "Yeniden iste ve kart çıkınca İzin ver'i seç."
+    },
+    "toolFailed": {
+      "title": "Bot bu adımı tamamlayamadı",
+      "hint": "Yeniden iste ya da görevi başka türlü anlat."
+    },
+    "hostManaged": {
+      "title": "Bu öbür bilgisayarda yönetiliyor",
+      "hint": "Botun çalıştığı bilgisayardaki Praxi'den değiştir."
+    },
+    "sendFailed": {
+      "title": "Mesajın gönderilmedi",
+      "hint": "Bağlantını kontrol edip yeniden dene."
+    },
+    "serviceStarting": {
+      "title": "Praxi'nin yerel servisi açılıyor",
+      "hint": "Birkaç saniye sürer. Praxi kendiliğinden denemeye devam eder."
+    },
+    "serviceDown": {
+      "title": "Praxi'nin yerel servisi durdu",
+      "hint": "Yeniden başlat. Botların ve sohbetlerin güvende."
+    },
+    "serviceWrongTarget": {
+      "title": "Praxi yanıt vermeyen bir servise bakıyor",
+      "hint": "Bu bilgisayara dön ya da yerel servisi yeniden başlat."
+    }
+  },
   "firstRun": {
     "badge": "Kurulum",
     "skip": "Şimdilik atla",
@@ -1245,8 +1552,8 @@
       "stderr": "Sunucunun yazdıkları",
       "noStderr": "Sunucu durmadan önce hiçbir şey yazmadı.",
       "hint": {
-        "runtime_node": "Node.js PATH üzerinde bulunamadı. LTS sürümünü https://nodejs.org adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
-        "runtime_uv": "uv PATH üzerinde bulunamadı. Kurun (Windows: winget install --id=astral-sh.uv -e veya https://docs.astral.sh/uv/) ya da klasörünü PATH'e ekleyin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_node": "Node.js PATH'te bulunamadı. Yukarıdaki düğmeyle ya da https://nodejs.org adresinden kur, sonra Yeniden bağlan'a bas.",
+        "runtime_uv": "uv PATH'te bulunamadı. Yukarıdaki düğmeyle ya da https://docs.astral.sh/uv/ adresinden kur, sonra Yeniden bağlan'a bas.",
         "runtime_pipx": "pipx PATH üzerinde bulunamadı. https://pipx.pypa.io adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
         "runtime_docker": "docker komutu PATH üzerinde bulunamadı. Docker'ı kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
         "runtime_other": "Bu sunucuyu başlatan program PATH üzerinde bulunamadı. Kurun, klasörünü PATH'e ekleyin ya da sunucu ayarlarında tam yolunu verin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
@@ -1255,7 +1562,8 @@
         "needs_folder": "Bu uygulamanın okuyup yazabileceği tek klasörü seçin, sonra Kaydet ve bağla'ya basın.",
         "timeout": "Sunucu zamanında yanıt vermedi. İlk başlatma paketler inerken yavaş olabilir; tekrar denemek için Yeniden bağlan'a basın.",
         "config": "Sunucu ayarları ya da gerekli bir gizli anahtar eksik veya geçersiz. Düzeltin ve Yeniden bağlan'a basın."
-      }
+      },
+      "generic": "Bu uygulama başlatılamadı. Nedenini görmek için ayrıntıları aç."
     },
     "folder": {
       "label": "Botun okuyup yazabileceği klasör",
@@ -1302,41 +1610,93 @@
     "advanced": {
       "title": "Özel MCP sunucusu",
       "tokenCards": "Erişim anahtarı isteyen hizmetler",
-      "tokenHint": "Bunlar kendi oluşturduğun kişisel bir anahtar ister. Çoğu hizmet ana ekrandaki Composio ile anahtarsız bağlanır."
+      "tokenHint": "Bunlar kendi oluşturduğun kişisel bir anahtar ister. Çoğu hizmet ana ekrandaki Composio ile anahtarsız bağlanır.",
+      "localTitle": "Yerel geliştirici sunucuları"
     },
     "composio": {
       "title": "Composio",
-      "via": "Composio ile",
-      "setupTitle": "Uygulamaları anahtarsız bağla",
-      "setupBody": "Composio, Instagram, LinkedIn, Gmail ve yüzlercesine senin yerine giriş yapar. Ücretsiz bir proje API anahtarını bir kez oluştur, buraya yapıştır; bir daha anahtar girmezsin.",
       "getKey": "Composio anahtar sayfasını aç",
       "keyLabel": "Composio API anahtarı",
       "keyHint": "Hemen doğrulanır, sonra sistem anahtar zincirinde saklanır. Bir daha gösterilmez.",
       "keySave": "Anahtarı kaydet",
-      "dataNotice": "Bu uygulamaların girdileri ve sonuçları Composio sunucularından geçer ve orada varsayılan olarak kaydedilir. Praxi her işlemden önce sana sorar.",
-      "dataNoticeSensitive": "Bu uygulamadaki e-postaların, belgelerin veya mesajların Composio sunucularından geçer ve orada varsayılan olarak kaydedilir. Praxi her işlemden önce sana sorar.",
-      "continue": "Girişe devam et",
-      "nativeNote": "Praxi bunu doğrudan da bağlıyor",
-      "popular": "Popüler",
-      "catalog": "Tüm uygulamalar",
       "connectedSection": "Bağlı",
       "loadMore": "Daha fazla göster",
       "loading": "Uygulamalar yükleniyor…",
       "noResults": "Eşleşen uygulama yok.",
-      "waiting": "Tarayıcında girişin tamamlanması bekleniyor…",
+      "waiting": "Tarayıcıda seni bekliyor…",
       "state": {
         "not_connected": "Bağlı değil",
         "pending": "Giriş yapılıyor",
         "active": "Bağlı",
-        "expired": "Giriş süresi doldu"
+        "expired": "Giriş süresi doldu",
+        "failed": "Tamamlanmadı"
       },
       "enable": "Aç",
       "disable": "Kapat",
-      "removeKey": "Anahtarı kaldır",
-      "removeKeyConfirm": "Anahtarı kaldır",
       "openFailed": "Giriş bağlantısı Composio bağlantısı olmadığı için açılmadı.",
       "disconnectedLocal": "{{name}} burada kaldırıldı. Composio panelinden de kaldır.",
-      "retryOpen": "Oturum açma sayfasını yeniden aç"
+      "link": {
+        "title": "Composio'yu bağla (ücretsiz) — bir kez",
+        "body": "Ücretsiz bir Composio hesabı uygulamalarını bağlar. Düğmeye bas, tarayıcıda giriş yap ve geri dön. Kopyalanacak bir şey yok.",
+        "open": "Composio'yu aç",
+        "waiting": "Tarayıcıda seni bekliyor…",
+        "failed": "Giriş tamamlanamadı. Tekrar dene.",
+        "privacy": "Girdiler ve sonuçlar Composio sunucularından geçer. Praxi her işlemden önce sana sorar."
+      },
+      "advanced": {
+        "title": "Composio",
+        "mode": {
+          "none": "Henüz bağlı değil. Bir uygulamanın ilk Bağlan'ında bir kez giriş istenir.",
+          "login": "Composio girişin üzerinden bağlı.",
+          "project_key": "Kendi Composio proje anahtarın kullanılıyor."
+        },
+        "signOut": "Composio'dan çıkış yap",
+        "ownKey": "Kendi proje anahtarımı kullan"
+      },
+      "retry": "Tekrar dene",
+      "failedHint": "Giriş tamamlanamadı. Tekrar dene.",
+      "expiredHint": "Girişin süresi doldu. Devam etmek için yeniden bağlan.",
+      "loadFailed": "Uygulama listesi yüklenemedi.",
+      "catalogError": {
+        "offline": "Bağlantı yok: kayıtlı uygulama listesi gösteriliyor.",
+        "unauthorized": "Composio girişinin süresi doldu: kayıtlı uygulama listesi gösteriliyor.",
+        "rate_limited": "Composio meşgul: kayıtlı uygulama listesi gösteriliyor.",
+        "failed": "Uygulama listesi yenilenemedi: kayıtlı liste gösteriliyor."
+      }
+    },
+    "group": {
+      "label": "Kategoriler",
+      "all": "Tümü",
+      "communication": "İletişim",
+      "social": "Sosyal",
+      "productivity": "Verimlilik",
+      "dev": "Geliştirme",
+      "finance": "Finans",
+      "business": "İş",
+      "other": "Diğer"
+    },
+    "component": {
+      "name": {
+        "uv": "uv",
+        "node": "Node.js"
+      },
+      "needs": {
+        "uv": "Bu uygulama uv'ye ihtiyacı duyuyor; küçük bir Python araç çalıştırıcı.",
+        "node": "Bu uygulama JavaScript araçlarını çalıştıran Node.js'e ihtiyacı duyuyor."
+      },
+      "install": "{{name}} kur",
+      "confirm": "Praxi {{name}} kurmak için şu komutu çalıştıracak:",
+      "source": "Kaynak: {{source}}",
+      "run": "Kur",
+      "installing": "{{name}} kuruluyor… bu bir dakika sürebilir.",
+      "manual": "Bu bilgisayarda buradan kurulum yapılamıyor. Resmi sayfa nasıl kuracağını gösterir:",
+      "openPage": "Resmi sayfayı aç",
+      "failed": {
+        "exit": "Kurulum tamamlanamadı. Tekrar dene ya da resmi sayfadan kendin kur.",
+        "not_detected": "Kurulum bitti ama program henüz bulunamadı. Yeniden bağlan'a bas ya da Praxi-Bot'u bir kez yeniden başlat.",
+        "timeout": "Kurulum çok uzun sürdü ve durduruldu.",
+        "unavailable": "Kurulum başlatılamadı."
+      }
     }
   },
   "help": {
@@ -1466,7 +1826,7 @@
         "enabledToast": "{{name}} etkinleştirildi.",
         "notInstalled": "Kurulu değil",
         "detectError": "Kurulu kodlama araçları denetlenemedi.",
-        "offline": "Algılanan kodlama araçlarını görmek için daemon'a bağlanın.",
+        "offline": "Yerel servis çalışmıyor; algılanan kodlama araçları gösterilemiyor.",
         "signIn": "Giriş yap",
         "signInIn": "Terminalde çalıştır:",
         "install": "Kur",
@@ -1710,7 +2070,7 @@
       "reportFailed": "Destek raporu oluşturulamadı",
       "repairDone": "Onarım tamamlandı",
       "repairFailed": "Onarım başarılı olmadı",
-      "offline": "Arka plan servisine bağlı değil. Tanılama için Praxi'yi başlatın.",
+      "offline": "Yerel servis çalışmıyor. Tanılama için yeniden başlat.",
       "loadError": "Tanılama çalıştırılamadı",
       "empty": "Hiç denetim sonucu gelmedi",
       "notOnPlatform": "Bu platformda kullanılamaz.",
@@ -2272,7 +2632,11 @@
   "botEmpty": {
     "title": "{{name}} ile sohbete başla",
     "body": "Burada henüz bir şey yok. Bir şey iste, sohbet bu alanda açılsın.",
-    "suggestionsTitle": "Şunlardan birini dene"
+    "suggestionsTitle": "Şunlardan birini dene",
+    "goneTitle": "Bu bot artık yok",
+    "goneHint": "Silinmiş ya da başka bir bilgisayarda olabilir. İlk botuna git ya da yeni bir tane oluştur.",
+    "goFirst": "{{name}} botuna git",
+    "createBot": "Bot oluştur"
   },
   "botProfile": {
     "facts": "{{date}} tarihinde oluşturuldu · {{chats}} sohbet",
@@ -2508,7 +2872,8 @@
     "stopHostHint": "Şu an orada çalışanları durdurur",
     "stopNone": "Sunucuda çalışan bir şey yok.",
     "stopFailed": "Çalışmaları durdurmak için sunucuya ulaşılamadı.",
-    "stopped": "Sunucuda {{count}} çalışma durduruldu."
+    "stopped": "Sunucuda {{count}} çalışma durduruldu.",
+    "makeHome": "Bu sunucuyu botlarımın evi yap…"
   },
   "pairHost": {
     "title": "Sunucu ekle",
@@ -2520,6 +2885,49 @@
     "pair": "Eşleştir",
     "pairing": "Eşleştiriliyor…",
     "failed": "Eşleştirme olmadı. Sunucunun açık ve biletin yeni olduğunu kontrol et."
+  },
+  "hostMode": {
+    "state": {
+      "connected": "Bağlı",
+      "connecting": "Bağlanıyor…",
+      "offline": "Yanıt vermiyor. Kendiliğinden yeniden dener.",
+      "notPaired": "Bu bilgisayarı artık kabul etmiyor. Yeniden eşleştir.",
+      "mismatch": "Bu uygulamadan farklı bir sürümde çalışıyor. İkisini aynı sürüme güncelle."
+    },
+    "missing": {
+      "model": "Bu sunucuda henüz bağlı bir model yok.",
+      "bots": "Bu sunucuda henüz bot yok."
+    },
+    "have": {
+      "model": "Bir model bağlı.",
+      "bots": "Botlar bu sunucuda hazır."
+    },
+    "viewScreen": "Ekranı izle",
+    "managedOnServer": "Anahtarlar, izinler, araçlar ve eşleştirme {{name}} üzerinde yönetilir. Buradan bot oluşturup düzenleyebilir, sohbet edebilir ve ekranını izleyebilirsin.",
+    "newBotNeedsModel": "{{name}} sunucusunda henüz model yok, bu yüzden orada bot oluşturulamaz. Önce sunucuya bir model bağla.",
+    "model": {
+      "action": "{{name}} sunucusuna model bağla",
+      "title": "Bu sunucuya model bağla",
+      "onServer": "Şimdilik anahtarlar bu uygulamadan değil, sunucunun kendisinde eklenir. {{name}} üzerinde bir terminal aç ve şunu çalıştır:",
+      "fromApp": "{{name}} için anahtarı buraya ekle.",
+      "copy": "Komutu kopyala",
+      "afterwards": "Bu uygulama birkaç saniye sonra bunu kendiliğinden fark eder."
+    },
+    "refusal": {
+      "policy": "Çalıştırma politikası bu uygulamadan değil, {{name}} üzerinde ayarlanır.",
+      "secrets": "Anahtarlar ve gizli bilgiler bu uygulamadan değil, {{name}} üzerinde eklenir.",
+      "tools": "Araç sunucuları ve beceriler {{name}} üzerinde yönetilir.",
+      "credentials": "E-posta ve arama hesapları {{name}} üzerinde bağlanır.",
+      "hostTransfer": "Sunucuyu taşıma ve kanal eşleştirme {{name}} üzerinde yapılır.",
+      "lifecycle": "Eşleştirme ve sunucu güncellemeleri {{name}} üzerinde yapılır.",
+      "botPermissions": "Bir botun izinleri ve araçları {{name}} üzerinde yönetilir. Ad, kişilik ve model buradan değiştirilebilir.",
+      "knowledge": "Bilgi ayarları {{name}} üzerinde yönetilir.",
+      "composio": "Uygulama bağlantıları {{name}} üzerinde değil, bu bilgisayarın sahibi tarafında yönetilir.",
+      "overlay": "Bu soruyu yalnızca {{name}} başındaki kişi yanıtlayabilir.",
+      "ownerOnly": "Bu yalnızca {{name}} üzerinde yapılabilir.",
+      "role": "{{name}} bu bilgisayarın bunu yapmasına izin vermiyor.",
+      "generic": "{{name}} buna izin vermedi. Bu yalnızca {{name}} üzerinde yapılabilir."
+    }
   },
   "hostState": {
     "connecting": "{{name}} sunucusuna bağlanılıyor…",
@@ -2591,6 +2999,7 @@
     "starting": "Başlıyor…",
     "noDaemon": "Yerel Praxi hizmeti çalışmıyor. Uygulamayı yeniden başlatıp tekrar dene.",
     "startFailed": "Başlatılamadı. Yukarıdaki ayrıntılara bakıp tekrar dene.",
+    "answerFailed": "Yanıt kurulum işine ulaşmadı. Bu pencereyi kapatıp yeniden başlat.",
     "formInvalid": "Sunucu adresini ve geçerli bir port gir.",
     "keyMissing": "Bir özel anahtar dosyası seç ya da SSH ajanına geç.",
     "progress": "Kurulum ilerlemesi",
@@ -2684,6 +3093,48 @@
         "msg": "Sunucu kurulurken bir şey ters gitti.",
         "fix": "Tekrar dene. Sürekli başarısız olursa ayrıntıları kopyala."
       }
+    }
+  },
+  "copySetup": {
+    "title": "Bu sunucuyu botlarımın evi yap",
+    "lead": "Botların, model anahtarları ve ayarlarıyla sunucuya taşınır; bu bilgisayar kapalıyken de çalışmaya devam ederler. Aynı uygulamada kalırsın.",
+    "send": "Sunucuya taşı",
+    "sending": "Taşınıyor…",
+    "failed": "Olmadı. Sunucunun bağlı olduğundan emin ol ve tekrar dene.",
+    "cannotMove": "Henüz taşınamayanlar: sohbet geçmişi, bellek, zamanlamalar ve tetikleyiciler, uygulama bağlantıları ve CLI oturumları (Claude Code, Codex, agy, OpenCode sunucunun kendisinde giriş yapar).",
+    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez; çalışan bir yedek olarak kalır. İstersen sonra tekrar çalıştırıp eşitleyebilirsin.",
+    "summary": "{{done}} taşındı, {{skipped}} atlandı, {{failed}} başarısız.",
+    "homeFailed": "Öğeler taşındı ama sunucu botlarının evi olarak işaretlenemedi.",
+    "kind": {
+      "provider": "Model sağlayıcı",
+      "providerKey": "Model sağlayıcı ve anahtarı",
+      "bot": "Bot",
+      "default": "Varsayılan model"
+    },
+    "blocked": {
+      "cli_engine": "Bu bilgisayarda kalan bir CLI motoru kullanıyor"
+    },
+    "host": {
+      "host_admin_required": "Sunucu sahibi bu bilgisayarı sunucuda bir kez onaylamalı. Sunucuda şunu çalıştır:",
+      "secrets_unavailable": "Sunucu henüz anahtar saklayamıyor. Sunucuda:",
+      "host_admin_forbidden": "Sunucu bu bilgisayarı kabul etmiyor."
+    },
+    "result": {
+      "done": "Taşındı",
+      "exists": "Sunucuda zaten var",
+      "cli_engine": "Burada kalır (CLI motoru)",
+      "not_copyable": "Taşınamaz",
+      "not_found": "Bulunamadı",
+      "key_unreadable": "Anahtar burada okunamadı",
+      "host_admin_required": "Sunucu onay istiyor",
+      "host_admin_forbidden": "Sunucu reddetti",
+      "secrets_unavailable": "Sunucu anahtar saklayamıyor",
+      "secret_store_failed": "Sunucu kaydedemedi",
+      "host_unreachable": "Sunucu yanıt vermedi",
+      "rejected": "Sunucu kabul etmedi",
+      "no_default": "Varsayılan model yok",
+      "skipped": "Atlandı",
+      "failed": "Başarısız"
     }
   }
 }
