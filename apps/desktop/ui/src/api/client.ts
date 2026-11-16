@@ -89,6 +89,11 @@ import type {
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 
 /** An error response of the daemon (`{"error": {"code", "message"}}`) or a network failure. */
+import { hostRefusalKey } from "../lib/hostMode.ts";
+
+/** A request that gets no answer for this long fails instead of hanging its screen forever. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -162,10 +167,21 @@ export class ApiClient {
   }
   readonly baseUrl: string;
   private readonly token: string;
+  /** Name of the paired host this client talks to (null for this computer). */
+  hostName: string | null = null;
+  /** Turns a host refusal key into a sentence (installed by the app with i18n; tests leave it). */
+  static refusalText: ((key: string, name: string) => string) | null = null;
+  /** Aborts every request of this client when its computer is dropped (`dispose`). */
+  private readonly life = new AbortController();
 
   constructor(conn: Pick<Connection, "base_url" | "token">) {
     this.baseUrl = conn.base_url.replace(/\/$/, "");
     this.token = conn.token;
+  }
+
+  /** The computer this client talked to is no longer selected: drop what is in flight. */
+  dispose(): void {
+    this.life.abort();
   }
 
   /** Headers for a request, also used by the SSE reader. */
@@ -195,7 +211,14 @@ export class ApiClient {
   private async send(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
+    opts: {
+      body?: unknown;
+      query?: Query;
+      auth?: boolean;
+      signal?: AbortSignal;
+      /** Streaming answers (install output) must not be cut by the request timeout. */
+      noTimeout?: boolean;
+    } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -216,7 +239,11 @@ export class ApiClient {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        signal: opts.signal
+        signal: AbortSignal.any([
+          this.life.signal,
+          ...(opts.signal ? [opts.signal] : []),
+          ...(opts.noTimeout ? [] : [AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        ])
       });
     } catch (e) {
       throw new ApiError(
@@ -237,6 +264,13 @@ export class ApiClient {
       } catch {
         // not JSON
       }
+      // A host's refusal is shown as one human sentence naming the server, on every screen.
+      if (this.hostName !== null && ApiClient.refusalText) {
+        const key = hostRefusalKey(res.status, message);
+        if (key) {
+          message = ApiClient.refusalText(key, this.hostName);
+        }
+      }
       throw new ApiError(res.status, code, message, parsed);
     }
     return res;
@@ -256,7 +290,7 @@ export class ApiClient {
   }
 
   async decideCliInstall(id: string, decision: "approve" | "deny", onOutput: (text: string) => void): Promise<void> {
-    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision } });
+    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision }, noTimeout: true });
     const reader = res.body?.getReader();
     if (!reader) { throw new Error("Missing install stream"); }
     let done = false;
