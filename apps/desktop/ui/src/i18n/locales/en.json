@@ -1171,6 +1171,10 @@
       "view_quota": {
         "title": "Too many live views are open",
         "hint": "Close one and try again."
+      },
+      "owner_key_required": {
+        "title": "Only the owner can give this permission",
+        "hint": "Use the Praxi desktop app on this computer to allow it for the chat."
       }
     },
     "network": {

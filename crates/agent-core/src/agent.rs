@@ -1008,6 +1008,18 @@ impl AgentLoop {
             .map_err(|_| LoopError::NoPendingApproval(call_id))
     }
 
+    /// The pending card is a taint-gate card whose "always for this chat" choice is a grant.
+    /// Channels that carry owner authority (the desktop app) may give it; a bare API token or a
+    /// peer may not (the HTTP route checks this before calling [`Self::approve`]).
+    #[must_use]
+    pub fn approval_is_gate_grant(&self, call_id: ToolCallId) -> bool {
+        self.sh
+            .pending
+            .lock()
+            .get(&call_id)
+            .is_some_and(|p| p.gate_grant)
+    }
+
     /// Deny a pending tool call; the model receives a denial message.
     ///
     /// # Errors

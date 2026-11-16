@@ -268,36 +268,6 @@ fn apply_fact_list(taint: &mut ContentTaint, value: Option<&Value>) {
     }
 }
 
-const OUTSIDE_DIRS: &[&str] = &[
-    "downloads",
-    "download",
-    "attachments",
-    "attachment",
-    "inbox",
-    "temp",
-    "tmp",
-    "quarantine",
-];
-const OUTSIDE_EXTENSIONS: &[&str] = &["eml", "mbox", "msg", "html", "htm", "mhtml"];
-
-/// A file the user's own tools did not write: it came from outside (a download, a mail
-/// attachment, a saved web page). Reading one puts untrusted text in the context. Decided by
-/// the path only (directory names and extensions), so it is a heuristic: a file the user
-/// moved out of Downloads is read as private.
-pub(crate) fn arrived_from_outside(name: &str, input: &Value) -> bool {
-    if !matches!(name, "fs_read" | "fs_search") {
-        return false;
-    }
-    let Some(path) = input.get("path").and_then(Value::as_str) else {
-        return false;
-    };
-    let lower = path.to_ascii_lowercase().replace('\\', "/");
-    lower.split('/').any(|part| OUTSIDE_DIRS.contains(&part))
-        || lower
-            .rsplit_once('.')
-            .is_some_and(|(_, ext)| OUTSIDE_EXTENSIONS.contains(&ext))
-}
-
 /// Short label for the approval card: `file <path>`, `mailbox <folder>`,
 /// `page <url>`, and the same shape for the other sources.
 pub(crate) fn source_label(name: &str, input: &Value) -> String {

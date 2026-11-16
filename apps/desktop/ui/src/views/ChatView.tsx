@@ -21,8 +21,9 @@ import {
   useState
 } from "react";
 import { useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
 import { BotAvatar, Button } from "ui";
-import { isMockMode } from "../api/mockMode";
+import { isMockMode, MOCK_BASE_URL } from "../api/mockMode";
 import { ApiError } from "../api/client";
 import type { Bot, Message, SendMode } from "../api/types";
 import {
@@ -804,11 +805,20 @@ export function ChatView({
               if (!client) {
                 return;
               }
+              // A standing choice ("always for this chat") carries the owner's authority, which
+              // only the desktop app's own window holds; a plain approval needs no key.
+              const standing = decision === "approve" && scope !== undefined && scope !== "once" && scope !== "run_control";
+              const ownerKey = !standing
+                ? undefined
+                : client.baseUrl === MOCK_BASE_URL
+                  ? "mock"
+                  : await invoke<string>("owner_key").catch(() => undefined);
               await client.decideApproval(
                 item.callId,
                 decision,
                 scope,
-                reason
+                reason,
+                ownerKey
               );
             }}
           />

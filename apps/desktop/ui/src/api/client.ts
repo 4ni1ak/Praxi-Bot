@@ -515,10 +515,12 @@ export class ApiClient {
     callId: string,
     decision: Decision,
     scope?: Scope,
-    reason?: string
+    reason?: string,
+    ownerKey?: string
   ): Promise<{ call_id: string; decision: Decision }> {
     return this.request("POST", `/approvals/${callId}`, {
-      body: { decision, scope, reason }
+      body: { decision, scope, reason },
+      ...(ownerKey ? { headers: { "x-praxi-owner-key": ownerKey } } : {})
     });
   }
   answerQuestion(callId: string, answer: string): Promise<{ call_id: string }> {

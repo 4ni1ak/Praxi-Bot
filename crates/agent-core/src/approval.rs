@@ -181,6 +181,17 @@ fn computer_approval(
     prefix
 }
 
+/// Scheme, userinfo, host, port, path, query and fragment of a normalised URL.
+type UrlParts = (
+    String,
+    String,
+    String,
+    Option<u16>,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
 impl Shared {
     /// Resolve policy + grants for one call.
     pub(crate) fn decide(
@@ -353,37 +364,64 @@ impl Shared {
         }
     }
 
-    /// Tool class and destination class a taint-gate grant is keyed on: web (one site), browser
-    /// actions, shell, desktop input. `None` for everything else (sends, schedules, apps,
-    /// program launches): those stay once-only.
+    /// The site of a URL as a grant boundary: `scheme://host:port`, lower case, no trailing dot,
+    /// default port made explicit. Only `http` / `https` with a host qualify.
+    fn origin_of(url: &str) -> Option<String> {
+        let url = url::Url::parse(url).ok()?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return None;
+        }
+        let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+        Some(format!(
+            "{}://{host}:{}",
+            url.scheme(),
+            url.port_or_known_default()?
+        ))
+    }
+
+    /// Tool class and destination a taint-gate grant is keyed on: web (`browser_open`, per
+    /// origin), shell, desktop input. Browser actions on the CURRENT page are not grantable: the
+    /// daemon cannot observe that page's origin at decision time, and an unknown destination
+    /// stays once-only (a grant for site A must never cover site B). `None` for everything else
+    /// (sends, schedules, apps, program launches).
     pub(crate) fn gate_key(name: &str, input: &Value) -> Option<(&'static str, String)> {
         match name {
             "shell_run" | "script_run" => Some(("shell", String::new())),
             "desktop_type" | "desktop_key" | "desktop_set_value" | "desktop_drag" => {
                 Some(("desktop_input", String::new()))
             }
-            "browser_open" => {
-                let url = url::Url::parse(input.get("url")?.as_str()?).ok()?;
-                Some(("web", url.host_str()?.to_ascii_lowercase()))
-            }
-            n if n.starts_with("browser_") => Some(("browser_act", String::new())),
+            "browser_open" => Some(("web", Self::origin_of(input.get("url")?.as_str()?)?)),
             _ => None,
         }
     }
 
-    /// The URL of this call is one the user wrote in this chat, character for character
-    /// (fragment and a trailing slash aside): the user chose the destination, and an exact
-    /// URL cannot carry anything the model added.
+    /// The destination of this call is a URL the user wrote in this chat: the COMPLETE
+    /// destination (scheme, userinfo, host, port, path, query, fragment) must be equal after
+    /// standard normalisation only (case of scheme and host, default port, trailing dot), and
+    /// the call must be a plain navigation: any other field (`dialog`, `prompt_text`, `profile`)
+    /// can carry model-chosen text, so such a call stays behind approval. Not detected: whether a
+    /// message was typed by the local user (a peer's or Telegram's steering text and a block the
+    /// user pasted from a page are both `user` messages in the chat).
     fn user_typed_url(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
-        if name != "browser_open" {
+        if name != "browser_open" || input.as_object().is_none_or(|o| o.len() != 1) {
             return false;
         }
-        let norm = |u: &str| -> Option<String> {
-            let mut url = url::Url::parse(u.trim_end_matches(['.', ',', ')', ';'])).ok()?;
-            url.set_fragment(None);
-            Some(url.as_str().trim_end_matches('/').to_owned())
+        let parts = |u: &str| -> Option<UrlParts> {
+            let url = url::Url::parse(u).ok()?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return None;
+            }
+            Some((
+                url.scheme().to_owned(),
+                format!("{}:{}", url.username(), url.password().unwrap_or_default()),
+                url.host_str()?.trim_end_matches('.').to_ascii_lowercase(),
+                url.port_or_known_default(),
+                url.path().to_owned(),
+                url.query().map(str::to_owned),
+                url.fragment().map(str::to_owned),
+            ))
         };
-        let Some(want) = input.get("url").and_then(Value::as_str).and_then(norm) else {
+        let Some(want) = input.get("url").and_then(Value::as_str).and_then(parts) else {
             return false;
         };
         let Ok((messages, _)) =
@@ -396,8 +434,11 @@ impl Shared {
             .filter(|m| m.role == "user")
             .flat_map(|m| m.content.split_whitespace())
             .filter(|w| w.starts_with("http://") || w.starts_with("https://"))
-            .filter_map(norm)
-            .any(|u| u == want)
+            .map(|w| {
+                w.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\''])
+            })
+            .filter_map(parts)
+            .any(|got| got == want)
     }
 
     /// A call that only the taint gate (not the policy, not an always-ask tool, not a floor)
@@ -843,6 +884,7 @@ impl Shared {
                 tx,
                 once_only,
                 grantable,
+                gate_grant: false,
             },
         );
         *self.parked.lock().entry(ctx.run_id).or_insert(0) += 1;
@@ -1095,6 +1137,9 @@ impl Shared {
             obj.insert("once_only".into(), json!(once_only));
         }
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only, grantable);
+        if let Some(p) = self.pending.lock().get_mut(&call_id) {
+            p.gate_grant = gate_grant;
+        }
         let parked_at = policy_revision(self);
         self.remember_parked(call_id, ctx, name, effect, category, input);
         self.emit(
@@ -1599,6 +1644,19 @@ impl ToolGate for LoopGate {
         }
     }
 
+    fn content_untrusted(&self, run_id: &str) -> bool {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return false;
+        };
+        let Some(sh) = self.sh.upgrade() else {
+            return false;
+        };
+        sh.runs
+            .lock()
+            .get(&protocol::RunId(id))
+            .is_some_and(|ctx| ctx.taint.lock().exposure.untrusted)
+    }
+
     fn content_tainted(&self, run_id: &str) -> bool {
         let Ok(id) = run_id.parse::<uuid::Uuid>() else {
             return false;
@@ -1731,11 +1789,7 @@ impl LoopGate {
 /// the model by the time the next call is authorized. Record that now so the
 /// next inner call sees the taint. A denial records nothing.
 fn note_gate(ctx: &RunCtx, req: &GateRequest) {
-    let mut content = req.content;
-    if taint::arrived_from_outside(&req.tool, &req.input) {
-        content.ingests_untrusted = true;
-    }
     ctx.taint
         .lock()
-        .note(content, &taint::source_label(&req.tool, &req.input));
+        .note(req.content, &taint::source_label(&req.tool, &req.input));
 }

@@ -73,11 +73,23 @@ struct Input {
 pub struct ShellTool {
     spec: ToolSpec,
     spill_dir: PathBuf,
+    /// Ledger of untrusted-origin files: what the command fetches (`git clone`, `curl`, `wget`,
+    /// `unzip` ...) is recorded before it runs.
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
 }
 
 /// Build the shell tool; `data_dir` hosts spill files.
 #[must_use]
 pub fn tool(data_dir: &Path) -> Arc<dyn Tool> {
+    tool_with_provenance(data_dir, None)
+}
+
+/// [`tool`] that records what a command fetches in the provenance ledger.
+#[must_use]
+pub fn tool_with_provenance(
+    data_dir: &Path,
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+) -> Arc<dyn Tool> {
     Arc::new(ShellTool {
         spec: spec(
             "shell_run",
@@ -92,6 +104,7 @@ pub fn tool(data_dir: &Path) -> Arc<dyn Tool> {
             PermissionCategory::Shell,
         ),
         spill_dir: data_dir.join("spill"),
+        provenance,
     })
 }
 
@@ -323,6 +336,23 @@ impl Tool for ShellTool {
         if i.command.trim().is_empty() {
             return Err(ToolError::InvalidInput("command is empty".into()));
         }
+        if let Some(ledger) = &self.provenance {
+            let cwd = i
+                .cwd
+                .as_ref()
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_dir().ok());
+            for (path, tree) in cwd
+                .iter()
+                .flat_map(|cwd| crate::provenance::shell_fetch_targets(&i.command, cwd))
+            {
+                ledger.mark(
+                    &crate::provenance::normalize(&path),
+                    tree,
+                    "fetched by a shell command",
+                );
+            }
+        }
         let kind = i.shell.unwrap_or_else(ShellKind::default_for_host);
         let timeout = Duration::from_secs(resolved_timeout_secs(i.timeout));
         let mut cmd = build_command(kind, &i.command);
@@ -548,6 +578,7 @@ mod tests {
             max_inline_bytes: 1000,
             bot_id: None,
             content_tainted: false,
+            exposure_untrusted: false,
             control_guard: None,
         };
         let out = t

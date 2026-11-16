@@ -1171,6 +1171,10 @@
       "view_quota": {
         "title": "Çok fazla canlı görünüm açık",
         "hint": "Birini kapatıp yeniden dene."
+      },
+      "owner_key_required": {
+        "title": "Bu izni yalnızca sahibi verebilir",
+        "hint": "Sohbet için izin vermek üzere bu bilgisayardaki Praxi masaüstü uygulamasını kullan."
       }
     },
     "network": {

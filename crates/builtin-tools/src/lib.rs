@@ -26,6 +26,7 @@ mod fill_secret_tests;
 pub mod knowledge;
 pub mod knowledge_brain;
 pub mod meta;
+pub mod provenance;
 pub mod schedule;
 pub mod script;
 pub mod shell;
@@ -126,6 +127,8 @@ pub struct BuiltinConfig {
     /// and `desktop_set_value` accept `secret: "<name>"` and the model gets
     /// `secrets_list`; with `None` a `secret` parameter is refused.
     pub fill_secrets: Option<Arc<secret_store::FillSecrets>>,
+    /// Ledger of files with an untrusted origin (see [`provenance`]); `None` = rules only.
+    pub provenance: Option<Arc<dyn provenance::Provenance>>,
 }
 
 /// What the built-in file tools may reach for one bot.
@@ -180,6 +183,7 @@ impl BuiltinConfig {
             fs_access: None,
             fs_home: None,
             fill_secrets: None,
+            provenance: None,
         }
     }
 
@@ -241,8 +245,12 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         &cfg.fs_granted_paths,
         cfg.fs_access.clone(),
         fs_home,
+        cfg.provenance.clone(),
     ));
-    all.push(shell::tool(&cfg.data_dir));
+    all.push(shell::tool_with_provenance(
+        &cfg.data_dir,
+        cfg.provenance.clone(),
+    ));
     all.push(script::tool_with_control(
         registry.clone(),
         cfg.gate,

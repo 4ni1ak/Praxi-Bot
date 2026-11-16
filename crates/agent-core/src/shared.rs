@@ -564,6 +564,9 @@ pub(crate) struct Pending {
     /// The card offers [`ApprovalScope::RunControl`]: the daemon resolved an
     /// eligible control target for this call.
     pub grantable: bool,
+    /// The card is a taint-gate card that offers "always for this chat": creating that grant
+    /// takes the owner's authority (the API token alone is not enough).
+    pub gate_grant: bool,
 }
 
 #[derive(Default)]
