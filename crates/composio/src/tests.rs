@@ -788,3 +788,196 @@ async fn reentering_a_key_recovers_saved_account_binding_without_new_consent() {
             .any(|r| r.method.as_str() == "POST")
     );
 }
+
+// --- browser login, router link, connect state machine, offline catalog ------
+
+const USER_KEY: &str = "uak_browser_SECRET_9876543210";
+
+async fn mount_login(h: &Harness, linked: bool) {
+    Mock::given(method("POST"))
+        .and(path("/cli/create-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"id": "sess-1", "code": "ABC123", "expiresAt": "2030-01-01T00:00:00Z", "status": "pending"}),
+        ))
+        .mount(&h.server)
+        .await;
+    let body = if linked {
+        json!({"id": "sess-1", "status": "linked", "api_key": USER_KEY})
+    } else {
+        json!({"id": "sess-1", "status": "pending", "api_key": null})
+    };
+    Mock::given(method("GET"))
+        .and(path("/cli/get-session"))
+        .and(query_param("id", "sess-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/auth/session/info"))
+        .and(header("x-user-api-key", USER_KEY))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"project": {"id": "pr_1", "org": {"id": "org_1"}}})),
+        )
+        .mount(&h.server)
+        .await;
+}
+
+async fn mount_router(h: &Harness, account_status: &str) {
+    Mock::given(method("POST"))
+        .and(path("/tool_router/session"))
+        .and(header("x-user-api-key", USER_KEY))
+        .and(header("x-org-id", "org_1"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"session_id": "trs_1"})))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/tool_router/session/trs_1/link"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "redirect_url": "https://connect.composio.dev/link/lk_9", "connected_account_id": "ca_secret_conn_1"})))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/connected_accounts"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(accounts(account_status)))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/toolkits"))
+        .and(query_param("search", "github"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"items":[{"slug":"github","name":"GitHub"}]})),
+        )
+        .mount(&h.server)
+        .await;
+}
+
+async fn logged_in(h: &Harness) {
+    mount_login(h, true).await;
+    h.svc.login_start().await.unwrap();
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Linked);
+}
+
+#[tokio::test]
+async fn browser_login_links_without_a_pasted_key_and_never_leaks_the_user_key() {
+    let h = harness().await;
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Idle);
+    mount_login(&h, false).await;
+    let start = h.svc.login_start().await.unwrap();
+    assert_eq!(
+        start.login_url,
+        "https://dashboard.composio.dev/?cliKey=sess-1"
+    );
+    assert_eq!(
+        h.svc.login_poll().await.unwrap(),
+        crate::LoginState::Pending
+    );
+    assert!(!h.svc.configured());
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Linked);
+    assert!(h.svc.configured());
+    assert_eq!(h.svc.linkage(), crate::Linkage::Login);
+    let stored = h.store.get(KEY_SECRET).unwrap().unwrap();
+    assert_eq!(stored.expose(), format!("user-login:{USER_KEY}"));
+    let toml = std::fs::read_to_string(h.svc.state_path()).unwrap();
+    assert!(toml.contains("org_1") && !toml.contains(USER_KEY));
+    assert!(!leak_surface(&h).contains(USER_KEY));
+    // Remove = sign out of Composio.
+    h.svc.remove_key().await.unwrap();
+    assert_eq!(h.svc.linkage(), crate::Linkage::None);
+    assert!(h.store.get(KEY_SECRET).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn connect_flow_link_pending_connected_failed_and_timeout() {
+    let h = harness().await;
+    logged_in(&h).await;
+    mount_router(&h, "INITIATED").await;
+    let link = h.svc.connect("github").await.unwrap();
+    assert_eq!(link.redirect_url, "https://connect.composio.dev/link/lk_9");
+    assert_eq!(h.svc.apps()[0].state, ConnState::Pending);
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Pending
+    );
+    // The user finishes in the browser.
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    mount_router(&h, "ACTIVE").await;
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Active
+    );
+    // A refused consent shows up as failed, not as a silent "not connected".
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    mount_router(&h, "INITIATED").await;
+    h.svc.connect("github").await.unwrap();
+    h.server.reset().await;
+    mount_router(&h, "FAILED").await;
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Failed
+    );
+    // An unfinished sign-in times out.
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    mount_router(&h, "INITIATED").await;
+    h.svc.connect("github").await.unwrap();
+    h.svc.0.pending_since.lock().insert(
+        "github".into(),
+        std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(700))
+            .unwrap(),
+    );
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Failed
+    );
+    let surface = leak_surface(&h);
+    assert!(!surface.contains(USER_KEY), "user key leaked");
+}
+
+#[tokio::test]
+async fn catalog_serves_bundled_then_cache_instantly_and_survives_a_dead_network() {
+    let h = harness().await;
+    // Nothing cached, nothing linked: the bundled popular apps, at once.
+    let v = h.svc.catalog_view(None, None, None, 5);
+    assert_eq!(v.source, crate::CatalogSource::Bundled);
+    assert_eq!(v.items[0].0.slug, "gmail");
+    logged_in(&h).await;
+    let items: Vec<Value> = (0..150)
+        .map(|i| json!({"slug": format!("app{i}"), "name": format!("App {i}"), "meta": {"description": "d", "categories": [{"name": "Email"}]}}))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/toolkits"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": items})))
+        .mount(&h.server)
+        .await;
+    h.svc.refresh_catalog().await.unwrap();
+    let live = h.svc.catalog_view(Some("app14"), None, None, 10);
+    assert_eq!(live.source, crate::CatalogSource::Cache);
+    assert!(live.items.iter().any(|(t, _)| t.slug == "app14"));
+    // The network dies: the view still answers from memory, a refresh fails
+    // with a short fixed reason, and a restarted service reads the disk cache.
+    h.server.reset().await;
+    let again = h.svc.refresh_catalog().await;
+    assert!(again.is_err());
+    assert!(h.svc.catalog_error().is_some());
+    assert_eq!(h.svc.catalog_view(None, None, None, 10).items.len(), 10);
+    let svc2 = ComposioService::new(ServiceConfig {
+        data_dir: h.dir.path().to_path_buf(),
+        keys: Arc::new(crate::LocalKeySource::new(h.store.clone())),
+        registry: ToolRegistry::new(),
+        redact: Arc::new(str::to_owned),
+        register_secret: Arc::new(|_| {}),
+        audit: h.rows.clone(),
+        loopback_base: Some("http://127.0.0.1:1".into()),
+    })
+    .unwrap();
+    let offline = svc2.catalog_view(Some("app149"), None, None, 10);
+    assert_eq!(offline.source, crate::CatalogSource::Cache);
+    assert_eq!(offline.items.len(), 1);
+}

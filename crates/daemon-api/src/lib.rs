@@ -16,6 +16,7 @@ pub mod auth;
 mod bot_engine;
 pub mod changes;
 mod cli_engines;
+pub mod components;
 pub mod composio;
 mod composio_routes;
 pub mod control;
@@ -79,6 +80,7 @@ use tokio_util::sync::CancellationToken;
 const EMAIL_TESTS_AT_ONCE: usize = 2;
 
 pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
+pub use components::{ComponentControl, ComponentError};
 pub use composio::{ComposioControl, ComposioControlError};
 pub use control::{ControlConfig, ControlHub};
 pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
@@ -199,6 +201,8 @@ struct Inner {
     mcp_server: parking_lot::Mutex<mcp_server::McpServerBook>,
     /// Composio app connections (see [`AppState::set_composio`]).
     composio: OnceLock<Arc<dyn ComposioControl>>,
+    /// Missing-component installer (see [`AppState::set_components`]).
+    components: OnceLock<Arc<dyn ComponentControl>>,
     /// E-mail account management (see [`AppState::set_email`]).
     email: OnceLock<Arc<dyn EmailControl>>,
     /// Bounds concurrent "test connection" calls (see `email_routes`).
@@ -375,6 +379,7 @@ impl AppState {
             mcp: OnceLock::new(),
             mcp_server: parking_lot::Mutex::new(mcp_server::McpServerBook::default()),
             composio: OnceLock::new(),
+            components: OnceLock::new(),
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
@@ -541,6 +546,15 @@ impl AppState {
 
     pub(crate) fn mcp(&self) -> Option<Arc<dyn McpControl>> {
         self.0.mcp.get().cloned()
+    }
+
+    /// Enable `/v1/components/*` (call once, at startup).
+    pub fn set_components(&self, c: Arc<dyn ComponentControl>) {
+        let _ = self.0.components.set(c);
+    }
+
+    pub(crate) fn components(&self) -> Option<Arc<dyn ComponentControl>> {
+        self.0.components.get().cloned()
     }
 
     pub(crate) fn composio(&self) -> Option<Arc<dyn ComposioControl>> {
@@ -1179,10 +1193,20 @@ fn api_routes() -> Router<AppState> {
             post(m::logout_mcp_auth),
         )
         .route("/v1/mcp/catalog", get(m::mcp_catalog))
+        .route("/v1/components", get(crate::components::list_components))
+        .route("/v1/components/{id}", get(crate::components::get_component))
+        .route(
+            "/v1/components/{id}/install",
+            post(crate::components::install_component),
+        )
         .route("/v1/composio", get(c::composio_status))
         .route(
             "/v1/composio/key",
             put(c::composio_set_key).delete(c::composio_remove_key),
+        )
+        .route(
+            "/v1/composio/login",
+            get(c::composio_login_status).post(c::composio_login_start),
         )
         .route("/v1/composio/toolkits", get(c::composio_catalog))
         .route("/v1/composio/apps", get(c::composio_list_apps))

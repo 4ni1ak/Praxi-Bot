@@ -1105,6 +1105,7 @@ pub fn serve(
             Some(mcp_registrar),
         );
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
+        state.set_components(crate::components_host::ComponentHost::system());
         // Composio app connections: the key stays in the secret store (reserved
         // `composio/` prefix); without a store there is no key custody, so the
         // feature stays off.

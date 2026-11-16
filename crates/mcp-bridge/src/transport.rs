@@ -228,20 +228,31 @@ fn build_command(
     // Resolve against the parent's PATH *before* clearing the child's env. A
     // launcher that is not installed is reported with an install hint before
     // anything is spawned.
-    let mut cmd = which_command(command).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            McpError::RuntimeMissing {
-                server: server.to_owned(),
-                command: command.clone(),
-                hint: runtime_install_hint(command),
+    let mut cmd = which_command(command)
+        .or_else(|e| {
+            // Installed after the daemon started (in-app installer): look in
+            // the usual per-user install folders before giving up.
+            if e.kind() == std::io::ErrorKind::NotFound
+                && let Some(found) = crate::runtime::find_tool(command, &[])
+            {
+                return Ok(tokio::process::Command::new(found));
             }
-        } else {
-            McpError::Spawn {
-                server: server.to_owned(),
-                message: format!("`{command}`: {e}"),
+            Err(e)
+        })
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                McpError::RuntimeMissing {
+                    server: server.to_owned(),
+                    command: command.clone(),
+                    hint: runtime_install_hint(command),
+                }
+            } else {
+                McpError::Spawn {
+                    server: server.to_owned(),
+                    message: format!("`{command}`: {e}"),
+                }
             }
-        }
-    })?;
+        })?;
     cmd.env_clear();
     for key in OS_ESSENTIAL_ENV {
         if let Some(v) = std::env::var_os(key) {
