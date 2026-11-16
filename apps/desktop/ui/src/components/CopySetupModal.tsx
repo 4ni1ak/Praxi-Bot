@@ -40,7 +40,7 @@ export function CopySetupModal({
 
 function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
   const { t } = useTranslation();
-  const { localApi: local, client } = useDaemon();
+  const { localApi: local, client, refreshHome, hostList } = useDaemon();
   // Mock mode (design review) has no separate local daemon: the mock client answers.
   const localApi = local ?? (client?.baseUrl === MOCK_BASE_URL ? client : null);
   const [plan, setPlan] = useState<CopyPlan | null>(null);
@@ -74,6 +74,8 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
     try {
       const ownerKey = client?.baseUrl === MOCK_BASE_URL ? "mock" : await invoke<string>("owner_key");
       setReport(await localApi.copySetup(hostId, toRequest(items, checked), ownerKey));
+      // The home is recorded on both sides: the app follows it right away (no picking).
+      void refreshHome();
     } catch {
       setFailed(true);
     } finally {
@@ -83,6 +85,8 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
 
   const refused = plan?.host_accepts === false && plan.host_code;
   const summary = report ? summarizeReport(report) : null;
+  const hostName = hostList?.hosts.find((h) => h.id === hostId)?.name ?? t("computerPicker.host");
+  const adopted = Boolean(summary && !summary.homeFailed && summary.done > 0);
   return (
     <div className={styles.root} data-testid="copy-setup">
       <header>
@@ -98,6 +102,12 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
       ) : null}
       {report ? (
         <>
+          {adopted ? (
+            <div className={styles.notice} data-testid="home-adopted" role="status">
+              <b>{t("home.adopted.title", { name: hostName })}</b>
+              <p>{t("home.adopted.moved", { name: hostName })}</p>
+            </div>
+          ) : null}
           <ul className={styles.list} data-testid="copy-report">
             {report.items
               .filter((i) => i.kind !== "home")
@@ -116,6 +126,11 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
             })}
           </p>
           {summary?.homeFailed ? <p role="alert">{t("copySetup.homeFailed")}</p> : null}
+          {adopted ? (
+            <>
+              <p className={styles.note}><b>{t("home.adopted.stayed")}.</b> {t("home.adopted.stayedBody")}</p>
+            </>
+          ) : null}
         </>
       ) : (
         <ul className={styles.list}>

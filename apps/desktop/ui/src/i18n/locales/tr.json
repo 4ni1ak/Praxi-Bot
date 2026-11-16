@@ -924,6 +924,11 @@
     "retrying": "{{seconds}} sn sonra yeniden denenecek",
     "restarting": "Yeniden başlatılıyor…",
     "codes": {
+      "host_admin_forbidden": { "title": "Bu bilgisayar o sunucuyu yönetemez", "hint": "Sunucunun kurulumunu yalnızca sahibinin eşleşmiş masaüstü uygulaması değiştirebilir." },
+      "host_admin_required": { "title": "Önce bu bilgisayarı sunucuda onayla", "hint": "Aşağıdaki komutu sunucuda bir kez çalıştırıp yeniden dene." },
+      "secrets_unavailable": { "title": "Sunucu henüz anahtar saklayamıyor", "hint": "Aşağıdaki kurulum notunu sunucuda uygulayıp yeniden dene." },
+      "secret_store_failed": { "title": "Sunucu anahtarı kaydedemedi", "hint": "Yeniden dene. Sürerse sunucunun diskini ve gizli depolamasını kontrol et." },
+      "owner_key_required": { "title": "Bunu yalnızca bu bilgisayarın sahibi yapabilir", "hint": "Başka bir cihazda değil, bu bilgisayardaki Praxi uygulamasını kullan." },
       "admin_rate_limit": {
         "title": "Çok fazla yönetim değişikliği",
         "hint": "Bir dakika bekleyip yeniden dene."
@@ -1220,6 +1225,65 @@
     "serviceWrongTarget": {
       "title": "Praxi yanıt vermeyen bir servise bakıyor",
       "hint": "Bu bilgisayara dön ya da yerel servisi yeniden başlat."
+    }
+  },
+  "home": {
+    "hint": "{{name}} üzerinde",
+    "saved": "Kaydedildi.",
+    "copy": "Kopyala",
+    "admin": {
+      "title": "Bu bilgisayardan kurulum",
+      "byDesign": "{{name}} bazı şeyleri kendine saklar: yürütme politikası, komut satırı araç sunucuları, beceriler, e-posta hesapları ve kodlama CLI girişleri doğrudan {{name}} üzerinde değiştirilir.",
+      "notGranted": "{{name}} bu bilgisayarı henüz onaylamadı. Şunu {{name}} üzerinde bir kez çalıştır:",
+      "noSecrets": "{{name}} henüz anahtar saklayamıyor."
+    },
+    "engines": {
+      "title": "{{name}} üzerindeki kodlama CLI'ları",
+      "loading": "Sunucuya soruluyor…",
+      "none": "Sunucu hiç kodlama CLI'ı bildirmedi.",
+      "signIn": "Kurulu, giriş gerekli. Sunucuda şunu çalıştır:",
+      "ready": "Hazır",
+      "notInstalled": "Kurulu değil. Sunucuda şunu çalıştır:",
+      "note": "Bunlar sunucunun kendi araçları. Kurulum ve giriş {{name}} üzerinde yapılır."
+    },
+    "chip": {
+      "local": "Bu bilgisayar",
+      "online": "{{name}} · çevrimiçi",
+      "connecting": "{{name}} · bağlanıyor",
+      "offline": "{{name}} · çevrimdışı",
+      "temporary": "Bu bilgisayar · şimdilik"
+    },
+    "menu": {
+      "title": "Botlarının bilgisayarı",
+      "add": "Sunucu ekle",
+      "makeHome": "{{name}} botlarımın evi olsun",
+      "sync": "Kurulumumu {{name}} ile eşitle",
+      "viewScreen": "Ekranını gör",
+      "workHere": "Şimdilik bu bilgisayarda çalış",
+      "backHome": "{{name}} bilgisayarına dön",
+      "workHereHint": "Geri dönene kadar bu bilgisayarın kendi botlarını gösterir.",
+      "backHomeHint": "Şimdilik bu bilgisayarda çalışıyorsun.",
+      "stop": "{{name}} üzerindeki her şeyi durdur",
+      "stopHint": "Orada şu an süren her çalışmayı durdurur."
+    },
+    "banner": {
+      "offline": "Botlarının bilgisayarı çevrimdışı. Yeniden bağlanılıyor… Liste en son görülen.",
+      "workHere": "Şimdilik bu bilgisayarda çalış",
+      "temporary": "Şimdilik bu bilgisayarda çalışıyorsun. Botların {{name}} üzerinde yaşıyor.",
+      "back": "{{name}} bilgisayarına dön"
+    },
+    "adopted": {
+      "title": "{{name}} artık botlarının evi",
+      "moved": "{{name}} bilgisayarına taşınanlar",
+      "stayed": "Bu bilgisayarda kalanlar",
+      "stayedBody": "Bu bilgisayar elindeki her şeyi yedek olarak saklar ve bir hedef olarak kalır: bir bottan istediğin zaman bunun üzerinde iş yapmasını isteyebilirsin. Burada hiçbir şey silinmedi.",
+      "done": "Anladım"
+    },
+    "target": {
+      "label": "Çalıştığı yer",
+      "bot": "Botun bilgisayarı",
+      "mine": "Benim bilgisayarım",
+      "title": "Bu bot nerede çalışsın"
     }
   },
   "firstRun": {

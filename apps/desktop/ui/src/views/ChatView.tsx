@@ -93,6 +93,7 @@ import {
 import ccStyles from "../components/ChatCards.module.css";
 import styles from "./ChatView.module.css";
 import { type HumanError, humanError, humanLine, humanToolError } from "../lib/humanError";
+import { ComputerTargetChip } from "../components/ComputerTargetChip";
 import { ErrorNotice } from "../components/ErrorNotice";
 
 const LIVE_STATES = new Set(["pending", "running", "waiting_approval"]);
@@ -1234,6 +1235,7 @@ export function ChatView({
                 />
               </div>
             ) : null}
+            {bot ? <ComputerTargetChip bot={bot} /> : null}
             {active ? (
               <div
                 className={styles.mode}

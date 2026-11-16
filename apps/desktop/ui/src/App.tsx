@@ -159,6 +159,9 @@ function AppShell() {
     refreshChats,
     retry,
     restartDaemon,
+    home,
+    workLocalNow,
+    homeStale,
     serviceProblem,
     retryInSeconds,
     activeComputerId
@@ -183,6 +186,8 @@ function AppShell() {
   }, [activeComputerId]);
   // The first-run wizard is written for this computer's own daemon: never while a host is selected.
   const onboardingBlocked = !onboardingAllowed(activeComputerId);
+  // The bots' computer has no bots to show (not set up yet, or not answering): one calm screen, never a blank app.
+  const hostEmpty = onboardingBlocked && phase === "ready" && bots.length === 0;
   useEffect(() => {
     if (onboardingBlocked && route.kind === "onboarding") {
       setRoute({ kind: "home" });
@@ -738,7 +743,7 @@ function AppShell() {
           </SidebarHeader>
           <SidebarSection>
             <span className={styles.srOnly} role="status" aria-live="polite">{orderNote}</span>
-            <div ref={reorder.containerRef} className={styles.botList}>
+            <div ref={reorder.containerRef} className={styles.botList} data-stale={homeStale ? "true" : undefined}>
             {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
             {bots.filter(bot => bot.name.toLowerCase().includes((botSearch ?? "").toLowerCase())).map((bot) => {
               const view = botView(bot);
@@ -774,7 +779,7 @@ function AppShell() {
     >
       <div className={styles.mainColumn}>
         <div className={styles.titleBar} data-tauri-drag-region>
-          <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
+          <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{home.kind === "host" && !workLocalNow ? home.name || t("computerPicker.host") : t("account.localComputer")}</span>
           {botInView && panelBotView ? (
             <button
               ref={chipRef}
@@ -832,10 +837,10 @@ function AppShell() {
             }}
           />
         ) : null}
-        {route.kind === "home" && onboardingBlocked && phase === "ready" && bots.length === 0 ? (
-          <HostEmptyState onNewBot={() => setNewBotOpen(true)} />
+        {hostEmpty && (route.kind === "home" || route.kind === "chat" || route.kind === "bot") ? (
+          <HostEmptyState onNewBot={() => setNewBotOpen(true)} onConnectModel={() => setSettingsOpen("ai")} />
         ) : null}
-        {route.kind === "home" && !(onboardingBlocked && phase === "ready" && bots.length === 0) ? (
+        {route.kind === "home" && !hostEmpty ? (
           <div className={styles.centerPane}>
             <Card padding="lg" className={styles.emptyStateCard}>
               {phase === "error" ? (
@@ -920,7 +925,7 @@ function AppShell() {
             </Card>
           </div>
         ) : null}
-        {route.kind === "bot" ? (
+        {route.kind === "bot" && !hostEmpty ? (
           <BotEmptyView
             key={route.botId}
             bot={panelBotView && selectedBot?.id === route.botId ? panelBotView : undefined}
@@ -933,7 +938,7 @@ function AppShell() {
             onCreateBot={() => setNewBotOpen(true)}
           />
         ) : null}
-        {route.kind === "chat" ? (
+        {route.kind === "chat" && !hostEmpty ? (
           <ChatView
             key={route.chatId}
             chatId={route.chatId}

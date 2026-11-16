@@ -10,8 +10,20 @@ import styles from "./HostStateBanner.module.css";
  */
 export function HostStateBanner() {
   const { t } = useTranslation();
-  const { hostState, activeHostName, versions, selectComputer, activeComputerId, bots } =
+  const { hostState, activeHostName, versions, home, workLocalNow, setWorkLocalNow, activeComputerId, bots } =
     useDaemon();
+  // The explicit, temporary mode keeps a visible way back to the bots' computer.
+  if (home.kind === "host" && workLocalNow) {
+    return (
+      <div className={styles.root} data-tone="warn" data-kind="temporary" role="status" data-testid="host-state-banner">
+        <i className={styles.dot} aria-hidden="true" />
+        <span className={styles.text}>{t("home.banner.temporary", { name: home.name || t("computerPicker.host") })}</span>
+        <Button size="sm" variant="ghost" onClick={() => setWorkLocalNow(false)}>
+          {t("home.banner.back", { name: home.name || t("computerPicker.host") })}
+        </Button>
+      </div>
+    );
+  }
   if (activeComputerId === LOCAL_COMPUTER || !hostState || hostState.kind === "connected") {
     return null;
   }
@@ -29,7 +41,7 @@ export function HostStateBanner() {
       break;
     case "offline":
       tone = "bad";
-      text = t("hostState.offline", { name });
+      text = t("home.banner.offline");
       break;
     case "not_paired":
       tone = "bad";
@@ -61,9 +73,9 @@ export function HostStateBanner() {
       <Button
         size="sm"
         variant="ghost"
-        onClick={() => void selectComputer(LOCAL_COMPUTER)}
+        onClick={() => setWorkLocalNow(true)}
       >
-        {t("hostState.useThisComputer")}
+        {t("home.banner.workHere")}
       </Button>
     </div>
   );

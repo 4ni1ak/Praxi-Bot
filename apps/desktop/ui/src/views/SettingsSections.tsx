@@ -11,7 +11,7 @@ import {
 import { isTauriRuntime } from "../overlay/events";
 import formStyles from "../components/Form.module.css";
 import { botView } from "../lib/botProfile";
-import { addProvider, setDefaultProvider, testProvider } from "../lib/providers";
+import { testProvider } from "../lib/providers";
 import { canManageProviders } from "../lib/providerConnection";
 import {
   canTestProvider,
@@ -22,6 +22,8 @@ import { useDaemon } from "../state/DaemonContext";
 import { notifyProvidersChanged, useProviders } from "../state/useProviders";
 import styles from "./SettingsSections.module.css";
 import { humanLine } from "../lib/humanError";
+import { useBotsHome } from "../state/useBotsHome";
+import { HomeHint } from "../components/HomeHint";
 
 const CUSTOM = "__custom__";
 
@@ -42,8 +44,11 @@ export function ProvidersSection() {
   const { client, conn, restartDaemon } = useDaemon();
   const native = isTauriRuntime();
   const providerTarget = { connection: conn, baseUrl: client?.baseUrl };
-  const canManage = native && canManageProviders(providerTarget);
-  const canView = native || client?.baseUrl === MOCK_BASE_URL;
+  const home = useBotsHome();
+  const onHome = home.target === "host";
+  // On a host-home the write goes through the bots' home (host administration), not the local CLI.
+  const canManage = onHome || (native && canManageProviders(providerTarget));
+  const canView = native || onHome || client?.baseUrl === MOCK_BASE_URL;
   const { dto, error: loadError, reload } = useProviders();
   const view = useMemo(() => providersView(dto), [dto]);
   const list = view.configured;
@@ -95,14 +100,14 @@ export function ProvidersSection() {
   return (
     <Card padding="md" className={styles.card}>
       <div className={styles.info}>
-        <h2 className={styles.heading}>{t("settings.providers.title")}</h2>
+        <h2 className={styles.heading}>{t("settings.providers.title")} <HomeHint /></h2>
         <p className={formStyles.hint}>{t("settings.providers.description")}</p>
       </div>
       {!canView ? (
         <p className={formStyles.hint}>{t("settings.providers.nativeOnly")}</p>
       ) : (
         <>
-          {native && !canManage ? <p className={formStyles.hint}>{t("settings.providers.localDaemonOnly")}</p> : null}
+          {native && !canManage && !onHome ? <p className={formStyles.hint}>{t("settings.providers.localDaemonOnly")}</p> : null}
           {loadError ? <p className={formStyles.error}>{loadError}</p> : null}
           {list.length === 0 && !loadError ? (
             <p className={formStyles.hint}>{t("settings.providers.none")}</p>
@@ -146,7 +151,7 @@ export function ProvidersSection() {
                         <Button
                           size="sm"
                           variant="secondary"
-                          disabled={busy || !canManage}
+                          disabled={busy || !canManage || onHome}
                           onClick={() =>
                             void run(
                               async () => outcomeOf(await testProvider(p.id, providerTarget)),
@@ -164,7 +169,10 @@ export function ProvidersSection() {
                           disabled={busy || !canManage}
                           onClick={() =>
                             void run(
-                              async () => outcomeOf(await setDefaultProvider(p.id, providerTarget)),
+                              async () => {
+                                await home.setDefaultModel(p.id);
+                                return { ok: true, text: t("home.saved") };
+                              },
                               true
                             )
                           }
@@ -261,18 +269,13 @@ export function ProvidersSection() {
                 disabled={!canAdd}
                 onClick={() =>
                   void run(async () => {
-                    const o = outcomeOf(
-                      await addProvider({
-                        id,
-                        baseUrl: isCustom ? baseUrl.trim() : undefined,
-                        model: model.trim() || undefined,
-                        apiKey: apiKey || undefined
-                      }, providerTarget)
-                    );
-                    if (o.ok) {
-                      setApiKey("");
-                    }
-                    return o;
+                    await home.saveProvider(id, {
+                      baseUrl: isCustom ? baseUrl.trim() : undefined,
+                      model: model.trim() || undefined,
+                      apiKey: apiKey || undefined
+                    });
+                    setApiKey("");
+                    return { ok: true, text: t("home.saved") };
                   }, true)
                 }
               >

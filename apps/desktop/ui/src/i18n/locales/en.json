@@ -924,6 +924,11 @@
     "retrying": "Trying again in {{seconds}} s",
     "restarting": "Restarting…",
     "codes": {
+      "host_admin_forbidden": { "title": "This computer may not manage that server", "hint": "Only the owner's paired desktop can change the server's setup." },
+      "host_admin_required": { "title": "Confirm this computer on the server first", "hint": "Run the command shown below on the server once, then try again." },
+      "secrets_unavailable": { "title": "The server cannot store keys yet", "hint": "Follow the setup note shown below on the server, then try again." },
+      "secret_store_failed": { "title": "The server could not save the key", "hint": "Try again. If it keeps failing, check the server's disk and its secret store." },
+      "owner_key_required": { "title": "Only the owner of this computer can do that", "hint": "Use the Praxi app on this computer, not another device." },
       "admin_rate_limit": {
         "title": "Too many administration changes",
         "hint": "Wait a minute and try again."
@@ -1220,6 +1225,65 @@
     "serviceWrongTarget": {
       "title": "Praxi is pointed at a service that does not answer",
       "hint": "Switch back to This computer, or restart the local service."
+    }
+  },
+  "home": {
+    "hint": "on {{name}}",
+    "saved": "Saved.",
+    "copy": "Copy",
+    "admin": {
+      "title": "Set up from this computer",
+      "byDesign": "{{name}} keeps some things to itself: the execution policy, command-line tool servers, skills, email accounts and coding-CLI sign-ins are changed on {{name}} directly.",
+      "notGranted": "{{name}} has not confirmed this computer yet. Run this once on {{name}}:",
+      "noSecrets": "{{name}} cannot store keys yet."
+    },
+    "engines": {
+      "title": "Coding CLIs on {{name}}",
+      "loading": "Asking the server…",
+      "none": "The server reported no coding CLIs.",
+      "signIn": "Installed, sign-in needed. On the server run:",
+      "ready": "Ready",
+      "notInstalled": "Not installed. On the server run:",
+      "note": "These are the server's own tools. Installing and signing in happens on {{name}}."
+    },
+    "chip": {
+      "local": "This computer",
+      "online": "{{name}} · online",
+      "connecting": "{{name}} · connecting",
+      "offline": "{{name}} · offline",
+      "temporary": "This computer · for now"
+    },
+    "menu": {
+      "title": "Your bots' computer",
+      "add": "Add a server",
+      "makeHome": "Make {{name}} my bots' home",
+      "sync": "Sync my setup to {{name}}",
+      "viewScreen": "View its screen",
+      "workHere": "Work on this computer for now",
+      "backHome": "Back to {{name}}",
+      "workHereHint": "Shows this computer's own bots until you go back.",
+      "backHomeHint": "You are working on this computer for now.",
+      "stop": "Stop everything on {{name}}",
+      "stopHint": "Stops every run that is going on there right now."
+    },
+    "banner": {
+      "offline": "Your bots' computer is offline. Reconnecting… The list is the last one seen.",
+      "workHere": "Work on this computer for now",
+      "temporary": "You are working on this computer for now. Your bots live on {{name}}.",
+      "back": "Back to {{name}}"
+    },
+    "adopted": {
+      "title": "{{name}} is now your bots' home",
+      "moved": "Moved to {{name}}",
+      "stayed": "Stays on this computer",
+      "stayedBody": "This computer keeps everything it had as a fallback and stays a target: ask a bot to do something on it any time. Nothing was deleted here.",
+      "done": "Got it"
+    },
+    "target": {
+      "label": "Runs on",
+      "bot": "Bot's computer",
+      "mine": "My computer",
+      "title": "Where this bot works"
     }
   },
   "firstRun": {
