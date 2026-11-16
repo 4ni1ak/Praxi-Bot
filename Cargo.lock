@@ -1345,6 +1345,7 @@ dependencies = [
  "web-tools",
  "wiremock",
  "workflow-replay",
+ "zeroize",
 ]
 
 [[package]]
@@ -1894,6 +1895,7 @@ dependencies = [
  "uuid",
  "wiremock",
  "workflow-replay",
+ "zeroize",
 ]
 
 [[package]]
@@ -2147,6 +2149,7 @@ dependencies = [
 name = "desktop"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.3.4",
  "open",
  "parking_lot",
  "serde",

@@ -45,6 +45,20 @@ pub enum HostCmd {
         #[arg(long)]
         revoke: bool,
     },
+    /// Let a paired desktop send model keys, bots and settings to this host
+    /// (host administration). Local only: run it on the host. Needed once for
+    /// a desktop paired before this existed; new desktop invites grant it.
+    Admin {
+        /// Paired device key from `bot host devices`.
+        #[arg(required_unless_present = "all_desktops")]
+        key: Option<String>,
+        /// Every paired device with the desktop role.
+        #[arg(long, conflicts_with = "key")]
+        all_desktops: bool,
+        /// Withdraw the capability instead of granting it.
+        #[arg(long)]
+        revoke: bool,
+    },
     /// Provision your own server over SSH: add, repair, upgrade, remove.
     #[command(flatten)]
     Provision(crate::host_provision::ProvisionCmd),
@@ -116,11 +130,13 @@ pub async fn join(data: &Path, ticket: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // one dispatcher over the host subcommands
 pub async fn run(
     client: &Client,
     action: &HostCmd,
     json_output: bool,
     out: &mut dyn Write,
+    data: &Path,
 ) -> Result<()> {
     if let HostCmd::Screen {
         key,
@@ -145,6 +161,37 @@ pub async fn run(
         }
         return Ok(());
     }
+    if let HostCmd::Admin {
+        key,
+        all_desktops,
+        revoke,
+    } = action
+    {
+        // The owner key of THIS data dir (a file only the host's own account
+        // reads), not the general API token.
+        let owner = daemon_api::read_owner_key(data).map_err(|_| {
+            "no owner key in this data dir: run this on the host, as the account that runs the service, after `bot serve --host` has started once"
+        })?;
+        for key in screen_targets(client, key.as_deref(), *all_desktops).await? {
+            client
+                .request_owner(
+                    Method::PUT,
+                    &format!("/v1/host/devices/{key}/admin"),
+                    Some(json!({"enabled": !revoke})),
+                    &owner,
+                )
+                .await?;
+            if *revoke {
+                writeln!(out, "{key}: host administration withdrawn")?;
+            } else {
+                writeln!(
+                    out,
+                    "{key}: may now send model keys, bots and settings to this host"
+                )?;
+            }
+        }
+        return Ok(());
+    }
     let (method, path, body) = match action {
         HostCmd::Status | HostCmd::Devices => (Method::GET, "/v1/host".into(), None),
         HostCmd::Invite { role } => (
@@ -162,7 +209,10 @@ pub async fn run(
             "/v1/host/activate".into(),
             Some(json!({"force": force})),
         ),
-        HostCmd::Join { .. } | HostCmd::Screen { .. } | HostCmd::Provision(_) => {
+        HostCmd::Join { .. }
+        | HostCmd::Screen { .. }
+        | HostCmd::Admin { .. }
+        | HostCmd::Provision(_) => {
             return Err("this command is local only".into());
         }
     };
@@ -171,7 +221,15 @@ pub async fn run(
             "Forced activation uses this installation's last local data; newer changes on the other leader may be missing, and missed schedules can duplicate actions already run there."
         );
     }
-    let mut response = client.request(method, &path, body).await?;
+    // A desktop invite asks for host administration with the owner key; without
+    // one (no key file) the invite is an ordinary one.
+    let owner = matches!(action, HostCmd::Invite { .. })
+        .then(|| daemon_api::read_owner_key(data).ok())
+        .flatten();
+    let mut response = match owner {
+        Some(key) => client.request_owner(method, &path, body, &key).await?,
+        None => client.request(method, &path, body).await?,
+    };
     if matches!(action, HostCmd::Devices) {
         response = response["peers"].clone();
     }

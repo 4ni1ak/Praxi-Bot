@@ -252,9 +252,22 @@ pub fn bot_command() -> Command {
     cmd
 }
 
+/// The per-launch owner key: random, held only in memory here and in the
+/// daemon it is handed to (on its stdin), shown to the main window only.
+#[must_use]
+pub fn owner_key() -> &'static str {
+    static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes).expect("OS randomness");
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    })
+}
+
 fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
     let mut cmd = bot_command();
     cmd.arg("serve").arg("--port").arg(port().to_string());
+    cmd.arg("--owner-key-stdin");
     if fake {
         cmd.arg("--fake-provider");
     }
@@ -269,13 +282,20 @@ fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
         .append(true)
         .open(data_dir.join("desktop-daemon.log"))
         .map_or_else(|_| Stdio::null(), Stdio::from);
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
-    cmd.spawn().map_err(|e| {
+    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(log);
+    let mut child = cmd.spawn().map_err(|e| {
         format!(
             "cannot start `{}` ({e}); set PRAXIBOT_BOT_BIN or put `bot` next to the app",
             bot_binary().to_string_lossy()
         )
-    })
+    })?;
+    // One line on the child's stdin, then the pipe is closed: the key is in no
+    // argument, file or environment variable.
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = writeln!(stdin, "{}", owner_key());
+    }
+    Ok(child)
 }
 
 /// Marker `bot serve` prints (to the daemon log) when it cannot build a single
