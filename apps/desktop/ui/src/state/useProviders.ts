@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProvidersDto } from "../api/types";
 import { useDaemon } from "./DaemonContext";
+import { humanLine } from "../lib/humanError";
 
 const listeners = new Set<() => void>();
 
@@ -29,7 +30,7 @@ export function useProviders(): {
       setDto(await client.providers());
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   }, [client]);
 

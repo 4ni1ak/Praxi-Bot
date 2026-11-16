@@ -39,6 +39,7 @@ import {
   needsYou,
   reconcile
 } from "./timeline";
+import { humanLine, type ServiceProblem } from "../lib/humanError";
 
 export type Phase = "connecting" | "ready" | "error";
 
@@ -97,6 +98,10 @@ export interface DaemonContextValue {
   recordAnswer: (runId: string, callId: string, answer: string) => void;
   retry: () => void;
   restartDaemon: () => Promise<void>;
+  /** Why the local service is not answering (null while it is); the UI words it, see `humanService`. */
+  serviceProblem: ServiceProblem | null;
+  /** Seconds until the next automatic retry while the service is down. */
+  retryInSeconds: number | null;
   /** Listen to the raw daemon events (live and replayed); returns the unsubscribe. */
   onDaemonEvent: (listener: (env: GlobalEnvelope) => void) => () => void;
   /** Which computer the whole UI talks to: `local` or a paired host's key. */
@@ -393,6 +398,31 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     };
   }, [attempt]);
 
+  // Automatic retry with backoff (2 s, 4 s, ... 15 s) while the local service does not answer.
+  const failures = useRef(0);
+  const firstTry = useRef(Date.now());
+  const [retryInSeconds, setRetryInSeconds] = useState<number | null>(null);
+  useEffect(() => {
+    if (phase === "ready") {
+      failures.current = 0;
+      setRetryInSeconds(null);
+      return undefined;
+    }
+    if (phase !== "error") {
+      return undefined;
+    }
+    failures.current += 1;
+    const delay = Math.min(2000 * 2 ** (failures.current - 1), 15000);
+    const at = Date.now() + delay;
+    setRetryInSeconds(Math.ceil(delay / 1000));
+    const tick = window.setInterval(() => setRetryInSeconds(Math.max(1, Math.ceil((at - Date.now()) / 1000))), 500);
+    const go = window.setTimeout(() => setAttempt((n) => n + 1), delay);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(go);
+    };
+  }, [phase]);
+
   // 2. paired hosts and their channel state (polled from this computer's daemon)
   const refreshHosts = useCallback(async () => {
     const c = localClientRef.current;
@@ -451,7 +481,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
         void refreshHosts();
       } catch (e) {
         if (activeIdRef.current === id) {
-          setHostError(e instanceof Error ? e.message : String(e));
+          setHostError(humanLine(e));
         }
       }
     },
@@ -505,6 +535,15 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     conn: localConn,
     retry,
     restartDaemon,
+    serviceProblem:
+      phase !== "error"
+        ? null
+        : activeId !== LOCAL_COMPUTER
+          ? "wrongTarget"
+          : Date.now() - firstTry.current < 20000
+            ? "starting"
+            : "down",
+    retryInSeconds,
     activeComputerId: activeId,
     computers,
     activeHostName: null,

@@ -7,7 +7,7 @@ import { useToast } from "../../components/Toast";
 import { modelGroups } from "../../lib/modelPicker";
 import { defaultModelRef } from "../../lib/providerView";
 import { setDefaultProvider } from "../../lib/providers";
-import { canManageProviders, PROVIDERS_LOCAL_ONLY } from "../../lib/providerConnection";
+import { canManageProviders } from "../../lib/providerConnection";
 import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { useProviders } from "../../state/useProviders";
@@ -17,6 +17,7 @@ import { ApiKeyPaste } from "./ApiKeyPaste";
 import { DetectedAccountsBlock } from "./DetectedAccountsBlock";
 import { KnowledgeCard } from "./KnowledgeCard";
 import type { CardDef } from "./types";
+import { humanLine } from "../../lib/humanError";
 
 /** Default provider + model: a searchable dropdown grouped by provider. */
 function DefaultModelRow() {
@@ -49,8 +50,7 @@ function DefaultModelRow() {
       await reload();
       toast.show(t("modelPicker.switchedDefault", { model: ref }), "success");
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      toast.show(message === PROVIDERS_LOCAL_ONLY ? t("settings.providers.localDaemonOnly") : message, "danger");
+      toast.show(humanLine(e), "danger");
     }
   };
 

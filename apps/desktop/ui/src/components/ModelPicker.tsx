@@ -21,6 +21,7 @@ import { BrandMark } from "./BrandMark";
 import styles from "./ModelPicker.module.css";
 import { Popover, type PopoverPlacement } from "./Popover";
 import { useToast } from "./Toast";
+import { humanLine } from "../lib/humanError";
 
 export interface ModelPickerAutoOption {
   label: string;
@@ -60,7 +61,7 @@ function EngineSection({
         onConnected();
       }
     } catch (e) {
-      toast.show(e instanceof Error && e.message ? e.message : t("modelPicker.engineError"), "danger");
+      toast.show(humanLine(e), "danger");
     }
   };
   return (

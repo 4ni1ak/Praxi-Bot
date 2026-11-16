@@ -68,3 +68,40 @@ export function parseSlashInput(
 export function mentionHandle(name: string): string {
   return name.replace(/\s+/g, "");
 }
+
+export interface MentionSegment {
+  text: string;
+  /** Set for a known `@bot` mention: the bot's colour. */
+  color?: string;
+}
+
+/**
+ * Split composer text into plain runs and `@Name` mentions of known bots (case-insensitive,
+ * whole handle only), so the composer can paint each mention in its bot's colour while typing.
+ */
+export function mentionSegments(
+  text: string,
+  bots: ReadonlyArray<{ name: string; color: string }>
+): MentionSegment[] {
+  const colors = new Map(bots.map((b) => [mentionHandle(b.name).toLowerCase(), b.color]));
+  const out: MentionSegment[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/(^|[^\w@])@([^\s@]+)/gu)) {
+    // Punctuation right after a name ("@Nova,") is not part of the handle.
+    const handle = m[2].replace(/[.,;:!?)}"']+$/u, "");
+    const color = colors.get(handle.toLowerCase());
+    if (!color) {
+      continue;
+    }
+    const start = (m.index ?? 0) + m[1].length;
+    if (start > last) {
+      out.push({ text: text.slice(last, start) });
+    }
+    out.push({ text: `@${handle}`, color });
+    last = start + handle.length + 1;
+  }
+  if (last < text.length) {
+    out.push({ text: text.slice(last) });
+  }
+  return out;
+}

@@ -82,6 +82,8 @@ import { SkillsModal } from "./components/SkillsModal";
 import { useBotSkills } from "./state/useBotSkills";
 import { BotEditModal } from "./views/BotEditModal";
 import { BotEmptyView } from "./views/BotEmptyView";
+import { ErrorNotice } from "./components/ErrorNotice";
+import { humanService } from "./lib/humanError";
 import { FinishSetupHint } from "./components/FinishSetupHint";
 import { BotProfileModal } from "./views/BotProfileModal";
 import { useBotReorder } from "./components/useBotReorder";
@@ -130,6 +132,7 @@ import {
   saveSettings,
   shouldOpenOnboardingOnStart
 } from "./store/settingsStore";
+import { humanLine } from "./lib/humanError";
 
 type Route =
   | { kind: "home" }
@@ -153,6 +156,9 @@ function AppShell() {
     refreshBots,
     refreshChats,
     retry,
+    restartDaemon,
+    serviceProblem,
+    retryInSeconds,
     activeComputerId
   } = useDaemon();
   const { setThumbnailDemand, openViewer } = useLiveView();
@@ -283,7 +289,7 @@ function AppShell() {
         if (botDialog === "skills") setSkillsOpen(true);
         if (botDialog === "addSkill") setAddSkillOpen(true);
         if (screen === "newbot") setNewBotOpen(true);
-        if (screen === "bot") setRoute({ kind: "bot", botId: atlas });
+        if (screen === "bot" || screen === "gone") setRoute({ kind: "bot", botId: screen === "gone" ? "00000000-0000-4000-8000-000000000000" : atlas });
         if (screen === "schedules") setRoute({ kind: "schedules" });
         if (screen === "needs") setRoute({ kind: "needs" });
         if (screen === "home" || screen === "offline") setRoute({ kind: "home" });
@@ -553,7 +559,7 @@ function AppShell() {
       try {
         await client.sendMessage(result.chatId, prompt);
       } catch (e) {
-        toast.show(e instanceof Error ? e.message : String(e), "danger");
+        toast.show(humanLine(e), "danger");
       }
     } else {
       setNewChatError(result.message);
@@ -818,15 +824,16 @@ function AppShell() {
             <Card padding="lg" className={styles.emptyStateCard}>
               {phase === "error" ? (
                 <div className={styles.selectedBotContent} data-testid="daemon-offline-empty-state">
-                  <span className={`${styles.stateIcon} ${styles.stateIconDanger}`}><ServerOff /></span><h1 className={styles.emptyStateTitle}>
-                    {t("main.daemonOfflineTitle")}
-                  </h1>
-                  <p className={styles.emptyStateDescription}>
-                    {t("main.daemonOfflineDescription")}
-                  </p>
-                  {daemonError ? <pre className={styles.errorDetailMono}>{daemonError}</pre> : null}
+                  <span className={`${styles.stateIcon} ${styles.stateIconDanger}`}><ServerOff /></span>
+                  <ErrorNotice error={humanService(serviceProblem ?? "down", daemonError ?? "")} />
+                  {retryInSeconds ? (
+                    <p className={styles.emptyStateDescription}>{t("errors.retrying", { seconds: retryInSeconds })}</p>
+                  ) : null}
                   <div className={styles.optionRow}>
-                    <Button variant="primary" onClick={retry}>
+                    <Button variant="primary" onClick={() => void restartDaemon()}>
+                      {t("errors.restartService")}
+                    </Button>
+                    <Button variant="secondary" onClick={retry}>
                       {t("main.daemonRetry")}
                     </Button>
                     <Button variant="secondary" onClick={() => handleOpenOnboarding(false)}>
@@ -905,6 +912,9 @@ function AppShell() {
             error={newChatError}
             onNewChat={() => void startChat(route.botId)}
             onSuggest={(prompt) => void startChatWith(route.botId, prompt)}
+            firstBot={bots[0] ? { id: bots[0].id, name: bots[0].name } : undefined}
+            onGoFirst={goToBot}
+            onCreateBot={() => setNewBotOpen(true)}
           />
         ) : null}
         {route.kind === "chat" ? (

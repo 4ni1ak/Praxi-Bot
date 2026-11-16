@@ -1,4 +1,5 @@
 import type { ApiClient } from "../api/client.ts";
+import { humanLine } from "./humanError.ts";
 
 export type NewChatResult = { ok: true; chatId: string } | { ok: false; message: string };
 
@@ -13,7 +14,7 @@ export async function createChatFor(
     await refreshChats().catch(() => {});
     return { ok: true, chatId: chat.id };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    return { ok: false, message: humanLine(e) };
   }
 }
 

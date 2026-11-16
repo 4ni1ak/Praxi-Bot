@@ -40,6 +40,7 @@ import { Modal } from "./Modal";
 import { Segmented } from "./SettingsUi";
 import styles from "./Skills.module.css";
 import { useToast } from "./Toast";
+import { humanLine } from "../lib/humanError";
 
 const COPIED_MS = 1600;
 
@@ -236,7 +237,7 @@ function AddSkillDialog({
       }
     } catch (e) {
       setFlow((f) =>
-        flowAfterCheck(f, { state: "failed", message: e instanceof Error ? e.message : String(e) })
+        flowAfterCheck(f, { state: "failed", message: humanLine(e) })
       );
     } finally {
       setChecking(false);

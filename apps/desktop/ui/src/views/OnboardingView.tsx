@@ -109,6 +109,7 @@ export function OnboardingView({ settings, onLanguageChange, onSkip, onComplete,
         executor: parseModelRef(state.model),
         preset: autonomyToPreset(state.level)
       };
+      // TODO(260): write through the versioned helper from PR #132 once it is on main (not merged when this was written).
       const bot = await client.createBot({ name, config: configFromDraft(draft, undefined) });
       await refreshBots().catch(() => {});
       dispatch({ type: "started" });

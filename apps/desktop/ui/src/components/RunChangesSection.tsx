@@ -24,6 +24,7 @@ import {
 import { Modal } from "./Modal";
 import { useToast } from "./Toast";
 import styles from "./RunChangesSection.module.css";
+import { humanLine } from "../lib/humanError";
 
 interface PendingRestore {
   checkpointId: string;
@@ -157,7 +158,7 @@ export function RunChangesSection({
       const next = await client.getRunChanges(runId, offset);
       setData((previous) => offset > 0 && previous ? { ...next, changes: [...previous.changes, ...next.changes] } : next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     } finally {
       setLoading(false);
     }
@@ -190,7 +191,7 @@ export function RunChangesSection({
       const res = await client.previewRestore(runId, checkpointId);
       setPreview(res);
     } catch (e) {
-      setPreviewError(e instanceof Error ? e.message : String(e));
+      setPreviewError(humanLine(e));
     }
   };
 
@@ -232,7 +233,7 @@ export function RunChangesSection({
     } catch (e) {
       setPreviewError(
         t("chat.changes.restoreFailed", {
-          message: e instanceof Error ? e.message : String(e)
+          message: humanLine(e)
         })
       );
       // Discard the old clean preview immediately, and reset explicit consent.

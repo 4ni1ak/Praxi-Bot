@@ -36,6 +36,7 @@ import { modelGroups } from "../lib/modelPicker";
 import { useDaemon } from "../state/DaemonContext";
 import { useCustomText } from "../state/useCustomText";
 import styles from "./NewBotModal.module.css";
+import { humanLine } from "../lib/humanError";
 
 function NewBotDialogContent({
   onDone,
@@ -177,7 +178,7 @@ function NewBotDialogContent({
       }
       onDone(bot.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(humanLine(err));
     } finally {
       setSaving(false);
     }
