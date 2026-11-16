@@ -70,10 +70,15 @@ fn update(jobs: &Jobs, id: &str, f: impl FnOnce(&mut Slot)) {
     }
 }
 
+/// Builds the SSH transport of one job (the real OpenSSH one; tests inject a fake).
+type TransportFactory =
+    Arc<dyn Fn(&Store, &HostRecord) -> Result<Box<dyn Transport>, String> + Send + Sync>;
+
 pub struct CliHostSetup {
     data: PathBuf,
     links: Arc<CliHostLinks>,
     jobs: Jobs,
+    transport: TransportFactory,
 }
 
 impl CliHostSetup {
@@ -82,7 +87,18 @@ impl CliHostSetup {
             data,
             links,
             jobs: Arc::new(Mutex::new(VecDeque::new())),
+            transport: Arc::new(|store, record| {
+                transport(store, record)
+                    .map(|t| Box::new(t) as Box<dyn Transport>)
+                    .map_err(|e| e.to_string())
+            }),
         }
+    }
+
+    #[cfg(test)]
+    fn with_transport(mut self, factory: TransportFactory) -> Self {
+        self.transport = factory;
+        self
     }
 }
 
@@ -120,6 +136,11 @@ impl HostSetup for CliHostSetup {
                 .filter(|n| !n.is_empty()),
         )
         .map_err(invalid)?;
+        // What the user typed now wins over a stale record from an earlier
+        // attempt: the key (or its absence: ssh-agent) is never inherited.
+        let mut record = record;
+        record.key_path.clone_from(&key);
+        record.port = port;
         let handle = tokio::runtime::Handle::try_current()
             .map_err(|_| HostSetupError::Conflict("the daemon is shutting down".into()))?;
 
@@ -164,6 +185,7 @@ impl HostSetup for CliHostSetup {
             cancel,
             rx,
             record,
+            transport: self.transport.clone(),
         };
         std::thread::Builder::new()
             .name("host-setup".into())
@@ -270,6 +292,7 @@ struct Worker {
     cancel: Arc<AtomicBool>,
     rx: mpsc::Receiver<bool>,
     record: HostRecord,
+    transport: TransportFactory,
 }
 
 impl Worker {
@@ -307,13 +330,13 @@ impl Worker {
             ));
             return false;
         }
-        let ssh = match transport(store, &self.record) {
+        let ssh = match (self.transport)(store, &self.record) {
             Ok(t) => t,
             Err(e) => {
                 ui.progress(&StepResult::fail(
                     "prepare",
                     "SSH client",
-                    e.to_string(),
+                    e,
                     "Install the OpenSSH client (the `ssh` program) and try again.",
                 ));
                 return false;
@@ -350,12 +373,12 @@ impl Worker {
 }
 
 /// Stops sending new commands once the user cancelled.
-struct Cancellable<T> {
-    inner: T,
+struct Cancellable {
+    inner: Box<dyn Transport>,
     cancel: Arc<AtomicBool>,
 }
 
-impl<T: Transport> Transport for Cancellable<T> {
+impl Transport for Cancellable {
     fn scan_host_keys(&self) -> Result<Vec<host_provision::ScannedKey>, TransportError> {
         if self.cancel.load(Ordering::SeqCst) {
             return Err(TransportError::Other("cancelled".into()));
@@ -438,8 +461,14 @@ impl Ui for JobUi<'_> {
             s.job.state = HostSetupState::AwaitingHostKey;
             s.job.host_key = Some(prompt);
         });
-        let accepted = self.rx.recv_timeout(KEY_WAIT).unwrap_or(false);
+        let answer = self.rx.recv_timeout(KEY_WAIT);
+        let accepted = answer.unwrap_or(false);
         let cancelled = self.cancel.load(Ordering::SeqCst);
+        if answer.is_err() {
+            self.note("no answer to the host key question within 5 minutes");
+        } else if !accepted && !cancelled {
+            self.note("the host key was declined");
+        }
         update(&self.jobs, &self.id, |s| {
             if s.job.state == HostSetupState::AwaitingHostKey {
                 s.job.state = HostSetupState::Running;
@@ -522,5 +551,89 @@ impl LocalHost for SetupLocal {
         } else {
             Err("no such pairing".into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use host_provision::{ScannedKey, Status as _Status};
+
+    const ED: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+
+    /// Answers like a server whose only pending question is the host key.
+    struct Fake;
+
+    impl Transport for Fake {
+        fn scan_host_keys(&self) -> Result<Vec<ScannedKey>, TransportError> {
+            Ok(vec![ScannedKey {
+                key_type: "ssh-ed25519".into(),
+                key_b64: ED.into(),
+            }])
+        }
+        fn run(
+            &self,
+            cmd: RemoteCmd,
+            _stdin: &[u8],
+            _t: Duration,
+        ) -> Result<Output, TransportError> {
+            Ok(Output {
+                code: 0,
+                stdout: if cmd == RemoteCmd::Probe {
+                    "praxi-ok\n".into()
+                } else {
+                    String::new()
+                },
+                ..Output::default()
+            })
+        }
+    }
+
+    fn wait(setup: &CliHostSetup, id: &str, ok: impl Fn(&HostSetupJob) -> bool) -> HostSetupJob {
+        for _ in 0..200 {
+            let job = setup.job(id).unwrap();
+            if ok(&job) {
+                return job;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("timed out: {:?}", setup.job(id));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn accepting_the_host_key_continues_and_pins_it() {
+        let dir = tempfile::tempdir().unwrap();
+        // A key file under a folder with a space and a non-ASCII letter (OneDrive\Masaüstü).
+        let keydir = dir.path().join("Masa\u{fc}st\u{fc} oracle");
+        std::fs::create_dir_all(&keydir).unwrap();
+        let key = keydir.join("free-a1.key");
+        std::fs::write(&key, "-----BEGIN OPENSSH PRIVATE KEY-----\n").unwrap();
+        let data = dir.path().join("data");
+        let links = Arc::new(CliHostLinks::new(data.clone(), None));
+        let setup = CliHostSetup::new(data.clone(), links)
+            .with_transport(Arc::new(|_, _| Ok(Box::new(Fake) as Box<dyn Transport>)));
+        let job = setup
+            .start(StartHostSetupInput {
+                host: "203.0.113.7".into(),
+                user: None,
+                port: None,
+                key_path: Some(key.to_string_lossy().into_owned()),
+                name: None,
+            })
+            .unwrap();
+        let waiting = wait(&setup, &job.id, |j| {
+            j.state == HostSetupState::AwaitingHostKey
+        });
+        assert!(waiting.host_key.is_some());
+        setup.answer_host_key(&job.id, true).unwrap();
+        let after = wait(&setup, &job.id, |j| {
+            j.steps.iter().any(|s| s.id == "connect")
+        });
+        let hostkey = after.steps.iter().find(|s| s.id == "hostkey").unwrap();
+        assert_eq!(hostkey.status, HostSetupStepStatus::Pass, "{hostkey:?}");
+        let pinned = std::fs::read_to_string(data.join("hosts/known_hosts")).unwrap();
+        assert!(pinned.contains("203.0.113.7 ssh-ed25519"), "{pinned}");
+        setup.cancel(&job.id).unwrap();
+        let _ = _Status::Pass;
     }
 }
