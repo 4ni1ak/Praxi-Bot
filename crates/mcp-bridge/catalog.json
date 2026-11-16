@@ -277,23 +277,14 @@
   {
     "id": "linear",
     "name": "Linear",
-    "description": "Issues, projects and cycles in Linear (remote server).",
+    "description": "Issues, projects and cycles in Linear. Sign in with your Linear account.",
     "category": "accounts",
     "homepage": "https://linear.app/docs/mcp",
     "icon": "linear",
     "install": {
       "transport": "http",
       "url": "https://mcp.linear.app/mcp",
-      "secret_headers": {
-        "Authorization": "mcp/linear-auth"
-      },
-      "required_secrets": [
-        {
-          "name": "mcp/linear-auth",
-          "label": "Authorization header value: the word Bearer, a space, then your Linear API key",
-          "help_url": "https://linear.app/settings/account/security"
-        }
-      ]
+      "required_secrets": []
     }
   },
   {
@@ -467,6 +458,45 @@
         "-y",
         "@upstash/context7-mcp@4.5.1"
       ],
+      "required_secrets": []
+    }
+  },
+  {
+    "id": "notion-remote",
+    "name": "Notion",
+    "description": "Search, read and edit Notion pages. Sign in with your Notion account.",
+    "category": "accounts",
+    "homepage": "https://developers.notion.com/docs/mcp",
+    "icon": "notion",
+    "install": {
+      "transport": "http",
+      "url": "https://mcp.notion.com/mcp",
+      "required_secrets": []
+    }
+  },
+  {
+    "id": "stripe",
+    "name": "Stripe",
+    "description": "Payments, customers and invoices. Sign in with your Stripe account.",
+    "category": "accounts",
+    "homepage": "https://docs.stripe.com/mcp",
+    "icon": "stripe",
+    "install": {
+      "transport": "http",
+      "url": "https://mcp.stripe.com",
+      "required_secrets": []
+    }
+  },
+  {
+    "id": "atlassian",
+    "name": "Atlassian",
+    "description": "Jira and Confluence. Sign in with your Atlassian account.",
+    "category": "accounts",
+    "homepage": "https://www.atlassian.com/platform/remote-mcp-server",
+    "icon": "atlassian",
+    "install": {
+      "transport": "http",
+      "url": "https://mcp.atlassian.com/v1/mcp",
       "required_secrets": []
     }
   }

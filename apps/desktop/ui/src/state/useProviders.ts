@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProvidersDto } from "../api/types";
 import { createScopedLoader } from "../lib/scopedLoader";
 import { useDaemon } from "./DaemonContext";
+import { humanLine } from "../lib/humanError";
 
 const listeners = new Set<() => void>();
 
@@ -26,7 +27,7 @@ export function useProviders(): {
   const [error, setError] = useState<string | null>(null);
   const loader = useRef(
     createScopedLoader<ProvidersDto>(setDto, (e) =>
-      setError(e instanceof Error ? e.message : String(e))
+      setError(humanLine(e))
     )
   );
 

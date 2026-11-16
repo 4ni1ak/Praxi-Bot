@@ -299,6 +299,9 @@ impl DesktopBackend for ReadBackend {
 
 // ── The handler ──────────────────────────────────────────────────────────────
 
+/// Writes one audit row; an error blocks what it was written for.
+pub type AuditFn = Arc<dyn Fn(&str, Value) -> Result<(), String> + Send + Sync>;
+
 /// Everything the handler needs from the daemon.
 pub struct PcTargetDeps {
     pub raw: Arc<dyn DesktopBackend>,
@@ -309,7 +312,7 @@ pub struct PcTargetDeps {
     /// The owner's desktop app is running (its heartbeat is live).
     pub owner_ui_live: Arc<dyn Fn() -> bool + Send + Sync>,
     /// Write an audit row; a failure blocks reads.
-    pub audit: Arc<dyn Fn(&str, Value) -> Result<(), String> + Send + Sync>,
+    pub audit: AuditFn,
     /// Mask owner secrets in text shown on a card.
     pub redact: Arc<dyn Fn(&str) -> String + Send + Sync>,
     pub own_pid: u32,
@@ -910,6 +913,7 @@ mod tests {
             addr: None,
             paired_at: 1,
             pairing_generation: "g1".into(),
+            admin: false,
         }
     }
 

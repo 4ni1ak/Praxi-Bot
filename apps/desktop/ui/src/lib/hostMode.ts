@@ -2,10 +2,9 @@
  * What the app does while a paired always-on host is the selected computer (card 257-A).
  *
  * Pure helpers: the local first-run wizard never runs against a host, the host's refusals
- * (`crates/daemon-api/src/peer.rs`) are shown as one human sentence, and the entry point for
+ * (`crates/daemon-api/src/peer.rs`) are shown as one human sentence by `humanError`, and the entry point for
  * "connect a model on this server" sits behind a single flag.
  */
-import type { TFunction } from "i18next";
 
 /** Same id as `LOCAL_COMPUTER` in the daemon context (kept literal so this file stays pure). */
 const LOCAL = "local";
@@ -57,27 +56,6 @@ export function hostRefusalKey(status: number | undefined, message: string): str
     }
   }
   return status === 403 ? "generic" : null;
-}
-
-/**
- * One human sentence for an API failure. While a host is selected a refusal never shows the raw
- * daemon text, and every message names the right machine.
- */
-export function friendlyApiError(
-  err: unknown,
-  t: TFunction,
-  host: { name: string } | null
-): string {
-  const message = err instanceof Error ? err.message : String(err);
-  if (!host) {
-    return message;
-  }
-  const status = (err as { status?: number } | null)?.status;
-  const key = hostRefusalKey(status, message);
-  if (key) {
-    return t(`hostMode.refusal.${key}`, { name: host.name });
-  }
-  return message;
 }
 
 /** What a paired desktop may do on a host today (`peer.rs`), for the empty-state note. */

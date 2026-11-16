@@ -13,7 +13,6 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
-import { ApiError } from "../api/client";
 import { isMockMode } from "../api/mockMode";
 import type { HostSetupJob, SshKeyHint, StartHostSetupInput } from "../api/types";
 import {
@@ -33,6 +32,7 @@ import { Callout, DialogFooter, DialogHeader, Field } from "./DialogParts";
 import form from "./Form.module.css";
 import { Modal } from "./Modal";
 import { useToast } from "./Toast";
+import { humanLine } from "../lib/humanError";
 
 const POLL_MS = 800;
 
@@ -163,7 +163,7 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
         input.current = body;
         setJob(await api.startHostSetup(body));
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : t("addServer.startFailed"));
+        setError(humanLine(e));
       } finally {
         setBusy(false);
       }

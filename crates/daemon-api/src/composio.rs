@@ -21,14 +21,60 @@ pub enum ComposioConnState {
     Active,
     /// The authorization ran out; reconnect.
     Expired,
+    /// The sign-in did not finish (cancelled, refused or timed out).
+    Failed,
+}
+
+/// How Praxi is linked to Composio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposioLinkMode {
+    /// Not linked: the first Connect starts the one-time browser login.
+    None,
+    /// Linked through the browser login (no key was typed or copied).
+    Login,
+    /// The owner's own Composio project key (advanced).
+    ProjectKey,
+}
+
+/// `POST /v1/composio/login`: the one-time browser login.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ComposioLoginDto {
+    /// https URL on Composio's dashboard; open it in the system browser.
+    pub login_url: String,
+    /// When the login expires (ISO timestamp, may be empty).
+    pub expires_at: String,
+}
+
+/// State of the one-time browser login.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposioLoginState {
+    /// No login was started.
+    Idle,
+    /// Waiting for the user in the browser.
+    Pending,
+    /// Linked.
+    Linked,
+    /// Expired, refused or failed; start again.
+    Failed,
+}
+
+/// `GET /v1/composio/login`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ComposioLoginStatusDto {
+    /// State of the login.
+    pub state: ComposioLoginState,
 }
 
 /// `GET /v1/composio`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ComposioStatusDto {
-    /// A key is stored (the key itself is never returned).
+    /// Praxi is linked to Composio (the credential itself is never returned).
     pub configured: bool,
-    /// Where the owner creates the key (https, on Composio's domain).
+    /// How it is linked.
+    pub mode: ComposioLinkMode,
+    /// Where an owner who wants their own project key creates it (advanced).
     pub key_setup_url: String,
 }
 
@@ -58,6 +104,11 @@ pub struct ComposioToolkitDto {
     pub categories: Vec<String>,
     /// Number of actions, when Composio reports it.
     pub tools_count: Option<u64>,
+    /// Chip group: `communication`, `social`, `productivity`, `dev`,
+    /// `finance`, `business` or `other`.
+    pub group: String,
+    /// Logo URL (https), when Composio gives one.
+    pub logo: Option<String>,
     /// Praxi connects it directly (always `false` until a zero-setup direct
     /// path exists); the UI notes it but never blocks the choice.
     pub native_first: bool,
@@ -70,12 +121,19 @@ pub struct ComposioToolkitDto {
 /// `GET /v1/composio/toolkits`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ComposioCatalogDto {
-    /// Pinned popular row (first page without filters only; empty otherwise).
-    pub popular: Vec<ComposioToolkitDto>,
-    /// The page, in Composio's popularity order.
+    /// The page: popular apps first, then Composio's popularity order.
     pub items: Vec<ComposioToolkitDto>,
     /// Cursor of the next page.
     pub next_cursor: Option<String>,
+    /// `bundled` (only the apps shipped with Praxi so far) or `cache`.
+    pub source: String,
+    /// Unix seconds of the disk cache, when there is one.
+    pub updated_at: Option<u64>,
+    /// A background refresh is running.
+    pub refreshing: bool,
+    /// Why the last refresh failed: `offline`, `unauthorized`,
+    /// `rate_limited` or `failed`.  The list above is still usable.
+    pub error: Option<String>,
 }
 
 /// Query of `GET /v1/composio/toolkits`.
@@ -84,8 +142,8 @@ pub struct ComposioCatalogDto {
 pub struct ComposioCatalogQuery {
     /// Text matched against name, slug and description.
     pub search: Option<String>,
-    /// Category.
-    pub category: Option<String>,
+    /// Chip group (`all` or empty = every group).
+    pub group: Option<String>,
     /// Cursor from the previous page.
     pub cursor: Option<String>,
     /// Page size, 1 to 100 (default 48).
@@ -142,7 +200,7 @@ pub enum ComposioControlError {
     NotFound(String),
     /// Invalid input (`422`).
     Invalid(String),
-    /// No key yet (`409`).
+    /// Not linked to Composio yet (`409`).
     NotConfigured,
     /// Composio rate limit (`429`).
     RateLimited(String),
@@ -155,8 +213,18 @@ pub enum ComposioControlError {
 /// What `/v1/composio/*` needs from the embedder.
 #[async_trait]
 pub trait ComposioControl: Send + Sync {
-    /// Key status.
+    /// Link status.
     fn status(&self) -> ComposioStatusDto;
+    /// Start the one-time browser login.
+    ///
+    /// # Errors
+    /// [`ComposioControlError`].
+    async fn login_start(&self) -> Result<ComposioLoginDto, ComposioControlError>;
+    /// One check of the browser login.
+    ///
+    /// # Errors
+    /// [`ComposioControlError`].
+    async fn login_poll(&self) -> Result<ComposioLoginStatusDto, ComposioControlError>;
     /// Validate and store the key.
     ///
     /// # Errors
@@ -167,7 +235,7 @@ pub trait ComposioControl: Send + Sync {
     /// # Errors
     /// [`ComposioControlError`].
     async fn remove_key(&self) -> Result<(), ComposioControlError>;
-    /// One catalog page.
+    /// One catalog page, from the local cache (never waits for the network).
     ///
     /// # Errors
     /// [`ComposioControlError`].

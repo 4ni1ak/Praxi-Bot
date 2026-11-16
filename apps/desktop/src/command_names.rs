@@ -30,6 +30,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "simulate_bot_run",
     "get_monitors_geometry",
     "daemon_connect",
+    "owner_key",
     "daemon_restart",
     "providers_cli",
     "get_autostart",

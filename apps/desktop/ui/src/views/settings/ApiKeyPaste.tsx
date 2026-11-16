@@ -13,11 +13,12 @@ import {
   scrubSecret
 } from "../../lib/apiKey";
 import { addProvider } from "../../lib/providers";
-import { canManageProviders, PROVIDERS_LOCAL_ONLY } from "../../lib/providerConnection";
+import { canManageProviders } from "../../lib/providerConnection";
 import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { notifyProvidersChanged, useProviders } from "../../state/useProviders";
 import styles from "./AiPage.module.css";
+import { humanLine } from "../../lib/humanError";
 
 /** Open the collapsed "advanced providers" block (custom OpenAI-compatible servers). */
 function openAdvanced() {
@@ -75,10 +76,7 @@ export function ApiKeyPaste() {
       notifyProvidersChanged();
       toast.show(t("settingsModal.ai.keys.saved", { provider: target.id }), "success");
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      const msg = message === PROVIDERS_LOCAL_ONLY
-        ? t("settings.providers.localDaemonOnly")
-        : scrubSecret(message, secret);
+      const msg = scrubSecret(humanLine(e), secret);
       setError(msg);
       toast.show(msg, "danger");
     } finally {

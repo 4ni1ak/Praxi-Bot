@@ -3,6 +3,7 @@ import type { McpCatalogEntry, McpServer } from "../api/types";
 import { createScopedLoader } from "../lib/scopedLoader";
 import { applyServerEvent, eventNeedsRefetch } from "../lib/mcpApps";
 import { useDaemon } from "./DaemonContext";
+import { humanLine } from "../lib/humanError";
 
 /**
  * Connected MCP servers + the catalog, kept fresh by the daemon's
@@ -32,7 +33,7 @@ export function useMcp(active: boolean): {
           setError(null);
         }
       },
-      (e) => setError(e instanceof Error ? e.message : String(e))
+      (e) => setError(humanLine(e))
     )
   );
   const reload = useCallback(async () => {

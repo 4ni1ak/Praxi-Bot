@@ -1,10 +1,11 @@
-import { Check, ChevronDown, Monitor, Plus, Server, Square } from "lucide-react";
+import { Check, ChevronDown, House, Monitor, Plus, Server, Square } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { hostAcceptsWork, type LinkState } from "../lib/hostState";
 import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
 import styles from "./ComputerPicker.module.css";
 import { AddServerModal } from "./AddServerModal";
+import { CopySetupModal } from "./CopySetupModal";
 import { PairHostModal } from "./PairHostModal";
 import { Popover } from "./Popover";
 import { useToast } from "./Toast";
@@ -41,6 +42,7 @@ export function ComputerPicker() {
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
+  const [homeOpen, setHomeOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -159,6 +161,23 @@ export function ComputerPicker() {
             <b>{t("computerPicker.add")}</b>
           </span>
         </button>
+        {onHost ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={styles.item}
+            data-testid="computer-make-home"
+            onClick={() => {
+              setOpen(false);
+              setHomeOpen(true);
+            }}
+          >
+            <House aria-hidden="true" className={styles.icon} />
+            <span className={styles.itemText}>
+              <b>{t("computerPicker.makeHome")}</b>
+            </span>
+          </button>
+        ) : null}
         {onHost && hostState && hostAcceptsWork(hostState) ? (
           <button
             type="button"
@@ -185,6 +204,11 @@ export function ComputerPicker() {
         }}
       />
       <PairHostModal open={pairOpen} onClose={() => setPairOpen(false)} />
+      <CopySetupModal
+        open={homeOpen}
+        hostId={activeComputerId}
+        onClose={() => setHomeOpen(false)}
+      />
     </>
   );
 }

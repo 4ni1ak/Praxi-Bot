@@ -14,6 +14,7 @@ import {
 import { useDaemon } from "../state/DaemonContext";
 import formStyles from "./Form.module.css";
 import styles from "./BotEngineBlock.module.css";
+import { humanLine } from "../lib/humanError";
 
 /** Static keys keep `check:i18n` honest. */
 function levelText(t: (key: string) => string, level: ApprovalLevel): { name: string; text: string } {
@@ -61,7 +62,7 @@ export function BotEngineBlock({ bot }: { bot: Bot }) {
       setConsent({ native: false, full: false });
       await refreshBots();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     } finally {
       setBusy(false);
     }

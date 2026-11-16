@@ -715,15 +715,19 @@ async fn server_setup_is_local_only_and_never_reaches_the_seam_from_a_peer() {
     assert_eq!(count_audit(&t, "host_setup.start"), 1);
 }
 
-/// Review blocker 1 (card 258-A): the general API token alone must not flip the
-/// "bots may use this computer" switch, list or answer approval cards.
+/// Review blocker 1 (card 258-A): the general API token alone, and even a
+/// forged app `Origin`, must not flip the "bots may use this computer" switch,
+/// list or answer approval cards; the owner key does.
 #[tokio::test]
-async fn computer_access_routes_refuse_the_general_bearer_without_the_app_origin() {
+async fn computer_access_routes_need_the_owner_key_not_the_bearer_or_an_origin() {
+    const OWNER: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
     let t = setup();
+    t.state.set_owner_key(OWNER.into());
     t.state.set_host_links(Arc::new(FakeLinks::default()));
     let (k, v) = auth();
     let bearer_only = [(k, v.as_str())];
-    let from_app = [(k, v.as_str()), ("origin", "http://tauri.localhost")];
+    let forged_origin = [(k, v.as_str()), ("origin", "http://tauri.localhost")];
+    let owner = [(k, v.as_str()), ("x-praxi-owner-key", OWNER)];
     let routes: [(Method, &str, Option<Value>); 3] = [
         (Method::GET, "/v1/hosts/computer-requests", None),
         (
@@ -738,16 +742,18 @@ async fn computer_access_routes_refuse_the_general_bearer_without_the_app_origin
         ),
     ];
     for (method, path, body) in &routes {
-        let r = send(&t.app, method.clone(), path, body.clone(), &bearer_only).await;
-        assert_eq!(r.status, StatusCode::FORBIDDEN, "{method} {path}");
+        for headers in [&bearer_only[..], &forged_origin[..]] {
+            let r = send(&t.app, method.clone(), path, body.clone(), headers).await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN, "{method} {path}");
+        }
     }
     let r = send(
         &t.app,
         Method::GET,
         "/v1/hosts/computer-requests",
         None,
-        &from_app,
+        &owner,
     )
     .await;
-    assert_eq!(r.status, StatusCode::OK, "the app's own origin is accepted");
+    assert_eq!(r.status, StatusCode::OK, "the owner key is accepted");
 }

@@ -105,6 +105,14 @@ pub enum HostLinkError {
     Failed(String),
 }
 
+/// The answer of a host to one request sent over its peer link.
+#[derive(Debug, Clone)]
+pub struct HostCall {
+    pub status: u16,
+    /// Parsed JSON body (`null` when the host sent none).
+    pub body: serde_json::Value,
+}
+
 /// What `/v1/hosts` needs from the embedder.
 #[async_trait::async_trait]
 pub trait HostLinks: Send + Sync {
@@ -142,6 +150,20 @@ pub trait HostLinks: Send + Sync {
     fn decide_computer_request(&self, _id: &str, _allow: bool) -> bool {
         false
     }
+    /// Send one JSON request to a paired host through its channel, as this
+    /// computer's Desktop peer. Used only by the owner-initiated "copy my
+    /// setup": the host applies its own peer guard to it.
+    async fn call(
+        &self,
+        _id: &str,
+        _method: &str,
+        _path: &str,
+        _body: Option<serde_json::Value>,
+    ) -> Result<HostCall, HostLinkError> {
+        Err(HostLinkError::Failed(
+            "this daemon cannot send requests to a host".into(),
+        ))
+    }
 }
 
 impl From<HostLinkError> for ApiError {
@@ -151,29 +173,6 @@ impl From<HostLinkError> for ApiError {
             HostLinkError::Invalid(m) => Self::bad_request(m),
             HostLinkError::Failed(m) => Self::new(StatusCode::BAD_GATEWAY, "host_link_failed", m),
         }
-    }
-}
-
-/// PLACEHOLDER owner-authority guard for the three computer-access routes (card
-/// 258-A, review blocker 1). The general API token is also held by the CLI, bot
-/// tools and CLI engines, so "no peer identity" is not "the owner". Until the
-/// owner-key mechanism of PR #133 (`AppState::require_owner`, header
-/// `x-praxi-owner-key`) is on main, this requires the request to come from the
-/// desktop app's web view: an `Origin` header that is one of the app's allowed
-/// origins (non-browser clients, bot tools and the CLI send none). A process
-/// that forges the header passes, so this is damping, not a boundary: SWAP THE
-/// BODY FOR `s.require_owner(headers)` once #133 is merged.
-fn require_owner_authority(s: &AppState, headers: &axum::http::HeaderMap) -> Result<(), ApiError> {
-    let from_app = headers
-        .get(axum::http::header::ORIGIN)
-        .and_then(|o| o.to_str().ok())
-        .is_some_and(|o| s.origin_allowed(o));
-    if from_app {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden(
-            "this is the owner's decision: use the desktop app on this computer",
-        ))
     }
 }
 
@@ -297,15 +296,14 @@ pub(crate) async fn computer_requests(
     if peer.is_some() {
         return Err(ApiError::forbidden("host links are local only"));
     }
-    require_owner_authority(&s, &headers)?;
-    Ok(Json(
-        s.host_links()
-            .map(|l| l.computer_requests())
-            .unwrap_or(crate::pc_access::PcRequestList {
-                requests: Vec::new(),
-                reading: Vec::new(),
-            }),
-    ))
+    s.require_owner(&headers)?;
+    Ok(Json(s.host_links().map_or(
+        crate::pc_access::PcRequestList {
+            requests: Vec::new(),
+            reading: Vec::new(),
+        },
+        |l| l.computer_requests(),
+    )))
 }
 
 #[utoipa::path(post, operation_id = "hosts_decide_computer_request", path = "/v1/hosts/computer-requests/{rid}", tag = "host", security(("bearer" = [])), params(("rid" = String, Path)), request_body = crate::pc_access::PcRequestDecision, responses((status = 204), (status = 404, body = crate::error::ErrorBody)))]
@@ -319,7 +317,7 @@ pub(crate) async fn decide_computer_request(
     if peer.is_some() {
         return Err(ApiError::forbidden("host links are local only"));
     }
-    require_owner_authority(&s, &headers)?;
+    s.require_owner(&headers)?;
     let links = links(&s)?;
     audit(
         &s,
@@ -344,7 +342,7 @@ pub(crate) async fn set_computer_access(
     if peer.is_some() {
         return Err(ApiError::forbidden("host links are local only"));
     }
-    require_owner_authority(&s, &headers)?;
+    s.require_owner(&headers)?;
     if !valid_id(&id) {
         return Err(ApiError::bad_request("invalid host id"));
     }

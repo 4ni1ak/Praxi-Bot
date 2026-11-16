@@ -10,6 +10,293 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/v1/admin/cli-engines": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_cli_engines",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminCliEngineDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/default-provider": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_set_default_provider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminDefaultInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProviderDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/home": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_set_home",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminHomeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/providers/{id}": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_put_provider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminProviderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProviderDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_delete_provider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/state": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_state",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/approvals": {
       "get": {
         "tags": [
@@ -1989,6 +2276,139 @@
         ]
       }
     },
+    "/v1/components": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "summary": "Components local apps may need and whether each is installed.",
+        "operationId": "list_components",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComponentDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/components/{id}": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "summary": "One component (poll this while an install runs).",
+        "operationId": "get_component",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`uv` or `node`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComponentDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/components/{id}/install": {
+      "post": {
+        "tags": [
+          "components"
+        ],
+        "summary": "Run the official installer for a component (the client confirmed the\ncommand first).  Returns at once; poll `GET /v1/components/{id}`.",
+        "operationId": "install_component",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`uv` or `node`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComponentDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/composio": {
       "get": {
         "tags": [
@@ -2340,12 +2760,72 @@
         ]
       }
     },
+    "/v1/composio/login": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "State of the browser login (poll while it is `pending`).",
+        "operationId": "composio_login_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioLoginStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Start the one-time browser login: Composio makes a session, the caller\nopens `login_url` in the system browser and polls `GET /v1/composio/login`.\nNo key is typed or copied.",
+        "operationId": "composio_login_start",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioLoginDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Composio unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/composio/toolkits": {
       "get": {
         "tags": [
           "composio"
         ],
-        "summary": "Composio's toolkit catalog (searchable, paged, cached), with this\ninstallation's state per toolkit.",
+        "summary": "Composio's toolkit catalog (searchable, paged), with this installation's\nstate per toolkit.  Served from the local cache and the bundled popular\napps: it never waits for the network, a stale cache is refreshed in the\nbackground.",
         "operationId": "composio_catalog",
         "parameters": [
           {
@@ -2358,9 +2838,9 @@
             }
           },
           {
-            "name": "category",
+            "name": "group",
             "in": "query",
-            "description": "Category.",
+            "description": "Chip group (`all` or empty = every group).",
             "required": false,
             "schema": {
               "type": "string"
@@ -2394,16 +2874,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ComposioCatalogDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "no key yet",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -4013,6 +4483,65 @@
         ]
       }
     },
+    "/v1/host/devices/{key}/admin": {
+      "put": {
+        "tags": [
+          "host"
+        ],
+        "summary": "The owner of this installation (not a paired peer) grants or withdraws host\nadministration for a paired desktop. This is the one confirmation step for a\ndesktop that was paired before the capability existed. Audited.",
+        "operationId": "host_set_admin",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostAdminInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/host/invite": {
       "post": {
         "tags": [
@@ -4187,6 +4716,31 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/home": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_home",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeDto"
                 }
               }
             }
@@ -4547,6 +5101,84 @@
         "responses": {
           "204": {
             "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/copy-setup": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_copy_plan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyPlanDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_copy_setup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyReport"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7908,6 +8540,181 @@
           }
         }
       },
+      "AdminCliEngineDto": {
+        "type": "object",
+        "description": "What the host reports about one CLI engine, as installed THERE.",
+        "required": [
+          "id",
+          "name",
+          "installed",
+          "login",
+          "docs_url"
+        ],
+        "properties": {
+          "docs_url": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "install_command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Command that installs it on the host, when one is known."
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "login": {
+            "type": "string",
+            "description": "How to sign in on the host."
+          },
+          "name": {
+            "type": "string"
+          },
+          "signed_in": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`None` when the CLI offers no safe way to check."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AdminDefaultInput": {
+        "type": "object",
+        "description": "`PUT /v1/admin/default-provider`.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminHomeInput": {
+        "type": "object",
+        "description": "`PUT /v1/admin/home`.",
+        "required": [
+          "adopted"
+        ],
+        "properties": {
+          "adopted": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminProviderDto": {
+        "type": "object",
+        "description": "The provider as stored on the host.",
+        "required": [
+          "id",
+          "has_key",
+          "is_default"
+        ],
+        "properties": {
+          "has_key": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AdminProviderInput": {
+        "type": "object",
+        "description": "Add or update a provider. The key is write-only.",
+        "properties": {
+          "api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Never echoed, logged or audited."
+          },
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only for a custom OpenAI-compatible endpoint."
+          },
+          "make_default": {
+            "type": "boolean",
+            "description": "Make this the host's default provider."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminStateDto": {
+        "type": "object",
+        "description": "`GET /v1/admin/state`.",
+        "required": [
+          "granted",
+          "secrets_available",
+          "adopted"
+        ],
+        "properties": {
+          "adopted": {
+            "type": "boolean",
+            "description": "The owner made this host the bots' home (setup moved here)."
+          },
+          "confirm_command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The command the owner runs on the host when `granted` is false."
+          },
+          "granted": {
+            "type": "boolean",
+            "description": "This desktop holds host administration."
+          },
+          "secrets_available": {
+            "type": "boolean",
+            "description": "Whether the host can store an API key."
+          },
+          "secrets_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do when `secrets_available` is false."
+          }
+        }
+      },
       "AnswerQuestion": {
         "type": "object",
         "description": "`POST /v1/questions/{call_id}`.",
@@ -8927,6 +9734,74 @@
           "webp"
         ]
       },
+      "ComponentDto": {
+        "type": "object",
+        "description": "One component.",
+        "required": [
+          "id",
+          "installed",
+          "can_install",
+          "command",
+          "source",
+          "manual_command",
+          "state"
+        ],
+        "properties": {
+          "can_install": {
+            "type": "boolean",
+            "description": "The app can run an official installer here."
+          },
+          "command": {
+            "type": "string",
+            "description": "The exact command that would run (display only; empty when not possible)."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last install failed: `exit`, `not_detected`, `timeout` or `unavailable`."
+          },
+          "id": {
+            "$ref": "#/components/schemas/ComponentId",
+            "description": "Id."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "The launcher is found (checked now, without restarting the app)."
+          },
+          "manual_command": {
+            "type": "string",
+            "description": "What to run by hand when `can_install` is false."
+          },
+          "source": {
+            "type": "string",
+            "description": "Where it comes from (shown in the confirm dialog)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ComponentInstallState",
+            "description": "Install progress."
+          }
+        }
+      },
+      "ComponentId": {
+        "type": "string",
+        "description": "A component Praxi can install (fixed list).",
+        "enum": [
+          "uv",
+          "node"
+        ]
+      },
+      "ComponentInstallState": {
+        "type": "string",
+        "description": "Progress of an install.",
+        "enum": [
+          "idle",
+          "installing",
+          "done",
+          "failed"
+        ]
+      },
       "ComposioAppDto": {
         "type": "object",
         "description": "A connected (or connecting) app.",
@@ -8981,16 +9856,24 @@
         "type": "object",
         "description": "`GET /v1/composio/toolkits`.",
         "required": [
-          "popular",
-          "items"
+          "items",
+          "source",
+          "refreshing"
         ],
         "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last refresh failed: `offline`, `unauthorized`,\n`rate_limited` or `failed`.  The list above is still usable."
+          },
           "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ComposioToolkitDto"
             },
-            "description": "The page, in Composio's popularity order."
+            "description": "The page: popular apps first, then Composio's popularity order."
           },
           "next_cursor": {
             "type": [
@@ -8999,12 +9882,22 @@
             ],
             "description": "Cursor of the next page."
           },
-          "popular": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ComposioToolkitDto"
-            },
-            "description": "Pinned popular row (first page without filters only; empty otherwise)."
+          "refreshing": {
+            "type": "boolean",
+            "description": "A background refresh is running."
+          },
+          "source": {
+            "type": "string",
+            "description": "`bundled` (only the apps shipped with Praxi so far) or `cache`."
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds of the disk cache, when there is one.",
+            "minimum": 0
           }
         }
       },
@@ -9015,7 +9908,8 @@
           "not_connected",
           "pending",
           "active",
-          "expired"
+          "expired",
+          "failed"
         ]
       },
       "ComposioConnectDto": {
@@ -9075,21 +9969,76 @@
           }
         }
       },
+      "ComposioLinkMode": {
+        "type": "string",
+        "description": "How Praxi is linked to Composio.",
+        "enum": [
+          "none",
+          "login",
+          "project_key"
+        ]
+      },
+      "ComposioLoginDto": {
+        "type": "object",
+        "description": "`POST /v1/composio/login`: the one-time browser login.",
+        "required": [
+          "login_url",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "description": "When the login expires (ISO timestamp, may be empty)."
+          },
+          "login_url": {
+            "type": "string",
+            "description": "https URL on Composio's dashboard; open it in the system browser."
+          }
+        }
+      },
+      "ComposioLoginState": {
+        "type": "string",
+        "description": "State of the one-time browser login.",
+        "enum": [
+          "idle",
+          "pending",
+          "linked",
+          "failed"
+        ]
+      },
+      "ComposioLoginStatusDto": {
+        "type": "object",
+        "description": "`GET /v1/composio/login`.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/ComposioLoginState",
+            "description": "State of the login."
+          }
+        }
+      },
       "ComposioStatusDto": {
         "type": "object",
         "description": "`GET /v1/composio`.",
         "required": [
           "configured",
+          "mode",
           "key_setup_url"
         ],
         "properties": {
           "configured": {
             "type": "boolean",
-            "description": "A key is stored (the key itself is never returned)."
+            "description": "Praxi is linked to Composio (the credential itself is never returned)."
           },
           "key_setup_url": {
             "type": "string",
-            "description": "Where the owner creates the key (https, on Composio's domain)."
+            "description": "Where an owner who wants their own project key creates it (advanced)."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ComposioLinkMode",
+            "description": "How it is linked."
           }
         }
       },
@@ -9101,6 +10050,7 @@
           "name",
           "description",
           "categories",
+          "group",
           "native_first",
           "state",
           "enabled"
@@ -9120,6 +10070,17 @@
           "enabled": {
             "type": "boolean",
             "description": "The owner enabled it."
+          },
+          "group": {
+            "type": "string",
+            "description": "Chip group: `communication`, `social`, `productivity`, `dev`,\n`finance`, `business` or `other`."
+          },
+          "logo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Logo URL (https), when Composio gives one."
           },
           "name": {
             "type": "string",
@@ -9424,6 +10385,185 @@
           "proceed",
           "refuse"
         ]
+      },
+      "CopyBotRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "blocked": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The bot cannot be copied (it runs on a CLI engine)."
+          },
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CopyItemResult": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "status"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`provider`, `bot` or `default`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`done`, `skipped` or `failed`."
+          }
+        }
+      },
+      "CopyPlanDto": {
+        "type": "object",
+        "description": "What a copy could send. Names only; no secret value.",
+        "required": [
+          "providers",
+          "bots"
+        ],
+        "properties": {
+          "bots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CopyBotRow"
+            }
+          },
+          "default_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_accepts": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "What the host says about this computer: `true` when it may receive."
+          },
+          "host_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable code from the host when it would refuse (`host_admin_required`, `secrets_unavailable`)."
+          },
+          "host_command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Command for the owner to run on the host, when one is needed."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CopyProviderRow"
+            }
+          }
+        }
+      },
+      "CopyProviderRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "has_key",
+          "custom"
+        ],
+        "properties": {
+          "custom": {
+            "type": "boolean"
+          },
+          "has_key": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CopyReport": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CopyItemResult"
+            }
+          }
+        }
+      },
+      "CopyRequest": {
+        "type": "object",
+        "properties": {
+          "bots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_model": {
+            "type": "boolean",
+            "description": "Also set the host's default provider and model to this computer's."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "set_home": {
+            "type": "boolean",
+            "description": "Record the host as the bots' home on both sides when something moved.\nNothing is deleted on this computer: it stays a working fallback."
+          }
+        },
+        "additionalProperties": false
       },
       "CreateChat": {
         "type": "object",
@@ -10772,6 +11912,30 @@
         },
         "additionalProperties": false
       },
+      "HomeDto": {
+        "type": "object",
+        "description": "`GET /v1/hosts/home`: the host adopted as the bots' home, if any.",
+        "properties": {
+          "host_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "HostAdminInput": {
+        "type": "object",
+        "description": "`PUT /v1/host/devices/{key}/admin`.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
       "HostConfig": {
         "type": "object",
         "properties": {
@@ -10926,6 +12090,13 @@
           "role"
         ],
         "properties": {
+          "admin": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Pair a desktop WITH host administration (default: yes for a desktop\ninvite created by the local owner; a paired peer can never set it)."
+          },
           "role": {
             "$ref": "#/components/schemas/InviteRole"
           },
@@ -11110,9 +12281,14 @@
           "key",
           "name",
           "role",
-          "online"
+          "online",
+          "admin"
         ],
         "properties": {
+          "admin": {
+            "type": "boolean",
+            "description": "The device holds host administration (may send keys and settings here)."
+          },
           "key": {
             "type": "string"
           },
@@ -15879,6 +17055,9 @@
     },
     {
       "name": "host"
+    },
+    {
+      "name": "admin"
     },
     {
       "name": "mcp"

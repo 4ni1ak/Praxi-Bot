@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { friendlyApiError, hostRefusalKey, onboardingAllowed } from "./hostMode.ts";
+import { hostRefusalKey, onboardingAllowed } from "./hostMode.ts";
 import { HOST_STATE_HOLD_MS, settleHostState } from "./hostState.ts";
 
 const flat = (file: string): Record<string, unknown> => {
@@ -43,11 +43,8 @@ test("every host refusal maps to a translated sentence, never the raw daemon tex
     assert.ok(key && key !== "generic", message);
     assert.ok(typeof tr[`hostMode.refusal.${key}`] === "string", `tr ${key}`);
     assert.ok(typeof en[`hostMode.refusal.${key}`] === "string", `en ${key}`);
-    const shown = friendlyApiError(new Error(message), ((k: string) => k) as never, { name: "Praxi host" });
-    assert.equal(shown, `hostMode.refusal.${key}`);
   }
   assert.equal(hostRefusalKey(403, "something new"), "generic");
-  assert.equal(friendlyApiError(new Error("boom"), ((k: string) => k) as never, null), "boom");
 });
 
 test("a good host connection survives a missed poll instead of flickering to connecting", () => {

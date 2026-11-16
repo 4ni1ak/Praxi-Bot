@@ -38,6 +38,15 @@ export type HostSetupJob = S["HostSetupJob"];
 export type HostSetupStep = S["HostSetupStep"];
 export type SshKeyHint = S["SshKeyHint"];
 export type HostLinkConnection = S["HostLinkConnection"];
+export type CopyPlan = S["CopyPlanDto"];
+export type CopyRequest = S["CopyRequest"];
+export type CopyReport = S["CopyReport"];
+export type CopyItemResult = S["CopyItemResult"];
+export type AdminState = S["AdminStateDto"];
+export type AdminProviderInput = S["AdminProviderInput"];
+export type AdminProvider = S["AdminProviderDto"];
+export type AdminCliEngine = S["AdminCliEngineDto"];
+export type HomeInfo = S["HomeDto"];
 export type StopRunsInput = S["StopRunsInput"];
 export type StopRunsResponse = S["StopRunsResponse"];
 export type UsageSummary = S["UsageSummary"];
@@ -336,6 +345,10 @@ export type ComposioToolkit = S["ComposioToolkitDto"];
 export type ComposioCatalog = S["ComposioCatalogDto"];
 export type ComposioApp = S["ComposioAppDto"];
 export type ComposioConnect = S["ComposioConnectDto"];
+export type ComposioLogin = S["ComposioLoginDto"];
+export type ComposioLoginStatus = S["ComposioLoginStatusDto"];
+export type Component = S["ComponentDto"];
+export type ComponentId = S["ComponentId"];
 export type ComposioDisconnect = S["ComposioDisconnectDto"];
 
 // ---- E-mail accounts (`/v1/email/*`) ---------------------------------------

@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -6,6 +7,9 @@ import { useDaemon } from "../state/DaemonContext";
 import { Modal } from "./Modal";
 import { SettingRow, Switch } from "./SettingsUi";
 import styles from "./ComputerAccess.module.css";
+
+/** The owner key of this app's daemon (Tauri command, main window only), sent on owner-only routes. */
+const ownerKey = () => invoke<string>("owner_key");
 
 /**
  * Settings > Computer: "Let my bots use this computer", one switch per paired server. Off by
@@ -34,8 +38,10 @@ export function ComputerAccessCard() {
             label={t("computerAccess.allow", { name: h.name })}
             onChange={(enabled) => {
               setError(null);
-              void localApi
-                ?.setComputerAccess(h.id, enabled, enabled && h.computer_access_always === true)
+              void ownerKey()
+                .then((key) =>
+                  localApi?.setComputerAccess(h.id, enabled, enabled && h.computer_access_always === true, key)
+                )
                 .then(() => refreshHosts())
                 .catch((e: unknown) =>
                   setError(e instanceof Error ? e.message : String(e))
@@ -57,8 +63,8 @@ export function ComputerAccessCard() {
               label={t("computerAccess.alwaysRead", { name: h.name })}
               onChange={(always) => {
                 setError(null);
-                void localApi
-                  ?.setComputerAccess(h.id, true, always)
+                void ownerKey()
+                  .then((key) => localApi?.setComputerAccess(h.id, true, always, key))
                   .then(() => refreshHosts())
                   .catch((e: unknown) =>
                     setError(e instanceof Error ? e.message : String(e))
@@ -91,8 +97,8 @@ export function ComputerRequestModal() {
     }
     let stopped = false;
     const tick = () => {
-      localApi
-        .computerRequests()
+      ownerKey()
+        .then((key) => localApi.computerRequests(key))
         .then((list) => {
           if (stopped) return;
           setPending(list.requests);
@@ -111,7 +117,9 @@ export function ComputerRequestModal() {
   const answer = (allow: boolean) => {
     if (!current || !localApi) return;
     setPending((p) => p.filter((r) => r.id !== current.id));
-    void localApi.decideComputerRequest(current.id, allow).catch(() => {});
+    void ownerKey()
+      .then((key) => localApi.decideComputerRequest(current.id, allow, key))
+      .catch(() => {});
   };
   return (
     <>

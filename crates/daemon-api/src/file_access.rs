@@ -141,7 +141,7 @@ pub(crate) async fn put_files(
     Path(bot): Path<Uuid>,
     ApiJson(input): ApiJson<FileAccessDto>,
 ) -> Result<Json<FileAccessDto>, ApiError> {
-    if peer.is_some() {
+    if s.bot_authority_peer(peer.as_ref().map(|p| &p.0)).is_some() {
         return Err(ApiError::forbidden(
             "file access is managed by the local owner",
         ));
