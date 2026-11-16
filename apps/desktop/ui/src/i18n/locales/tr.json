@@ -2608,6 +2608,7 @@
     "starting": "Başlıyor…",
     "noDaemon": "Yerel Praxi hizmeti çalışmıyor. Uygulamayı yeniden başlatıp tekrar dene.",
     "startFailed": "Başlatılamadı. Yukarıdaki ayrıntılara bakıp tekrar dene.",
+    "answerFailed": "Yanıt kurulum işine ulaşmadı. Bu pencereyi kapatıp yeniden başlat.",
     "formInvalid": "Sunucu adresini ve geçerli bir port gir.",
     "keyMissing": "Bir özel anahtar dosyası seç ya da SSH ajanına geç.",
     "progress": "Kurulum ilerlemesi",

@@ -2608,6 +2608,7 @@
     "starting": "Starting…",
     "noDaemon": "The local Praxi service is not running. Restart the app and try again.",
     "startFailed": "Could not start. Check the details above and try again.",
+    "answerFailed": "The answer did not reach the setup. Close this window and start again.",
     "formInvalid": "Enter the server address and a valid port.",
     "keyMissing": "Choose a private key file, or switch to the SSH agent.",
     "progress": "Setup progress",

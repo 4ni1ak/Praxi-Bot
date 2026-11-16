@@ -88,7 +88,10 @@ import { useBotReorder } from "./components/useBotReorder";
 import { setBotOrderSnapshot } from "./store/botOrderStore";
 import { computerScopePlan } from "./lib/hostState";
 import { ComputerPicker } from "./components/ComputerPicker";
+<<<<<<< HEAD
 import { ComputerRequestModal } from "./components/ComputerAccess";
+=======
+>>>>>>> origin/main
 import { HostEmptyState } from "./components/HostEmptyState";
 import { HostStateBanner } from "./components/HostStateBanner";
 import { friendlyApiError, onboardingAllowed } from "./lib/hostMode";
