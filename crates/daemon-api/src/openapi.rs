@@ -10,8 +10,9 @@ use utoipa::{Modify, OpenApi};
 
 use crate::{
     changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
-    file_access, fill_routes, host, host_links, host_setup, knowledge, knowledge_settings,
-    live_view, mcp, mcp_routes, mcp_server, routes, skill_management, skills, sse, web, web_routes,
+    file_access, fill_routes, host, host_admin, host_copy, host_links, host_setup, knowledge,
+    knowledge_settings, live_view, mcp, mcp_routes, mcp_server, routes, skill_management, skills,
+    sse, web, web_routes,
 };
 
 struct Security;
@@ -45,7 +46,7 @@ impl Modify for Security {
     ),
     paths(
         crate::cli_engines::list, crate::cli_engines::refresh_models_route, crate::cli_engines::preview, crate::cli_engines::decide,
-        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_links::forget, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::standby, host::activate, host::update,
+        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_links::forget, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::set_admin, host_admin::state, host_admin::put_provider, host_admin::delete_provider, host_admin::set_default, host_admin::cli_engines, host_copy::plan, host_copy::copy, host_copy::home, host_admin::set_home, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
         live_view::availability,
@@ -196,6 +197,7 @@ impl Modify for Security {
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host_links::HostLinkState, host_links::HostLinkInfo, host_links::HostLinkList, host_links::PairHostInput, host_links::HostLinkConnection,
         host_setup::StartHostSetupInput, host_setup::HostSetupState, host_setup::HostSetupStepStatus, host_setup::HostSetupStep, host_setup::HostKeyPrompt, host_setup::HostSetupJob, host_setup::HostKeyAnswer, host_setup::SshKeyHint, host_setup::SshKeyList,
+        host::HostAdminInput, host_admin::AdminStateDto, host_admin::AdminCliEngineDto, host_admin::AdminProviderInput, host_admin::AdminProviderDto, host_admin::AdminDefaultInput, host_copy::CopyPlanDto, host_copy::CopyProviderRow, host_copy::CopyBotRow, host_copy::CopyRequest, host_copy::CopyItemResult, host_copy::CopyReport, host_copy::HomeDto, host_admin::AdminHomeInput,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
         changes::CheckpointComputerDto, changes::CheckpointLocationDto, changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
         changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,
@@ -219,7 +221,7 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"),
+        (name = "host"), (name = "admin"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"),
         (name = "skills"), (name = "doctor"), (name = "mcp-server")
     )
 )]

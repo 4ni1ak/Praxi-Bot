@@ -3,6 +3,14 @@ import type { Connection } from "./connection";
 import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
 import type {
   AcceptedResponse,
+  AdminCliEngine,
+  AdminProvider,
+  AdminProviderInput,
+  AdminState,
+  CopyPlan,
+  CopyReport,
+  CopyRequest,
+  HomeInfo,
   Approval,
   Bot,
   BotEngineInput,
@@ -192,7 +200,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string> } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -218,6 +226,7 @@ export class ApiClient {
       signal?: AbortSignal;
       /** Streaming answers (install output) must not be cut by the request timeout. */
       noTimeout?: boolean;
+      headers?: Record<string, string>;
     } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
@@ -226,7 +235,7 @@ export class ApiClient {
         url.searchParams.set(k, String(v));
       }
     }
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
     if (opts.auth !== false) {
       Object.assign(headers, this.authHeaders());
     }
@@ -316,6 +325,36 @@ export class ApiClient {
   /** Paired hosts and their channel state (this computer's own daemon). */
   listHosts(): Promise<HostLinkList> {
     return this.request("GET", "/hosts");
+  }
+  /** What "make this server my bots' home" could send (names only; local daemon). */
+  copyPlan(hostId: string): Promise<CopyPlan> {
+    return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/copy-setup`);
+  }
+  /** Send the ticked items; the LOCAL daemon reads the keys, the app never sees them. */
+  copySetup(hostId: string, input: CopyRequest, ownerKey: string): Promise<CopyReport> {
+    // The owner key (from the app, main window only) authorises sending keys.
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/copy-setup`, {
+      body: input,
+      headers: { "x-praxi-owner-key": ownerKey }
+    });
+  }
+  /** The host adopted as the bots' home, if any. */
+  homeInfo(): Promise<HomeInfo> {
+    return this.request("GET", "/hosts/home");
+  }
+  // ---- host administration (call on a client connected to the HOST) -----
+  adminState(): Promise<AdminState> {
+    return this.request("GET", "/admin/state");
+  }
+  /** The key is write-only; the host stores it in its secret store. */
+  adminPutProvider(id: string, input: AdminProviderInput): Promise<AdminProvider> {
+    return this.request("PUT", `/admin/providers/${encodeURIComponent(id)}`, { body: input });
+  }
+  adminSetDefault(id: string, model?: string): Promise<AdminProvider> {
+    return this.request("PUT", "/admin/default-provider", { body: { id, model } });
+  }
+  adminCliEngines(): Promise<AdminCliEngine[]> {
+    return this.request("GET", "/admin/cli-engines");
   }
   /** Pair with a host using the ticket from `bot host invite --role desktop`. */
   pairHost(ticket: string): Promise<HostLinkInfo> {

@@ -99,6 +99,14 @@ pub enum HostLinkError {
     Failed(String),
 }
 
+/// The answer of a host to one request sent over its peer link.
+#[derive(Debug, Clone)]
+pub struct HostCall {
+    pub status: u16,
+    /// Parsed JSON body (`null` when the host sent none).
+    pub body: serde_json::Value,
+}
+
 /// What `/v1/hosts` needs from the embedder.
 #[async_trait::async_trait]
 pub trait HostLinks: Send + Sync {
@@ -114,6 +122,20 @@ pub trait HostLinks: Send + Sync {
     /// pairing that did not finish). Returns whether a pairing was removed.
     async fn forget(&self, _id: &str) -> bool {
         false
+    }
+    /// Send one JSON request to a paired host through its channel, as this
+    /// computer's Desktop peer. Used only by the owner-initiated "copy my
+    /// setup": the host applies its own peer guard to it.
+    async fn call(
+        &self,
+        _id: &str,
+        _method: &str,
+        _path: &str,
+        _body: Option<serde_json::Value>,
+    ) -> Result<HostCall, HostLinkError> {
+        Err(HostLinkError::Failed(
+            "this daemon cannot send requests to a host".into(),
+        ))
     }
 }
 

@@ -2295,7 +2295,11 @@
     "edit": "Edit bot",
     "runsOnHost": "Runs on {{name}} (host)",
     "runsOnLocal": "Runs on this computer",
-    "tabs": { "label": "Panel sections", "activity": "Activity", "library": "Library" },
+    "tabs": {
+      "label": "Panel sections",
+      "activity": "Activity",
+      "library": "Library"
+    },
     "subagents": {
       "title": "Sub-agents",
       "noTask": "Sub-agent",
@@ -2304,10 +2308,28 @@
       "open": "Open details: {{task}}",
       "stop": "Stop",
       "stopLabel": "Stop sub-agent: {{task}}",
-      "state": { "running": "Running", "waiting": "Needs approval", "done": "Done", "failed": "Failed", "stopped": "Stopped", "paused": "Paused" },
-      "detail": { "title": "Sub-agent details", "task": "Task", "steps": "Steps", "result": "Result", "approval": "Waiting for your approval. Decide in the chat." }
+      "state": {
+        "running": "Running",
+        "waiting": "Needs approval",
+        "done": "Done",
+        "failed": "Failed",
+        "stopped": "Stopped",
+        "paused": "Paused"
+      },
+      "detail": {
+        "title": "Sub-agent details",
+        "task": "Task",
+        "steps": "Steps",
+        "result": "Result",
+        "approval": "Waiting for your approval. Decide in the chat."
+      }
     },
-    "upcoming": { "title": "Upcoming", "paused": "Paused", "trigger": "When something happens", "toggle": "Turn {{name}} on or off" }
+    "upcoming": {
+      "title": "Upcoming",
+      "paused": "Paused",
+      "trigger": "When something happens",
+      "toggle": "Turn {{name}} on or off"
+    }
   },
   "knowledge": {
     "title": "Knowledge and shared brain",
@@ -2777,7 +2799,8 @@
     "stopHostHint": "Stops what is running there now",
     "stopNone": "Nothing is running on the host.",
     "stopFailed": "Could not reach the host to stop its runs.",
-    "stopped": "Stopped {{count}} run(s) on the host."
+    "stopped": "Stopped {{count}} run(s) on the host.",
+    "makeHome": "Make this server my bots' home…"
   },
   "pairHost": {
     "title": "Add a host",
@@ -2902,6 +2925,7 @@
     "starting": "Starting…",
     "noDaemon": "The local Praxi service is not running. Restart the app and try again.",
     "startFailed": "Could not start. Check the details above and try again.",
+    "answerFailed": "The answer did not reach the setup. Close this window and start again.",
     "formInvalid": "Enter the server address and a valid port.",
     "keyMissing": "Choose a private key file, or switch to the SSH agent.",
     "progress": "Setup progress",
@@ -2995,6 +3019,48 @@
         "msg": "Something went wrong while setting up the server.",
         "fix": "Try again. If it keeps failing, copy the details."
       }
+    }
+  },
+  "copySetup": {
+    "title": "Make this server the home of my bots",
+    "lead": "Your bots, their model keys and settings move to the server, so they keep working when this computer is off. You stay in the same app.",
+    "send": "Move to the server",
+    "sending": "Moving…",
+    "failed": "That did not work. Check that the server is connected and try again.",
+    "cannotMove": "Cannot move yet: chat history, memory, schedules and triggers, app connections, and CLI sign-ins (Claude Code, Codex, agy, OpenCode sign in on the server itself).",
+    "keepLocal": "Nothing is deleted on this computer; it stays a working fallback. You can run this again later to sync.",
+    "summary": "{{done}} moved, {{skipped}} skipped, {{failed}} failed.",
+    "homeFailed": "The items moved, but the server could not be marked as your bots' home.",
+    "kind": {
+      "provider": "Model provider",
+      "providerKey": "Model provider and its key",
+      "bot": "Bot",
+      "default": "Default model"
+    },
+    "blocked": {
+      "cli_engine": "Uses a CLI engine that stays on this computer"
+    },
+    "host": {
+      "host_admin_required": "The owner must confirm this computer on the server once. Run this on the server:",
+      "secrets_unavailable": "The server cannot store keys yet. On the server:",
+      "host_admin_forbidden": "The server does not accept this computer."
+    },
+    "result": {
+      "done": "Moved",
+      "exists": "Already on the server",
+      "cli_engine": "Stays here (CLI engine)",
+      "not_copyable": "Cannot be moved",
+      "not_found": "Not found",
+      "key_unreadable": "Key not readable here",
+      "host_admin_required": "Server needs confirmation",
+      "host_admin_forbidden": "Refused by the server",
+      "secrets_unavailable": "Server cannot store keys",
+      "secret_store_failed": "Server could not save it",
+      "host_unreachable": "Server did not answer",
+      "rejected": "Server refused it",
+      "no_default": "No default model",
+      "skipped": "Skipped",
+      "failed": "Failed"
     }
   }
 }

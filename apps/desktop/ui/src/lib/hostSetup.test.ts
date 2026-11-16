@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HostSetupJob, HostSetupStep } from "../api/types";
-import { copyDetails, failure, stageStates, wizardView } from "./hostSetup.ts";
+import { afterKeyAnswer, copyDetails, failure, stageStates, wizardView } from "./hostSetup.ts";
 
 const step = (id: string, status: HostSetupStep["status"], detail = ""): HostSetupStep => ({
   id,
@@ -85,4 +85,24 @@ test("a failure maps to one code, stops later rows, and the details carry no sec
     "hostkey_unreadable"
   );
   assert.match(copyDetails(j), /\[fail\] connect: the server rejected the login/);
+});
+
+test("accepting the host key keeps the progress page and advances", () => {
+  const waiting = job("awaiting_host_key", []);
+  const accepted = afterKeyAnswer(waiting, true);
+  assert.equal(wizardView(accepted), "progress");
+  assert.equal(accepted.host_key, null);
+  // the next poll brings the first steps: the connect row is done, the check row runs
+  const next = job("running", [step("hostkey", "pass"), step("connect", "pass")]);
+  assert.deepEqual(Object.values(stageStates(next)), [
+    "done",
+    "running",
+    "pending",
+    "pending",
+    "pending"
+  ]);
+  // declining ends the run instead of leaving a stale card
+  assert.equal(wizardView(afterKeyAnswer(waiting, false)), "failed");
+  // a job that is not waiting is left alone
+  assert.equal(afterKeyAnswer(next, true), next);
 });

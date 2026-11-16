@@ -30,6 +30,8 @@ pub mod fake;
 mod file_access;
 mod fill_routes;
 pub mod host;
+pub mod host_admin;
+pub mod host_copy;
 pub mod host_links;
 pub mod host_setup;
 mod knowledge;
@@ -40,6 +42,7 @@ pub mod mcp;
 mod mcp_routes;
 pub mod mcp_server;
 pub mod openapi;
+pub mod owner;
 pub mod peer;
 pub mod policy;
 mod provider_models;
@@ -78,7 +81,10 @@ use tokio_util::sync::CancellationToken;
 /// Connection tests (`/v1/email/*/test`) that may run at the same time.
 const EMAIL_TESTS_AT_ONCE: usize = 2;
 
-pub use auth::{TOKEN_FILE_NAME, TokenInfo, load_or_create_token, read_token, token_path};
+pub use auth::{
+    OWNER_KEY_FILE_NAME, TOKEN_FILE_NAME, TokenInfo, load_or_create_owner_key,
+    load_or_create_token, read_owner_key, read_token, token_path,
+};
 pub use composio::{ComposioControl, ComposioControlError};
 pub use control::{ControlConfig, ControlHub};
 pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
@@ -213,6 +219,7 @@ struct Inner {
     web_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
     secrets: OnceLock<Arc<dyn secret_store::SecretStore>>,
+    owner_key: OnceLock<String>,
     /// Owner-stored fill secrets (see [`AppState::set_fill_secrets`]).
     fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// `schedules.db`, opened on first use.
@@ -382,6 +389,7 @@ impl AppState {
             skill_mutations: parking_lot::Mutex::new(()),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
+            owner_key: OnceLock::new(),
             fill_secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
@@ -956,6 +964,11 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/hosts", get(host_links::list))
         .route("/v1/hosts/pair", post(host_links::pair))
         .route("/v1/hosts/{id}", axum::routing::delete(host_links::forget))
+        .route("/v1/hosts/home", get(host_copy::home))
+        .route(
+            "/v1/hosts/{id}/copy-setup",
+            get(host_copy::plan).post(host_copy::copy),
+        )
         .route("/v1/hosts/setup", post(host_setup::start))
         .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
         .route("/v1/hosts/setup/{job}", get(host_setup::get))
@@ -970,6 +983,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/host/devices/{key}",
             axum::routing::delete(host::revoke),
         )
+        .route("/v1/host/devices/{key}/admin", put(host::set_admin))
         .route("/v1/host/standby", post(host::standby))
         .route("/v1/host/activate", post(host::activate))
         .route("/v1/host/update", post(host::update))
@@ -1234,6 +1248,7 @@ fn api_routes() -> Router<AppState> {
             axum::routing::delete(f::revoke_fill_grant),
         )
         .route("/v1/events", get(sse::events))
+        .merge(host_admin::routes())
 }
 
 /// Serve the API on `listener` until `shutdown` completes.

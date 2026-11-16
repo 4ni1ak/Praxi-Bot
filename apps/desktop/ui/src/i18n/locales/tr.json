@@ -2295,7 +2295,11 @@
     "edit": "Botu düzenle",
     "runsOnHost": "{{name}} sunucusunda çalışır",
     "runsOnLocal": "Bu bilgisayarda çalışır",
-    "tabs": { "label": "Panel bölümleri", "activity": "Etkinlik", "library": "Kitaplık" },
+    "tabs": {
+      "label": "Panel bölümleri",
+      "activity": "Etkinlik",
+      "library": "Kitaplık"
+    },
     "subagents": {
       "title": "Alt ajanlar",
       "noTask": "Alt ajan",
@@ -2304,10 +2308,28 @@
       "open": "Ayrıntıları aç: {{task}}",
       "stop": "Durdur",
       "stopLabel": "Alt ajanı durdur: {{task}}",
-      "state": { "running": "Çalışıyor", "waiting": "Onay bekliyor", "done": "Bitti", "failed": "Başarısız", "stopped": "Durduruldu", "paused": "Duraklatıldı" },
-      "detail": { "title": "Alt ajan ayrıntıları", "task": "Görev", "steps": "Adımlar", "result": "Sonuç", "approval": "Onayını bekliyor. Sohbetten karar ver." }
+      "state": {
+        "running": "Çalışıyor",
+        "waiting": "Onay bekliyor",
+        "done": "Bitti",
+        "failed": "Başarısız",
+        "stopped": "Durduruldu",
+        "paused": "Duraklatıldı"
+      },
+      "detail": {
+        "title": "Alt ajan ayrıntıları",
+        "task": "Görev",
+        "steps": "Adımlar",
+        "result": "Sonuç",
+        "approval": "Onayını bekliyor. Sohbetten karar ver."
+      }
     },
-    "upcoming": { "title": "Yaklaşanlar", "paused": "Duraklatıldı", "trigger": "Bir olay olunca", "toggle": "{{name}} açık/kapalı" }
+    "upcoming": {
+      "title": "Yaklaşanlar",
+      "paused": "Duraklatıldı",
+      "trigger": "Bir olay olunca",
+      "toggle": "{{name}} açık/kapalı"
+    }
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",
@@ -2777,7 +2799,8 @@
     "stopHostHint": "Şu an orada çalışanları durdurur",
     "stopNone": "Sunucuda çalışan bir şey yok.",
     "stopFailed": "Çalışmaları durdurmak için sunucuya ulaşılamadı.",
-    "stopped": "Sunucuda {{count}} çalışma durduruldu."
+    "stopped": "Sunucuda {{count}} çalışma durduruldu.",
+    "makeHome": "Bu sunucuyu botlarımın evi yap…"
   },
   "pairHost": {
     "title": "Sunucu ekle",
@@ -2902,6 +2925,7 @@
     "starting": "Başlıyor…",
     "noDaemon": "Yerel Praxi hizmeti çalışmıyor. Uygulamayı yeniden başlatıp tekrar dene.",
     "startFailed": "Başlatılamadı. Yukarıdaki ayrıntılara bakıp tekrar dene.",
+    "answerFailed": "Yanıt kurulum işine ulaşmadı. Bu pencereyi kapatıp yeniden başlat.",
     "formInvalid": "Sunucu adresini ve geçerli bir port gir.",
     "keyMissing": "Bir özel anahtar dosyası seç ya da SSH ajanına geç.",
     "progress": "Kurulum ilerlemesi",
@@ -2995,6 +3019,48 @@
         "msg": "Sunucu kurulurken bir şey ters gitti.",
         "fix": "Tekrar dene. Sürekli başarısız olursa ayrıntıları kopyala."
       }
+    }
+  },
+  "copySetup": {
+    "title": "Bu sunucuyu botlarımın evi yap",
+    "lead": "Botların, model anahtarları ve ayarlarıyla sunucuya taşınır; bu bilgisayar kapalıyken de çalışmaya devam ederler. Aynı uygulamada kalırsın.",
+    "send": "Sunucuya taşı",
+    "sending": "Taşınıyor…",
+    "failed": "Olmadı. Sunucunun bağlı olduğundan emin ol ve tekrar dene.",
+    "cannotMove": "Henüz taşınamayanlar: sohbet geçmişi, bellek, zamanlamalar ve tetikleyiciler, uygulama bağlantıları ve CLI oturumları (Claude Code, Codex, agy, OpenCode sunucunun kendisinde giriş yapar).",
+    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez; çalışan bir yedek olarak kalır. İstersen sonra tekrar çalıştırıp eşitleyebilirsin.",
+    "summary": "{{done}} taşındı, {{skipped}} atlandı, {{failed}} başarısız.",
+    "homeFailed": "Öğeler taşındı ama sunucu botlarının evi olarak işaretlenemedi.",
+    "kind": {
+      "provider": "Model sağlayıcı",
+      "providerKey": "Model sağlayıcı ve anahtarı",
+      "bot": "Bot",
+      "default": "Varsayılan model"
+    },
+    "blocked": {
+      "cli_engine": "Bu bilgisayarda kalan bir CLI motoru kullanıyor"
+    },
+    "host": {
+      "host_admin_required": "Sunucu sahibi bu bilgisayarı sunucuda bir kez onaylamalı. Sunucuda şunu çalıştır:",
+      "secrets_unavailable": "Sunucu henüz anahtar saklayamıyor. Sunucuda:",
+      "host_admin_forbidden": "Sunucu bu bilgisayarı kabul etmiyor."
+    },
+    "result": {
+      "done": "Taşındı",
+      "exists": "Sunucuda zaten var",
+      "cli_engine": "Burada kalır (CLI motoru)",
+      "not_copyable": "Taşınamaz",
+      "not_found": "Bulunamadı",
+      "key_unreadable": "Anahtar burada okunamadı",
+      "host_admin_required": "Sunucu onay istiyor",
+      "host_admin_forbidden": "Sunucu reddetti",
+      "secrets_unavailable": "Sunucu anahtar saklayamıyor",
+      "secret_store_failed": "Sunucu kaydedemedi",
+      "host_unreachable": "Sunucu yanıt vermedi",
+      "rejected": "Sunucu kabul etmedi",
+      "no_default": "Varsayılan model yok",
+      "skipped": "Atlandı",
+      "failed": "Başarısız"
     }
   }
 }
