@@ -723,11 +723,46 @@ pub(crate) async fn patch_bot(
             }
         }
     }
+    let host_mode = s.leader().config().mode == crate::host::HostMode::Host;
     let outcome = s
         .storage()
         .patch_bot(bot.id, input.expected_version, |name, config| {
             let mut next = config.clone();
             apply_patch_ops(&mut next, &ops).map_err(|e| format!("bad_patch:{e}"))?;
+            // The FINAL candidate is checked against the stored profile inside
+            // the atomic write, with the same guards as create and PUT.
+            let refused = |e: ApiError| {
+                if e.status() == StatusCode::FORBIDDEN {
+                    format!("forbidden:{e}")
+                } else {
+                    format!("bad_patch:{e}")
+                }
+            };
+            let peer_id = peer.as_ref().map(|p| &p.0);
+            crate::peer::protect_knowledge_config(peer_id, config.get("knowledge"), &mut next)
+                .map_err(refused)?;
+            crate::peer::protect_execution_config(
+                s.bot_authority_peer(peer_id),
+                host_mode,
+                Some(config),
+                &mut next,
+            )
+            .map_err(refused)?;
+            crate::file_access::guard_files_config(
+                &s,
+                s.bot_authority_peer(peer_id),
+                config.get("files"),
+                &mut next,
+            )
+            .map_err(refused)?;
+            // Engine settings (who runs files and shell, and the consent
+            // behind them) change only through `PUT /v1/bots/{id}/engine`.
+            if next.get("engine") != config.get("engine") {
+                return Err(
+                    "bad_patch:the engine settings change only through the engine endpoint"
+                        .to_owned(),
+                );
+            }
             serde_json::from_value::<BotProfile>(next.clone())
                 .map_err(|e| format!("bad_profile:invalid bot profile: {e}"))?;
             Ok((new_name.unwrap_or_else(|| name.to_owned()), next))
@@ -751,6 +786,9 @@ fn profile_write_response(
         storage::BotPatch::Missing => Err(ApiError::not_found("bot").into()),
         storage::BotPatch::Rejected(why) => {
             let (code, msg) = why.split_once(':').unwrap_or(("bad_patch", &why));
+            if code == "forbidden" {
+                return Err(ApiError::forbidden(msg.to_owned()).into());
+            }
             let code = if code == "bad_profile" {
                 "bad_profile"
             } else {
