@@ -749,9 +749,10 @@ async fn daemon_connect(
 /// The owner key of the daemon this app started, for the web view to send as
 /// `x-praxi-owner-key` on owner-only requests. Main window only.
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // tauri hands the window over by value
 fn owner_key(window: Window) -> Result<String, String> {
     require_window(&window, MAIN_ONLY)?;
-    Ok(daemon::owner_key().to_owned())
+    daemon::owner_key().map(str::to_owned)
 }
 
 /// Stop a daemon this app started, then start it again (e.g. to pick up new
