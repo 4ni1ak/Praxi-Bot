@@ -47,6 +47,12 @@ pub struct HostLinkInfo {
     pub state: HostLinkState,
     /// One short, path-free sentence for `offline` / `unreachable`.
     pub detail: Option<String>,
+    /// The owner lets this host's bots use THIS computer (off by default).
+    #[serde(default)]
+    pub computer_access: bool,
+    /// ... and may look at the screen without asking first each session.
+    #[serde(default)]
+    pub computer_access_always: bool,
 }
 
 /// `GET /v1/hosts`.
@@ -121,6 +127,27 @@ pub trait HostLinks: Send + Sync {
     /// Remove the pairing with a host from this computer (rollback of a
     /// pairing that did not finish). Returns whether a pairing was removed.
     async fn forget(&self, _id: &str) -> bool {
+        false
+    }
+    /// Let (or stop letting) a paired host's bots use this computer.
+    async fn set_computer_access(
+        &self,
+        _id: &str,
+        _enabled: bool,
+        _always_read: bool,
+    ) -> Result<(), HostLinkError> {
+        Err(HostLinkError::NotFound)
+    }
+    /// Requests of hosts to act on this computer, waiting for the owner, and
+    /// the hosts looking at the screen right now.
+    fn computer_requests(&self) -> crate::pc_access::PcRequestList {
+        crate::pc_access::PcRequestList {
+            requests: Vec::new(),
+            reading: Vec::new(),
+        }
+    }
+    /// Answer one request; `false` when it is gone.
+    fn decide_computer_request(&self, _id: &str, _allow: bool) -> bool {
         false
     }
     /// Send one JSON request to a paired host through its channel, as this
@@ -257,5 +284,76 @@ pub(crate) async fn disconnect(
     let links = links(&s)?;
     audit(&s, "host_link.disconnect", &serde_json::json!({"host":id}))?;
     links.disconnect(&id);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(get, operation_id = "hosts_computer_requests", path = "/v1/hosts/computer-requests", tag = "host", security(("bearer" = [])), responses((status = 200, body = crate::pc_access::PcRequestList)))]
+pub(crate) async fn computer_requests(
+    State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<crate::pc_access::PcRequestList>, ApiError> {
+    if peer.is_some() {
+        return Err(ApiError::forbidden("host links are local only"));
+    }
+    s.require_owner(&headers)?;
+    Ok(Json(s.host_links().map_or(
+        crate::pc_access::PcRequestList {
+            requests: Vec::new(),
+            reading: Vec::new(),
+        },
+        |l| l.computer_requests(),
+    )))
+}
+
+#[utoipa::path(post, operation_id = "hosts_decide_computer_request", path = "/v1/hosts/computer-requests/{rid}", tag = "host", security(("bearer" = [])), params(("rid" = String, Path)), request_body = crate::pc_access::PcRequestDecision, responses((status = 204), (status = 404, body = crate::error::ErrorBody)))]
+pub(crate) async fn decide_computer_request(
+    State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
+    Path(rid): Path<String>,
+    ApiJson(input): ApiJson<crate::pc_access::PcRequestDecision>,
+) -> Result<StatusCode, ApiError> {
+    if peer.is_some() {
+        return Err(ApiError::forbidden("host links are local only"));
+    }
+    s.require_owner(&headers)?;
+    let links = links(&s)?;
+    audit(
+        &s,
+        "host_link.computer_request",
+        &serde_json::json!({"request":rid,"allow":input.allow}),
+    )?;
+    if links.decide_computer_request(&rid, input.allow) {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found("request"))
+    }
+}
+
+#[utoipa::path(put, operation_id = "hosts_set_computer_access", path = "/v1/hosts/{id}/computer-access", tag = "host", security(("bearer" = [])), params(("id" = String, Path)), request_body = crate::pc_access::ComputerAccessInput, responses((status = 204), (status = 404, body = crate::error::ErrorBody)))]
+pub(crate) async fn set_computer_access(
+    State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    ApiJson(input): ApiJson<crate::pc_access::ComputerAccessInput>,
+) -> Result<StatusCode, ApiError> {
+    if peer.is_some() {
+        return Err(ApiError::forbidden("host links are local only"));
+    }
+    s.require_owner(&headers)?;
+    if !valid_id(&id) {
+        return Err(ApiError::bad_request("invalid host id"));
+    }
+    let links = links(&s)?;
+    audit(
+        &s,
+        "host_link.computer_access",
+        &serde_json::json!({"host":id,"enabled":input.enabled,"always_read":input.always_read}),
+    )?;
+    links
+        .set_computer_access(&id, input.enabled, input.always_read)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }

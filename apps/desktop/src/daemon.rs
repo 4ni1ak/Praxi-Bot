@@ -254,14 +254,22 @@ pub fn bot_command() -> Command {
 
 /// The per-launch owner key: random, held only in memory here and in the
 /// daemon it is handed to (on its stdin), shown to the main window only.
-#[must_use]
-pub fn owner_key() -> &'static str {
+///
+/// # Errors
+/// The OS offers no randomness; nothing is cached, so a later call retries.
+pub fn owner_key() -> Result<&'static str, String> {
+    use std::fmt::Write as _;
     static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    KEY.get_or_init(|| {
-        let mut bytes = [0u8; 32];
-        getrandom::fill(&mut bytes).expect("OS randomness");
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
-    })
+    if let Some(key) = KEY.get() {
+        return Ok(key);
+    }
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| format!("no OS randomness for the owner key: {e}"))?;
+    let key = bytes.iter().fold(String::new(), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    });
+    Ok(KEY.get_or_init(|| key))
 }
 
 fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
@@ -293,7 +301,14 @@ fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
     // argument, file or environment variable.
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        let _ = writeln!(stdin, "{}", owner_key());
+        let key = match owner_key() {
+            Ok(key) => key,
+            Err(e) => {
+                let _ = child.kill();
+                return Err(e);
+            }
+        };
+        let _ = writeln!(stdin, "{key}");
     }
     Ok(child)
 }

@@ -1318,6 +1318,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/computer-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_computer_requests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/computer-requests/{rid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_decide_computer_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hosts/home": {
         parameters: {
             query?: never;
@@ -1441,6 +1473,22 @@ export interface paths {
         put?: never;
         post?: never;
         delete: operations["hosts_forget"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}/computer-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["hosts_set_computer_access"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3122,6 +3170,13 @@ export interface components {
              */
             tools_count?: number | null;
         };
+        /** @description Switches for one host. */
+        ComputerAccessInput: {
+            /** @description Do not ask before the first look at the screen each session. */
+            always_read?: boolean;
+            /** @description Let this host's bots use this computer. */
+            enabled: boolean;
+        };
         /** @description A configured provider (never carries a key). */
         ConfiguredProviderDto: {
             /** @description Loaded in the running loop (a restart or `reload` picks up changes). */
@@ -3908,6 +3963,10 @@ export interface components {
         };
         /** @description A paired host. */
         HostLinkInfo: {
+            /** @description The owner lets this host's bots use THIS computer (off by default). */
+            computer_access?: boolean;
+            /** @description ... and may look at the screen without asking first each session. */
+            computer_access_always?: boolean;
             /** @description One short, path-free sentence for `offline` / `unreachable`. */
             detail?: string | null;
             /** @description Paired device key (public, not a secret). */
@@ -4715,6 +4774,34 @@ export interface components {
             next_run_at_ms?: number | null;
             /** @description The [`ScheduleDto::spec`] the phrase means. */
             spec: unknown;
+        };
+        /** @description The local owner's answer. */
+        PcRequestDecision: {
+            allow: boolean;
+        };
+        /** @description One pending request, as the desktop app shows it. */
+        PcRequestInfo: {
+            /** @description `click`, `type`, `key`, `scroll`, `launch`, ... */
+            action: string;
+            /** Format: int64 */
+            created_ms: number;
+            /** @description Paired host the request comes from (public key). */
+            host_id: string;
+            /** @description Name the host announced (untrusted text, shown as "from the server"). */
+            host_name: string;
+            id: string;
+            /** @description `session_read` (first look at the screen this session) or `act`. */
+            kind: string;
+            /** @description The complete, masked payload (text to type, keys, launch command). */
+            payload: string;
+            /** @description What the input would reach, resolved by this computer's OS. */
+            target: string;
+        };
+        /** @description Pending requests and who is looking at the screen right now. */
+        PcRequestList: {
+            /** @description Names of hosts whose bots read this screen in the last few seconds. */
+            reading: string[];
+            requests: components["schemas"]["PcRequestInfo"][];
         };
         /** @enum {string} */
         PointerPhase: "move" | "down" | "up";
@@ -8809,6 +8896,56 @@ export interface operations {
             };
         };
     };
+    hosts_computer_requests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PcRequestList"];
+                };
+            };
+        };
+    };
+    hosts_decide_computer_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PcRequestDecision"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     hosts_home: {
         parameters: {
             query?: never;
@@ -8970,6 +9107,37 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_set_computer_access: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComputerAccessInput"];
+            };
+        };
         responses: {
             204: {
                 headers: {

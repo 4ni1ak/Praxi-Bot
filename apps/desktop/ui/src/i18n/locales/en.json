@@ -1009,6 +1009,10 @@
         "title": "Only the owner can change this",
         "hint": "Use the app on the computer that runs the bot."
       },
+      "owner_key_required": {
+        "title": "Only the Praxi app on this computer can do this",
+        "hint": "Open this computer's Praxi app and use it there."
+      },
       "forbidden": {
         "title": "You are not allowed to do that here",
         "hint": "This action is only available on the computer that runs the bot."
@@ -2937,6 +2941,28 @@
     "pair": "Pair",
     "pairing": "Pairing…",
     "failed": "Pairing failed. Check that the host is on and the ticket is new."
+  },
+  "computerAccess": {
+    "title": "Let my bots use this computer",
+    "description": "Servers you paired can ask this computer to look at the screen and act on it, only when you allow it.",
+    "noServer": "No server is paired yet. Add one and you can let its bots use this computer here.",
+    "explain": "Off by default. When on, the server's bots can look at this computer's screen. Anything that clicks, types or opens something still asks you first, and Stop always wins.",
+    "allow": "Let the bots on {{name}} use this computer",
+    "askNote": "Every action that changes something asks you first.",
+    "requestTitle": "A bot wants to act on this computer",
+    "requestBody": "A bot on this server asks to do this on this computer:",
+    "allowOnce": "Allow once",
+    "deny": "Deny",
+    "alwaysRead": "Don't ask before {{name}}'s bots look at the screen",
+    "alwaysReadNote": "Otherwise you are asked once per session. Praxi's own windows are never shown.",
+    "looking": "A bot on {{name}} is looking at this screen",
+    "readTitle": "A server's bots want to look at your screen",
+    "fromServerName": "(server name, as it calls itself: {{name}})",
+    "fromServer": "This name comes from the server, not from this computer.",
+    "what": "Action",
+    "where": "Goes to",
+    "details": "Exactly",
+    "allowSession": "Allow for this session"
   },
   "hostMode": {
     "state": {

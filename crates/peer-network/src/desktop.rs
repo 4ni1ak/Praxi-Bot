@@ -22,6 +22,11 @@ use crate::proto::{
 use crate::rpc::{RpcClient, RpcHandler};
 use crate::store::{Device, now_secs};
 
+/// Deadline of a mutating desktop call: the person at the desktop may need
+/// this long to answer the approval card (card wait 120 s + margin). Reads keep
+/// the short default deadline.
+pub const ACTION_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
+
 /// Application error code: element not found.
 pub const ERR_ELEMENT_NOT_FOUND: i64 = -32001;
 /// Application error code: accessibility error.
@@ -143,6 +148,12 @@ struct ScreenshotParams {
 #[derive(Serialize, Deserialize)]
 struct LaunchParams {
     app: AppSpec,
+}
+
+/// A backend error as the wire error (for serving wrappers outside this crate).
+#[must_use]
+pub fn desktop_error_to_rpc(e: &DesktopError) -> RpcError {
+    desktop_to_rpc(e)
 }
 
 fn desktop_to_rpc(e: &DesktopError) -> RpcError {
@@ -359,11 +370,15 @@ impl RemoteDesktop {
         method: &str,
         params: Value,
     ) -> std::result::Result<T, DesktopError> {
-        let v = self
-            .client
-            .call(method, params)
-            .await
-            .map_err(peer_to_desktop)?;
+        let mutating = matches!(method, "desktop.act" | "desktop.launch");
+        let v = if mutating {
+            self.client
+                .call_with_timeout(method, params, ACTION_RPC_TIMEOUT)
+                .await
+        } else {
+            self.client.call(method, params).await
+        }
+        .map_err(peer_to_desktop)?;
         decode(v).map_err(peer_to_desktop)
     }
 }

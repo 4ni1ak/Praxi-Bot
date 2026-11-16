@@ -4655,6 +4655,79 @@
         ]
       }
     },
+    "/v1/hosts/computer-requests": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_computer_requests",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PcRequestList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/computer-requests/{rid}": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_decide_computer_request",
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PcRequestDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/hosts/home": {
       "get": {
         "tags": [
@@ -4906,6 +4979,54 @@
             }
           }
         ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/computer-access": {
+      "put": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_set_computer_access",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerAccessInput"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "204": {
             "description": ""
@@ -9988,6 +10109,23 @@
           }
         }
       },
+      "ComputerAccessInput": {
+        "type": "object",
+        "description": "Switches for one host.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "always_read": {
+            "type": "boolean",
+            "description": "Do not ask before the first look at the screen each session."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Let this host's bots use this computer."
+          }
+        }
+      },
       "ConfiguredProviderDto": {
         "type": "object",
         "description": "A configured provider (never carries a key).",
@@ -12065,6 +12203,14 @@
           "state"
         ],
         "properties": {
+          "computer_access": {
+            "type": "boolean",
+            "description": "The owner lets this host's bots use THIS computer (off by default)."
+          },
+          "computer_access_always": {
+            "type": "boolean",
+            "description": "... and may look at the screen without asking first each session."
+          },
           "detail": {
             "type": [
               "string",
@@ -14475,6 +14621,88 @@
           },
           "spec": {
             "description": "The [`ScheduleDto::spec`] the phrase means."
+          }
+        }
+      },
+      "PcRequestDecision": {
+        "type": "object",
+        "description": "The local owner's answer.",
+        "required": [
+          "allow"
+        ],
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PcRequestInfo": {
+        "type": "object",
+        "description": "One pending request, as the desktop app shows it.",
+        "required": [
+          "id",
+          "host_id",
+          "host_name",
+          "kind",
+          "action",
+          "target",
+          "payload",
+          "created_ms"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`click`, `type`, `key`, `scroll`, `launch`, ..."
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "host_id": {
+            "type": "string",
+            "description": "Paired host the request comes from (public key)."
+          },
+          "host_name": {
+            "type": "string",
+            "description": "Name the host announced (untrusted text, shown as \"from the server\")."
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`session_read` (first look at the screen this session) or `act`."
+          },
+          "payload": {
+            "type": "string",
+            "description": "The complete, masked payload (text to type, keys, launch command)."
+          },
+          "target": {
+            "type": "string",
+            "description": "What the input would reach, resolved by this computer's OS."
+          }
+        }
+      },
+      "PcRequestList": {
+        "type": "object",
+        "description": "Pending requests and who is looking at the screen right now.",
+        "required": [
+          "requests",
+          "reading"
+        ],
+        "properties": {
+          "reading": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of hosts whose bots read this screen in the last few seconds."
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PcRequestInfo"
+            }
           }
         }
       },

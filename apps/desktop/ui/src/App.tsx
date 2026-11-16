@@ -90,6 +90,7 @@ import { useBotReorder } from "./components/useBotReorder";
 import { setBotOrderSnapshot } from "./store/botOrderStore";
 import { computerScopePlan } from "./lib/hostState";
 import { ComputerPicker } from "./components/ComputerPicker";
+import { ComputerRequestModal } from "./components/ComputerAccess";
 import { HostEmptyState } from "./components/HostEmptyState";
 import { HostStateBanner } from "./components/HostStateBanner";
 import { onboardingAllowed } from "./lib/hostMode";
@@ -1077,6 +1078,7 @@ export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
+        <ComputerRequestModal />
         <ComputerScope>
           <LeaveGuardProvider>
             <AppShell />
