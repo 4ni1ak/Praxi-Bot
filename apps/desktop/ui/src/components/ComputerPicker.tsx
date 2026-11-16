@@ -1,13 +1,15 @@
-import { ArrowLeft, ChevronDown, House, Maximize2, Monitor, Plus, RefreshCw, Server, Square } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, House, Maximize2, Monitor, Plus, RefreshCw, Server, Square } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isMockMode } from "../api/mockMode";
+import { humanLine } from "../lib/humanError";
 import { homeStatus } from "../lib/home";
 import { hostAcceptsWork } from "../lib/hostState";
 import { useDaemon } from "../state/DaemonContext";
 import { useLiveView } from "../state/LiveViewContext";
 import styles from "./ComputerPicker.module.css";
 import { AddServerModal } from "./AddServerModal";
+import { setHostComputerAccess } from "./ComputerAccess";
 import { CopySetupModal } from "./CopySetupModal";
 import { PairHostModal } from "./PairHostModal";
 import { Popover } from "./Popover";
@@ -22,7 +24,7 @@ import { useToast } from "./Toast";
 export function ComputerPicker() {
   const { t } = useTranslation();
   const toast = useToast();
-  const { home, workLocalNow, setWorkLocalNow, hostState, hostList, stopHostRuns } = useDaemon();
+  const { home, workLocalNow, setWorkLocalNow, hostState, hostList, stopHostRuns, localApi, refreshHosts } = useDaemon();
   const { openViewer } = useLiveView();
   // Design review (mock mode only): `?menu=1` opens the menu.
   const [open, setOpen] = useState(() => isMockMode() && new URLSearchParams(window.location.search).get("menu") === "1");
@@ -39,6 +41,17 @@ export function ComputerPicker() {
   const tone = status === "online" || status === "local" ? "ok" : status === "connecting" || status === "temporary" ? "wait" : "bad";
   const Icon = home.kind === "host" && status !== "temporary" ? Server : Monitor;
   const unadopted = (hostList?.hosts ?? []).filter((h) => h.id !== (home.kind === "host" ? home.hostId : ""));
+
+  const homeLink = home.kind === "host" ? (hostList?.hosts.find((h) => h.id === home.hostId) ?? null) : null;
+  const pcAllowed = homeLink?.computer_access === true;
+  const togglePc = () => {
+    if (!homeLink) {
+      return;
+    }
+    void setHostComputerAccess(localApi, homeLink, !pcAllowed)
+      .then(() => refreshHosts())
+      .catch((e: unknown) => toast.show(humanLine(e), "danger"));
+  };
 
   const stop = async () => {
     setOpen(false);
@@ -138,7 +151,26 @@ export function ComputerPicker() {
           item(`home-make-${h.id}`, <House aria-hidden="true" className={styles.icon} />, t("home.menu.makeHome", { name: h.name }), () => setSyncHost(h.id))
         )}
         {item("computer-add", <Plus aria-hidden="true" className={styles.icon} />, t("home.menu.add"), () => setAddOpen(true))}
-        {/* Slot: "Let my bots use this computer" (PR #134's switch) goes here once it is on main. */}
+        {homeLink ? (
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={pcAllowed}
+            className={styles.item}
+            data-testid="home-pc-access"
+            onClick={() => {
+              setOpen(false);
+              togglePc();
+            }}
+          >
+            <Monitor aria-hidden="true" className={styles.icon} />
+            <span className={styles.itemText}>
+              <b>{t("computerAccess.title")}</b>
+              <small>{pcAllowed ? t("home.menu.pcOn") : t("home.menu.pcOff")}</small>
+            </span>
+            {pcAllowed ? <Check aria-hidden="true" className={styles.check} /> : null}
+          </button>
+        ) : null}
         {home.kind === "host"
           ? workLocalNow
             ? item("home-back", <ArrowLeft aria-hidden="true" className={styles.icon} />, t("home.menu.backHome", { name }), () => setWorkLocalNow(false), {

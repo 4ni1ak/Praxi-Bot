@@ -11,6 +11,7 @@ import {
   toRequest
 } from "../lib/copySetup";
 import { MOCK_BASE_URL } from "../api/mockMode";
+import { setHostComputerAccess } from "./ComputerAccess";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./CopySetupModal.module.css";
 import { Modal } from "./Modal";
@@ -47,6 +48,8 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
   const [failed, setFailed] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // Optional last step, off by default: let this server's bots use THIS computer too.
+  const [allowPc, setAllowPc] = useState(false);
   const [report, setReport] = useState<CopyReport | null>(null);
   const items = useMemo(() => (plan ? buildCopyItems(plan) : []), [plan]);
 
@@ -76,6 +79,11 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
       setReport(await localApi.copySetup(hostId, toRequest(items, checked), ownerKey));
       // The home is recorded on both sides: the app follows it right away (no picking).
       void refreshHome();
+      const link = hostList?.hosts.find((h) => h.id === hostId);
+      if (allowPc && link) {
+        await setHostComputerAccess(localApi, link, true).catch(() => {});
+        void refreshHome();
+      }
     } catch {
       setFailed(true);
     } finally {
@@ -161,6 +169,12 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
             </li>
           ))}
         </ul>
+      )}
+      {report || refused ? null : (
+        <label className={styles.note} data-testid="copy-setup-allow-pc">
+          <input type="checkbox" checked={allowPc} onChange={(e) => setAllowPc(e.target.checked)} />{" "}
+          <b>{t("computerAccess.title")}.</b> {t("home.adopted.allowPc")}
+        </label>
       )}
       <p className={styles.note}>{t("copySetup.cannotMove")}</p>
       <p className={styles.note}>{t("copySetup.keepLocal")}</p>

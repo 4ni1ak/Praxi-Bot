@@ -1265,7 +1265,7 @@
       "viewScreen": "Ekranını gör",
       "workHere": "Şimdilik bu bilgisayarda çalış",
       "backHome": "{{name}} bilgisayarına dön",
-      "workHereHint": "Geri dönene kadar bu bilgisayarın kendi botlarını gösterir.",
+      "pcOn": "Açık · her işlem burada sana sorar", "pcOff": "Kapalı · botların bu bilgisayarı kullanamaz", "workHereHint": "Geri dönene kadar bu bilgisayarın kendi botlarını gösterir.",
       "backHomeHint": "Şimdilik bu bilgisayarda çalışıyorsun.",
       "stop": "{{name}} üzerindeki her şeyi durdur",
       "stopHint": "Orada şu an süren her çalışmayı durdurur."
@@ -1280,7 +1280,7 @@
       "title": "{{name}} artık botlarının evi",
       "moved": "{{name}} bilgisayarına taşınanlar",
       "stayed": "Bu bilgisayarda kalanlar",
-      "stayedBody": "Bu bilgisayar elindeki her şeyi yedek olarak saklar ve bir hedef olarak kalır: bir bottan istediğin zaman bunun üzerinde iş yapmasını isteyebilirsin. Burada hiçbir şey silinmedi.",
+      "allowPc": "İsteğe bağlı: botların istediğinde bu bilgisayarın ekranına bakabilir ve üzerinde iş yapabilir. Bir şeyi değiştiren her işlem yine burada önce sana sorar.", "stayedBody": "Bu bilgisayar elindeki her şeyi yedek olarak saklar ve bir hedef olarak kalır: bir bottan istediğin zaman bunun üzerinde iş yapmasını isteyebilirsin. Burada hiçbir şey silinmedi.",
       "done": "Anladım"
     },
     "target": {

@@ -1265,7 +1265,7 @@
       "viewScreen": "View its screen",
       "workHere": "Work on this computer for now",
       "backHome": "Back to {{name}}",
-      "workHereHint": "Shows this computer's own bots until you go back.",
+      "pcOn": "On · every action asks you here", "pcOff": "Off · your bots cannot use this computer", "workHereHint": "Shows this computer's own bots until you go back.",
       "backHomeHint": "You are working on this computer for now.",
       "stop": "Stop everything on {{name}}",
       "stopHint": "Stops every run that is going on there right now."
@@ -1280,7 +1280,7 @@
       "title": "{{name}} is now your bots' home",
       "moved": "Moved to {{name}}",
       "stayed": "Stays on this computer",
-      "stayedBody": "This computer keeps everything it had as a fallback and stays a target: ask a bot to do something on it any time. Nothing was deleted here.",
+      "allowPc": "Optional: your bots may then look at this computer's screen and act on it when you ask. Every action that changes something still asks you here first.", "stayedBody": "This computer keeps everything it had as a fallback and stays a target: ask a bot to do something on it any time. Nothing was deleted here.",
       "done": "Got it"
     },
     "target": {
