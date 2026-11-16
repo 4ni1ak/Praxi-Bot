@@ -1,0 +1,490 @@
+//! "Copy my setup to this server": the owner's computer sends its provider
+//! keys, bots and default model to a paired host it administers.
+//!
+//! The LOCAL daemon does the work, never the web view: the keys are read from
+//! this computer's secret store at the moment the owner confirms, only for the
+//! providers that were ticked, and travel straight into the paired peer link
+//! (end-to-end encrypted) to the host's administration routes
+//! (`host_admin.rs`). The UI sees names and per-item results, never a key.
+//!
+//! Local owner only: the route lives under `/v1/hosts`, which the peer router
+//! refuses to every paired role and the scoped MCP token filter never lists.
+//! Nothing here is a tool, and no bot can reach it.
+
+use axum::{
+    Extension, Json,
+    extract::{Path, State},
+};
+use provider_catalog::{ProviderConfig, config_path};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use crate::{
+    ApiError, AppState,
+    host_links::{HostLinkError, HostLinks},
+    routes::ApiJson,
+};
+
+/// Most items one copy may carry (providers + bots).
+const MAX_ITEMS: usize = 64;
+
+static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CopyProviderRow {
+    pub id: String,
+    pub has_key: bool,
+    pub model: Option<String>,
+    pub custom: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CopyBotRow {
+    pub id: String,
+    pub name: String,
+    pub model: Option<String>,
+    /// The bot cannot be copied (it runs on a CLI engine).
+    pub blocked: Option<String>,
+}
+
+/// What a copy could send. Names only; no secret value.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CopyPlanDto {
+    pub providers: Vec<CopyProviderRow>,
+    pub bots: Vec<CopyBotRow>,
+    pub default_provider: Option<String>,
+    pub default_model: Option<String>,
+    /// What the host says about this computer: `true` when it may receive.
+    pub host_accepts: Option<bool>,
+    /// Stable code from the host when it would refuse (`host_admin_required`, `secrets_unavailable`).
+    pub host_code: Option<String>,
+    /// Command for the owner to run on the host, when one is needed.
+    pub host_command: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CopyRequest {
+    #[serde(default)]
+    pub providers: Vec<String>,
+    #[serde(default)]
+    pub bots: Vec<String>,
+    /// Also set the host's default provider and model to this computer's.
+    #[serde(default)]
+    pub default_model: bool,
+    /// Record the host as the bots' home on both sides when something moved.
+    /// Nothing is deleted on this computer: it stays a working fallback.
+    #[serde(default)]
+    pub set_home: bool,
+}
+
+/// `GET /v1/hosts/home`: the host adopted as the bots' home, if any.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct HomeDto {
+    pub host_id: Option<String>,
+}
+
+const LOCAL_HOME_FILE: &str = "home.json";
+
+fn read_home(s: &AppState) -> Option<String> {
+    std::fs::read(s.data_dir().join(LOCAL_HOME_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v["host_id"].as_str().map(str::to_owned))
+}
+
+#[utoipa::path(get, operation_id = "hosts_home", path = "/v1/hosts/home", tag = "host", security(("bearer" = [])),
+    responses((status = 200, body = HomeDto)))]
+pub(crate) async fn home(
+    State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+) -> Result<Json<HomeDto>, ApiError> {
+    local_only(peer.as_ref())?;
+    Ok(Json(HomeDto {
+        host_id: read_home(&s),
+    }))
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CopyItemResult {
+    /// `provider`, `bot` or `default`.
+    pub kind: String,
+    pub id: String,
+    pub name: String,
+    /// `done`, `skipped` or `failed`.
+    pub status: String,
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CopyReport {
+    pub items: Vec<CopyItemResult>,
+}
+
+fn local_only(peer: Option<&Extension<crate::PeerIdentity>>) -> Result<(), ApiError> {
+    if peer.is_some() {
+        return Err(ApiError::forbidden("host links are local only"));
+    }
+    Ok(())
+}
+
+fn links(s: &AppState) -> Result<std::sync::Arc<dyn HostLinks>, ApiError> {
+    s.host_links()
+        .ok_or_else(|| ApiError::unavailable("host links are not available in this daemon"))
+}
+
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+fn audit(s: &AppState, action: &str, detail: &serde_json::Value) -> Result<(), ApiError> {
+    s.storage()
+        .append_audit(s.user_id(), None, "local-ui", action, detail)
+        .map(|_| ())
+        .map_err(ApiError::internal)
+}
+
+/// Provider ids that are plain HTTP providers (a `cli:` engine is a login of
+/// the vendor's tool on THIS computer and never leaves it).
+fn http_providers(
+    cfg: &ProviderConfig,
+) -> impl Iterator<Item = &provider_catalog::ProviderSettings> {
+    cfg.providers.iter().filter(|p| !p.id.starts_with("cli:"))
+}
+
+fn bot_executor(config: &serde_json::Value) -> Option<String> {
+    config
+        .pointer("/models/executor")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
+/// The profile as the host should get it: what only makes sense on this
+/// computer (folders, knowledge sources, an external engine) is left behind.
+fn portable_config(config: &serde_json::Value) -> serde_json::Value {
+    let mut config = config.clone();
+    if let Some(obj) = config.as_object_mut() {
+        for key in ["files", "knowledge", "engine"] {
+            obj.remove(key);
+        }
+    }
+    config
+}
+
+#[utoipa::path(get, operation_id = "hosts_copy_plan", path = "/v1/hosts/{id}/copy-setup", tag = "host", security(("bearer" = [])),
+    params(("id" = String, Path)), responses((status = 200, body = CopyPlanDto)))]
+pub(crate) async fn plan(
+    State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+    Path(id): Path<String>,
+) -> Result<Json<CopyPlanDto>, ApiError> {
+    local_only(peer.as_ref())?;
+    if !valid_id(&id) {
+        return Err(ApiError::bad_request("invalid host id"));
+    }
+    let cfg = ProviderConfig::load(&config_path(&s.data_dir()))
+        .map_err(|e| ApiError::internal(format!("providers.toml: {e}")))?;
+    let providers = http_providers(&cfg)
+        .map(|p| CopyProviderRow {
+            id: p.id.clone(),
+            has_key: p.key.is_some(),
+            model: p.default_model.clone(),
+            custom: p.custom.is_some(),
+        })
+        .collect();
+    let bots = s
+        .storage()
+        .list_bots(s.user_id())?
+        .into_iter()
+        .map(|bot| {
+            let executor = bot_executor(&bot.config);
+            CopyBotRow {
+                id: bot.id.0.to_string(),
+                name: bot.name,
+                blocked: executor
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("cli:"))
+                    .then(|| "cli_engine".to_owned()),
+                model: executor,
+            }
+        })
+        .collect();
+    let default = cfg
+        .effective_default()
+        .filter(|d| !d.id.starts_with("cli:"));
+    let mut plan = CopyPlanDto {
+        providers,
+        bots,
+        default_provider: default.map(|d| d.id.clone()),
+        default_model: default.and_then(|d| d.default_model.clone()),
+        host_accepts: None,
+        host_code: None,
+        host_command: None,
+    };
+    // Best effort: ask the host whether it would accept, so the dialog can
+    // say what to do before anything is ticked.
+    if let Ok(call) = links(&s)?.call(&id, "GET", "/v1/admin/state", None).await {
+        if call.status == 200 {
+            {
+                let granted = call.body["granted"].as_bool().unwrap_or(false);
+                let secrets = call.body["secrets_available"].as_bool().unwrap_or(true);
+                plan.host_accepts = Some(granted && secrets);
+                if !granted {
+                    plan.host_code = Some(crate::host_admin::codes::REQUIRED.into());
+                    plan.host_command = call.body["confirm_command"].as_str().map(str::to_owned);
+                } else if !secrets {
+                    plan.host_code = Some(crate::host_admin::codes::NO_SECRETS.into());
+                    plan.host_command = call.body["secrets_hint"].as_str().map(str::to_owned);
+                }
+            }
+        } else {
+            plan.host_accepts = Some(false);
+            plan.host_code = call.body["error"]["code"].as_str().map(str::to_owned);
+        }
+    }
+    Ok(Json(plan))
+}
+
+fn item(kind: &str, id: &str, name: &str, status: &str, code: Option<&str>) -> CopyItemResult {
+    CopyItemResult {
+        kind: kind.into(),
+        id: id.into(),
+        name: name.into(),
+        status: status.into(),
+        code: code.map(str::to_owned),
+    }
+}
+
+fn failure(e: &HostLinkError) -> String {
+    match e {
+        HostLinkError::NotFound => "host_not_found".into(),
+        HostLinkError::Invalid(_) => "invalid".into(),
+        HostLinkError::Failed(_) => "host_unreachable".into(),
+    }
+}
+
+#[utoipa::path(post, operation_id = "hosts_copy_setup", path = "/v1/hosts/{id}/copy-setup", tag = "host", security(("bearer" = [])),
+    params(("id" = String, Path)), request_body = CopyRequest, responses((status = 200, body = CopyReport)))]
+#[allow(clippy::too_many_lines)] // one linear send loop; each item reports on its own
+pub(crate) async fn copy(
+    State(s): State<AppState>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+    Path(id): Path<String>,
+    ApiJson(input): ApiJson<CopyRequest>,
+) -> Result<Json<CopyReport>, ApiError> {
+    local_only(peer.as_ref())?;
+    if !valid_id(&id) {
+        return Err(ApiError::bad_request("invalid host id"));
+    }
+    if input.providers.len() + input.bots.len() > MAX_ITEMS {
+        return Err(ApiError::bad_request("too many items in one copy"));
+    }
+    let links = links(&s)?;
+    let Ok(_running) = RUNNING.try_lock() else {
+        return Err(ApiError::conflict("a copy is already running"));
+    };
+    // Names only: never a key, a profile or a ticket.
+    audit(
+        &s,
+        "host_link.copy_setup",
+        &serde_json::json!({"host": id, "providers": input.providers, "bots": input.bots,
+                            "default_model": input.default_model, "phase": "requested"}),
+    )?;
+    let cfg = ProviderConfig::load(&config_path(&s.data_dir()))
+        .map_err(|e| ApiError::internal(format!("providers.toml: {e}")))?;
+    let store = s.secret_store();
+    let mut items = Vec::new();
+    // A refusal that no later item can fix (no capability, no secret store)
+    // stops the run; the remaining items are reported as skipped.
+    let mut stop: Option<String> = None;
+
+    for pid in &input.providers {
+        if let Some(code) = &stop {
+            items.push(item("provider", pid, pid, "skipped", Some(code)));
+            continue;
+        }
+        let Some(settings) = http_providers(&cfg).find(|p| &p.id == pid) else {
+            items.push(item("provider", pid, pid, "skipped", Some("not_copyable")));
+            continue;
+        };
+        // The key is read here, for this one ticked provider, and dropped
+        // after the request.
+        let key = match (&settings.key, &store) {
+            (Some(name), Some(store)) => store
+                .get(name.name())
+                .ok()
+                .flatten()
+                .map(|v| v.expose().to_owned()),
+            _ => None,
+        };
+        if settings.key.is_some() && key.is_none() {
+            items.push(item("provider", pid, pid, "failed", Some("key_unreadable")));
+            continue;
+        }
+        let mut body = serde_json::json!({"model": settings.default_model});
+        if let Some(k) = key {
+            body["api_key"] = k.into();
+        }
+        if let Some(custom) = &settings.custom {
+            body["base_url"] = custom.base_url.clone().into();
+        }
+        match links
+            .call(
+                &id,
+                "PUT",
+                &format!("/v1/admin/providers/{pid}"),
+                Some(body),
+            )
+            .await
+        {
+            Ok(call) if (200..300).contains(&call.status) => {
+                items.push(item("provider", pid, pid, "done", None));
+            }
+            Ok(call) => {
+                let code = call.body["error"]["code"]
+                    .as_str()
+                    .unwrap_or("rejected")
+                    .to_owned();
+                if matches!(
+                    code.as_str(),
+                    "host_admin_required" | "host_admin_forbidden" | "secrets_unavailable"
+                ) {
+                    stop = Some(code.clone());
+                }
+                items.push(item("provider", pid, pid, "failed", Some(&code)));
+            }
+            Err(e) => {
+                stop = Some(failure(&e));
+                items.push(item("provider", pid, pid, "failed", Some(&failure(&e))));
+            }
+        }
+    }
+
+    let local_bots = s.storage().list_bots(s.user_id())?;
+    let mut host_bot_names: Option<Vec<String>> = None;
+    for bid in &input.bots {
+        let Some(bot) = local_bots.iter().find(|b| &b.id.0.to_string() == bid) else {
+            items.push(item("bot", bid, bid, "skipped", Some("not_found")));
+            continue;
+        };
+        let name = bot.name.clone();
+        if let Some(code) = &stop {
+            items.push(item("bot", bid, &name, "skipped", Some(code)));
+            continue;
+        }
+        if bot_executor(&bot.config).is_some_and(|e| e.starts_with("cli:")) {
+            items.push(item("bot", bid, &name, "skipped", Some("cli_engine")));
+            continue;
+        }
+        if host_bot_names.is_none() {
+            host_bot_names = Some(
+                links
+                    .call(&id, "GET", "/v1/bots", None)
+                    .await
+                    .ok()
+                    .filter(|c| c.status == 200)
+                    .and_then(|c| c.body.as_array().cloned())
+                    .map(|bots| {
+                        bots.iter()
+                            .filter_map(|b| b["name"].as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            );
+        }
+        if host_bot_names.as_deref().is_some_and(|n| n.contains(&name)) {
+            items.push(item("bot", bid, &name, "skipped", Some("exists")));
+            continue;
+        }
+        let body = serde_json::json!({"name": name, "config": portable_config(&bot.config)});
+        match links.call(&id, "POST", "/v1/bots", Some(body)).await {
+            Ok(call) if (200..300).contains(&call.status) => {
+                items.push(item("bot", bid, &name, "done", None));
+            }
+            Ok(call) => {
+                let code = call.body["error"]["code"]
+                    .as_str()
+                    .unwrap_or("rejected")
+                    .to_owned();
+                items.push(item("bot", bid, &name, "failed", Some(&code)));
+            }
+            Err(e) => {
+                stop = Some(failure(&e));
+                items.push(item("bot", bid, &name, "failed", Some(&failure(&e))));
+            }
+        }
+    }
+
+    if input.default_model {
+        let default = cfg
+            .effective_default()
+            .filter(|d| !d.id.starts_with("cli:"));
+        match (default, &stop) {
+            (_, Some(code)) => {
+                items.push(item("default", "default", "default", "skipped", Some(code)));
+            }
+            (None, None) => items.push(item(
+                "default",
+                "default",
+                "default",
+                "skipped",
+                Some("no_default"),
+            )),
+            (Some(d), None) => {
+                let body = serde_json::json!({"id": d.id, "model": d.default_model});
+                let result = links
+                    .call(&id, "PUT", "/v1/admin/default-provider", Some(body))
+                    .await;
+                items.push(match result {
+                    Ok(call) if (200..300).contains(&call.status) => {
+                        item("default", "default", &d.id, "done", None)
+                    }
+                    Ok(call) => item(
+                        "default",
+                        "default",
+                        &d.id,
+                        "failed",
+                        Some(call.body["error"]["code"].as_str().unwrap_or("rejected")),
+                    ),
+                    Err(e) => item("default", "default", &d.id, "failed", Some(&failure(&e))),
+                });
+            }
+        }
+    }
+    let moved = items.iter().any(|i| i.status == "done");
+    if input.set_home && moved && stop.is_none() {
+        let host_ok = links
+            .call(
+                &id,
+                "PUT",
+                "/v1/admin/home",
+                Some(serde_json::json!({"adopted": true})),
+            )
+            .await
+            .is_ok_and(|c| (200..300).contains(&c.status));
+        let local_ok = std::fs::write(
+            s.data_dir().join(LOCAL_HOME_FILE),
+            serde_json::json!({"host_id": id}).to_string(),
+        )
+        .is_ok();
+        items.push(item(
+            "home",
+            "home",
+            "home",
+            if host_ok && local_ok {
+                "done"
+            } else {
+                "failed"
+            },
+            (!(host_ok && local_ok)).then_some("home_not_recorded"),
+        ));
+    }
+    audit(
+        &s,
+        "host_link.copy_setup",
+        &serde_json::json!({"host": id, "phase": "done",
+            "done": items.iter().filter(|i| i.status == "done").count(),
+            "failed": items.iter().filter(|i| i.status == "failed").count()}),
+    )?;
+    Ok(Json(CopyReport { items }))
+}

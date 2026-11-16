@@ -189,6 +189,7 @@ struct LeaderInner {
     state: WeakAppState,
     network: Mutex<Option<PeerNetwork>>,
     invites: Mutex<std::collections::VecDeque<std::time::Instant>>,
+    admin_calls: Mutex<std::collections::VecDeque<std::time::Instant>>,
     events: tokio::sync::broadcast::Sender<HostEvent>,
     peer_check_timeout: Mutex<Duration>,
 }
@@ -204,6 +205,7 @@ impl LeaderControl {
             state,
             network: Mutex::new(None),
             invites: Mutex::default(),
+            admin_calls: Mutex::default(),
             events: tokio::sync::broadcast::channel(64).0,
             peer_check_timeout: Mutex::new(PEER_CHECK_TIMEOUT),
         }))
@@ -241,6 +243,43 @@ impl LeaderControl {
         }
         invites.push_back(now);
         Ok(())
+    }
+
+    /// Admission for one host-administration call: a sliding minute window
+    /// shared by every administrator, so a stuck client cannot hammer the
+    /// secret store or `providers.toml`.
+    pub(crate) fn admit_admin_call(&self) -> Result<(), ApiError> {
+        let mut calls = self.0.admin_calls.lock();
+        let now = std::time::Instant::now();
+        while calls
+            .front()
+            .is_some_and(|time| now.duration_since(*time) >= Duration::from_secs(60))
+        {
+            calls.pop_front();
+        }
+        if calls.len() >= crate::host_admin::MAX_ADMIN_CALLS_PER_MINUTE {
+            return Err(ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "admin_rate_limit",
+                "too many administration calls; wait a minute",
+            ));
+        }
+        calls.push_back(now);
+        Ok(())
+    }
+
+    /// Whether the paired device `key` currently holds host administration.
+    /// Read from the pairing store on every call: a revoke or a withdrawn
+    /// grant takes effect on the very next request of a live connection.
+    #[must_use]
+    pub(crate) fn peer_is_admin(&self, key: &str) -> bool {
+        let Some(net) = self.network() else {
+            return false;
+        };
+        peer_network::key_from_string(key)
+            .ok()
+            .and_then(|k| net.device(&k))
+            .is_some_and(|d| d.admin && d.role == Role::Desktop)
     }
 
     /// Attach the already-running peer endpoint and publish our ownership state.
@@ -662,6 +701,8 @@ pub struct HostPeer {
     pub role: String,
     pub online: bool,
     pub last_seen_ms: Option<i64>,
+    /// The device holds host administration (may send keys and settings here).
+    pub admin: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -704,6 +745,15 @@ impl InviteRole {
 pub struct HostInviteInput {
     pub role: InviteRole,
     pub ttl_secs: Option<u64>,
+    /// Pair a desktop WITH host administration (default: yes for a desktop
+    /// invite created by the local owner; a paired peer can never set it).
+    #[serde(default)]
+    pub admin: Option<bool>,
+}
+/// `PUT /v1/host/devices/{key}/admin`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct HostAdminInput {
+    pub enabled: bool,
 }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct HostInvite {
@@ -732,6 +782,7 @@ pub(crate) async fn status(State(s): State<AppState>) -> Json<HostStatus> {
                     key: d.id,
                     name: d.name,
                     role: d.role.to_string(),
+                    admin: d.admin && d.role == Role::Desktop,
                     online: net.is_connected(&key),
                     last_seen_ms: net.last_seen(&key).map(|t| {
                         storage::now_ms().saturating_sub(
@@ -803,8 +854,12 @@ pub(crate) async fn invite(
         &serde_json::json!({"role":input.role,"ttl_secs":ttl,"phase":"requested"}),
     )?;
     s.leader().admit_invite()?;
+    // Host administration is granted at pairing only when the OWNER asks
+    // for it on this installation (no paired peer, whatever its role).
+    let admin =
+        peer.is_none() && matches!(input.role, InviteRole::Desktop) && input.admin.unwrap_or(true);
     let invite = net
-        .create_invite_with_ttl(input.role.peer_role(), Duration::from_secs(ttl))
+        .create_invite_with_options(input.role.peer_role(), Duration::from_secs(ttl), admin)
         .await;
     let qr = qrcode::QrCode::new(invite.ticket.as_bytes()).map_err(ApiError::internal)?;
     // The installer does not implement --join yet. Do not return a broken command.
@@ -852,6 +907,40 @@ pub(crate) async fn revoke(
         return Err(ApiError::not_found("device"));
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The owner of this installation (not a paired peer) grants or withdraws host
+/// administration for a paired desktop. This is the one confirmation step for a
+/// desktop that was paired before the capability existed. Audited.
+#[utoipa::path(put, operation_id = "host_set_admin", path = "/v1/host/devices/{key}/admin", tag = "host", security(("bearer" = [])), params(("key" = String, Path)), request_body = HostAdminInput, responses((status = 204), (status = 403, body = crate::error::ErrorBody), (status = 404, body = crate::error::ErrorBody)))]
+pub(crate) async fn set_admin(
+    State(s): State<AppState>,
+    Param(key): Param<String>,
+    peer: Option<Extension<crate::PeerIdentity>>,
+    ApiJson(input): ApiJson<HostAdminInput>,
+) -> Result<StatusCode, ApiError> {
+    if peer.is_some() {
+        return Err(ApiError::forbidden(
+            "host administration is granted on the host itself",
+        ));
+    }
+    let key =
+        peer_network::key_from_string(&key).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let net = s
+        .leader()
+        .network()
+        .ok_or_else(|| ApiError::conflict("peer networking is disabled"))?;
+    s.leader().audit(
+        &actor(peer.as_ref()),
+        "host.admin_grant",
+        &serde_json::json!({"target":key.to_string(),"enabled":input.enabled,"phase":"requested"}),
+    )?;
+    match net.set_device_admin(&key, input.enabled) {
+        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(false) => Err(ApiError::not_found("device")),
+        Err(peer_network::PeerError::Protocol(m)) => Err(ApiError::bad_request(m)),
+        Err(e) => Err(ApiError::internal(e)),
+    }
 }
 
 #[utoipa::path(post, operation_id = "host_standby", path = "/v1/host/standby", tag = "host", security(("bearer" = [])), responses((status = 200, body = HostConfig)))]

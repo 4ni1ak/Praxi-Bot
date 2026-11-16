@@ -333,18 +333,15 @@ pub(crate) async fn create_bot(
         return Err(engine_in_profile());
     }
     crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
+    // The owner's desktop with host administration acts as the owner here.
+    let owner = s.bot_authority_peer(peer.as_ref().map(|peer| &peer.0));
     crate::peer::protect_execution_config(
-        peer.as_ref().map(|peer| &peer.0),
+        owner,
         s.leader().config().mode == crate::host::HostMode::Host,
         None,
         &mut config,
     )?;
-    crate::file_access::guard_files_config(
-        &s,
-        peer.as_ref().map(|peer| &peer.0),
-        None,
-        &mut config,
-    )?;
+    crate::file_access::guard_files_config(&s, owner, None, &mut config)?;
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -458,18 +455,14 @@ pub(crate) async fn update_bot(
         bot.config.get("knowledge"),
         &mut config,
     )?;
+    let owner = s.bot_authority_peer(peer.as_ref().map(|peer| &peer.0));
     crate::peer::protect_execution_config(
-        peer.as_ref().map(|peer| &peer.0),
+        owner,
         s.leader().config().mode == crate::host::HostMode::Host,
         Some(&bot.config),
         &mut config,
     )?;
-    crate::file_access::guard_files_config(
-        &s,
-        peer.as_ref().map(|peer| &peer.0),
-        bot.config.get("files"),
-        &mut config,
-    )?;
+    crate::file_access::guard_files_config(&s, owner, bot.config.get("files"), &mut config)?;
     // Engine settings (who runs files and shell) change only through
     // `PUT /v1/bots/{id}/engine`: an edit keeps the stored table, and a profile
     // that carries a different one is refused.

@@ -588,6 +588,7 @@ mod tests {
             addr: None,
             paired_at: 1,
             pairing_generation: "test".into(),
+            admin: false,
         };
 
         assert!(is_remote_desktop_candidate(&make_device(
@@ -697,6 +698,7 @@ mod tests {
             addr: None,
             paired_at: 1,
             pairing_generation: "pair-1".into(),
+            admin: false,
         };
         assert!(cached.matches(&device));
         device.pairing_generation = "pair-2".into();

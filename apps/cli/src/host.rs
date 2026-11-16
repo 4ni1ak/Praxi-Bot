@@ -45,6 +45,20 @@ pub enum HostCmd {
         #[arg(long)]
         revoke: bool,
     },
+    /// Let a paired desktop send model keys, bots and settings to this host
+    /// (host administration). Local only: run it on the host. Needed once for
+    /// a desktop paired before this existed; new desktop invites grant it.
+    Admin {
+        /// Paired device key from `bot host devices`.
+        #[arg(required_unless_present = "all_desktops")]
+        key: Option<String>,
+        /// Every paired device with the desktop role.
+        #[arg(long, conflicts_with = "key")]
+        all_desktops: bool,
+        /// Withdraw the capability instead of granting it.
+        #[arg(long)]
+        revoke: bool,
+    },
     /// Provision your own server over SSH: add, repair, upgrade, remove.
     #[command(flatten)]
     Provision(crate::host_provision::ProvisionCmd),
@@ -145,6 +159,31 @@ pub async fn run(
         }
         return Ok(());
     }
+    if let HostCmd::Admin {
+        key,
+        all_desktops,
+        revoke,
+    } = action
+    {
+        for key in screen_targets(client, key.as_deref(), *all_desktops).await? {
+            client
+                .request(
+                    Method::PUT,
+                    &format!("/v1/host/devices/{key}/admin"),
+                    Some(json!({"enabled": !revoke})),
+                )
+                .await?;
+            if *revoke {
+                writeln!(out, "{key}: host administration withdrawn")?;
+            } else {
+                writeln!(
+                    out,
+                    "{key}: may now send model keys, bots and settings to this host"
+                )?;
+            }
+        }
+        return Ok(());
+    }
     let (method, path, body) = match action {
         HostCmd::Status | HostCmd::Devices => (Method::GET, "/v1/host".into(), None),
         HostCmd::Invite { role } => (
@@ -162,7 +201,10 @@ pub async fn run(
             "/v1/host/activate".into(),
             Some(json!({"force": force})),
         ),
-        HostCmd::Join { .. } | HostCmd::Screen { .. } | HostCmd::Provision(_) => {
+        HostCmd::Join { .. }
+        | HostCmd::Screen { .. }
+        | HostCmd::Admin { .. }
+        | HostCmd::Provision(_) => {
             return Err("this command is local only".into());
         }
     };

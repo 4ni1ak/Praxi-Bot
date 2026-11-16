@@ -3,6 +3,14 @@ import type { Connection } from "./connection";
 import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
 import type {
   AcceptedResponse,
+  AdminCliEngine,
+  AdminProvider,
+  AdminProviderInput,
+  AdminState,
+  CopyPlan,
+  CopyReport,
+  CopyRequest,
+  HomeInfo,
   Approval,
   Bot,
   BotEngineInput,
@@ -284,6 +292,32 @@ export class ApiClient {
   /** Paired hosts and their channel state (this computer's own daemon). */
   listHosts(): Promise<HostLinkList> {
     return this.request("GET", "/hosts");
+  }
+  /** What "make this server my bots' home" could send (names only; local daemon). */
+  copyPlan(hostId: string): Promise<CopyPlan> {
+    return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/copy-setup`);
+  }
+  /** Send the ticked items; the LOCAL daemon reads the keys, the app never sees them. */
+  copySetup(hostId: string, input: CopyRequest): Promise<CopyReport> {
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/copy-setup`, { body: input });
+  }
+  /** The host adopted as the bots' home, if any. */
+  homeInfo(): Promise<HomeInfo> {
+    return this.request("GET", "/hosts/home");
+  }
+  // ---- host administration (call on a client connected to the HOST) -----
+  adminState(): Promise<AdminState> {
+    return this.request("GET", "/admin/state");
+  }
+  /** The key is write-only; the host stores it in its secret store. */
+  adminPutProvider(id: string, input: AdminProviderInput): Promise<AdminProvider> {
+    return this.request("PUT", `/admin/providers/${encodeURIComponent(id)}`, { body: input });
+  }
+  adminSetDefault(id: string, model?: string): Promise<AdminProvider> {
+    return this.request("PUT", "/admin/default-provider", { body: { id, model } });
+  }
+  adminCliEngines(): Promise<AdminCliEngine[]> {
+    return this.request("GET", "/admin/cli-engines");
   }
   /** Pair with a host using the ticket from `bot host invite --role desktop`. */
   pairHost(ticket: string): Promise<HostLinkInfo> {

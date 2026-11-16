@@ -216,6 +216,39 @@ impl HostLinks for CliHostLinks {
         self.open.lock().remove(id).is_some()
     }
 
+    async fn call(
+        &self,
+        id: &str,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<daemon_api::host_links::HostCall, HostLinkError> {
+        // Only administration, bot and health paths of the host API.
+        if !(path.starts_with("/v1/admin/") || path.starts_with("/v1/bots")) {
+            return Err(HostLinkError::Invalid("path not allowed".into()));
+        }
+        let conn = self.connect(id).await?;
+        let method = reqwest::Method::from_bytes(method.as_bytes())
+            .map_err(|_| HostLinkError::Invalid("bad method".into()))?;
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(40))
+            .build()
+            .map_err(|e| HostLinkError::Failed(safe(e)))?;
+        let mut req = http
+            .request(method, format!("{}{path}", conn.base_url))
+            .bearer_auth(&conn.token);
+        if let Some(body) = body {
+            req = req.json(&body);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|_| HostLinkError::Failed("the host did not answer".into()))?;
+        let status = resp.status().as_u16();
+        let body = resp.json().await.unwrap_or(serde_json::Value::Null);
+        Ok(daemon_api::host_links::HostCall { status, body })
+    }
+
     async fn forget(&self, id: &str) -> bool {
         let Some(device) = self
             .devices()

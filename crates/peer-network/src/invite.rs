@@ -132,6 +132,8 @@ struct Pending {
     secret: String,
     code: String,
     role: Role,
+    /// The paired device gets host administration (owner-issued invites only).
+    admin: bool,
     expires: Instant,
     failed: u32,
 }
@@ -152,7 +154,7 @@ fn ct_eq(a: &str, b: &str) -> bool {
 
 impl InviteBook {
     /// Create an invite; returns `(secret, code)`.
-    pub(crate) fn create(&self, role: Role, ttl: Duration) -> (String, String) {
+    pub(crate) fn create(&self, role: Role, ttl: Duration, admin: bool) -> (String, String) {
         // The iroh key generator is a CSPRNG; reuse it instead of another rand dependency.
         let secret = data_encoding::HEXLOWER.encode(&iroh::SecretKey::generate().to_bytes());
         let seed = iroh::SecretKey::generate().to_bytes();
@@ -165,6 +167,7 @@ impl InviteBook {
             secret: secret.clone(),
             code: code.clone(),
             role,
+            admin,
             expires: now + ttl,
             failed: 0,
         });
@@ -177,7 +180,7 @@ impl InviteBook {
         secret: &str,
         code: &str,
         role: Role,
-    ) -> std::result::Result<(), RedeemError> {
+    ) -> std::result::Result<bool, RedeemError> {
         let now = Instant::now();
         let mut guard = self.pending.lock();
         let Some(idx) = guard.iter().position(|p| ct_eq(&p.secret, secret)) else {
@@ -201,8 +204,9 @@ impl InviteBook {
         if guard[idx].role != role {
             return Err(RedeemError::RoleMismatch);
         }
+        let admin = guard[idx].admin;
         guard.remove(idx);
-        Ok(())
+        Ok(admin)
     }
 }
 
@@ -239,15 +243,15 @@ mod tests {
     #[test]
     fn single_use() {
         let b = InviteBook::default();
-        let (s, c) = b.create(Role::Node, INVITE_TTL);
-        assert_eq!(b.redeem(&s, &c, Role::Node), Ok(()));
+        let (s, c) = b.create(Role::Node, INVITE_TTL, false);
+        assert_eq!(b.redeem(&s, &c, Role::Node), Ok(false));
         assert_eq!(b.redeem(&s, &c, Role::Node), Err(RedeemError::Invalid));
     }
 
     #[test]
     fn expired_is_reported_and_removed() {
         let b = InviteBook::default();
-        let (s, c) = b.create(Role::Node, Duration::ZERO);
+        let (s, c) = b.create(Role::Node, Duration::ZERO, false);
         assert_eq!(b.redeem(&s, &c, Role::Node), Err(RedeemError::Expired));
         assert_eq!(b.redeem(&s, &c, Role::Node), Err(RedeemError::Invalid));
     }
@@ -255,7 +259,7 @@ mod tests {
     #[test]
     fn wrong_code_and_role_do_not_consume_until_cap() {
         let b = InviteBook::default();
-        let (s, c) = b.create(Role::Node, INVITE_TTL);
+        let (s, c) = b.create(Role::Node, INVITE_TTL, false);
         assert_eq!(
             b.redeem(&s, "000000x", Role::Node),
             Err(RedeemError::Invalid)
@@ -264,13 +268,13 @@ mod tests {
             b.redeem(&s, &c, Role::Phone),
             Err(RedeemError::RoleMismatch)
         );
-        assert_eq!(b.redeem(&s, &c, Role::Node), Ok(()));
+        assert_eq!(b.redeem(&s, &c, Role::Node), Ok(false));
     }
 
     #[test]
     fn guessing_burns_the_invite() {
         let b = InviteBook::default();
-        let (s, c) = b.create(Role::Node, INVITE_TTL);
+        let (s, c) = b.create(Role::Node, INVITE_TTL, false);
         for _ in 0..MAX_FAILED {
             let _ = b.redeem(&s, "wrong!", Role::Node);
         }
@@ -280,20 +284,20 @@ mod tests {
     #[test]
     fn unknown_secret_does_not_destroy_live_invites() {
         let b = InviteBook::default();
-        let (s, c) = b.create(Role::Node, INVITE_TTL);
+        let (s, c) = b.create(Role::Node, INVITE_TTL, false);
         for _ in 0..(MAX_FAILED * 4) {
             assert_eq!(
                 b.redeem("deadbeef", "000000", Role::Node),
                 Err(RedeemError::Invalid)
             );
         }
-        assert_eq!(b.redeem(&s, &c, Role::Node), Ok(()));
+        assert_eq!(b.redeem(&s, &c, Role::Node), Ok(false));
     }
 
     #[test]
     fn code_is_six_digits() {
         let b = InviteBook::default();
-        let (_, c) = b.create(Role::Node, INVITE_TTL);
+        let (_, c) = b.create(Role::Node, INVITE_TTL, false);
         assert_eq!(c.len(), 6);
         assert!(c.chars().all(|ch| ch.is_ascii_digit()));
     }

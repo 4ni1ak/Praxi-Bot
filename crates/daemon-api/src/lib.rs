@@ -30,6 +30,8 @@ pub mod fake;
 mod file_access;
 mod fill_routes;
 pub mod host;
+pub mod host_admin;
+pub mod host_copy;
 pub mod host_links;
 pub mod host_setup;
 mod knowledge;
@@ -947,6 +949,11 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/hosts", get(host_links::list))
         .route("/v1/hosts/pair", post(host_links::pair))
         .route("/v1/hosts/{id}", axum::routing::delete(host_links::forget))
+        .route("/v1/hosts/home", get(host_copy::home))
+        .route(
+            "/v1/hosts/{id}/copy-setup",
+            get(host_copy::plan).post(host_copy::copy),
+        )
         .route("/v1/hosts/setup", post(host_setup::start))
         .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
         .route("/v1/hosts/setup/{job}", get(host_setup::get))
@@ -961,6 +968,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/host/devices/{key}",
             axum::routing::delete(host::revoke),
         )
+        .route("/v1/host/devices/{key}/admin", put(host::set_admin))
         .route("/v1/host/standby", post(host::standby))
         .route("/v1/host/activate", post(host::activate))
         .route("/v1/host/update", post(host::update))
@@ -1221,6 +1229,7 @@ fn api_routes() -> Router<AppState> {
             axum::routing::delete(f::revoke_fill_grant),
         )
         .route("/v1/events", get(sse::events))
+        .merge(host_admin::routes())
 }
 
 /// Serve the API on `listener` until `shutdown` completes.

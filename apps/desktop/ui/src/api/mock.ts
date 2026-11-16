@@ -626,6 +626,35 @@ export class MockApiClient extends ApiClient {
       if (seg[3] === "cancel") return ok(this.hostSetup.cancel(seg[2]));
       return ok(this.hostSetup.get(seg[2]));
     }
+    if (seg[0] === "hosts" && seg[1] === "home") return ok({ host_id: null });
+    if (seg[0] === "hosts" && seg[2] === "copy-setup") {
+      if (method === "GET") {
+        return ok({
+          providers: [
+            { id: "gemini", has_key: true, model: "gemini-3.5-flash-lite", custom: false },
+            { id: "openrouter", has_key: true, model: null, custom: false },
+            { id: "local-llm", has_key: false, model: "qwen3", custom: true }
+          ],
+          bots: this.bots.slice(0, 3).map((b) => ({ id: b.id, name: b.name, model: null, blocked: null })),
+          default_provider: "gemini",
+          default_model: "gemini-3.5-flash-lite",
+          host_accepts: true,
+          host_code: null,
+          host_command: null
+        });
+      }
+      const req = (opts.body ?? {}) as { providers?: string[]; bots?: string[]; default_model?: boolean; set_home?: boolean };
+      const items = [
+        ...(req.providers ?? []).map((id) => ({ kind: "provider", id, name: id, status: "done", code: null })),
+        ...(req.bots ?? []).map((id, i) => ({
+          kind: "bot", id, name: this.bots.find((b) => b.id === id)?.name ?? id,
+          status: i === 0 ? "skipped" : "done", code: i === 0 ? "exists" : null
+        })),
+        ...(req.default_model ? [{ kind: "default", id: "default", name: "gemini", status: "done", code: null }] : []),
+        ...(req.set_home ? [{ kind: "home", id: "home", name: "home", status: "done", code: null }] : [])
+      ];
+      return ok({ items });
+    }
     if (seg[0] === "bots" && seg[2] === "knowledge") {
       if (!this.bots.some((bot) => bot.id === seg[1])) throw new ApiError(404, "not_found", "bot");
       const bot = seg[1];
