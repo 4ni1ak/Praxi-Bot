@@ -9,6 +9,7 @@ import {
   Zap
 } from "lucide-react";
 import {
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
   useCallback,
@@ -50,6 +51,8 @@ import {
   showJumpToLatest,
   showRouteChip
 } from "../lib/chatLogic";
+import { botWriteMessage, writeBotProfile } from "../lib/botWrite";
+import { splitMentions } from "../lib/mentionText";
 import { modelGroups } from "../lib/modelPicker";
 import { type ChatRunPhase, runBarModel, singleRunStop } from "../lib/runBar";
 import {
@@ -199,16 +202,15 @@ export function ChatView({
       return;
     }
     try {
-      const draft = draftFromBot(bot);
-      draft.executor = parseModelRef(ref);
-      await client.updateBot(bot.id, {
-        name: bot.name,
-        config: configFromDraft(draft, bot)
+      await writeBotProfile(client, bot, (current) => {
+        const draft = draftFromBot(current);
+        draft.executor = parseModelRef(ref);
+        return { name: current.name, config: configFromDraft(draft, current) };
       });
       await refreshBots();
       toast.show(t("modelPicker.switched", { model: ref }), "success");
     } catch (e) {
-      toast.show(e instanceof Error ? e.message : String(e), "danger");
+      toast.show(botWriteMessage(e, t), "danger");
     }
   };
 
@@ -700,7 +702,18 @@ export function ChatView({
     botId && botId !== chat?.bot_id ? bots.find((b) => b.id === botId) : undefined;
   const runGuest = (runId: string) => guestBot(runs.find((r) => r.id === runId)?.bot_id);
   const botAvatarFor = (decorative: boolean, size: "xs" | "sm" = "sm", guest?: Bot) => <BotAvatar bot={guest ? botView(guest) : (view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" })} size={size} state={guest ? undefined : avatarState} decorative={decorative} />;
-  const guestName = (guest?: Bot) => guest ? <span className={styles.authorName}>{botView(guest).name}</span> : null;
+  const mentionBots = useMemo(() => bots.map((b) => ({ name: b.name, color: botView(b).color })), [bots]);
+  // Another bot's reply: its own avatar (as in the sidebar) and its name in its colour above the bubble.
+  const guestName = (guest?: Bot) => {
+    if (!guest) return null;
+    const gv = botView(guest);
+    return (
+      <span className={styles.authorName} style={{ "--mention-color": gv.color } as CSSProperties} data-testid="guest-author">
+        <BotAvatar bot={gv} size="xs" decorative />
+        <span className={styles.authorLabel}>{gv.name}</span>
+      </span>
+    );
+  };
 
   const rememberRun = async (runId: string) => {
     if (!client) {
@@ -886,7 +899,15 @@ export function ChatView({
               case "user":
                 return (
                   <div key={e.key} className={styles.userRow}>
-                    <div className={styles.userBubble}>{e.text}</div>
+                    <div className={styles.userBubble}>
+                      {splitMentions(e.text, mentionBots).map((part, i) =>
+                        part.color ? (
+                          <span key={i} className={styles.mention} style={{ "--mention-color": part.color } as CSSProperties}>{part.text}</span>
+                        ) : (
+                          part.text
+                        )
+                      )}
+                    </div>
                   </div>
                 );
               case "assistant":

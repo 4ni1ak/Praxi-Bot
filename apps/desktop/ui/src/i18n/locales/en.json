@@ -239,6 +239,7 @@
     "details": "Daemon {{version}} · up {{uptime}} s {{mode}}"
   },
   "bots": {
+    "writeConflict": "This bot was changed somewhere else while you were saving. Reload it and try again.",
     "notFound": "This bot no longer exists.",
     "noModel": "No model",
     "newChat": "New chat",
@@ -1341,6 +1342,11 @@
     },
     "otherId": "Use \"{{id}}\" with {{provider}}",
     "recommended": "Recommended",
+    "listBundled": "Built-in fallback list: the CLI could not be asked.",
+    "listFresh": "Updated just now",
+    "listAge": "Updated {{hours}} h ago",
+    "refresh": "Refresh",
+    "refreshList": "Ask the CLI for its models again",
     "showAll": "All models ({{count}})",
     "noModels": "Type a model id in the search to use one.",
     "sectionCli": "Coding CLIs (your subscription)",
