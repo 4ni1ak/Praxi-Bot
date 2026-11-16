@@ -350,6 +350,14 @@ impl ControlHub {
         (!left.is_zero()).then_some((mode, left))
     }
 
+    /// The desktop app's heartbeat is live (it reported within the TTL). A
+    /// computer served to a paired host stops serving when the owner's UI is
+    /// not running.
+    #[must_use]
+    pub fn owner_ui_live(&self) -> bool {
+        self.registration().is_some()
+    }
+
     /// Last reported mode, including an expired registration. Heartbeat expiry
     /// changes liveness, not whether the next heartbeat is a mode transition.
     #[must_use]

@@ -1031,11 +1031,45 @@ pub fn serve(
                 }
             })
         };
+        // This computer as a target for a paired host's bots (card 258-A): the same
+        // desktop RPC a bot-node serves, behind the owner's per-host switch.
+        let pc_target = (!host_is_host).then(|| {
+            let access = Arc::new(crate::pc_target::AccessStore::open(data_dir));
+            let requests = Arc::new(daemon_api::pc_access::PcRequests::new());
+            let handler = local_desktop.clone().map(|backend| {
+                let audit = state.audit_writer_as("pc-target");
+                let hub = state.control_hub();
+                let live_hub = state.control_hub();
+                let masker = redactor.clone();
+                Arc::new(crate::pc_target::HostDesktopHandler::new(
+                    crate::pc_target::PcTargetDeps {
+                        raw: backend,
+                        data: data_dir.join(""),
+                        access: access.clone(),
+                        requests: requests.clone(),
+                        gate: hub,
+                        owner_ui_live: Arc::new(move || live_hub.owner_ui_live()),
+                        audit: Arc::new(move |action, detail| audit(action, &detail)),
+                        redact: Arc::new(move |text| masker.redact(text)),
+                        own_pid: std::process::id(),
+                    },
+                ))
+            });
+            crate::host_links::PcTarget {
+                access,
+                requests,
+                handler,
+            }
+        });
         let peer = crate::peer::start_server(
             data_dir,
             host_is_host,
             effective_peer_enabled,
             state.clone(),
+            pc_target
+                .as_ref()
+                .and_then(|pc| pc.handler.clone())
+                .map(|h| h as Arc<dyn peer_network::RpcHandler>),
         )
         .await?;
         if let Some(net) = peer.clone() {
@@ -1045,10 +1079,10 @@ pub fn serve(
         // has nobody at its screen to grant them again. Pairing
         // reconciliation below still revokes devices that are gone.
         state.load_screen_privileges().await;
-        if !host_is_host {
+        if let Some(pc) = pc_target {
             // This computer's links to paired hosts (`/v1/hosts`); the peer
             // endpoint starts lazily unless `--peer` already started one.
-            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone());
+            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone(), pc);
         }
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
         let computer = Arc::new(crate::computer::CliComputerProvider::new(

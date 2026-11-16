@@ -20,7 +20,7 @@ export const DAEMON_ERROR_CODES = [
   "email_provider_error", "engine_owner_only", "forbidden", "host_link_failed", "host_setup_conflict",
   "input_busy", "input_rate_limited", "internal", "invalid_mcp_grant", "invalid_signature",
   "invalid_skill", "invalid_skill_name", "invite_rate_limit", "knowledge_busy", "mcp_approval_timeout",
-  "mcp_rate_limit", "modified_since", "not_found", "payload_too_large", "precondition_required",
+  "mcp_rate_limit", "modified_since", "not_found", "owner_key_required", "payload_too_large", "precondition_required",
   "reload_failed", "repair_failed", "restore_in_progress", "resync_required", "run_files_in_use",
   "session_expired", "setup_required", "skill_conflict", "skill_contains_secret", "skill_not_found",
   "skill_storage", "skill_too_large", "too_many_requests", "too_many_skills", "too_many_streams",

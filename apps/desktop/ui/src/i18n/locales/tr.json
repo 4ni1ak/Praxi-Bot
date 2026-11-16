@@ -1004,6 +1004,10 @@
         "title": "Bunu yalnızca sahibi değiştirebilir",
         "hint": "Botun çalıştığı bilgisayardaki uygulamayı kullan."
       },
+      "owner_key_required": {
+        "title": "Bunu yalnızca bu bilgisayardaki Praxi uygulaması yapabilir",
+        "hint": "Bu bilgisayarın Praxi uygulamasını açıp işlemi orada yap."
+      },
       "forbidden": {
         "title": "Burada buna izin yok",
         "hint": "Bu işlem yalnızca botun çalıştığı bilgisayarda yapılabilir."
@@ -2873,6 +2877,28 @@
     "pair": "Eşleştir",
     "pairing": "Eşleştiriliyor…",
     "failed": "Eşleştirme olmadı. Sunucunun açık ve biletin yeni olduğunu kontrol et."
+  },
+  "computerAccess": {
+    "title": "Botlarım bu bilgisayarı kullanabilsin",
+    "description": "Eşleştirdiğin sunucular, yalnızca sen izin verirsen bu bilgisayarın ekranına bakıp işlem yapmak isteyebilir.",
+    "noServer": "Henüz eşleşmiş bir sunucu yok. Sunucu ekleyince botlarının bu bilgisayarı kullanmasına buradan izin verebilirsin.",
+    "explain": "Varsayılan olarak kapalı. Açıkken sunucudaki botlar bu bilgisayarın ekranına bakabilir. Tıklayan, yazan veya bir şey açan her işlem yine önce sana sorar; Durdur her zaman önceliklidir.",
+    "allow": "{{name}} üzerindeki botlar bu bilgisayarı kullanabilsin",
+    "askNote": "Bir şeyi değiştiren her işlem önce sana sorar.",
+    "requestTitle": "Bir bot bu bilgisayarda işlem yapmak istiyor",
+    "requestBody": "Bu sunucudaki bir bot bu bilgisayarda şunu yapmak istiyor:",
+    "allowOnce": "Bir kez izin ver",
+    "deny": "Reddet",
+    "alwaysRead": "{{name}} botları ekrana bakmadan önce sorma",
+    "alwaysReadNote": "Kapalıyken oturum başına bir kez sorulur. Praxi'nin kendi pencereleri asla gösterilmez.",
+    "looking": "{{name}} üzerindeki bir bot bu ekrana bakıyor",
+    "readTitle": "Bir sunucunun botları ekranına bakmak istiyor",
+    "fromServerName": "(sunucunun kendini adlandırdığı ad: {{name}})",
+    "fromServer": "Bu ad sunucudan gelir, bu bilgisayardan değil.",
+    "what": "İşlem",
+    "where": "Şuraya gider",
+    "details": "Tam olarak",
+    "allowSession": "Bu oturum için izin ver"
   },
   "hostMode": {
     "state": {

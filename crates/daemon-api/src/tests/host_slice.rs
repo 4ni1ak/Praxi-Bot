@@ -372,6 +372,8 @@ struct FakeLinks {
 impl HostLinks for FakeLinks {
     fn list(&self) -> Vec<HostLinkInfo> {
         vec![HostLinkInfo {
+            computer_access: false,
+            computer_access_always: false,
             id: "abc123".into(),
             name: "Oracle".into(),
             state: HostLinkState::Idle,
@@ -711,4 +713,47 @@ async fn server_setup_is_local_only_and_never_reaches_the_seam_from_a_peer() {
     );
     assert_eq!(*setup_seam.starts.lock(), 1);
     assert_eq!(count_audit(&t, "host_setup.start"), 1);
+}
+
+/// Review blocker 1 (card 258-A): the general API token alone, and even a
+/// forged app `Origin`, must not flip the "bots may use this computer" switch,
+/// list or answer approval cards; the owner key does.
+#[tokio::test]
+async fn computer_access_routes_need_the_owner_key_not_the_bearer_or_an_origin() {
+    const OWNER: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
+    let t = setup();
+    t.state.set_owner_key(OWNER.into());
+    t.state.set_host_links(Arc::new(FakeLinks::default()));
+    let (k, v) = auth();
+    let bearer_only = [(k, v.as_str())];
+    let forged_origin = [(k, v.as_str()), ("origin", "http://tauri.localhost")];
+    let owner = [(k, v.as_str()), ("x-praxi-owner-key", OWNER)];
+    let routes: [(Method, &str, Option<Value>); 3] = [
+        (Method::GET, "/v1/hosts/computer-requests", None),
+        (
+            Method::POST,
+            "/v1/hosts/computer-requests/abc",
+            Some(json!({"allow": true})),
+        ),
+        (
+            Method::PUT,
+            "/v1/hosts/abc123/computer-access",
+            Some(json!({"enabled": true})),
+        ),
+    ];
+    for (method, path, body) in &routes {
+        for headers in [&bearer_only[..], &forged_origin[..]] {
+            let r = send(&t.app, method.clone(), path, body.clone(), headers).await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN, "{method} {path}");
+        }
+    }
+    let r = send(
+        &t.app,
+        Method::GET,
+        "/v1/hosts/computer-requests",
+        None,
+        &owner,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "the owner key is accepted");
 }

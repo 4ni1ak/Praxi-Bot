@@ -177,6 +177,8 @@ struct Recorder(parking_lot::Mutex<Vec<(String, String, Option<Value>)>>);
 impl crate::host_links::HostLinks for Recorder {
     fn list(&self) -> Vec<crate::host_links::HostLinkInfo> {
         vec![crate::host_links::HostLinkInfo {
+            computer_access: false,
+            computer_access_always: false,
             id: "abc123".into(),
             name: "h".into(),
             state: crate::host_links::HostLinkState::Idle,

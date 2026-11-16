@@ -19,6 +19,7 @@ mod host_setup;
 mod mcp_host;
 mod mcp_paste;
 mod mcp_serve;
+mod pc_target;
 mod peer;
 mod presets;
 mod prompt;
