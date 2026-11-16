@@ -266,7 +266,7 @@ test("problems and the skills limit block Save before any request", async () => 
   assert.deepEqual(d.calls, []);
 });
 
-test("a rejected profile request is a failure with the message, nothing else runs, and a retry works", async () => {
+test("a rejected profile request is a failure with a human message, nothing else runs, and a retry works", async () => {
   const b = mkBot(baseConfig());
   const d = fakeDaemon(b);
   d.gate.fail = new Error("network down");
@@ -278,7 +278,8 @@ test("a rejected profile request is a failure with the message, nothing else run
       })
     );
   const failed = await run();
-  assert.deepEqual(failed, { kind: "failed", message: "network down" });
+  assert.equal(failed.kind, "failed");
+  assert.doesNotMatch(failed.kind === "failed" ? failed.message : "", /network down/); // raw text stays out of the UI
   assert.equal(skillsRan, 0);
   d.gate.fail = null;
   const retried = await run();

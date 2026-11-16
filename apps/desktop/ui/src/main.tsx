@@ -6,8 +6,7 @@ import "@fontsource-variable/geist/wght.css";
 import "@fontsource-variable/geist-mono/wght.css";
 import { App } from "./App";
 import "./global.css";
-import { i18n } from "./i18n";
-import { ApiClient } from "./api/client";
+import "./i18n";
 import { isTauriRuntime } from "./overlay/events";
 import { OverlayWindow } from "./overlay/OverlayWindow";
 import { WidgetWindow } from "./overlay/WidgetWindow";
@@ -90,5 +89,3 @@ createRoot(container).render(
   </StrictMode>
 );
 
-// Host refusals are shown as one translated sentence naming the server, on every screen.
-ApiClient.refusalText = (key, name) => i18n.t(`hostMode.refusal.${key}`, { name });

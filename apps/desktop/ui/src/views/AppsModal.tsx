@@ -36,9 +36,10 @@ import { useDaemon } from "../state/DaemonContext";
 import { useMcp } from "../state/useMcp";
 import styles from "./AppsModal.module.css";
 import { ComposioSection } from "./ComposioSection";
+import { humanLine } from "../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 /** Most bot faces shown next to an app; the rest collapse into "+n". */

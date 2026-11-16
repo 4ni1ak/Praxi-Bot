@@ -1,0 +1,199 @@
+import i18n from "i18next";
+import { hostRefusalKey } from "./hostMode.ts";
+
+/**
+ * The one place that turns "anything that went wrong" into words a person can act on:
+ * a title (what happened), a hint (what to do), an optional one-click action, and the raw text
+ * kept apart as `details` (shown only behind a "Details" disclosure, never as primary text).
+ *
+ * Input can be a daemon error envelope (`ApiError`: status + stable `code` + message), a network
+ * failure, a Tauri string error, a tool-result error text from the chat step chain, or anything
+ * thrown. Known codes map through a table; unknown ones fall back to the status class, then to a
+ * generic sentence.
+ */
+
+/** Every `code` the daemon can put in its error envelope (checked against the Rust sources by a test). */
+export const DAEMON_ERROR_CODES = [
+  "admin_rate_limit", "approval_once_only", "bad_composio_request", "bad_email_config", "bad_engine", "bad_mcp_config",
+  "bad_profile", "bad_request", "bad_schedule", "bad_web_config", "busy", "composio_error",
+  "composio_not_configured", "composio_rate_limited", "conflict", "could_not_verify", "disabled",
+  "email_provider_error", "engine_owner_only", "forbidden", "host_link_failed", "host_setup_conflict",
+  "input_busy", "input_rate_limited", "internal", "invalid_mcp_grant", "invalid_signature",
+  "invalid_skill", "invalid_skill_name", "invite_rate_limit", "knowledge_busy", "mcp_approval_timeout",
+  "mcp_rate_limit", "modified_since", "not_found", "payload_too_large", "precondition_required",
+  "reload_failed", "repair_failed", "restore_in_progress", "resync_required", "run_files_in_use",
+  "session_expired", "setup_required", "skill_conflict", "skill_contains_secret", "skill_not_found",
+  "skill_storage", "skill_too_large", "too_many_requests", "too_many_skills", "too_many_streams",
+  "unauthorized", "unavailable", "unsupported_media_type", "version_conflict", "view_media_type",
+  "view_quota"
+] as const;
+
+export type ErrorAction = "retry" | "reload" | "restartService" | "settings";
+
+export interface HumanError {
+  /** Stable key: the daemon code, a client code, or `generic`. */
+  code: string;
+  title: string;
+  hint: string;
+  action?: ErrorAction;
+  /** The raw text for the "Details" disclosure and for copying. */
+  details: string;
+}
+
+/** Codes that are worth a Retry / Reload / restart button. */
+const ACTIONS: Record<string, ErrorAction> = {
+  network: "restartService",
+  unauthorized: "restartService",
+  reload_failed: "restartService",
+  unavailable: "retry",
+  internal: "retry",
+  busy: "retry",
+  http_error: "retry",
+  timeout: "retry",
+  sendFailed: "retry",
+  conflict: "reload",
+  version_conflict: "reload",
+  precondition_required: "reload",
+  setup_required: "settings",
+  composio_not_configured: "settings",
+  disabled: "settings"
+};
+
+/** Status classes for a code the table does not know. */
+const STATUS_CODE: Record<number, string> = {
+  400: "bad_request",
+  401: "unauthorized",
+  403: "forbidden",
+  404: "not_found",
+  409: "conflict",
+  413: "payload_too_large",
+  415: "unsupported_media_type",
+  428: "precondition_required",
+  429: "too_many_requests",
+  503: "unavailable"
+};
+
+/** Raw-text patterns, for tool results and plain errors that carry no code. First match wins. */
+const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) => Record<string, string>)?]> = [
+  [/user is controlling the screen|observation paused/i, "toolScreenControl"],
+  [/`?([\w.-]+)`? was not found on path|command not found: ?`?([\w.-]+)/i, "toolMissingProgram", (m) => ({ name: m[1] ?? m[2] ?? "" })],
+  [/managed on the host itself/i, "hostManaged"],
+  [/expected_version|reload and retry/i, "codes.version_conflict"],
+  [/providers_require_app_daemon|_outside_tauri|daemon_unavailable/i, "desktop_only"],
+  [/denied|not allowed by the user|user rejected/i, "toolDenied"],
+  [/failed to fetch|networkerror|load failed|econnrefused|enotfound|fetch failed|connection (refused|reset|lost)/i, "network"],
+  [/timed? ?out|etimedout/i, "timeout"]
+];
+
+/** `t` that still returns a string before i18next is initialised (plain-node tests). */
+function tr(key: string, params?: Record<string, string>): string {
+  const v = i18n.t(key, params);
+  return typeof v === "string" ? v : key;
+}
+
+function hasKey(key: string): boolean {
+  return i18n.exists(`errors.${key}`);
+}
+
+function pack(key: string, code: string, details: string, params?: Record<string, string>): HumanError {
+  const base = key.startsWith("codes.") || hasKey(`${key}.title`) ? key : "generic";
+  return {
+    code,
+    title: tr(`errors.${base}.title`, params),
+    hint: tr(`errors.${base}.hint`, params),
+    action: ACTIONS[code] ?? ACTIONS[base.replace("codes.", "")],
+    details
+  };
+}
+
+interface Envelope {
+  host?: unknown;
+  status?: unknown;
+  code?: unknown;
+  message?: unknown;
+}
+
+function rawOf(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && typeof (err as Envelope).message === "string") {
+    return (err as Envelope).message as string;
+  }
+  try {
+    return JSON.stringify(err) ?? String(err);
+  } catch {
+    return String(err);
+  }
+}
+
+/** Describe any error for display. Pure apart from reading the current UI language. */
+export function humanError(err: unknown): HumanError {
+  const raw = rawOf(err);
+  const env = (err && typeof err === "object" ? err : {}) as Envelope;
+  const status = typeof env.status === "number" ? env.status : undefined;
+  const code = typeof env.code === "string" ? env.code : undefined;
+  const details = [status ? `HTTP ${status}` : "", code ?? "", raw].filter(Boolean).join(" · ");
+
+  // A paired host's refusal: one sentence naming the server (the raw daemon text stays in details).
+  const host = typeof env.host === "string" ? env.host : undefined;
+  const refusal = host ? hostRefusalKey(status, raw) : null;
+  if (host && refusal) {
+    return {
+      code: "host_refusal",
+      title: tr(`hostMode.refusal.${refusal}`, { name: host }),
+      hint: "",
+      details
+    };
+  }
+  if (code === "network") {
+    return pack("network", "network", details);
+  }
+  if (code && (DAEMON_ERROR_CODES as readonly string[]).includes(code)) {
+    return pack(`codes.${code}`, code, details);
+  }
+  // Pattern match first: it is more specific than a bare status class (a tool failure inside a 200,
+  // a Tauri string error, a message that names the program that is missing).
+  for (const [re, key, params] of PATTERNS) {
+    const m = re.exec(raw);
+    if (m) {
+      return pack(key, key.replace("codes.", ""), details, params?.(m));
+    }
+  }
+  if (status !== undefined && status > 0) {
+    const mapped = STATUS_CODE[status] ?? (status >= 500 ? "internal" : undefined);
+    if (mapped) {
+      return pack(`codes.${mapped}`, mapped, details);
+    }
+    return pack("http_error", "http_error", details);
+  }
+  return pack("generic", "generic", details);
+}
+
+/** One line for toasts: "Title. Hint". */
+export function humanLine(err: unknown): string {
+  const h = humanError(err);
+  return h.hint ? `${h.title}. ${h.hint}` : h.title;
+}
+
+/**
+ * A failed tool step in the chat: one human sentence (what the bot could not do and why).
+ * `text` is the tool result's error text; unknown text gets the generic "could not finish this step".
+ */
+export function humanToolError(text: string): HumanError {
+  const h = humanError(text);
+  return h.code === "generic" ? pack("toolFailed", "toolFailed", text) : h;
+}
+
+/** The local service's state, for the banner: starting, stopped, or the wrong target. */
+export type ServiceProblem = "starting" | "down" | "wrongTarget";
+
+export function humanService(problem: ServiceProblem, raw = ""): HumanError {
+  const key = problem === "starting" ? "serviceStarting" : problem === "down" ? "serviceDown" : "serviceWrongTarget";
+  return {
+    code: key,
+    title: tr(`errors.${key}.title`),
+    hint: tr(`errors.${key}.hint`),
+    action: problem === "starting" ? undefined : "restartService",
+    details: raw
+  };
+}

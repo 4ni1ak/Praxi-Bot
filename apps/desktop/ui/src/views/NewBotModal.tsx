@@ -34,7 +34,6 @@ import { invalidCustomRoles } from "../lib/botEditor";
 import { botHasAccess, changedApps, saveBotAndApps } from "../lib/mcpApps";
 import { botWriteMessage } from "../lib/botWrite";
 import { modelGroups } from "../lib/modelPicker";
-import { friendlyApiError } from "../lib/hostMode";
 import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
 import { useCustomText } from "../state/useCustomText";
 import styles from "./NewBotModal.module.css";
@@ -180,8 +179,7 @@ function NewBotDialogContent({
       }
       onDone(bot.id);
     } catch (err) {
-      const conflict = botWriteMessage(err, t);
-      setError(conflict === (err instanceof Error ? err.message : String(err)) ? friendlyApiError(err, t, host) : conflict);
+      setError(botWriteMessage(err, t));
     } finally {
       setSaving(false);
     }

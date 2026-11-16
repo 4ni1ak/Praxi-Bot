@@ -106,7 +106,7 @@
       "keyStored": "key stored",
       "noKey": "no key",
       "noKeyNeeded": "no key needed",
-      "offline": "Daemon offline — start the daemon to manage providers.",
+      "offline": "The local service is not running. Restart it to manage providers.",
       "test": "Test connection",
       "makeDefault": "Make default",
       "add": "Add a provider",
@@ -229,11 +229,11 @@
     "delete": "Delete"
   },
   "health": {
-    "connecting": "Starting daemon…",
-    "failed": "Daemon unavailable",
-    "offline": "Daemon offline",
+    "connecting": "Starting the local service…",
+    "failed": "Local service stopped",
+    "offline": "Local service offline",
     "reconnecting": "Reconnecting…",
-    "connected": "Daemon connected",
+    "connected": "Local service running",
     "retry": "Retry",
     "fakeProvider": "Fake provider",
     "details": "Daemon {{version}} · up {{uptime}} s {{mode}}"
@@ -912,6 +912,312 @@
   "control": {
     "starting": "Working…"
   },
+  "errors": {
+    "details": "Details",
+    "copy": "Copy details",
+    "copied": "Copied",
+    "retry": "Try again",
+    "reload": "Reload",
+    "restartService": "Restart the local service",
+    "restartApp": "Restart Praxi",
+    "openSettings": "Open Settings",
+    "retrying": "Trying again in {{seconds}} s",
+    "restarting": "Restarting…",
+    "codes": {
+      "admin_rate_limit": {
+        "title": "Too many administration changes",
+        "hint": "Wait a minute and try again."
+      },
+      "approval_once_only": {
+        "title": "This approval can only be given once",
+        "hint": "Allow it for this step only, or deny it."
+      },
+      "bad_composio_request": {
+        "title": "Composio did not understand the request",
+        "hint": "Check the app and the values you entered, then try again."
+      },
+      "bad_email_config": {
+        "title": "The email settings are not valid",
+        "hint": "Check the address, server and password, then save again."
+      },
+      "bad_engine": {
+        "title": "That engine setting is not valid",
+        "hint": "Pick one of the options in the list and save again."
+      },
+      "bad_mcp_config": {
+        "title": "The server settings are not valid",
+        "hint": "Check the command or address and try again."
+      },
+      "bad_profile": {
+        "title": "The bot's settings are not valid",
+        "hint": "Check the highlighted fields and save again."
+      },
+      "bad_request": {
+        "title": "That did not go through",
+        "hint": "Check what you entered and try again."
+      },
+      "bad_schedule": {
+        "title": "That schedule is not valid",
+        "hint": "Check the time or repeat rule and try again."
+      },
+      "bad_web_config": {
+        "title": "The web search settings are not valid",
+        "hint": "Check the key or address and save again."
+      },
+      "busy": {
+        "title": "Praxi is busy with something else",
+        "hint": "Wait a moment and try again."
+      },
+      "composio_error": {
+        "title": "Composio could not finish that",
+        "hint": "Try again in a moment. If it keeps failing, reconnect the app."
+      },
+      "composio_not_configured": {
+        "title": "Composio is not set up yet",
+        "hint": "Add your Composio key in Apps, then try again."
+      },
+      "composio_rate_limited": {
+        "title": "Composio is asking you to slow down",
+        "hint": "Wait a minute and try again."
+      },
+      "conflict": {
+        "title": "Someone changed this at the same time",
+        "hint": "Reload to see the latest version, then try again."
+      },
+      "could_not_verify": {
+        "title": "Some files could not be checked",
+        "hint": "They may have changed since the bot touched them. Look at them before restoring."
+      },
+      "disabled": {
+        "title": "This is switched off",
+        "hint": "Turn it on in Settings, then try again."
+      },
+      "email_provider_error": {
+        "title": "Your email provider refused the request",
+        "hint": "Check the account and password, then try again."
+      },
+      "engine_owner_only": {
+        "title": "Only the owner can change this",
+        "hint": "Use the app on the computer that runs the bot."
+      },
+      "forbidden": {
+        "title": "You are not allowed to do that here",
+        "hint": "This action is only available on the computer that runs the bot."
+      },
+      "host_link_failed": {
+        "title": "Could not reach that computer",
+        "hint": "Check that it is on and online, then try again."
+      },
+      "host_setup_conflict": {
+        "title": "That computer is already being set up",
+        "hint": "Wait for the current setup to finish, then try again."
+      },
+      "input_busy": {
+        "title": "Someone else is already controlling the screen",
+        "hint": "Wait until they are done, or take over from the live view."
+      },
+      "input_rate_limited": {
+        "title": "Too many keystrokes at once",
+        "hint": "Slow down a little and try again."
+      },
+      "internal": {
+        "title": "Something went wrong inside Praxi",
+        "hint": "Try again. If it keeps happening, copy the details and report it."
+      },
+      "invalid_mcp_grant": {
+        "title": "That app access is not valid",
+        "hint": "Open the bot's apps and grant access again."
+      },
+      "invalid_signature": {
+        "title": "The request could not be verified",
+        "hint": "Check the secret that was set up for this trigger."
+      },
+      "invalid_skill": {
+        "title": "This skill is not valid",
+        "hint": "Check the skill's files and try again."
+      },
+      "invalid_skill_name": {
+        "title": "That skill name is not allowed",
+        "hint": "Use letters, numbers and dashes only."
+      },
+      "invite_rate_limit": {
+        "title": "Too many invitations",
+        "hint": "Wait a few minutes and try again."
+      },
+      "knowledge_busy": {
+        "title": "The knowledge base is busy",
+        "hint": "It is still reading your files. Try again in a moment."
+      },
+      "mcp_approval_timeout": {
+        "title": "The approval was not answered in time",
+        "hint": "Ask again and answer the approval card."
+      },
+      "mcp_rate_limit": {
+        "title": "That app is being asked too often",
+        "hint": "Wait a moment and try again."
+      },
+      "modified_since": {
+        "title": "Some files changed after the bot touched them",
+        "hint": "Restoring would overwrite your newer changes. Review them first."
+      },
+      "not_found": {
+        "title": "That no longer exists",
+        "hint": "It may have been deleted. Go back and pick another."
+      },
+      "payload_too_large": {
+        "title": "That is too large",
+        "hint": "Use a smaller file or fewer items."
+      },
+      "precondition_required": {
+        "title": "This page is out of date",
+        "hint": "Reload it to get the latest version, then make your change again."
+      },
+      "reload_failed": {
+        "title": "The new settings could not be loaded",
+        "hint": "Check them for mistakes, or restart the local service."
+      },
+      "repair_failed": {
+        "title": "The automatic fix did not work",
+        "hint": "Open Diagnostics for the next step, or restart Praxi."
+      },
+      "restore_in_progress": {
+        "title": "A restore is already running",
+        "hint": "Wait for it to finish."
+      },
+      "resync_required": {
+        "title": "The live view lost track of the screen",
+        "hint": "Reopen the live view to continue."
+      },
+      "run_files_in_use": {
+        "title": "Those files are in use right now",
+        "hint": "Wait for the bot to finish, then try again."
+      },
+      "session_expired": {
+        "title": "The live view session ended",
+        "hint": "Open the live view again."
+      },
+      "setup_required": {
+        "title": "Praxi needs a brain first",
+        "hint": "Connect a model in Settings, then try again."
+      },
+      "skill_conflict": {
+        "title": "A skill with that name already exists",
+        "hint": "Pick another name or replace the old one."
+      },
+      "skill_contains_secret": {
+        "title": "The skill seems to contain a password or key",
+        "hint": "Remove the secret from its files, then add it again."
+      },
+      "skill_not_found": {
+        "title": "That skill no longer exists",
+        "hint": "Reload the list."
+      },
+      "skill_storage": {
+        "title": "The skill could not be saved",
+        "hint": "Check that the disk has space, then try again."
+      },
+      "skill_too_large": {
+        "title": "That skill is too large",
+        "hint": "Remove big files from it and try again."
+      },
+      "too_many_requests": {
+        "title": "Too many requests",
+        "hint": "Wait a moment and try again."
+      },
+      "too_many_skills": {
+        "title": "This bot has too many skills",
+        "hint": "Remove one you no longer use."
+      },
+      "too_many_streams": {
+        "title": "Too many live views are open",
+        "hint": "Close one and try again."
+      },
+      "unauthorized": {
+        "title": "Praxi could not prove who you are",
+        "hint": "Restart the local service. If that does not help, restart Praxi."
+      },
+      "unavailable": {
+        "title": "That is not available right now",
+        "hint": "Try again in a moment."
+      },
+      "unsupported_media_type": {
+        "title": "That file type is not supported",
+        "hint": "Try another file."
+      },
+      "version_conflict": {
+        "title": "This was changed somewhere else",
+        "hint": "Reload to see the latest version, then make your change again."
+      },
+      "view_media_type": {
+        "title": "The live view could not start",
+        "hint": "Update Praxi, then open the live view again."
+      },
+      "view_quota": {
+        "title": "Too many live views are open",
+        "hint": "Close one and try again."
+      }
+    },
+    "network": {
+      "title": "Praxi cannot reach its local service",
+      "hint": "It may still be starting. Praxi will try again by itself; you can also restart the service."
+    },
+    "http_error": {
+      "title": "The service answered with a problem",
+      "hint": "Try again. If it keeps happening, copy the details and report it."
+    },
+    "timeout": {
+      "title": "That took too long",
+      "hint": "Check your connection and try again."
+    },
+    "events_disconnected": {
+      "title": "Live updates were interrupted",
+      "hint": "Praxi is reconnecting. Nothing is lost."
+    },
+    "desktop_only": {
+      "title": "This only works in the desktop app",
+      "hint": "Open Praxi on this computer and try again."
+    },
+    "generic": {
+      "title": "Something went wrong",
+      "hint": "Try again. If it keeps happening, copy the details and report it."
+    },
+    "toolScreenControl": {
+      "title": "The bot could not look at the screen",
+      "hint": "You are controlling it right now. Hand control back, then ask again."
+    },
+    "toolMissingProgram": {
+      "title": "{{name}} is not installed",
+      "hint": "Install {{name}}, then try again."
+    },
+    "toolDenied": {
+      "title": "You did not allow that step",
+      "hint": "Ask again and choose Allow when the card appears."
+    },
+    "toolFailed": {
+      "title": "The bot could not finish this step",
+      "hint": "Ask again, or describe the task differently."
+    },
+    "hostManaged": {
+      "title": "This is managed on the other computer",
+      "hint": "Change it in Praxi on the computer that runs the bot."
+    },
+    "sendFailed": {
+      "title": "Your message was not sent",
+      "hint": "Check the connection and try again."
+    },
+    "serviceStarting": {
+      "title": "Praxi's local service is starting",
+      "hint": "This takes a few seconds. Praxi keeps trying by itself."
+    },
+    "serviceDown": {
+      "title": "Praxi's local service stopped",
+      "hint": "Restart it. Your bots and chats are safe."
+    },
+    "serviceWrongTarget": {
+      "title": "Praxi is pointed at a service that does not answer",
+      "hint": "Switch back to This computer, or restart the local service."
+    }
+  },
   "firstRun": {
     "badge": "Setup",
     "skip": "Skip for now",
@@ -1451,7 +1757,7 @@
         "enabledToast": "{{name}} enabled.",
         "notInstalled": "Not installed",
         "detectError": "Could not check installed coding tools.",
-        "offline": "Connect to the daemon to inspect detected coding tools.",
+        "offline": "The local service is not running, so detected coding tools cannot be shown.",
         "signIn": "Sign in",
         "signInIn": "Run in a terminal:",
         "install": "Install",
@@ -1695,7 +2001,7 @@
       "reportFailed": "Could not create the support report",
       "repairDone": "Repair finished",
       "repairFailed": "The repair did not succeed",
-      "offline": "Not connected to the daemon. Start Praxi to run diagnostics.",
+      "offline": "The local service is not running. Restart it to run diagnostics.",
       "loadError": "Could not run diagnostics",
       "empty": "No checks were returned",
       "notOnPlatform": "Not available on this platform.",
@@ -2257,7 +2563,11 @@
   "botEmpty": {
     "title": "Start a chat with {{name}}",
     "body": "Nothing here yet. Ask for something, and the conversation will open in this space.",
-    "suggestionsTitle": "Try one of these"
+    "suggestionsTitle": "Try one of these",
+    "goneTitle": "This bot is gone",
+    "goneHint": "It may have been deleted, or it lives on another computer. Go to your first bot or create a new one.",
+    "goFirst": "Go to {{name}}",
+    "createBot": "Create a bot"
   },
   "botProfile": {
     "facts": "Created {{date}} · {{chats}} chats",

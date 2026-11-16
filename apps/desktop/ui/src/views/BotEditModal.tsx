@@ -55,6 +55,7 @@ import { useLeaveGuard } from "../state/LeaveGuard";
 import { type BotSkillsState, useSkillsDraft } from "../state/useBotSkills";
 import { useCustomText } from "../state/useCustomText";
 import styles from "./BotEditModal.module.css";
+import { humanLine } from "../lib/humanError";
 
 /** The section list turns into a horizontal strip at this width (see the stylesheet). */
 const STRIP_QUERY = "(width <= 52em)";
@@ -324,7 +325,7 @@ function BotEditDialog({
       toast.show(t("botEdit.deleted", { name: bot.name }), "info");
       onDeleted(bot.id);
     } catch (e) {
-      setDeleteError(e instanceof Error ? e.message : String(e));
+      setDeleteError(humanLine(e));
       setDeleting(false);
     }
   };

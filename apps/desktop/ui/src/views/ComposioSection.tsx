@@ -12,12 +12,13 @@ import { useDaemon } from "../state/DaemonContext";
 import { useComposio } from "../state/useComposio";
 import styles from "./AppsModal.module.css";
 import own from "./ComposioSection.module.css";
+import { humanLine } from "../lib/humanError";
 
 /** Data notice shown at connect; mail, documents and chat are named explicitly. */
 const SENSITIVE = new Set(["gmail", "googledrive", "outlook", "googledocs", "googlesheets", "slack", "whatsapp", "telegram", "discord"]);
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 function tone(state: ComposioApp["state"]): "ok" | "busy" | "bad" | "muted" {

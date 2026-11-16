@@ -75,6 +75,7 @@ import {
 } from "./controlBridge.ts";
 import { useDaemon } from "./DaemonContext.tsx";
 import { TakeoverStop } from "./takeoverStop.ts";
+import { humanLine } from "../lib/humanError";
 
 const SESSION_HEARTBEAT_MS = 5000;
 const CONTROL_POLL_MS = 5000;
@@ -825,7 +826,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       void refreshTargets();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "takeover_failed";
-      const message = err instanceof Error ? err.message : String(err);
+      const message = humanLine(err);
       updateState((prev) =>
         applyTakeoverFailed(prev, code, message, {
           retainRequestId: !(err instanceof ApiError)
@@ -1007,7 +1008,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       void refreshTargets();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "recover_failed";
-      const message = err instanceof Error ? err.message : String(err);
+      const message = humanLine(err);
       updateState((prev) => applyTakeoverFailed(prev, code, message));
     }
   }, [client, clearPause, controlState, refreshTargets, updateState]);

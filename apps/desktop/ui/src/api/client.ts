@@ -97,7 +97,6 @@ import type {
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 
 /** An error response of the daemon (`{"error": {"code", "message"}}`) or a network failure. */
-import { hostRefusalKey } from "../lib/hostMode.ts";
 
 /** A request that gets no answer for this long fails instead of hanging its screen forever. */
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -107,9 +106,12 @@ export class ApiError extends Error {
   readonly code: string;
   /** The parsed JSON body of the error response, when it had one (a `409` carries `current`). */
   readonly body?: unknown;
+  /** Name of the paired host the request went to, when it was not this computer (see `humanError`). */
+  readonly host?: string;
 
-  constructor(status: number, code: string, message: string, body?: unknown) {
+  constructor(status: number, code: string, message: string, body?: unknown, host?: string) {
     super(message);
+    this.host = host;
     this.name = "ApiError";
     this.status = status;
     this.code = code;
@@ -177,8 +179,6 @@ export class ApiClient {
   private readonly token: string;
   /** Name of the paired host this client talks to (null for this computer). */
   hostName: string | null = null;
-  /** Turns a host refusal key into a sentence (installed by the app with i18n; tests leave it). */
-  static refusalText: ((key: string, name: string) => string) | null = null;
   /** Aborts every request of this client when its computer is dropped (`dispose`). */
   private readonly life = new AbortController();
 
@@ -273,14 +273,7 @@ export class ApiClient {
       } catch {
         // not JSON
       }
-      // A host's refusal is shown as one human sentence naming the server, on every screen.
-      if (this.hostName !== null && ApiClient.refusalText) {
-        const key = hostRefusalKey(res.status, message);
-        if (key) {
-          message = ApiClient.refusalText(key, this.hostName);
-        }
-      }
-      throw new ApiError(res.status, code, message, parsed);
+      throw new ApiError(res.status, code, message, parsed, this.hostName ?? undefined);
     }
     return res;
   }

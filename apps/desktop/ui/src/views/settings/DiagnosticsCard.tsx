@@ -30,6 +30,7 @@ import {
 import { useDaemon } from "../../state/DaemonContext";
 import { notifyProvidersChanged } from "../../state/useProviders";
 import styles from "./DiagnosticsCard.module.css";
+import { humanLine } from "../../lib/humanError";
 
 const TONE_ICON = {
   ok: CircleCheck,
@@ -42,7 +43,7 @@ const TONE_ICON = {
 const PLATFORM_CHECKS = new Set(["desktop_automation", "capabilities"]);
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 /**
