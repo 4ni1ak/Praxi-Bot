@@ -2583,6 +2583,10 @@
         "msg": "This is not the server you set up before.",
         "fix": "Its identity changed and nothing was sent. If you rebuilt the server on purpose, remove it and add it again."
       },
+      "hostkey_unreadable": {
+        "msg": "Praxi reached the server but could not read its identity.",
+        "fix": "This computer's SSH program may be older than the server's. Update the OpenSSH client (Windows: Settings > Optional features, or install Git for Windows), then try again."
+      },
       "hostkey_declined": {
         "msg": "You did not trust this server.",
         "fix": "Compare the fingerprint with your provider's console, then try again."

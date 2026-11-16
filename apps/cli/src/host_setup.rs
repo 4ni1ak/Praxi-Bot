@@ -314,7 +314,7 @@ impl Worker {
                     "prepare",
                     "SSH client",
                     e.to_string(),
-                    "Install the OpenSSH client (the `ssh` and `ssh-keyscan` programs) and try again.",
+                    "Install the OpenSSH client (the `ssh` program) and try again.",
                 ));
                 return false;
             }

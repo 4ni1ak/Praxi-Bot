@@ -2583,6 +2583,10 @@
         "msg": "Bu, daha önce kurduğun sunucu değil.",
         "fix": "Kimliği değişti ve hiçbir şey gönderilmedi. Sunucuyu bilerek yeniden kurduysan kaldırıp yeniden ekle."
       },
+      "hostkey_unreadable": {
+        "msg": "Praxi sunucuya ulaştı ama kimliğini okuyamadı.",
+        "fix": "Bu bilgisayardaki SSH programı sunucununkinden eski olabilir. OpenSSH istemcisini güncelle (Windows: Ayarlar > İsteğe bağlı özellikler ya da Git for Windows kur), sonra tekrar dene."
+      },
       "hostkey_declined": {
         "msg": "Bu sunucuya güvenmedin.",
         "fix": "Parmak izini sağlayıcının konsoluyla karşılaştır, sonra tekrar dene."
