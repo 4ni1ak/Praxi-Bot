@@ -506,6 +506,8 @@ export function ApprovalCard({
               >
                 {t("chat.approval.thisChat")}
               </Button>
+              {/* A taint-gate card keeps its choice to this chat (tool class and site). */}
+              {why === "egress" || why === "executes" ? null : (
               <Button
                 size="sm"
                 variant="ghost"
@@ -514,6 +516,7 @@ export function ApprovalCard({
               >
                 {t("chat.approval.always")}
               </Button>
+              )}
             </>
           )}
           <Button

@@ -571,6 +571,10 @@ pub(crate) struct Grants {
     /// `(chat, bot, tool, computer)`: a grant given to one bot never covers another
     /// bot answering in the same chat (`@mention`).
     pub this_chat: HashSet<(ChatId, BotId, String, Option<String>)>,
+    /// `(chat, bot, tool class, destination class)`: "always allow for this chat" given to a
+    /// taint-gate card on a Full bot (see `Shared::gate_key`). Never covers a send, a payment,
+    /// a never-list command or a secret fill: those are not grantable.
+    pub gate_chat: HashSet<(ChatId, BotId, &'static str, String)>,
     /// Persisted rules, in creation order.
     pub always: Vec<Grant>,
 }

@@ -1085,7 +1085,8 @@ impl TurnExecutor {
             let tool = resolved.tool;
             let class = match &resolved.spec {
                 Some(spec) => PlannedClass {
-                    ingests_untrusted: spec.content.ingests_untrusted,
+                    ingests_untrusted: spec.content.ingests_untrusted
+                        || taint::arrived_from_outside(&resolved.name, &resolved.input),
                     reads_private: spec.content.reads_private,
                     label: taint::source_label(&resolved.name, &resolved.input),
                 },

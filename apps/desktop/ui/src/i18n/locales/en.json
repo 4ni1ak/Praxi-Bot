@@ -413,8 +413,8 @@
       },
       "why": {
         "policy": "This bot is set to ask before this kind of action.",
-        "egress": "It read something earlier in this chat, so sending data out asks first.",
-        "executes": "It read untrusted content, so typing, shell commands and launching programs ask first.",
+        "egress": "Untrusted content (a web page, mail, download) is in this chat, so sending data out asks first.",
+        "executes": "Untrusted content (a web page, mail, download) is in this chat, so typing, shell commands and launching programs ask first.",
         "always_ask": "This action always asks, whatever the permission level (apps, secrets).",
         "floor": "Payments and risky commands always ask, whatever the permission level."
       }

@@ -1862,7 +1862,9 @@ async fn reading_an_untrusted_skill_taints_only_the_run_that_loaded_it() {
 }
 
 #[tokio::test]
-async fn replace_all_noop_edit_taints_before_egress() {
+async fn a_private_only_read_does_not_gate_egress_even_under_the_full_preset() {
+    // The user's own file (an edit that reads it counts as a private read): no untrusted text
+    // is in the context, so nothing can tell the model to send it anywhere.
     let env = setup();
     let notes = env.dir.path().join("notes.txt");
     std::fs::write(&notes, "bank: 4 bank: 4").unwrap();
@@ -1872,20 +1874,30 @@ async fn replace_all_noop_edit_taints_before_egress() {
         PermissionCategory::Browser,
         ContentClass::untrusted_egress(),
     );
+    let open = egress_tool(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::all(),
+    );
     let fake = Fake::new(vec![
         calls(&[(
             "c1",
             "fs_edit",
             json!({"path": notes, "old": "bank: 4", "new": "bank: 4", "replace_all": true}),
         )]),
-        calls(&[("c2", "web_search", json!({"query": "bank: 4"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://example.com/a"}),
+        )]),
         text("done"),
     ]);
     let lp = make_loop(
         &env.storage,
         env.bot,
         &fake,
-        &[t(&search)],
+        &[t(&search), t(&open)],
         profile(""),
         cfg(Policy::full()),
     );
@@ -1894,20 +1906,25 @@ async fn replace_all_noop_edit_taints_before_egress() {
     }
     let mut rx = lp.subscribe();
     let run = lp.run_turn(env.chat, "edit then search").unwrap();
-    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
-    let Event::ApprovalNeeded(card) = event else {
-        unreachable!()
-    };
-    assert_eq!(card.tool_name, "web_search");
-    assert!(
-        tool_messages(&fake.request(1))
-            .join("\n")
-            .contains("replaced 2")
-    );
-    assert_eq!(search.count.load(Ordering::SeqCst), 0);
-    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+    let state = tokio::time::timeout(Duration::from_secs(10), lp.wait(run))
+        .await
+        .unwrap_or_else(|_| {
+            let mut asked = Vec::new();
+            while let Ok(item) = rx.try_recv() {
+                if let Event::ApprovalNeeded(a) = item.envelope.event {
+                    asked.push(format!("{} {:?}", a.tool_name, a.details));
+                }
+            }
+            panic!("a private read must not park the run on a card: {asked:?}")
+        })
         .unwrap();
-    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(search.count.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        open.count.load(Ordering::SeqCst),
+        1,
+        "opening a page after a private read"
+    );
 }
 
 #[tokio::test]
@@ -2169,13 +2186,17 @@ allow_egress_after_reads = true
         assert!(payload.contains("PLANTED"), "{name}: {payload}");
         let reason = details["reason"].as_str().unwrap();
         assert!(reason.contains("starts a program"), "{name}: {reason}");
-        let err = lp
-            .approve(card.call_id, crate::ApprovalScope::Always, env.user)
-            .unwrap_err();
-        assert!(
-            matches!(err, crate::LoopError::OnceOnly(_)),
-            "{name}: {err}"
-        );
+        // A Full-level gate card may offer "always for this chat" for the tool class (shell,
+        // desktop input); a program launch stays once-only.
+        if name == "desktop_launch" {
+            let err = lp
+                .approve(card.call_id, crate::ApprovalScope::Always, env.user)
+                .unwrap_err();
+            assert!(
+                matches!(err, crate::LoopError::OnceOnly(_)),
+                "{name}: {err}"
+            );
+        }
         lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
             .unwrap();
         assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
@@ -2907,4 +2928,108 @@ async fn discovery_tools_never_ask_after_a_read_even_under_the_full_preset() {
             "find_tool must not ask"
         );
     }
+}
+
+fn open_tool() -> Arc<crate::tests::TestTool> {
+    egress_tool(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::all(),
+    )
+}
+
+#[tokio::test]
+async fn a_full_level_gate_card_offers_a_chat_grant_per_site_and_the_grant_is_remembered() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted_private());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://example.com/a"}),
+        )]),
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://example.com/b"}),
+        )]),
+        calls(&[("c4", "browser_open", json!({"url": "https://other.org/x"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "read it then browse").unwrap();
+    let first = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(first) = first else {
+        unreachable!()
+    };
+    assert_eq!(first.details.as_ref().unwrap()["once_only"], false);
+    assert_eq!(first.details.as_ref().unwrap()["why"], "egress");
+    lp.approve(first.call_id, crate::ApprovalScope::ThisChat, env.user)
+        .unwrap();
+    // The same site is now remembered; another site asks again.
+    let next = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(next) = next else {
+        unreachable!()
+    };
+    assert_eq!(next.input["url"], "https://other.org/x");
+    assert_eq!(open.count.load(Ordering::SeqCst), 2, "a and b ran, x waits");
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn a_url_the_user_typed_is_allowed_after_untrusted_content_but_an_edited_one_asks() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted_private());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://example.com/typed"}),
+        )]),
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://example.com/typed?leak=SECRET"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp
+        .run_turn(
+            env.chat,
+            "read it, then open https://example.com/typed please",
+        )
+        .unwrap();
+    let card = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = card else {
+        unreachable!()
+    };
+    assert_eq!(card.input["url"], "https://example.com/typed?leak=SECRET");
+    assert_eq!(
+        open.count.load(Ordering::SeqCst),
+        1,
+        "the typed URL ran without a card"
+    );
+    lp.cancel(run).unwrap();
 }

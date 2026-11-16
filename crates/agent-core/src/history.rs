@@ -88,7 +88,7 @@ They remain in storage; do not infer their contents. A summary of older history 
 
 /// Messages from earlier turns that [`build_messages`] will place in context,
 /// after the same bound and the same drop of a leading assistant fragment.
-fn messages_in_context(
+pub(crate) fn messages_in_context(
     storage: &Storage,
     chat: ChatId,
     exclude_run: Option<RunId>,

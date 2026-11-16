@@ -413,8 +413,8 @@
       },
       "why": {
         "policy": "Bu bot, bu tür bir işlemden önce sormaya ayarlı.",
-        "egress": "Bu sohbette daha önce bir şey okudu; bu yüzden veri göndermeden önce sorar.",
-        "executes": "Güvenilmeyen içerik okudu; bu yüzden yazma, komut ve program başlatmadan önce sorar.",
+        "egress": "Bu sohbette güvenilmeyen içerik (web sayfası, e-posta, indirilen dosya) var; bu yüzden veri göndermeden önce sorar.",
+        "executes": "Bu sohbette güvenilmeyen içerik (web sayfası, e-posta, indirilen dosya) var; bu yüzden yazma, komut ve program başlatmadan önce sorar.",
         "always_ask": "Bu işlem izin düzeyi ne olursa olsun her zaman sorar (uygulamalar, gizli bilgiler).",
         "floor": "Ödemeler ve riskli komutlar izin düzeyi ne olursa olsun her zaman sorar."
       }
