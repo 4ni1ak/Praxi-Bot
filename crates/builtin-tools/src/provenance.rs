@@ -82,7 +82,8 @@ const EXTERNAL_EXTENSIONS: &[&str] = &["eml", "mbox", "msg", "mhtml"];
 /// Whether `path` lies in an external location by rule (see the module docs).
 #[must_use]
 pub fn external_location(path: &Path) -> bool {
-    let n = format!("{}/", normalize(path));
+    // rules match case-insensitively on every OS (`Downloads` on Linux too)
+    let n = format!("{}/", normalize(path).to_lowercase());
     if EXTERNAL_PARTS.iter().any(|part| n.contains(part)) {
         return true;
     }

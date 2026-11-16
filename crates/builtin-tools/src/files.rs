@@ -4016,7 +4016,7 @@ mod tests {
         assert!(
             crate::provenance::Provenance::is_marked(
                 ledger.as_ref(),
-                &crate::provenance::normalize(&c)
+                &crate::provenance::normalize(&fs::canonicalize(&c).unwrap())
             ),
             "{:?}",
             ledger.0.lock()
