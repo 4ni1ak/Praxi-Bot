@@ -1,7 +1,7 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { BotAvatar, Button } from "ui";
+import { Button } from "ui";
 import type { Bot } from "../api/types";
 import { BotAvatarUploadField, useBotFormDeps } from "../components/BotAdvancedFields";
 import {
@@ -10,7 +10,7 @@ import {
   ModelFields,
   PermissionFields
 } from "../components/BotEditorFields";
-import { CharacterColorRow, CharacterShapeGrid } from "../components/CharacterPicker";
+import { BotIdentityPicker } from "../components/BotIdentityPicker";
 import formStyles from "../components/Form.module.css";
 import { Modal } from "../components/Modal";
 import { ModelPicker } from "../components/ModelPicker";
@@ -223,50 +223,21 @@ function NewBotDialogContent({
           })}
         </div>
 
-        <div className={styles.preview}>
-          <BotAvatar
-            bot={{
-              id: createdBot?.id ?? "new-bot-preview",
-              name: draft.name.trim() || t("newBot.title"),
-              shape: draft.shape,
-              color: draft.color,
-              avatar: draft.avatar
-            }}
-            size="hero"
-            live
-            decorative
-          />
-        </div>
-
-        <div className={styles.nameWrap}>
-          <input
-            type="text"
-            className={styles.nameInput}
-            data-autofocus
-            data-testid="new-bot-name"
-            maxLength={24}
-            value={draft.name}
-            placeholder={t("newBot.namePlaceholder")}
-            aria-label={t("botForm.name")}
-            onChange={(e) => {
-              setTemplateId(null);
-              patch({ name: e.target.value });
-            }}
-          />
-        </div>
-
-        <CharacterShapeGrid
-          value={draft.shape}
+        <BotIdentityPicker
+          previewId={createdBot?.id ?? "new-bot-preview"}
+          name={draft.name}
+          shape={draft.shape}
           color={draft.color}
-          onChange={(shape) => {
+          avatar={draft.avatar}
+          onName={(name) => {
+            setTemplateId(null);
+            patch({ name });
+          }}
+          onShape={(shape) => {
             setTemplateId(null);
             patch({ shape });
           }}
-        />
-
-        <CharacterColorRow
-          value={draft.color}
-          onChange={(color) => {
+          onColor={(color) => {
             setTemplateId(null);
             patch({ color });
           }}

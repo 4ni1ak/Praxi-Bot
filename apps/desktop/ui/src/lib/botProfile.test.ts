@@ -10,7 +10,6 @@ import {
   botView,
   configFromDraft,
   draftFromBot,
-  onboardingBotDraft,
   presetToAutonomy,
   resolveAutoExecutorRef
 } from "./botProfile.ts";
@@ -247,7 +246,6 @@ function loadLocale(name: "en" | "tr") {
     readFileSync(new URL(`../i18n/locales/${name}.json`, import.meta.url), "utf8")
   ) as {
     botForm: { preset: Record<string, { name: string; hint: string }> };
-    onboarding: { step3: { explain: Record<string, string> } };
     newBot: {
       autonomyLevels: Record<string, string>;
       autonomyHints: Record<string, string>;
@@ -314,11 +312,9 @@ test("autonomy hints in both locales accurately describe the stored permission p
   assert.match(tr.newBot.autonomyHints.auto, /Para/);
   assert.match(tr.newBot.autonomyHints.auto, /yasaklı/i);
 
-  // `botForm.preset.read-and-draft` and onboarding explain must not claim drafts run free or changes are denied.
+  // `botForm.preset.read-and-draft` must not claim drafts run free or changes are denied.
   assert.doesNotMatch(en.botForm.preset["read-and-draft"].hint, /never sends or changes/i);
   assert.doesNotMatch(tr.botForm.preset["read-and-draft"].hint, /asla göndermez/i);
-  assert.doesNotMatch(en.onboarding.step3.explain["read-and-draft"], /read and prepare drafts/i);
-  assert.doesNotMatch(tr.onboarding.step3.explain["read-and-draft"], /taslak hazırlayabilir/i);
 });
 
 test("botView preserves stored shape when it differs from fallbackBotShape(id)", () => {
@@ -336,55 +332,4 @@ test("botView preserves stored shape when it differs from fallbackBotShape(id)",
   const view = botView(bot);
   assert.equal(view.shape, "heart");
   assert.equal(botShape(view.id, view.shape).id, "heart");
-});
-
-test("onboarding Step 4 preview shape matches configFromDraft stored shape", () => {
-  // Without an explicit shape, `new-bot` hashes to `ghost`, whereas `configFromDraft` stores `pebble`.
-  assert.equal(fallbackBotShape("new-bot"), "ghost");
-
-  const draft = onboardingBotDraft(undefined, {
-    name: "Atlas",
-    color: "#f4f4f5",
-    persona: "Helpful",
-    executor: { provider: "anthropic", model: "claude-sonnet-5-5" },
-    planner: { provider: "", model: "" },
-    classifier: { provider: "", model: "" },
-    preset: "approve-destructive"
-  });
-  const stored = configFromDraft(draft, undefined);
-  assert.equal(draft.shape, "pebble");
-  assert.equal((stored.bot as Record<string, unknown>).shape, draft.shape);
-
-  const existing: Bot = {
-    id: "bot-cube-0",
-    name: "Atlas",
-    created_at_ms: 1,
-    version: 1,
-    config: {
-      bot: { id: "atlas", name: "Atlas", shape: "heart", color: "#4c8dff" },
-      models: { executor: "anthropic/claude-sonnet-5-5" }
-    }
-  };
-  const editedDraft = onboardingBotDraft(existing, {
-    name: "Atlas",
-    color: "#4c8dff",
-    persona: "Helpful",
-    executor: { provider: "anthropic", model: "claude-sonnet-5-5" },
-    planner: { provider: "", model: "" },
-    classifier: { provider: "", model: "" },
-    preset: "approve-destructive"
-  });
-  assert.equal(editedDraft.shape, "heart");
-
-  const onboardingSrc = readFileSync(
-    new URL("../views/OnboardingView.tsx", import.meta.url),
-    "utf8"
-  );
-  const previewMatch = onboardingSrc.match(/<BotAvatar[\s\S]*?size="lg"/);
-  assert.ok(previewMatch, "Onboarding Step 4 should render BotAvatar preview");
-  assert.match(
-    previewMatch[0],
-    /\bshape\s*:/,
-    "Onboarding Step 4 BotAvatar preview must pass explicit shape matching configFromDraft"
-  );
 });

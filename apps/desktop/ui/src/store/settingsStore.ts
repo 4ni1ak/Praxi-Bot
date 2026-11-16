@@ -1,5 +1,4 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
-import type { PermissionPreset } from "../api/types";
 import { DEFAULT_STOP_HOTKEY, PRODUCT_CONFIG } from "../config/product";
 import type { SupportedLanguage } from "../i18n";
 import {
@@ -25,10 +24,6 @@ export interface AppSettings extends AppearanceSettings {
   onboardingCompleted: boolean;
   onboardingSkipped: boolean;
   onboardingStep: number;
-  onboardingProviderId: string;
-  onboardingModel: string;
-  onboardingPermissionPreset: PermissionPreset;
-  onboardingBotId: string;
   autostart: boolean;
   /** OS notification when an approval or question waits (window unfocused). */
   notifyNeedsYou: boolean;
@@ -63,10 +58,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   onboardingCompleted: false,
   onboardingSkipped: false,
   onboardingStep: 1,
-  onboardingProviderId: "",
-  onboardingModel: "",
-  onboardingPermissionPreset: "approve-destructive",
-  onboardingBotId: "",
   autostart: false,
   notifyNeedsYou: true,
   notifyLongRun: true,
@@ -168,18 +159,6 @@ export async function loadSettings(): Promise<AppSettings> {
       const onboardingStep =
         (await store.get<number>("onboardingStep")) ??
         DEFAULT_SETTINGS.onboardingStep;
-      const onboardingProviderId =
-        (await store.get<string>("onboardingProviderId")) ??
-        DEFAULT_SETTINGS.onboardingProviderId;
-      const onboardingModel =
-        (await store.get<string>("onboardingModel")) ??
-        DEFAULT_SETTINGS.onboardingModel;
-      const onboardingPermissionPreset =
-        (await store.get<PermissionPreset>("onboardingPermissionPreset")) ??
-        DEFAULT_SETTINGS.onboardingPermissionPreset;
-      const onboardingBotId =
-        (await store.get<string>("onboardingBotId")) ??
-        DEFAULT_SETTINGS.onboardingBotId;
       const autostart =
         (await store.get<boolean>("autostart")) ?? DEFAULT_SETTINGS.autostart;
       const notifyNeedsYou =
@@ -221,10 +200,6 @@ export async function loadSettings(): Promise<AppSettings> {
         onboardingCompleted,
         onboardingSkipped,
         onboardingStep,
-        onboardingProviderId,
-        onboardingModel,
-        onboardingPermissionPreset,
-        onboardingBotId,
         autostart,
         notifyNeedsYou,
         notifyLongRun,
@@ -267,13 +242,6 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("onboardingCompleted", settings.onboardingCompleted);
       await store.set("onboardingSkipped", settings.onboardingSkipped);
       await store.set("onboardingStep", settings.onboardingStep);
-      await store.set("onboardingProviderId", settings.onboardingProviderId);
-      await store.set("onboardingModel", settings.onboardingModel);
-      await store.set(
-        "onboardingPermissionPreset",
-        settings.onboardingPermissionPreset
-      );
-      await store.set("onboardingBotId", settings.onboardingBotId);
       await store.set("autostart", settings.autostart);
       await store.set("notifyNeedsYou", settings.notifyNeedsYou);
       await store.set("notifyLongRun", settings.notifyLongRun);
