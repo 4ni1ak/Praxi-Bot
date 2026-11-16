@@ -834,6 +834,7 @@ impl Replayer {
             run_id: self.opts.run_id.clone(),
             bot_id: self.opts.bot_id.clone(),
             content_tainted: gate.content_tainted(&self.opts.run_id),
+            exposure_untrusted: gate.content_untrusted(&self.opts.run_id),
             ..ToolContext::default()
         };
         match tool.call(&ctx, input).await {

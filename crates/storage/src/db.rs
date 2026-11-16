@@ -1136,6 +1136,48 @@ impl Storage {
         Ok(())
     }
 
+    /// Record that the file (or, with `tree`, everything under the directory) at the already
+    /// normalised `path` has an untrusted origin. Idempotent; a tree mark is never downgraded.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn mark_untrusted_path(&self, path: &str, tree: bool, origin: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO file_provenance (path, tree, origin, recorded_at_ms) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(path) DO UPDATE SET tree = MAX(tree, excluded.tree)",
+            params![path, i64::from(tree), origin, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Whether `path` (normalised: `/` separators, no trailing slash) is marked, itself or through
+    /// a marked ancestor directory.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn is_untrusted_path(&self, path: &str) -> Result<bool> {
+        let conn = self.conn();
+        let mut probe = Some(path);
+        let mut first = true;
+        while let Some(p) = probe {
+            let hit: Option<i64> = conn
+                .query_row(
+                    "SELECT tree FROM file_provenance WHERE path = ?1",
+                    params![p],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(tree) = hit
+                && (first || tree == 1)
+            {
+                return Ok(true);
+            }
+            first = false;
+            probe = p.rfind('/').filter(|i| *i > 0).map(|i| &p[..i]);
+        }
+        Ok(false)
+    }
+
     /// Fetch an approval.
     ///
     /// # Errors
@@ -2183,6 +2225,27 @@ mod tests {
         }
         let st = Storage::open(dir.path()).unwrap();
         assert_eq!(st.get_user(user.id).unwrap().unwrap(), user);
+    }
+
+    #[test]
+    fn untrusted_file_marks_cover_the_file_or_a_whole_tree_and_survive_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        st.mark_untrusted_path("c:/docs/page.txt", false, "write")
+            .unwrap();
+        st.mark_untrusted_path("c:/work/clone", true, "git clone")
+            .unwrap();
+        assert!(st.is_untrusted_path("c:/docs/page.txt").unwrap());
+        assert!(!st.is_untrusted_path("c:/docs/own.txt").unwrap());
+        assert!(
+            !st.is_untrusted_path("c:/docs/page.txt/x").unwrap(),
+            "a file mark is not a tree"
+        );
+        assert!(st.is_untrusted_path("c:/work/clone/src/readme.md").unwrap());
+        assert!(!st.is_untrusted_path("c:/work/clone2/readme.md").unwrap());
+        drop(st);
+        let st = Storage::open(dir.path()).unwrap();
+        assert!(st.is_untrusted_path("c:/work/clone/a/b").unwrap());
     }
 
     #[test]

@@ -94,6 +94,12 @@ pub trait ToolGate: Send + Sync {
     fn content_tainted(&self, _run_id: &str) -> bool {
         false
     }
+
+    /// Whether the run holds UNTRUSTED content: files a tool writes in such a run get an
+    /// untrusted-origin mark. Default false.
+    fn content_untrusted(&self, _run_id: &str) -> bool {
+        false
+    }
 }
 
 /// Non-interactive [`ToolGate`] backed by [`PermissionResolver`]: `Allow` passes,
@@ -261,6 +267,7 @@ impl ScriptHost for GateHost {
             max_inline_bytes: self.max_inline_bytes,
             bot_id: self.bot_id.clone(),
             content_tainted: self.gate.content_tainted(&self.run_id),
+            exposure_untrusted: self.gate.content_untrusted(&self.run_id),
             // A script is never covered by a run-scoped control grant.
             control_guard: None,
         };

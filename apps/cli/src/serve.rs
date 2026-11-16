@@ -299,6 +299,9 @@ fn build_agent_with_skills(
     tools.desktop.clone_from(&desktop);
     tools.dynamic_desktop = dynamic_desktop;
     tools.fill_secrets = fill_secrets;
+    tools.provenance = Some(Arc::new(builtin_tools::provenance::StorageProvenance(
+        Arc::clone(storage),
+    )));
     tools.view_registry = view_registry;
     tools.knowledge = Some(Arc::new(
         builtin_tools::knowledge::LocalKnowledgeBackend::new(Arc::clone(storage)),

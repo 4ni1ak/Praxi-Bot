@@ -1030,11 +1030,20 @@ pub(crate) async fn list_approvals(
     responses((status = 200, body = DecisionResponse), (status = 404, body = ErrorBody)))]
 pub(crate) async fn decide_approval(
     State(s): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(call): Path<String>,
     ApiJson(input): ApiJson<DecideApproval>,
 ) -> Result<Json<DecisionResponse>, ApiError> {
     let call_uuid = id(&call)?;
     let call_id = ToolCallId(call_uuid);
+    // "Always allow for this chat" on a taint-gate card is a standing grant: it takes the
+    // owner's authority (`x-praxi-owner-key`), not just the API token or a paired peer.
+    if matches!(input.decision, Decision::Approve)
+        && !matches!(input.scope, Scope::Once | Scope::RunControl)
+        && s.agent().approval_is_gate_grant(call_id)
+    {
+        s.require_owner(&headers)?;
+    }
     match input.decision {
         Decision::Approve => {
             let scope = match input.scope {

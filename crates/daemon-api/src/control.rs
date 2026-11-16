@@ -141,7 +141,7 @@ pub(crate) fn display_label(actor: &str) -> String {
 }
 
 /// Returned to the model by observation tools while the human drives.
-const OBSERVATION_PAUSED: &str = "The user is controlling the screen right now (observation paused), so this read was not performed: you must not see what they type. Do not retry it; wait until they give control back.";
+const OBSERVATION_PAUSED: &str = "The user is controlling the screen right now (observation paused), so this read was not performed: you must not see what they type. Do not retry it. Ask the user to press \"Give control back\" in Praxi (the banner at the top), then continue.";
 
 fn refused_while(mode: ControlMode) -> Option<&'static str> {
     match mode {
@@ -196,8 +196,12 @@ impl ControlHub {
     #[must_use]
     pub fn with_latch_file(cfg: ControlConfig, path: std::path::PathBuf) -> Self {
         let mut hub = Self::new(cfg);
-        owned::restore(hub.state.get_mut(), &path);
+        let healed = owned::restore(hub.state.get_mut(), &path);
         hub.latch_file = Some(path);
+        if healed {
+            // Rewrite (or remove) the stale file now, not at the next change.
+            let _ = hub.persist(&hub.state.lock());
+        }
         hub
     }
 
@@ -264,7 +268,14 @@ impl ControlHub {
             st.latch_by_local = local || (before.is_some() && st.latch_by_local);
             st.latched = Some(mode);
             st.pending.clear();
-        } else if release {
+        } else if release
+            || (before == Some(ControlMode::HumanDriving)
+                && st.owned.is_none()
+                && !st.require_recovery)
+        {
+            // An ownerless `human_driving` latch is only ever the reporter's own claim
+            // ("I am driving"): the same reporter saying it no longer is ends it. Only a
+            // takeover with an owner, or a pause, needs an explicit release.
             st.latched = None;
             st.latch_by_local = false;
         }
@@ -290,7 +301,33 @@ impl ControlHub {
     /// The latched `Paused` / `HumanDriving` mode, if any (never expires).
     #[must_use]
     pub fn latched(&self) -> Option<ControlMode> {
-        self.state.lock().latched
+        let mut st = self.state.lock();
+        self.expire_ownerless_driving(&mut st);
+        st.latched
+    }
+
+    /// An ownerless `human_driving` latch lives only while its reporter keeps sending
+    /// heartbeats: when they stop (app closed, crashed, restarted) it ends, so a lost
+    /// reporter can never leave observation refused for good. Pauses and owned takeovers
+    /// are unaffected (they need an explicit release / recovery).
+    fn expire_ownerless_driving(&self, st: &mut State) {
+        if st.latched != Some(ControlMode::HumanDriving)
+            || st.owned.is_some()
+            || st.require_recovery
+        {
+            return;
+        }
+        let alive = st.registration.is_some_and(|(mode, at)| {
+            mode == ControlMode::HumanDriving && at.elapsed() < self.cfg.heartbeat_ttl
+        });
+        if alive {
+            return;
+        }
+        st.latched = None;
+        st.latch_by_local = false;
+        st.epoch = st.epoch.saturating_add(1);
+        let _ = self.persist(st);
+        self.changed.notify_waiters();
     }
 
     /// Explicitly give the desktop back to the bots: clears the latch and
@@ -643,12 +680,19 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(180)).await;
         assert!(hub.registration().is_none(), "expired after the ttl");
         let (out, published, _) = gate(&hub, None).await;
-        assert!(out.is_err(), "the latch outlives the heartbeat (SEC-07)");
-        assert_eq!(published, 0);
-        assert_eq!(hub.release(), Some(ControlMode::HumanDriving));
-        let (out, _, _) = gate(&hub, None).await;
         assert!(
             out.is_ok(),
+            "an ownerless human_driving claim ends with its reporter's heartbeat"
+        );
+        assert_eq!(published, 0);
+        assert_eq!(hub.latched(), None);
+        // A pause still outlives the heartbeat (SEC-07).
+        hub.put_state(ControlMode::Paused);
+        tokio::time::sleep(Duration::from_millis(180)).await;
+        assert!(gate(&hub, None).await.0.is_err());
+        assert_eq!(hub.release(), Some(ControlMode::Paused));
+        assert!(
+            gate(&hub, None).await.0.is_ok(),
             "released: an expired registration does not block"
         );
         // A fresh heartbeat re-registers.
@@ -708,12 +752,12 @@ mod tests {
     async fn latched_pause_still_refuses_after_the_subscriber_is_dropped() {
         let hub = Arc::new(ControlHub::new(fast()));
         let sub = hub.subscribe();
-        hub.put_state(ControlMode::HumanDriving);
+        hub.put_state(ControlMode::Paused);
         drop(sub);
         assert!(!hub.app_connected());
         tokio::time::sleep(Duration::from_millis(200)).await;
         let (out, published, _) = gate(&hub, None).await;
-        assert!(out.unwrap_err().contains("taken control"));
+        assert!(out.unwrap_err().contains("paused"));
         assert_eq!(published, 0);
     }
 
@@ -741,13 +785,13 @@ mod tests {
         let f = d.path().join("control-latch.json");
         let hub = ControlHub::with_latch_file(fast(), f.clone());
         assert_eq!(hub.latched(), None);
-        hub.put_state(ControlMode::HumanDriving);
+        hub.put_state(ControlMode::Paused);
         let again = ControlHub::with_latch_file(fast(), f.clone());
-        assert_eq!(again.latched(), Some(ControlMode::HumanDriving));
+        assert_eq!(again.latched(), Some(ControlMode::Paused));
         assert!(f.exists());
         // A latch without a takeover owner is the user's own pause: the local
         // user can release it after a restart (no view session needed).
-        assert_eq!(again.try_release(), Ok(Some(ControlMode::HumanDriving)));
+        assert_eq!(again.try_release(), Ok(Some(ControlMode::Paused)));
         assert!(!f.exists());
         assert_eq!(
             ControlHub::with_latch_file(fast(), f.clone()).latched(),
@@ -758,6 +802,32 @@ mod tests {
             ControlHub::with_latch_file(fast(), f).latched(),
             Some(ControlMode::Paused)
         );
+    }
+
+    #[test]
+    fn a_stale_human_driving_file_heals_on_start_and_a_local_report_never_latches() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("control-latch.json");
+        // The exact file from the owner's machine (ownerless human_driving, no releases).
+        std::fs::write(
+            &f,
+            r#"{"v":1,"latched":"human_driving","owned":null,"epoch":0,"releases":[],"require_recovery":false,"reset_pending":false,"audit_pending":false,"latch_by_local":false}"#,
+        )
+        .unwrap();
+        let hub = ControlHub::with_latch_file(fast(), f.clone());
+        assert_eq!(hub.latched(), None, "stale claim dropped");
+        assert!(hub.observation_refused().is_none());
+        assert!(!f.exists(), "the stale file is removed at start");
+        // The reporter says it drives, then that it does not: the latch follows it.
+        hub.put_state(ControlMode::HumanDriving);
+        assert!(hub.observation_refused().is_some());
+        hub.put_state(ControlMode::Idle);
+        assert_eq!(
+            hub.latched(),
+            None,
+            "an idle report ends the claim, no release call needed"
+        );
+        assert!(hub.observation_refused().is_none());
     }
 
     #[test]

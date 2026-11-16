@@ -238,6 +238,11 @@
     "fakeProvider": "Fake provider",
     "details": "Daemon {{version}} · up {{uptime}} s {{mode}}"
   },
+  "humanDriving": {
+    "banner": "You are driving - the bot is paused",
+    "giveBack": "Give control back",
+    "giveBackFailed": "Could not give control back. Try again."
+  },
   "bots": {
     "writeConflict": "This bot was changed somewhere else while you were saving. Reload it and try again.",
     "notFound": "This bot no longer exists.",
@@ -402,6 +407,13 @@
       "app": {
         "arguments": "Show all arguments ({{count}} characters)",
         "footer": "Via Composio. Approve only this action with all arguments shown above."
+      },
+      "why": {
+        "policy": "This bot is set to ask before this kind of action.",
+        "egress": "Untrusted content (a web page, mail, download) is in this chat, so sending data out asks first.",
+        "executes": "Untrusted content (a web page, mail, download) is in this chat, so typing, shell commands and launching programs ask first.",
+        "always_ask": "This action always asks, whatever the permission level (apps, secrets).",
+        "floor": "Payments and risky commands always ask, whatever the permission level."
       }
     },
     "question": {
@@ -1168,6 +1180,10 @@
       "view_quota": {
         "title": "Too many live views are open",
         "hint": "Close one and try again."
+      },
+      "owner_key_required": {
+        "title": "Only the owner can give this permission",
+        "hint": "Use the Praxi desktop app on this computer to allow it for the chat."
       }
     },
     "network": {
@@ -2969,7 +2985,8 @@
       "connected": "Connected",
       "connecting": "Connecting…",
       "offline": "Not answering. Retrying on its own.",
-      "notPaired": "No longer accepts this computer. Pair again.", "mismatch": "Runs a different version than this app. Update both to the same version."
+      "notPaired": "No longer accepts this computer. Pair again.",
+      "mismatch": "Runs a different version than this app. Update both to the same version."
     },
     "missing": {
       "model": "No model connected on this server yet.",

@@ -112,6 +112,8 @@ struct Shared {
     home: Option<PathBuf>,
     /// Base directory relative paths resolve against (`None`: process cwd).
     workdir: Option<PathBuf>,
+    /// Ledger of files with an untrusted origin (see `crate::provenance`).
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
 }
 
 impl Shared {
@@ -139,6 +141,7 @@ impl Shared {
             access: None,
             home: self.home.clone(),
             workdir,
+            provenance: self.provenance.clone(),
         }
     }
 }
@@ -208,6 +211,7 @@ pub fn watch_snapshot(
         access: None,
         home: None,
         workdir: None,
+        provenance: None,
     };
     let root = validate_path(&sh, raw, Follow::Watch)?;
     if root.parent().is_none() {
@@ -352,7 +356,7 @@ pub(crate) fn tools_bounded(
     allowed_roots: &[PathBuf],
     grants: &[PathBuf],
 ) -> Vec<Arc<dyn Tool>> {
-    tools_scoped(data_dir, allowed_roots, grants, None, None)
+    tools_scoped(data_dir, allowed_roots, grants, None, None, None)
 }
 
 /// Like [`tools_bounded`] with a per-bot scope source and the home directory.
@@ -363,6 +367,7 @@ pub(crate) fn tools_scoped(
     grants: &[PathBuf],
     access: Option<Arc<dyn crate::FsAccessProvider>>,
     home: Option<PathBuf>,
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
 ) -> Vec<Arc<dyn Tool>> {
     let drives = DriveCache::new();
     let (allowed_roots, roots_unresolved) = match prepare_roots(allowed_roots, &drives) {
@@ -382,6 +387,7 @@ pub(crate) fn tools_scoped(
         workdir: home.clone(),
         access,
         home,
+        provenance,
     });
     let fs = PermissionCategory::Fs;
     let defs: Vec<(Op, ToolSpec)> = vec![
@@ -3758,6 +3764,107 @@ fn do_cp_restore(sh: &Shared, id: &str) -> Result<String, ToolError> {
     Ok(out)
 }
 
+/// `rel` of a `fs_search` hit line `rel:LINE: text`.
+fn search_hit_path(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    (0..bytes.len()).find_map(|i| {
+        if bytes[i] != b':' {
+            return None;
+        }
+        let digits = bytes[i + 1..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        (digits > 0 && bytes.get(i + 1 + digits) == Some(&b':')).then(|| &line[..i])
+    })
+}
+
+/// Judge a finished call by provenance (review of #138): is what it returned untrusted?
+/// A read by the file's origin; a list or search by every entry it returned (not by the folder it
+/// was asked about). Also records what a write, edit or move in an untrusted run (or from an
+/// untrusted source) produced, so the mark outlives the chat.
+fn provenance_after(
+    sh: &Shared,
+    op: Op,
+    raw: &Value,
+    text: &str,
+    base: Option<PathBuf>,
+    run_untrusted: bool,
+) -> bool {
+    use crate::provenance::{external_location, is_untrusted, normalize};
+    let ledger = sh.provenance.as_deref();
+    with_base_dir(base, || {
+        let resolve = |key: &str| {
+            let raw = raw.get(key)?.as_str()?;
+            validate_path(sh, raw, Follow::Content)
+                .or_else(|_| validate_path(sh, raw, Follow::Write))
+                .ok()
+        };
+        let mark = |p: &Path| {
+            if let Some(l) = ledger {
+                l.mark(
+                    &normalize(p),
+                    p.is_dir(),
+                    "written by a tool in an untrusted run",
+                );
+            }
+        };
+        match op {
+            Op::Read => resolve("path").is_some_and(|p| is_untrusted(ledger, &p)),
+            Op::Edit | Op::Write => {
+                let Some(p) = resolve("path") else {
+                    return false;
+                };
+                let bad = is_untrusted(ledger, &p);
+                if run_untrusted {
+                    mark(&p);
+                }
+                bad
+            }
+            Op::Move => {
+                if let (Some(from), Some(to)) = (resolve("from"), resolve("to"))
+                    && (run_untrusted || is_untrusted(ledger, &from))
+                {
+                    mark(&to);
+                }
+                false
+            }
+            Op::List | Op::Search => {
+                let Some(root) = resolve("path") else {
+                    return false;
+                };
+                if is_untrusted(ledger, &root) {
+                    return true;
+                }
+                let base = if root.is_file() {
+                    root.parent()
+                        .map_or_else(|| root.clone(), Path::to_path_buf)
+                } else {
+                    root.clone()
+                };
+                let mut dirs: std::collections::HashMap<PathBuf, bool> =
+                    std::collections::HashMap::new();
+                text.lines().take(600).any(|line| {
+                    let rel = if op == Op::List {
+                        line.get(2..)
+                            .map(|r| r.split(" (").next().unwrap_or(r).trim_end_matches('/'))
+                    } else {
+                        search_hit_path(line)
+                    };
+                    let Some(rel) = rel else { return false };
+                    let entry = base.join(rel);
+                    let dir = entry.parent().map(Path::to_path_buf).unwrap_or_default();
+                    let external = *dirs
+                        .entry(dir)
+                        .or_insert_with_key(|d| external_location(&d.join("x")));
+                    external || ledger.is_some_and(|l| l.is_marked(&normalize(&entry)))
+                })
+            }
+            _ => false,
+        }
+    })
+}
+
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, ToolError> + Send + 'static,
 ) -> Result<T, ToolError> {
@@ -3785,6 +3892,8 @@ impl Tool for FsTool {
         }
         let base = sh.workdir.clone();
         let run = ctx.run_id.clone();
+        let raw = input.clone();
+        let (sh_after, base_after) = (sh.clone(), base.clone());
         let text = match self.op {
             Op::Read => {
                 let i: ReadIn = parse(input)?;
@@ -3824,7 +3933,21 @@ impl Tool for FsTool {
                 blocking(move || with_base_dir(base, || do_cp_restore(&sh, &i.id))).await?
             }
         };
-        Ok(finish_text(ctx, &self.shared.spill_dir, text))
+        let untrusted = {
+            let (sh, text, base) = (sh_after, text.clone(), base_after);
+            let (op, untrusted_run) = (self.op, ctx.exposure_untrusted);
+            blocking(move || Ok(provenance_after(&sh, op, &raw, &text, base, untrusted_run)))
+                .await?
+        };
+        let mut out = finish_text(ctx, &self.shared.spill_dir, text);
+        if untrusted {
+            out.exposure = Some(tool_registry::OutputExposure {
+                ingests_untrusted: true,
+                reads_private: true,
+                label: String::new(),
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -3832,6 +3955,84 @@ impl Tool for FsTool {
 mod tests {
     #![allow(clippy::many_single_char_names)]
     use super::*;
+
+    #[derive(Default)]
+    struct MemLedger(parking_lot::Mutex<Vec<(String, bool)>>);
+    impl crate::provenance::Provenance for MemLedger {
+        fn is_marked(&self, n: &str) -> bool {
+            self.0
+                .lock()
+                .iter()
+                .any(|(p, tree)| p == n || (*tree && n.starts_with(&format!("{p}/"))))
+        }
+        fn mark(&self, n: &str, tree: bool, _: &str) {
+            self.0.lock().push((n.to_owned(), tree));
+        }
+    }
+
+    #[test]
+    fn search_hit_lines_name_their_file() {
+        assert_eq!(search_hit_path("src/a.rs:12: let x = 1;"), Some("src/a.rs"));
+        assert_eq!(
+            search_hit_path(r"C:\w\a.txt:3: hi: 4: there"),
+            Some(r"C:\w\a.txt")
+        );
+        assert_eq!(search_hit_path("no hit here"), None);
+    }
+
+    #[tokio::test]
+    async fn untrusted_origin_follows_writes_moves_and_results_across_calls() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let ledger = Arc::new(MemLedger::default());
+        let t = tools_scoped(data.path(), &[], &[], None, None, Some(ledger.clone()));
+        let (a, b, c) = (
+            work.path().join("a.txt"),
+            work.path().join("b.txt"),
+            work.path().join("c.txt"),
+        );
+        let mut ctx = ToolContext {
+            run_id: "run-1".into(),
+            ..ToolContext::default()
+        };
+        // a write in a clean run records nothing; in an untrusted run it records the file
+        get(&t, "fs_write")
+            .call(&ctx, json!({"path": a, "content": "mine"}))
+            .await
+            .unwrap();
+        assert!(ledger.0.lock().is_empty());
+        ctx.exposure_untrusted = true;
+        get(&t, "fs_write")
+            .call(&ctx, json!({"path": b, "content": "web text"}))
+            .await
+            .unwrap();
+        assert_eq!(ledger.0.lock().len(), 1);
+        // a move by Praxi carries the mark to the new name, even from a clean run
+        ctx.exposure_untrusted = false;
+        get(&t, "fs_move")
+            .call(&ctx, json!({"from": b, "to": c}))
+            .await
+            .unwrap();
+        assert!(
+            crate::provenance::Provenance::is_marked(
+                ledger.as_ref(),
+                &crate::provenance::normalize(&fs::canonicalize(&c).unwrap())
+            ),
+            "{:?}",
+            ledger.0.lock()
+        );
+        // reading it (and searching a folder that holds it) is an untrusted result
+        let read = get(&t, "fs_read")
+            .call(&ctx, json!({"path": c}))
+            .await
+            .unwrap();
+        assert!(read.exposure.as_ref().is_some_and(|e| e.ingests_untrusted));
+        let hits = get(&t, "fs_search")
+            .call(&ctx, json!({"query": "web", "path": work.path()}))
+            .await
+            .unwrap();
+        assert!(hits.exposure.as_ref().is_some_and(|e| e.ingests_untrusted));
+    }
 
     fn setup() -> (tempfile::TempDir, tempfile::TempDir, Vec<Arc<dyn Tool>>) {
         let data = tempfile::tempdir().unwrap();
@@ -3854,6 +4055,7 @@ mod tests {
             max_inline_bytes: 1 << 20,
             bot_id: None,
             content_tainted: false,
+            exposure_untrusted: false,
             control_guard: None,
         }
     }
@@ -6006,6 +6208,7 @@ mod tests {
                 max_inline_bytes: 1 << 20,
                 bot_id: None,
                 content_tainted: false,
+                exposure_untrusted: false,
                 control_guard: None,
             };
             async move { reader.call(&c, json!({"path": p})).await }
@@ -6259,6 +6462,7 @@ mod tests {
                 &[],
                 Some(Arc::new(FixedScope(scope))),
                 Some(home.path().to_path_buf()),
+                None,
             )
         };
 
@@ -6404,6 +6608,7 @@ mod tests {
             access: None,
             home: None,
             workdir: None,
+            provenance: None,
         }
     }
 

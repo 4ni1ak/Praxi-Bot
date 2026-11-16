@@ -181,6 +181,17 @@ fn computer_approval(
     prefix
 }
 
+/// Scheme, userinfo, host, port, path, query and fragment of a normalised URL.
+type UrlParts = (
+    String,
+    String,
+    String,
+    Option<u16>,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
 impl Shared {
     /// Resolve policy + grants for one call.
     pub(crate) fn decide(
@@ -308,7 +319,7 @@ impl Shared {
         if !d.is_ask() {
             // A clean Allow becomes an ask once the run is tainted and this
             // call can leave the machine. A Deny is unchanged.
-            if d == Decision::Allow && must_ask {
+            if d == Decision::Allow && must_ask && !self.gate_waived(ctx, name, input) {
                 return Decision::ask();
             }
             return d;
@@ -353,6 +364,137 @@ impl Shared {
         }
     }
 
+    /// The site of a URL as a grant boundary: `scheme://host:port`, lower case, no trailing dot,
+    /// default port made explicit. Only `http` / `https` with a host qualify.
+    fn origin_of(url: &str) -> Option<String> {
+        let url = url::Url::parse(url).ok()?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return None;
+        }
+        let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+        Some(format!(
+            "{}://{host}:{}",
+            url.scheme(),
+            url.port_or_known_default()?
+        ))
+    }
+
+    /// Tool class and destination a taint-gate grant is keyed on: web (`browser_open`, per
+    /// origin), shell, desktop input. Browser actions on the CURRENT page are not grantable: the
+    /// daemon cannot observe that page's origin at decision time, and an unknown destination
+    /// stays once-only (a grant for site A must never cover site B). `None` for everything else
+    /// (sends, schedules, apps, program launches).
+    pub(crate) fn gate_key(name: &str, input: &Value) -> Option<(&'static str, String)> {
+        match name {
+            "shell_run" | "script_run" => Some(("shell", String::new())),
+            "desktop_type" | "desktop_key" | "desktop_set_value" | "desktop_drag" => {
+                Some(("desktop_input", String::new()))
+            }
+            "browser_open" => Some(("web", Self::origin_of(input.get("url")?.as_str()?)?)),
+            _ => None,
+        }
+    }
+
+    /// The destination of this call is a URL the user wrote in this chat: the COMPLETE
+    /// destination (scheme, userinfo, host, port, path, query, fragment) must be equal after
+    /// standard normalisation only (case of scheme and host, default port, trailing dot), and
+    /// the call must be a plain navigation: any other field (`dialog`, `prompt_text`, `profile`)
+    /// can carry model-chosen text, so such a call stays behind approval. Not detected: whether a
+    /// message was typed by the local user (a peer's or Telegram's steering text and a block the
+    /// user pasted from a page are both `user` messages in the chat).
+    fn user_typed_url(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        if name != "browser_open" || input.as_object().is_none_or(|o| o.len() != 1) {
+            return false;
+        }
+        let parts = |u: &str| -> Option<UrlParts> {
+            let url = url::Url::parse(u).ok()?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return None;
+            }
+            Some((
+                url.scheme().to_owned(),
+                format!("{}:{}", url.username(), url.password().unwrap_or_default()),
+                url.host_str()?.trim_end_matches('.').to_ascii_lowercase(),
+                url.port_or_known_default(),
+                url.path().to_owned(),
+                url.query().map(str::to_owned),
+                url.fragment().map(str::to_owned),
+            ))
+        };
+        let Some(want) = input.get("url").and_then(Value::as_str).and_then(parts) else {
+            return false;
+        };
+        let Ok((messages, _)) =
+            crate::history::messages_in_context(&self.storage, ctx.chat_id, None, None)
+        else {
+            return false;
+        };
+        messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .flat_map(|m| m.content.split_whitespace())
+            .filter(|w| w.starts_with("http://") || w.starts_with("https://"))
+            .map(|w| {
+                w.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\''])
+            })
+            .filter_map(parts)
+            .any(|got| got == want)
+    }
+
+    /// A call that only the taint gate (not the policy, not an always-ask tool, not a floor)
+    /// makes ask, on a bot whose level allows it: the card may offer "always for this chat".
+    pub(crate) fn gate_grantable(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> bool {
+        if ctx.initiator != InitiatorKind::Human
+            || self.must_ask(name, input)
+            || Self::gate_key(name, input).is_none()
+        {
+            return false;
+        }
+        let mut raw = raw_command_for(name, input);
+        if raw.is_empty() {
+            input
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .clone_into(&mut raw);
+        }
+        let req = ActionRequest {
+            category,
+            raw_command: raw,
+            initiator: InitiatorKind::Human,
+        };
+        let policy = self.resolver.resolve(
+            &self.global_policy.read(),
+            ctx.bot_policy.as_ref(),
+            None,
+            &req,
+        );
+        policy == Decision::Allow && self.gate_must_ask(ctx, name, input)
+    }
+
+    /// The gate is satisfied by an earlier "always for this chat" for this tool class and
+    /// destination, or by a URL the user typed.
+    fn gate_waived(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        if ctx.initiator != InitiatorKind::Human {
+            return false;
+        }
+        if self.user_typed_url(ctx, name, input) {
+            return true;
+        }
+        Self::gate_key(name, input).is_some_and(|(class, dest)| {
+            self.grants
+                .lock()
+                .gate_chat
+                .contains(&(ctx.chat_id, ctx.bot_id, class, dest))
+        })
+    }
+
     /// The taint gate for this call: egress after a read, or a program start
     /// after untrusted content. Not a grant and not the read shortcut.
     ///
@@ -381,6 +523,16 @@ impl Shared {
     /// embedding provider); that can only add egress, never remove it.
     pub(crate) fn content_class(&self, ctx: &RunCtx, name: &str) -> ContentClass {
         let Some(tool) = self.tools.get(name) else {
+            // The discovery tools live on the surface, not in the registry. They only list
+            // tool names (`use_tool` is judged as its target): they never read user data
+            // or send anything. Without this they fell into "unspecified" (egress) and asked
+            // for approval after any read, even under the Full preset.
+            if matches!(
+                name,
+                agent_router::FIND_TOOL | agent_router::GET_TOOL_DETAILS
+            ) {
+                return ContentClass::none();
+            }
             return builtin_tools::classify(name).unwrap_or_else(ContentClass::unspecified);
         };
         let mut class = tool.spec().content;
@@ -467,6 +619,45 @@ impl Shared {
         }
         taint::finalize_egress_record(&mut details);
         Some(details)
+    }
+
+    /// Why this call asks, as a short kind the UI turns into one human line
+    /// (`policy`, `egress`, `executes`, `always_ask`, `floor`).
+    fn ask_kind(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> &'static str {
+        if self.must_ask(name, input) {
+            return "always_ask";
+        }
+        let class = self.content_class(ctx, name);
+        let exposure = ctx.taint.lock().exposure;
+        if executes_must_ask(exposure, class.executes) {
+            return "executes";
+        }
+        if self.gate_must_ask(ctx, name, input) {
+            return "egress";
+        }
+        let mut raw = raw_command_for(name, input);
+        if raw.is_empty() {
+            input
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .clone_into(&mut raw);
+        }
+        let req = ActionRequest {
+            category,
+            raw_command: raw,
+            initiator: InitiatorKind::Human,
+        };
+        if self.resolver.resolve(&Policy::full(), None, None, &req) != Decision::Allow {
+            return "floor";
+        }
+        "policy"
     }
 
     fn closed_guard(
@@ -693,6 +884,7 @@ impl Shared {
                 tx,
                 once_only,
                 grantable,
+                gate_grant: false,
             },
         );
         *self.parked.lock().entry(ctx.run_id).or_insert(0) += 1;
@@ -917,12 +1109,17 @@ impl Shared {
                     .into(),
             ));
         }
-        let once_only = details.is_some()
-            || must_ask
-            || matches!(
-                ctx.initiator,
-                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
-            );
+        // A card that only the taint gate asks (a bot whose level allows the call) is not
+        // once-only: it offers "always for this chat" for this tool class and site. The egress
+        // disclosure in `details` is not tool-specific data.
+        let gate_grant = self.gate_grantable(ctx, name, category, input);
+        let once_only = !gate_grant
+            && (details.is_some()
+                || must_ask
+                || matches!(
+                    ctx.initiator,
+                    InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+                ));
         let (target, grantable) =
             self.control_offer(ctx, name, category, input, &mut details, target);
         let closed = self.closed_guard(ctx, name, input, token);
@@ -932,7 +1129,17 @@ impl Shared {
             prefix.push_str("[External agent: approve once only] ");
         }
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
+        // Daemon-authored facts for the card: why it asks, and whether a standing choice
+        // ("always for this chat") may be offered at all.
+        let why = self.ask_kind(ctx, name, category, input);
+        if let Some(obj) = details.get_or_insert_with(|| json!({})).as_object_mut() {
+            obj.insert("why".into(), json!(why));
+            obj.insert("once_only".into(), json!(once_only));
+        }
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only, grantable);
+        if let Some(p) = self.pending.lock().get_mut(&call_id) {
+            p.gate_grant = gate_grant;
+        }
         let parked_at = policy_revision(self);
         self.remember_parked(call_id, ctx, name, effect, category, input);
         self.emit(
@@ -1221,6 +1428,30 @@ impl ExecPermit {
         } else {
             self.scope
         };
+        // A taint-gate card never creates a tool-wide or standing grant: the choice is kept
+        // for this chat, keyed on tool class and site.
+        let gate_grant =
+            matches!(
+                scope,
+                ApprovalScope::ThisChat | ApprovalScope::Always | ApprovalScope::AlwaysCategory
+            ) && self
+                .sh
+                .gate_grantable(&self.ctx, &self.name, self.category, &self.input);
+        if gate_grant && let Some((class, dest)) = Shared::gate_key(&self.name, &self.input) {
+            {
+                self.sh.grants.lock().gate_chat.insert((
+                    self.ctx.chat_id,
+                    self.ctx.bot_id,
+                    class,
+                    dest,
+                ));
+            }
+        }
+        let scope = if gate_grant {
+            ApprovalScope::Once
+        } else {
+            scope
+        };
         match scope {
             ApprovalScope::Once => {}
             ApprovalScope::ThisChat => {
@@ -1411,6 +1642,19 @@ impl ToolGate for LoopGate {
         {
             ctx.taint.lock().note(content, label);
         }
+    }
+
+    fn content_untrusted(&self, run_id: &str) -> bool {
+        let Ok(id) = run_id.parse::<uuid::Uuid>() else {
+            return false;
+        };
+        let Some(sh) = self.sh.upgrade() else {
+            return false;
+        };
+        sh.runs
+            .lock()
+            .get(&protocol::RunId(id))
+            .is_some_and(|ctx| ctx.taint.lock().exposure.untrusted)
     }
 
     fn content_tainted(&self, run_id: &str) -> bool {

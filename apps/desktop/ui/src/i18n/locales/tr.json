@@ -238,6 +238,11 @@
     "fakeProvider": "Sahte sağlayıcı",
     "details": "Daemon {{version}} · {{uptime}} sn çalışıyor {{mode}}"
   },
+  "humanDriving": {
+    "banner": "Sen yönetiyorsun - bot duraklatıldı",
+    "giveBack": "Kontrolü geri ver",
+    "giveBackFailed": "Kontrol geri verilemedi. Tekrar dene."
+  },
   "bots": {
     "writeConflict": "Bu bot siz kaydederken başka bir yerden değiştirildi. Yeniden yükleyip tekrar deneyin.",
     "notFound": "Bu bot artık yok.",
@@ -402,6 +407,13 @@
       "app": {
         "arguments": "Tüm bağımsız değişkenleri göster ({{count}} karakter)",
         "footer": "Composio üzerinden. Yalnızca bu eylemi yukarıdaki tüm bağımsız değişkenlerle onaylayın."
+      },
+      "why": {
+        "policy": "Bu bot, bu tür bir işlemden önce sormaya ayarlı.",
+        "egress": "Bu sohbette güvenilmeyen içerik (web sayfası, e-posta, indirilen dosya) var; bu yüzden veri göndermeden önce sorar.",
+        "executes": "Bu sohbette güvenilmeyen içerik (web sayfası, e-posta, indirilen dosya) var; bu yüzden yazma, komut ve program başlatmadan önce sorar.",
+        "always_ask": "Bu işlem izin düzeyi ne olursa olsun her zaman sorar (uygulamalar, gizli bilgiler).",
+        "floor": "Ödemeler ve riskli komutlar izin düzeyi ne olursa olsun her zaman sorar."
       }
     },
     "question": {
@@ -1168,6 +1180,10 @@
       "view_quota": {
         "title": "Çok fazla canlı görünüm açık",
         "hint": "Birini kapatıp yeniden dene."
+      },
+      "owner_key_required": {
+        "title": "Bu izni yalnızca sahibi verebilir",
+        "hint": "Sohbet için izin vermek üzere bu bilgisayardaki Praxi masaüstü uygulamasını kullan."
       }
     },
     "network": {
@@ -2969,7 +2985,8 @@
       "connected": "Bağlı",
       "connecting": "Bağlanıyor…",
       "offline": "Yanıt vermiyor. Kendiliğinden yeniden dener.",
-      "notPaired": "Bu bilgisayarı artık kabul etmiyor. Yeniden eşleştir.", "mismatch": "Bu uygulamadan farklı bir sürümde çalışıyor. İkisini aynı sürüme güncelle."
+      "notPaired": "Bu bilgisayarı artık kabul etmiyor. Yeniden eşleştir.",
+      "mismatch": "Bu uygulamadan farklı bir sürümde çalışıyor. İkisini aynı sürüme güncelle."
     },
     "missing": {
       "model": "Bu sunucuda henüz bağlı bir model yok.",

@@ -535,7 +535,7 @@ mod tests {
             .unwrap()
             .taint
             .lock()
-            .note(ContentClass::private_read(), "file");
+            .note(ContentClass::untrusted_private(), "file");
         let host = Host {
             sh: lp.sh.clone(),
             run,
@@ -631,7 +631,7 @@ mod tests {
             .unwrap()
             .taint
             .lock()
-            .note(ContentClass::private_read(), "file notes.txt");
+            .note(ContentClass::untrusted_private(), "file notes.txt");
         let call = host.call("web_search", input);
         tokio::pin!(call);
         let event = tokio::select! {

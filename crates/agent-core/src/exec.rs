@@ -1395,11 +1395,14 @@ impl TurnExecutor {
                     ));
                 }
                 guarded.store(control_guard.is_some(), std::sync::atomic::Ordering::SeqCst);
+                // One lock: a second `lock()` in the same literal would deadlock.
+                let exposure = ctx.taint.lock().exposure;
                 let tctx = ToolContext {
                     run_id: run.id.to_string(),
                     max_inline_bytes: g.spill_threshold_bytes,
                     bot_id: Some(run.bot_id.to_string()),
-                    content_tainted: ctx.taint.lock().exposure.is_tainted(),
+                    content_tainted: exposure.is_tainted(),
+                    exposure_untrusted: exposure.untrusted,
                     control_guard,
                 };
                 tool.call(&tctx, input).await

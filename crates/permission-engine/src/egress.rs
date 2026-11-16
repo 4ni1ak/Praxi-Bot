@@ -58,10 +58,15 @@ impl ContentExposure {
 /// Whether an egress call must ask because of [`ContentExposure`].
 ///
 /// * Clean runs are unchanged.
+/// * A PRIVATE read alone (the user's own files, screen, window list, memory) never
+///   asks here: with no untrusted text in the context there is nothing that can
+///   instruct the model to send it anywhere. The tools that always ask (sends,
+///   money, never-list) are decided before this rule.
 /// * Untrusted content only: `configured_search` (a `web_search` that can only
 ///   reach the configured search provider, never an arbitrary URL) stays
 ///   prompt-free. Every other egress asks.
-/// * A private read: every egress asks.
+/// * Untrusted AND private content: every egress asks, search included (a query
+///   could carry the private data).
 /// * `explicit_waiver` is the per-bot "allow egress after reads" setting. It
 ///   is never implied by a tool or category grant.
 ///
@@ -73,7 +78,7 @@ pub const fn egress_must_ask(
     configured_search: bool,
     explicit_waiver: bool,
 ) -> bool {
-    if explicit_waiver || !egress || !exposure.is_tainted() {
+    if explicit_waiver || !egress || !exposure.untrusted {
         return false;
     }
     if exposure.has_private() {
@@ -119,12 +124,12 @@ mod tests {
     }
 
     #[test]
-    fn private_read_asks_for_every_egress_including_search() {
+    fn a_private_read_alone_never_asks_but_untrusted_plus_private_asks_for_every_egress() {
         let mut exposure = ContentExposure::clean();
         exposure.observe(false, true);
         assert!(exposure.has_private());
-        assert!(egress_must_ask(exposure, true, true, false));
-        assert!(egress_must_ask(exposure, true, false, false));
+        assert!(!egress_must_ask(exposure, true, true, false));
+        assert!(!egress_must_ask(exposure, true, false, false));
         exposure.observe(true, false);
         assert!(exposure.has_private());
         assert!(egress_must_ask(exposure, true, true, false));

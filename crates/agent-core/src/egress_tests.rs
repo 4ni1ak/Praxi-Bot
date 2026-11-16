@@ -1862,52 +1862,40 @@ async fn reading_an_untrusted_skill_taints_only_the_run_that_loaded_it() {
 }
 
 #[tokio::test]
-async fn replace_all_noop_edit_taints_before_egress() {
+async fn a_private_only_read_does_not_gate_egress_even_under_the_full_preset() {
+    // The user's own file: no untrusted text is in the context, so nothing can tell the model
+    // to send it anywhere.
     let env = setup();
-    let notes = env.dir.path().join("notes.txt");
-    std::fs::write(&notes, "bank: 4 bank: 4").unwrap();
-    let search = egress_tool(
-        "web_search",
-        Effect::Read,
-        PermissionCategory::Browser,
-        ContentClass::untrusted_egress(),
-    );
+    let notes = read_tool("fs_edit", ContentClass::private_read());
+    let open = open_tool();
     let fake = Fake::new(vec![
+        calls(&[("c1", "fs_edit", json!({"path": "notes.txt"}))]),
         calls(&[(
-            "c1",
-            "fs_edit",
-            json!({"path": notes, "old": "bank: 4", "new": "bank: 4", "replace_all": true}),
+            "c2",
+            "browser_open",
+            json!({"url": "https://example.com/a"}),
         )]),
-        calls(&[("c2", "web_search", json!({"query": "bank: 4"}))]),
         text("done"),
     ]);
     let lp = make_loop(
         &env.storage,
         env.bot,
         &fake,
-        &[t(&search)],
+        &[t(&notes), t(&open)],
         profile(""),
         cfg(Policy::full()),
     );
-    for tool in builtin_tools::files::tools(&env.dir.path().join("data")) {
-        lp.sh.tools.register(tool);
-    }
-    let mut rx = lp.subscribe();
-    let run = lp.run_turn(env.chat, "edit then search").unwrap();
-    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
-    let Event::ApprovalNeeded(card) = event else {
-        unreachable!()
-    };
-    assert_eq!(card.tool_name, "web_search");
-    assert!(
-        tool_messages(&fake.request(1))
-            .join("\n")
-            .contains("replaced 2")
-    );
-    assert_eq!(search.count.load(Ordering::SeqCst), 0);
-    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+    let run = lp.run_turn(env.chat, "edit then browse").unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(10), lp.wait(run))
+        .await
+        .expect("a private read must not park the run on a card")
         .unwrap();
-    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(
+        open.count.load(Ordering::SeqCst),
+        1,
+        "opening a page after a private read"
+    );
 }
 
 #[tokio::test]
@@ -2169,13 +2157,17 @@ allow_egress_after_reads = true
         assert!(payload.contains("PLANTED"), "{name}: {payload}");
         let reason = details["reason"].as_str().unwrap();
         assert!(reason.contains("starts a program"), "{name}: {reason}");
-        let err = lp
-            .approve(card.call_id, crate::ApprovalScope::Always, env.user)
-            .unwrap_err();
-        assert!(
-            matches!(err, crate::LoopError::OnceOnly(_)),
-            "{name}: {err}"
-        );
+        // A Full-level gate card may offer "always for this chat" for the tool class (shell,
+        // desktop input); a program launch stays once-only.
+        if name == "desktop_launch" {
+            let err = lp
+                .approve(card.call_id, crate::ApprovalScope::Always, env.user)
+                .unwrap_err();
+            assert!(
+                matches!(err, crate::LoopError::OnceOnly(_)),
+                "{name}: {err}"
+            );
+        }
         lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
             .unwrap();
         assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
@@ -2865,4 +2857,217 @@ async fn a_standing_grant_does_not_waive_the_ask_of_a_tainted_run() {
             assert_eq!(fill.count.load(Ordering::SeqCst), 1);
         }
     }
+}
+
+#[tokio::test]
+async fn discovery_tools_never_ask_after_a_read_even_under_the_full_preset() {
+    // The owner's Full bot got a card for `find_tool` after the chat had read something:
+    // the discovery tools are not registry tools, so they were classified "unspecified"
+    // (egress) and the egress gate asked.
+    let env = setup();
+    let read = read_tool("fs_read", ContentClass::untrusted_private());
+    let fake = Fake::new(vec![
+        calls(&[(
+            "c1",
+            "use_tool",
+            json!({"name": "fs_read", "input": {"path": "notes.txt"}}),
+        )]),
+        calls(&[("c2", "find_tool", json!({"query": "desktop"}))]),
+        text("done"),
+    ]);
+    let mut config = cfg(Policy::full());
+    config.discovery_threshold = 0;
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&read)],
+        profile(""),
+        config,
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "look around").unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(10), lp.wait(run))
+        .await
+        .expect("no approval card may park the run")
+        .unwrap();
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(read.count.load(Ordering::SeqCst), 1);
+    while let Ok(item) = rx.try_recv() {
+        assert!(
+            !matches!(item.envelope.event, Event::ApprovalNeeded(_)),
+            "find_tool must not ask"
+        );
+    }
+}
+
+fn open_tool() -> Arc<crate::tests::TestTool> {
+    egress_tool(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::all(),
+    )
+}
+
+#[tokio::test]
+async fn a_full_level_gate_card_offers_a_chat_grant_per_site_and_the_grant_is_remembered() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted_private());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://example.com/a"}),
+        )]),
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://example.com/b"}),
+        )]),
+        calls(&[("c4", "browser_open", json!({"url": "https://other.org/x"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "read it then browse").unwrap();
+    let first = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(first) = first else {
+        unreachable!()
+    };
+    assert_eq!(first.details.as_ref().unwrap()["once_only"], false);
+    assert_eq!(first.details.as_ref().unwrap()["why"], "egress");
+    // creating this standing choice takes the owner's authority (the HTTP route checks it)
+    assert!(lp.approval_is_gate_grant(first.call_id));
+    lp.approve(first.call_id, crate::ApprovalScope::ThisChat, env.user)
+        .unwrap();
+    // The same site is now remembered; another site asks again.
+    let next = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(next) = next else {
+        unreachable!()
+    };
+    assert_eq!(next.input["url"], "https://other.org/x");
+    assert_eq!(open.count.load(Ordering::SeqCst), 2, "a and b ran, x waits");
+    lp.cancel(run).unwrap();
+}
+
+#[test]
+fn a_site_grant_is_bound_to_scheme_host_and_port_and_page_actions_are_not_grantable() {
+    use crate::shared::Shared;
+    let key = |u: &str| Shared::gate_key("browser_open", &json!({ "url": u }));
+    let a = key("https://a.example/x");
+    assert!(a.is_some());
+    assert_eq!(
+        a,
+        key("HTTPS://A.EXAMPLE./other?q=1#f"),
+        "case, trailing dot, path"
+    );
+    assert_ne!(a, key("http://a.example/x"), "scheme");
+    assert_ne!(a, key("https://a.example:8443/x"), "port");
+    assert_ne!(a, key("https://b.example/x"), "host");
+    assert_eq!(key("about:blank"), None, "no origin: once-only");
+    assert_eq!(key("file:///c:/x"), None);
+    // a fill / eval / press acts on the CURRENT page, whose origin the daemon cannot see here
+    for tool in [
+        "browser_fill",
+        "browser_eval",
+        "browser_press",
+        "browser_click",
+    ] {
+        assert_eq!(
+            Shared::gate_key(tool, &json!({"ref": "e1"})),
+            None,
+            "{tool}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_typed_url_waiver_needs_the_complete_url_and_a_plain_navigation() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted_private());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://example.com/typed#top"}),
+        )]),
+        // same URL, but the fragment is model-chosen: a page script can read it
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://example.com/typed#PRIVATE"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp
+        .run_turn(
+            env.chat,
+            "read it, then open https://example.com/typed#top please",
+        )
+        .unwrap();
+    let card = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = card else {
+        unreachable!()
+    };
+    assert_eq!(card.input["url"], "https://example.com/typed#PRIVATE");
+    assert_eq!(
+        open.count.load(Ordering::SeqCst),
+        1,
+        "the exact typed URL ran, the fragment did not"
+    );
+    lp.cancel(run).unwrap();
+
+    // the same URL with a dialog / prompt_text field can carry text to the page: it asks
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted_private());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://example.com/typed", "dialog": "accept", "prompt_text": "PRIVATE"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp
+        .run_turn(env.chat, "open https://example.com/typed")
+        .unwrap();
+    let card = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = card else {
+        unreachable!()
+    };
+    assert_eq!(card.input["prompt_text"], "PRIVATE");
+    assert_eq!(open.count.load(Ordering::SeqCst), 0);
+    lp.cancel(run).unwrap();
 }

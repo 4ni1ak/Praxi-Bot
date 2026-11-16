@@ -146,6 +146,9 @@ pub struct ToolContext {
     /// The run has already read untrusted or private content. A skill saved
     /// from this call is stored as untrusted data, not as a trusted instruction.
     pub content_tainted: bool,
+    /// The run holds UNTRUSTED content (a page, mail, a download, another bot's reply). Files
+    /// written or moved by a tool in such a run get an untrusted origin mark.
+    pub exposure_untrusted: bool,
     /// Set by the loop only when a run-scoped control grant covers this call:
     /// the tool must send its input through the backend's guarded path, so the
     /// window that would receive it is checked against this program right
@@ -160,6 +163,7 @@ impl Default for ToolContext {
             max_inline_bytes: 1024 * 1024, // 1 MiB
             bot_id: None,
             content_tainted: false,
+            exposure_untrusted: false,
             control_guard: None,
         }
     }
