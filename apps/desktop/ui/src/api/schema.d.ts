@@ -1660,6 +1660,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/providers/cli/{id}/models/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /v1/providers/cli/{id}/models/refresh`: ask the CLI again now. */
+        post: operations["refresh_models_route"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/providers/detected": {
         parameters: {
             query?: never;
@@ -2798,6 +2815,16 @@ export interface components {
             models: string[];
             /** @description Why the model list could not be fetched. */
             models_error?: string | null;
+            /**
+             * Format: int64
+             * @description Coding CLIs only: when the list was fetched (ms since the epoch; absent for `bundled`).
+             */
+            models_fetched_at_ms?: number | null;
+            /**
+             * @description Coding CLIs only: where the list came from (`cli`, `local_cache` or `bundled`, the
+             *     last-resort fallback the UI marks as such).
+             */
+            models_source?: string | null;
         };
         /** @description `POST /v1/control/{request_id}`. */
         ControlDecisionInput: {
@@ -9007,6 +9034,35 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": unknown;
+                };
+            };
+        };
+    };
+    refresh_models_route: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description engine id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description list refreshed (or kept) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

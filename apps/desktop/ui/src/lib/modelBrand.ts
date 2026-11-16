@@ -68,6 +68,8 @@ export function productBrandKey(providerId: string, model: string): string {
   const slash = model.lastIndexOf("/");
   const m = model.slice(slash + 1).toLowerCase();
   if (m.startsWith("claude")) return "claude";
+  // Claude Code's own aliases (default, fable, opus, sonnet, haiku) are Claude models.
+  if (/^(claude-code|cli:claude)$/.test(providerId) && slash < 0) return "claude";
   if (/^(gpt|chatgpt|codex)/.test(m) || /^o\d/.test(m)) return "openai";
   if (m.startsWith("gemini")) return "googlegemini";
   if (slash > 0) {

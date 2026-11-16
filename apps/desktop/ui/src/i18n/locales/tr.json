@@ -244,6 +244,7 @@
     "giveBackFailed": "Kontrol geri verilemedi. Tekrar dene."
   },
   "bots": {
+    "writeConflict": "Bu bot siz kaydederken başka bir yerden değiştirildi. Yeniden yükleyip tekrar deneyin.",
     "notFound": "Bu bot artık yok.",
     "noModel": "Model yok",
     "newChat": "Yeni sohbet",
@@ -1361,6 +1362,11 @@
     },
     "otherId": "\"{{id}}\" modelini {{provider}} ile kullan",
     "recommended": "Önerilen",
+    "listBundled": "Yerleşik yedek liste: CLI'ya sorulamadı.",
+    "listFresh": "Az önce güncellendi",
+    "listAge": "{{hours}} sa önce güncellendi",
+    "refresh": "Yenile",
+    "refreshList": "Modelleri CLI'ya yeniden sor",
     "showAll": "Tüm modeller ({{count}})",
     "noModels": "Kullanmak için aramaya model kimliği yazın.",
     "sectionCli": "Kodlama CLI'ları (aboneliğiniz)",

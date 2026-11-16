@@ -9,6 +9,7 @@ import type {
   McpServerPatch,
   McpStatus
 } from "../api/types.ts";
+import { writeBotProfile } from "./botWrite.ts";
 import { matchesQuery } from "./searchText.ts";
 
 /** The slice of the daemon client the Apps modal needs (a mock fits too). */
@@ -495,7 +496,7 @@ export async function saveServerScope(
  * failure in the apps step can never lead to a second created bot.
  */
 export async function saveBotAndApps(
-  api: Pick<ApiClient, "createBot" | "updateBot" | "listMcpServers" | "updateMcpServer">,
+  api: Pick<ApiClient, "createBot" | "getBot" | "updateBot" | "listMcpServers" | "updateMcpServer">,
   target: Bot | undefined,
   input: BotInput,
   initial: Record<string, boolean>,
@@ -503,7 +504,7 @@ export async function saveBotAndApps(
   allBotIds: string[]
 ): Promise<{ bot: Bot } & AppsResult> {
   const bot = target
-    ? await api.updateBot(target.id, { ...input, expected_version: target.version })
+    ? await writeBotProfile(api, target, () => input)
     : await api.createBot(input);
   const apps = await applyAppsSelection(api, bot.id, initial, allowed, allBotIds);
   return { bot, ...apps };

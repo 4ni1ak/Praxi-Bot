@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
@@ -970,6 +971,17 @@ async fn run_process_probe(
     args: &[&str],
     env: &PathEnv,
 ) -> Result<(std::process::ExitStatus, String, String), ProbeError> {
+    run_process_probe_with(resolved, args, env, PROBE_TIMEOUT, MAX_OUTPUT_BYTES).await
+}
+
+/// Same fixed-argv probe with its own time and output bounds (model listings are longer).
+async fn run_process_probe_with(
+    resolved: &ResolvedCommand,
+    args: &[&str],
+    env: &PathEnv,
+    timeout: Duration,
+    cap: usize,
+) -> Result<(std::process::ExitStatus, String, String), ProbeError> {
     // Last line of defence: Rust runs `.cmd`/`.bat` through `cmd.exe /c` and
     // appends the arguments. Never start those.
     if is_batch_file(&resolved.program) {
@@ -1018,7 +1030,7 @@ async fn run_process_probe(
                     let n = n.map_err(|_| ProbeError::Io)?;
                     if n == 0 {
                         stdout_done = true;
-                    } else if stdout_buf.len() + n > MAX_OUTPUT_BYTES {
+                    } else if stdout_buf.len() + n > cap {
                         return Err(ProbeError::OutputTooLarge);
                     } else {
                         stdout_buf.extend_from_slice(&stdout_chunk[..n]);
@@ -1028,7 +1040,7 @@ async fn run_process_probe(
                     let n = n.map_err(|_| ProbeError::Io)?;
                     if n == 0 {
                         stderr_done = true;
-                    } else if stderr_buf.len() + n > MAX_OUTPUT_BYTES {
+                    } else if stderr_buf.len() + n > cap {
                         return Err(ProbeError::OutputTooLarge);
                     } else {
                         stderr_buf.extend_from_slice(&stderr_chunk[..n]);
@@ -1040,10 +1052,10 @@ async fn run_process_probe(
                     // pipes. End the owned tree before draining to EOF.
                     child.terminate().await;
                     if !stdout_done {
-                        read_capped(&mut stdout, &mut stdout_buf, MAX_OUTPUT_BYTES).await?;
+                        read_capped(&mut stdout, &mut stdout_buf, cap).await?;
                     }
                     if !stderr_done {
-                        read_capped(&mut stderr, &mut stderr_buf, MAX_OUTPUT_BYTES).await?;
+                        read_capped(&mut stderr, &mut stderr_buf, cap).await?;
                     }
                     return Ok((
                         status,
@@ -1055,7 +1067,7 @@ async fn run_process_probe(
         }
     };
 
-    let result = tokio::time::timeout(PROBE_TIMEOUT, read_fut).await;
+    let result = tokio::time::timeout(timeout, read_fut).await;
     child.terminate().await;
     result.unwrap_or(Err(ProbeError::Timeout))
 }
@@ -1175,6 +1187,66 @@ impl Detector {
         let fresh = Box::pin(self.detect_fresh()).await;
         *guard = Some((Instant::now(), fresh.clone()));
         fresh
+    }
+
+    /// Last detection result at any age, so a route can answer at once; a stale one (older than
+    /// 60 s) is refreshed in the background. With nothing cached yet this waits for the probe.
+    pub async fn detect_cached(self: &Arc<Self>) -> Vec<DetectedCli> {
+        let cached = self.cache.lock().await.clone();
+        match cached {
+            Some((at, rows)) => {
+                if at.elapsed() >= Duration::from_secs(60) {
+                    let me = Arc::clone(self);
+                    tokio::spawn(async move {
+                        let _ = me.detect(true).await;
+                    });
+                }
+                rows
+            }
+            None => self.detect(false).await,
+        }
+    }
+
+    /// Ask the installed CLI for its models (fixed argv, 20 s, 4 MiB: codex prints its full prompts), else read the CLI's own
+    /// local cache file. `None` when neither gives a model: the caller uses the bundled list.
+    pub async fn fetch_models(&self, id: &str) -> Option<crate::models::ModelList> {
+        use crate::models::{CliModel, ModelList, ModelSource, now_ms};
+        let spec = engine_spec(id)?;
+        let mut found: Option<(ModelSource, Vec<CliModel>)> = None;
+        if let Some(args) = crate::models::list_args(id)
+            && let Some(candidate) = crate::search::find_engine(spec, &self.env)
+            && let Ok(resolved) = resolve_spawn(&candidate, &self.env)
+            && let Ok((status, stdout, _)) = run_process_probe_with(
+                &resolved,
+                args,
+                &self.env,
+                Duration::from_secs(20),
+                4 * 1024 * 1024,
+            )
+            .await
+            && status.success()
+        {
+            let models = crate::models::parse_list_output(id, &stdout);
+            if !models.is_empty() {
+                found = Some((ModelSource::Cli, models));
+            }
+        }
+        if found.is_none() {
+            let codex_home = self.env.env_vars.get("CODEX_HOME").map(PathBuf::from);
+            let models = crate::models::read_local_cache(
+                id,
+                self.env.home_dir.as_deref(),
+                codex_home.as_deref(),
+            );
+            if !models.is_empty() {
+                found = Some((ModelSource::LocalCache, models));
+            }
+        }
+        found.map(|(source, models)| ModelList {
+            models,
+            source,
+            fetched_at_ms: now_ms(),
+        })
     }
 
     async fn detect_fresh(&self) -> Vec<DetectedCli> {

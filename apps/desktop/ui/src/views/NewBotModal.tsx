@@ -32,6 +32,7 @@ import {
 } from "../lib/botProfile";
 import { invalidCustomRoles } from "../lib/botEditor";
 import { botHasAccess, changedApps, saveBotAndApps } from "../lib/mcpApps";
+import { botWriteMessage } from "../lib/botWrite";
 import { modelGroups } from "../lib/modelPicker";
 import { useDaemon } from "../state/DaemonContext";
 import { useCustomText } from "../state/useCustomText";
@@ -177,7 +178,7 @@ function NewBotDialogContent({
       }
       onDone(bot.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(botWriteMessage(err, t));
     } finally {
       setSaving(false);
     }
