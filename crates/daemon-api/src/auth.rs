@@ -408,7 +408,9 @@ fn with_cors(mut resp: Response, origin: Option<HeaderValue>, preflight: bool) -
         );
         h.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("authorization, content-type, last-event-id"),
+            HeaderValue::from_static(
+                "authorization, content-type, last-event-id, x-praxi-owner-key",
+            ),
         );
         h.insert(
             header::ACCESS_CONTROL_MAX_AGE,

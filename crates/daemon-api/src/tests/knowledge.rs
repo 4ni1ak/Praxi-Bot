@@ -274,6 +274,7 @@ async fn knowledge_redacts_registered_values_before_persistence() {
         },
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let t = T {
         app: router(state.clone()),
         state,

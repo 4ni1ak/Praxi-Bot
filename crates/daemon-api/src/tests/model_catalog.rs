@@ -94,6 +94,7 @@ fn catalog_setup(fail: bool) -> (T, Arc<std::sync::Mutex<Vec<String>>>) {
         },
     );
     let state = AppState::new(agent.clone(), store, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     (
         T {
             app: router(state.clone()),

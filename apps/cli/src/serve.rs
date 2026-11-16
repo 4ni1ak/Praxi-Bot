@@ -988,9 +988,12 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
+    // The owner key: handed over by the desktop app on stdin (memory only), else
+    // the `owner-key` file of this data dir (0600) for a terminal `bot serve`,
+    // a host and the `bot` commands the owner runs in a terminal (card 262).
     if let Some(key) = owner_key.clone() {
         state.set_owner_key(key);
-    } else if *host_mode {
+    } else {
         match daemon_api::load_or_create_owner_key(data_dir) {
             Ok(key) => state.set_owner_key(key),
             Err(e) => {
@@ -1198,6 +1201,7 @@ pub fn serve(
                 Arc::clone(store),
                 &format!("http://{addr}"),
                 &api_token,
+                state.owner_key().as_deref(),
                 None,
                 Some(state.leader().clone()),
             );

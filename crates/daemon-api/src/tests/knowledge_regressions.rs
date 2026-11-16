@@ -10,6 +10,7 @@ fn state_at(dir: tempfile::TempDir, path: std::path::PathBuf) -> T {
         LoopConfig::default(),
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     T {
         app: router(state.clone()),
         state,
@@ -281,6 +282,7 @@ async fn review_81_daemon_state_and_ancestor_are_never_source_grants() {
         LoopConfig::default(),
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let t = T {
         app: router(state.clone()),
         state,
@@ -581,6 +583,7 @@ async fn metadata_refresh_case(action: &str) {
         },
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let t = T {
         app: router(state.clone()),
         state,

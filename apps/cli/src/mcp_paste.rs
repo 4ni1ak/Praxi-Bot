@@ -1008,12 +1008,14 @@ mod tests {
         );
         let state = daemon_api::AppState::new(agent, storage, daemon_api::DaemonConfig::new(TOKEN))
             .unwrap();
+        state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
         state.set_mcp(Arc::clone(&host) as Arc<dyn daemon_api::McpControl>);
         state.set_secret_store(Arc::clone(&store));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
-        let client = crate::client::Client::new(&url, TOKEN.to_owned());
+        let client = crate::client::Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
 
         let paste = format!(
             "claude mcp add --transport http remote {}/mcp --header \"X-Api-Key: {VALUE}\"",
@@ -1077,6 +1079,7 @@ mod tests {
         );
         let state = daemon_api::AppState::new(agent, storage, daemon_api::DaemonConfig::new(TOKEN))
             .unwrap();
+        state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
         state.set_mcp(Arc::clone(&host) as Arc<dyn daemon_api::McpControl>);
         if secrets {
             state.set_secret_store(Arc::clone(&store));
@@ -1085,7 +1088,8 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
         (
-            crate::client::Client::new(&url, TOKEN.to_owned()),
+            crate::client::Client::new(&url, TOKEN.to_owned())
+                .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned())),
             store,
             host,
             dir,

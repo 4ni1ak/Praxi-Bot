@@ -18,12 +18,15 @@ mod common;
 
 const TOKEN: &str = "install-fixture-owner-0123456789abcdef";
 
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
+
 async fn request(app: &Router, method: Method, path: &str, body: Value) -> (StatusCode, String) {
     let request = Request::builder()
         .method(method)
         .uri(path)
         .header("host", "127.0.0.1:47821")
         .header("authorization", format!("Bearer {TOKEN}"))
+        .header("x-praxi-owner-key", OWNER_KEY)
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
@@ -99,6 +102,7 @@ async fn exercise_install(root: &Path) {
         LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let app = router(state.clone());
     let (_, before) = request(&app, Method::GET, "/v1/providers/cli", Value::Null).await;
     let before: Vec<Value> = serde_json::from_str(&before).unwrap();

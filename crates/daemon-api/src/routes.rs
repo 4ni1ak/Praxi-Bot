@@ -326,6 +326,7 @@ pub(crate) async fn list_bots(State(s): State<AppState>) -> Result<Json<Vec<BotD
 pub(crate) async fn create_bot(
     State(s): State<AppState>,
     peer: Option<axum::Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<(StatusCode, Json<BotDto>), ApiError> {
     let (name, mut config) = resolve_bot(input)?;
@@ -342,6 +343,11 @@ pub(crate) async fn create_bot(
         &mut config,
     )?;
     crate::file_access::guard_files_config(&s, owner, None, &mut config)?;
+    // Permissions, tools, file access or a CLI engine in a new profile are
+    // authority: the owner key, not the general token (card 262).
+    if peer.is_none() && crate::owner::execution_changed(None, &config) {
+        s.require_owner(&headers)?;
+    }
     if config.get("knowledge").is_some() {
         return Err(ApiError::bad_request(
             "configure knowledge through the bot knowledge settings endpoint",
@@ -437,6 +443,7 @@ pub(crate) async fn update_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
     peer: Option<axum::Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
     ApiJson(input): ApiJson<BotInput>,
 ) -> Result<Json<BotDto>, BotPatchError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
@@ -463,6 +470,9 @@ pub(crate) async fn update_bot(
         &mut config,
     )?;
     crate::file_access::guard_files_config(&s, owner, bot.config.get("files"), &mut config)?;
+    if peer.is_none() && crate::owner::execution_changed(Some(&bot.config), &config) {
+        s.require_owner(&headers)?;
+    }
     // Engine settings (who runs files and shell) change only through
     // `PUT /v1/bots/{id}/engine`: an edit keeps the stored table, and a profile
     // that carries a different one is refused.
@@ -678,6 +688,7 @@ pub(crate) async fn patch_bot(
     State(s): State<AppState>,
     Path(bid): Path<String>,
     peer: Option<axum::Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
     ApiJson(input): ApiJson<BotPatchInput>,
 ) -> Result<Json<BotDto>, BotPatchError> {
     let bot = s.bot_of_user(BotId(id(&bid)?))?;
@@ -710,6 +721,9 @@ pub(crate) async fn patch_bot(
         // edits never change knowledge settings (the dedicated endpoint owns them).
         let mut next = bot.config.clone();
         if apply_patch_ops(&mut next, &ops).is_ok() {
+            if peer.is_none() && crate::owner::execution_changed(Some(&bot.config), &next) {
+                s.require_owner(&headers)?;
+            }
             crate::peer::protect_knowledge_config(
                 peer.as_ref().map(|peer| &peer.0),
                 bot.config.get("knowledge"),
@@ -724,11 +738,22 @@ pub(crate) async fn patch_bot(
         }
     }
     let host_mode = s.leader().config().mode == crate::host::HostMode::Host;
+    let owner_key_given = s.has_owner(&headers);
     let outcome = s
         .storage()
         .patch_bot(bot.id, input.expected_version, |name, config| {
             let mut next = config.clone();
             apply_patch_ops(&mut next, &ops).map_err(|e| format!("bad_patch:{e}"))?;
+            // The profile may have changed since the dry run above.
+            if peer.is_none()
+                && !owner_key_given
+                && crate::owner::execution_changed(Some(config), &next)
+            {
+                return Err(
+                    "forbidden:this edit changes what the bot may do and needs the owner key"
+                        .to_owned(),
+                );
+            }
             // The FINAL candidate is checked against the stored profile inside
             // the atomic write, with the same guards as create and PUT.
             let refused = |e: ApiError| {

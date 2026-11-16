@@ -21,6 +21,7 @@ use tool_registry::{
 use tower::ServiceExt as _;
 
 const TOKEN: &str = "cli-only-test-token-0123456789abcdef";
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn fixture_process(root: &std::path::Path) -> std::process::Command {
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
@@ -66,6 +67,7 @@ async fn request(
         .header("host", "127.0.0.1:47821")
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {TOKEN}"))
+        .header("x-praxi-owner-key", OWNER_KEY)
         .body(Body::from(bytes))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -101,6 +103,7 @@ fn build_cli_only_app(root: &std::path::Path) -> Router {
         LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let reload_dir = data_dir;
     state.set_provider_host(ProviderHost {
         catalog: Catalog::default(),

@@ -725,8 +725,12 @@ async fn computer_access_routes_need_the_owner_key_not_the_bearer_or_an_origin()
     t.state.set_owner_key(OWNER.into());
     t.state.set_host_links(Arc::new(FakeLinks::default()));
     let (k, v) = auth();
-    let bearer_only = [(k, v.as_str())];
-    let forged_origin = [(k, v.as_str()), ("origin", "http://tauri.localhost")];
+    let bearer_only = [(k, v.as_str()), ("x-test-token-only", "1")];
+    let forged_origin = [
+        (k, v.as_str()),
+        ("x-test-token-only", "1"),
+        ("origin", "http://tauri.localhost"),
+    ];
     let owner = [(k, v.as_str()), ("x-praxi-owner-key", OWNER)];
     let routes: [(Method, &str, Option<Value>); 3] = [
         (Method::GET, "/v1/hosts/computer-requests", None),
@@ -756,4 +760,122 @@ async fn computer_access_routes_need_the_owner_key_not_the_bearer_or_an_origin()
     )
     .await;
     assert_eq!(r.status, StatusCode::OK, "the owner key is accepted");
+}
+
+// ---------------------------------------------------------------- card 262
+
+/// Concrete path of a table pattern.
+fn concrete(pattern: &str) -> String {
+    pattern.replace("{}", "x").replace('*', "a/b")
+}
+
+/// Every OWNER route: the general bearer alone is refused with
+/// `owner_key_required`; with the owner key the request gets past the guard.
+#[tokio::test]
+async fn every_owner_route_refuses_the_general_bearer_and_accepts_the_owner_key() {
+    let t = setup();
+    for (method, pattern) in crate::owner::OWNER_ROUTES {
+        let path = concrete(pattern);
+        let m: Method = method.parse().unwrap();
+        let body = Some(json!({}));
+        let token_only = call_token_only(&t, m.clone(), &path, body.clone()).await;
+        assert_eq!(token_only.status, StatusCode::FORBIDDEN, "{method} {path}");
+        assert_eq!(
+            token_only.json()["error"]["code"],
+            "owner_key_required",
+            "{method} {path}"
+        );
+        let owner = call(&t, m, &path, body).await;
+        assert_ne!(
+            owner.json()["error"]["code"],
+            "owner_key_required",
+            "{method} {path} still refused with the owner key"
+        );
+    }
+}
+
+/// A new mutating route cannot ship unclassified: every documented one is in
+/// the owner table or the explicit token-ok list.
+#[test]
+fn every_documented_mutating_route_is_classified() {
+    let doc: Value = serde_json::from_str(&crate::openapi_json()).unwrap();
+    let mut unclassified = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        for method in item.as_object().unwrap().keys() {
+            if method == "get" || method == "head" {
+                continue;
+            }
+            let ours = path.replace("{call_id}", "x");
+            let generic = regex_free(&ours);
+            if !crate::owner::is_owner_route(method, &generic)
+                && !crate::owner::is_token_ok_route(method, &generic)
+            {
+                unclassified.push(format!("{} {path}", method.to_uppercase()));
+            }
+        }
+    }
+    assert!(
+        unclassified.is_empty(),
+        "unclassified routes: {unclassified:?}"
+    );
+}
+
+/// `{name}`-style `OpenAPI` parameters become one segment; a wildcard secret name
+/// may hold slashes, which one segment also matches.
+fn regex_free(path: &str) -> String {
+    path.split('/')
+        .map(|seg| if seg.starts_with('{') { "x" } else { seg })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A holder of only the token cannot approve its own tool call, answer its own
+/// question or answer a desktop-control prompt.
+#[tokio::test]
+async fn approval_decisions_cannot_be_made_with_the_general_bearer() {
+    let t = setup();
+    for path in [
+        "/v1/approvals/00000000-0000-0000-0000-000000000001",
+        "/v1/questions/00000000-0000-0000-0000-000000000001",
+        "/v1/control/00000000-0000-0000-0000-000000000001",
+    ] {
+        let r = call_token_only(
+            &t,
+            Method::POST,
+            path,
+            Some(json!({"decision": "approve", "scope": "always", "answer": "yes"})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(r.json()["error"]["code"], "owner_key_required", "{path}");
+    }
+}
+
+/// Permissions, tools or a CLI engine in a bot profile are authority; a plain
+/// profile edit is not.
+#[tokio::test]
+async fn bot_profile_authority_needs_the_owner_key() {
+    let t = setup();
+    let plain = call_token_only(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": PROFILE })),
+    )
+    .await;
+    assert_eq!(plain.status, StatusCode::CREATED, "{:?}", plain.json());
+    let with_permissions = format!("{PROFILE}\n[permissions]\npreset = \"full\"\n");
+    let powerful = call_token_only(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": with_permissions })),
+    )
+    .await;
+    assert_eq!(
+        powerful.json()["error"]["code"],
+        "owner_key_required",
+        "{:?}",
+        powerful.json()
+    );
 }

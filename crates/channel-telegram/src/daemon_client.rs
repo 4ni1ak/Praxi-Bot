@@ -173,6 +173,7 @@ pub type ApiClient = dyn DaemonClient;
 pub struct HttpDaemonClient {
     base_url: String,
     token: SecretValue,
+    owner_key: Option<SecretValue>,
     http: Client,
 }
 
@@ -193,8 +194,18 @@ impl HttpDaemonClient {
         Self {
             base_url,
             token,
+            owner_key: None,
             http: Client::new(),
         }
+    }
+
+    /// Also present the daemon's owner key (`x-praxi-owner-key`), which the
+    /// approval decision route requires: the channel decides for the owner's
+    /// own authenticated chat.
+    #[must_use]
+    pub fn with_owner_key(mut self, key: Option<SecretValue>) -> Self {
+        self.owner_key = key;
+        self
     }
 
     async fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
@@ -213,6 +224,9 @@ impl HttpDaemonClient {
             .request(method, format!("{}{path}", self.base_url))
             .bearer_auth(self.token.expose())
             .timeout(Duration::from_secs(30));
+        if let Some(key) = &self.owner_key {
+            rb = rb.header("x-praxi-owner-key", key.expose());
+        }
         if let Some(b) = body {
             rb = rb.json(&b);
         }

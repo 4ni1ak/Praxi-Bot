@@ -1,4 +1,5 @@
 import { createSseParser } from "./events.ts";
+import { isLocalBaseUrl } from "../lib/liveViewState.ts";
 import type { Connection } from "./connection";
 import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
 import type {
@@ -184,6 +185,11 @@ export class ApiClient {
   private readonly token: string;
   /** Name of the paired host this client talks to (null for this computer). */
   hostName: string | null = null;
+  /**
+   * Where the owner key comes from (the Tauri `owner_key` command, main window only), installed by
+   * `main.tsx`. `null` in a plain browser: the daemon then refuses owner-only routes.
+   */
+  static ownerKeyProvider: (() => Promise<string | null>) | null = null;
   /** Aborts every request of this client when its computer is dropped (`dispose`). */
   private readonly life = new AbortController();
 
@@ -243,6 +249,14 @@ export class ApiClient {
     const headers: Record<string, string> = { ...(opts.headers ?? {}) };
     if (opts.auth !== false) {
       Object.assign(headers, this.authHeaders());
+    }
+    // The owner key (card 262) goes to THIS computer's daemon only, never through the proxy to a
+    // paired host, and the daemon ignores it on routes that do not need it. One place for every call.
+    if (!("x-praxi-owner-key" in headers) && ApiClient.ownerKeyProvider && isLocalBaseUrl(this.baseUrl)) {
+      const key = await ApiClient.ownerKeyProvider();
+      if (key) {
+        headers["x-praxi-owner-key"] = key;
+      }
     }
     if (opts.body !== undefined) {
       headers["Content-Type"] = "application/json";

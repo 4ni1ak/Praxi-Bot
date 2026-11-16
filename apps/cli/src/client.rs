@@ -50,10 +50,17 @@ pub fn fail(code: i32, msg: impl Into<String>) -> Box<dyn std::error::Error> {
     })
 }
 
+/// Owner key of the daemons the tests start.
+#[cfg(test)]
+pub const TEST_OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
+
 /// A connected client.
 pub struct Client {
     base: String,
     token: String,
+    /// The owner key of this data dir (the `owner-key` file), sent on the
+    /// owner-only routes (`daemon_api::owner::OWNER_ROUTES`) and nowhere else.
+    owner_key: Option<String>,
     http: reqwest::Client,
 }
 
@@ -85,6 +92,7 @@ impl Client {
         Ok(Self {
             base: base.trim_end_matches('/').to_owned(),
             token,
+            owner_key: None,
             http: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -156,8 +164,16 @@ impl Client {
         Self {
             base: base.trim_end_matches('/').to_owned(),
             token,
+            owner_key: None,
             http: reqwest::Client::new(),
         }
+    }
+
+    /// Present `key` on the owner-only routes (the terminal owner's authority).
+    #[must_use]
+    pub fn with_owner_key(mut self, key: Option<String>) -> Self {
+        self.owner_key = key;
+        self
     }
 
     fn unreachable(&self, e: &reqwest::Error) -> Box<dyn std::error::Error> {
@@ -184,6 +200,14 @@ impl Client {
         let msg = body["error"]["message"]
             .as_str()
             .map_or_else(|| status.to_string(), str::to_owned);
+        if body["error"]["code"] == daemon_api::owner::OWNER_REQUIRED {
+            return Err(fail(
+                exit::AUTH,
+                "this needs the owner key. A daemon started by the Praxi app keeps it in memory only: \
+                 do this in the app, or stop the app and run `bot serve` in a terminal (it keeps the \
+                 key in the `owner-key` file of the data dir, which this command reads)",
+            ));
+        }
         let code = match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => exit::AUTH,
             StatusCode::NOT_FOUND => exit::NOT_FOUND,
@@ -217,6 +241,11 @@ impl Client {
         body: Option<Value>,
         owner_key: Option<&str>,
     ) -> Result<Value> {
+        let owner_key = owner_key.or_else(|| {
+            self.owner_key
+                .as_deref()
+                .filter(|_| daemon_api::owner::is_owner_route(method.as_str(), path))
+        });
         let mut rb = self
             .http
             .request(method, format!("{}{path}", self.base))

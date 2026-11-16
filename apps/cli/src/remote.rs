@@ -707,6 +707,7 @@ mod tests {
             None,
         );
         let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
@@ -716,7 +717,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn bots_chat_status_approve_against_a_live_daemon() {
         let (dir, url) = daemon().await;
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let mut out = Vec::new();
 
         let file = dir.path().join("bot.toml");
@@ -835,7 +837,8 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     async fn answer_and_grants_commands_against_a_live_daemon() {
         let (dir, url) = daemon().await;
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let (bot, chat) = setup_bot_and_chat(&c, dir.path()).await;
         let mut out = Vec::new();
 
@@ -958,7 +961,8 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
         drop(l);
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let err = status(&c, false, &mut Vec::new()).await.unwrap_err();
         assert_eq!(code_of(&*err), exit::UNREACHABLE);
     }
@@ -966,7 +970,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn schedules_add_list_run_now_rm_against_a_live_daemon() {
         let (dir, url) = daemon().await;
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let (bot, _) = setup_bot_and_chat(&c, dir.path()).await;
         let mut out = Vec::new();
 

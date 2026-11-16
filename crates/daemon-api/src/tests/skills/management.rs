@@ -434,6 +434,7 @@ fn setup_production_redactor(secret: &str) -> T {
         },
     );
     let state = AppState::new(agent.clone(), storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key("ownerkey0123456789abcdef0123456789abcdef0123456789abcdef".into());
     let index = ::skills::SkillIndex::load_roots(::skills::SkillRoots::from_data_dir(dir.path()))
         .with_assignments(Arc::new(SkillAssignments::new(state.storage_arc())));
     state.set_skills(index).unwrap();

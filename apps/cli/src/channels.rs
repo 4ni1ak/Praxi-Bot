@@ -274,6 +274,7 @@ pub fn start_telegram(
         store,
         daemon_url,
         daemon_token,
+        None,
         api_base_url,
         None,
     );
@@ -286,6 +287,7 @@ pub fn telegram_runtime(
     store: Arc<dyn SecretStore>,
     daemon_url: &str,
     daemon_token: &str,
+    owner_key: Option<&str>,
     api_base_url: Option<&str>,
     leader: Option<daemon_api::host::LeaderControl>,
 ) -> Arc<TelegramRuntime> {
@@ -312,10 +314,12 @@ pub fn telegram_runtime(
         data_dir: data_dir.to_path_buf(),
         channel: parking_lot::Mutex::new(None),
         config,
-        client: Arc::new(HttpDaemonClient::new(
-            daemon_url,
-            SecretValue::new(daemon_token),
-        )),
+        // The channel decides approvals for the owner's authenticated chat, so it
+        // carries the owner key like the desktop app does.
+        client: Arc::new(
+            HttpDaemonClient::new(daemon_url, SecretValue::new(daemon_token))
+                .with_owner_key(owner_key.map(SecretValue::new)),
+        ),
     })
 }
 
