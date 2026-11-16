@@ -928,6 +928,10 @@
         "title": "Çok fazla yönetim değişikliği",
         "hint": "Bir dakika bekleyip yeniden dene."
       },
+      "component_conflict": {
+        "title": "Şu an kurulacak bir şey yok",
+        "hint": "Zaten kurulu ya da kuruluyor olabilir veya bu bilgisayarda kurulum aracı yok."
+      },
       "approval_once_only": {
         "title": "Bu onay yalnızca bir kez verilebilir",
         "hint": "Yalnızca bu adım için izin ver ya da reddet."
@@ -1536,8 +1540,8 @@
       "stderr": "Sunucunun yazdıkları",
       "noStderr": "Sunucu durmadan önce hiçbir şey yazmadı.",
       "hint": {
-        "runtime_node": "Node.js PATH üzerinde bulunamadı. LTS sürümünü https://nodejs.org adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
-        "runtime_uv": "uv PATH üzerinde bulunamadı. Kurun (Windows: winget install --id=astral-sh.uv -e veya https://docs.astral.sh/uv/) ya da klasörünü PATH'e ekleyin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
+        "runtime_node": "Node.js PATH'te bulunamadı. Yukarıdaki düğmeyle ya da https://nodejs.org adresinden kur, sonra Yeniden bağlan'a bas.",
+        "runtime_uv": "uv PATH'te bulunamadı. Yukarıdaki düğmeyle ya da https://docs.astral.sh/uv/ adresinden kur, sonra Yeniden bağlan'a bas.",
         "runtime_pipx": "pipx PATH üzerinde bulunamadı. https://pipx.pypa.io adresinden kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
         "runtime_docker": "docker komutu PATH üzerinde bulunamadı. Docker'ı kurun (ya da klasörünü PATH'e ekleyin), Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
         "runtime_other": "Bu sunucuyu başlatan program PATH üzerinde bulunamadı. Kurun, klasörünü PATH'e ekleyin ya da sunucu ayarlarında tam yolunu verin, Praxi-Bot'u yeniden başlatın ve Yeniden bağlan'a basın.",
@@ -1546,7 +1550,8 @@
         "needs_folder": "Bu uygulamanın okuyup yazabileceği tek klasörü seçin, sonra Kaydet ve bağla'ya basın.",
         "timeout": "Sunucu zamanında yanıt vermedi. İlk başlatma paketler inerken yavaş olabilir; tekrar denemek için Yeniden bağlan'a basın.",
         "config": "Sunucu ayarları ya da gerekli bir gizli anahtar eksik veya geçersiz. Düzeltin ve Yeniden bağlan'a basın."
-      }
+      },
+      "generic": "Bu uygulama başlatılamadı. Nedenini görmek için ayrıntıları aç."
     },
     "folder": {
       "label": "Botun okuyup yazabileceği klasör",
@@ -1593,41 +1598,93 @@
     "advanced": {
       "title": "Özel MCP sunucusu",
       "tokenCards": "Erişim anahtarı isteyen hizmetler",
-      "tokenHint": "Bunlar kendi oluşturduğun kişisel bir anahtar ister. Çoğu hizmet ana ekrandaki Composio ile anahtarsız bağlanır."
+      "tokenHint": "Bunlar kendi oluşturduğun kişisel bir anahtar ister. Çoğu hizmet ana ekrandaki Composio ile anahtarsız bağlanır.",
+      "localTitle": "Yerel geliştirici sunucuları"
     },
     "composio": {
       "title": "Composio",
-      "via": "Composio ile",
-      "setupTitle": "Uygulamaları anahtarsız bağla",
-      "setupBody": "Composio, Instagram, LinkedIn, Gmail ve yüzlercesine senin yerine giriş yapar. Ücretsiz bir proje API anahtarını bir kez oluştur, buraya yapıştır; bir daha anahtar girmezsin.",
       "getKey": "Composio anahtar sayfasını aç",
       "keyLabel": "Composio API anahtarı",
       "keyHint": "Hemen doğrulanır, sonra sistem anahtar zincirinde saklanır. Bir daha gösterilmez.",
       "keySave": "Anahtarı kaydet",
-      "dataNotice": "Bu uygulamaların girdileri ve sonuçları Composio sunucularından geçer ve orada varsayılan olarak kaydedilir. Praxi her işlemden önce sana sorar.",
-      "dataNoticeSensitive": "Bu uygulamadaki e-postaların, belgelerin veya mesajların Composio sunucularından geçer ve orada varsayılan olarak kaydedilir. Praxi her işlemden önce sana sorar.",
-      "continue": "Girişe devam et",
-      "nativeNote": "Praxi bunu doğrudan da bağlıyor",
-      "popular": "Popüler",
-      "catalog": "Tüm uygulamalar",
       "connectedSection": "Bağlı",
       "loadMore": "Daha fazla göster",
       "loading": "Uygulamalar yükleniyor…",
       "noResults": "Eşleşen uygulama yok.",
-      "waiting": "Tarayıcında girişin tamamlanması bekleniyor…",
+      "waiting": "Tarayıcıda seni bekliyor…",
       "state": {
         "not_connected": "Bağlı değil",
         "pending": "Giriş yapılıyor",
         "active": "Bağlı",
-        "expired": "Giriş süresi doldu"
+        "expired": "Giriş süresi doldu",
+        "failed": "Tamamlanmadı"
       },
       "enable": "Aç",
       "disable": "Kapat",
-      "removeKey": "Anahtarı kaldır",
-      "removeKeyConfirm": "Anahtarı kaldır",
       "openFailed": "Giriş bağlantısı Composio bağlantısı olmadığı için açılmadı.",
       "disconnectedLocal": "{{name}} burada kaldırıldı. Composio panelinden de kaldır.",
-      "retryOpen": "Oturum açma sayfasını yeniden aç"
+      "link": {
+        "title": "Composio'yu bağla (ücretsiz) — bir kez",
+        "body": "Ücretsiz bir Composio hesabı uygulamalarını bağlar. Düğmeye bas, tarayıcıda giriş yap ve geri dön. Kopyalanacak bir şey yok.",
+        "open": "Composio'yu aç",
+        "waiting": "Tarayıcıda seni bekliyor…",
+        "failed": "Giriş tamamlanamadı. Tekrar dene.",
+        "privacy": "Girdiler ve sonuçlar Composio sunucularından geçer. Praxi her işlemden önce sana sorar."
+      },
+      "advanced": {
+        "title": "Composio",
+        "mode": {
+          "none": "Henüz bağlı değil. Bir uygulamanın ilk Bağlan'ında bir kez giriş istenir.",
+          "login": "Composio girişin üzerinden bağlı.",
+          "project_key": "Kendi Composio proje anahtarın kullanılıyor."
+        },
+        "signOut": "Composio'dan çıkış yap",
+        "ownKey": "Kendi proje anahtarımı kullan"
+      },
+      "retry": "Tekrar dene",
+      "failedHint": "Giriş tamamlanamadı. Tekrar dene.",
+      "expiredHint": "Girişin süresi doldu. Devam etmek için yeniden bağlan.",
+      "loadFailed": "Uygulama listesi yüklenemedi.",
+      "catalogError": {
+        "offline": "Bağlantı yok: kayıtlı uygulama listesi gösteriliyor.",
+        "unauthorized": "Composio girişinin süresi doldu: kayıtlı uygulama listesi gösteriliyor.",
+        "rate_limited": "Composio meşgul: kayıtlı uygulama listesi gösteriliyor.",
+        "failed": "Uygulama listesi yenilenemedi: kayıtlı liste gösteriliyor."
+      }
+    },
+    "group": {
+      "label": "Kategoriler",
+      "all": "Tümü",
+      "communication": "İletişim",
+      "social": "Sosyal",
+      "productivity": "Verimlilik",
+      "dev": "Geliştirme",
+      "finance": "Finans",
+      "business": "İş",
+      "other": "Diğer"
+    },
+    "component": {
+      "name": {
+        "uv": "uv",
+        "node": "Node.js"
+      },
+      "needs": {
+        "uv": "Bu uygulama uv'ye ihtiyacı duyuyor; küçük bir Python araç çalıştırıcı.",
+        "node": "Bu uygulama JavaScript araçlarını çalıştıran Node.js'e ihtiyacı duyuyor."
+      },
+      "install": "{{name}} kur",
+      "confirm": "Praxi {{name}} kurmak için şu komutu çalıştıracak:",
+      "source": "Kaynak: {{source}}",
+      "run": "Kur",
+      "installing": "{{name}} kuruluyor… bu bir dakika sürebilir.",
+      "manual": "Bu bilgisayarda buradan kurulum yapılamıyor. Resmi sayfa nasıl kuracağını gösterir:",
+      "openPage": "Resmi sayfayı aç",
+      "failed": {
+        "exit": "Kurulum tamamlanamadı. Tekrar dene ya da resmi sayfadan kendin kur.",
+        "not_detected": "Kurulum bitti ama program henüz bulunamadı. Yeniden bağlan'a bas ya da Praxi-Bot'u bir kez yeniden başlat.",
+        "timeout": "Kurulum çok uzun sürdü ve durduruldu.",
+        "unavailable": "Kurulum başlatılamadı."
+      }
     }
   },
   "help": {

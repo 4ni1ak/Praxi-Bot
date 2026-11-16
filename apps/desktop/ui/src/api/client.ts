@@ -46,6 +46,10 @@ import type {
   ComposioApp,
   ComposioCatalog,
   ComposioConnect,
+  ComposioLogin,
+  ComposioLoginStatus,
+  Component,
+  ComponentId,
   ComposioDisconnect,
   ComposioStatus,
   McpCatalogEntry,
@@ -766,7 +770,14 @@ export class ApiClient {
   composioStatus(): Promise<ComposioStatus> {
     return this.request("GET", "/composio");
   }
-  /** The key is write-only: validated, stored in the OS secret store, never returned. */
+  /** One-time browser login: returns the Composio page to open; no key is typed or copied. */
+  composioLoginStart(): Promise<ComposioLogin> {
+    return this.request("POST", "/composio/login");
+  }
+  composioLoginStatus(): Promise<ComposioLoginStatus> {
+    return this.request("GET", "/composio/login");
+  }
+  /** Advanced: the owner's own project key; write-only, never returned. */
   setComposioKey(value: string): Promise<ComposioStatus> {
     return this.request("PUT", "/composio/key", { body: { value } });
   }
@@ -775,12 +786,25 @@ export class ApiClient {
   }
   composioToolkits(q: {
     search?: string;
+    group?: string;
     cursor?: string;
     limit?: number;
   }): Promise<ComposioCatalog> {
     return this.request("GET", "/composio/toolkits", {
-      query: { search: q.search || null, cursor: q.cursor ?? null, limit: q.limit ?? null }
+      query: {
+        search: q.search || null,
+        group: q.group ?? null,
+        cursor: q.cursor ?? null,
+        limit: q.limit ?? null
+      }
     });
+  }
+  // ---- Missing local components (uv, Node.js): detect and install ----------
+  component(id: ComponentId): Promise<Component> {
+    return this.request("GET", `/components/${id}`);
+  }
+  installComponent(id: ComponentId): Promise<Component> {
+    return this.request("POST", `/components/${id}/install`);
   }
   composioApps(): Promise<ComposioApp[]> {
     return this.request("GET", "/composio/apps");

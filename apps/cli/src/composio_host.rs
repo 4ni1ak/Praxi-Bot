@@ -8,12 +8,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use composio::{
-    AppView, Audit, ComposioError, ComposioService, ConnState, KEY_SETUP_URL, LocalKeySource,
-    Redact, ServiceConfig, Toolkit,
+    AppView, Audit, CatalogSource, ComposioError, ComposioService, ConnState, KEY_SETUP_URL,
+    Linkage, LocalKeySource, LoginState, Redact, ServiceConfig, Toolkit,
 };
 use daemon_api::composio::{
     ComposioAppDto, ComposioCatalogDto, ComposioCatalogQuery, ComposioConnState,
-    ComposioConnectDto, ComposioDisconnectDto, ComposioStatusDto, ComposioToolkitDto,
+    ComposioConnectDto, ComposioDisconnectDto, ComposioLinkMode, ComposioLoginDto,
+    ComposioLoginState, ComposioLoginStatusDto, ComposioStatusDto, ComposioToolkitDto,
 };
 use daemon_api::{ComposioControl, ComposioControlError};
 use secret_store::SecretStore;
@@ -63,7 +64,10 @@ impl ComposioHost {
         })
         .map_err(|e| e.to_string())?;
         let bg = svc.clone();
-        tokio::spawn(async move { bg.refresh_all().await });
+        tokio::spawn(async move {
+            bg.refresh_all().await;
+            bg.spawn_catalog_refresh();
+        });
         Ok(Arc::new(Self { svc }))
     }
 
@@ -79,7 +83,7 @@ impl ComposioHost {
         }
     }
 
-    fn toolkit_dto(&self, t: &Toolkit, apps: &[AppView]) -> ComposioToolkitDto {
+    fn toolkit_dto(&self, t: &Toolkit, group: &str, apps: &[AppView]) -> ComposioToolkitDto {
         let mine = apps.iter().find(|a| a.slug == t.slug);
         ComposioToolkitDto {
             slug: t.slug.clone(),
@@ -87,6 +91,8 @@ impl ComposioHost {
             description: t.description.clone(),
             categories: t.categories.clone(),
             tools_count: t.tools_count,
+            group: group.to_owned(),
+            logo: t.logo.clone(),
             native_first: self.svc.curated().is_native_first(&t.slug),
             state: mine.map_or(ComposioConnState::NotConnected, |a| conn(a.state)),
             enabled: mine.is_some_and(|a| a.enabled),
@@ -100,6 +106,7 @@ fn conn(s: ConnState) -> ComposioConnState {
         ConnState::Pending => ComposioConnState::Pending,
         ConnState::Active => ComposioConnState::Active,
         ConnState::Expired => ComposioConnState::Expired,
+        ConnState::Failed => ComposioConnState::Failed,
     }
 }
 
@@ -121,8 +128,31 @@ impl ComposioControl for ComposioHost {
     fn status(&self) -> ComposioStatusDto {
         ComposioStatusDto {
             configured: self.svc.configured(),
+            mode: match self.svc.linkage() {
+                Linkage::None => ComposioLinkMode::None,
+                Linkage::Login => ComposioLinkMode::Login,
+                Linkage::ProjectKey => ComposioLinkMode::ProjectKey,
+            },
             key_setup_url: KEY_SETUP_URL.to_owned(),
         }
+    }
+
+    async fn login_start(&self) -> Result<ComposioLoginDto, ComposioControlError> {
+        let s = self.svc.login_start().await.map_err(map_err)?;
+        Ok(ComposioLoginDto {
+            login_url: s.login_url,
+            expires_at: s.expires_at,
+        })
+    }
+
+    async fn login_poll(&self) -> Result<ComposioLoginStatusDto, ComposioControlError> {
+        let state = match self.svc.login_poll().await.map_err(map_err)? {
+            LoginState::Idle => ComposioLoginState::Idle,
+            LoginState::Pending => ComposioLoginState::Pending,
+            LoginState::Linked => ComposioLoginState::Linked,
+            LoginState::Failed => ComposioLoginState::Failed,
+        };
+        Ok(ComposioLoginStatusDto { state })
     }
 
     async fn set_key(&self, key: &str) -> Result<(), ComposioControlError> {
@@ -137,46 +167,31 @@ impl ComposioControl for ComposioHost {
         &self,
         q: ComposioCatalogQuery,
     ) -> Result<ComposioCatalogDto, ComposioControlError> {
-        let unfiltered = q.search.is_none() && q.category.is_none() && q.cursor.is_none();
-        let page = self
-            .svc
-            .toolkits(
-                q.search.as_deref(),
-                q.category.as_deref(),
-                q.cursor.as_deref(),
-                q.limit.unwrap_or(DEFAULT_PAGE),
-            )
-            .await
-            .map_err(map_err)?;
+        // Memory only: never waits for Composio; a stale cache refreshes in
+        // the background.
+        let view = self.svc.catalog_view(
+            q.search.as_deref(),
+            q.group.as_deref(),
+            q.cursor.as_deref(),
+            q.limit.unwrap_or(DEFAULT_PAGE) as usize,
+        );
         let apps = self.svc.apps();
-        let popular = if unfiltered {
-            self.svc
-                .curated()
-                .popular
-                .iter()
-                .map(|p| {
-                    let live = page.items.iter().find(|t| t.slug == p.slug);
-                    let base = live.cloned().unwrap_or_else(|| Toolkit {
-                        slug: p.slug.clone(),
-                        name: p.name.clone(),
-                        description: String::new(),
-                        categories: Vec::new(),
-                        tools_count: None,
-                    });
-                    self.toolkit_dto(&base, &apps)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let items: Vec<ComposioToolkitDto> = view
+            .items
+            .iter()
+            .map(|(t, g)| self.toolkit_dto(t, g, &apps))
+            .collect();
         Ok(ComposioCatalogDto {
-            popular,
-            items: page
-                .items
-                .iter()
-                .map(|t| self.toolkit_dto(t, &apps))
-                .collect(),
-            next_cursor: page.next_cursor,
+            items,
+            next_cursor: view.next_cursor,
+            source: match view.source {
+                CatalogSource::Bundled => "bundled",
+                CatalogSource::Cache => "cache",
+            }
+            .to_owned(),
+            updated_at: view.updated_at,
+            refreshing: self.svc.catalog_refreshing(),
+            error: self.svc.catalog_error().map(str::to_owned),
         })
     }
 

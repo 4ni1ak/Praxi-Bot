@@ -16,7 +16,7 @@ import { hostRefusalKey } from "./hostMode.ts";
 export const DAEMON_ERROR_CODES = [
   "admin_rate_limit", "approval_once_only", "bad_composio_request", "bad_email_config", "bad_engine", "bad_mcp_config",
   "bad_profile", "bad_request", "bad_schedule", "bad_web_config", "busy", "composio_error",
-  "composio_not_configured", "composio_rate_limited", "conflict", "could_not_verify", "disabled",
+  "composio_not_configured", "component_conflict", "composio_rate_limited", "conflict", "could_not_verify", "disabled",
   "email_provider_error", "engine_owner_only", "forbidden", "host_link_failed", "host_setup_conflict",
   "input_busy", "input_rate_limited", "internal", "invalid_mcp_grant", "invalid_signature",
   "invalid_skill", "invalid_skill_name", "invite_rate_limit", "knowledge_busy", "mcp_approval_timeout",

@@ -9,10 +9,10 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
-    changes, composio, composio_routes, doctor, doctor_routes, dto, email, email_routes, error,
-    file_access, fill_routes, host, host_admin, host_copy, host_links, host_setup, knowledge,
-    knowledge_settings, live_view, mcp, mcp_routes, mcp_server, routes, skill_management, skills,
-    sse, web, web_routes,
+    changes, components, composio, composio_routes, doctor, doctor_routes, dto, email,
+    email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_links,
+    host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server, routes,
+    skill_management, skills, sse, web, web_routes,
 };
 
 struct Security;
@@ -140,7 +140,10 @@ impl Modify for Security {
         mcp_routes::set_secret,
         mcp_server::create_token, mcp_server::revoke_token,
         mcp_server::list_tools, mcp_server::call_tool,
+        components::list_components, components::get_component, components::install_component,
         composio_routes::composio_status,
+        composio_routes::composio_login_start,
+        composio_routes::composio_login_status,
         composio_routes::composio_set_key,
         composio_routes::composio_remove_key,
         composio_routes::composio_catalog,
@@ -184,7 +187,9 @@ impl Modify for Security {
         mcp::McpTransportInput, mcp::McpServerInput, mcp::McpToolDto, mcp::McpRequiredSecretDto,
         mcp::McpOAuthConfig, mcp::McpAuthState, mcp::McpAuthStart, mcp::McpAuthCallback,
         mcp::McpCatalogInstallDto, mcp::McpFolderDto, mcp::McpCatalogEntryDto, mcp::SetSecret, mcp::McpServerChanged,
-        composio::ComposioConnState, composio::ComposioStatusDto, composio::ComposioKeyInput,
+        components::ComponentId, components::ComponentInstallState, components::ComponentDto,
+        composio::ComposioConnState, composio::ComposioLinkMode, composio::ComposioLoginDto,
+        composio::ComposioLoginState, composio::ComposioLoginStatusDto, composio::ComposioStatusDto, composio::ComposioKeyInput,
         composio::ComposioToolkitDto, composio::ComposioCatalogDto, composio::ComposioAppDto,
         composio::ComposioConnectDto, composio::ComposioEnabledInput, composio::ComposioDisconnectDto,
         mcp_server::McpScope, mcp_server::McpTokenGrant, mcp_server::CreateMcpToken,

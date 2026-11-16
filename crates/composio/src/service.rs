@@ -12,16 +12,31 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tool_registry::{Tool, ToolRegistry};
 
-use crate::client::{Account, ComposioClient, Link, Redact, ToolkitPage};
+use crate::catalog::{self, CATALOG_FILE, CatalogFile, CatalogView};
+use crate::client::{Account, Auth, CliPoll, ComposioClient, Link, Redact, ToolkitPage};
 use crate::curated::{Curated, display_class, short_name};
 use crate::error::{ComposioError, Result};
-use crate::keys::KeySource;
-use crate::state::{AppConfig, FILE_NAME, StateFile};
+use crate::keys::{KeySource, LOGIN_URL, Stored};
+use crate::state::{AppConfig, FILE_NAME, LoginIds, StateFile};
 use crate::tool::{ActionTool, FindActionTool, RunActionTool};
 
 const DISCOVERY_TTL: Duration = Duration::from_secs(3600);
 const CATALOG_TTL: Duration = Duration::from_secs(900);
 const CATALOG_CACHE_MAX: usize = 64;
+/// How long a consent page may stay unfinished before the app counts as failed
+/// (the browser login of Composio expires on the same scale).
+const PENDING_TIMEOUT: Duration = Duration::from_secs(600);
+/// Pages of 100 toolkits read for the disk cache (the catalog has ~1700).
+const CATALOG_PAGES: usize = 30;
+
+/// Clears the "refresh running" flag when the refresh ends, however it ends.
+struct RefreshGuard<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for RefreshGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// Receives secret-free audit rows (`composio.*`).
 pub trait Audit: Send + Sync {
@@ -44,6 +59,47 @@ pub enum ConnState {
     Active,
     /// The authorization ran out; reconnect.
     Expired,
+    /// The sign-in did not finish (cancelled, refused by the provider or timed
+    /// out); try again.
+    Failed,
+}
+
+/// How Praxi is linked to Composio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Linkage {
+    /// Not linked.
+    None,
+    /// Linked through the browser login (the normal, copy-free path).
+    Login,
+    /// The owner's own Composio project key (advanced).
+    ProjectKey,
+}
+
+/// State of the one-time browser login.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginState {
+    /// No login was started.
+    Idle,
+    /// Waiting for the user in the browser.
+    Pending,
+    /// Linked.
+    Linked,
+    /// Expired, refused or failed; start again.
+    Failed,
+}
+
+/// A started browser login.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginStart {
+    /// https URL on Composio's dashboard to open in the system browser.
+    pub login_url: String,
+    /// ISO timestamp, may be empty.
+    pub expires_at: String,
+}
+
+struct LoginSession {
+    id: String,
+    started: Instant,
 }
 
 /// A connected (or connecting) app as shown in the Apps panel.
@@ -125,6 +181,13 @@ pub(crate) struct Inner {
     discovered: Mutex<HashMap<String, Discovered>>,
     registered: Mutex<HashMap<String, Vec<String>>>,
     catalog: Mutex<HashMap<String, (Instant, ToolkitPage)>>,
+    catalog_file: Mutex<Option<CatalogFile>>,
+    catalog_refreshing: std::sync::atomic::AtomicBool,
+    catalog_error: Mutex<Option<&'static str>>,
+    catalog_attempt: Mutex<Option<Instant>>,
+    login: Mutex<Option<LoginSession>>,
+    router_session: Mutex<Option<String>>,
+    pub(crate) pending_since: Mutex<HashMap<String, Instant>>,
     auth_configs: Mutex<HashMap<String, String>>,
     prepared: Mutex<HashMap<String, Prepared>>,
 }
@@ -168,6 +231,13 @@ impl ComposioService {
             discovered: Mutex::new(HashMap::new()),
             registered: Mutex::new(HashMap::new()),
             catalog: Mutex::new(HashMap::new()),
+            catalog_file: Mutex::new(CatalogFile::load(&cfg.data_dir.join(CATALOG_FILE))),
+            catalog_refreshing: false.into(),
+            catalog_error: Mutex::new(None),
+            catalog_attempt: Mutex::new(None),
+            login: Mutex::new(None),
+            router_session: Mutex::new(None),
+            pending_since: Mutex::new(HashMap::new()),
             auth_configs: Mutex::new(HashMap::new()),
             prepared: Mutex::new(HashMap::new()),
         }));
@@ -217,23 +287,137 @@ impl ComposioService {
         if let Some(c) = self.0.client.lock().clone() {
             return Ok(c);
         }
-        let key = self
+        let stored = self
             .0
             .keys
             .get()
             .await?
             .ok_or(ComposioError::NotConfigured)?;
-        let c = Arc::new(self.build_client(&key)?);
+        let auth = match Stored::parse(&stored) {
+            Stored::Project(key) => Auth::Project(key),
+            Stored::User(key) => {
+                let ids = self.0.state.lock().login.clone().unwrap_or_default();
+                Auth::User {
+                    key,
+                    org_id: ids.org_id,
+                    project_id: ids.project_id,
+                }
+            }
+        };
+        let c = Arc::new(self.build_with(&auth)?);
         *self.0.client.lock() = Some(Arc::clone(&c));
         Ok(c)
     }
 
     fn build_client(&self, key: &str) -> Result<ComposioClient> {
+        self.build_with(&Auth::Project(key.to_owned()))
+    }
+
+    fn build_with(&self, auth: &Auth) -> Result<ComposioClient> {
         let redact = Arc::clone(&self.0.redact);
         match &self.0.loopback_base {
-            Some(base) => ComposioClient::for_loopback_tests(key, base, redact),
-            None => ComposioClient::new(key, redact),
+            Some(base) => ComposioClient::for_loopback_with(auth, base, redact),
+            None => ComposioClient::new_with(auth, redact),
         }
+    }
+
+    /// How Praxi is linked to Composio right now.
+    #[must_use]
+    pub fn linkage(&self) -> Linkage {
+        if !self.configured() {
+            Linkage::None
+        } else if self.0.state.lock().login.is_some() {
+            Linkage::Login
+        } else {
+            Linkage::ProjectKey
+        }
+    }
+
+    fn catalog_path(&self) -> PathBuf {
+        self.0.path.with_file_name(CATALOG_FILE)
+    }
+
+    // --- one-time browser login -----------------------------------------
+
+    /// Start the browser login: Composio makes a session, the caller opens
+    /// the returned URL in the system browser and polls [`Self::login_poll`].
+    /// No key is typed or copied anywhere.
+    ///
+    /// # Errors
+    /// Composio is unreachable or answers an error.
+    pub async fn login_start(&self) -> Result<LoginStart> {
+        let anon = self.build_with(&Auth::Anonymous)?;
+        let session = anon.create_cli_session().await?;
+        let login_url = format!("{LOGIN_URL}?cliKey={}", session.id);
+        *self.0.login.lock() = Some(LoginSession {
+            id: session.id,
+            started: Instant::now(),
+        });
+        Ok(LoginStart {
+            login_url,
+            expires_at: session.expires_at,
+        })
+    }
+
+    /// One check of the browser login.  On success the user key goes straight
+    /// to the secret store; it is never returned.
+    ///
+    /// # Errors
+    /// Only local failures (secret store, state file).
+    pub async fn login_poll(&self) -> Result<LoginState> {
+        if self.linkage() == Linkage::Login {
+            return Ok(LoginState::Linked);
+        }
+        let id = {
+            let mut g = self.0.login.lock();
+            match g.as_ref() {
+                None => return Ok(LoginState::Idle),
+                Some(l) if l.started.elapsed() > PENDING_TIMEOUT => {
+                    *g = None;
+                    return Ok(LoginState::Failed);
+                }
+                Some(l) => l.id.clone(),
+            }
+        };
+        let anon = self.build_with(&Auth::Anonymous)?;
+        let key = match anon.get_cli_session(&id).await {
+            Ok(CliPoll::Pending) => return Ok(LoginState::Pending),
+            Ok(CliPoll::Linked(key)) => key,
+            // A flaky network is not a failed login: keep waiting.
+            Err(ComposioError::Transport(_) | ComposioError::RateLimited { .. }) => {
+                return Ok(LoginState::Pending);
+            }
+            Err(_) => {
+                *self.0.login.lock() = None;
+                return Ok(LoginState::Failed);
+            }
+        };
+        (self.0.register_secret)(&key);
+        let ids = match self
+            .build_with(&Auth::User {
+                key: key.clone(),
+                org_id: None,
+                project_id: None,
+            })?
+            .session_info()
+            .await
+        {
+            Ok((org_id, project_id)) => LoginIds { org_id, project_id },
+            Err(_) => LoginIds::default(),
+        };
+        self.0.keys.set(&Stored::encode_user(&key)).await?;
+        self.save_state(|st| st.login = Some(ids.clone()))?;
+        *self.0.client.lock() = None;
+        *self.0.router_session.lock() = None;
+        *self.0.login.lock() = None;
+        self.0
+            .key_present
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.audit("composio.login_linked", json!({}));
+        self.spawn_catalog_refresh();
+        let bg = self.clone();
+        tokio::spawn(async move { bg.refresh_all().await });
+        Ok(LoginState::Linked)
     }
 
     /// Validate `key` against Composio, then store it.  The key is never
@@ -264,10 +448,12 @@ impl ComposioService {
         }
         self.0.keys.set(key).await?;
         *self.0.client.lock() = Some(client);
+        *self.0.router_session.lock() = None;
         self.0
             .key_present
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.save_state(|_| {})?;
+        self.save_state(|st| st.login = None)?;
+        self.spawn_catalog_refresh();
         self.refresh_all().await;
         Ok(())
     }
@@ -284,6 +470,10 @@ impl ComposioService {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.0.statuses.lock().clear();
         self.0.auth_configs.lock().clear();
+        *self.0.router_session.lock() = None;
+        *self.0.login.lock() = None;
+        self.0.pending_since.lock().clear();
+        self.save_state(|st| st.login = None)?;
         let slugs: Vec<String> = self.0.registered.lock().keys().cloned().collect();
         for s in slugs {
             self.unregister_app(&s);
@@ -326,12 +516,143 @@ impl ComposioService {
         Ok(page)
     }
 
-    fn view(&self, slug: &str, cfg: &AppConfig) -> AppView {
-        let name = self
+    /// The catalog the Apps modal shows, built from memory only: it never
+    /// waits for the network and works offline.  Starts a background refresh
+    /// when the cache is missing or stale and a credential exists.
+    #[must_use]
+    pub fn catalog_view(
+        &self,
+        search: Option<&str>,
+        group: Option<&str>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> CatalogView {
+        let view = {
+            let cache = self.0.catalog_file.lock();
+            catalog::view(
+                &self.0.curated,
+                cache.as_ref(),
+                search,
+                group,
+                cursor,
+                limit,
+            )
+        };
+        self.spawn_catalog_refresh();
+        view
+    }
+
+    /// Whether a background refresh is running.
+    #[must_use]
+    pub fn catalog_refreshing(&self) -> bool {
+        self.0
+            .catalog_refreshing
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Short reason the last refresh failed (a fixed phrase, never server text).
+    #[must_use]
+    pub fn catalog_error(&self) -> Option<&'static str> {
+        *self.0.catalog_error.lock()
+    }
+
+    /// Refresh in the background when due.  Cheap and idempotent.
+    pub fn spawn_catalog_refresh(&self) {
+        let due = self
             .0
-            .curated
-            .popular_name(slug)
-            .map_or_else(|| slug.to_owned(), str::to_owned);
+            .catalog_file
+            .lock()
+            .as_ref()
+            .is_none_or(CatalogFile::is_stale)
+            // A failed refresh is retried by the next request, at most every 10 s.
+            || (self.catalog_error().is_some()
+                && self
+                    .0
+                    .catalog_attempt
+                    .lock()
+                    .is_none_or(|t| t.elapsed() > Duration::from_secs(10)));
+        if !due || !self.configured() || self.catalog_refreshing() {
+            return;
+        }
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let me = self.clone();
+        rt.spawn(async move {
+            let _ = me.refresh_catalog().await;
+        });
+    }
+
+    /// Read the whole Composio catalog (about 17 requests), keep it in memory
+    /// and on disk.  A failure keeps the previous cache and records a short,
+    /// fixed reason for the retry hint.
+    ///
+    /// # Errors
+    /// Not configured, Composio errors, disk errors (cache kept as it was).
+    pub async fn refresh_catalog(&self) -> Result<()> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self
+            .0
+            .catalog_refreshing
+            .compare_exchange(false, true, SeqCst, SeqCst)
+            .is_err()
+        {
+            return Ok(());
+        }
+        let _done = RefreshGuard(&self.0.catalog_refreshing);
+        *self.0.catalog_attempt.lock() = Some(Instant::now());
+        let result = async {
+            let client = self.client().await?;
+            let mut items: Vec<crate::client::Toolkit> = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let mut cursor: Option<String> = None;
+            for _ in 0..CATALOG_PAGES {
+                let page = client
+                    .list_toolkits(None, None, cursor.as_deref(), 100)
+                    .await?;
+                items.extend(
+                    page.items
+                        .into_iter()
+                        .filter(|t| seen.insert(t.slug.clone())),
+                );
+                cursor = page.next_cursor;
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            if items.is_empty() {
+                return Err(ComposioError::Upstream("empty catalog".into()));
+            }
+            let file = CatalogFile {
+                updated_at: catalog::now_secs(),
+                items,
+            };
+            file.save(&self.catalog_path())?;
+            *self.0.catalog_file.lock() = Some(file);
+            Ok::<(), ComposioError>(())
+        }
+        .await;
+        *self.0.catalog_error.lock() = result.as_ref().err().map(|e| match e {
+            ComposioError::Unauthorized => "unauthorized",
+            ComposioError::Transport(_) => "offline",
+            ComposioError::RateLimited { .. } => "rate_limited",
+            _ => "failed",
+        });
+        result
+    }
+
+    fn view(&self, slug: &str, cfg: &AppConfig) -> AppView {
+        let name = self.0.curated.popular_name(slug).map_or_else(
+            || {
+                self.0
+                    .catalog_file
+                    .lock()
+                    .as_ref()
+                    .and_then(|c| c.items.iter().find(|t| t.slug == slug))
+                    .map_or_else(|| slug.to_owned(), |t| t.name.clone())
+            },
+            str::to_owned,
+        );
         AppView {
             slug: slug.to_owned(),
             name,
@@ -408,12 +729,35 @@ impl ComposioService {
             self.unregister_app(slug);
             return Err(e);
         }
-        let new = Self::derive(&accounts);
+        let mut new = Self::derive(&accounts);
+        {
+            let mut pending = self.0.pending_since.lock();
+            let since = pending.get(slug).copied();
+            match (new, since) {
+                (ConnState::Active, _) => {
+                    pending.remove(slug);
+                }
+                (ConnState::Pending | ConnState::NotConnected, Some(t)) => {
+                    if t.elapsed() > PENDING_TIMEOUT {
+                        pending.remove(slug);
+                        new = ConnState::Failed;
+                    } else {
+                        new = ConnState::Pending;
+                    }
+                }
+                (ConnState::Expired, Some(_)) => {
+                    pending.remove(slug);
+                    new = ConnState::Failed;
+                }
+                _ => {}
+            }
+        }
         let old = self.0.statuses.lock().insert(slug.to_owned(), new);
         if old != Some(new) {
             match new {
                 ConnState::Active => self.audit("composio.connected", json!({"app": slug})),
                 ConnState::Expired => self.audit("composio.expired", json!({"app": slug})),
+                ConnState::Failed => self.audit("composio.connect_failed", json!({"app": slug})),
                 _ => {}
             }
         }
@@ -437,18 +781,22 @@ impl ComposioService {
                 "unknown or unsupported app toolkit; connection refused".into(),
             ));
         }
-        let cached = self.0.auth_configs.lock().get(slug).cloned();
-        let auth_config = if let Some(id) = cached {
-            id
+        let link = if self.linkage() == Linkage::Login {
+            self.router_link(&client, slug).await?
         } else {
-            let id = client.ensure_auth_config(slug).await?;
-            self.0
-                .auth_configs
-                .lock()
-                .insert(slug.to_owned(), id.clone());
-            id
+            let cached = self.0.auth_configs.lock().get(slug).cloned();
+            let auth_config = if let Some(id) = cached {
+                id
+            } else {
+                let id = client.ensure_auth_config(slug).await?;
+                self.0
+                    .auth_configs
+                    .lock()
+                    .insert(slug.to_owned(), id.clone());
+                id
+            };
+            client.create_link(&auth_config, &self.user_id()).await?
         };
-        let link = client.create_link(&auth_config, &self.user_id()).await?;
         self.save_state(|s| {
             let app = s.apps.entry(slug.to_owned()).or_default();
             app.enabled = true;
@@ -458,7 +806,36 @@ impl ComposioService {
             .statuses
             .lock()
             .insert(slug.to_owned(), ConnState::Pending);
+        self.0
+            .pending_since
+            .lock()
+            .insert(slug.to_owned(), Instant::now());
         Ok(link)
+    }
+
+    /// A connect link through the user Tool Router session; a stale session
+    /// is replaced once.
+    async fn router_link(&self, client: &ComposioClient, slug: &str) -> Result<Link> {
+        for attempt in 0..2 {
+            let cached = self.0.router_session.lock().clone();
+            let session = if let Some(id) = cached {
+                id
+            } else {
+                let id = client.create_router_session(&self.user_id()).await?;
+                *self.0.router_session.lock() = Some(id.clone());
+                id
+            };
+            match client.router_link(&session, slug).await {
+                Ok(link) => return Ok(link),
+                Err(ComposioError::Upstream(_)) if attempt == 0 => {
+                    *self.0.router_session.lock() = None;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(ComposioError::Upstream(
+            "could not create a connect link".into(),
+        ))
     }
 
     /// Switch an app's tools on or off.

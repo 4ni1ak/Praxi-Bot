@@ -7,7 +7,7 @@ fn allowed(href: &str, dashboard: bool) -> bool {
     let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
     !href.chars().any(|c| c.is_control() || c == '\\')
         && if dashboard {
-            host == "platform.composio.dev"
+            matches!(host, "platform.composio.dev" | "dashboard.composio.dev")
         } else {
             matches!(host, "connect.composio.dev" | "backend.composio.dev")
         }
@@ -39,6 +39,8 @@ mod tests {
     fn exact_browser_hosts_and_separate_dashboard() {
         assert!(allowed("https://connect.composio.dev/link/x", false));
         assert!(allowed("https://platform.composio.dev/", true));
+        assert!(allowed("https://dashboard.composio.dev/?cliKey=abc", true));
+        assert!(!allowed("https://dashboard.composio.dev/", false));
         assert!(!allowed("https://platform.composio.dev/", false));
         for bad in [
             "https://logos.composio.dev/x",

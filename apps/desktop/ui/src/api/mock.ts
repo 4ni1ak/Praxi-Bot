@@ -607,6 +607,14 @@ export class MockApiClient extends ApiClient {
       serverFromConfig({ name: "google-calendar", transport: "http", url: "https://example.com/calendar", bots: [ATLAS, NOVA] }, "productivity"),
       serverFromConfig({ name: "slack", transport: "http", url: "https://example.com/slack", bots: [NOVA, "bot-milo"] }, "communication"),
       {
+        ...serverFromConfig({ name: "sqlite", transport: "stdio", command: "uvx", args: ["mcp-server-sqlite"] }, "files"),
+        status: "error",
+        error: "cannot start MCP server `sqlite`: `uvx` was not found on PATH. Install uv (https://docs.astral.sh/uv/getting-started/installation/; on Windows: `winget install --id=astral-sh.uv -e`), restart Praxi-Bot and reconnect.",
+        error_kind: "runtime_missing",
+        tool_count: 0,
+        bots: null
+      },
+      {
         ...serverFromConfig(
           { name: "linear", transport: "http", url: "https://mcp.linear.app/mcp" },
           "productivity"
@@ -1074,6 +1082,9 @@ export class MockApiClient extends ApiClient {
       case "PUT /composio":
       case "DELETE /composio":
         return ok(this.composio(method, seg, opts.body));
+      case "GET /components":
+      case "POST /components":
+        return ok(this.components(method, seg));
       case "GET /mcp":
       case "POST /mcp":
       case "PUT /mcp":
@@ -1415,29 +1426,85 @@ export class MockApiClient extends ApiClient {
     throw new ApiError(404, "not_found", "mock web");
   }
 
-  private mockComposioKey = false;
+  private mockComposioMode: "none" | "login" = "none";
+  private mockLoginPolls = 0;
   private mockComposioApps: ComposioApp[] = [];
+  private mockUvState: "idle" | "installing" | "done" = "idle";
+  private mockUvPolls = 0;
+
+  /** Review-state stand-in for `/v1/components/*` (uv installs after two polls). */
+  private components(method: string, seg: string[]): unknown {
+    const [, id, action] = seg;
+    if (id !== "uv" && id !== "node") {
+      throw new ApiError(404, "not_found", "unknown component");
+    }
+    if (id === "uv" && method === "POST" && action === "install") {
+      this.mockUvState = "installing";
+      this.mockUvPolls = 0;
+    } else if (id === "uv" && this.mockUvState === "installing" && ++this.mockUvPolls >= 2) {
+      this.mockUvState = "done";
+    }
+    const done = id === "uv" && this.mockUvState === "done";
+    return {
+      id,
+      installed: done,
+      can_install: true,
+      command: id === "uv"
+        ? "winget install --id astral-sh.uv -e --accept-source-agreements --accept-package-agreements"
+        : "winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements",
+      source: id === "uv" ? "astral-sh.uv (Astral, https://docs.astral.sh/uv/)" : "OpenJS.NodeJS.LTS (OpenJS Foundation)",
+      manual_command: "https://docs.astral.sh/uv/getting-started/installation/",
+      state: id === "uv" ? this.mockUvState : "idle",
+      error: null
+    };
+  }
 
   /** Review-state stand-in for `/v1/composio/*` (no network, no key). */
   private composio(method: string, seg: string[], body: unknown): unknown {
     const [, sub, slug, action] = seg;
-    const status = { configured: this.mockComposioKey, key_setup_url: "https://platform.composio.dev/" };
-    const kit = (s: string, name: string, cats: string[]): ComposioToolkit => ({
-      slug: s, name, description: `${name} actions for your bots`, categories: cats, tools_count: 24,
+    const configured = this.mockComposioMode !== "none";
+    const status = { configured, mode: this.mockComposioMode, key_setup_url: "https://platform.composio.dev/" };
+    const kit = (s: string, name: string, description: string, group: string): ComposioToolkit => ({
+      slug: s, name, description, categories: [], tools_count: 24, group, logo: null,
       native_first: false, state: "not_connected", enabled: false
     });
     if (!sub) {
       return status;
     }
+    if (sub === "login") {
+      if (method === "POST") {
+        this.mockLoginPolls = 0;
+        return { login_url: "https://dashboard.composio.dev/?cliKey=mock", expires_at: "" };
+      }
+      if (++this.mockLoginPolls >= 2) {
+        this.mockComposioMode = "login";
+        return { state: "linked" };
+      }
+      return { state: "pending" };
+    }
     if (sub === "key") {
-      this.mockComposioKey = method === "PUT";
-      return { ...status, configured: this.mockComposioKey };
+      this.mockComposioMode = method === "PUT" ? "login" : "none";
+      return { ...status, configured: this.mockComposioMode !== "none", mode: this.mockComposioMode };
     }
     if (sub === "toolkits") {
-      const items = [kit("instagram", "Instagram", ["social"]), kit("linkedin", "LinkedIn", ["social"]),
-        kit("twitter", "X", ["social"]), kit("hubspot", "HubSpot", ["crm"]), kit("gmail", "Gmail", ["email"]),
-        kit("github", "GitHub", ["developer"])];
-      return { popular: items.slice(0, 3), items, next_cursor: null };
+      const all = [
+        kit("gmail", "Gmail", "Read, search and send email.", "communication"),
+        kit("googlecalendar", "Google Calendar", "Check and create calendar events.", "productivity"),
+        kit("github", "GitHub", "Repositories, issues and pull requests.", "dev"),
+        kit("slack", "Slack", "Read channels and post messages.", "communication"),
+        kit("instagram", "Instagram", "Posts, media and account insights.", "social"),
+        kit("linkedin", "LinkedIn", "Profile, posts and company pages.", "social"),
+        kit("twitter", "X", "Search, read and post on X.", "social"),
+        kit("discord", "Discord", "Servers, channels and messages.", "communication"),
+        kit("youtube", "YouTube", "Videos, channels and playlists.", "social"),
+        kit("spotify", "Spotify", "Playlists, playback and library.", "social"),
+        kit("googledrive", "Google Drive", "Find and manage files and folders.", "productivity"),
+        kit("hubspot", "HubSpot", "Contacts, deals and marketing.", "business"),
+        kit("quickbooks", "QuickBooks", "Invoices, expenses and accounting.", "finance")
+      ];
+      const q = new URLSearchParams(seg.slice(2).join("")).get("x");
+      void q;
+      return { items: all, next_cursor: null, source: configured ? "cache" : "bundled", updated_at: null, refreshing: false, error: null };
     }
     if (sub === "apps" && !slug) {
       return structuredClone(this.mockComposioApps);
@@ -1445,8 +1512,8 @@ export class MockApiClient extends ApiClient {
     if (sub === "apps" && slug) {
       const i = this.mockComposioApps.findIndex((a) => a.slug === slug);
       if (action === "connect") {
-        const app: ComposioApp = { slug, name: slug, state: "active", enabled: true, native_first: false, bots: null, tools: 6 };
-        if (i < 0) { this.mockComposioApps.push(app); }
+        const app: ComposioApp = { slug, name: slug, state: "pending", enabled: true, native_first: false, bots: null, tools: 0 };
+        if (i < 0) { this.mockComposioApps.push(app); } else { this.mockComposioApps[i] = app; }
         return { redirect_url: "https://connect.composio.dev/link/mock", expires_at: "" };
       }
       if (i < 0) {
@@ -1458,6 +1525,9 @@ export class MockApiClient extends ApiClient {
       }
       if (action === "enabled") {
         this.mockComposioApps[i] = { ...this.mockComposioApps[i], enabled: (body as { enabled: boolean }).enabled };
+      } else if (this.mockComposioApps[i].state === "pending") {
+        // The user finished in the browser.
+        this.mockComposioApps[i] = { ...this.mockComposioApps[i], state: "active", tools: 6 };
       }
       return this.mockComposioApps[i];
     }

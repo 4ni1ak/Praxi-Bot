@@ -39,6 +39,19 @@ impl Default for AppConfig {
     }
 }
 
+/// Org and project of the browser-logged-in user key (identifiers, not secrets).
+/// Present exactly when the stored credential is a user key.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoginIds {
+    /// Organization id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<String>,
+    /// Project id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+}
+
 /// Contents of `composio.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +59,9 @@ pub struct StateFile {
     /// Opaque end-user id sent to Composio (no personal data).
     #[serde(default)]
     pub user_id: String,
+    /// Set when the credential is a browser-login user key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login: Option<LoginIds>,
     /// Apps the owner connected or started to connect, by toolkit slug.
     #[serde(default)]
     pub apps: BTreeMap<String, AppConfig>,
@@ -86,6 +102,11 @@ impl StateFile {
             .user_id
             .strip_prefix("praxi-")
             .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+            && self.login.as_ref().is_none_or(|l| {
+                [&l.org_id, &l.project_id]
+                    .iter()
+                    .all(|id| id.as_ref().is_none_or(|id| valid_id(id)))
+            })
             && self.apps.len() <= 1000
             && self.apps.iter().all(|(slug, cfg)| {
                 crate::surface::toolkit_allowed(slug)

@@ -2276,6 +2276,139 @@
         ]
       }
     },
+    "/v1/components": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "summary": "Components local apps may need and whether each is installed.",
+        "operationId": "list_components",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComponentDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/components/{id}": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "summary": "One component (poll this while an install runs).",
+        "operationId": "get_component",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`uv` or `node`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComponentDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/components/{id}/install": {
+      "post": {
+        "tags": [
+          "components"
+        ],
+        "summary": "Run the official installer for a component (the client confirmed the\ncommand first).  Returns at once; poll `GET /v1/components/{id}`.",
+        "operationId": "install_component",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "`uv` or `node`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComponentDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/composio": {
       "get": {
         "tags": [
@@ -2627,12 +2760,72 @@
         ]
       }
     },
+    "/v1/composio/login": {
+      "get": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "State of the browser login (poll while it is `pending`).",
+        "operationId": "composio_login_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioLoginStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "composio"
+        ],
+        "summary": "Start the one-time browser login: Composio makes a session, the caller\nopens `login_url` in the system browser and polls `GET /v1/composio/login`.\nNo key is typed or copied.",
+        "operationId": "composio_login_start",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposioLoginDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Composio unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/composio/toolkits": {
       "get": {
         "tags": [
           "composio"
         ],
-        "summary": "Composio's toolkit catalog (searchable, paged, cached), with this\ninstallation's state per toolkit.",
+        "summary": "Composio's toolkit catalog (searchable, paged), with this installation's\nstate per toolkit.  Served from the local cache and the bundled popular\napps: it never waits for the network, a stale cache is refreshed in the\nbackground.",
         "operationId": "composio_catalog",
         "parameters": [
           {
@@ -2645,9 +2838,9 @@
             }
           },
           {
-            "name": "category",
+            "name": "group",
             "in": "query",
-            "description": "Category.",
+            "description": "Chip group (`all` or empty = every group).",
             "required": false,
             "schema": {
               "type": "string"
@@ -2681,16 +2874,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ComposioCatalogDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "no key yet",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -9430,6 +9613,74 @@
           "webp"
         ]
       },
+      "ComponentDto": {
+        "type": "object",
+        "description": "One component.",
+        "required": [
+          "id",
+          "installed",
+          "can_install",
+          "command",
+          "source",
+          "manual_command",
+          "state"
+        ],
+        "properties": {
+          "can_install": {
+            "type": "boolean",
+            "description": "The app can run an official installer here."
+          },
+          "command": {
+            "type": "string",
+            "description": "The exact command that would run (display only; empty when not possible)."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last install failed: `exit`, `not_detected`, `timeout` or `unavailable`."
+          },
+          "id": {
+            "$ref": "#/components/schemas/ComponentId",
+            "description": "Id."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "The launcher is found (checked now, without restarting the app)."
+          },
+          "manual_command": {
+            "type": "string",
+            "description": "What to run by hand when `can_install` is false."
+          },
+          "source": {
+            "type": "string",
+            "description": "Where it comes from (shown in the confirm dialog)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ComponentInstallState",
+            "description": "Install progress."
+          }
+        }
+      },
+      "ComponentId": {
+        "type": "string",
+        "description": "A component Praxi can install (fixed list).",
+        "enum": [
+          "uv",
+          "node"
+        ]
+      },
+      "ComponentInstallState": {
+        "type": "string",
+        "description": "Progress of an install.",
+        "enum": [
+          "idle",
+          "installing",
+          "done",
+          "failed"
+        ]
+      },
       "ComposioAppDto": {
         "type": "object",
         "description": "A connected (or connecting) app.",
@@ -9484,16 +9735,24 @@
         "type": "object",
         "description": "`GET /v1/composio/toolkits`.",
         "required": [
-          "popular",
-          "items"
+          "items",
+          "source",
+          "refreshing"
         ],
         "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last refresh failed: `offline`, `unauthorized`,\n`rate_limited` or `failed`.  The list above is still usable."
+          },
           "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ComposioToolkitDto"
             },
-            "description": "The page, in Composio's popularity order."
+            "description": "The page: popular apps first, then Composio's popularity order."
           },
           "next_cursor": {
             "type": [
@@ -9502,12 +9761,22 @@
             ],
             "description": "Cursor of the next page."
           },
-          "popular": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ComposioToolkitDto"
-            },
-            "description": "Pinned popular row (first page without filters only; empty otherwise)."
+          "refreshing": {
+            "type": "boolean",
+            "description": "A background refresh is running."
+          },
+          "source": {
+            "type": "string",
+            "description": "`bundled` (only the apps shipped with Praxi so far) or `cache`."
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds of the disk cache, when there is one.",
+            "minimum": 0
           }
         }
       },
@@ -9518,7 +9787,8 @@
           "not_connected",
           "pending",
           "active",
-          "expired"
+          "expired",
+          "failed"
         ]
       },
       "ComposioConnectDto": {
@@ -9578,21 +9848,76 @@
           }
         }
       },
+      "ComposioLinkMode": {
+        "type": "string",
+        "description": "How Praxi is linked to Composio.",
+        "enum": [
+          "none",
+          "login",
+          "project_key"
+        ]
+      },
+      "ComposioLoginDto": {
+        "type": "object",
+        "description": "`POST /v1/composio/login`: the one-time browser login.",
+        "required": [
+          "login_url",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "description": "When the login expires (ISO timestamp, may be empty)."
+          },
+          "login_url": {
+            "type": "string",
+            "description": "https URL on Composio's dashboard; open it in the system browser."
+          }
+        }
+      },
+      "ComposioLoginState": {
+        "type": "string",
+        "description": "State of the one-time browser login.",
+        "enum": [
+          "idle",
+          "pending",
+          "linked",
+          "failed"
+        ]
+      },
+      "ComposioLoginStatusDto": {
+        "type": "object",
+        "description": "`GET /v1/composio/login`.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/ComposioLoginState",
+            "description": "State of the login."
+          }
+        }
+      },
       "ComposioStatusDto": {
         "type": "object",
         "description": "`GET /v1/composio`.",
         "required": [
           "configured",
+          "mode",
           "key_setup_url"
         ],
         "properties": {
           "configured": {
             "type": "boolean",
-            "description": "A key is stored (the key itself is never returned)."
+            "description": "Praxi is linked to Composio (the credential itself is never returned)."
           },
           "key_setup_url": {
             "type": "string",
-            "description": "Where the owner creates the key (https, on Composio's domain)."
+            "description": "Where an owner who wants their own project key creates it (advanced)."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ComposioLinkMode",
+            "description": "How it is linked."
           }
         }
       },
@@ -9604,6 +9929,7 @@
           "name",
           "description",
           "categories",
+          "group",
           "native_first",
           "state",
           "enabled"
@@ -9623,6 +9949,17 @@
           "enabled": {
             "type": "boolean",
             "description": "The owner enabled it."
+          },
+          "group": {
+            "type": "string",
+            "description": "Chip group: `communication`, `social`, `productivity`, `dev`,\n`finance`, `business` or `other`."
+          },
+          "logo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Logo URL (https), when Composio gives one."
           },
           "name": {
             "type": "string",

@@ -71,6 +71,9 @@ pub struct Toolkit {
     pub categories: Vec<String>,
     /// Number of tools, when reported.
     pub tools_count: Option<u64>,
+    /// Logo URL (https only), when Composio gives one.
+    #[serde(default)]
+    pub logo: Option<String>,
 }
 
 /// One page of the catalog.
@@ -97,7 +100,53 @@ pub struct RemoteTool {
     pub schema: Value,
 }
 
-/// Composio REST client.  Built once per key.
+/// How the client authenticates.
+#[derive(Clone)]
+pub enum Auth {
+    /// A project API key (`x-api-key`): the owner's own Composio project.
+    Project(String),
+    /// The user key obtained by the browser login (`x-user-api-key`), with the
+    /// org and project it belongs to (`x-org-id`, `x-project-id`).
+    User {
+        /// The user key.
+        key: String,
+        /// Organization id (not a secret).
+        org_id: Option<String>,
+        /// Project id (not a secret).
+        project_id: Option<String>,
+    },
+    /// No credential: only the browser-login endpoints.
+    Anonymous,
+}
+
+/// A browser-login session at Composio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliSession {
+    /// Session id (goes into the dashboard URL as `cliKey`).
+    pub id: String,
+    /// ISO timestamp, may be empty.
+    pub expires_at: String,
+}
+
+/// Result of polling a browser-login session.
+#[derive(Clone, PartialEq, Eq)]
+pub enum CliPoll {
+    /// The user has not finished in the browser.
+    Pending,
+    /// Finished: the user key.  Never logged (see the `Debug` impl).
+    Linked(String),
+}
+
+impl std::fmt::Debug for CliPoll {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => f.write_str("Pending"),
+            Self::Linked(_) => f.write_str("Linked(<key hidden>)"),
+        }
+    }
+}
+
+/// Composio REST client.  Built once per credential.
 #[derive(Clone)]
 pub struct ComposioClient {
     http: Client,
@@ -139,12 +188,18 @@ impl ComposioClient {
     /// # Panics
     /// Never: the base URL is a constant.
     pub fn new(api_key: &str, redact: Redact) -> Result<Self> {
-        Self::build(
-            api_key,
-            Url::parse(API_BASE).expect("constant"),
-            redact,
-            true,
-        )
+        Self::new_with(&Auth::Project(api_key.to_owned()), redact)
+    }
+
+    /// Client for the production origin with an explicit credential kind.
+    ///
+    /// # Errors
+    /// A credential is not a valid header value or the HTTP client cannot be built.
+    ///
+    /// # Panics
+    /// Never: the base URL is a constant.
+    pub fn new_with(auth: &Auth, redact: Redact) -> Result<Self> {
+        Self::build(auth, Url::parse(API_BASE).expect("constant"), redact, true)
     }
 
     /// Client for a fake server in tests.  Accepts only a loopback `http` URL;
@@ -153,6 +208,14 @@ impl ComposioClient {
     /// # Errors
     /// `base` is not a loopback URL.
     pub fn for_loopback_tests(api_key: &str, base: &str, redact: Redact) -> Result<Self> {
+        Self::for_loopback_with(&Auth::Project(api_key.to_owned()), base, redact)
+    }
+
+    /// [`Self::for_loopback_tests`] with an explicit credential kind.
+    ///
+    /// # Errors
+    /// `base` is not a loopback URL.
+    pub fn for_loopback_with(auth: &Auth, base: &str, redact: Redact) -> Result<Self> {
         let url = Url::parse(base).map_err(|e| ComposioError::Internal(e.to_string()))?;
         let loopback = url.host_str().is_some_and(|h| {
             h == "localhost"
@@ -164,15 +227,38 @@ impl ComposioClient {
                 "the test base URL must be http on loopback".into(),
             ));
         }
-        Self::build(api_key, url, redact, false)
+        Self::build(auth, url, redact, false)
     }
 
-    fn build(api_key: &str, base: Url, redact: Redact, https_only: bool) -> Result<Self> {
-        let mut key = HeaderValue::from_str(api_key)
-            .map_err(|_| ComposioError::Invalid("the API key has invalid characters".into()))?;
-        key.set_sensitive(true);
+    fn build(auth: &Auth, base: Url, redact: Redact, https_only: bool) -> Result<Self> {
+        let secret = |v: &str| -> Result<HeaderValue> {
+            let mut h = HeaderValue::from_str(v)
+                .map_err(|_| ComposioError::Invalid("the API key has invalid characters".into()))?;
+            h.set_sensitive(true);
+            Ok(h)
+        };
+        let plain = |v: &str| -> Result<HeaderValue> {
+            HeaderValue::from_str(v)
+                .map_err(|_| ComposioError::Invalid("invalid Composio identifier".into()))
+        };
         let mut headers = HeaderMap::new();
-        headers.insert(HeaderName::from_static("x-api-key"), key);
+        match auth {
+            Auth::Project(key) => {
+                headers.insert(HeaderName::from_static("x-api-key"), secret(key)?);
+            }
+            Auth::User {
+                key,
+                org_id,
+                project_id,
+            } => {
+                headers.insert(HeaderName::from_static("x-user-api-key"), secret(key)?);
+                if let (Some(org), Some(project)) = (org_id, project_id) {
+                    headers.insert(HeaderName::from_static("x-org-id"), plain(org)?);
+                    headers.insert(HeaderName::from_static("x-project-id"), plain(project)?);
+                }
+            }
+            Auth::Anonymous => {}
+        }
         let http = Client::builder()
             .default_headers(headers)
             .redirect(Policy::none())
@@ -308,41 +394,127 @@ impl ComposioClient {
             .request(Method::POST, self.url(&["connected_accounts", "link"]))
             .json(&json!({"auth_config_id": auth_config_id, "user_id": user_id}));
         let v = self.send(req).await?;
-        let url = v
-            .get("redirect_url")
+        parse_link(&v)
+    }
+
+    /// Start a browser login at Composio: no credential needed.  The user
+    /// then opens `https://dashboard.composio.dev/?cliKey=<id>`.
+    ///
+    /// UNVERIFIED against the live API: the path comes from the Composio CLI
+    /// (`composio login`, `ts/packages/cli/src/effects/browser-login.ts`) and
+    /// its mock server (`POST /api/v3.1/cli/create-session`, answer
+    /// `{id, code, expiresAt, status}`).
+    ///
+    /// # Errors
+    /// API or transport errors.
+    pub async fn create_cli_session(&self) -> Result<CliSession> {
+        let req = self
+            .http
+            .request(Method::POST, self.url(&["cli", "create-session"]))
+            .json(&json!({"scope": "user"}));
+        let v = self.send(req).await?;
+        let id = v
+            .get("id")
             .and_then(Value::as_str)
-            .unwrap_or_default();
-        // The URL is only ever handed to the owner's browser, never requested
-        // here, and only when it is on Composio's own domain.
-        if !is_composio_https_url(url) {
-            return Err(ComposioError::Upstream(
-                "Composio returned a connect link outside its own domain; it was discarded".into(),
-            ));
-        }
-        let account_id = v
-            .get("connected_account_id")
-            .and_then(Value::as_str)
-            .filter(|id| {
-                !id.is_empty()
-                    && id.len() <= 128
-                    && id
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            })
-            .ok_or_else(|| {
-                ComposioError::Upstream(
-                    "no valid account binding in connect response; reconnect required".into(),
-                )
-            })?;
-        Ok(Link {
-            account_id: account_id.to_owned(),
-            redirect_url: url.to_owned(),
+            .filter(|id| valid_id(id))
+            .ok_or_else(|| ComposioError::Upstream("no login session id in the response".into()))?;
+        Ok(CliSession {
+            id: id.to_owned(),
             expires_at: v
-                .get("expires_at")
+                .get("expiresAt")
+                .or_else(|| v.get("expires_at"))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned(),
         })
+    }
+
+    /// Poll a browser-login session.
+    ///
+    /// UNVERIFIED against the live API: `GET /api/v3.1/cli/get-session?id=`
+    /// answering `{status: "pending" | "linked", api_key}` (the CLI reads
+    /// `status` and `api_key` of a linked session, `models/session.ts`).
+    ///
+    /// # Errors
+    /// API or transport errors (an expired session answers an error).
+    pub async fn get_cli_session(&self, id: &str) -> Result<CliPoll> {
+        if !valid_id(id) {
+            return Err(ComposioError::Invalid("invalid login session".into()));
+        }
+        let req = self
+            .http
+            .request(Method::GET, self.url(&["cli", "get-session"]))
+            .query(&[("id", id)]);
+        let v = self.send(req).await?;
+        match (
+            v.get("status").and_then(Value::as_str),
+            v.get("api_key").and_then(Value::as_str),
+        ) {
+            (Some("linked"), Some(key)) if !key.is_empty() => Ok(CliPoll::Linked(key.to_owned())),
+            _ => Ok(CliPoll::Pending),
+        }
+    }
+
+    /// Org and project of the logged-in user key.
+    ///
+    /// UNVERIFIED: `GET /auth/session/info` with `x-user-api-key`; the CLI
+    /// reads `project.id` and `project.org.id` (`services/composio-account.ts`).
+    ///
+    /// # Errors
+    /// API or transport errors.
+    pub async fn session_info(&self) -> Result<(Option<String>, Option<String>)> {
+        let req = self
+            .http
+            .request(Method::GET, self.url(&["auth", "session", "info"]));
+        let v = self.send(req).await?;
+        let pick = |p: &str| {
+            v.pointer(p)
+                .and_then(Value::as_str)
+                .filter(|s| valid_id(s))
+                .map(str::to_owned)
+        };
+        Ok((pick("/project/org/id"), pick("/project/id")))
+    }
+
+    /// A Tool Router session for `user_id` (used to create connect links when
+    /// logged in with a user key; Composio-managed OAuth needs no auth config).
+    ///
+    /// # Errors
+    /// API or transport errors.
+    pub async fn create_router_session(&self, user_id: &str) -> Result<String> {
+        let req = self
+            .http
+            .request(Method::POST, self.url(&["tool_router", "session"]))
+            .json(&json!({
+                "user_id": user_id,
+                "manage_connections": {"enable": true}
+            }));
+        let v = self.send(req).await?;
+        v.get("session_id")
+            .or_else(|| v.get("id"))
+            .and_then(Value::as_str)
+            .filter(|id| valid_id(id))
+            .map(str::to_owned)
+            .ok_or_else(|| ComposioError::Upstream("no session id in the response".into()))
+    }
+
+    /// A connect link for `toolkit` inside a Tool Router session.
+    ///
+    /// # Errors
+    /// API errors, or a `redirect_url` outside Composio's domain.
+    pub async fn router_link(&self, session_id: &str, toolkit: &str) -> Result<Link> {
+        if !valid_id(session_id) {
+            return Err(ComposioError::Invalid("invalid session".into()));
+        }
+        let req = self
+            .http
+            .request(
+                Method::POST,
+                self.url(&["tool_router", "session", session_id, "link"]),
+            )
+            .json(&json!({"toolkit": toolkit}));
+        let v = self.send(req).await?;
+        parse_link(&v)
     }
 
     /// Connected accounts of `user_id`, optionally of one toolkit.
@@ -546,6 +718,47 @@ impl ComposioClient {
     }
 }
 
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// A connect-link answer: https on Composio's domain, plus the account id.
+fn parse_link(v: &Value) -> Result<Link> {
+    let url = v
+        .get("redirect_url")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    // The URL is only ever handed to the owner's browser, never requested
+    // here, and only when it is on Composio's own domain.
+    if !is_composio_https_url(url) {
+        return Err(ComposioError::Upstream(
+            "Composio returned a connect link outside its own domain; it was discarded".into(),
+        ));
+    }
+    let account_id = v
+        .get("connected_account_id")
+        .and_then(Value::as_str)
+        .filter(|id| valid_id(id))
+        .ok_or_else(|| {
+            ComposioError::Upstream(
+                "no valid account binding in connect response; reconnect required".into(),
+            )
+        })?;
+    Ok(Link {
+        account_id: account_id.to_owned(),
+        redirect_url: url.to_owned(),
+        expires_at: v
+            .get("expires_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    })
+}
+
 fn parse_toolkit(i: &Value) -> Option<Toolkit> {
     let slug = i.get("slug")?.as_str()?.to_owned();
     if !crate::surface::toolkit_allowed(&slug)
@@ -580,6 +793,15 @@ fn parse_toolkit(i: &Value) -> Option<Toolkit> {
         ),
         categories,
         tools_count: i.pointer("/meta/tools_count").and_then(Value::as_u64),
+        logo: i
+            .pointer("/meta/logo")
+            .and_then(Value::as_str)
+            .filter(|u| {
+                u.len() <= 300
+                    && u.starts_with("https://")
+                    && !u.chars().any(|c| c.is_control() || c.is_whitespace())
+            })
+            .map(str::to_owned),
     })
 }
 

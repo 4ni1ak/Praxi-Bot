@@ -24,6 +24,7 @@ const kit = (slug: string): ComposioToolkit => ({
   description: "",
   categories: [],
   tools_count: null,
+  group: "other",
   native_first: false,
   state: "not_connected",
   enabled: false

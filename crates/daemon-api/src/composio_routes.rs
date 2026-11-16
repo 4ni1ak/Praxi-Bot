@@ -13,7 +13,7 @@ use crate::AppState;
 use crate::composio::{
     ComposioAppDto, ComposioCatalogDto, ComposioCatalogQuery, ComposioConnectDto, ComposioControl,
     ComposioControlError, ComposioDisconnectDto, ComposioEnabledInput, ComposioKeyInput,
-    ComposioStatusDto,
+    ComposioLoginDto, ComposioLoginStatusDto, ComposioStatusDto,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::live_view::Actor;
@@ -29,7 +29,7 @@ impl From<ComposioControlError> for ApiError {
             ComposioControlError::NotConfigured => Self::new(
                 StatusCode::CONFLICT,
                 "composio_not_configured",
-                "Composio is not set up: paste the API key first",
+                "Composio is not linked yet: start the one-time login first",
             ),
             ComposioControlError::RateLimited(m) => {
                 Self::new(StatusCode::TOO_MANY_REQUESTS, "composio_rate_limited", m)
@@ -83,6 +83,30 @@ pub(crate) async fn composio_status(
     Ok(Json(composio(&s)?.status()))
 }
 
+/// Start the one-time browser login: Composio makes a session, the caller
+/// opens `login_url` in the system browser and polls `GET /v1/composio/login`.
+/// No key is typed or copied.
+#[utoipa::path(post, path = "/v1/composio/login", tag = "composio", security(("bearer" = [])),
+    responses((status = 200, body = ComposioLoginDto),
+              (status = 502, body = ErrorBody, description = "Composio unreachable")))]
+pub(crate) async fn composio_login_start(
+    State(s): State<AppState>,
+    axum::Extension(actor): axum::Extension<Actor>,
+) -> Result<Json<ComposioLoginDto>, ApiError> {
+    let c = composio(&s)?;
+    audit(&s, &actor, "composio.login_started", &json!({}))?;
+    Ok(Json(c.login_start().await?))
+}
+
+/// State of the browser login (poll while it is `pending`).
+#[utoipa::path(get, path = "/v1/composio/login", tag = "composio", security(("bearer" = [])),
+    responses((status = 200, body = ComposioLoginStatusDto)))]
+pub(crate) async fn composio_login_status(
+    State(s): State<AppState>,
+) -> Result<Json<ComposioLoginStatusDto>, ApiError> {
+    Ok(Json(composio(&s)?.login_poll().await?))
+}
+
 /// Validate (one cheap authenticated call to Composio) and store the project
 /// API key in the OS secret store.  **Write-only**: no route returns it.
 #[utoipa::path(put, path = "/v1/composio/key", tag = "composio", security(("bearer" = [])),
@@ -123,19 +147,20 @@ fn short(field: &str, v: Option<&str>, max: usize) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Composio's toolkit catalog (searchable, paged, cached), with this
-/// installation's state per toolkit.
+/// Composio's toolkit catalog (searchable, paged), with this installation's
+/// state per toolkit.  Served from the local cache and the bundled popular
+/// apps: it never waits for the network, a stale cache is refreshed in the
+/// background.
 #[utoipa::path(get, path = "/v1/composio/toolkits", tag = "composio", security(("bearer" = [])),
     params(ComposioCatalogQuery),
     responses((status = 200, body = ComposioCatalogDto),
-              (status = 409, body = ErrorBody, description = "no key yet"),
               (status = 502, body = ErrorBody)))]
 pub(crate) async fn composio_catalog(
     State(s): State<AppState>,
     Query(q): Query<ComposioCatalogQuery>,
 ) -> Result<Json<ComposioCatalogDto>, ApiError> {
     short("search", q.search.as_deref(), 100)?;
-    short("category", q.category.as_deref(), 60)?;
+    short("group", q.group.as_deref(), 60)?;
     short("cursor", q.cursor.as_deref(), 512)?;
     Ok(Json(composio(&s)?.catalog(q).await?))
 }
