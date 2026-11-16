@@ -2472,6 +2472,18 @@
     "pairing": "Eşleştiriliyor…",
     "failed": "Eşleştirme olmadı. Sunucunun açık ve biletin yeni olduğunu kontrol et."
   },
+  "computerAccess": {
+    "title": "Botlarım bu bilgisayarı kullanabilsin",
+    "description": "Eşleştirdiğin sunucular, yalnızca sen izin verirsen bu bilgisayarın ekranına bakıp işlem yapmak isteyebilir.",
+    "noServer": "Henüz eşleşmiş bir sunucu yok. Sunucu ekleyince botlarının bu bilgisayarı kullanmasına buradan izin verebilirsin.",
+    "explain": "Varsayılan olarak kapalı. Açıkken sunucudaki botlar bu bilgisayarın ekranına bakabilir. Tıklayan, yazan veya bir şey açan her işlem yine önce sana sorar; Durdur her zaman önceliklidir.",
+    "allow": "{{name}} üzerindeki botlar bu bilgisayarı kullanabilsin",
+    "askNote": "Bir şeyi değiştiren her işlem önce sana sorar.",
+    "requestTitle": "Bir bot bu bilgisayarda işlem yapmak istiyor",
+    "requestBody": "{{name}} üzerindeki bir bot bu bilgisayarda şunu yapmak istiyor:",
+    "allowOnce": "Bir kez izin ver",
+    "deny": "Reddet"
+  },
   "hostMode": {
     "state": {
       "connected": "Bağlı",

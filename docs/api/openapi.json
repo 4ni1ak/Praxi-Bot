@@ -4126,6 +4126,82 @@
         ]
       }
     },
+    "/v1/hosts/computer-requests": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_computer_requests",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PcRequestInfo"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/computer-requests/{rid}": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_decide_computer_request",
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PcRequestDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/hosts/pair": {
       "post": {
         "tags": [
@@ -4352,6 +4428,54 @@
             }
           }
         ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/computer-access": {
+      "put": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_set_computer_access",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerAccessInput"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "204": {
             "description": ""
@@ -8987,6 +9111,19 @@
           }
         }
       },
+      "ComputerAccessInput": {
+        "type": "object",
+        "description": "Switch for one host.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Let this host's bots use this computer."
+          }
+        }
+      },
       "ConfiguredProviderDto": {
         "type": "object",
         "description": "A configured provider (never carries a key).",
@@ -10839,6 +10976,10 @@
           "state"
         ],
         "properties": {
+          "computer_access": {
+            "type": "boolean",
+            "description": "The owner lets this host's bots use THIS computer (off by default)."
+          },
           "detail": {
             "type": [
               "string",
@@ -13244,6 +13385,54 @@
           },
           "spec": {
             "description": "The [`ScheduleDto::spec`] the phrase means."
+          }
+        }
+      },
+      "PcRequestDecision": {
+        "type": "object",
+        "description": "The local owner's answer.",
+        "required": [
+          "allow"
+        ],
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PcRequestInfo": {
+        "type": "object",
+        "description": "One pending request, as the desktop app shows it.",
+        "required": [
+          "id",
+          "host_id",
+          "host_name",
+          "action",
+          "detail",
+          "created_ms"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`click`, `type`, `key`, `scroll`, `launch`, ..."
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "detail": {
+            "type": "string",
+            "description": "Short single-line description of the target / input."
+          },
+          "host_id": {
+            "type": "string",
+            "description": "Paired host the request comes from (public key)."
+          },
+          "host_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
           }
         }
       },

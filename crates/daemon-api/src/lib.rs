@@ -40,6 +40,7 @@ pub mod mcp;
 mod mcp_routes;
 pub mod mcp_server;
 pub mod openapi;
+pub mod pc_access;
 pub mod peer;
 pub mod policy;
 mod provider_models;
@@ -801,6 +802,13 @@ impl AppState {
         &self.0.live_view
     }
 
+    /// The control hub (pause / human-driving latch), for embedders that guard
+    /// actions of their own with it.
+    #[must_use]
+    pub fn control_hub(&self) -> Arc<ControlHub> {
+        Arc::clone(&self.0.hub)
+    }
+
     pub(crate) fn hub(&self) -> &Arc<ControlHub> {
         &self.0.hub
     }
@@ -816,11 +824,19 @@ impl AppState {
     pub fn audit_writer(
         &self,
     ) -> impl Fn(&str, &serde_json::Value) -> Result<(), String> + Send + Sync + 'static {
+        self.audit_writer_as("composio")
+    }
+
+    /// [`audit_writer`](Self::audit_writer) under another actor name.
+    pub fn audit_writer_as(
+        &self,
+        actor: &'static str,
+    ) -> impl Fn(&str, &serde_json::Value) -> Result<(), String> + Send + Sync + 'static {
         let storage = Arc::clone(&self.0.storage);
         let user = self.0.user_id;
         move |action, detail| {
             storage
-                .append_audit(user, None, "composio", action, detail)
+                .append_audit(user, None, actor, action, detail)
                 .map(|_| ())
                 .map_err(|e| e.to_string())
         }
@@ -947,6 +963,18 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/hosts", get(host_links::list))
         .route("/v1/hosts/pair", post(host_links::pair))
         .route("/v1/hosts/{id}", axum::routing::delete(host_links::forget))
+        .route(
+            "/v1/hosts/computer-requests",
+            get(host_links::computer_requests),
+        )
+        .route(
+            "/v1/hosts/computer-requests/{rid}",
+            post(host_links::decide_computer_request),
+        )
+        .route(
+            "/v1/hosts/{id}/computer-access",
+            axum::routing::put(host_links::set_computer_access),
+        )
         .route("/v1/hosts/setup", post(host_setup::start))
         .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
         .route("/v1/hosts/setup/{job}", get(host_setup::get))

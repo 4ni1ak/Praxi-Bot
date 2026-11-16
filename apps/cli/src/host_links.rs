@@ -22,11 +22,22 @@ struct Open {
     seen_up: bool,
 }
 
+/// What lets this computer be a target for a paired host's bots (card 258-A).
+pub struct PcTarget {
+    pub access: Arc<crate::pc_target::AccessStore>,
+    pub requests: Arc<daemon_api::pc_access::PcRequests>,
+    /// `None` when this computer has no desktop to share.
+    pub handler: Option<Arc<crate::pc_target::HostDesktopHandler>>,
+}
+
 pub struct CliHostLinks {
     data: PathBuf,
     shared: Option<PeerNetwork>,
     started: tokio::sync::Mutex<Option<PeerNetwork>>,
     open: Mutex<HashMap<String, Open>>,
+    pc: Option<PcTarget>,
+    /// Keep-alive links so a host can reach this computer without the app selecting it.
+    beats: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
 /// A short, single-line, path-free message for the UI.
@@ -53,9 +64,47 @@ impl CliHostLinks {
             shared,
             started: tokio::sync::Mutex::new(None),
             open: Mutex::new(HashMap::new()),
+            pc: None,
+            beats: Mutex::new(HashMap::new()),
         }
     }
 
+    #[must_use]
+    pub fn with_pc_target(mut self, pc: PcTarget) -> Self {
+        self.pc = Some(pc);
+        self
+    }
+
+    /// Open the events link to a host so it can call this computer.
+    async fn ensure_beat(&self, id: &str) -> Result<(), HostLinkError> {
+        let device = self
+            .devices()
+            .into_iter()
+            .find(|d| d.id == id && d.role == Role::Host)
+            .ok_or(HostLinkError::NotFound)?;
+        let key = device.public_key().map_err(|_| HostLinkError::NotFound)?;
+        if self.beats.lock().contains_key(id) {
+            return Ok(());
+        }
+        let net = self.network().await?;
+        let beat = net.spawn_heartbeat(
+            key,
+            peer_network::HeartbeatConfig::default(),
+            Arc::new(|_| {}),
+        );
+        if let Some(old) = self.beats.lock().insert(id.to_owned(), beat) {
+            old.abort();
+        }
+        Ok(())
+    }
+
+    /// After a restart: reconnect to every host the owner lets use this computer.
+    pub async fn restore_access(&self) {
+        let Some(pc) = &self.pc else { return };
+        for id in pc.access.enabled_ids() {
+            let _ = self.ensure_beat(&id).await;
+        }
+    }
     async fn network(&self) -> Result<PeerNetwork, HostLinkError> {
         if let Some(net) = &self.shared {
             return Ok(net.clone());
@@ -66,7 +115,12 @@ impl CliHostLinks {
         }
         let (cfg, _) =
             crate::peer::config(&self.data, false).map_err(|e| HostLinkError::Failed(safe(e)))?;
-        let net = PeerNetwork::start(cfg, None)
+        let handler = self
+            .pc
+            .as_ref()
+            .and_then(|pc| pc.handler.clone())
+            .map(|h| h as Arc<dyn peer_network::RpcHandler>);
+        let net = PeerNetwork::start(cfg, handler)
             .await
             .map_err(|e| HostLinkError::Failed(safe(e)))?;
         *slot = Some(net.clone());
@@ -129,6 +183,10 @@ impl CliHostLinks {
             name: device.name.clone(),
             state,
             detail,
+            computer_access: self
+                .pc
+                .as_ref()
+                .is_some_and(|pc| pc.access.enabled(&device.id)),
         }
     }
 }
@@ -212,6 +270,48 @@ impl HostLinks for CliHostLinks {
         Ok(connection)
     }
 
+    async fn set_computer_access(&self, id: &str, enabled: bool) -> Result<(), HostLinkError> {
+        let Some(pc) = &self.pc else {
+            return Err(HostLinkError::Invalid(
+                "this computer cannot be used by a server".into(),
+            ));
+        };
+        if pc.handler.is_none() && enabled {
+            return Err(HostLinkError::Invalid(
+                "this computer has no screen a server could use".into(),
+            ));
+        }
+        if !self
+            .devices()
+            .iter()
+            .any(|d| d.id == id && d.role == Role::Host)
+        {
+            return Err(HostLinkError::NotFound);
+        }
+        pc.access
+            .set(id, enabled)
+            .map_err(|e| HostLinkError::Failed(safe(e)))?;
+        if enabled {
+            self.ensure_beat(id).await?;
+        } else if let Some(beat) = self.beats.lock().remove(id) {
+            beat.abort();
+        }
+        Ok(())
+    }
+
+    fn computer_requests(&self) -> Vec<daemon_api::pc_access::PcRequestInfo> {
+        self.pc
+            .as_ref()
+            .map(|pc| pc.requests.list())
+            .unwrap_or_default()
+    }
+
+    fn decide_computer_request(&self, id: &str, allow: bool) -> bool {
+        self.pc
+            .as_ref()
+            .is_some_and(|pc| pc.requests.decide(id, allow))
+    }
+
     fn disconnect(&self, id: &str) -> bool {
         self.open.lock().remove(id).is_some()
     }
@@ -232,8 +332,15 @@ impl HostLinks for CliHostLinks {
     }
 }
 
-pub fn install(state: &daemon_api::AppState, data: PathBuf, shared: Option<PeerNetwork>) {
-    let links = Arc::new(CliHostLinks::new(data.clone(), shared));
+pub fn install(
+    state: &daemon_api::AppState,
+    data: PathBuf,
+    shared: Option<PeerNetwork>,
+    pc: PcTarget,
+) {
+    let links = Arc::new(CliHostLinks::new(data.clone(), shared).with_pc_target(pc));
+    let restore = Arc::clone(&links);
+    tokio::spawn(async move { restore.restore_access().await });
     state.set_host_links(links.clone());
     // The "Add server" wizard pairs through the same links.
     state.set_host_setup(Arc::new(crate::host_setup::CliHostSetup::new(data, links)));

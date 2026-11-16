@@ -30,6 +30,7 @@ export type StopOutcome = S["StopOutcome"];
 export type StopScope = S["StopScope"];
 export type Health = S["Health"];
 export type HostLinkInfo = S["HostLinkInfo"];
+export type PcRequestInfo = S["PcRequestInfo"];
 export type HostLinkList = S["HostLinkList"];
 export type StartHostSetupInput = S["StartHostSetupInput"];
 export type HostSetupJob = S["HostSetupJob"];

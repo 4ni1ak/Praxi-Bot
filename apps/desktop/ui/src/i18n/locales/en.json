@@ -2472,6 +2472,18 @@
     "pairing": "Pairing…",
     "failed": "Pairing failed. Check that the host is on and the ticket is new."
   },
+  "computerAccess": {
+    "title": "Let my bots use this computer",
+    "description": "Servers you paired can ask this computer to look at the screen and act on it, only when you allow it.",
+    "noServer": "No server is paired yet. Add one and you can let its bots use this computer here.",
+    "explain": "Off by default. When on, the server's bots can look at this computer's screen. Anything that clicks, types or opens something still asks you first, and Stop always wins.",
+    "allow": "Let the bots on {{name}} use this computer",
+    "askNote": "Every action that changes something asks you first.",
+    "requestTitle": "A bot wants to act on this computer",
+    "requestBody": "A bot on {{name}} asks to do this on this computer:",
+    "allowOnce": "Allow once",
+    "deny": "Deny"
+  },
   "hostMode": {
     "state": {
       "connected": "Connected",

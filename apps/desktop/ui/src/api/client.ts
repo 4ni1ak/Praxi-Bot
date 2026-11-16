@@ -25,6 +25,7 @@ import type {
   Health,
   HostLinkConnection,
   HostLinkInfo,
+  PcRequestInfo,
   HostSetupJob,
   SshKeyHint,
   StartHostSetupInput,
@@ -326,6 +327,17 @@ export class ApiClient {
   /** Open (or reuse) the guarded channel to a paired host. */
   connectHost(id: string): Promise<HostLinkConnection> {
     return this.request("POST", `/hosts/${encodeURIComponent(id)}/connect`);
+  }
+  /** Let (or stop letting) a paired server's bots use THIS computer (local owner only). */
+  setComputerAccess(id: string, enabled: boolean): Promise<void> {
+    return this.request("PUT", `/hosts/${encodeURIComponent(id)}/computer-access`, { body: { enabled } });
+  }
+  /** Requests of a server to act on this computer, waiting for the owner. */
+  computerRequests(): Promise<PcRequestInfo[]> {
+    return this.request("GET", "/hosts/computer-requests");
+  }
+  decideComputerRequest(id: string, allow: boolean): Promise<void> {
+    return this.request("POST", `/hosts/computer-requests/${encodeURIComponent(id)}`, { body: { allow } });
   }
   disconnectHost(id: string): Promise<void> {
     return this.request("DELETE", `/hosts/${encodeURIComponent(id)}/connect`);

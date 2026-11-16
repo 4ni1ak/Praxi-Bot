@@ -372,6 +372,7 @@ struct FakeLinks {
 impl HostLinks for FakeLinks {
     fn list(&self) -> Vec<HostLinkInfo> {
         vec![HostLinkInfo {
+            computer_access: false,
             id: "abc123".into(),
             name: "Oracle".into(),
             state: HostLinkState::Idle,
