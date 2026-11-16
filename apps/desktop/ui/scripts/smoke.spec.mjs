@@ -237,6 +237,28 @@ export async function flows(ctx) {
     if (!text || /error:|panic|ssh:|exception|\bat \w+\./i.test(text)) throw new Error(`not a human error: "${text}"`);
     await page.keyboard.press('Escape');
   }, { expectError: true });
+  await run(s, 'owner routes refuse the general token alone and accept the owner key (card 262)', async () => {
+    // The UI flows above already did these things with the owner key; here the same routes are
+    // called the way a CLI engine or a script holding only the API token would call them.
+    const post = (path, body, owner) => fetch(`${ctx.base}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ctx.token}`, 'content-type': 'application/json', ...(owner ? { 'x-praxi-owner-key': ctx.ownerKey } : {}) },
+      body: JSON.stringify(body)
+    });
+    const ghost = '00000000-0000-0000-0000-000000000001';
+    for (const [path, body] of [
+      [`/v1/approvals/${ghost}`, { decision: 'approve', scope: 'always' }],
+      ['/v1/providers/cli/enable', { id: 'claude' }],
+      ['/v1/secrets/smoke/extra-provider-key', { value: 'k' }]
+    ]) {
+      const bare = await post(path, body, false);
+      const code = (await bare.json().catch(() => ({})))?.error?.code;
+      if (bare.status !== 403 || code !== 'owner_key_required') throw new Error(`${path}: the general token alone got ${bare.status} ${code}`);
+      const owner = await post(path, body, true);
+      const ownerCode = (await owner.json().catch(() => ({})))?.error?.code;
+      if (ownerCode === 'owner_key_required') throw new Error(`${path}: refused even with the owner key`);
+    }
+  });
   await s.context.close();
   return results;
 }

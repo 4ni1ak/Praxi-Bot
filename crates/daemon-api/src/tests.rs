@@ -433,6 +433,14 @@ async fn browser_origin_must_be_the_desktop_app() {
             .unwrap()
             .contains("authorization")
     );
+    // The web view sends the owner key on cross-origin calls: the preflight must allow it
+    // (without this the real app's owner routes fail in the browser, card 262).
+    assert!(
+        r.headers["access-control-allow-headers"]
+            .to_str()
+            .unwrap()
+            .contains("x-praxi-owner-key")
+    );
     let r = send(
         &t.app,
         Method::OPTIONS,
