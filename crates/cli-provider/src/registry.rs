@@ -43,8 +43,8 @@ pub struct CliEngineSpec {
     pub minimum_version: Option<(u32, u32, u32)>,
     pub install_windows: Option<InstallCommand>,
     pub install_unix: Option<InstallCommand>,
-    /// Short curated list (the CLI's own `models` / `--list-models` is account-specific and
-    /// not probed); the picker also accepts any other model id the CLI takes.
+    /// LAST-RESORT fallback only, used when the CLI cannot be asked and has no local model
+    /// cache (see `models.rs`). Deliberately minimal: live lists come from the CLI itself.
     pub models: &'static [&'static str],
     pub login: &'static str,
     pub docs_url: &'static str,
@@ -114,7 +114,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: None,
         install_windows: npm(&["install", "-g", "@openai/codex"], true),
         install_unix: npm(&["install", "-g", "@openai/codex"], true),
-        models: &["default", "gpt-5-codex", "gpt-5"],
+        models: &["default"],
         login: "codex login",
         docs_url: "https://github.com/openai/codex",
     },
@@ -143,7 +143,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
             verified: true,
             executable: true,
         }),
-        models: &["auto", "gpt-5.3-codex", "sonnet-4-thinking"],
+        models: &["auto"],
         login: "cursor-agent login",
         docs_url: "https://cursor.com/docs/cli",
     },
@@ -158,11 +158,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: None,
         install_windows: npm(&["install", "-g", "opencode-ai"], true),
         install_unix: npm(&["install", "-g", "opencode-ai"], true),
-        models: &[
-            "default",
-            "google/gemini-2.5-pro",
-            "google/gemini-2.5-flash",
-        ],
+        models: &["default"],
         login: "opencode auth login",
         docs_url: "https://opencode.ai/docs/",
     },
@@ -194,14 +190,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         minimum_version: None,
         install_windows: None,
         install_unix: None,
-        // From `agy models`; the CLI's own list is account-specific and not probed.
-        models: &[
-            "default",
-            "gemini-4-argon-medium",
-            "gemini-3.8-flash-medium",
-            "claude-sonnet-5-5-medium",
-            "claude-opus-5-5-medium",
-        ],
+        models: &["default"],
         login: "agy",
         docs_url: "https://antigravity.google/docs",
     },
@@ -256,7 +245,7 @@ mod tests {
     #[test]
     fn every_engine_with_a_driver_offers_models_the_cli_accepts() {
         for spec in CLI_ENGINES.iter().filter(|s| s.driver().is_some()) {
-            assert!(spec.models.len() >= 2, "{}", spec.id);
+            assert!(!spec.models.is_empty(), "{}", spec.id);
             assert!(
                 spec.models
                     .iter()

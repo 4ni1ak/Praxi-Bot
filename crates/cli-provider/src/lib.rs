@@ -6,6 +6,7 @@
 pub mod detect;
 pub mod install;
 pub mod levels;
+pub mod models;
 pub mod opencode;
 mod peer;
 pub mod registry;
