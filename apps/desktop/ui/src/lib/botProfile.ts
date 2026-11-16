@@ -384,37 +384,3 @@ export function botView(bot: Bot): BotView {
     executor: formatModelRef(d.executor)
   };
 }
-
-/** Fields edited in Onboarding Step 4; shared by the preview and save path. */
-export interface OnboardingBotFields {
-  name: string;
-  color: string;
-  avatar?: string;
-  persona: string;
-  executor: ModelRef;
-  planner: ModelRef;
-  classifier: ModelRef;
-  preset: PermissionPreset;
-}
-
-/**
- * Build the `BotDraft` used by Onboarding Step 4 so the preview `<BotAvatar>`
- * and `configFromDraft` agree on `shape` and `color`.
- */
-export function onboardingBotDraft(
-  existing: Bot | undefined,
-  fields: OnboardingBotFields
-): BotDraft {
-  const base = draftFromBot(existing);
-  return {
-    ...base,
-    name: fields.name.trim(),
-    color: fields.color,
-    avatar: fields.avatar ?? null,
-    persona: fields.persona,
-    executor: fields.executor,
-    planner: fields.planner,
-    classifier: fields.classifier,
-    preset: fields.preset
-  };
-}

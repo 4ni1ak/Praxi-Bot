@@ -236,6 +236,8 @@ struct Inner {
     /// CLI provider detector (`GET /v1/providers/detected`).
     detector: parking_lot::RwLock<Arc<cli_provider::Detector>>,
     cli_installs: cli_engines::InstallBook,
+    /// Live model lists of the coding CLIs (disk-cached, refreshed in the background).
+    cli_models: Arc<cli_provider::models::ModelCache>,
     /// The running scheduler (see [`AppState::start_scheduler`]).
     scheduler: parking_lot::Mutex<Option<Scheduler>>,
     leader: OnceLock<host::LeaderControl>,
@@ -349,6 +351,9 @@ impl AppState {
             }
         };
         let host_config = host::HostConfig::load(storage.data_dir())?;
+        let cli_models = cli_provider::models::ModelCache::load(Some(
+            storage.data_dir().join("cache").join("cli-models.json"),
+        ));
         let state = Self(Arc::new(Inner {
             schedule_events: tokio::sync::broadcast::channel(64).0,
             channels: parking_lot::Mutex::new(Vec::new()),
@@ -393,6 +398,7 @@ impl AppState {
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
             cli_installs: cli_engines::InstallBook::default(),
+            cli_models,
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),
             doctor_host: OnceLock::new(),
@@ -758,6 +764,9 @@ impl AppState {
     }
     pub(crate) fn providers_lock(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.0.providers_lock.lock()
+    }
+    pub(crate) fn cli_models(&self) -> Arc<cli_provider::models::ModelCache> {
+        Arc::clone(&self.0.cli_models)
     }
     pub(crate) fn detector(&self) -> Arc<cli_provider::Detector> {
         Arc::clone(&*self.0.detector.read())
@@ -1135,6 +1144,10 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/providers/cli", get(cli_engines::list))
         .route("/v1/providers/cli/install", post(cli_engines::preview))
         .route(
+            "/v1/providers/cli/{id}/models/refresh",
+            post(cli_engines::refresh_models_route),
+        )
+        .route(
             "/v1/providers/cli/install/{approval_id}/decision",
             post(cli_engines::decide),
         )
@@ -1280,8 +1293,12 @@ pub async fn serve(
     // must never probe the real machine's credentialed CLIs as a side effect.
     if state.provider_host().is_some() {
         let detector = state.detector();
+        let warm = state.clone();
         tokio::spawn(async move {
-            let _ = detector.detect(false).await;
+            let rows = detector.detect(false).await;
+            for row in rows.iter().filter(|r| r.installed) {
+                cli_engines::refresh_models_if_stale(&warm, &row.id).await;
+            }
         });
     }
     let cancel = state.shutdown_token();

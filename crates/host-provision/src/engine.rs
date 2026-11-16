@@ -140,6 +140,9 @@ fn fail_from(id: &'static str, title: &str, e: &TransportError) -> StepResult {
         TransportError::Network(_) | TransportError::Timeout => {
             "Check the address and port, that the server is running, and that the cloud firewall allows inbound SSH (port 22)."
         }
+        TransportError::NoHostKey(_) => {
+            "The server answered but Praxi could not read its identity. Update the OpenSSH client on this computer, or check the server's SSH settings."
+        }
         TransportError::HostKeyChanged => {
             "The server's identity changed. If you did not reinstall it, do not continue."
         }

@@ -82,6 +82,7 @@ import { SkillsModal } from "./components/SkillsModal";
 import { useBotSkills } from "./state/useBotSkills";
 import { BotEditModal } from "./views/BotEditModal";
 import { BotEmptyView } from "./views/BotEmptyView";
+import { FinishSetupHint } from "./components/FinishSetupHint";
 import { BotProfileModal } from "./views/BotProfileModal";
 import { useBotReorder } from "./components/useBotReorder";
 import { setBotOrderSnapshot } from "./store/botOrderStore";
@@ -558,6 +559,27 @@ function AppShell() {
     setNewChatBusy(false);
   };
 
+  /** A suggested first prompt: open a chat and send the prompt as its first message. */
+  const startChatWith = async (botId: string, prompt: string) => {
+    if (!client || newChatBusy) {
+      return;
+    }
+    setNewChatBusy(true);
+    setNewChatError(null);
+    const result = await createChatFor(client, botId, refreshChats);
+    if (result.ok) {
+      go({ kind: "chat", chatId: result.chatId, botId });
+      try {
+        await client.sendMessage(result.chatId, prompt);
+      } catch (e) {
+        toast.show(e instanceof Error ? e.message : String(e), "danger");
+      }
+    } else {
+      setNewChatError(result.message);
+    }
+    setNewChatBusy(false);
+  };
+
   const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot");
   // The bot dialogs belong to one bot: another bot, or leaving the bot views, closes them.
   const dialogBotId = botInView ? selectedBot?.id : undefined;
@@ -787,31 +809,23 @@ function AppShell() {
           onOpenNeeds={openNeeds}
         />
         {runBanner}
+        {settings.onboardingSkipped && !settings.onboardingCompleted && route.kind !== "onboarding" ? (
+          <FinishSetupHint onClick={() => handleOpenOnboarding(false)} />
+        ) : null}
         {panelVisible || route.kind === "chat" ? null : <StopStatusNotice variant="main" />}
         <PausedControlBanner />
         {route.kind === "onboarding" && !onboardingBlocked ? (
           <OnboardingView
             settings={settings}
-            onUpdateSettings={updateSettings}
             onLanguageChange={handleLanguageChange}
-            onSkip={(currentStep) => {
-              updateSettings({
-                onboardingSkipped: true,
-                onboardingStep: currentStep
-              });
+            onSkip={() => {
+              updateSettings({ onboardingSkipped: true });
               go({ kind: "home" });
             }}
-            onComplete={({ botId, chatId }) => {
-              updateSettings({
-                onboardingCompleted: true,
-                onboardingSkipped: false,
-                onboardingStep: 5,
-                ...(botId ? { onboardingBotId: botId } : {})
-              });
-              if (chatId && botId) {
-                go({ kind: "chat", chatId, botId });
-              } else if (botId) {
-                goToBot(botId);
+            onComplete={({ botId }) => {
+              updateSettings({ onboardingCompleted: true, onboardingSkipped: false });
+              if (botId) {
+                go({ kind: "bot", botId });
               } else {
                 go({ kind: "home" });
               }
@@ -912,6 +926,7 @@ function AppShell() {
             busy={newChatBusy}
             error={newChatError}
             onNewChat={() => void startChat(route.botId)}
+            onSuggest={(prompt) => void startChatWith(route.botId, prompt)}
           />
         ) : null}
         {route.kind === "chat" ? (

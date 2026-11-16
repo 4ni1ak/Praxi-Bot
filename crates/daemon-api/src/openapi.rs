@@ -44,7 +44,7 @@ impl Modify for Security {
             except GET /v1/health need `Authorization: Bearer <token>`."
     ),
     paths(
-        crate::cli_engines::list, crate::cli_engines::preview, crate::cli_engines::decide,
+        crate::cli_engines::list, crate::cli_engines::refresh_models_route, crate::cli_engines::preview, crate::cli_engines::decide,
         host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_links::forget, host_links::computer_requests, host_links::decide_computer_request, host_links::set_computer_access, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,

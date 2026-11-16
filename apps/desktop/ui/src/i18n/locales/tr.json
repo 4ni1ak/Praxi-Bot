@@ -239,6 +239,7 @@
     "details": "Daemon {{version}} · {{uptime}} sn çalışıyor {{mode}}"
   },
   "bots": {
+    "writeConflict": "Bu bot siz kaydederken başka bir yerden değiştirildi. Yeniden yükleyip tekrar deneyin.",
     "notFound": "Bu bot artık yok.",
     "noModel": "Model yok",
     "newChat": "Yeni sohbet",
@@ -911,127 +912,132 @@
   "control": {
     "starting": "Çalışıyor…"
   },
-  "onboarding": {
-    "badge": "İlk kurulum",
-    "stepCounter": "Adım {{current}} / {{total}}",
+  "firstRun": {
+    "badge": "Kurulum",
     "skip": "Şimdilik atla",
     "back": "Geri",
     "next": "Devam et",
-    "finish": "Kurulumu tamamla",
+    "start": "Başla",
+    "creating": "Oluşturuluyor…",
+    "language": "Dil",
+    "progress": "Adım {{current}} / {{total}}",
     "steps": {
-      "1": "Hoş geldin",
-      "2": "Sağlayıcı",
-      "3": "Güvenlik",
-      "4": "İlk bot",
-      "5": "Dene"
+      "brain": "Beyin",
+      "freedom": "Özgürlük",
+      "bot": "Botun"
     },
-    "daemonBanner": {
-      "offlineTitle": "Yerel servis yanıt vermiyor",
-      "offlineHint": "Tercihlerini seçmeye ve sağlayıcı anahtarını kaydetmeye devam edebilir veya yerel servisi şimdi yeniden başlatmayı deneyebilirsin.",
-      "retry": "Servisi yeniden dene"
+    "finishHint": "Kurulumu bitir",
+    "service": {
+      "title": "Praxi'nin arka plan servisi henüz çalışmıyor",
+      "body": "Praxi onu kendiliğinden başlatır. Birkaç saniye bekleyip yeniden dene; olmazsa uygulamayı yeniden başlat.",
+      "retry": "Yeniden dene"
     },
-    "step1": {
-      "title": "Praxi-Bot’a hoş geldin",
-      "subtitle": "Yerel öncelikli kişisel bilgisayar kullanım asistanın. Terminal gerekmeden birkaç dakika içinde kurulumu tamamlayalım.",
-      "languageTitle": "Arayüz dili",
-      "languageHint": "İstediğin zaman Türkçe ve İngilizce arasında geçiş yapabilirsin.",
-      "themeTitle": "Görünüm teması",
-      "themeHint": "Açık, koyu veya Windows sistem temasını seç.",
-      "privacyTitle": "%100 yerel öncelikli ve sıfır telemetri",
-      "privacyBody": "Sohbetlerin, izinlerin ve bot profillerin kendi bilgisayarında kalır. Praxi-Bot hiçbir telemetri veya analitik toplamaz; veriler yalnızca seçtiğin model sağlayıcısına gönderilir."
-    },
-    "step2": {
-      "title": "Bir model sağlayıcısı bağla",
-      "subtitle": "Botunun zekâsının nerede çalışacağını seç. API anahtarın Windows Kimlik Bilgisi Yöneticisi’ne kaydedilir ve bir daha asla gösterilmez.",
-      "presets": {
+    "brain": {
+      "title": "Bir beyin seç",
+      "subtitle": "Botun için düşünen modeldir. İstediğin zaman değiştirebilirsin.",
+      "looking": "Bu bilgisayarda hazır olanlar aranıyor…",
+      "foundTitle": "Bu bilgisayarda hazır",
+      "useCli": "{{name}} kullan",
+      "cliSub": "Aboneliğin · anahtar gerekmez",
+      "cliSubAccount": "{{account}} · anahtar gerekmez",
+      "apiTitleAfter": "ya da bir API bağla",
+      "apiTitle": "Bir API bağla",
+      "providers": {
         "gemini": {
-          "title": "Google Gemini",
-          "badge": "Ücretsiz katman var",
-          "description": "Google’ın hızlı çok kipli ve bilgisayar kullanımı modelleri.",
-          "freeTierLine": "Google AI Studio ücretsiz bir Gemini API katmanı sunar — kredi kartı gerekmeden saniyeler içinde anahtar alabilirsin."
+          "name": "Google Gemini",
+          "badge": "Ücretsiz katman",
+          "sub": "Hızlı, cömert ücretsiz kota"
         },
         "anthropic": {
-          "title": "Anthropic Claude",
-          "badge": "Bulut API",
-          "description": "Akıl yürütme ve bilgisayar kullanımı için Claude Sonnet, Opus ve Haiku modelleri."
+          "name": "Anthropic",
+          "badge": "",
+          "sub": "Claude modelleri"
         },
-        "openai_compatible": {
-          "title": "OpenAI uyumlu",
-          "badge": "OpenRouter / DeepSeek / Özel",
-          "description": "OpenRouter, DeepSeek veya LM Studio gibi herhangi bir OpenAI uyumlu uç nokta."
+        "openai": {
+          "name": "OpenAI uyumlu",
+          "badge": "",
+          "sub": "OpenAI, OpenRouter, DeepSeek"
         },
         "ollama": {
-          "title": "Yerel Ollama",
-          "badge": "Bu bilgisayarda çalışır",
-          "description": "Açık ağırlıklı modelleri API anahtarı gerekmeden kendi bilgisayarında çalıştır."
-        },
-        "fake": {
-          "title": "Yerleşik Demo Sağlayıcısı",
-          "badge": "Çevrimdışı test modu",
-          "description": "API anahtarı olmadan kurulumu denemek için yerel yankı ve araç çağrısı simülatörü."
+          "name": "Ollama",
+          "badge": "",
+          "sub": "Bu bilgisayardaki modeller, anahtarsız",
+          "found": "Burada çalışıyor"
         }
       },
-      "providerId": "Katalog hazır ayarı",
-      "customOption": "Özel OpenAI uyumlu URL",
-      "customId": "Sağlayıcı kimliği",
-      "baseUrl": "Temel URL",
-      "apiKey": "API anahtarı",
-      "apiKeyPlaceholder": "API anahtarını buraya yapıştır…",
-      "keyStoredBadge": "API anahtarı işletim sistemi anahtarlığına kaydedildi (güvenlik için gizlendi)",
-      "replaceKey": "API anahtarını değiştir",
-      "noKeyNeeded": "Bu yerel sağlayıcı için API anahtarı gerekmez.",
-      "defaultModel": "Varsayılan model",
-      "saveProvider": "Sağlayıcıyı kaydet",
-      "saving": "Kaydediliyor…",
-      "testButton": "Bağlantıyı sına",
-      "testing": "Sınanıyor…",
-      "retryTest": "Sınamayı yeniden dene",
-      "savedOk": "{{id}} sağlayıcısı yapılandırmana kaydedildi.",
-      "testOk": "Bağlantı sınaması başarılı: {{detail}}",
-      "testFailedTitle": "Sağlayıcı sınaması başarısız oldu",
-      "testFailedHint": "API anahtarının geçerli olduğundan ve internet bağlantın olduğundan (veya Ollama’nın yerel olarak çalıştığından) emin olup yeniden dene.",
-      "nativeWarning": "Sağlayıcı anahtarlığı kaydı masaüstü uygulaması içinde çalışmayı gerektirir."
-    },
-    "step3": {
-      "title": "Güvenlik varsayılanlarını seç",
-      "subtitle": "Botunun bu bilgisayarda varsayılan olarak neler yapabileceğine karar ver. Bunu istediğin zaman bot veya kategori bazında değiştirebilirsin.",
+      "keyLabel": "{{name}} API anahtarı",
+      "keyPlaceholder": "Anahtarını buraya yapıştır",
+      "getFreeKey": "Ücretsiz anahtar al",
+      "getKey": "Anahtar al",
+      "paste": "Yapıştır",
+      "show": "Anahtarı göster",
+      "hide": "Anahtarı gizle",
+      "connect": "Bağlan",
+      "keyHint": "Sistem anahtarlığına kaydedilir. Bir daha gösterilmez.",
+      "checking": "Denetleniyor…",
+      "connected": "Bağlandı",
+      "connectedModel": "Bağlandı · {{count}} model",
+      "connectedModels": "Bağlandı · {{count}} model",
+      "cliReady": "{{name}} hazır",
+      "model": "Model",
       "recommended": "Önerilen",
-      "whatItMeansTitle": "Bot bu bilgisayarda neler yapabilir?",
-      "explain": {
-        "read-only": "Bot ekranını inceleyebilir, dosyaları okuyabilir ve web sayfalarına bakabilir; ancak asla tıklayamaz, yazamaz, dosya düzenleyemez veya komut çalıştıramaz.",
-        "read-and-draft": "Bot dosyaları okuyabilir, web’de arama yapabilir ve ekranını serbestçe inceleyebilir; taslak hazırlamadan, dosya değiştirip silmeden, sayfa açmadan, tıklamadan, yazmadan, komut çalıştırmadan veya ileti göndermeden önce sana sorar (Yıkıcı işlemlerde onay ile aynı etkili politika).",
-        "approve-destructive": "Bot dosyaları okuyabilir ve ekranını serbestçe inceleyebilir; tıklamadan, yazmadan, dosya düzenlemeden, kabuk komutu çalıştırmadan veya ileti göndermeden önce sana canlı bir onay kartı gösterir.",
-        "full": "Bot önceden sormadan okuyabilir, tıklayabilir, yazabilir, sıradan dosyaları düzenleyip silebilir, kabuk komutu çalıştırabilir ve ileti gönderebilir (aşağıdaki sert güvenlik sınırları hariç)."
+      "change": "Değiştir",
+      "another": "Başka bir beyin seç"
+    },
+    "errors": {
+      "badKey": "{{name}} bu anahtarı kabul etmedi. Tamamını kopyaladığından emin ol, sonra yeniden yapıştır.",
+      "offline": "{{name}} servisine ulaşılamadı. İnternet bağlantını kontrol edip yeniden dene.",
+      "ollamaDown": "Ollama çalışıyor gibi görünmüyor. Ollama'yı bu bilgisayarda başlat, sonra yeniden seç.",
+      "noModels": "{{name}} anahtarı kabul etti ama hiç model listelemedi. Biraz sonra yeniden dene.",
+      "unavailable": "Anahtarlar yalnızca bu bilgisayardaki masaüstü uygulamasından kaydedilebilir.",
+      "unknown": "{{name}} bağlanırken bir sorun çıktı. Yeniden dene ya da anahtarı sonra Ayarlar → Yapay zekâ bölümünden ekle."
+    },
+    "freedom": {
+      "title": "Ne kadar serbest olsun?",
+      "subtitle": "Botunun sormadan ne kadarını yapabileceğine karar ver. Sonradan her bota ayrı seviye verebilirsin.",
+      "recommended": "Önerilen",
+      "levels": {
+        "ask": {
+          "pitch": "Bir şeyi değiştirmeden önce sana sorar. Onu tanırken iyi bir başlangıç.",
+          "examples": [
+            "Dosya kaydetmeden ya da düzenlemeden önce sorar",
+            "Senin yerine tıklamadan ya da yazmadan önce sorar",
+            "Komut çalıştırmadan önce sorar"
+          ]
+        },
+        "balanced": {
+          "pitch": "Etrafa kendi bakar; bir şeyi değiştirmeden ya da göndermeden önce sorar.",
+          "examples": [
+            "Dosyaları okur, ekranına bakar; sormaz",
+            "Silmeden ya da göndermeden önce sorar",
+            "Ne yapmak istediğini önce sana gösterir"
+          ]
+        },
+        "auto": {
+          "pitch": "İşini kendi halleder. Yalnızca ödemelerde ve kısa bir yasaklı listede durur.",
+          "examples": [
+            "Sıradan dosyaları kendi düzenler ve siler",
+            "Komutları çalıştırır, iletileri kendi gönderir",
+            "Ödemelerde her zaman durur"
+          ]
+        }
       },
-      "floorsTitle": "Her zaman açık güvenlik korumaları",
-      "floorMoney": "Finansal ve ödeme işlemleri her zaman açık onayını gerektirir.",
-      "floorNever": "Yerleşik yasaklılar listesi: kimlik bilgisi depoları, SSH/GPG özel anahtarları ve kritik işletim sistemi önyükleme dosyaları her zaman engellenir.",
-      "floorHotkey": "Praxi-Bot odaktayken {{hotkey}} kısayoluna bas veya yüzen araçtaki “Durdur” düğmesine tıkla. Windows masaüstü uygulamasında kısayol başka uygulamalar odaktayken de çalışır.",
-      "saving": "Güvenlik politikası kaydediliyor…",
-      "saveError": "Çalışma alanı politikası kaydedilemedi: {{message}}"
+      "alwaysTitle": "Hangisini seçersen seç, hep açık",
+      "alwaysMoney": "Ödemeler her zaman onayını ister.",
+      "alwaysStop": "Praxi-Bot odaktayken {{hotkey}} tuşlarına bas ya da yüzen widget'ta “Durdur”a tıkla. Windows masaüstü uygulamasında kısayol başka uygulama odaktayken de çalışır."
     },
-    "step4": {
-      "title": "İlk botunu oluştur",
-      "subtitle": "Asistanına bir ad, görünüm ve seçtiğin sağlayıcıdan otomatik doldurulan rol modelleri ver.",
-      "defaultBotName": "Atlas",
-      "defaultPersona": "Bilgisayarımda işlem yapmadan önce planını açıkça anlatan, yardımsever ve dikkatli kişisel asistan.",
-      "rolesTitle": "Model rol varsayılanları ({{provider}} sağlayıcısından)",
-      "rolesHint": "Yürütücü eylemleri ve araçları çalıştırır, Planlayıcı çok adımlı hedefleri böler, Sınıflandırıcı ise istekleri yönlendirir.",
-      "creating": "Bot oluşturuluyor…",
-      "createdBadge": "“{{name}}” botu hazır."
+    "bot": {
+      "title": "Botunla tanış",
+      "subtitle": "Ona bir ad ve bir görünüm ver. İkisini de sonra değiştirebilirsin.",
+      "defaultName": "Praxi",
+      "recap": "Beyin: {{model}} · Özgürlük: {{level}}",
+      "createFailed": "Botun oluşturulamadı. Hiçbir şey kaydedilmedi. Biraz sonra yeniden dene.",
+      "noService": "Praxi'nin arka plan servisi henüz çalışmıyor. Birkaç saniye bekleyip yeniden dene."
     },
-    "step5": {
-      "title": "Botunu canlı dene",
-      "subtitle": "Botunun nasıl yanıt verdiğini ve herhangi bir masaüstü eylemi çalışmadan önce canlı onay kartlarının nasıl göründüğünü görmek için aşağıdaki örnek istemlerden birine tıkla.",
-      "promptScreen": "Ekranımda ne var?",
-      "promptNotepad": "Not Defteri'ni aç ve merhaba yaz",
-      "customPlaceholder": "Veya denemek için başka bir istem yaz…",
-      "send": "Gönder",
-      "sending": "Çalışıyor…",
-      "emptyHint": "Burada canlı bir deneme başlatmak için yukarıdaki örnek istemlerden birini seç.",
-      "approvalHint": "Bir aracın izne ihtiyacı olduğunda (Not Defteri’ni başlatmak gibi), Bir kez izin ver veya Reddet seçebilmen için onay kartı aşağıda canlı olarak belirir.",
-      "openFullChat": "Tam sohbette aç",
-      "retryPrompt": "İstemi yeniden dene"
+    "prompts": {
+      "screen": "Şu an ekranımda ne var?",
+      "folder": "Bu klasörü özetle",
+      "news": "Bugünün en önemli yapay zekâ haberlerini bul"
     }
   },
   "notify": {
@@ -1341,6 +1347,11 @@
     },
     "otherId": "\"{{id}}\" modelini {{provider}} ile kullan",
     "recommended": "Önerilen",
+    "listBundled": "Yerleşik yedek liste: CLI'ya sorulamadı.",
+    "listFresh": "Az önce güncellendi",
+    "listAge": "{{hours}} sa önce güncellendi",
+    "refresh": "Yenile",
+    "refreshList": "Modelleri CLI'ya yeniden sor",
     "showAll": "Tüm modeller ({{count}})",
     "noModels": "Kullanmak için aramaya model kimliği yazın.",
     "sectionCli": "Kodlama CLI'ları (aboneliğiniz)",
@@ -2223,7 +2234,8 @@
   },
   "botEmpty": {
     "title": "{{name}} ile sohbete başla",
-    "body": "Burada henüz bir şey yok. Bir şey iste, sohbet bu alanda açılsın."
+    "body": "Burada henüz bir şey yok. Bir şey iste, sohbet bu alanda açılsın.",
+    "suggestionsTitle": "Şunlardan birini dene"
   },
   "botProfile": {
     "facts": "{{date}} tarihinde oluşturuldu · {{chats}} sohbet",
@@ -2636,6 +2648,10 @@
       "hostkey_changed": {
         "msg": "Bu, daha önce kurduğun sunucu değil.",
         "fix": "Kimliği değişti ve hiçbir şey gönderilmedi. Sunucuyu bilerek yeniden kurduysan kaldırıp yeniden ekle."
+      },
+      "hostkey_unreadable": {
+        "msg": "Praxi sunucuya ulaştı ama kimliğini okuyamadı.",
+        "fix": "Bu bilgisayardaki SSH programı sunucununkinden eski olabilir. OpenSSH istemcisini güncelle (Windows: Ayarlar > İsteğe bağlı özellikler ya da Git for Windows kur), sonra tekrar dene."
       },
       "hostkey_declined": {
         "msg": "Bu sunucuya güvenmedin.",

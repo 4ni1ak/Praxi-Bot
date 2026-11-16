@@ -18,11 +18,12 @@ pub(crate) fn for_picker(
     agent: &AgentLoop,
     settings: &ProviderSettings,
     mut ids: Vec<String>,
+    labels: &std::collections::HashMap<String, String>,
     chat_only: bool,
 ) -> Vec<ModelMetadataDto> {
     if settings.cli.is_some() {
-        // The CLI has no live models endpoint. Keep its existing configured
-        // model/default behavior; never infer account entitlements from docs.
+        // The ids come from the CLI itself (or its fallback list). Keep the configured
+        // model/default selectable; never infer account entitlements from docs.
         ids.push(
             settings
                 .default_model
@@ -34,6 +35,13 @@ pub(crate) fn for_picker(
         provider_catalog::model_metadata(&settings.id, &ids, chat_only)
             .into_iter()
             .map(Into::into)
+            .map(|mut m: ModelMetadataDto| {
+                // A name the CLI itself reports wins over the catalog's and a prettified id.
+                if let Some(label) = labels.get(&m.id) {
+                    m.display_name.clone_from(label);
+                }
+                m
+            })
             .collect();
     // Refresh the production redactor once for the whole list, not once per
     // id (a refresh may read the OS secret store). All presentation fields are

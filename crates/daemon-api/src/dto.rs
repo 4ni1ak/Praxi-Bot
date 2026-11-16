@@ -653,6 +653,13 @@ pub struct ConfiguredProviderDto {
     pub model_details: Vec<ModelMetadataDto>,
     /// Why the model list could not be fetched.
     pub models_error: Option<String>,
+    /// Coding CLIs only: where the list came from (`cli`, `local_cache` or `bundled`, the
+    /// last-resort fallback the UI marks as such).
+    #[serde(default)]
+    pub models_source: Option<String>,
+    /// Coding CLIs only: when the list was fetched (ms since the epoch; absent for `bundled`).
+    #[serde(default)]
+    pub models_fetched_at_ms: Option<i64>,
 }
 
 /// Presentation only: never changes execution capabilities or configured ids.

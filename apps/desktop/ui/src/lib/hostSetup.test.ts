@@ -76,5 +76,13 @@ test("a failure maps to one code, stops later rows, and the details carry no sec
     failure(job("failed", [step("install", "fail", "Praxi is not installed on this server")]))?.code,
     "not_installed"
   );
+  assert.equal(
+    failure(
+      job("failed", [
+        step("hostkey", "fail", "connected, but could not read the server's host key: choose_kex")
+      ])
+    )?.code,
+    "hostkey_unreadable"
+  );
   assert.match(copyDetails(j), /\[fail\] connect: the server rejected the login/);
 });
