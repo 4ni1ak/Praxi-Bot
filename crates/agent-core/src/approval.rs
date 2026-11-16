@@ -381,6 +381,16 @@ impl Shared {
     /// embedding provider); that can only add egress, never remove it.
     pub(crate) fn content_class(&self, ctx: &RunCtx, name: &str) -> ContentClass {
         let Some(tool) = self.tools.get(name) else {
+            // The discovery tools live on the surface, not in the registry. They only list
+            // tool names (`use_tool` is judged as its target): they never read user data
+            // or send anything. Without this they fell into "unspecified" (egress) and asked
+            // for approval after any read, even under the Full preset.
+            if matches!(
+                name,
+                agent_router::FIND_TOOL | agent_router::GET_TOOL_DETAILS
+            ) {
+                return ContentClass::none();
+            }
             return builtin_tools::classify(name).unwrap_or_else(ContentClass::unspecified);
         };
         let mut class = tool.spec().content;
@@ -467,6 +477,45 @@ impl Shared {
         }
         taint::finalize_egress_record(&mut details);
         Some(details)
+    }
+
+    /// Why this call asks, as a short kind the UI turns into one human line
+    /// (`policy`, `egress`, `executes`, `always_ask`, `floor`).
+    fn ask_kind(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> &'static str {
+        if self.must_ask(name, input) {
+            return "always_ask";
+        }
+        let class = self.content_class(ctx, name);
+        let exposure = ctx.taint.lock().exposure;
+        if executes_must_ask(exposure, class.executes) {
+            return "executes";
+        }
+        if self.gate_must_ask(ctx, name, input) {
+            return "egress";
+        }
+        let mut raw = raw_command_for(name, input);
+        if raw.is_empty() {
+            input
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .clone_into(&mut raw);
+        }
+        let req = ActionRequest {
+            category,
+            raw_command: raw,
+            initiator: InitiatorKind::Human,
+        };
+        if self.resolver.resolve(&Policy::full(), None, None, &req) != Decision::Allow {
+            return "floor";
+        }
+        "policy"
     }
 
     fn closed_guard(
@@ -932,6 +981,13 @@ impl Shared {
             prefix.push_str("[External agent: approve once only] ");
         }
         let summary = self.redact(format!("{prefix}{name} {}", truncate_utf8(&args, 300)));
+        // Daemon-authored facts for the card: why it asks, and whether a standing choice
+        // ("always for this chat") may be offered at all.
+        let why = self.ask_kind(ctx, name, category, input);
+        if let Some(obj) = details.get_or_insert_with(|| json!({})).as_object_mut() {
+            obj.insert("why".into(), json!(why));
+            obj.insert("once_only".into(), json!(once_only));
+        }
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only, grantable);
         let parked_at = policy_revision(self);
         self.remember_parked(call_id, ctx, name, effect, category, input);

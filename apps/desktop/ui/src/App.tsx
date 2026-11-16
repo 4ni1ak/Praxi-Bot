@@ -64,6 +64,7 @@ import { requestStop } from "./state/appStop";
 import { isNewerNativeSnapshot } from "./state/stopStatus";
 import { StopStatusNotice } from "./components/StopStatusNotice";
 import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
+import { HumanDrivingBanner } from "./components/HumanDrivingBanner";
 import { LiveViewer } from "./views/LiveViewer";
 import { appearanceFromQuery } from "./lib/appearance";
 import { createDebounced } from "./lib/debounce";
@@ -789,6 +790,7 @@ function AppShell() {
           onOpenChat={openChat}
           onOpenNeeds={openNeeds}
         />
+        <HumanDrivingBanner />
         {runBanner}
         {settings.onboardingSkipped && !settings.onboardingCompleted && route.kind !== "onboarding" ? (
           <FinishSetupHint onClick={() => handleOpenOnboarding(false)} />

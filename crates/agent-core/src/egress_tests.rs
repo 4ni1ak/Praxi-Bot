@@ -2866,3 +2866,45 @@ async fn a_standing_grant_does_not_waive_the_ask_of_a_tainted_run() {
         }
     }
 }
+
+#[tokio::test]
+async fn discovery_tools_never_ask_after_a_read_even_under_the_full_preset() {
+    // The owner's Full bot got a card for `find_tool` after the chat had read something:
+    // the discovery tools are not registry tools, so they were classified "unspecified"
+    // (egress) and the egress gate asked.
+    let env = setup();
+    let read = read_tool("fs_read", ContentClass::untrusted_private());
+    let fake = Fake::new(vec![
+        calls(&[(
+            "c1",
+            "use_tool",
+            json!({"name": "fs_read", "input": {"path": "notes.txt"}}),
+        )]),
+        calls(&[("c2", "find_tool", json!({"query": "desktop"}))]),
+        text("done"),
+    ]);
+    let mut config = cfg(Policy::full());
+    config.discovery_threshold = 0;
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&read)],
+        profile(""),
+        config,
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "look around").unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(10), lp.wait(run))
+        .await
+        .expect("no approval card may park the run")
+        .unwrap();
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(read.count.load(Ordering::SeqCst), 1);
+    while let Ok(item) = rx.try_recv() {
+        assert!(
+            !matches!(item.envelope.event, Event::ApprovalNeeded(_)),
+            "find_tool must not ask"
+        );
+    }
+}

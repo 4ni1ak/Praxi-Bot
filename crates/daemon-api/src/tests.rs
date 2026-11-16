@@ -2524,7 +2524,7 @@ async fn heartbeats_never_release_a_pause_only_the_release_flag_does() {
         &t,
         Method::PUT,
         "/v1/control/state",
-        Some(json!({"mode": "human_driving"})),
+        Some(json!({"mode": "paused"})),
     )
     .await;
     // A reopened UI heartbeats idle, a stale beat says bot_driving.
@@ -2536,7 +2536,7 @@ async fn heartbeats_never_release_a_pause_only_the_release_flag_does() {
             Some(json!({"mode": mode})),
         )
         .await;
-        assert_eq!(r.json()["latched"], "human_driving", "{mode}");
+        assert_eq!(r.json()["latched"], "paused", "{mode}");
     }
     let r = call(
         &t,
@@ -2546,6 +2546,30 @@ async fn heartbeats_never_release_a_pause_only_the_release_flag_does() {
     )
     .await;
     assert!(r.json()["latched"].is_null());
+}
+
+#[tokio::test]
+async fn a_human_driving_claim_ends_when_its_reporter_reports_idle() {
+    let t = setup();
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/control/state",
+        Some(json!({"mode": "human_driving"})),
+    )
+    .await;
+    assert_eq!(r.json()["latched"], "human_driving");
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/control/state",
+        Some(json!({"mode": "idle"})),
+    )
+    .await;
+    assert!(
+        r.json()["latched"].is_null(),
+        "a reopened UI must not leave observation refused"
+    );
 }
 
 #[tokio::test]

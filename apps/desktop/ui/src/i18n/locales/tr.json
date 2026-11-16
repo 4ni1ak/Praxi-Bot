@@ -238,6 +238,11 @@
     "fakeProvider": "Sahte sağlayıcı",
     "details": "Daemon {{version}} · {{uptime}} sn çalışıyor {{mode}}"
   },
+  "humanDriving": {
+    "banner": "Sen yönetiyorsun - bot duraklatıldı",
+    "giveBack": "Kontrolü geri ver",
+    "giveBackFailed": "Kontrol geri verilemedi. Tekrar dene."
+  },
   "bots": {
     "notFound": "Bu bot artık yok.",
     "noModel": "Model yok",
@@ -328,6 +333,9 @@
         "done": "Bitti",
         "error": "Başarısız",
         "expired": "Süresi doldu"
+      },
+      "errors": {
+        "observationPaused": "Şu an ekranı sen yönetiyorsun, bu yüzden bot ekrana bakmadı. “Kontrolü geri ver”e bas ve tekrar iste."
       }
     },
     "approval": {
@@ -401,6 +409,13 @@
       "app": {
         "arguments": "Tüm bağımsız değişkenleri göster ({{count}} karakter)",
         "footer": "Composio üzerinden. Yalnızca bu eylemi yukarıdaki tüm bağımsız değişkenlerle onaylayın."
+      },
+      "why": {
+        "policy": "Bu bot, bu tür bir işlemden önce sormaya ayarlı.",
+        "egress": "Bu sohbette daha önce bir şey okudu; bu yüzden veri göndermeden önce sorar.",
+        "executes": "Güvenilmeyen içerik okudu; bu yüzden yazma, komut ve program başlatmadan önce sorar.",
+        "always_ask": "Bu işlem izin düzeyi ne olursa olsun her zaman sorar (uygulamalar, gizli bilgiler).",
+        "floor": "Ödemeler ve riskli komutlar izin düzeyi ne olursa olsun her zaman sorar."
       }
     },
     "question": {
@@ -1987,7 +2002,11 @@
     "edit": "Botu düzenle",
     "runsOnHost": "{{name}} sunucusunda çalışır",
     "runsOnLocal": "Bu bilgisayarda çalışır",
-    "tabs": { "label": "Panel bölümleri", "activity": "Etkinlik", "library": "Kitaplık" },
+    "tabs": {
+      "label": "Panel bölümleri",
+      "activity": "Etkinlik",
+      "library": "Kitaplık"
+    },
     "subagents": {
       "title": "Alt ajanlar",
       "noTask": "Alt ajan",
@@ -1996,10 +2015,28 @@
       "open": "Ayrıntıları aç: {{task}}",
       "stop": "Durdur",
       "stopLabel": "Alt ajanı durdur: {{task}}",
-      "state": { "running": "Çalışıyor", "waiting": "Onay bekliyor", "done": "Bitti", "failed": "Başarısız", "stopped": "Durduruldu", "paused": "Duraklatıldı" },
-      "detail": { "title": "Alt ajan ayrıntıları", "task": "Görev", "steps": "Adımlar", "result": "Sonuç", "approval": "Onayını bekliyor. Sohbetten karar ver." }
+      "state": {
+        "running": "Çalışıyor",
+        "waiting": "Onay bekliyor",
+        "done": "Bitti",
+        "failed": "Başarısız",
+        "stopped": "Durduruldu",
+        "paused": "Duraklatıldı"
+      },
+      "detail": {
+        "title": "Alt ajan ayrıntıları",
+        "task": "Görev",
+        "steps": "Adımlar",
+        "result": "Sonuç",
+        "approval": "Onayını bekliyor. Sohbetten karar ver."
+      }
     },
-    "upcoming": { "title": "Yaklaşanlar", "paused": "Duraklatıldı", "trigger": "Bir olay olunca", "toggle": "{{name}} açık/kapalı" }
+    "upcoming": {
+      "title": "Yaklaşanlar",
+      "paused": "Duraklatıldı",
+      "trigger": "Bir olay olunca",
+      "toggle": "{{name}} açık/kapalı"
+    }
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",

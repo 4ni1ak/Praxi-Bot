@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { humanToolError } from "../lib/toolError";
 import { AppWindow, CalendarClock, Clock, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -144,7 +145,7 @@ export function ToolBody({ tool }: { tool: ToolItem }) {
       {tool.error ? (
         <>
           <span className={styles.bodyLabel}>{t("chat.tool.result")}</span>
-          <pre className={styles.code}>{tool.error}</pre>
+          <pre className={styles.code}>{humanToolError(tool.error, t)}</pre>
         </>
       ) : null}
       {!tool.error && tool.outputPreview ? (
@@ -369,6 +370,10 @@ export function ApprovalCard({
   const brain = brainDetails(tool.details);
   const unrenderable =
     (tool.details as { kind?: unknown } | null | undefined)?.kind === "app_action" && !app;
+  const facts = tool.details as { why?: unknown; once_only?: unknown } | null | undefined;
+  const why = typeof facts?.why === "string" ? facts.why : null;
+  // The daemon says whether a standing choice may be offered; older events: any details mean once only.
+  const onceOnly = typeof facts?.once_only === "boolean" ? facts.once_only : tool.details != null;
 
   const decide = async (
     decision: "approve" | "deny",
@@ -452,6 +457,11 @@ export function ApprovalCard({
             </div>
           </>
         )}
+        {why ? (
+          <p className={styles.bodyLabel} data-testid="approval-why">
+            {t(`chat.approval.why.${why}`, { defaultValue: "" })}
+          </p>
+        ) : null}
         {computer && (egress || schedule) ? (
           <p className={styles.bodyLabel} data-testid="approval-computer">
             {t("chat.approval.computer", {
@@ -485,8 +495,8 @@ export function ApprovalCard({
               {t("chat.approval.control.button", { program: control.program })}
             </Button>
           ) : null}
-          {/* The daemon refuses a standing grant for any card with details. */}
-          {tool.details != null ? null : (
+          {/* The daemon refuses a standing grant for a once-only card. */}
+          {onceOnly ? null : (
             <>
               <Button
                 size="sm"
