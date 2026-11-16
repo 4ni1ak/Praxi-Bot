@@ -48,6 +48,7 @@ futures-util.workspace = true
 protocol.workspace = true
 provider-catalog = { path = "../../crates/provider-catalog", version = "0.1.0" }
 reqwest.workspace = true
+zeroize = "1"
 rmcp = { version = "3.9", default-features = false, features = ["server", "transport-io"] }
 secret-store.workspace = true
 serde.workspace = true

@@ -184,7 +184,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string> } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -203,7 +203,7 @@ export class ApiClient {
   private async send(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string> } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -211,7 +211,7 @@ export class ApiClient {
         url.searchParams.set(k, String(v));
       }
     }
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
     if (opts.auth !== false) {
       Object.assign(headers, this.authHeaders());
     }
@@ -298,8 +298,12 @@ export class ApiClient {
     return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/copy-setup`);
   }
   /** Send the ticked items; the LOCAL daemon reads the keys, the app never sees them. */
-  copySetup(hostId: string, input: CopyRequest): Promise<CopyReport> {
-    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/copy-setup`, { body: input });
+  copySetup(hostId: string, input: CopyRequest, ownerKey: string): Promise<CopyReport> {
+    // The owner key (from the app, main window only) authorises sending keys.
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/copy-setup`, {
+      body: input,
+      headers: { "x-praxi-owner-key": ownerKey }
+    });
   }
   /** The host adopted as the bots' home, if any. */
   homeInfo(): Promise<HomeInfo> {

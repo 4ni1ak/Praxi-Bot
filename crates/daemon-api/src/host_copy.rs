@@ -14,6 +14,7 @@
 use axum::{
     Extension, Json,
     extract::{Path, State},
+    http::HeaderMap,
 };
 use provider_catalog::{ProviderConfig, config_path};
 use serde::{Deserialize, Serialize};
@@ -269,10 +270,13 @@ fn failure(e: &HostLinkError) -> String {
 pub(crate) async fn copy(
     State(s): State<AppState>,
     peer: Option<Extension<crate::PeerIdentity>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     ApiJson(input): ApiJson<CopyRequest>,
 ) -> Result<Json<CopyReport>, ApiError> {
     local_only(peer.as_ref())?;
+    // Sending keys needs the owner key, not just the general token.
+    s.require_owner(&headers)?;
     if !valid_id(&id) {
         return Err(ApiError::bad_request("invalid host id"));
     }
@@ -280,6 +284,11 @@ pub(crate) async fn copy(
         return Err(ApiError::bad_request("too many items in one copy"));
     }
     let links = links(&s)?;
+    // Only the paired host the owner chose; the items are exactly the ids in
+    // this request (nothing else is ever read from the secret store).
+    if !links.list().iter().any(|h| h.id == id) {
+        return Err(ApiError::not_found("host"));
+    }
     let Ok(_running) = RUNNING.try_lock() else {
         return Err(ApiError::conflict("a copy is already running"));
     };
@@ -314,7 +323,7 @@ pub(crate) async fn copy(
                 .get(name.name())
                 .ok()
                 .flatten()
-                .map(|v| v.expose().to_owned()),
+                .map(|v| zeroize::Zeroizing::new(v.expose().to_owned())),
             _ => None,
         };
         if settings.key.is_some() && key.is_none() {
@@ -323,7 +332,9 @@ pub(crate) async fn copy(
         }
         let mut body = serde_json::json!({"model": settings.default_model});
         if let Some(k) = key {
-            body["api_key"] = k.into();
+            // The JSON value is the one remaining copy; the link scrubs it
+            // after serialising (see `CliHostLinks::call`).
+            body["api_key"] = k.as_str().into();
         }
         if let Some(custom) = &settings.custom {
             body["base_url"] = custom.base_url.clone().into();

@@ -704,6 +704,7 @@ pub struct NeverList {
 /// be assembled at run time).
 const DAEMON_STATE_NAMES: &[&str] = &[
     "api-token",
+    "owner-key",
     "control-latch",
     "view-privileges",
     "bot.db",

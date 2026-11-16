@@ -817,6 +817,7 @@ pub(crate) async fn status(State(s): State<AppState>) -> Json<HostStatus> {
 pub(crate) async fn invite(
     State(s): State<AppState>,
     peer: Option<Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
     ApiJson(input): ApiJson<HostInviteInput>,
 ) -> Result<Json<HostInvite>, ApiError> {
     // A phone that can mint another phone invite leaves a foothold that
@@ -856,8 +857,16 @@ pub(crate) async fn invite(
     s.leader().admit_invite()?;
     // Host administration is granted at pairing only when the OWNER asks
     // for it on this installation (no paired peer, whatever its role).
-    let admin =
-        peer.is_none() && matches!(input.role, InviteRole::Desktop) && input.admin.unwrap_or(true);
+    // It also needs the owner key: the general API token alone issues an
+    // ordinary invite and is refused when it explicitly asks for administration.
+    let owner = s.owner_ok(&headers);
+    if input.admin == Some(true) && peer.is_none() && !owner {
+        return Err(s.require_owner(&headers).unwrap_err());
+    }
+    let admin = peer.is_none()
+        && owner
+        && matches!(input.role, InviteRole::Desktop)
+        && input.admin.unwrap_or(true);
     let invite = net
         .create_invite_with_options(input.role.peer_role(), Duration::from_secs(ttl), admin)
         .await;
@@ -917,6 +926,7 @@ pub(crate) async fn set_admin(
     State(s): State<AppState>,
     Param(key): Param<String>,
     peer: Option<Extension<crate::PeerIdentity>>,
+    headers: axum::http::HeaderMap,
     ApiJson(input): ApiJson<HostAdminInput>,
 ) -> Result<StatusCode, ApiError> {
     if peer.is_some() {
@@ -924,6 +934,7 @@ pub(crate) async fn set_admin(
             "host administration is granted on the host itself",
         ));
     }
+    s.require_owner(&headers)?;
     let key =
         peer_network::key_from_string(&key).map_err(|e| ApiError::bad_request(e.to_string()))?;
     let net = s

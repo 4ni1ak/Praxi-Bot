@@ -130,11 +130,13 @@ pub async fn join(data: &Path, ticket: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // one dispatcher over the host subcommands
 pub async fn run(
     client: &Client,
     action: &HostCmd,
     json_output: bool,
     out: &mut dyn Write,
+    data: &Path,
 ) -> Result<()> {
     if let HostCmd::Screen {
         key,
@@ -165,12 +167,18 @@ pub async fn run(
         revoke,
     } = action
     {
+        // The owner key of THIS data dir (a file only the host's own account
+        // reads), not the general API token.
+        let owner = daemon_api::read_owner_key(data).map_err(|_| {
+            "no owner key in this data dir: run this on the host, as the account that runs the service, after `bot serve --host` has started once"
+        })?;
         for key in screen_targets(client, key.as_deref(), *all_desktops).await? {
             client
-                .request(
+                .request_owner(
                     Method::PUT,
                     &format!("/v1/host/devices/{key}/admin"),
                     Some(json!({"enabled": !revoke})),
+                    &owner,
                 )
                 .await?;
             if *revoke {
@@ -213,7 +221,15 @@ pub async fn run(
             "Forced activation uses this installation's last local data; newer changes on the other leader may be missing, and missed schedules can duplicate actions already run there."
         );
     }
-    let mut response = client.request(method, &path, body).await?;
+    // A desktop invite asks for host administration with the owner key; without
+    // one (no key file) the invite is an ordinary one.
+    let owner = matches!(action, HostCmd::Invite { .. })
+        .then(|| daemon_api::read_owner_key(data).ok())
+        .flatten();
+    let mut response = match owner {
+        Some(key) => client.request_owner(method, &path, body, &key).await?,
+        None => client.request(method, &path, body).await?,
+    };
     if matches!(action, HostCmd::Devices) {
         response = response["peers"].clone();
     }

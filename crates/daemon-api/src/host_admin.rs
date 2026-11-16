@@ -95,7 +95,6 @@ fn require_admin(s: &AppState, peer: Option<&PeerIdentity>) -> Result<Admin, Api
             format!("the owner must confirm this desktop on the host: run `{CONFIRM_COMMAND}`"),
         ));
     }
-    s.leader().admit_admin_call()?;
     Ok(Admin {
         actor: format!("desktop-admin:{}", peer.key),
     })
@@ -111,6 +110,25 @@ fn audit(
         .append_audit(s.user_id(), None, &admin.actor, action, detail)
         .map(|_| ())
         .map_err(|_| ApiError::internal("cannot write the audit log"))
+}
+
+/// Rate admission that runs BEFORE the body is read or parsed, for a caller
+/// that holds the capability (a refused caller cannot spend the owner's budget).
+pub(crate) struct Gate;
+
+impl axum::extract::FromRequestParts<AppState> for Gate {
+    type Rejection = ApiError;
+    fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        s: &AppState,
+    ) -> impl std::future::Future<Output = Result<Self, ApiError>> + Send {
+        let admitted = if s.is_host_admin(parts.extensions.get::<PeerIdentity>()) {
+            s.leader().admit_admin_call()
+        } else {
+            Ok(())
+        };
+        std::future::ready(admitted.map(|()| Self))
+    }
 }
 
 impl AppState {
@@ -199,6 +217,12 @@ pub struct AdminProviderInput {
     pub make_default: bool,
 }
 
+impl Drop for AdminProviderInput {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.api_key);
+    }
+}
+
 impl std::fmt::Debug for AdminProviderInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AdminProviderInput")
@@ -243,6 +267,7 @@ fn valid_text(text: &str, max: usize) -> bool {
 pub(crate) async fn state(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
 ) -> Result<Json<AdminStateDto>, ApiError> {
     let peer = is_desktop_peer(peer.as_ref().map(|p| &p.0))?;
     require_host(&s)?;
@@ -263,6 +288,7 @@ pub(crate) async fn state(
 pub(crate) async fn set_home(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
     ApiJson(input): ApiJson<AdminHomeInput>,
 ) -> Result<StatusCode, ApiError> {
     let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
@@ -303,6 +329,7 @@ fn config_error(e: impl std::fmt::Display) -> ApiError {
 pub(crate) async fn put_provider(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
     Path(id): Path<String>,
     ApiJson(input): ApiJson<AdminProviderInput>,
 ) -> Result<Json<AdminProviderDto>, ApiError> {
@@ -373,7 +400,11 @@ pub(crate) async fn put_provider(
         input.make_default,
         input.model.clone(),
     );
-    let (key, id2, data2) = (key.map(str::to_owned), id.clone(), data.clone());
+    let (key, id2, data2) = (
+        key.map(|k| zeroize::Zeroizing::new(k.to_owned())),
+        id.clone(),
+        data.clone(),
+    );
     let result = tokio::task::spawn_blocking(move || {
         let store = store.ok_or_else(|| "no secret store".to_owned())?;
         provider_catalog::configure_provider(
@@ -381,7 +412,7 @@ pub(crate) async fn put_provider(
             store.as_ref(),
             &data2,
             &choice,
-            key.as_deref(),
+            key.as_deref().map(String::as_str),
             model.as_deref(),
             storage::now_ms(),
         )
@@ -431,6 +462,7 @@ pub(crate) async fn put_provider(
 pub(crate) async fn delete_provider(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
@@ -474,6 +506,7 @@ pub(crate) async fn delete_provider(
 pub(crate) async fn set_default(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
     ApiJson(input): ApiJson<AdminDefaultInput>,
 ) -> Result<Json<AdminProviderDto>, ApiError> {
     let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
@@ -521,6 +554,7 @@ pub(crate) async fn set_default(
 pub(crate) async fn cli_engines(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
 ) -> Result<Json<Vec<AdminCliEngineDto>>, ApiError> {
     require_admin(&s, peer.as_ref().map(|p| &p.0))?;
     let rows = s.detector().detect(false).await;

@@ -4,6 +4,7 @@ use crate::host::{HostConfig, HostMode, HostState};
 use peer_network::{PairTicket, PeerConfig, PeerNetwork, RelayConfig, Role};
 
 const KEY: &str = "sk-SECRET-VALUE-0123456789";
+const OWNER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 struct Rig {
     t: T,
@@ -42,6 +43,7 @@ async fn rig() -> Rig {
     });
     let store = Arc::new(secret_store::MemoryStore::new());
     t.state.set_secret_store(store.clone());
+    t.state.set_owner_key(OWNER.into());
     t.state.set_provider_host(crate::ProviderHost {
         catalog: provider_catalog::Catalog::from_entries([catalog_entry("second")]),
         reload: Box::new(|| Ok(Providers::single(Arc::new(FakeProvider)))),
@@ -174,7 +176,12 @@ struct Recorder(parking_lot::Mutex<Vec<(String, String, Option<Value>)>>);
 #[async_trait]
 impl crate::host_links::HostLinks for Recorder {
     fn list(&self) -> Vec<crate::host_links::HostLinkInfo> {
-        Vec::new()
+        vec![crate::host_links::HostLinkInfo {
+            id: "abc123".into(),
+            name: "h".into(),
+            state: crate::host_links::HostLinkState::Idle,
+            detail: None,
+        }]
     }
     async fn pair(
         &self,
@@ -211,6 +218,7 @@ async fn copy_setup_is_local_owner_only_and_sends_only_ticked_keys() {
     let t = setup();
     let store = Arc::new(secret_store::MemoryStore::new());
     t.state.set_secret_store(store.clone());
+    t.state.set_owner_key(OWNER.into());
     let mut cfg = provider_catalog::ProviderConfig::default();
     for id in ["alpha", "beta"] {
         let name = provider_catalog::api_key_secret_name(id);
@@ -238,10 +246,155 @@ async fn copy_setup_is_local_owner_only_and_sends_only_ticked_keys() {
     }
     assert!(!crate::mcp_server::scoped_path_allowed(&Method::POST, url));
     assert!(rec.0.lock().is_empty());
+    // The general API token alone cannot start an export.
     let r = call(&t, Method::POST, url, Some(json!({"providers":["alpha"]}))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.json()["error"]["code"], "owner_key_required");
+    assert!(rec.0.lock().is_empty());
+    let (k, v) = auth();
+    let owner = [(k, v.as_str()), ("x-praxi-owner-key", OWNER)];
+    // A host that is not a paired one is refused.
+    let r = send(
+        &t.app,
+        Method::POST,
+        "/v1/hosts/zzz/copy-setup",
+        Some(json!({"providers":["alpha"]})),
+        &owner,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let r = send(
+        &t.app,
+        Method::POST,
+        url,
+        Some(json!({"providers":["alpha"]})),
+        &owner,
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK);
     let all = format!("{:?}", rec.0.lock().clone());
     assert!(all.contains("key-of-alpha-xxxxxx") && !all.contains("key-of-beta"));
     assert_eq!(r.json()["items"][0]["status"], "done");
     assert!(!String::from_utf8_lossy(&r.body).contains("key-of-alpha"));
+}
+
+#[tokio::test]
+async fn the_general_token_cannot_issue_admin_invites_or_grants() {
+    let r = rig().await;
+    let (k, v) = auth();
+    let bearer = [(k, v.as_str())];
+    let owner = [(k, v.as_str()), ("x-praxi-owner-key", OWNER)];
+    let grant = format!("/v1/host/devices/{}/admin", r.legacy_key);
+    let body = || Some(json!({"enabled": true}));
+    let denied = send(&r.t.app, Method::PUT, &grant, body(), &bearer).await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    assert_eq!(denied.json()["error"]["code"], "owner_key_required");
+    let k2 = peer_network::key_from_string(&r.legacy_key).unwrap();
+    assert!(!r.net.device(&k2).unwrap().admin);
+    let invite = Some(json!({"role": "desktop", "admin": true}));
+    let denied = send(
+        &r.t.app,
+        Method::POST,
+        "/v1/host/invite",
+        invite.clone(),
+        &bearer,
+    )
+    .await;
+    assert_eq!(
+        denied.json()["error"]["code"],
+        "owner_key_required",
+        "{} {}",
+        denied.status,
+        String::from_utf8_lossy(&denied.body)
+    );
+    // An ordinary invite is still fine with the token alone.
+    let plain = send(
+        &r.t.app,
+        Method::POST,
+        "/v1/host/invite",
+        Some(json!({"role": "desktop"})),
+        &bearer,
+    )
+    .await;
+    assert_eq!(plain.status, StatusCode::OK);
+    let ok = send(&r.t.app, Method::PUT, &grant, body(), &owner).await;
+    assert_eq!(ok.status, StatusCode::NO_CONTENT);
+    assert!(r.net.device(&k2).unwrap().admin);
+    let ok = send(&r.t.app, Method::POST, "/v1/host/invite", invite, &owner).await;
+    assert_eq!(ok.status, StatusCode::OK);
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn non_admin_peers_cannot_patch_authority_files_or_engine() {
+    let r = rig().await;
+    let created = call(
+        &r.t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": "[bot]
+id=\"t\"
+name=\"T\"
+[models]
+executor=\"fake/echo\"
+"})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let bot = created.json();
+    let path = format!("/v1/bots/{}", bot["id"].as_str().unwrap());
+    let ops = |op: Value| json!({"expected_version": 1, "ops": [op]});
+    let set = |p: &str, v: Value| json!({"op":"set","path":p,"value":v});
+    let cases = [
+        set("/permissions/preset", json!("full")),
+        set("/tools/allow", json!(["*"])),
+        set("/files", json!({"mode": "everything"})),
+        set("/models/executor", json!("cli:claude/x")),
+        set(
+            "/engine",
+            json!({"mode": "native_tools", "level": "full", "consent": {"at_ms": 1}}),
+        ),
+    ];
+    for peer in [
+        (r.legacy_key.as_str(), crate::PeerRole::Desktop),
+        (r.admin_key.as_str(), crate::PeerRole::Phone),
+    ] {
+        for case in &cases {
+            let resp = peer_call(
+                &r.t,
+                Some(peer),
+                Method::PATCH,
+                &path,
+                Some(ops(case.clone())),
+            )
+            .await;
+            assert!(
+                resp.status == StatusCode::FORBIDDEN
+                    || resp.status == StatusCode::UNPROCESSABLE_ENTITY,
+                "{case}: {}",
+                resp.status
+            );
+        }
+    }
+    // Nothing changed, and the owner's ordinary edit still works. Engine changes
+    // are refused even to the local owner (they have their own endpoint).
+    let got = call(&r.t, Method::GET, &path, None).await.json();
+    assert_eq!(got["version"], 1);
+    let engine = call(
+        &r.t,
+        Method::PATCH,
+        &path,
+        Some(ops(set("/engine", json!({"mode":"native_tools"})))),
+    )
+    .await;
+    assert_eq!(engine.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ok = call(
+        &r.t,
+        Method::PATCH,
+        &path,
+        Some(ops(set("/bot/persona", json!("Calm.")))),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK);
+    r.net.shutdown().await;
 }

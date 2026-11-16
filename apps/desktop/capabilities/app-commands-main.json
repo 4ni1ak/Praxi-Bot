@@ -21,6 +21,7 @@
     "allow-overlay-click",
     "allow-simulate-bot-run",
     "allow-daemon-connect",
+    "allow-owner-key",
     "allow-daemon-restart",
     "allow-providers-cli",
     "allow-get-autostart",

@@ -133,6 +133,10 @@ enum Command {
         /// Seconds running tool steps may take to finish on shutdown.
         #[arg(long, default_value_t = 10)]
         shutdown_grace: u64,
+        /// Read the owner key (one line) from standard input. The desktop app
+        /// uses this so the key never appears in argv, a file or the environment.
+        #[arg(long)]
+        owner_key_stdin: bool,
     },
     /// Update the Linux installation (restart is explicit).
     SelfUpdate(update::UpdateArgs),
@@ -832,9 +836,24 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
             telegram_store: None,
             host_mode,
             peer_enabled,
+            owner_key: None,
         };
         return serve::serve(data_dir, &opts, providers, None, Some(desktop));
     }
+    let owner_key = if matches!(
+        command,
+        Command::Serve {
+            owner_key_stdin: true,
+            ..
+        }
+    ) {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let key = line.trim().to_owned();
+        (key.len() >= 32).then_some(key)
+    } else {
+        None
+    };
     let (store, kind) = open_store(cli.secrets_backend, data_dir, &ask_passphrase)?;
     eprintln!("(secret backend: {kind:?})");
     let catalog = load_catalog(cli.catalog_dir.as_ref())?;
@@ -862,6 +881,7 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
         telegram_store: Some(telegram_store),
         host_mode,
         peer_enabled,
+        owner_key,
     };
     serve::serve(data_dir, &opts, providers, Some(host), desktop)
 }
@@ -954,7 +974,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
     let json = cli.json;
     let outcome = rt.block_on(async {
         match command {
-            Command::Host { action } => host::run(&c, action, json, &mut out).await,
+            Command::Host { action } => host::run(&c, action, json, &mut out, data_dir).await,
             Command::Status => remote::status(&c, json, &mut out).await,
             Command::Bots {
                 action: BotsCmd::List,

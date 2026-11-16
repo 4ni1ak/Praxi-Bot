@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -71,7 +72,8 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
     }
     setBusy(true);
     try {
-      setReport(await localApi.copySetup(hostId, toRequest(items, checked)));
+      const ownerKey = client?.baseUrl === MOCK_BASE_URL ? "mock" : await invoke<string>("owner_key");
+      setReport(await localApi.copySetup(hostId, toRequest(items, checked), ownerKey));
     } catch {
       setFailed(true);
     } finally {
