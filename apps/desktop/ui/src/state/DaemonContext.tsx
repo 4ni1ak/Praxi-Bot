@@ -31,6 +31,7 @@ import {
   liveRunIds,
   settleHostState
 } from "../lib/hostState";
+import { type Home, homeFromInfo, LOCAL_HOME, wantedComputer } from "../lib/home";
 import { markRemoteBaseUrl } from "../lib/liveViewState";
 import { orderBots } from "../lib/botOrder";
 import { useBotOrder } from "../store/botOrderStore";
@@ -108,6 +109,17 @@ export interface DaemonContextValue {
   retryInSeconds: number | null;
   /** Listen to the raw daemon events (live and replayed); returns the unsubscribe. */
   onDaemonEvent: (listener: (env: GlobalEnvelope) => void) => () => void;
+  /** Where the bots live: the adopted host (the app follows it by itself) or this computer. */
+  home: Home;
+  /** Explicit, temporary "work on this computer for now" while a host is the home. */
+  workLocalNow: boolean;
+  setWorkLocalNow: (on: boolean) => void;
+  /** Re-read which host is the home (after "make this server my bots' home"). */
+  refreshHome: () => Promise<void>;
+  /** This computer's own connection, whatever computer the views show. */
+  localConn: Connection | null;
+  /** The lists shown are the last known ones: the home is not answering. */
+  homeStale: boolean;
   /** Which computer the whole UI talks to: `local` or a paired host's key. */
   activeComputerId: string;
   /** This computer plus every paired host. */
@@ -366,6 +378,8 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   const [hostError, setHostError] = useState<string | null>(null);
   const [hostList, setHostList] = useState<HostLinkList | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [home, setHome] = useState<Home>(LOCAL_HOME);
+  const [workLocalNow, setWorkLocalNow] = useState(false);
   const data = useDaemonData(localConn);
 
   // The local daemon's own client: it owns the pairing store and the channels.
@@ -389,6 +403,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     }
     activeIdRef.current = MOCK_HOST_ID;
     setActiveId(MOCK_HOST_ID);
+    setHome({ kind: "host", hostId: MOCK_HOST_ID, name: "Praxi host" });
     setHostList({
       local_version: "0.1.0-mock",
       local_api_version: "1",
@@ -400,6 +415,13 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
         } as HostLinkInfo
       ]
     } as HostLinkList);
+    // Review: `?temp=local` shows the explicit "work on this computer for now" mode.
+    if (new URLSearchParams(window.location.search).get("temp") === "local") {
+      activeIdRef.current = LOCAL_COMPUTER;
+      setActiveId(LOCAL_COMPUTER);
+      setWorkLocalNow(true);
+      return;
+    }
     if (scenario === "offline") {
       setHostError("host did not answer");
     } else {
@@ -462,11 +484,18 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      setHostList(await c.listHosts());
+      const list = await c.listHosts();
+      setHostList(list);
+      // Which host (if any) the owner made the home of the bots.
+      const info = await c.homeInfo().catch(() => null);
+      if (info) {
+        setHome(homeFromInfo(info.host_id, list.hosts));
+      }
     } catch {
       // keep the last list; the next poll retries
     }
   }, []);
+  const refreshHome = refreshHosts;
   useEffect(() => {
     if (!localClient) {
       return undefined;
@@ -519,6 +548,39 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     },
     [refreshHosts]
   );
+
+  // The app follows the home by itself: at startup, after a reconnect and when the owner adopts a
+  // host. Only the explicit "work on this computer for now" mode keeps it on this computer.
+  const wanted = wantedComputer(home, workLocalNow, LOCAL_COMPUTER);
+  useEffect(() => {
+    if (mockHostScenario()) {
+      return;
+    }
+    if (wanted !== activeIdRef.current) {
+      void selectComputer(wanted);
+    }
+  }, [wanted, selectComputer]);
+  // A home that does not answer is retried every few seconds until the channel is back.
+  useEffect(() => {
+    if (mockHostScenario() || wanted === LOCAL_COMPUTER || activeId !== wanted || hostConn) {
+      return undefined;
+    }
+    const id = window.setInterval(() => {
+      const lc = localClientRef.current;
+      if (!lc || activeIdRef.current !== wanted) {
+        return;
+      }
+      lc.connectHost(wanted)
+        .then((c) => {
+          if (activeIdRef.current === wanted) {
+            setHostError(null);
+            setHostConn({ base_url: c.base_url, token: c.token, started_by_app: false, fake_provider: false, data_dir: "" });
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [wanted, activeId, hostConn]);
 
   const pairHost = useCallback(
     async (ticket: string) => {
@@ -576,6 +638,12 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
             ? "starting"
             : "down",
     retryInSeconds,
+    home,
+    workLocalNow,
+    setWorkLocalNow,
+    refreshHome,
+    localConn,
+    homeStale: false,
     activeComputerId: activeId,
     computers,
     activeHostName: null,
@@ -649,9 +717,18 @@ export function HostSession({ children }: { children: ReactNode }) {
     return ids.length;
   }, []);
 
+  // The home stopped answering: keep showing the last known bots and chats, greyed out.
+  const lastLists = useRef({ bots: data.bots, chats: data.chats });
+  if (data.bots.length > 0) {
+    lastLists.current = { bots: data.bots, chats: data.chats };
+  }
+  const stale = hostState.kind === "offline" && data.bots.length === 0 && lastLists.current.bots.length > 0;
+
   const value: DaemonContextValue = {
     ...local,
     ...data,
+    ...(stale ? lastLists.current : {}),
+    homeStale: stale,
     phase: "ready",
     error: null,
     conn: hostConn,

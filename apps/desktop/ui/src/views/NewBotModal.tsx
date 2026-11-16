@@ -37,6 +37,7 @@ import { modelGroups } from "../lib/modelPicker";
 import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
 import { useCustomText } from "../state/useCustomText";
 import styles from "./NewBotModal.module.css";
+import { HomeHint } from "../components/HomeHint";
 
 function NewBotDialogContent({
   onDone,
@@ -194,6 +195,7 @@ function NewBotDialogContent({
     <form className={styles.modalForm} onSubmit={handleSubmit}>
       <header className={styles.header}>
         <h2 className={styles.title}>{t("newBot.title")}</h2>
+        <HomeHint />
         <button
           type="button"
           className={styles.closeButton}

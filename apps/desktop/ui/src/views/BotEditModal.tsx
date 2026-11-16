@@ -56,6 +56,7 @@ import { type BotSkillsState, useSkillsDraft } from "../state/useBotSkills";
 import { useCustomText } from "../state/useCustomText";
 import styles from "./BotEditModal.module.css";
 import { humanLine } from "../lib/humanError";
+import { HomeHint } from "../components/HomeHint";
 
 /** The section list turns into a horizontal strip at this width (see the stylesheet). */
 const STRIP_QUERY = "(width <= 52em)";
@@ -406,12 +407,15 @@ function BotEditDialog({
           closeDisabled={saving || deleting}
           onClose={requestClose}
           actions={
-            section === "skills" ? (
-              <Button size="sm" variant="secondary" onClick={onAddSkill}>
-                <Plus aria-hidden="true" />
-                {t("addSkill.open")}
-              </Button>
-            ) : undefined
+            <>
+              <HomeHint />
+              {section === "skills" ? (
+                <Button size="sm" variant="secondary" onClick={onAddSkill}>
+                  <Plus aria-hidden="true" />
+                  {t("addSkill.open")}
+                </Button>
+              ) : null}
+            </>
           }
         />
         <div

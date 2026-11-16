@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
+import type { ApiClient } from "../api/client";
 import type { PcRequestInfo } from "../api/types";
 import { useDaemon } from "../state/DaemonContext";
 import { Modal } from "./Modal";
@@ -9,7 +10,22 @@ import { SettingRow, Switch } from "./SettingsUi";
 import styles from "./ComputerAccess.module.css";
 
 /** The owner key of this app's daemon (Tauri command, main window only), sent on owner-only routes. */
-const ownerKey = () => invoke<string>("owner_key");
+export const ownerKey = () => invoke<string>("owner_key");
+
+/**
+ * Turn "let this server's bots use this computer" on or off through the same owner-key route as the
+ * Settings switch (`setComputerAccess`). Keeps the "don't ask before reading" choice as it was.
+ */
+export async function setHostComputerAccess(
+  api: Pick<ApiClient, "setComputerAccess"> | null,
+  host: { id: string; computer_access_always?: boolean | null },
+  enabled: boolean
+): Promise<void> {
+  if (!api) {
+    throw new Error("local_daemon_unavailable");
+  }
+  await api.setComputerAccess(host.id, enabled, enabled && host.computer_access_always === true, await ownerKey());
+}
 
 /**
  * Settings > Computer: "Let my bots use this computer", one switch per paired server. Off by

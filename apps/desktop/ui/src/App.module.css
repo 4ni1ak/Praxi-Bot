@@ -678,3 +678,10 @@
   width: calc(var(--size-icon-sm) * 0.7);
   height: calc(var(--size-icon-sm) * 0.7);
 }
+
+/* The bots' computer is not answering: the last known list stays, greyed out. */
+.botList[data-stale="true"] {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+  pointer-events: none;
+}

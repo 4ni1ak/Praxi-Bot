@@ -675,7 +675,17 @@ export class MockApiClient extends ApiClient {
       if (seg[3] === "cancel") return ok(this.hostSetup.cancel(seg[2]));
       return ok(this.hostSetup.get(seg[2]));
     }
-    if (seg[0] === "hosts" && seg[1] === "home") return ok({ host_id: null });
+    if (seg[0] === "hosts" && seg[1] === "home") return ok({ host_id: mockHostScenario() ? MOCK_HOST_ID : null });
+    // Host administration (review states): the desktop is confirmed, the server has two CLIs.
+    if (seg[0] === "admin" && seg[1] === "state") return ok({ granted: new URLSearchParams(window.location.search).get("admin") !== "needs", secrets_available: true, confirm_command: "bot host admin --all-desktops", secrets_hint: null, adopted: true });
+    if (seg[0] === "admin" && seg[1] === "cli-engines") {
+      return ok([
+        { id: "claude", name: "Claude Code", installed: true, signed_in: true, version: "2.1.42", install_command: null, login: "claude auth login", docs_url: "https://example.com" },
+        { id: "codex", name: "Codex", installed: true, signed_in: false, version: "0.169.0", install_command: null, login: "codex login", docs_url: "https://example.com" },
+        { id: "opencode", name: "OpenCode", installed: false, signed_in: null, version: null, install_command: "npm install -g opencode-ai", login: "opencode auth login", docs_url: "https://example.com" }
+      ]);
+    }
+    if (seg[0] === "admin" && method === "PUT") return ok({ id: seg[2] ?? "default", enabled: true, has_key: true });
     if (seg[0] === "hosts" && seg[2] === "copy-setup") {
       if (method === "GET") {
         return ok({

@@ -10,7 +10,10 @@ export interface HomeClient {
 
 /** The existing local way of changing providers (native CLI through the app). */
 export interface LocalProviders {
-  saveProvider(id: string, input: { apiKey?: string; baseUrl?: string; model?: string }): Promise<void>;
+  saveProvider(
+    id: string,
+    input: { apiKey?: string; baseUrl?: string; model?: string; keyEnv?: string }
+  ): Promise<void>;
   setDefault(id: string, model?: string): Promise<void>;
 }
 
@@ -37,7 +40,7 @@ export function botsHome(input: HomeInput) {
     target,
     async saveProvider(
       id: string,
-      p: { apiKey?: string; baseUrl?: string; model?: string; makeDefault?: boolean }
+      p: { apiKey?: string; baseUrl?: string; model?: string; keyEnv?: string; makeDefault?: boolean }
     ) {
       if (input.host) {
         await input.host.adminPutProvider(id, {

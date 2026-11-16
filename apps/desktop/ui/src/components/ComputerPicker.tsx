@@ -1,70 +1,58 @@
-import { Check, ChevronDown, House, Monitor, Plus, Server, Square } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, House, Maximize2, Monitor, Plus, RefreshCw, Server, Square } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { hostAcceptsWork, type LinkState } from "../lib/hostState";
-import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
+import { isMockMode } from "../api/mockMode";
+import { humanLine } from "../lib/humanError";
+import { homeStatus } from "../lib/home";
+import { hostAcceptsWork } from "../lib/hostState";
+import { useDaemon } from "../state/DaemonContext";
+import { useLiveView } from "../state/LiveViewContext";
 import styles from "./ComputerPicker.module.css";
 import { AddServerModal } from "./AddServerModal";
+import { setHostComputerAccess } from "./ComputerAccess";
 import { CopySetupModal } from "./CopySetupModal";
 import { PairHostModal } from "./PairHostModal";
 import { Popover } from "./Popover";
 import { useToast } from "./Toast";
 
-function dotTone(state: LinkState | undefined): "ok" | "wait" | "bad" | "idle" {
-  switch (state) {
-    case "connected":
-      return "ok";
-    case "connecting":
-      return "wait";
-    case "offline":
-    case "unreachable":
-      return "bad";
-    default:
-      return "idle";
-  }
-}
-
 /**
- * Header selector: "this computer" or a paired host. Selecting a host switches the
- * whole UI (bots, chats, events, live view) to that daemon through the paired channel.
+ * The status chip of the bots' computer. It is not a switch between two worlds: the app follows the
+ * home (the host the owner adopted) by itself. The menu manages that computer - add a server, make
+ * one the home, sync, look at its screen - and holds the one explicit, temporary exception,
+ * "work on this computer for now", with a visible way back.
  */
 export function ComputerPicker() {
   const { t } = useTranslation();
   const toast = useToast();
-  const {
-    computers,
-    activeComputerId,
-    activeHostName,
-    hostState,
-    selectComputer,
-    stopHostRuns
-  } = useDaemon();
-  const [open, setOpen] = useState(false);
+  const { home, workLocalNow, setWorkLocalNow, hostState, hostList, stopHostRuns, localApi, refreshHosts } = useDaemon();
+  const { openViewer } = useLiveView();
+  // Design review (mock mode only): `?menu=1` opens the menu.
+  const [open, setOpen] = useState(() => isMockMode() && new URLSearchParams(window.location.search).get("menu") === "1");
   const [addOpen, setAddOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
-  const [homeOpen, setHomeOpen] = useState(false);
+  const [syncHost, setSyncHost] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
-  const onHost = activeComputerId !== LOCAL_COMPUTER;
-  const label = onHost
-    ? (activeHostName ?? t("computerPicker.host"))
-    : t("account.localComputer");
-  const tone = onHost
-    ? hostState?.kind === "connected" || hostState?.kind === "no_model_key"
-      ? "ok"
-      : hostState?.kind === "connecting"
-        ? "wait"
-        : hostState?.kind === "version_mismatch" && !hostState.blocking
-          ? "wait"
-          : "bad"
-    : "ok";
-  const Icon = onHost ? Server : Monitor;
 
-  const choose = (id: string) => {
-    setOpen(false);
-    void selectComputer(id);
+  const status = homeStatus(home, workLocalNow, hostState);
+  const name = home.kind === "host" ? home.name || t("computerPicker.host") : "";
+  const label = t(`home.chip.${status}`, { name });
+  const tone = status === "online" || status === "local" ? "ok" : status === "connecting" || status === "temporary" ? "wait" : "bad";
+  const Icon = home.kind === "host" && status !== "temporary" ? Server : Monitor;
+  const unadopted = (hostList?.hosts ?? []).filter((h) => h.id !== (home.kind === "host" ? home.hostId : ""));
+
+  const homeLink = home.kind === "host" ? (hostList?.hosts.find((h) => h.id === home.hostId) ?? null) : null;
+  const pcAllowed = homeLink?.computer_access === true;
+  const togglePc = () => {
+    if (!homeLink) {
+      return;
+    }
+    void setHostComputerAccess(localApi, homeLink, !pcAllowed)
+      .then(() => refreshHosts())
+      .catch((e: unknown) => toast.show(humanLine(e), "danger"));
   };
+
   const stop = async () => {
     setOpen(false);
     setStopping(true);
@@ -81,6 +69,32 @@ export function ComputerPicker() {
     }
   };
 
+  const item = (
+    testId: string,
+    icon: React.ReactNode,
+    title: string,
+    onClick: () => void,
+    extra?: { hint?: string; danger?: boolean; disabled?: boolean }
+  ) => (
+    <button
+      type="button"
+      role="menuitem"
+      className={`${styles.item} ${extra?.danger ? styles.danger : ""}`}
+      data-testid={testId}
+      disabled={extra?.disabled}
+      onClick={() => {
+        setOpen(false);
+        onClick();
+      }}
+    >
+      {icon}
+      <span className={styles.itemText}>
+        <b>{title}</b>
+        {extra?.hint ? <small>{extra.hint}</small> : null}
+      </span>
+    </button>
+  );
+
   return (
     <>
       <button
@@ -92,7 +106,8 @@ export function ComputerPicker() {
         aria-label={t("computerPicker.label", { name: label })}
         title={t("computerPicker.label", { name: label })}
         data-testid="computer-picker"
-        data-computer={onHost ? "host" : "local"}
+        data-computer={home.kind === "host" ? "host" : "local"}
+        data-status={status}
         onClick={() => setOpen((o) => !o)}
       >
         <i className={styles.dot} data-tone={tone} aria-hidden="true" />
@@ -105,95 +120,66 @@ export function ComputerPicker() {
         anchor={trigger}
         onClose={close}
         placement="bottom-end"
-        label={t("computerPicker.menu")}
-        width={288}
+        label={t("home.menu.title")}
+        width={300}
         className={styles.menu}
       >
-        <p className={styles.heading}>{t("computerPicker.menu")}</p>
-        {computers.map((c) => {
-          const active = c.id === activeComputerId;
-          const name = c.kind === "local" ? t("account.localComputer") : c.name;
-          const state = c.link?.state;
-          return (
-            <button
-              key={c.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={active}
-              className={styles.item}
-              data-testid={`computer-${c.kind === "local" ? "local" : "host"}`}
-              onClick={() => choose(c.id)}
-            >
-              <i
-                className={styles.dot}
-                data-tone={c.kind === "local" ? "ok" : dotTone(state)}
-                aria-hidden="true"
-              />
-              {c.kind === "local" ? (
-                <Monitor aria-hidden="true" className={styles.icon} />
-              ) : (
-                <Server aria-hidden="true" className={styles.icon} />
-              )}
-              <span className={styles.itemText}>
-                <b>{name}</b>
-                <small>
-                  {c.kind === "local"
-                    ? t("computerPicker.localHint")
-                    : t(`computerPicker.link.${state ?? "idle"}`)}
-                </small>
-              </span>
-              {active ? <Check aria-hidden="true" className={styles.check} /> : null}
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          role="menuitem"
-          className={styles.item}
-          data-testid="computer-add"
-          onClick={() => {
-            setOpen(false);
-            setAddOpen(true);
-          }}
-        >
-          <Plus aria-hidden="true" className={styles.icon} />
+        <p className={styles.heading}>{t("home.menu.title")}</p>
+        <div className={styles.item} data-testid="home-status" aria-live="polite">
+          <i className={styles.dot} data-tone={tone} aria-hidden="true" />
+          <Icon aria-hidden="true" className={styles.icon} />
           <span className={styles.itemText}>
-            <b>{t("computerPicker.add")}</b>
+            <b>{label}</b>
           </span>
-        </button>
-        {onHost ? (
+        </div>
+        {home.kind === "host" ? (
+          <>
+            {item("home-sync", <RefreshCw aria-hidden="true" className={styles.icon} />, t("home.menu.sync", { name }), () => setSyncHost(home.hostId))}
+            {status === "online"
+              ? item("home-view-screen", <Maximize2 aria-hidden="true" className={styles.icon} />, t("home.menu.viewScreen"), () => openViewer())
+              : null}
+            {hostState && hostAcceptsWork(hostState) && !workLocalNow
+              ? item("computer-stop-host", <Square aria-hidden="true" className={styles.icon} />, t("home.menu.stop", { name }), () => void stop(), {
+                  hint: t("home.menu.stopHint"),
+                  danger: true,
+                  disabled: stopping
+                })
+              : null}
+          </>
+        ) : null}
+        {unadopted.map((h) =>
+          item(`home-make-${h.id}`, <House aria-hidden="true" className={styles.icon} />, t("home.menu.makeHome", { name: h.name }), () => setSyncHost(h.id))
+        )}
+        {item("computer-add", <Plus aria-hidden="true" className={styles.icon} />, t("home.menu.add"), () => setAddOpen(true))}
+        {homeLink ? (
           <button
             type="button"
-            role="menuitem"
+            role="menuitemcheckbox"
+            aria-checked={pcAllowed}
             className={styles.item}
-            data-testid="computer-make-home"
+            data-testid="home-pc-access"
             onClick={() => {
               setOpen(false);
-              setHomeOpen(true);
+              togglePc();
             }}
           >
-            <House aria-hidden="true" className={styles.icon} />
+            <Monitor aria-hidden="true" className={styles.icon} />
             <span className={styles.itemText}>
-              <b>{t("computerPicker.makeHome")}</b>
+              <b>{t("computerAccess.title")}</b>
+              <small>{pcAllowed ? t("home.menu.pcOn") : t("home.menu.pcOff")}</small>
             </span>
+            {pcAllowed ? <Check aria-hidden="true" className={styles.check} /> : null}
           </button>
         ) : null}
-        {onHost && hostState && hostAcceptsWork(hostState) ? (
-          <button
-            type="button"
-            role="menuitem"
-            className={`${styles.item} ${styles.danger}`}
-            data-testid="computer-stop-host"
-            disabled={stopping}
-            onClick={() => void stop()}
-          >
-            <Square aria-hidden="true" className={styles.icon} />
-            <span className={styles.itemText}>
-              <b>{t("computerPicker.stopHost")}</b>
-              <small>{t("computerPicker.stopHostHint")}</small>
-            </span>
-          </button>
-        ) : null}
+        {home.kind === "host"
+          ? workLocalNow
+            ? item("home-back", <ArrowLeft aria-hidden="true" className={styles.icon} />, t("home.menu.backHome", { name }), () => setWorkLocalNow(false), {
+                hint: t("home.menu.backHomeHint")
+              })
+            : item("home-work-here", <Monitor aria-hidden="true" className={styles.icon} />, t("home.menu.workHere"), () => setWorkLocalNow(true), {
+                hint: t("home.menu.workHereHint")
+              })
+          : null}
       </Popover>
       <AddServerModal
         open={addOpen}
@@ -204,11 +190,7 @@ export function ComputerPicker() {
         }}
       />
       <PairHostModal open={pairOpen} onClose={() => setPairOpen(false)} />
-      <CopySetupModal
-        open={homeOpen}
-        hostId={activeComputerId}
-        onClose={() => setHomeOpen(false)}
-      />
+      <CopySetupModal open={syncHost !== null} hostId={syncHost ?? ""} onClose={() => setSyncHost(null)} />
     </>
   );
 }

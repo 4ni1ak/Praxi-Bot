@@ -9,16 +9,16 @@ import {
   keyTargets,
   looksLikeKey,
   resolveKeyTarget,
-  saveProviderKey,
   scrubSecret
 } from "../../lib/apiKey";
-import { addProvider } from "../../lib/providers";
 import { canManageProviders } from "../../lib/providerConnection";
 import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { notifyProvidersChanged, useProviders } from "../../state/useProviders";
 import styles from "./AiPage.module.css";
 import { humanLine } from "../../lib/humanError";
+import { useBotsHome } from "../../state/useBotsHome";
+import { HomeHint } from "../../components/HomeHint";
 
 /** Open the collapsed "advanced providers" block (custom OpenAI-compatible servers). */
 function openAdvanced() {
@@ -43,7 +43,8 @@ export function ApiKeyPaste() {
   const { client, conn } = useDaemon();
   const mock = client?.baseUrl === MOCK_BASE_URL;
   const providerTarget = { connection: conn, baseUrl: client?.baseUrl };
-  const canConfigure = mock || (isTauriRuntime() && canManageProviders(providerTarget));
+  const home = useBotsHome();
+  const canConfigure = mock || home.target === "host" || (isTauriRuntime() && canManageProviders(providerTarget));
   const { dto, reload } = useProviders();
   const [value, setValue] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
@@ -65,11 +66,8 @@ export function ApiKeyPaste() {
     setBusy(true);
     setError(null);
     try {
-      if (mock) {
-        await client.setSecret(target.keyEnv, secret);
-      } else {
-        await saveProviderKey(target, secret, client, (input) => addProvider(input, providerTarget), conn);
-      }
+      // The bots' home decides where the key goes (the host, or this computer's keychain).
+      await home.saveProvider(target.id, { apiKey: secret, keyEnv: target.keyEnv });
       setValue("");
       setPicked(null);
       await reload();
@@ -94,6 +92,7 @@ export function ApiKeyPaste() {
     <section className={styles.sec} data-testid="api-key-paste" aria-labelledby="ai-key-h">
       <div className={styles.head}>
         <h3 id="ai-key-h">{t("settingsModal.ai.keys.title")}</h3>
+        <HomeHint />
       </div>
       <form
         className={`${styles.card} ${styles.paste}`}
