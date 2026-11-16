@@ -210,7 +210,9 @@ test("a failed New chat yields a message, and only the empty state shows it inli
   };
   const failing = { createChat: async () => Promise.reject(new Error("daemon says no")) };
   const bad = await createChatFor(failing as never, "b1", refresh);
-  assert.deepEqual(bad, { ok: false, message: "daemon says no" });
+  assert.equal(bad.ok, false);
+  // The raw daemon text never reaches the screen (see humanError).
+  assert.doesNotMatch(bad.ok ? "" : bad.message, /daemon says no/);
   assert.equal(refreshed, 0);
   const good = await createChatFor({ createChat: async () => ({ id: "c9" }) } as never, "b1", refresh);
   assert.deepEqual(good, { ok: true, chatId: "c9" });

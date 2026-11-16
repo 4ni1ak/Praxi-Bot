@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Ghost, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, type BotIdentity, Button } from "ui";
 import { FIRST_PROMPT_KEYS } from "../lib/firstRun";
@@ -13,7 +13,10 @@ export function BotEmptyView({
   busy,
   error,
   onNewChat,
-  onSuggest
+  onSuggest,
+  firstBot,
+  onGoFirst,
+  onCreateBot
 }: {
   bot: BotIdentity | undefined;
   busy: boolean;
@@ -21,12 +24,33 @@ export function BotEmptyView({
   onNewChat: () => void;
   /** Starts a chat with this prompt already sent; omitted where suggestions make no sense. */
   onSuggest?: (prompt: string) => void;
+  /** For the "bot is gone" state: where to go instead. */
+  firstBot?: { id: string; name: string };
+  onGoFirst?: (botId: string) => void;
+  onCreateBot?: () => void;
 }) {
   const { t } = useTranslation();
   if (!bot) {
     return (
-      <div className={styles.pane}>
-        <p className={styles.text}>{t("bots.notFound")}</p>
+      <div className={styles.pane} data-testid="bot-gone-state">
+        <div className={styles.stage}>
+          <Ghost aria-hidden="true" />
+          <h1 className={styles.title}>{t("botEmpty.goneTitle")}</h1>
+          <p className={styles.text}>{t("botEmpty.goneHint")}</p>
+          <div className={styles.suggestList}>
+            {firstBot && onGoFirst ? (
+              <Button variant="primary" onClick={() => onGoFirst(firstBot.id)}>
+                {t("botEmpty.goFirst", { name: firstBot.name })}
+              </Button>
+            ) : null}
+            {onCreateBot ? (
+              <Button variant={firstBot ? "secondary" : "primary"} onClick={onCreateBot}>
+                <Plus aria-hidden="true" />
+                {t("botEmpty.createBot")}
+              </Button>
+            ) : null}
+          </div>
+        </div>
       </div>
     );
   }

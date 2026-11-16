@@ -10,9 +10,13 @@ import styles from "./HostStateBanner.module.css";
  */
 export function HostStateBanner() {
   const { t } = useTranslation();
-  const { hostState, activeHostName, versions, selectComputer, activeComputerId } =
+  const { hostState, activeHostName, versions, selectComputer, activeComputerId, bots } =
     useDaemon();
   if (activeComputerId === LOCAL_COMPUTER || !hostState || hostState.kind === "connected") {
+    return null;
+  }
+  // With no bots the empty state in the chat area already says "no model" and "no bots".
+  if (hostState.kind === "no_model_key" && bots.length === 0) {
     return null;
   }
   const name = activeHostName ?? t("computerPicker.host");

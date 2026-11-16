@@ -101,6 +101,8 @@ impl Transport for Fake {
 
 #[derive(Default)]
 struct Local {
+    /// This computer was paired with the host before the run (by ticket).
+    preexisting: bool,
     paired: RefCell<bool>,
     forgotten: RefCell<Vec<String>>,
 }
@@ -130,7 +132,11 @@ impl LocalHost for Local {
         Ok(())
     }
     fn host_ids(&self) -> Vec<String> {
-        Vec::new()
+        if self.preexisting {
+            vec!["hostid1".into()]
+        } else {
+            Vec::new()
+        }
     }
     fn forget_host(&self, id: &str) -> Result<(), String> {
         self.forgotten.borrow_mut().push(id.into());
@@ -527,4 +533,35 @@ fn an_edited_saved_record_is_not_trusted() {
     let text = serde_json::to_string(&evil).unwrap();
     std::fs::write(dir.path().join("hosts/oracle/host.json"), text).unwrap();
     assert!(store.load("oracle").is_none(), "hostile host field refused");
+}
+
+#[test]
+fn a_host_already_paired_with_this_computer_is_confirmed_not_paired_twice() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    fake.desktops.borrow_mut().push("deskkey1".into()); // our key is already on the host
+    *fake.preflight.borrow_mut() = installed_facts();
+    let local = Local {
+        preexisting: true,
+        ..Local::default()
+    };
+    let mut ui = TestUi {
+        accept: true,
+        ..TestUi::default()
+    };
+    let r = run_with(dir.path(), &fake, &local, &mut ui, Mode::Add, false);
+    assert_eq!(status_of(&r, "pair"), Status::Pass, "{}", r.table());
+    assert!(
+        r.results
+            .iter()
+            .find(|s| s.id == "pair")
+            .unwrap()
+            .detail
+            .contains("already connected")
+    );
+    assert!(local.forgotten.borrow().is_empty(), "nothing is removed");
+    assert!(
+        !fake.ran(RemoteCmd::Provision(Sub::Screen)),
+        "existing privileges are left alone"
+    );
 }

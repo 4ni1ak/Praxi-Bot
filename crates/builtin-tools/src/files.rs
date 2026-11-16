@@ -1165,6 +1165,7 @@ fn prepare_grants(grants: &[PathBuf]) -> Vec<PathBuf> {
 
 const CREDENTIAL_NAMES: &[&str] = &[
     "api-token",
+    "owner-key",
     "praxi.env",
     "praxi-node.env",
     "secrets.enc",

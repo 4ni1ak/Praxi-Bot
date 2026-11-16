@@ -1,0 +1,614 @@
+//! Host administration: what the OWNER's paired desktop may do to this host.
+//!
+//! An always-on host starts with no model provider and no bots. The owner's
+//! desktop can give it both over the paired peer link, so the host works like
+//! the computer the owner already knows. The capability is explicit
+//! (`Device::admin`, see `peer-network`), granted when the owner of the host
+//! creates the desktop invite or later by the owner on the host itself
+//! (`bot host admin`), and never held by phones, nodes or other hosts.
+//!
+//! Callers are identified by the transport only (`PeerIdentity`, inserted by
+//! the iroh ingress). A bot, a tool, the MCP server facade, a CLI engine or a
+//! scheduled run reaches the daemon without that extension and is refused.
+//!
+//! Secrets: an API key arrives inside the end-to-end encrypted peer link, is
+//! written straight to the host's secret store and is never logged, echoed,
+//! audited or kept in `providers.toml` (which only names the secret). The
+//! audit rows carry the provider id and whether a key was set, nothing else.
+//!
+//! Not administrable from here (stays with the host's own user): the global
+//! execution policy (`/v1/policy`), stdio tool servers and skills, e-mail and
+//! web-search credentials, pairing and the host lifecycle, a bot's external
+//! engine and its knowledge settings. See the PR description for why.
+
+use axum::{
+    Extension, Json,
+    extract::{DefaultBodyLimit, Path, State},
+    http::StatusCode,
+};
+use provider_catalog::{ProviderChoice, ProviderConfig, api_key_secret_name, config_path};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use crate::{ApiError, AppState, PeerIdentity, PeerRole, host::HostMode, routes::ApiJson};
+
+/// Administration calls per minute, all administrators together.
+pub(crate) const MAX_ADMIN_CALLS_PER_MINUTE: usize = 60;
+/// Largest administration request body.
+pub(crate) const MAX_ADMIN_BODY: usize = 64 * 1024;
+/// Longest accepted API key.
+const MAX_KEY_BYTES: usize = 16 * 1024;
+
+/// Stable codes the desktop turns into text.
+pub mod codes {
+    /// The caller is not a paired desktop (or the daemon is not a host).
+    pub const FORBIDDEN: &str = "host_admin_forbidden";
+    /// A desktop without the capability: the owner must confirm on the host.
+    pub const REQUIRED: &str = "host_admin_required";
+    /// The host has no secret store to put a key in.
+    pub const NO_SECRETS: &str = "secrets_unavailable";
+    /// The secret store refused the write.
+    pub const SECRET_FAILED: &str = "secret_store_failed";
+}
+
+/// The command the owner runs on the host to confirm a desktop that was
+/// paired before the capability existed.
+pub const CONFIRM_COMMAND: &str = "bot host admin --all-desktops";
+/// What to do on a host whose secret store cannot hold keys.
+pub const SECRETS_HINT: &str = "Set BOT_SECRETS_BACKEND=file and a long random BOT_SECRETS_PASSPHRASE in the host's service environment (/etc/praxi/praxi.env), then restart the service.";
+
+/// The paired desktop that is calling, once it holds the capability.
+struct Admin {
+    actor: String,
+}
+
+fn is_desktop_peer(peer: Option<&PeerIdentity>) -> Result<&PeerIdentity, ApiError> {
+    match peer {
+        Some(p) if p.role == PeerRole::Desktop => Ok(p),
+        _ => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            codes::FORBIDDEN,
+            "host administration is only for the owner's paired desktop",
+        )),
+    }
+}
+
+fn require_host(s: &AppState) -> Result<(), ApiError> {
+    if s.leader().config().mode == HostMode::Host {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            codes::FORBIDDEN,
+            "this daemon is not an always-on host",
+        ))
+    }
+}
+
+fn require_admin(s: &AppState, peer: Option<&PeerIdentity>) -> Result<Admin, ApiError> {
+    let peer = is_desktop_peer(peer)?;
+    require_host(s)?;
+    if !s.leader().peer_is_admin(&peer.key) {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            codes::REQUIRED,
+            format!("the owner must confirm this desktop on the host: run `{CONFIRM_COMMAND}`"),
+        ));
+    }
+    Ok(Admin {
+        actor: format!("desktop-admin:{}", peer.key),
+    })
+}
+
+fn audit(
+    s: &AppState,
+    admin: &Admin,
+    action: &str,
+    detail: &serde_json::Value,
+) -> Result<(), ApiError> {
+    s.storage()
+        .append_audit(s.user_id(), None, &admin.actor, action, detail)
+        .map(|_| ())
+        .map_err(|_| ApiError::internal("cannot write the audit log"))
+}
+
+/// Rate admission that runs BEFORE the body is read or parsed, for a caller
+/// that holds the capability (a refused caller cannot spend the owner's budget).
+pub(crate) struct Gate;
+
+impl axum::extract::FromRequestParts<AppState> for Gate {
+    type Rejection = ApiError;
+    fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        s: &AppState,
+    ) -> impl std::future::Future<Output = Result<Self, ApiError>> + Send {
+        let admitted = if s.is_host_admin(parts.extensions.get::<PeerIdentity>()) {
+            s.leader().admit_admin_call()
+        } else {
+            Ok(())
+        };
+        std::future::ready(admitted.map(|()| Self))
+    }
+}
+
+impl AppState {
+    /// Whether `peer` is a paired desktop holding host administration on a
+    /// daemon that runs as a host.
+    pub(crate) fn is_host_admin(&self, peer: Option<&PeerIdentity>) -> bool {
+        peer.is_some_and(|p| {
+            p.role == PeerRole::Desktop
+                && self.leader().config().mode == HostMode::Host
+                && self.leader().peer_is_admin(&p.key)
+        })
+    }
+
+    /// The peer as the bot-authority checks should see it: an administrator
+    /// acts as the owner (`None`), every other peer stays restricted.
+    pub(crate) fn bot_authority_peer<'a>(
+        &self,
+        peer: Option<&'a PeerIdentity>,
+    ) -> Option<&'a PeerIdentity> {
+        if self.is_host_admin(peer) { None } else { peer }
+    }
+}
+
+/// `GET /v1/admin/state`.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AdminStateDto {
+    /// This desktop holds host administration.
+    pub granted: bool,
+    /// Whether the host can store an API key.
+    pub secrets_available: bool,
+    /// The command the owner runs on the host when `granted` is false.
+    pub confirm_command: Option<String>,
+    /// What to do when `secrets_available` is false.
+    pub secrets_hint: Option<String>,
+    /// The owner made this host the bots' home (setup moved here).
+    pub adopted: bool,
+}
+
+/// `PUT /v1/admin/home`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminHomeInput {
+    pub adopted: bool,
+}
+
+const HOME_FILE: &str = "home-adopted.json";
+
+/// Whether the owner adopted this host as the bots' home.
+pub(crate) fn home_adopted(data: &std::path::Path) -> bool {
+    std::fs::read(data.join(HOME_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .is_some_and(|v| v["adopted"] == true)
+}
+
+/// What the host reports about one CLI engine, as installed THERE.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AdminCliEngineDto {
+    pub id: String,
+    pub name: String,
+    pub installed: bool,
+    /// `None` when the CLI offers no safe way to check.
+    pub signed_in: Option<bool>,
+    pub version: Option<String>,
+    /// Command that installs it on the host, when one is known.
+    pub install_command: Option<String>,
+    /// How to sign in on the host.
+    pub login: String,
+    pub docs_url: String,
+}
+
+/// Add or update a provider. The key is write-only.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminProviderInput {
+    /// Never echoed, logged or audited.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Only for a custom OpenAI-compatible endpoint.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Make this the host's default provider.
+    #[serde(default)]
+    pub make_default: bool,
+}
+
+impl Drop for AdminProviderInput {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.api_key);
+    }
+}
+
+impl std::fmt::Debug for AdminProviderInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminProviderInput")
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("model", &self.model)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The provider as stored on the host.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AdminProviderDto {
+    pub id: String,
+    pub has_key: bool,
+    pub model: Option<String>,
+    pub is_default: bool,
+}
+
+/// `PUT /v1/admin/default-provider`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminDefaultInput {
+    pub id: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+fn valid_provider_id(id: &str) -> bool {
+    id.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
+        && id.len() <= 64
+        && id.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
+}
+
+fn valid_text(text: &str, max: usize) -> bool {
+    !text.is_empty() && text.len() <= max && !text.chars().any(char::is_control)
+}
+
+#[utoipa::path(get, operation_id = "admin_state", path = "/v1/admin/state", tag = "admin", security(("bearer" = [])),
+    responses((status = 200, body = AdminStateDto), (status = 403, body = crate::error::ErrorBody)))]
+pub(crate) async fn state(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+) -> Result<Json<AdminStateDto>, ApiError> {
+    let peer = is_desktop_peer(peer.as_ref().map(|p| &p.0))?;
+    require_host(&s)?;
+    let granted = s.leader().peer_is_admin(&peer.key);
+    let secrets_available = s.secret_store().is_some();
+    Ok(Json(AdminStateDto {
+        granted,
+        secrets_available,
+        confirm_command: (!granted).then(|| CONFIRM_COMMAND.to_owned()),
+        secrets_hint: (!secrets_available).then(|| SECRETS_HINT.to_owned()),
+        adopted: home_adopted(&s.data_dir()),
+    }))
+}
+
+#[utoipa::path(put, operation_id = "admin_set_home", path = "/v1/admin/home", tag = "admin", security(("bearer" = [])),
+    request_body = AdminHomeInput,
+    responses((status = 204), (status = 403, body = crate::error::ErrorBody)))]
+pub(crate) async fn set_home(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+    ApiJson(input): ApiJson<AdminHomeInput>,
+) -> Result<StatusCode, ApiError> {
+    let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    audit(
+        &s,
+        &admin,
+        "host.admin.home_set",
+        &serde_json::json!({"adopted": input.adopted}),
+    )?;
+    let data = s.data_dir();
+    std::fs::write(
+        data.join(HOME_FILE),
+        serde_json::json!({"adopted": input.adopted, "at_ms": storage::now_ms()}).to_string(),
+    )
+    .map_err(ApiError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn provider_dto(cfg: &ProviderConfig, id: &str) -> Option<AdminProviderDto> {
+    let p = cfg.get(id)?;
+    Some(AdminProviderDto {
+        id: p.id.clone(),
+        has_key: p.key.is_some(),
+        model: p.default_model.clone(),
+        is_default: cfg.effective_default().is_some_and(|d| d.id == p.id),
+    })
+}
+
+fn config_error(e: impl std::fmt::Display) -> ApiError {
+    ApiError::internal(format!("providers.toml: {e}"))
+}
+
+#[utoipa::path(put, operation_id = "admin_put_provider", path = "/v1/admin/providers/{id}", tag = "admin", security(("bearer" = [])),
+    params(("id" = String, Path)), request_body = AdminProviderInput,
+    responses((status = 200, body = AdminProviderDto), (status = 403, body = crate::error::ErrorBody),
+              (status = 400, body = crate::error::ErrorBody), (status = 503, body = crate::error::ErrorBody)))]
+#[allow(clippy::too_many_lines)] // validate, store, config, reload, audit: one ordered write
+pub(crate) async fn put_provider(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+    Path(id): Path<String>,
+    ApiJson(input): ApiJson<AdminProviderInput>,
+) -> Result<Json<AdminProviderDto>, ApiError> {
+    let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    if !valid_provider_id(&id) {
+        return Err(ApiError::bad_request("invalid provider id"));
+    }
+    let key = input.api_key.as_deref().map(str::trim);
+    if let Some(k) = key
+        && (!valid_text(k, MAX_KEY_BYTES))
+    {
+        return Err(ApiError::bad_request(
+            "the API key is empty, too long or malformed",
+        ));
+    }
+    if let Some(m) = &input.model
+        && !valid_text(m, 200)
+    {
+        return Err(ApiError::bad_request("invalid model name"));
+    }
+    if let Some(u) = &input.base_url
+        && !(valid_text(u, 512) && (u.starts_with("http://") || u.starts_with("https://")))
+    {
+        return Err(ApiError::bad_request("base_url must be an http(s) URL"));
+    }
+    let host = s
+        .provider_host()
+        .ok_or_else(|| ApiError::conflict("this daemon has no provider configuration"))?;
+    let store = match key {
+        Some(_) => Some(s.secret_store().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                codes::NO_SECRETS,
+                SECRETS_HINT,
+            )
+        })?),
+        None => s.secret_store(),
+    };
+    let data = s.data_dir();
+    let existing_custom = ProviderConfig::load(&config_path(&data))
+        .map_err(config_error)?
+        .get(&id)
+        .and_then(|p| p.custom.clone());
+    let choice = if host.catalog.get(&id).is_some() {
+        ProviderChoice::Catalog(id.clone())
+    } else if let Some(base_url) = input
+        .base_url
+        .clone()
+        .or(existing_custom.map(|e| e.base_url))
+    {
+        ProviderChoice::Custom {
+            id: id.clone(),
+            base_url,
+        }
+    } else {
+        return Err(ApiError::bad_request(
+            "unknown provider; give base_url for a custom endpoint",
+        ));
+    };
+    audit(
+        &s,
+        &admin,
+        "host.admin.provider_set",
+        &serde_json::json!({"provider": id, "key_set": key.is_some(), "phase": "requested"}),
+    )?;
+    let (catalog, make_default, model) = (
+        host.catalog.clone(),
+        input.make_default,
+        input.model.clone(),
+    );
+    let (key, id2, data2) = (
+        key.map(|k| zeroize::Zeroizing::new(k.to_owned())),
+        id.clone(),
+        data.clone(),
+    );
+    let result = tokio::task::spawn_blocking(move || {
+        let store = store.ok_or_else(|| "no secret store".to_owned())?;
+        provider_catalog::configure_provider(
+            &catalog,
+            store.as_ref(),
+            &data2,
+            &choice,
+            key.as_deref().map(String::as_str),
+            model.as_deref(),
+            storage::now_ms(),
+        )
+        .map_err(|e| e.to_string())?;
+        if make_default {
+            let path = config_path(&data2);
+            let _guard = ProviderConfig::lock(&path).map_err(|e| e.to_string())?;
+            let mut cfg = ProviderConfig::load(&path).map_err(|e| e.to_string())?;
+            cfg.set_default(&id2).map_err(|e| e.to_string())?;
+            cfg.save(&path).map_err(|e| e.to_string())?;
+        }
+        Ok::<_, String>(())
+    })
+    .await
+    .map_err(ApiError::internal)?;
+    if result.is_err() {
+        // The text of a store error is not forwarded: it must never carry a value.
+        audit(
+            &s,
+            &admin,
+            "host.admin.provider_set",
+            &serde_json::json!({"provider": id, "phase": "failed"}),
+        )?;
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            codes::SECRET_FAILED,
+            "the host could not save the provider; check its secret store",
+        ));
+    }
+    // A provider that does not load yet (for instance no key) is still saved.
+    let _ = crate::routes::reload_from_host(&s).await;
+    audit(
+        &s,
+        &admin,
+        "host.admin.provider_set",
+        &serde_json::json!({"provider": id, "phase": "done"}),
+    )?;
+    let cfg = ProviderConfig::load(&config_path(&data)).map_err(config_error)?;
+    provider_dto(&cfg, &id)
+        .map(Json)
+        .ok_or_else(|| ApiError::internal("provider vanished after save"))
+}
+
+#[utoipa::path(delete, operation_id = "admin_delete_provider", path = "/v1/admin/providers/{id}", tag = "admin", security(("bearer" = [])),
+    params(("id" = String, Path)),
+    responses((status = 204), (status = 403, body = crate::error::ErrorBody), (status = 404, body = crate::error::ErrorBody)))]
+pub(crate) async fn delete_provider(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    if !valid_provider_id(&id) {
+        return Err(ApiError::bad_request("invalid provider id"));
+    }
+    audit(
+        &s,
+        &admin,
+        "host.admin.provider_remove",
+        &serde_json::json!({"provider": id}),
+    )?;
+    let data = s.data_dir();
+    let store = s.secret_store();
+    let id2 = id.clone();
+    let removed = tokio::task::spawn_blocking(move || {
+        let path = config_path(&data);
+        let _guard = ProviderConfig::lock(&path).map_err(config_error)?;
+        let mut cfg = ProviderConfig::load(&path).map_err(config_error)?;
+        let removed = cfg.remove(&id2);
+        if removed {
+            cfg.save(&path).map_err(config_error)?;
+            if let Some(store) = store {
+                let _ = store.delete(&api_key_secret_name(&id2));
+            }
+        }
+        Ok::<_, ApiError>(removed)
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    if !removed {
+        return Err(ApiError::not_found("provider"));
+    }
+    let _ = crate::routes::reload_from_host(&s).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(put, operation_id = "admin_set_default_provider", path = "/v1/admin/default-provider", tag = "admin", security(("bearer" = [])),
+    request_body = AdminDefaultInput,
+    responses((status = 200, body = AdminProviderDto), (status = 403, body = crate::error::ErrorBody), (status = 404, body = crate::error::ErrorBody)))]
+pub(crate) async fn set_default(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+    ApiJson(input): ApiJson<AdminDefaultInput>,
+) -> Result<Json<AdminProviderDto>, ApiError> {
+    let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    if !input.id.starts_with("cli:") && !valid_provider_id(&input.id) {
+        return Err(ApiError::bad_request("invalid provider id"));
+    }
+    if let Some(m) = &input.model
+        && !valid_text(m, 200)
+    {
+        return Err(ApiError::bad_request("invalid model name"));
+    }
+    audit(
+        &s,
+        &admin,
+        "host.admin.default_set",
+        &serde_json::json!({"provider": input.id, "model": input.model}),
+    )?;
+    let data = s.data_dir();
+    let (id, model) = (input.id.clone(), input.model.clone());
+    let data2 = data.clone();
+    tokio::task::spawn_blocking(move || {
+        let path = config_path(&data2);
+        let _guard = ProviderConfig::lock(&path).map_err(config_error)?;
+        let mut cfg = ProviderConfig::load(&path).map_err(config_error)?;
+        if cfg.get(&id).is_none() {
+            return Err(ApiError::not_found("provider"));
+        }
+        cfg.set_default(&id).map_err(config_error)?;
+        if let Some(m) = &model {
+            cfg.set_model(&id, m).map_err(config_error)?;
+        }
+        cfg.save(&path).map_err(config_error)
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    let _ = crate::routes::reload_from_host(&s).await;
+    let cfg = ProviderConfig::load(&config_path(&data)).map_err(config_error)?;
+    provider_dto(&cfg, &input.id)
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("provider"))
+}
+
+#[utoipa::path(get, operation_id = "admin_cli_engines", path = "/v1/admin/cli-engines", tag = "admin", security(("bearer" = [])),
+    responses((status = 200, body = Vec<AdminCliEngineDto>), (status = 403, body = crate::error::ErrorBody)))]
+pub(crate) async fn cli_engines(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+) -> Result<Json<Vec<AdminCliEngineDto>>, ApiError> {
+    require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    let rows = s.detector().detect(false).await;
+    Ok(Json(
+        rows.into_iter()
+            .filter_map(|row| {
+                let spec = cli_provider::engine_spec(&row.id)?;
+                Some(AdminCliEngineDto {
+                    signed_in: match row.auth {
+                        cli_provider::AuthState::SignedIn => Some(true),
+                        cli_provider::AuthState::SignedOut => Some(false),
+                        cli_provider::AuthState::Unknown => None,
+                    },
+                    install_command: spec
+                        .install()
+                        .map(cli_provider::registry::InstallCommand::display),
+                    login: spec.login.into(),
+                    docs_url: spec.docs_url.into(),
+                    id: row.id,
+                    name: row.display_name,
+                    installed: row.installed,
+                    version: row.version,
+                })
+            })
+            .collect(),
+    ))
+}
+
+/// The administration routes with their own, small body limit.
+pub(crate) fn routes() -> axum::Router<AppState> {
+    use axum::routing::{get, put};
+    axum::Router::new()
+        .route("/v1/admin/state", get(state))
+        .route("/v1/admin/cli-engines", get(cli_engines))
+        .route("/v1/admin/home", put(set_home))
+        .route("/v1/admin/default-provider", put(set_default))
+        .route(
+            "/v1/admin/providers/{id}",
+            put(put_provider).delete(delete_provider),
+        )
+        .layer(DefaultBodyLimit::max(MAX_ADMIN_BODY))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_ids_are_plain_and_never_cli() {
+        for ok in ["openai", "gemini-openai-compat", "my.local_1"] {
+            assert!(valid_provider_id(ok), "{ok}");
+        }
+        for bad in ["", "cli:claude", "Open AI", "a/b", "..", &"x".repeat(65)] {
+            assert!(!valid_provider_id(bad), "{bad}");
+        }
+    }
+}

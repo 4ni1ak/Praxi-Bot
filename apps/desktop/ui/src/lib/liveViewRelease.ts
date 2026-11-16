@@ -5,6 +5,7 @@ import {
   sameForeignPaused,
   snapshotPausedTakeoverId
 } from "./liveViewState.ts";
+import { humanLine } from "./humanError.ts";
 
 export interface ReleaseDeps {
   /** `POST /v1/control/release` (through the control bridge when one exists). */
@@ -29,7 +30,7 @@ function describeError(err: unknown, fallbackCode: string) {
     typeof (err as { code?: unknown }).code === "string"
       ? (err as { code: string }).code
       : fallbackCode;
-  const message = err instanceof Error ? err.message : String(err);
+  const message = humanLine(err);
   return { code, message };
 }
 

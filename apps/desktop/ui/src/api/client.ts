@@ -3,6 +3,14 @@ import type { Connection } from "./connection";
 import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
 import type {
   AcceptedResponse,
+  AdminCliEngine,
+  AdminProvider,
+  AdminProviderInput,
+  AdminState,
+  CopyPlan,
+  CopyReport,
+  CopyRequest,
+  HomeInfo,
   Approval,
   Bot,
   BotEngineInput,
@@ -93,14 +101,21 @@ import type {
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
 
 /** An error response of the daemon (`{"error": {"code", "message"}}`) or a network failure. */
+
+/** A request that gets no answer for this long fails instead of hanging its screen forever. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   /** The parsed JSON body of the error response, when it had one (a `409` carries `current`). */
   readonly body?: unknown;
+  /** Name of the paired host the request went to, when it was not this computer (see `humanError`). */
+  readonly host?: string;
 
-  constructor(status: number, code: string, message: string, body?: unknown) {
+  constructor(status: number, code: string, message: string, body?: unknown, host?: string) {
     super(message);
+    this.host = host;
     this.name = "ApiError";
     this.status = status;
     this.code = code;
@@ -166,10 +181,19 @@ export class ApiClient {
   }
   readonly baseUrl: string;
   private readonly token: string;
+  /** Name of the paired host this client talks to (null for this computer). */
+  hostName: string | null = null;
+  /** Aborts every request of this client when its computer is dropped (`dispose`). */
+  private readonly life = new AbortController();
 
   constructor(conn: Pick<Connection, "base_url" | "token">) {
     this.baseUrl = conn.base_url.replace(/\/$/, "");
     this.token = conn.token;
+  }
+
+  /** The computer this client talked to is no longer selected: drop what is in flight. */
+  dispose(): void {
+    this.life.abort();
   }
 
   /** Headers for a request, also used by the SSE reader. */
@@ -180,7 +204,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string> } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -199,7 +223,15 @@ export class ApiClient {
   private async send(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal } = {}
+    opts: {
+      body?: unknown;
+      query?: Query;
+      auth?: boolean;
+      signal?: AbortSignal;
+      /** Streaming answers (install output) must not be cut by the request timeout. */
+      noTimeout?: boolean;
+      headers?: Record<string, string>;
+    } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -207,7 +239,7 @@ export class ApiClient {
         url.searchParams.set(k, String(v));
       }
     }
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
     if (opts.auth !== false) {
       Object.assign(headers, this.authHeaders());
     }
@@ -220,7 +252,11 @@ export class ApiClient {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        signal: opts.signal
+        signal: AbortSignal.any([
+          this.life.signal,
+          ...(opts.signal ? [opts.signal] : []),
+          ...(opts.noTimeout ? [] : [AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        ])
       });
     } catch (e) {
       throw new ApiError(
@@ -241,7 +277,7 @@ export class ApiClient {
       } catch {
         // not JSON
       }
-      throw new ApiError(res.status, code, message, parsed);
+      throw new ApiError(res.status, code, message, parsed, this.hostName ?? undefined);
     }
     return res;
   }
@@ -260,7 +296,7 @@ export class ApiClient {
   }
 
   async decideCliInstall(id: string, decision: "approve" | "deny", onOutput: (text: string) => void): Promise<void> {
-    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision } });
+    const res = await this.send("POST", `/providers/cli/install/${encodeURIComponent(id)}/decision`, { body: { decision }, noTimeout: true });
     const reader = res.body?.getReader();
     if (!reader) { throw new Error("Missing install stream"); }
     let done = false;
@@ -293,6 +329,36 @@ export class ApiClient {
   /** Paired hosts and their channel state (this computer's own daemon). */
   listHosts(): Promise<HostLinkList> {
     return this.request("GET", "/hosts");
+  }
+  /** What "make this server my bots' home" could send (names only; local daemon). */
+  copyPlan(hostId: string): Promise<CopyPlan> {
+    return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/copy-setup`);
+  }
+  /** Send the ticked items; the LOCAL daemon reads the keys, the app never sees them. */
+  copySetup(hostId: string, input: CopyRequest, ownerKey: string): Promise<CopyReport> {
+    // The owner key (from the app, main window only) authorises sending keys.
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/copy-setup`, {
+      body: input,
+      headers: { "x-praxi-owner-key": ownerKey }
+    });
+  }
+  /** The host adopted as the bots' home, if any. */
+  homeInfo(): Promise<HomeInfo> {
+    return this.request("GET", "/hosts/home");
+  }
+  // ---- host administration (call on a client connected to the HOST) -----
+  adminState(): Promise<AdminState> {
+    return this.request("GET", "/admin/state");
+  }
+  /** The key is write-only; the host stores it in its secret store. */
+  adminPutProvider(id: string, input: AdminProviderInput): Promise<AdminProvider> {
+    return this.request("PUT", `/admin/providers/${encodeURIComponent(id)}`, { body: input });
+  }
+  adminSetDefault(id: string, model?: string): Promise<AdminProvider> {
+    return this.request("PUT", "/admin/default-provider", { body: { id, model } });
+  }
+  adminCliEngines(): Promise<AdminCliEngine[]> {
+    return this.request("GET", "/admin/cli-engines");
   }
   /** Pair with a host using the ticket from `bot host invite --role desktop`. */
   pairHost(ticket: string): Promise<HostLinkInfo> {

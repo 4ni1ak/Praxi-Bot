@@ -7,9 +7,10 @@ import { useProviders } from "../../state/useProviders";
 import { advanceKnowledgeEmbeddings } from "../../lib/knowledgeEmbedding";
 import form from "../../components/Form.module.css";
 import styles from "./KnowledgeCard.module.css";
+import { humanLine } from "../../lib/humanError";
 
 const KINDS: KnowledgeSourceKind[] = ["file", "folder", "saved_web", "conversation", "email", "note", "shared_brain"];
-const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+const message = (error: unknown) => humanLine(error);
 
 /** Bot-scoped source selection and separate document/query egress consent. */
 export function KnowledgeCard() {

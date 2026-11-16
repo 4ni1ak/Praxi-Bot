@@ -746,6 +746,14 @@ async fn daemon_connect(
     daemon::connect(&daemon).await
 }
 
+/// The owner key of the daemon this app started, for the web view to send as
+/// `x-praxi-owner-key` on owner-only requests. Main window only.
+#[tauri::command]
+fn owner_key(window: Window) -> Result<String, String> {
+    require_window(&window, MAIN_ONLY)?;
+    Ok(daemon::owner_key().to_owned())
+}
+
 /// Stop a daemon this app started, then start it again (e.g. to pick up new
 /// providers).  A daemon started by someone else is left alone.
 #[tauri::command]
@@ -1114,6 +1122,7 @@ pub fn run() {
             simulate_bot_run,
             get_monitors_geometry,
             daemon_connect,
+            owner_key,
             daemon_restart,
             providers_cli,
             get_autostart,
@@ -1376,6 +1385,7 @@ mod acl_tests {
         ("overlay_clear", "MAIN_ONLY"),
         ("simulate_bot_run", "MAIN_ONLY"),
         ("daemon_connect", "MAIN_ONLY"),
+        ("owner_key", "MAIN_ONLY"),
         ("daemon_restart", "MAIN_ONLY"),
         ("providers_cli", "MAIN_ONLY"),
         ("get_autostart", "MAIN_ONLY"),
@@ -1569,6 +1579,7 @@ mod acl_tests {
                 "get_autostart",
                 "set_autostart",
                 "daemon_connect",
+                "owner_key",
                 "daemon_restart",
                 "simulate_bot_run",
                 "set_stop_hotkey",

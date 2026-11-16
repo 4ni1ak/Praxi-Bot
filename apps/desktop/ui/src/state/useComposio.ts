@@ -3,6 +3,7 @@ import type { ComposioApp, ComposioCatalog, ComposioStatus, ComposioToolkit } fr
 import { appendPage, pendingSlugs, upsertApp } from "../lib/composioApps";
 import { openComposioLink } from "../lib/externalLink";
 import { useDaemon } from "./DaemonContext";
+import { humanLine } from "../lib/humanError";
 
 /** How often a pending sign-in is checked, and when we stop asking. */
 const POLL_MS = 2000;
@@ -12,10 +13,6 @@ const SEARCH_DEBOUNCE_MS = 250;
 const REFRESH_WATCH_MS = 3000;
 
 export type LoginPhase = "idle" | "starting" | "waiting" | "failed";
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /**
  * Composio state of the Apps modal: link status, connected apps, the catalog
@@ -43,7 +40,7 @@ export function useComposio(active: boolean, query: string, group: string) {
     try {
       setApps(await client.composioApps());
     } catch (e) {
-      setError(messageOf(e));
+      setError(humanLine(e));
     }
   }, [client]);
 
@@ -56,7 +53,7 @@ export function useComposio(active: boolean, query: string, group: string) {
       setStatus(s);
       return s;
     } catch (e) {
-      setError(messageOf(e));
+      setError(humanLine(e));
       return null;
     }
   }, [client]);
@@ -83,7 +80,7 @@ export function useComposio(active: boolean, query: string, group: string) {
         setError(null);
       } catch (e) {
         if (mine === seq.current) {
-          setError(messageOf(e));
+          setError(humanLine(e));
         }
       } finally {
         if (mine === seq.current) {
@@ -140,7 +137,7 @@ export function useComposio(active: boolean, query: string, group: string) {
         void client
           .composioApp(slug)
           .then((a) => setApps((prev) => upsertApp(prev, a)))
-          .catch((e: unknown) => setError(messageOf(e)));
+          .catch((e: unknown) => setError(humanLine(e)));
       }
     }, POLL_MS);
     return () => clearInterval(id);

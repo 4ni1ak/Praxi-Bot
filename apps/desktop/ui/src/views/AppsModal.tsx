@@ -44,9 +44,10 @@ import { composioTileState, directEntries, filterDirect, isRemoteServer, visible
 import { openComposioLink } from "../lib/externalLink";
 import type { McpServer as McpServerT } from "../api/types";
 import own from "./AppsGrid.module.css";
+import { humanLine } from "../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 /** Most bot faces shown next to an app; the rest collapse into "+n". */

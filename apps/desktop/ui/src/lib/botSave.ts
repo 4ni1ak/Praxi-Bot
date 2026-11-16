@@ -5,6 +5,7 @@ import { isEmptyPatch, conflictBot, profilePatch } from "./botPatch.ts";
 import type { BotDraft } from "./botProfile.ts";
 import { MAX_ASSIGNED_SKILLS, exceedsSkillLimit } from "./botSkills.ts";
 import { applyAppsSelection, botHasAccess, changedApps } from "./mcpApps.ts";
+import { humanLine } from "./humanError.ts";
 
 /**
  * The combined Save of the "Edit bot" dialog (profile, app ticks, skills) as ONE controller: the
@@ -197,6 +198,6 @@ export async function performEditorSave(i: EditorSaveInput): Promise<EditorSaveO
       close: messages.length === 0
     };
   } catch (e) {
-    return { kind: "failed", message: e instanceof Error ? e.message : String(e) };
+    return { kind: "failed", message: humanLine(e) };
   }
 }

@@ -22,6 +22,16 @@ struct Open {
     seen_up: bool,
 }
 
+/// Overwrite every string in `value` (zeroize) so a key does not linger.
+fn scrub(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(s) => zeroize::Zeroize::zeroize(s),
+        serde_json::Value::Array(a) => a.iter_mut().for_each(scrub),
+        serde_json::Value::Object(o) => o.values_mut().for_each(scrub),
+        _ => {}
+    }
+}
+
 pub struct CliHostLinks {
     data: PathBuf,
     shared: Option<PeerNetwork>,
@@ -173,12 +183,19 @@ impl HostLinks for CliHostLinks {
             .find(|d| d.id == id && d.role == Role::Host)
             .ok_or(HostLinkError::NotFound)?;
         let key = device.public_key().map_err(|_| HostLinkError::NotFound)?;
-        if let Some(link) = self.open.lock().get(id) {
+        // Read the open link under the lock, release it, THEN ask `info` (it
+        // takes the same non-recursive lock).
+        let existing = self
+            .open
+            .lock()
+            .get(id)
+            .map(|link| (link.proxy.base_url.clone(), link.proxy.token.clone()));
+        if let Some((base_url, token)) = existing {
             return Ok(HostLinkConnection {
                 id: device.id.clone(),
                 name: device.name.clone(),
-                base_url: link.proxy.base_url.clone(),
-                token: link.proxy.token.clone(),
+                base_url,
+                token,
                 state: self.info(&device).state,
             });
         }
@@ -214,6 +231,41 @@ impl HostLinks for CliHostLinks {
 
     fn disconnect(&self, id: &str) -> bool {
         self.open.lock().remove(id).is_some()
+    }
+
+    async fn call(
+        &self,
+        id: &str,
+        method: &str,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<daemon_api::host_links::HostCall, HostLinkError> {
+        // Only administration, bot and health paths of the host API.
+        if !(path.starts_with("/v1/admin/") || path.starts_with("/v1/bots")) {
+            return Err(HostLinkError::Invalid("path not allowed".into()));
+        }
+        let conn = self.connect(id).await?;
+        let method = reqwest::Method::from_bytes(method.as_bytes())
+            .map_err(|_| HostLinkError::Invalid("bad method".into()))?;
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(40))
+            .build()
+            .map_err(|e| HostLinkError::Failed(safe(e)))?;
+        let mut req = http
+            .request(method, format!("{}{path}", conn.base_url))
+            .bearer_auth(&conn.token);
+        if let Some(mut body) = body {
+            req = req.json(&body);
+            // The request now owns its serialised copy; wipe ours (a key).
+            scrub(&mut body);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|_| HostLinkError::Failed("the host did not answer".into()))?;
+        let status = resp.status().as_u16();
+        let body = resp.json().await.unwrap_or(serde_json::Value::Null);
+        Ok(daemon_api::host_links::HostCall { status, body })
     }
 
     async fn forget(&self, id: &str) -> bool {
@@ -260,6 +312,52 @@ mod tests {
             serde_json::json!({"version":1,"devices":devices}).to_string(),
         )
         .unwrap();
+    }
+
+    /// The REAL links against a real host endpoint: a plan, a copy and a second
+    /// item all reach `connect` on an already-open proxy (this used to deadlock).
+    #[tokio::test]
+    async fn repeated_calls_on_an_open_connection_do_not_deadlock() {
+        use peer_network::{ALPN_API, PeerConfig, RelayConfig};
+        let host_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(storage::Storage::open(host_dir.path()).unwrap());
+        let agent = agent_core::AgentLoop::new(
+            storage.clone(),
+            tool_registry::ToolRegistry::new(),
+            agent_core::Providers::single(Arc::new(daemon_api::fake::FakeProvider)),
+            agent_core::LoopConfig::default(),
+        );
+        let state =
+            daemon_api::AppState::new(agent, storage, daemon_api::DaemonConfig::new("t")).unwrap();
+        let mut hc = PeerConfig::new(host_dir.path().join("peer"));
+        hc.local_role = Role::Host;
+        hc.relay = RelayConfig::Disabled;
+        hc.bind_addr = Some("127.0.0.1:0".parse().unwrap());
+        hc.extra_protocols.push((
+            ALPN_API.to_vec(),
+            Arc::new(remote_api::ApiProtocol::new(state)),
+        ));
+        let host = PeerNetwork::start(hc, None).await.unwrap();
+        let desk_dir = tempfile::tempdir().unwrap();
+        let mut dc = PeerConfig::new(desk_dir.path().join("peer"));
+        dc.local_role = Role::Desktop;
+        dc.relay = RelayConfig::Disabled;
+        dc.bind_addr = Some("127.0.0.1:0".parse().unwrap());
+        let desk = PeerNetwork::start(dc, None).await.unwrap();
+        let links = CliHostLinks::new(desk_dir.path().to_path_buf(), Some(desk));
+        let invite = host.create_invite(Role::Desktop).await;
+        let info = links.pair(&invite.ticket).await.unwrap();
+        for path in ["/v1/bots", "/v1/bots", "/v1/admin/state"] {
+            let call = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                links.call(&info.id, "GET", path, None),
+            )
+            .await
+            .expect("call must not hang")
+            .unwrap();
+            assert!(call.status > 0);
+        }
+        host.shutdown().await;
     }
 
     #[test]

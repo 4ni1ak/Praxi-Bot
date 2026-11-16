@@ -16,6 +16,7 @@ pub mod model_metadata;
 pub mod openai_compat;
 pub mod provider;
 pub mod selector;
+pub mod setup;
 mod util;
 
 pub use anthropic::AnthropicProvider;
@@ -42,3 +43,4 @@ pub use provider::{
     ToolChoice, Usage,
 };
 pub use selector::ModelSelector;
+pub use setup::{ProviderChoice, SetupError, configure_provider, custom_entry, entry_for};

@@ -1,3 +1,4 @@
+import { MOCK_HOST_ID, mockHostScenario } from "./mockHostScenario.ts";
 import { applyPatchOps, type PatchOp } from "../lib/botPatch.ts";
 import { ApiClient, ApiError } from "./client.ts";
 import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
@@ -674,6 +675,35 @@ export class MockApiClient extends ApiClient {
       if (seg[3] === "cancel") return ok(this.hostSetup.cancel(seg[2]));
       return ok(this.hostSetup.get(seg[2]));
     }
+    if (seg[0] === "hosts" && seg[1] === "home") return ok({ host_id: null });
+    if (seg[0] === "hosts" && seg[2] === "copy-setup") {
+      if (method === "GET") {
+        return ok({
+          providers: [
+            { id: "gemini", has_key: true, model: "gemini-3.5-flash-lite", custom: false },
+            { id: "openrouter", has_key: true, model: null, custom: false },
+            { id: "local-llm", has_key: false, model: "qwen3", custom: true }
+          ],
+          bots: this.bots.slice(0, 3).map((b) => ({ id: b.id, name: b.name, model: null, blocked: null })),
+          default_provider: "gemini",
+          default_model: "gemini-3.5-flash-lite",
+          host_accepts: true,
+          host_code: null,
+          host_command: null
+        });
+      }
+      const req = (opts.body ?? {}) as { providers?: string[]; bots?: string[]; default_model?: boolean; set_home?: boolean };
+      const items = [
+        ...(req.providers ?? []).map((id) => ({ kind: "provider", id, name: id, status: "done", code: null })),
+        ...(req.bots ?? []).map((id, i) => ({
+          kind: "bot", id, name: this.bots.find((b) => b.id === id)?.name ?? id,
+          status: i === 0 ? "skipped" : "done", code: i === 0 ? "exists" : null
+        })),
+        ...(req.default_model ? [{ kind: "default", id: "default", name: "gemini", status: "done", code: null }] : []),
+        ...(req.set_home ? [{ kind: "home", id: "home", name: "home", status: "done", code: null }] : [])
+      ];
+      return ok({ items });
+    }
     if (seg[0] === "bots" && seg[2] === "knowledge") {
       if (!this.bots.some((bot) => bot.id === seg[1])) throw new ApiError(404, "not_found", "bot");
       const bot = seg[1];
@@ -763,16 +793,20 @@ export class MockApiClient extends ApiClient {
     }
     switch (`${method} /${seg[0] ?? ""}`) {
       case "GET /health":
-        return ok({ status: "ok", uptime_secs: 3600, version: "0.1.0-mock" });
+        return ok({ status: mockHostScenario() === "empty" ? "setup_required" : "ok", uptime_secs: 3600, version: "0.1.0-mock", api_version: "1" });
       case "GET /hosts":
-        return ok({ local_version: "0.1.0-mock", local_api_version: "1", hosts: [] });
+        return ok({
+          local_version: "0.1.0-mock",
+          local_api_version: "1",
+          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" ? "offline" : "connected", detail: null }] : []
+        });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
       case "GET /bots":
         if (seg[1] && seg[2] === "skills") {
           return ok(this.getBotSkillsState(seg[1]));
         }
-        return ok(structuredClone(this.bots));
+        return ok(mockHostScenario() === "empty" ? [] : structuredClone(this.bots));
       case "GET /chats":
         if (seg[2] === "messages") {
           if (this.messages.has(seg[1])) return ok(this.messages.get(seg[1]));
@@ -1618,7 +1652,7 @@ export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["even
       { type: "run_started", run_id: runId, bot_id: "11111111-1111-4111-8111-111111111111", chat_id: "33333333-3333-4333-8333-333333333333" },
       { type: "tool_call_requested", run_id: runId, call_id: "mock-tool", tool_name: screen === "changes" ? "fs_edit" : "github.search", input: screen === "changes" ? { path: "docs/haftalik-ozet.md" } : { query: "is:closed updated:this-week" } },
       { type: "tool_call_completed", run_id: runId, call_id: "mock-tool", error: null },
-      { type: "run_finished", run_id: runId, error: null }
+      { type: "run_finished", run_id: runId, error: screen === "errors-run" ? "Error: execution error: The user is controlling the screen right now (observation paused), so this read was not performed: screenshot" : null }
     ];
     events.forEach((event, i) => out.push({ ts_ms: 1750000000000 + (i === 3 ? 2000 : 200 + i * 100), event }));
   }

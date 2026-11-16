@@ -195,11 +195,36 @@ impl Client {
 
     /// Send a request, return the JSON body (`Null` for empty bodies).
     pub async fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
+        self.request_with(method, path, body, None).await
+    }
+
+    /// An owner-only request: also carries the owner key (host: the data dir's
+    /// `owner-key` file) in `x-praxi-owner-key`.
+    pub async fn request_owner(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        owner_key: &str,
+    ) -> Result<Value> {
+        self.request_with(method, path, body, Some(owner_key)).await
+    }
+
+    async fn request_with(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        owner_key: Option<&str>,
+    ) -> Result<Value> {
         let mut rb = self
             .http
             .request(method, format!("{}{path}", self.base))
             .bearer_auth(&self.token)
             .timeout(Duration::from_secs(30));
+        if let Some(key) = owner_key {
+            rb = rb.header(daemon_api::owner::OWNER_HEADER, key);
+        }
         if let Some(b) = body {
             rb = rb.json(&b);
         }
