@@ -303,7 +303,7 @@
     },
     "placeholder": "Message…  / commands · @ bots",
     "addCommand": "Add a command or bot",
-    "placeholderBusy": "The bot is working — queue or steer…",
+    "placeholderBusy": "The bot is working. Type to queue a message…",
     "send": "Send",
     "subagent": {
       "title": "Subagent",
@@ -2618,7 +2618,109 @@
     "railGrip": "Resize sidebar (arrow keys)",
     "panelGrip": "Resize bot panel (arrow keys)"
   },
+  "computerCard": {
+    "title": "Computer",
+    "thisComputer": "This computer",
+    "sideBot": "Bot's",
+    "sideMine": "Mine",
+    "live": "LIVE",
+    "big": "Enlarge",
+    "take": "Take control",
+    "close": "Close",
+    "show": "Show screen",
+    "resume": "Resume",
+    "retry": "Try again",
+    "connecting": "Connecting",
+    "frameAlt": "Live screen of {{name}}",
+    "terminal": "Terminal",
+    "terminalSoon": "Coming soon",
+    "browser": "Browser",
+    "fps": "{{fps}} fps",
+    "pausedNote": "paused",
+    "hint": {
+      "idle": "The picture is only made while you look",
+      "starting": "Starting the screen…",
+      "paused": "Paused because nobody looked for 3 minutes"
+    },
+    "status": {
+      "serverOnline": "Server · online",
+      "serverOffline": "not answering · reconnecting",
+      "local": "{{system}} · the bot works here",
+      "localNoSystem": "The bot works here"
+    },
+    "reason": {
+      "connecting": "Connecting to {{name}}…",
+      "offline": "Cannot reach the server",
+      "notPaired": "The server no longer accepts this computer",
+      "version": "The app and the server are on different versions",
+      "permission": "This computer may not watch the server's screen yet",
+      "failed": "Could not get the screen",
+      "noScreen": "No screen: {{detail}}"
+    }
+  },
+  "homeMenu": {
+    "lives": {
+      "local": "Your bots live here",
+      "online": "Your bots live here · online",
+      "connecting": "Your bots live here · connecting",
+      "offline": "Your bots live here · offline",
+      "temporary": "For now your bots work on this computer"
+    },
+    "sync": "Sync my setup",
+    "lastSync": "Last sync: {{when}}",
+    "today": "today {{time}}",
+    "pcOn": "Every action asks you here",
+    "pcOff": "Your bots cannot use this computer"
+  },
+  "runStatus": {
+    "working": "Working…",
+    "stopping": "Stopping…",
+    "waiting": "Waiting for your approval: {{step}}"
+  },
+  "queued": {
+    "label": "Queued.",
+    "sendNow": "Send now",
+    "remove": "Remove this queued message"
+  },
+  "messageInfo": {
+    "label": "Message info",
+    "title": "Message details",
+    "steps": "{{count}} tools",
+    "steps_one": "{{count}} tool",
+    "steps_other": "{{count}} tools",
+    "unit": {
+      "s": "s",
+      "m": "min"
+    },
+    "rows": {
+      "model": "Model",
+      "source": "Source",
+      "duration": "Duration",
+      "started": "Started",
+      "finished": "Finished",
+      "steps": "Steps",
+      "where": "Where",
+      "tokens": "Tokens",
+      "sent": "Sent"
+    },
+    "sources": {
+      "app": "this app",
+      "telegram": "Telegram",
+      "peer": "another computer",
+      "api": "local API",
+      "unknown": "unknown"
+    }
+  },
   "botPanel": {
+    "now": {
+      "waiting": "Waiting for your approval",
+      "thinking": "Thinking…",
+      "subagents": "{{count}} sub-agents",
+      "subagents_one": "{{count}} sub-agent",
+      "subagents_other": "{{count}} sub-agents",
+      "open": "Open details",
+      "detailTitle": "Current run"
+    },
     "toggle": "Bot panel",
     "close": "Close panel",
     "profile": "Bot profile",

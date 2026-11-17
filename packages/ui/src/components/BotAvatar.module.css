@@ -12,6 +12,7 @@
 .sm { width: var(--space-8); height: var(--space-8); }
 .md { width: var(--space-10); height: var(--space-10); }
 .lg { width: var(--space-16); height: var(--space-16); }
+.panel { width: var(--size-avatar-panel); height: var(--size-avatar-panel); }
 .hero { width: calc(var(--space-16) * 1.625); height: calc(var(--space-16) * 1.625); }
 
 .customImg {

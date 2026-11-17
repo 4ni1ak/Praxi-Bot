@@ -18,10 +18,13 @@ import styles from "./SubagentList.module.css";
  */
 export function SubagentDetail({
   run,
+  fallbackTitle,
   onClose,
   onStop
 }: {
   run: RunState | undefined;
+  /** Heading for a run without a task (the chat's own run opened from the "now" row). */
+  fallbackTitle?: string;
   onClose: () => void;
   onStop: (id: string) => void;
 }) {
@@ -29,7 +32,7 @@ export function SubagentDetail({
   const state = run ? subagentRowState(run) : "done";
   const live = state === "running" || state === "waiting";
   const now = useNow(live);
-  const title = taskTitle(t, run?.task ?? "", 80);
+  const title = run?.task || !fallbackTitle ? taskTitle(t, run?.task ?? "", 80) : fallbackTitle;
   return (
     <Modal open={run !== undefined} onClose={onClose} label={t("botPanel.subagents.detail.title")} size="md">
       {run ? (

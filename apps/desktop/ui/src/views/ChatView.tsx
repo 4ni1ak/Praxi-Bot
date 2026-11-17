@@ -26,7 +26,7 @@ import { ownerKey } from "../lib/ownerKey";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
 import { ApiError } from "../api/client";
-import type { Bot, Message, SendMode } from "../api/types";
+import type { Bot, Message } from "../api/types";
 import {
   ApprovalCard,
   NoticeLine,
@@ -38,7 +38,9 @@ import {
 import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
-import { RunBar } from "../components/RunBar";
+import { MessageInfo } from "../components/MessageInfo";
+import { QueuedMessages } from "../components/QueuedMessages";
+import { RunStatusLine } from "../components/RunStatusLine";
 import { RunChangesGate } from "../components/RunChangesGate";
 import { ThinkingChain } from "../components/ThinkingChain";
 import { useToast } from "../components/Toast";
@@ -59,6 +61,10 @@ import { splitMentions } from "../lib/mentionText";
 import { dayHeader, type MessageTimes } from "../lib/messageTime";
 import { modelGroups } from "../lib/modelPicker";
 import { type ChatRunPhase, runBarModel, singleRunStop } from "../lib/runBar";
+import { sendButtonDisabled, sendButtonMode } from "../lib/composerRun";
+import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
+import { toolSentence } from "../lib/runSentence";
+import { useChatQueue } from "../state/useChatQueue";
 import {
   giveBackControl,
   type ControlSnapshot,
@@ -68,7 +74,6 @@ import {
 } from "../overlay/events";
 import { describeTool, stepPhase } from "../lib/toolLabels";
 import { brandIcon } from "../lib/brandIcons";
-import { useLiveView } from "../state/LiveViewContext";
 import { type Chain, chainOrderTs, groupRunItems } from "../lib/thinkingChain";
 import { type SendWith, shouldSend } from "../lib/settingsPrefs";
 import { rank } from "../lib/fuzzy";
@@ -124,8 +129,8 @@ interface MenuBot {
 
 type Entry =
   | { kind: "day"; key: string; ts: number }
-  | { kind: "user"; key: string; ts: number; text: string }
-  | { kind: "assistant"; key: string; ts: number; text: string; live: boolean; botId?: string | null }
+  | { kind: "user"; key: string; ts: number; text: string; source?: string | null }
+  | { kind: "assistant"; key: string; ts: number; text: string; live: boolean; botId?: string | null; runId?: string | null }
   | { kind: "item"; key: string; ts: number; item: TimelineItem; runId: string }
   | { kind: "chain"; key: string; ts: number; chain: Chain; runId: string }
   | { kind: "runError"; key: string; ts: number; message: string }
@@ -221,7 +226,7 @@ export function ChatView({
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<SendMode>("queue");
+  const [queue, updateQueue] = useChatQueue(chatId);
   const [sending, setSending] = useState(false);
   const [caret, setCaret] = useState(0);
   const [menuIdx, setMenuIdx] = useState(0);
@@ -329,7 +334,8 @@ export function ChatView({
           kind: "user",
           key: `m-${m.id}`,
           ts: m.created_at_ms,
-          text: m.content
+          text: m.content,
+          source: m.source
         });
       } else if (
         m.role === "assistant" &&
@@ -341,7 +347,8 @@ export function ChatView({
           ts: m.created_at_ms,
           text: m.content,
           live: false,
-          botId: m.bot_id
+          botId: m.bot_id,
+          runId: m.run_id
         });
       }
     }
@@ -424,6 +431,7 @@ export function ChatView({
   }, [messages, chatRuns, showAgentRoute, remember]);
 
   const lastItem = entries[entries.length - 1];
+  const sendMode = sendButtonMode({ runActive: active, hasText: text.trim().length > 0 });
   // ---- follow new content unless the user scrolled up
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const lastTop = useRef(0);
@@ -578,6 +586,14 @@ export function ChatView({
     if (!client || !body || sending) {
       return;
     }
+    // A message typed while the bot works joins the queue as a "Sirada." bubble (slash commands such
+    // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
+    if (active && !body.startsWith("/")) {
+      updateQueue((q) => enqueue(q, body, crypto.randomUUID(), Date.now()));
+      setText("");
+      scrollToEnd();
+      return;
+    }
     setSending(true);
     setError(null);
     setSendFailure(null);
@@ -586,7 +602,7 @@ export function ChatView({
       const res = await client.sendMessage(
         chatId,
         body,
-        active ? mode : undefined,
+        undefined,
         await ownerKey(client.baseUrl)
       );
       if (res.delivery === "stopped") {
@@ -643,9 +659,12 @@ export function ChatView({
     }
   };
 
-  const { openViewer } = useLiveView();
   const nativeActive = control.mode !== "idle";
-  const stop = async () => {
+  // Stop was pressed in this chat: the queue is held (nothing new starts right after a Stop).
+  const stoppedByUser = useRef(false);
+  /** THE stop function of the chat: the round button calls only this (the Stop owner swaps it in). */
+  const stopRun = async () => {
+    stoppedByUser.current = true;
     // Through the Stop ledger (PR #94 owns the logic): the run is held (cannot act) at
     // once and the cancel is retried with the same stop id until the daemon reports it
     // terminal. A desktop-driving run is stopped with the app-wide Stop.
@@ -684,6 +703,42 @@ export function ChatView({
     : pausedRunId
       ? "paused"
       : "none";
+  // Queued messages: delivered when the run ends (the daemon's queue path), or at once by "Simdi gonder"
+  // (its steer path). A Stop pressed here holds them, so nothing new starts right after a Stop.
+  const deliverQueued = async (message: { id: string; text: string; createdMs: number }, how: "queue" | "steer") => {
+    if (!client) {
+      return;
+    }
+    try {
+      await client.sendMessage(chatId, message.text, how, await ownerKey(client.baseUrl));
+      await Promise.all([loadMessages(), refreshRuns()]);
+    } catch (e) {
+      updateQueue((q) => putBack(q, message));
+      setSendFailure(humanError(e));
+    }
+  };
+  const wasActive = useRef(active);
+  useEffect(() => {
+    const was = wasActive.current;
+    wasActive.current = active;
+    if (was && !active && stoppedByUser.current) {
+      stoppedByUser.current = false;
+      return;
+    }
+    const { message, rest } = takeForRunEnd(queue, was, active);
+    if (message) {
+      updateQueue(() => rest);
+      void deliverQueued(message, "queue");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, queue]);
+  const sendNow = (id: string) => {
+    const { message, rest } = takeForNow(queue, id);
+    if (message) {
+      updateQueue(() => rest);
+      void deliverQueued(message, "steer");
+    }
+  };
   useLedgerVersion();
   const ledgerRun = activeRunId
     ? appLedger().runEntries().find((e) => e.id === activeRunId)
@@ -710,6 +765,10 @@ export function ChatView({
     });
     barDetail = t(`${label.key}.${stepPhase(liveTool.status)}`, label.values);
   }
+  const approvalTool = liveRunState?.items.find(
+    (i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool" && i.status === "awaiting_approval"
+  );
+  const approvalStep = approvalTool ? toolSentence(t, approvalTool) : null;
   const barBotName =
     control.bot && control.bot.botId !== chat?.bot_id
       ? control.bot.botName
@@ -784,6 +843,7 @@ export function ChatView({
               {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
+            <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
             <MessageTime
               ts={item.ts}
               mode={messageTimes}
@@ -946,6 +1006,7 @@ export function ChatView({
                 return (
                   <div key={e.key} className={styles.userRow}>
                     <MessageTime ts={e.ts} mode={messageTimes} />
+                    <MessageInfo side="me" ts={e.ts} source={e.source} />
                     <div className={styles.userBubble}>
                       {splitMentions(e.text, mentionBots).map((part, i) =>
                         part.color ? (
@@ -964,6 +1025,7 @@ export function ChatView({
                       {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
+                    <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
                     <MessageTime ts={e.ts} mode={messageTimes} />
                   </div>
                 );
@@ -1065,6 +1127,11 @@ export function ChatView({
                 );
             }
           })}
+          <QueuedMessages
+            queue={queue}
+            onSendNow={sendNow}
+            onRemove={(id) => updateQueue((q) => removeQueued(q, id))}
+          />
         </div>
       </div>
       {jumpVisible ? (
@@ -1094,14 +1161,14 @@ export function ChatView({
           />
         ) : null}
         <div className={styles.dockWrap}>
-          <RunBar
+          <RunStatusLine
             model={barModel}
             botName={barBotName}
-            detail={barDetail}
+            sentence={barDetail}
+            approvalStep={approvalStep}
             startedMs={barStartedMs}
-            runStop={stopProgress ? { phase: stopProgress, error: ledgerRun?.error ?? null } : null}
+            stop={stopProgress ? { phase: stopProgress, error: ledgerRun?.error ?? null } : null}
             humanDriving={control.mode === "human_driving"}
-            onStop={() => void stop()}
             onPause={() => void pauseBotRun().then(onControl).catch(() => {})}
             onResume={() => {
               if (barModel?.native) {
@@ -1115,7 +1182,6 @@ export function ChatView({
                 control.mode === "human_driving" ? giveBackControl() : takeTheWheel();
               void next.then(onControl).catch(() => {});
             }}
-            onBigView={() => openViewer()}
           />
         </div>
         <div className={styles.boxWrap}>
@@ -1268,48 +1334,19 @@ export function ChatView({
               </div>
             ) : null}
             {bot ? <ComputerTargetChip bot={bot} /> : null}
-            {active ? (
-              <div
-                className={styles.mode}
-                role="radiogroup"
-                aria-label={t("chat.modeLabel")}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                    e.preventDefault();
-                    const next: SendMode = mode === "queue" ? "steer" : "queue";
-                    setMode(next);
-                    (e.currentTarget.querySelector(`[data-mode="${next}"]`) as HTMLElement | null)?.focus();
-                  }
-                }}
-              >
-                {(["queue", "steer"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    role="radio"
-                    data-mode={m}
-                    aria-checked={mode === m}
-                    tabIndex={mode === m ? 0 : -1}
-                    className={styles.modeOption}
-                    title={t(`chat.mode.${m}Hint`)}
-                    onClick={() => setMode(m)}
-                  >
-                    {t(`chat.mode.${m}`)}
-                  </button>
-                ))}
-              </div>
-            ) : null}
             <span className={styles.spacer} />
-            <Button
-              variant="primary"
+            <button
+              type="button"
               className={styles.send}
-              disabled={sending || !text.trim()}
-              title={t("chat.send")}
-              aria-label={t("chat.send")}
-              onClick={() => void send()}
+              data-mode={sendMode}
+              data-testid="send-button"
+              disabled={sendButtonDisabled({ mode: sendMode, sending, stopping: stopProgress === "stopping" })}
+              title={sendMode === "stop" ? t("chat.stop") : t("chat.send")}
+              aria-label={sendMode === "stop" ? t("chat.stop") : t("chat.send")}
+              onClick={() => (sendMode === "stop" ? void stopRun() : void send())}
             >
-              <ArrowUp />
-            </Button>
+              {sendMode === "stop" ? <span className={styles.stopMark} aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+            </button>
           </div>
           </div>
         </div>
