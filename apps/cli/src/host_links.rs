@@ -9,6 +9,7 @@
 //! start, unless `serve --peer` already started one (then it is shared).
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use builtin_tools::pc::{PcError, PcLink, ServerLinks};
 use daemon_api::host_links::{
     HostLinkConnection, HostLinkError, HostLinkInfo, HostLinkState, HostLinks,
 };
@@ -137,6 +138,40 @@ impl CliHostLinks {
         Ok(net)
     }
 
+    /// The paired always-on server with key `id`, if there is one.
+    pub(crate) fn host_device(&self, id: &str) -> Option<Device> {
+        self.devices()
+            .into_iter()
+            .find(|d| d.id == id && d.role == Role::Host)
+    }
+
+    /// One RPC to a paired server as the paired admin desktop (card 272, gap 2).
+    /// The server decides from ITS pairing file whether this computer is its
+    /// administrator; nothing is claimed here.
+    pub(crate) async fn call_host(
+        &self,
+        id: &str,
+        method: &str,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, PcError> {
+        let device = self.host_device(id).ok_or(PcError::NotPaired)?;
+        let key = device.public_key().map_err(|_| PcError::NotPaired)?;
+        let net = self.network().await.map_err(|_| PcError::Offline)?;
+        let client = net.rpc_client(&key).map_err(|_| PcError::NotPaired)?;
+        match client.call_with_timeout(method, params, timeout).await {
+            Ok(v) => Ok(v),
+            Err(peer_network::PeerError::Rpc { message, .. }) => Err(PcError::Refused(message)),
+            Err(peer_network::PeerError::Timeout) => {
+                Err(PcError::Failed("the server did not answer in time".into()))
+            }
+            Err(peer_network::PeerError::Connection(_) | peer_network::PeerError::NotPaired(_)) => {
+                Err(PcError::Offline)
+            }
+            Err(other) => Err(PcError::Failed(other.to_string())),
+        }
+    }
+
     /// Paired devices without starting the endpoint: the running one if there
     /// is one, else the pairing file.
     fn devices(&self) -> Vec<Device> {
@@ -154,6 +189,11 @@ impl CliHostLinks {
     }
 
     fn info(&self, device: &Device) -> HostLinkInfo {
+        let sw = self
+            .pc
+            .as_ref()
+            .map(|pc| pc.access.switches(&device.id))
+            .unwrap_or_default();
         let mut open = self.open.lock();
         let (state, detail) = match open.get_mut(&device.id) {
             None => (HostLinkState::Idle, None),
@@ -193,14 +233,11 @@ impl CliHostLinks {
             name: device.name.clone(),
             state,
             detail,
-            computer_access: self
-                .pc
-                .as_ref()
-                .is_some_and(|pc| pc.access.enabled(&device.id)),
-            computer_access_always: self
-                .pc
-                .as_ref()
-                .is_some_and(|pc| pc.access.always_read(&device.id)),
+            computer_access: sw.screen,
+            computer_access_always: sw.screen && sw.always_read,
+            computer_browser: sw.browser,
+            computer_commands: sw.commands,
+            computer_files: sw.files,
         }
     }
 }
@@ -294,15 +331,16 @@ impl HostLinks for CliHostLinks {
     async fn set_computer_access(
         &self,
         id: &str,
-        enabled: bool,
-        always_read: bool,
+        access: &daemon_api::pc_access::ComputerAccessInput,
     ) -> Result<(), HostLinkError> {
+        let (enabled, always_read) = (access.enabled, access.always_read);
+        let any = enabled || access.browser || access.commands || access.files;
         let Some(pc) = &self.pc else {
             return Err(HostLinkError::Invalid(
                 "this computer cannot be used by a server".into(),
             ));
         };
-        if pc.handler.is_none() && enabled {
+        if pc.handler.is_none() && any {
             return Err(HostLinkError::Invalid(
                 "this computer has no screen a server could use".into(),
             ));
@@ -314,14 +352,27 @@ impl HostLinks for CliHostLinks {
         {
             return Err(HostLinkError::NotFound);
         }
+        let before = pc.access.switches(id);
+        let next = crate::pc_target::Switches {
+            screen: enabled,
+            always_read,
+            browser: access.browser,
+            commands: access.commands,
+            files: access.files,
+        };
         pc.access
-            .set(id, enabled, always_read)
+            .set_switches(id, next)
             .map_err(|e| HostLinkError::Failed(safe(e)))?;
-        if !enabled {
+        if !any
+            || (before.screen && !next.screen)
+            || (before.browser && !next.browser)
+            || (before.commands && !next.commands)
+            || (before.files && !next.files)
+        {
             // Whatever the host had parked is denied now, not at its timeout.
             pc.requests.cancel_host(id);
         }
-        if enabled {
+        if any {
             self.ensure_beat(id).await?;
         } else if let Some(beat) = self.beats.lock().remove(id) {
             beat.abort();
@@ -408,18 +459,65 @@ impl HostLinks for CliHostLinks {
     }
 }
 
+/// The paired servers a bot of THIS computer may use as its own computer
+/// (`[runtime].computer = "server:<key>"`): the bot, its model calls and its
+/// approvals stay here, only tool calls cross the paired link.
+pub struct CliServerLinks(pub Arc<CliHostLinks>);
+
+struct HostLink {
+    links: Arc<CliHostLinks>,
+    id: String,
+}
+
+#[async_trait::async_trait]
+impl PcLink for HostLink {
+    async fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, PcError> {
+        self.links
+            .call_host(&self.id, method, params, timeout)
+            .await
+    }
+
+    fn desktop(&self) -> Result<Arc<dyn desktop_api::DesktopBackend>, PcError> {
+        Err(PcError::Failed(
+            "the server's screen is not used as a computer by this bot".into(),
+        ))
+    }
+}
+
+impl ServerLinks for CliServerLinks {
+    fn link(&self, id: &str) -> Option<(String, Arc<dyn PcLink>)> {
+        let device = self.0.host_device(id)?;
+        Some((
+            device.name.clone(),
+            Arc::new(HostLink {
+                links: Arc::clone(&self.0),
+                id: device.id,
+            }),
+        ))
+    }
+}
+
 pub fn install(
     state: &daemon_api::AppState,
     data: PathBuf,
     shared: Option<PeerNetwork>,
     pc: PcTarget,
-) {
+) -> Arc<CliHostLinks> {
     let links = Arc::new(CliHostLinks::new(data.clone(), shared).with_pc_target(pc));
     let restore = Arc::clone(&links);
     tokio::spawn(async move { restore.restore_access().await });
     state.set_host_links(links.clone());
     // The "Add server" wizard pairs through the same links.
-    state.set_host_setup(Arc::new(crate::host_setup::CliHostSetup::new(data, links)));
+    state.set_host_setup(Arc::new(crate::host_setup::CliHostSetup::new(
+        data,
+        Arc::clone(&links),
+    )));
+    links
 }
 
 #[cfg(test)]

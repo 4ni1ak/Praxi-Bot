@@ -374,6 +374,9 @@ impl HostLinks for FakeLinks {
         vec![HostLinkInfo {
             computer_access: false,
             computer_access_always: false,
+            computer_browser: false,
+            computer_commands: false,
+            computer_files: false,
             id: "abc123".into(),
             name: "Oracle".into(),
             state: HostLinkState::Idle,

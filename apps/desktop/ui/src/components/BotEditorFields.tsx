@@ -535,6 +535,7 @@ const KNOWN_TARGETS = new Set(["auto", "pc", "host", "browser", "off"]);
 /** A stored computer/browser target in words (`node:<id>` and unknown values as stored). */
 function targetText(t: (key: string) => string, target: string): string {
   if (target === "local") return t("botForm.local");
+  if (target.startsWith("server:")) return t("botEdit.target.server");
   return KNOWN_TARGETS.has(target) ? t(`botEdit.target.${target}`) : target;
 }
 

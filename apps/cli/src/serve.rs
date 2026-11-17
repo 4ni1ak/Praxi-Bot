@@ -991,6 +991,18 @@ pub fn serve(
     step("agent built");
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
+    // The user's own computer as a per-request target of the bots living on this
+    // server (card 272): a separate `pc_*` family, bound to the paired desktop
+    // once the peer stack below exists. Only a host has bots to serve.
+    let pc_slot = Arc::new(builtin_tools::pc::PcLinkSlot::new());
+    if host_is_host {
+        for tool in builtin_tools::pc::pc_tools(
+            &(pc_slot.clone() as Arc<dyn builtin_tools::pc::PcLink>),
+            data_dir,
+        ) {
+            let _ = mcp_tools.register(tool);
+        }
+    }
     let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
@@ -1077,6 +1089,14 @@ pub fn serve(
                         audit: Arc::new(move |action, detail| audit(action, &detail)),
                         redact: Arc::new(move |text| masker.redact(text)),
                         own_pid: std::process::id(),
+                        tools: builtin_tools::pc::local_tools(data_dir),
+                        browser: Some(Arc::new(builtin_tools::CdpDriver::new({
+                            // This computer's managed browser: a window, an
+                            // isolated profile, never the owner's own.
+                            let mut settings = builtin_tools::BrowserSettings::isolated(data_dir);
+                            settings.headless = false;
+                            settings
+                        }))),
                     },
                 ))
             });
@@ -1086,15 +1106,34 @@ pub fn serve(
                 handler,
             }
         });
+        // What this daemon serves over RPC: a computer serves its desktop to its
+        // paired server (behind the owner's switches); a host serves its browser
+        // to the paired administrator desktop (card 272).
+        let rpc_handler: Option<Arc<dyn peer_network::RpcHandler>> = if host_is_host {
+            let audit = state.audit_writer_as("server-target");
+            let masker = redactor.clone();
+            let mut settings = builtin_tools::BrowserSettings::isolated(data_dir);
+            settings.headless = !browser_cdp::host::has_display();
+            Some(Arc::new(crate::server_target::ServerTargetHandler::new(
+                crate::server_target::ServerTargetDeps {
+                    data: data_dir.to_path_buf(),
+                    audit: Arc::new(move |action, detail| audit(action, &detail)),
+                    redact: Arc::new(move |text| masker.redact(text)),
+                    browser: Some(Arc::new(builtin_tools::CdpDriver::new(settings))),
+                },
+            )))
+        } else {
+            pc_target
+                .as_ref()
+                .and_then(|pc| pc.handler.clone())
+                .map(|h| h as Arc<dyn peer_network::RpcHandler>)
+        };
         let peer = crate::peer::start_server(
             data_dir,
             host_is_host,
             effective_peer_enabled,
             state.clone(),
-            pc_target
-                .as_ref()
-                .and_then(|pc| pc.handler.clone())
-                .map(|h| h as Arc<dyn peer_network::RpcHandler>),
+            rpc_handler,
         )
         .await?;
         step("peer stack handled");
@@ -1109,7 +1148,10 @@ pub fn serve(
         if let Some(pc) = pc_target {
             // This computer's links to paired hosts (`/v1/hosts`); the peer
             // endpoint starts lazily unless `--peer` already started one.
-            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone(), pc);
+            let links =
+                crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone(), pc);
+            // A bot may use a paired server as ITS computer while it runs here.
+            agent.set_server_links(Arc::new(crate::host_links::CliServerLinks(links)));
         }
         step("host links installed");
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
@@ -1121,6 +1163,9 @@ pub fn serve(
             local_id.clone(),
         ));
         agent.set_computer_provider(Arc::clone(&computer) as Arc<dyn agent_core::ComputerProvider>);
+        pc_slot.set(Arc::new(crate::computer::CliPcLink::new(Arc::clone(
+            &computer,
+        ))));
         if crate::computer::is_machine_fingerprint(&local_id) {
             // Without a running peer stack the paired list is unknown, not empty.
             let paired_computers: Option<Vec<String>> = peer.as_ref().map(|net| {

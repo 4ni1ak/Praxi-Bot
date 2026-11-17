@@ -365,6 +365,21 @@ impl RemoteDesktop {
         &self.client
     }
 
+    /// One RPC to the paired computer (`pc.*` families), with the deadline of
+    /// a call that may wait for the person at that computer.
+    ///
+    /// # Errors
+    /// [`PeerError::Rpc`] carries the remote refusal text; other variants are
+    /// transport failures.
+    pub async fn call_raw(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value> {
+        self.client.call_with_timeout(method, params, timeout).await
+    }
+
     async fn call<T: DeserializeOwned>(
         &self,
         method: &str,

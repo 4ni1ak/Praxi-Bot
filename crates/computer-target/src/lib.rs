@@ -42,6 +42,11 @@ pub enum ComputerTarget {
     /// Specific paired node identifier (legacy ADR-0011 syntax, e.g. `node:<id>`
     /// or 64-character hex peer public key).
     Node(String),
+    /// A paired always-on server used as the bot's own computer while the bot
+    /// itself (its model providers, keys and subscription CLIs) stays on THIS
+    /// computer: `server:<server key>`. Resolved by the daemon, which knows the
+    /// paired servers; [`resolve`] alone cannot place it.
+    Server(String),
 }
 
 impl ComputerTarget {
@@ -54,7 +59,16 @@ impl ComputerTarget {
             Self::Host => "host",
             Self::Browser => "browser",
             Self::Off => "off",
-            Self::Node(id) => id.as_str(),
+            Self::Node(id) | Self::Server(id) => id.as_str(),
+        }
+    }
+
+    /// Key of the server when targeting [`Self::Server`].
+    #[must_use]
+    pub fn server_id(&self) -> Option<&str> {
+        match self {
+            Self::Server(id) => id.strip_prefix("server:"),
+            _ => None,
         }
     }
 
@@ -93,9 +107,19 @@ impl FromStr for ComputerTarget {
             "host" => Ok(Self::Host),
             "browser" => Ok(Self::Browser),
             "off" => Ok(Self::Off),
+            other
+                if other.strip_prefix("server:").is_some_and(|rest| {
+                    !rest.is_empty()
+                        && rest
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+                }) =>
+            {
+                Ok(Self::Server(other.to_owned()))
+            }
             other if is_valid_node_id(other) => Ok(Self::Node(other.to_owned())),
             other => Err(format!(
-                "unknown computer target {other:?}; expected one of auto, pc, host, browser, off, or node:<id>"
+                "unknown computer target {other:?}; expected one of auto, pc, host, browser, off, node:<id> or server:<id>"
             )),
         }
     }
@@ -222,6 +246,14 @@ pub trait ComputerProvider: Send + Sync {
 
     /// Identity of an explicit node, matched by key only.
     fn node_target(&self, _id: &str) -> Option<ComputerDesktop> {
+        None
+    }
+
+    /// The user's own paired computer as a per-request tool target (card 272),
+    /// connected or not. It is a different identity from every `local`, `host`
+    /// and `pc` placement of a run: a grant scoped to it never covers another
+    /// computer and no other computer's grant covers it. `None`: nothing paired.
+    fn mypc_node(&self) -> Option<ComputerNode> {
         None
     }
 
@@ -416,6 +448,16 @@ pub fn resolve(target: &ComputerTarget, provider: &dyn ComputerProvider) -> Reso
             res
         }
         ComputerTarget::Auto => resolve_auto(provider, browser),
+        // The daemon places a server computer (it knows the paired servers);
+        // asked here, it is not a computer this provider can offer.
+        ComputerTarget::Server(_) => Resolution {
+            node: None,
+            unavailable_reason: Some("a server computer is resolved by the daemon".into()),
+            desktop: None,
+            browser: false,
+            label: ComputerLabel::Off,
+            wait_for_pc: false,
+        },
     }
 }
 
@@ -526,6 +568,10 @@ mod tests {
                 ComputerTarget::Node("node:workstation-1".into()),
             ),
             ("peer:abc_123", ComputerTarget::Node("peer:abc_123".into())),
+            (
+                "server:abc_123",
+                ComputerTarget::Server("server:abc_123".into()),
+            ),
         ] {
             let parsed: ComputerTarget = raw.parse().unwrap_or_else(|e| panic!("{raw}: {e}"));
             assert_eq!(parsed, expected);
@@ -545,6 +591,8 @@ mod tests {
             "desktop",
             "node:",
             "node:bad id",
+            "server:",
+            "server:bad id",
             "shorthex",
         ] {
             assert!(

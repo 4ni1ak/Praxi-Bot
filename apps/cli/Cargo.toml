@@ -58,6 +58,7 @@ storage.workspace = true
 tokio = { workspace = true, features = ["signal", "io-std"] }
 tool-registry = { path = "../../crates/tool-registry", version = "0.1.0" }
 toml.workspace = true
+base64.workspace = true
 url.workspace = true
 uuid.workspace = true
 web-tools = { path = "../../crates/web-tools", version = "0.1.0" }

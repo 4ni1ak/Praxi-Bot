@@ -630,6 +630,9 @@ pub(crate) struct RunComputer {
     pub wait_for_pc: bool,
     /// User-visible note about this resolution, emitted once as a run event.
     pub notice: Option<String>,
+    /// The browser of the paired server this run's bot uses as ITS computer
+    /// (gap 2 of card 272); `None`: the browser tools use this daemon's own.
+    pub remote_browser: Option<Arc<dyn builtin_tools::BrowserDriver>>,
 }
 
 struct FallbackComputerProvider {
@@ -663,6 +666,10 @@ pub(crate) struct RunCtx {
     pub computer: Arc<tokio::sync::OnceCell<tokio::sync::OwnedSemaphorePermit>>,
     pub waiting_computer: Arc<AtomicBool>,
     pub resolved_computer: RunComputer,
+    /// The user's own paired computer, the target of the `pc_*` tools (card 272).
+    /// Not part of `resolved_computer`: a run is placed on ONE computer, the
+    /// per-request target is a second identity with its own grant scope.
+    pub mypc: Option<computer_target::ComputerNode>,
     pub run_id: RunId,
     pub chat_id: ChatId,
     pub bot_id: BotId,
@@ -747,6 +754,18 @@ impl RunCtx {
         name: &str,
         category: PermissionCategory,
     ) -> Option<String> {
+        // The `pc_*` family acts on the user's own computer, whatever the run is
+        // placed on. Its scope is that computer's id only: a grant given for the
+        // bot's own computer ("host:..", "browser:..", "pc:..", or none for shell
+        // and files) never matches it, and a grant given here never matches
+        // those. Nothing paired still has a scope of its own, so it cannot fall
+        // back to an unscoped grant.
+        if name.starts_with(builtin_tools::pc::PC_PREFIX) {
+            return Some(format!(
+                "mypc:{}",
+                self.mypc.as_ref().map_or("none", |n| n.id.as_str())
+            ));
+        }
         let computer_tool = matches!(
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
@@ -808,6 +827,8 @@ pub(crate) struct Shared {
     pub control: RwLock<Option<Arc<dyn crate::control::ControlGate>>>,
     /// Dynamic computer availability provider installed by the daemon (`serve`).
     pub computer_provider: RwLock<Option<Arc<dyn ComputerProvider>>>,
+    /// Paired servers a bot may use as ITS computer while it runs here.
+    pub server_links: RwLock<Option<Arc<dyn builtin_tools::pc::ServerLinks>>>,
     /// Static desktop backend passed to [`AgentLoop::with_builtin_tools`] (fallback when
     /// no [`ComputerProvider`] is installed).
     pub static_desktop: RwLock<Option<Arc<dyn DesktopBackend>>>,
@@ -1250,6 +1271,9 @@ impl Shared {
                 self.resolve_fallback_computer(&fixed)
             };
         }
+        if let ComputerTarget::Server(_) = &profile.runtime.computer {
+            return self.resolve_server_computer(&profile.runtime.computer);
+        }
         if let Some(p) = provider.as_deref() {
             let mut rc = Self::run_computer(
                 resolve_computer(&profile.runtime.computer, p),
@@ -1324,6 +1348,41 @@ impl Shared {
             && provider.is_some_and(|p| !p.local_identity_bound())
     }
 
+    /// A bot whose own computer is a paired server (gap 2 of card 272): the bot,
+    /// its model calls and its approvals stay on THIS daemon; its browser tools
+    /// are a link to the server. Only the browser family is routed there in this
+    /// version; no desktop, shell or file tool is claimed for the server.
+    fn resolve_server_computer(&self, target: &ComputerTarget) -> RunComputer {
+        let id = target.server_id().unwrap_or_default();
+        let link = self
+            .server_links
+            .read()
+            .clone()
+            .and_then(|links| links.link(id));
+        let Some((name, link)) = link else {
+            return Self::unavailable_computer(
+                "The bot's computer (a server) is not paired with this computer, so it has no computer tools. Tell the user to add the server again or change the bot's computer.",
+            );
+        };
+        RunComputer {
+            node: Some(computer_target::ComputerNode {
+                id: id.to_owned(),
+                name,
+            }),
+            unavailable_reason: None,
+            label: ComputerLabel::Browser,
+            desktop: None,
+            desktop_available: false,
+            browser: true,
+            browser_headless: None,
+            wait_for_pc: false,
+            notice: None,
+            remote_browser: Some(Arc::new(
+                builtin_tools::pc::RemoteBrowserDriver::for_server(link),
+            )),
+        }
+    }
+
     fn unavailable_computer(reason: &str) -> RunComputer {
         let mut rc = Self::offline_pc(None);
         rc.wait_for_pc = false;
@@ -1342,6 +1401,7 @@ impl Shared {
             browser_headless: None,
             wait_for_pc: true,
             notice: None,
+            remote_browser: None,
         }
     }
 
@@ -1357,6 +1417,7 @@ impl Shared {
             browser_headless,
             wait_for_pc: res.wait_for_pc,
             notice: None,
+            remote_browser: None,
         }
     }
 
@@ -1423,6 +1484,7 @@ impl Shared {
             browser_headless,
             wait_for_pc: res.wait_for_pc,
             notice: None,
+            remote_browser: None,
         }
     }
 
@@ -1466,6 +1528,14 @@ impl Shared {
             }
         }
         taint
+    }
+
+    /// The user's own paired computer, the target of the `pc_*` tools.
+    fn mypc_node(&self) -> Option<computer_target::ComputerNode> {
+        self.computer_provider
+            .read()
+            .as_ref()
+            .and_then(|p| p.mypc_node())
     }
 
     /// Per-run context, built on first use (also after a restart).
@@ -1545,7 +1615,9 @@ impl Shared {
             .unwrap_or_else(|| Arc::new(tokio::sync::OnceCell::new()));
         let taint = self.initial_taint(run, chat_id);
         let steer = self.pending_steering(run)?;
+        let mypc = self.mypc_node();
         let ctx = Arc::new(RunCtx {
+            mypc,
             computer,
             waiting_computer: Arc::new(AtomicBool::new(false)),
             resolved_computer,
@@ -1630,8 +1702,7 @@ impl Shared {
     /// visibility (an MCP server's `bots` list).  Call-time enforcement stays
     /// in the tool itself; this keeps hidden tools out of what the model sees.
     pub(crate) fn spec_visible(&self, profile: &BotProfile, bot: BotId, spec: &ToolSpec) -> bool {
-        profile.tool_visible(&spec.name)
-            && profile.category_visible(spec.category)
+        profile.spec_visible(&spec.name, spec.category)
             && platform_ok(&spec.platforms)
             // Fail closed: a name the registry no longer knows is not visible.
             && self
@@ -1797,10 +1868,7 @@ impl Shared {
         } else {
             // Same gate as the spec list: a hidden or wrong-platform tool must
             // not run just because the model named it.
-            if !profile.tool_visible(name)
-                || !profile.category_visible(own.category)
-                || !platform_ok(&own.platforms)
-            {
+            if !profile.spec_visible(name, own.category) || !platform_ok(&own.platforms) {
                 return None;
             }
             (Some(own), name.to_owned())
@@ -1859,6 +1927,12 @@ impl Shared {
     /// machine the shell, files, desktop and browser tools act on, its OS and
     /// shell, and how the user's computer is addressed. Fixed for the run.
     pub(crate) fn place_block(&self, ctx: &RunCtx) -> Option<String> {
+        if ctx.resolved_computer.remote_browser.is_some() {
+            let name = ctx.resolved_computer.node.as_ref().map(|n| n.name.as_str());
+            return Some(crate::discovery_prompt::server_place_block(
+                name.unwrap_or_default(),
+            ));
+        }
         if !self.is_host_homed() {
             return None;
         }

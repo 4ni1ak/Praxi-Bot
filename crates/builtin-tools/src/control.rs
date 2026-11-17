@@ -55,6 +55,16 @@ pub trait DesktopControlGate: Send + Sync {
     fn browser_available_for_run(&self, _run_id: &str) -> bool {
         true
     }
+    /// The browser of the paired server this run's bot uses as ITS computer
+    /// (card 272, gap 2): the run's browser calls go there over the paired
+    /// link instead of to a browser on this machine. `None` (the default): this
+    /// daemon's own browser.
+    fn remote_browser_for_run(
+        &self,
+        _run_id: &str,
+    ) -> Option<std::sync::Arc<dyn crate::browser::BrowserDriver>> {
+        None
+    }
     /// Per-run browser headless override (`Some(false)` for headed on Xvfb,
     /// `Some(true)` for headless). `None` keeps `BrowserSettings::headless`.
     fn browser_headless_for_run(&self, _run_id: &str) -> Option<bool> {

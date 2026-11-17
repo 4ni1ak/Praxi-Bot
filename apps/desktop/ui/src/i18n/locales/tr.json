@@ -1439,6 +1439,12 @@
       "bot": "Botun bilgisayarı",
       "mine": "Benim bilgisayarım",
       "title": "Bu bot nerede çalışsın"
+    },
+    "server": {
+      "label": "Bilgisayarı",
+      "thisComputer": "Bu bilgisayar",
+      "unknown": "Eşleşmiş bir sunucu",
+      "title": "Bu botun tarayıcısının çalıştığı yer. Bot kendisi bu bilgisayarda kalır, yani modelleri ve anahtarları çalışmaya devam eder; bu bilgisayarın açık olması gerekir."
     }
   },
   "firstRun": {
@@ -2961,7 +2967,8 @@
       "pc": "Bu bilgisayar",
       "host": "Ana makine",
       "browser": "Tarayıcı",
-      "off": "Kapalı"
+      "off": "Kapalı",
+      "server": "Eşleşmiş bir sunucu (tarayıcısı)"
     },
     "deleteBlocked": "Bu botun sohbetleri var ({{count}}); bu yüzden silinemez. Yalnızca sohbeti ve çalıştırması olmayan bot silinebilir.",
     "deleteBlockedRuns": "Bu botun saklanan {{count}} çalıştırması var; bu yüzden silinemez. Yalnızca sohbeti ve çalıştırması olmayan bot silinebilir."
@@ -3137,7 +3144,19 @@
     "what": "İşlem",
     "where": "Şuraya gider",
     "details": "Tam olarak",
-    "allowSession": "Bu oturum için izin ver"
+    "allowSession": "Bu oturum için izin ver",
+    "family": {
+      "screen": "{{name}} üzerindeki botlar bu bilgisayarın ekranını ve girişini kullanabilsin",
+      "browser": "{{name}} üzerindeki botlar bu bilgisayarın tarayıcısını kullanabilsin",
+      "commands": "{{name}} üzerindeki botlar bu bilgisayarda komut çalıştırabilsin",
+      "files": "{{name}} üzerindeki botlar bu bilgisayardaki dosyaları okuyabilsin"
+    },
+    "familyNote": {
+      "screen": "Ekrana bakar, tıklar, yazar ve program başlatır. Bir şeyi değiştiren her işlem önce size sorar.",
+      "browser": "Sizinkinden ayrı, kendi profili olan bir tarayıcı penceresi. Sayfa açmak veya içine yazmak önce size sorar.",
+      "commands": "Her komut önce size sorulur ve size tam olarak gösterilir.",
+      "files": "Okuma oturum başına bir kez sorar; dosya yazmak her seferinde sorar. Parolalar, diğer programların ayarları ve Praxi'nin kendi verisi erişilemez kalır."
+    }
   },
   "hostMode": {
     "state": {

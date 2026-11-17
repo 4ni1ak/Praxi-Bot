@@ -1439,6 +1439,12 @@
       "bot": "Bot's computer",
       "mine": "My computer",
       "title": "Where this bot works"
+    },
+    "server": {
+      "label": "Its computer",
+      "thisComputer": "This computer",
+      "unknown": "A paired server",
+      "title": "Where this bot's browser works. The bot itself stays on this computer, so its models and keys keep working; this computer must be on."
     }
   },
   "firstRun": {
@@ -2961,7 +2967,8 @@
       "pc": "This computer",
       "host": "Host",
       "browser": "Browser",
-      "off": "Off"
+      "off": "Off",
+      "server": "A paired server (its browser)"
     },
     "deleteBlocked": "This bot still has chats ({{count}}), so it cannot be deleted. Only a bot without chats or runs can be removed.",
     "deleteBlockedRuns": "This bot still has {{count}} retained run(s), so it cannot be deleted. Only a bot without chats or runs can be removed."
@@ -3137,7 +3144,19 @@
     "what": "Action",
     "where": "Goes to",
     "details": "Exactly",
-    "allowSession": "Allow for this session"
+    "allowSession": "Allow for this session",
+    "family": {
+      "screen": "Let the bots on {{name}} use this computer's screen and input",
+      "browser": "Let the bots on {{name}} use this computer's browser",
+      "commands": "Let the bots on {{name}} run commands on this computer",
+      "files": "Let the bots on {{name}} read files on this computer"
+    },
+    "familyNote": {
+      "screen": "Look at the screen, click, type and start programs. Every action that changes something asks you first.",
+      "browser": "A separate browser window with its own profile, not yours. Opening a page or typing in one asks you first.",
+      "commands": "Every command asks you first and is shown to you in full.",
+      "files": "Reading asks once per session; writing a file asks every time. Passwords, other programs' settings and Praxi's own data stay unreachable."
+    }
   },
   "hostMode": {
     "state": {

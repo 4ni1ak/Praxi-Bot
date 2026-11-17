@@ -51,14 +51,27 @@ pub struct PcRequestDecision {
     pub allow: bool,
 }
 
-/// Switches for one host.
+/// Switches for one host. Each family is its own switch; all are off until
+/// the person at this computer turns them on.
+// One flag per family (wire shape).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ComputerAccessInput {
-    /// Let this host's bots use this computer.
+    /// Screen and input: let this host's bots look at the screen, click, type
+    /// and start programs on this computer.
     pub enabled: bool,
     /// Do not ask before the first look at the screen each session.
     #[serde(default)]
     pub always_read: bool,
+    /// Let them use this computer's managed browser.
+    #[serde(default)]
+    pub browser: bool,
+    /// Let them run shell commands here (each one asks).
+    #[serde(default)]
+    pub commands: bool,
+    /// Let them read files here (writing asks every time).
+    #[serde(default)]
+    pub files: bool,
 }
 
 /// What a card says; built by the embedder from the parsed request.

@@ -111,6 +111,7 @@ impl AgentLoop {
                 policy_locked: std::sync::atomic::AtomicBool::new(false),
                 control: RwLock::new(None),
                 computer_provider: RwLock::new(None),
+                server_links: RwLock::new(None),
                 static_desktop: RwLock::new(None),
                 run_computers: Mutex::new(HashMap::new()),
                 wait_pc_timers: Mutex::new(HashMap::new()),
@@ -298,6 +299,12 @@ impl AgentLoop {
     /// display and connected remote PC desktops here).
     pub fn set_computer_provider(&self, provider: Arc<dyn computer_target::ComputerProvider>) {
         *self.sh.computer_provider.write() = Some(provider);
+    }
+
+    /// Install the paired servers a bot may use as its own computer
+    /// (`[runtime].computer = "server:<key>"`) while its brain stays here.
+    pub fn set_server_links(&self, links: Arc<dyn builtin_tools::pc::ServerLinks>) {
+        *self.sh.server_links.write() = Some(links);
     }
 
     /// Names of the registered tools, sorted.

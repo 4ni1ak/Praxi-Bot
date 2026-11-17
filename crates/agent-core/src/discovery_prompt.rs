@@ -35,6 +35,10 @@ const FAMILIES: &[(&[&str], &str)] = &[
     (&["skill_"], "skills"),
     (&["workflow_"], "workflows"),
     (&["spawn_"], "sub-agents"),
+    (
+        &["pc_"],
+        "the USER'S own computer (their screen, browser, commands, files)",
+    ),
 ];
 
 /// Index of the `fs_` family in [`FAMILIES`].
@@ -45,6 +49,13 @@ File tools take absolute paths and can read anywhere this bot's file access allo
 
 /// Index of the `desktop_` family in [`FAMILIES`].
 const DESKTOP_FAMILY: usize = 1;
+/// Index of the `pc_` family in [`FAMILIES`].
+const PC_FAMILY: usize = 13;
+/// When to use the user's own computer (fixed text, cache-stable): only on an
+/// explicit request, never as a default.
+const PC_LINE: &str = "
+pc_* tools act on the USER'S computer, not yours. Use them ONLY when the user's message asks for something on THEIR computer, screen, files or browser (\"on my computer\", \"my PC\", \"on my screen\", \"benim bilgisayarımda\", \"bu bilgisayarda\" said about their own machine). For everything else, including a plain \"open a browser\" or \"run a command\", use YOUR OWN tools (browser_*, shell_run, fs_*). Call pc_info first to learn its system and what the owner allowed; when it is off or a part is not allowed, tell the user plainly and do not retry.";
+
 /// The added lines about the user's own screen (fixed text, cache-stable).
 const DESKTOP_LINE: &str = "
 browser_* tools drive a separate managed browser: about:blank or no tabs there says nothing about the user's own browser. Questions about what the user sees, watches or has open (their screen, browser, apps) are answered by observing the desktop: call desktop_list_apps (the focused window title is often enough; a browser title holds the page or video name), then use_tool desktop_get_state with screenshot if needed. Never refuse on privacy grounds and never offer to look instead of looking.";
@@ -126,8 +137,11 @@ with the address. Never start a browser with shell_run or desktop_launch and do 
                 );
             }
             out.push_str(
-                "\nThe user's own computer is a separate machine you cannot reach in this run. If they ask for \
-something on it, tell them to switch \"Runs on\" to \"My computer\" in the chat bar.",
+                "\nThe user's own computer is a separate machine. Only when the user's message explicitly asks for \
+something on THEIR computer, screen, files or browser (\"on my computer\", \"my PC\", \"on my screen\", \"benim bilgisayarımda\", \
+\"bu bilgisayarda\" about their own machine) use the pc_* tools, when they are listed. For any other request, including a \
+plain \"open a browser\" or \"run a command\", use YOUR OWN tools. If no pc_* tool is listed, tell them to switch \
+\"Runs on\" to \"My computer\" in the chat bar.",
             );
         }
         ComputerLabel::Pc => {
@@ -148,6 +162,21 @@ never on the user's computer. The desktop_* tools act on the user's computer \"{
         ComputerLabel::Off => return None,
     }
     Some(out)
+}
+
+/// The "where you run" block of a bot that lives on THIS computer but uses a
+/// paired server as its own computer (the brain stays here, the browser is
+/// there). Only the browser is the server's in this version.
+pub(crate) fn server_place_block(server_name: &str) -> String {
+    let name = clean_name(server_name);
+    let name = if name.is_empty() { "the server" } else { &name };
+    format!(
+        "Where you run: your own computer is the server \"{name}\", a separate machine from the one this assistant runs on. \
+Your browser tools (browser_*) open pages and act on that server's browser. Do not start a browser with shell_run or \
+desktop_launch. Shell commands, files and the desktop are NOT the server's in this version: they act on the user's own \
+computer, so use them only when the user asks for something on their own computer. If the server is off the browser \
+tools say so; tell the user."
+    )
 }
 
 /// Most connected apps (MCP server ids) named in the block.
@@ -227,6 +256,9 @@ pub(crate) fn block_for<'a>(
     }
     if families[FS_FAMILY] {
         out.push_str(FILES_LINE);
+    }
+    if families[PC_FAMILY] {
+        out.push_str(PC_LINE);
     }
     if families[DESKTOP_FAMILY] {
         out.push_str(if own_screen {
@@ -319,6 +351,19 @@ mod tests {
         }
         let desktop = block_for(["desktop_list_apps", "shell_run"], true).unwrap();
         assert!(!desktop.contains("Praxi desktop"));
+    }
+
+    /// The user's computer is a per-request target: the block says when, and
+    /// says the bot's own tools stay the default.
+    #[test]
+    fn pc_family_is_for_explicit_requests_only() {
+        let b = block_for(["browser_open", "pc_shell_run"], true).unwrap();
+        assert!(b.contains("USER'S own computer"));
+        assert!(b.contains("ONLY when the user's message asks"));
+        assert!(b.contains("use YOUR OWN tools"));
+        assert!(!block_for(["browser_open"], true).unwrap().contains("pc_*"));
+        let host = place_block(&place(ComputerLabel::Host, true)).unwrap();
+        assert!(host.contains("pc_* tools") && host.contains("use YOUR OWN tools"));
     }
 
     #[test]

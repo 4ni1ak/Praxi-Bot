@@ -168,6 +168,18 @@ impl DesktopControlGate for LoopControl {
             .is_some_and(|ctx| ctx.resolved_computer.browser)
     }
 
+    fn remote_browser_for_run(
+        &self,
+        run_id: &str,
+    ) -> Option<std::sync::Arc<dyn builtin_tools::BrowserDriver>> {
+        let sh = self.sh.upgrade()?;
+        let id = run_id.parse::<Uuid>().ok().map(RunId)?;
+        sh.runs
+            .lock()
+            .get(&id)
+            .and_then(|ctx| ctx.resolved_computer.remote_browser.clone())
+    }
+
     fn browser_headless_for_run(&self, run_id: &str) -> Option<bool> {
         let sh = self.sh.upgrade()?;
         let id = run_id.parse::<Uuid>().ok().map(RunId)?;
