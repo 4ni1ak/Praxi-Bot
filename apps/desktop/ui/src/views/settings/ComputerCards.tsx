@@ -1,3 +1,4 @@
+import { TrustedFolders } from "../../components/TrustedFolders";
 import { Monitor } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -120,6 +121,15 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
       description: t("computerAccess.description"),
       keywords: "bots use computer server host bilgisayar sunucu botlarim izin",
       node: <ComputerAccessCard />
+    },
+    {
+      id: "trusted-folders",
+      section: "computer",
+      kind: "block",
+      title: t("folderTrust.title"),
+      description: t("folderTrust.description"),
+      keywords: "trust folder repository klasor guven depo",
+      node: <TrustedFolders />
     },
     {
       id: "permissions",

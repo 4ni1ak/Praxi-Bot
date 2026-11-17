@@ -158,6 +158,12 @@ pub(crate) struct TestTool {
     /// Trust of text this tool puts in context, when it is not the spec class.
     /// Discovery sets this from the tools it actually returned.
     pub(crate) exposure: Option<tool_registry::OutputExposure>,
+    /// The origin this tool reports as the browser page's (`current_origin`); the loop hands it
+    /// back as `expected_origin`, which the tool records in `seen_expected`.
+    pub(crate) page_origin: Arc<parking_lot::Mutex<Option<String>>>,
+    pub(crate) seen_expected: Arc<parking_lot::Mutex<Vec<Option<String>>>>,
+    /// After a call the page is on this origin (a navigation the action caused).
+    pub(crate) moves_to: Option<String>,
 }
 
 pub(crate) fn tool(name: &str, effect: Effect, output: &str) -> TestTool {
@@ -194,6 +200,9 @@ pub(crate) fn with_class(
         self_spill: None,
         bots: None,
         exposure: None,
+        page_origin: Arc::new(parking_lot::Mutex::new(None)),
+        seen_expected: Arc::new(parking_lot::Mutex::new(Vec::new())),
+        moves_to: None,
     }
 }
 
@@ -207,8 +216,17 @@ impl Tool for TestTool {
             .as_ref()
             .is_none_or(|l| bot_id.is_some_and(|b| l.iter().any(|x| x == b)))
     }
+    async fn current_origin(&self, _: &ToolContext, _: &Value) -> Option<String> {
+        self.page_origin.lock().clone()
+    }
     async fn call(&self, ctx: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
         self.count.fetch_add(1, Ordering::SeqCst);
+        self.seen_expected.lock().push(ctx.expected_origin.clone());
+        if self.count.load(Ordering::SeqCst) == 2
+            && let Some(to) = &self.moves_to
+        {
+            *self.page_origin.lock() = Some(to.clone());
+        }
         if let Some(b) = &self.barrier {
             b.wait().await;
         }
@@ -2052,7 +2070,10 @@ async fn steering_refresh_leaves_run_state_unlocked_and_rechecks_closed() {
             assert!(ctx.state.lock().steer.is_empty());
             assert_eq!(messages.len(), 1, "closed run accepted a chat row");
             // Keep this test's artificial close from starting a follow-up.
-            assert_eq!(lp.sh.queued.lock().remove(&env.chat).unwrap(), [input]);
+            assert_eq!(
+                lp.sh.queued.lock().remove(&env.chat).unwrap(),
+                [(input, "unknown")]
+            );
         } else {
             assert_eq!(delivery, Delivery::Steered(run));
             assert_eq!(messages.len(), 2);
@@ -5053,7 +5074,7 @@ async fn a_queued_follow_up_is_put_back_when_its_turn_cannot_start() {
         .get(&env.chat)
         .cloned()
         .unwrap_or_default();
-    assert_eq!(queued, ["two"]);
+    assert_eq!(queued, [("two".to_owned(), "unknown")]);
     assert!(
         !lp.sh.active.lock().contains_key(&env.chat),
         "the chat slot is released"
@@ -7295,6 +7316,7 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             DROP TABLE bot_skill_assignment;
             DROP TABLE bot_skill_assignment_state;
             DROP TABLE IF EXISTS file_provenance;
+            DROP TABLE trusted_folders;
             ALTER TABLE runs DROP COLUMN computer_node;
             ALTER TABLE runs DROP COLUMN computer_node_name;
             ALTER TABLE runs DROP COLUMN paused_at_ms;
@@ -7303,6 +7325,7 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             ALTER TABLE messages DROP COLUMN exposure_untrusted;
             ALTER TABLE messages DROP COLUMN exposure_private;
             ALTER TABLE messages DROP COLUMN exposure_sources;
+            ALTER TABLE messages DROP COLUMN source;
             PRAGMA user_version = 3;",
         )
         .unwrap();

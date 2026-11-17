@@ -49,6 +49,7 @@ pub mod pc_access;
 pub mod peer;
 pub mod policy;
 mod provider_models;
+pub mod trusted_folders;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;
@@ -1012,6 +1013,12 @@ fn api_routes() -> Router<AppState> {
             axum::routing::put(host_links::set_computer_access),
         )
         .route("/v1/hosts/home", get(host_copy::home))
+        .route(
+            "/v1/trusted-folders",
+            get(trusted_folders::list)
+                .post(trusted_folders::add)
+                .delete(trusted_folders::remove),
+        )
         .route(
             "/v1/hosts/{id}/copy-setup",
             get(host_copy::plan).post(host_copy::copy),

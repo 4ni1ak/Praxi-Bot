@@ -224,6 +224,9 @@ impl HttpDaemonClient {
             .request(method, format!("{}{path}", self.base_url))
             .bearer_auth(self.token.expose())
             .timeout(Duration::from_secs(30));
+        if path.starts_with("/v1/chats/") && path.ends_with("/messages") {
+            rb = rb.header("x-praxi-message-source", "telegram");
+        }
         if let Some(key) = &self.owner_key {
             rb = rb.header("x-praxi-owner-key", key.expose());
         }

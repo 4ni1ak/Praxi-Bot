@@ -762,6 +762,25 @@ impl AgentLoop {
         directive: Option<ScheduleWork>,
         handoff: Option<RunId>,
     ) -> Result<RunId> {
+        let source = match initiator_of(kind) {
+            InitiatorKind::Schedule | InitiatorKind::ExternalSchedule => "schedule",
+            InitiatorKind::ExternalAgent => "external_agent",
+            InitiatorKind::Channel => "channel",
+            _ => "unknown",
+        };
+        self.start_turn_from(chat_id, user_message, kind, directive, handoff, source)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_turn_from(
+        &self,
+        chat_id: ChatId,
+        user_message: &str,
+        kind: &str,
+        directive: Option<ScheduleWork>,
+        handoff: Option<RunId>,
+        source: &'static str,
+    ) -> Result<RunId> {
         // `@Y` in the user's own message: Y answers this turn in this chat (up
         // to three bots, one after the other). Only human turns are parsed.
         if directive.is_none()
@@ -778,6 +797,7 @@ impl AgentLoop {
                 handoff,
                 Some(first),
                 false,
+                source,
             )?;
             if !rest.is_empty() {
                 self.sh
@@ -789,7 +809,16 @@ impl AgentLoop {
         }
         // A plain turn ends any leftover chain of an earlier message.
         self.sh.mention_chain.lock().remove(&chat_id);
-        self.start_turn_as_bot(chat_id, user_message, kind, directive, handoff, None, false)
+        self.start_turn_as_bot(
+            chat_id,
+            user_message,
+            kind,
+            directive,
+            handoff,
+            None,
+            false,
+            source,
+        )
     }
 
     /// Bots (existing, with a usable profile) the user's `text` calls with `@`,
@@ -820,6 +849,7 @@ impl AgentLoop {
         handoff: Option<RunId>,
         as_bot: Option<BotId>,
         reuse_user_message: bool,
+        source: &'static str,
     ) -> Result<RunId> {
         if self.sh.providers.read().setup_required() {
             return Err(LoopError::SetupRequired);
@@ -887,6 +917,7 @@ impl AgentLoop {
                     run_id,
                     user_message,
                     mention_message_id(kind),
+                    source,
                 )?;
             }
             if let Some(d) = directive {
@@ -910,6 +941,19 @@ impl AgentLoop {
         chat_id: ChatId,
         text: &str,
         mode: MessageMode,
+    ) -> Result<Delivery> {
+        self.send_user_message_from(chat_id, text, mode, "unknown")
+    }
+
+    /// Route a message with server-authenticated origin, recorded before execution.
+    /// # Errors
+    /// As [`Self::send_user_message`].
+    pub fn send_user_message_from(
+        &self,
+        chat_id: ChatId,
+        text: &str,
+        mode: MessageMode,
+        source: &'static str,
     ) -> Result<Delivery> {
         if let Some(run_id) = self.stop_command_target(chat_id, text) {
             self.cancel(run_id)?;
@@ -947,6 +991,7 @@ impl AgentLoop {
                                 run_id,
                                 content,
                                 None,
+                                source,
                             )?;
                             st.steer.push_back(stored);
                             return Ok(Delivery::Steered(run_id));
@@ -958,11 +1003,18 @@ impl AgentLoop {
                     .lock()
                     .entry(chat_id)
                     .or_default()
-                    .push_back(text.to_owned());
+                    .push_back((text.to_owned(), source));
                 return Ok(Delivery::Queued);
             }
         }
-        Ok(Delivery::NewTurn(self.run_turn(chat_id, text)?))
+        Ok(Delivery::NewTurn(self.start_turn_from(
+            chat_id,
+            text,
+            &kind_for(InitiatorKind::Human),
+            None,
+            None,
+            source,
+        )?))
     }
 
     /// The running turn of `chat_id` when `text` is the `/stop` command and
@@ -1686,12 +1738,13 @@ impl AgentLoop {
         run_id: RunId,
         text: &str,
         id: Option<Uuid>,
+        source: &str,
     ) -> Result<String> {
         // A key pasted into the chat is stored (and replayed into every later
         // provider request) masked.
         self.sh.refresh_redactor();
         let content = self.sh.redact(text.to_owned());
-        self.insert_redacted_user_message(user_id, chat_id, run_id, content, id)
+        self.insert_redacted_user_message(user_id, chat_id, run_id, content, id, source)
     }
 
     fn insert_redacted_user_message(
@@ -1701,9 +1754,11 @@ impl AgentLoop {
         run_id: RunId,
         content: String,
         id: Option<Uuid>,
+        source: &str,
     ) -> Result<String> {
+        let id = id.unwrap_or_else(Uuid::now_v7);
         self.sh.storage.insert_message(&DbMessage {
-            id: id.unwrap_or_else(Uuid::now_v7),
+            id,
             user_id,
             chat_id,
             run_id: Some(run_id),
@@ -1724,6 +1779,7 @@ impl AgentLoop {
             exposure_private: false,
             exposure_sources: Vec::new(),
         })?;
+        self.sh.storage.set_message_source(id, source)?;
         Ok(content)
     }
 
@@ -2123,6 +2179,7 @@ impl AgentLoop {
                 Some(run_id),
                 Some(bot),
                 true,
+                "unknown",
             );
             if started.is_err() {
                 self.sh.mention_chain.lock().remove(&chat_id);
@@ -2131,13 +2188,14 @@ impl AgentLoop {
                     active.remove(&chat_id);
                 }
             }
-        } else if let Some(text) = next {
-            let started = self.start_turn(
+        } else if let Some((text, source)) = next {
+            let started = self.start_turn_from(
                 chat_id,
                 &text,
                 &kind_for(initiator_of(&run.kind)),
                 None,
                 Some(run_id),
+                source,
             );
             if started.is_err() {
                 // Never lose the follow-up: release the slot and put it back.
@@ -2152,7 +2210,7 @@ impl AgentLoop {
                     .lock()
                     .entry(chat_id)
                     .or_default()
-                    .push_front(text);
+                    .push_front((text, source));
             }
         }
     }

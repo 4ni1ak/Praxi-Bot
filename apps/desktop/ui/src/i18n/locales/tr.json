@@ -1250,6 +1250,65 @@
     "serviceWrongTarget": {
       "title": "Praxi yanıt vermeyen bir servise bakıyor",
       "hint": "Bu bilgisayara dön ya da yerel servisi yeniden başlat."
+    },
+    "startup": {
+      "starting": {
+        "title": "Praxi'nin servisi her zamankinden uzun sürede açılıyor",
+        "hint": "Praxi beklemeye devam ediyor; hiçbir şey kaybolmadı. Değişmezse servisi yeniden başlat."
+      },
+      "spawning": {
+        "title": "Windows Praxi'nin servisini hâlâ başlatıyor",
+        "hint": "Antivirüs veya SmartScreen programı denetliyor olabilir. İlk açılış bir dakika sürebilir."
+      },
+      "sidecarMissing": {
+        "title": "Praxi'nin servis programı bulunamadı",
+        "hint": "{{file}} dosyası yok. Praxi'yi yeniden kur ve klasöründen dosya silme."
+      },
+      "sidecarBlocked": {
+        "title": "Windows Praxi'nin servisini engelledi",
+        "hint": "Antivirüs, SmartScreen veya bir ilke çalıştırmayı reddetti. Praxi klasöründeki bot.exe'ye izin ver, sonra yeniden dene."
+      },
+      "spawnFailed": {
+        "title": "Praxi'nin servisi başlatılamadı",
+        "hint": "Nedeni aşağıdaki ayrıntılarda. Yeniden dene ya da servisi yeniden başlat."
+      },
+      "exited": {
+        "title": "Praxi'nin servisi açılır açılmaz durdu (çıkış kodu {{code}})",
+        "hint": "Günlüğünün son satırları aşağıda. Tekrarlanırsa ayrıntıları kopyalayıp gönder."
+      },
+      "exitedDll": {
+        "title": "Praxi'nin servisi açılamıyor: bir Windows bileşeni eksik (çıkış kodu {{code}})",
+        "hint": "Microsoft'tan Microsoft Visual C++ Redistributable (x64) kur, sonra yeniden dene."
+      },
+      "exitedBadImage": {
+        "title": "Praxi'nin servis dosyası bozuk ya da bu bilgisayara uygun değil (çıkış kodu {{code}})",
+        "hint": "Praxi'yi yeniden kur. Tekrarlanırsa ayrıntıları kopyalayıp gönder."
+      },
+      "exitedCrash": {
+        "title": "Praxi'nin servisi açılırken çöktü (çıkış kodu {{code}})",
+        "hint": "Aşağıdaki ayrıntıları kopyalayıp gönder: çıkış kodunu ve ulaştığı son adımı gösterir."
+      },
+      "notResponding": {
+        "title": "Praxi'nin servisi çalışıyor ama yanıt vermiyor",
+        "hint": "Bu bilgisayarda yavaş olabilir. Servisi yeniden başlat; tekrarlanırsa ayrıntıları kopyala."
+      },
+      "portInUse": {
+        "title": "{{port}} numaralı bağlantı noktasını başka bir program kullanıyor",
+        "hint": "O programı kapat ya da bilgisayarı yeniden başlat, sonra yeniden dene."
+      },
+      "unreachable": {
+        "title": "Praxi'nin servisi yanıt veriyor ama uygulama ona güvenmiyor",
+        "hint": "{{port}} numaralı bağlantı noktasını başka bir program kullanıyor olabilir. Servisi yeniden başlat."
+      }
+    },
+    "startupPanel": {
+      "retry": "Yeniden dene",
+      "restart": "Servisi yeniden başlat",
+      "copy": "Ayrıntıları kopyala",
+      "copied": "Kopyalandı",
+      "openLogs": "Günlük klasörünü aç",
+      "logTitle": "Servis günlüğünün son satırları",
+      "waited": "{{seconds}} sn'dir bekleniyor"
     }
   },
   "home": {
@@ -3269,5 +3328,14 @@
       "skipped": "Atlandı",
       "failed": "Başarısız"
     }
+  },
+  "folderTrust": {
+    "title": "Güvenilen klasörler",
+    "description": "Güvendiğiniz klasörler kendi içeriğiniz olarak değerlendirilir. Botun indirdiği dosyalar dış içerik sayılmaya devam eder. Mevcut görevler okudukları içeriği korur.",
+    "action": "Bu klasöre güveniyorum — {{folder}} klasörünü dış içerik sayma",
+    "saved": "Güveniliyor: {{folder}}",
+    "empty": "Henüz güvenilen klasör yok. Bir klasörü okuduktan sonra onay kartından güvenebilirsiniz.",
+    "remove": "{{folder}} klasörüne güveni kaldır",
+    "ownerRequired": "Klasör güvenini değiştirmek için bu bilgisayardaki masaüstü uygulamasını açın."
   }
 }

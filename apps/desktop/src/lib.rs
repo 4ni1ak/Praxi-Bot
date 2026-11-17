@@ -766,6 +766,28 @@ async fn daemon_restart(
     daemon::restart(&daemon).await
 }
 
+/// How far the local service got when it does not come up: stage, exit code, last log lines.
+/// Read-only; the start-up screen polls it. Main window only.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // tauri hands the window and state over by value
+fn daemon_diagnostics(
+    window: Window,
+    daemon: State<'_, Arc<DaemonHandle>>,
+) -> Result<daemon::Diagnostics, String> {
+    require_window(&window, MAIN_ONLY)?;
+    Ok(daemon::diagnostics(&daemon))
+}
+
+/// Show the folder with `desktop-daemon.log` in the file manager. The path is the app's own data
+/// directory, never an argument. Main window only.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // tauri hands the window over by value
+fn open_log_folder(window: Window) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
+    let dir = daemon::log_folder()?;
+    open::that(&dir).map_err(|e| format!("cannot open {} ({e})", dir.display()))
+}
+
 /// Arguments of `providers_cli` (typed so no free-form flag reaches the CLI).
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1125,6 +1147,8 @@ pub fn run() {
             daemon_connect,
             owner_key,
             daemon_restart,
+            daemon_diagnostics,
+            open_log_folder,
             providers_cli,
             get_autostart,
             set_autostart,
@@ -1388,6 +1412,8 @@ mod acl_tests {
         ("daemon_connect", "MAIN_ONLY"),
         ("owner_key", "MAIN_ONLY"),
         ("daemon_restart", "MAIN_ONLY"),
+        ("daemon_diagnostics", "MAIN_ONLY"),
+        ("open_log_folder", "MAIN_ONLY"),
         ("providers_cli", "MAIN_ONLY"),
         ("get_autostart", "MAIN_ONLY"),
         ("set_autostart", "MAIN_ONLY"),
@@ -1582,6 +1608,8 @@ mod acl_tests {
                 "daemon_connect",
                 "owner_key",
                 "daemon_restart",
+                "daemon_diagnostics",
+                "open_log_folder",
                 "simulate_bot_run",
                 "set_stop_hotkey",
                 "notify_show",

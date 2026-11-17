@@ -30,6 +30,8 @@ pub(crate) struct ExecFact {
     pub reads_private: bool,
     #[serde(default)]
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_folder: Option<String>,
 }
 
 impl ExecFact {
@@ -39,6 +41,7 @@ impl ExecFact {
             ingests_untrusted: class.ingests_untrusted,
             reads_private: class.reads_private,
             label: label.into(),
+            trust_folder: None,
         }
     }
 
@@ -49,6 +52,7 @@ impl ExecFact {
             ingests_untrusted: false,
             reads_private: false,
             label: String::new(),
+            trust_folder: None,
         }
     }
 
@@ -64,6 +68,7 @@ impl ExecFact {
             ingests_untrusted: exposure.ingests_untrusted,
             reads_private: exposure.reads_private,
             label,
+            trust_folder: exposure.trust_folder.clone(),
         }
     }
 
@@ -71,9 +76,12 @@ impl ExecFact {
         ContentClass::declared(self.ingests_untrusted, self.reads_private, false)
     }
 
-    fn apply(&self, taint: &mut ContentTaint) {
+    pub(crate) fn apply(&self, taint: &mut ContentTaint) {
         if self.ran {
             taint.note(self.class(), &self.label);
+            if let Some(folder) = &self.trust_folder {
+                taint.trust_folders.insert(folder.clone());
+            }
         }
     }
 }
@@ -91,6 +99,7 @@ const MAX_LABEL_CHARS: usize = 120;
 pub(crate) struct ContentTaint {
     pub exposure: ContentExposure,
     sources: Vec<String>,
+    trust_folders: std::collections::BTreeSet<String>,
     /// Distinct labels dropped because [`MAX_SOURCES`] kept a newer one.
     earlier: usize,
 }
@@ -122,6 +131,8 @@ impl ContentTaint {
     /// Union with taint inherited from a parent run or from stored history.
     pub(crate) fn inherit(&mut self, other: &Self) {
         self.exposure.inherit(other.exposure);
+        self.trust_folders
+            .extend(other.trust_folders.iter().cloned());
         self.earlier += other.earlier;
         for label in &other.sources {
             self.push_label(label);
@@ -804,6 +815,7 @@ pub(crate) fn egress_record(taint: &ContentTaint, name: &str, input: &Value) -> 
     let reason = format!("this run read {sources} and now wants to send data to {host}");
     Some(json!({
         "kind": "egress",
+        "trust_folders": taint.trust_folders,
         "reason": reason,
         "read": read,
         "host": host,

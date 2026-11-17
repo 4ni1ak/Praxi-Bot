@@ -84,6 +84,12 @@ function startStub(port) {
     req.on('end', () => {
       stubLog.push(`${req.method} ${req.url}`);
       const path = req.url.split('?')[0];
+      if (req.method === 'GET' && path === '/search') {
+        // SearXNG-shaped answer: the one offline source of "untrusted content" (a search result).
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ results: [{ title: 'Smoke result', url: 'https://example.org/smoke', content: 'untrusted page text from the stub' }] }));
+        return;
+      }
       if (req.method === 'GET' && path.endsWith('/models')) {
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ object: 'list', data: MODELS.map((id) => ({ id, object: 'model', owned_by: 'stub' })) }));
@@ -151,6 +157,11 @@ async function main() {
   let browser;
   try {
     const stub = await startStub(stubPort);
+    // web_search goes to the stub (SearXNG instance, trusted loopback host): no network, and its answer is untrusted content.
+    writeFileSync(join(dataDir, 'web.toml'), `[search]
+searxng_url = "http://127.0.0.1:${stubPort}/"
+order = ["searxng"]
+`);
     // The scripted provider: OpenAI-compatible, pointed at the stub.
     const add = await cli(['providers', 'add', 'stub', '--base-url', stubUrl, '--model', 'stub-small', '--key-env', 'SMOKE_STUB_KEY'], { SMOKE_STUB_KEY: 'stub-key' });
     if (add.status !== 0) throw new Error(`providers add failed: ${add.stderr || add.stdout}`);

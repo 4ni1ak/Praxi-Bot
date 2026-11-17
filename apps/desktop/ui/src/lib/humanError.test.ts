@@ -91,3 +91,27 @@ test("unknown codes and raw strings fall back to a human sentence; raw text only
   assert.doesNotMatch(layer.humanError({ status: 409, code: "version_conflict", message: "PUT requires expected_version" }).title, /expected_version/);
   await i18n.changeLanguage("en");
 });
+
+test("a service that does not start is worded by its cause, with the exit code and log in the details", async () => {
+  const base: Omit<import("../api/connection.ts").StartupDiagnostics, "stage" | "exit_code"> & { exit_code: number | null } = {
+    elapsed_ms: 21_000, port: 47821, base_url: "http://127.0.0.1:47821", data_dir: "C:/Users/x/data",
+    log_path: "C:/Users/x/data/desktop-daemon.log", sidecar: "C:/Program Files/Praxi/bot.exe", sidecar_exists: true,
+    pid: null, exit_code: null, error: null, log_tail: ["startup: web tools registered (+40 ms)"], app_version: "0.1.0", os: "windows x86_64"
+  };
+  for (const lng of ["en", "tr"]) {
+    await i18n.changeLanguage(lng);
+    const dll = layer.humanStartup({ ...base, stage: "exited", exit_code: -1073741515 });
+    assert.equal(dll.code, "startup.exitedDll");
+    assert.match(dll.title, /0xC0000135/);
+    assert.match(dll.details, /exit code: -1073741515 \(0xC0000135\)/);
+    assert.match(dll.details, /web tools registered/);
+    const stages = ["spawning", "waiting", "sidecar_missing", "sidecar_blocked", "spawn_failed", "exited", "not_responding", "port_in_use", "unreachable"] as const;
+    for (const stage of stages) {
+      const h = layer.humanStartup({ ...base, stage });
+      assert.ok(h.title && !h.title.startsWith("errors."), `${lng}/${stage} title`);
+      assert.ok(h.hint && !h.hint.startsWith("errors."), `${lng}/${stage} hint`);
+    }
+    assert.match(layer.humanStartup({ ...base, stage: "port_in_use" }).title, /47821/);
+  }
+  await i18n.changeLanguage("en");
+});

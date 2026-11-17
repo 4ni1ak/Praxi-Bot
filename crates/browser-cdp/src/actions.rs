@@ -219,7 +219,116 @@ fn web_origin(raw: Option<&str>) -> Option<String> {
     (!rest.is_empty() && !rest.contains(['/', '?', '#', ' ', '@'])).then(|| raw.to_owned())
 }
 
+fn grant_origin_matches(origin: Option<&str>, expected: &str) -> bool {
+    let canonical = |raw: &str| -> Option<String> {
+        let u = url::Url::parse(raw).ok()?;
+        if !matches!(u.scheme(), "http" | "https") {
+            return None;
+        }
+        Some(format!(
+            "{}://{}:{}",
+            u.scheme(),
+            u.host_str()?.trim_end_matches('.').to_ascii_lowercase(),
+            u.port_or_known_default()?
+        ))
+    };
+    origin
+        .and_then(canonical)
+        .is_some_and(|o| Some(o) == canonical(expected))
+}
+
 impl Page {
+    /// Resolve the actual keyboard receiver through browser DOM focus state.
+    /// Unknown/unavailable child sessions fail closed rather than borrowing the top origin.
+    async fn focused_entry(&self) -> Result<RefEntry> {
+        let tree = self.cmd("Page.getFrameTree", json!({})).await?;
+        let mut frame = tree["frameTree"]["frame"]["id"]
+            .as_str()
+            .ok_or_else(|| Error::Element("unknown focused frame".into()))?
+            .to_owned();
+        let mut session: Option<String> = None;
+        let doc = self.cmd("DOM.getDocument", json!({})).await?;
+        let mut root = doc["root"]["nodeId"].clone();
+        for _ in 0..32 {
+            let focus = self
+                .cmd_on(
+                    session.as_deref(),
+                    "DOM.querySelector",
+                    json!({"nodeId": root, "selector": ":focus"}),
+                )
+                .await?;
+            let node = self
+                .cmd_on(
+                    session.as_deref(),
+                    "DOM.describeNode",
+                    json!({"nodeId": focus["nodeId"], "depth": 1, "pierce": true}),
+                )
+                .await?;
+            let node = &node["node"];
+            if let Some(shadow) = node["shadowRoots"]
+                .as_array()
+                .and_then(|roots| roots.first())
+            {
+                root = shadow["nodeId"].clone();
+                continue;
+            }
+            if matches!(node["nodeName"].as_str(), Some("IFRAME" | "FRAME")) {
+                frame = node["frameId"]
+                    .as_str()
+                    .ok_or_else(|| Error::Element("unknown focused child frame".into()))?
+                    .to_owned();
+                if let Some(child) = node.get("contentDocument") {
+                    root = child["nodeId"].clone();
+                } else {
+                    session = self
+                        .shared
+                        .oopif
+                        .lock()
+                        .ok()
+                        .and_then(|m| m.get(&frame).cloned());
+                    if session.is_none() {
+                        return Err(Error::Element("unknown focused child session".into()));
+                    }
+                    let doc = self
+                        .cmd_on(session.as_deref(), "DOM.getDocument", json!({}))
+                        .await?;
+                    root = doc["root"]["nodeId"].clone();
+                }
+            } else {
+                return Ok(RefEntry {
+                    session_id: session,
+                    frame_id: frame,
+                    backend_id: node["backendNodeId"]
+                        .as_i64()
+                        .ok_or_else(|| Error::Element("unknown focused node".into()))?,
+                    name: String::new(),
+                    role: String::new(),
+                });
+            }
+        }
+        Err(Error::Element("focused frame nesting limit".into()))
+    }
+
+    /// Browser-reported origin of the receiving frame; never infer it from a URL.
+    pub async fn input_origin(&self, r: Option<&str>) -> Result<Option<String>> {
+        let e = match r {
+            Some(r) => self.locate(r).await?,
+            None => self.focused_entry().await?,
+        };
+        Ok(self.frame_identity(&e).await?.origin)
+    }
+
+    async fn check_input_origin(&self, e: &RefEntry, expected: Option<&str>) -> Result<()> {
+        if let Some(expected) = expected
+            && !grant_origin_matches(self.frame_identity(e).await?.origin.as_deref(), expected)
+        {
+            return Err(Error::Element(
+                "receiving frame origin changed; ask again before input".into(),
+            ));
+        }
+        Ok(())
+    }
+
     // -- result plumbing ------------------------------------------------------------------------
 
     /// Baseline for diffing: the last snapshot the agent saw (taking one if there is none yet).
@@ -471,10 +580,11 @@ impl Page {
 
     // -- inner actions --------------------------------------------------------------------------
 
-    async fn click_inner(&self, r: &str, clicks: u32) -> Result<()> {
+    async fn click_inner(&self, r: &str, clicks: u32, expected: Option<&str>) -> Result<()> {
         let e = self.locate(r).await?;
         let (x, y) = self.center(&e).await?;
         self.mouse("mouseMoved", x, y, json!({})).await?;
+        self.check_input_origin(&e, expected).await?;
         for n in 1..=clicks {
             let btn = json!({"button": "left", "clickCount": n});
             self.mouse("mousePressed", x, y, btn.clone()).await?;
@@ -495,6 +605,18 @@ impl Page {
     }
 
     async fn key_inner(&self, spec: &str) -> Result<()> {
+        self.key_inner_with_origin(spec, None).await
+    }
+
+    async fn check_focused_origin(&self, expected: Option<&str>) -> Result<()> {
+        if expected.is_some() {
+            let e = self.focused_entry().await?;
+            self.check_input_origin(&e, expected).await?;
+        }
+        Ok(())
+    }
+
+    async fn key_inner_with_origin(&self, spec: &str, expected: Option<&str>) -> Result<()> {
         let k = parse_key(spec)?;
         let mut down = json!({
             "type": if k.text.is_some() { "keyDown" } else { "rawKeyDown" },
@@ -504,7 +626,9 @@ impl Page {
         if let Some(t) = &k.text {
             down["text"] = json!(t);
         }
+        self.check_focused_origin(expected).await?;
         self.cmd("Input.dispatchKeyEvent", down).await?;
+        self.check_focused_origin(expected).await?;
         self.cmd(
             "Input.dispatchKeyEvent",
             json!({"type": "keyUp", "key": k.key, "code": k.code,
@@ -519,8 +643,18 @@ impl Page {
 
     /// Click an element with explicit dialog handling options.
     pub async fn click_with(&self, r: &str, opts: &DialogOptions) -> Result<ActionResult> {
+        self.click_with_origin(r, opts, None).await
+    }
+
+    /// Click with a receiving-frame grant check.
+    pub async fn click_with_origin(
+        &self,
+        r: &str,
+        opts: &DialogOptions,
+        expected: Option<&str>,
+    ) -> Result<ActionResult> {
         let before = self.baseline_with(opts).await?;
-        let res = self.click_inner(r, 1).await;
+        let res = self.click_inner(r, 1, expected).await;
         self.finish(before, res).await
     }
 
@@ -532,7 +666,7 @@ impl Page {
     /// Double-click an element.
     pub async fn double_click(&self, r: &str) -> Result<ActionResult> {
         let before = self.baseline().await?;
-        let res = self.click_inner(r, 2).await;
+        let res = self.click_inner(r, 2, None).await;
         self.finish(before, res).await
     }
 
@@ -550,28 +684,20 @@ impl Page {
 
     /// Replace the content of an input/textarea/contenteditable with `text`.
     pub async fn fill(&self, r: &str, text: &str) -> Result<ActionResult> {
-        let before = self.baseline().await?;
-        let res = async {
-            let e = self.locate(r).await?;
-            self.focus_entry(&e).await?;
-            self.call_on(
-                &e,
-                "function(){ if (this.select) { this.select(); } else { \
-                 const r = document.createRange(); r.selectNodeContents(this); \
-                 const s = getSelection(); s.removeAllRanges(); s.addRange(r); } }",
-                &[],
-            )
-            .await?;
-            if text.is_empty() {
-                self.key_inner("Delete").await
-            } else {
-                self.cmd("Input.insertText", json!({"text": text}))
-                    .await
-                    .map(|_| ())
-            }
-        }
-        .await;
-        self.finish(before, res).await
+        self.fill_with_origin(r, text, None).await
+    }
+
+    /// Node-bound fill with an execution-time grant check. Focus theft cannot redirect it.
+    pub async fn fill_with_origin(
+        &self,
+        r: &str,
+        text: &str,
+        expected: Option<&str>,
+    ) -> Result<ActionResult> {
+        self.fill_secret(r, text, |origin| {
+            expected.is_none_or(|e| grant_origin_matches(origin.as_deref(), e))
+        })
+        .await
     }
 
     /// Type a secret value into a field, but only into a frame whose origin
@@ -657,9 +783,20 @@ impl Page {
 
     /// Choose an `<option>` of a `<select>` by value or visible label.
     pub async fn select_option(&self, r: &str, value: &str) -> Result<ActionResult> {
+        self.select_option_with_origin(r, value, None).await
+    }
+
+    /// Select only while the receiving frame still matches the grant.
+    pub async fn select_option_with_origin(
+        &self,
+        r: &str,
+        value: &str,
+        expected: Option<&str>,
+    ) -> Result<ActionResult> {
         let before = self.baseline().await?;
         let res = async {
             let e = self.locate(r).await?;
+            self.check_input_origin(&e, expected).await?;
             let ok = self
                 .call_on(
                     &e,
@@ -684,8 +821,17 @@ impl Page {
 
     /// Press a key (`Enter`, `Tab`, `Control+a`, ...) on the focused element.
     pub async fn press_key(&self, key: &str) -> Result<ActionResult> {
+        self.press_key_with_origin(key, None).await
+    }
+
+    /// Check the focused frame immediately before dispatching keyboard input.
+    pub async fn press_key_with_origin(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+    ) -> Result<ActionResult> {
         let before = self.baseline().await?;
-        let res = self.key_inner(key).await;
+        let res = self.key_inner_with_origin(key, expected).await;
         self.finish(before, res).await
     }
 

@@ -569,6 +569,14 @@ pub(crate) struct Pending {
     pub gate_grant: bool,
 }
 
+/// Browser actions that act on the page open right now: their allowance is bound to its origin.
+pub(crate) fn is_page_action(name: &str) -> bool {
+    matches!(
+        name,
+        "browser_fill" | "browser_press" | "browser_click" | "browser_select"
+    )
+}
+
 #[derive(Default)]
 pub(crate) struct Grants {
     /// `(chat, bot, tool, computer)`: a grant given to one bot never covers another
@@ -676,6 +684,10 @@ pub(crate) struct RunCtx {
     /// Run-scoped control grants (card 243-1). In memory, per run: gone when
     /// the run ends and not copied to a sub-agent's own context.
     pub control_grants: Mutex<Vec<ControlGrant>>,
+    /// Origin the browser page was on when the current page action was resolved (read from the
+    /// browser itself; `None`: unknown, so the action stays once-only). Set by the loop right
+    /// before the decision and handed to the tool as `expected_origin`.
+    pub page_origin: Mutex<Option<String>>,
 }
 
 /// "Let this run type into this program" on one computer.
@@ -812,7 +824,7 @@ pub(crate) struct Shared {
     pub pending: Mutex<HashMap<ToolCallId, Pending>>,
     pub grants: Mutex<Grants>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
-    pub queued: Mutex<HashMap<ChatId, VecDeque<String>>>,
+    pub queued: Mutex<HashMap<ChatId, VecDeque<(String, &'static str)>>>,
     /// Bots still to answer one user message that mentioned several bots
     /// (`@A @B`), with that message's text. Only the user's own text fills it.
     pub mention_chain: Mutex<HashMap<ChatId, VecDeque<(BotId, Uuid)>>>,
@@ -1555,6 +1567,7 @@ impl Shared {
             }),
             taint: Mutex::new(taint),
             control_grants: Mutex::new(Vec::new()),
+            page_origin: Mutex::new(None),
         });
         Ok(Arc::clone(self.runs.lock().entry(run.id).or_insert(ctx)))
     }
