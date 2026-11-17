@@ -149,6 +149,7 @@ impl ResolverGate {
 impl ToolGate for ResolverGate {
     async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
         let action = ActionRequest {
+            cwd: cwd_for(&req.tool, &req.input),
             category: req.category,
             raw_command: req.raw_command.clone(),
             initiator: self.initiator,
@@ -191,6 +192,16 @@ pub fn raw_command_for(tool: &str, input: &Value) -> String {
         }
         _ => String::new(),
     }
+}
+
+/// The working directory a `shell_run` call names (absolute only), for path resolution in the
+/// permission layer.
+pub fn cwd_for(tool: &str, input: &Value) -> Option<String> {
+    (tool == "shell_run")
+        .then(|| input.get("cwd").and_then(Value::as_str))
+        .flatten()
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
 }
 
 /// Convert a tool output into the JSON a script sees.

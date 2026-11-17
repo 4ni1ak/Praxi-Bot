@@ -324,6 +324,8 @@ impl AppState {
         cfg: DaemonConfig,
         registry: Arc<::live_view::TargetRegistry>,
     ) -> Result<Self, storage::StorageError> {
+        // `<data>/runtimes` (the CLIs Praxi installed) is a protected location for shell commands.
+        permission_engine::set_data_dir(storage.data_dir());
         memory_store::knowledge::brain::cleanup_stale_staging(storage.data_dir())
             .map_err(std::io::Error::other)?;
         let user_id = if let Some(u) = storage.list_users()?.into_iter().next() {
