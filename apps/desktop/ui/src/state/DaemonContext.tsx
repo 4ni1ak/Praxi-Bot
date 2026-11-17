@@ -10,7 +10,7 @@ import {
   useState
 } from "react";
 import { ApiClient } from "../api/client";
-import { type Connection, connectDaemon } from "../api/connection";
+import { type Connection, connectDaemon, type StartupDiagnostics, startupDiagnostics } from "../api/connection";
 import { subscribeEvents } from "../api/events";
 import { MOCK_HOST_ID, mockHostScenario } from "../api/mockHostScenario";
 import { MOCK_BASE_URL } from "../api/mockMode";
@@ -47,6 +47,9 @@ import {
 import { humanLine, type ServiceProblem } from "../lib/humanError";
 
 export type Phase = "connecting" | "ready" | "error";
+
+/** After this long without a connection the start-up screen shows why (see `StartupProblem`). */
+export const STARTUP_STUCK_MS = 15_000;
 
 /** The id of this computer in the computer selector. */
 export const LOCAL_COMPUTER = "local";
@@ -105,6 +108,8 @@ export interface DaemonContextValue {
   restartDaemon: () => Promise<void>;
   /** Why the local service is not answering (null while it is); the UI words it, see `humanService`. */
   serviceProblem: ServiceProblem | null;
+  /** What the shell knows about a start that is slow or failed; null while connected or outside the app. */
+  startup: StartupDiagnostics | null;
   /** Seconds until the next automatic retry while the service is down. */
   retryInSeconds: number | null;
   /** Listen to the raw daemon events (live and replayed); returns the unsubscribe. */
@@ -459,6 +464,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (phase === "ready") {
       failures.current = 0;
+      firstTry.current = Date.now();
       setRetryInSeconds(null);
       return undefined;
     }
@@ -474,6 +480,31 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     return () => {
       window.clearInterval(tick);
       window.clearTimeout(go);
+    };
+  }, [phase]);
+
+  // The shell's view of a start that is slow (>15 s) or failed: stage, exit code, last log lines.
+  const [startup, setStartup] = useState<StartupDiagnostics | null>(null);
+  useEffect(() => {
+    if (phase === "ready") {
+      setStartup(null);
+      return undefined;
+    }
+    let stopped = false;
+    const poll = async () => {
+      if (phase !== "error" && Date.now() - firstTry.current < STARTUP_STUCK_MS) {
+        return;
+      }
+      const d = await startupDiagnostics();
+      if (!stopped) {
+        setStartup(d);
+      }
+    };
+    void poll();
+    const id = window.setInterval(() => void poll(), 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
     };
   }, [phase]);
 
@@ -637,6 +668,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
           : Date.now() - firstTry.current < 20000
             ? "starting"
             : "down",
+    startup,
     retryInSeconds,
     home,
     workLocalNow,

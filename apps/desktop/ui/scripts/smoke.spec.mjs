@@ -1,7 +1,7 @@
 // The flows of the real-app smoke run (card 263). Driven by scripts/smoke.mjs; no test framework:
 // each step is a function, a thrown error fails it, and every step ends with a screenshot plus a
 // check for error banners, danger toasts, console errors and failed requests.
-/* global window, document, location, fetch, URL, console */
+/* global window, document, location, fetch, URL, console, setInterval, clearInterval */
 import process from 'node:process';
 import { join } from 'node:path';
 
@@ -59,7 +59,7 @@ export async function flows(ctx) {
   const results = [];
   let n = 0;
   const run = async (session, name, fn, opts = {}) => {
-    if (ctx.only && !name.includes(ctx.only)) return;
+    if (ctx.only && !ctx.only.split(',').some((part) => name.includes(part))) return;
     n += 1;
     const slug = `${String(n).padStart(2, '0')}-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
     const { page, problems } = session;
@@ -84,7 +84,8 @@ export async function flows(ctx) {
     results.push({ name, ok: !error, error });
     ctx.log(`${error ? 'FAIL' : 'ok  '} ${name}${error ? `  - ${error}` : ''}`);
   };
-  const T = { timeout: 15000 };
+  // Generous: the machine this runs on is often busy with builds, and a flow that is merely slow must not look broken.
+  const T = { timeout: 30000 };
 
   // ---- first run: skip path, then the API-key path against the stub
   const first = await newSession(ctx, { onboarded: false });
@@ -106,7 +107,8 @@ export async function flows(ctx) {
     await page.getByTestId('fr-api-openai').click();
     await page.getByTestId('fr-key').fill('sk-smoke-test-key-123456');
     await page.getByTestId('fr-connect').click();
-    await page.getByTestId('fr-connected').waitFor(T);
+    // Connecting runs real CLI processes (add + test the provider): slow on a busy machine.
+    await page.getByTestId('fr-connected').waitFor({ timeout: 60000 });
     if (!(await page.getByTestId('fr-model').textContent())?.trim()) throw new Error('no model chosen after connecting');
     await page.getByTestId('fr-next').click();
     await page.getByTestId('fr-level-balanced').waitFor(T);
@@ -153,6 +155,17 @@ export async function flows(ctx) {
     await page.getByTestId('new-bot-name').fill('Nova');
     await page.getByTestId('new-bot-submit').click();
     await page.getByTestId('bot-empty-state').waitFor(T);
+  });
+  // Created here, early: the New-bot modal's Create stays disabled in the later part of a full run (Auto brain unresolved).
+  await run(s, 'a Full-level bot is created', async (page) => {
+    await page.getByRole('button', { name: /new bot/i }).first().click();
+    await page.getByTestId('new-bot-name').fill('Fulla');
+    await page.getByTestId('autonomy-auto').click();
+    await page.getByTestId('new-bot-submit').click();
+    await page.getByTestId('bot-empty-state').waitFor(T);
+    const bots = await (await fetch(`${ctx.base}/v1/bots`, { headers: { authorization: `Bearer ${ctx.token}` } })).json();
+    const fulla = bots.find((x) => x.name === 'Fulla');
+    if (!fulla || !JSON.stringify(fulla.config).includes('full')) throw new Error('Fulla was not stored at the Full level');
   });
   await run(s, 'open a chat and send a message; the scripted reply arrives', async (page) => {
     await page.locator('[class*="railItem"]', { hasText: 'Atlas' }).first().click();
@@ -237,6 +250,83 @@ export async function flows(ctx) {
     if (!text || /error:|panic|ssh:|exception|\bat \w+\./i.test(text)) throw new Error(`not a human error: "${text}"`);
     await page.keyboard.press('Escape');
   }, { expectError: true });
+  // ---- permissions and screen control (cards 259, 262: #138 + #140 + #141 together)
+  const auth = (extra = {}) => ({ authorization: `Bearer ${ctx.token}`, 'content-type': 'application/json', 'x-praxi-owner-key': ctx.ownerKey, ...extra });
+  const sendLines = async (page, lines) => {
+    // A run that is still finishing would queue the next message instead of starting it.
+    await page.getByRole('button', { name: /^stop$/i }).waitFor({ state: 'hidden', timeout: 90000 }).catch(() => {});
+    const c = composer(page);
+    await c.fill(lines.join('\n'));
+    await c.press('Enter');
+  };
+  const cards = (page) => page.getByTestId('approval-card');
+  await run(s, 'Full level: a read, then shell_run with no untrusted content, asks nothing', async (page) => {
+    // Always switch: the previous flows left another bot's chat open.
+    await page.locator('[class*="railItem"]', { hasText: 'Fulla' }).first().click();
+    await openFirstChat(page);
+    await sendLines(page, ['call:schedule_list {}', `call:shell_run ${JSON.stringify({ command: 'echo smoke-one' })}`]);
+    // A card would hold the run: the reply of the last step only arrives when nothing asked.
+    await page.getByText(/tool said: .*smoke-one/).first().waitFor(T);
+    if ((await cards(page).count()) > 0) throw new Error('an approval card appeared although nothing untrusted was read');
+  });
+  await run(s, 'after an untrusted read one card offers "This chat"; the next shell call does not ask', async (page) => {
+    await sendLines(page, ['call:web_search {"query":"smoke untrusted"}', `call:shell_run ${JSON.stringify({ command: 'echo smoke-two' })}`]);
+    const card = cards(page).first();
+    await card.waitFor(T);
+    const why = ((await card.getByTestId('approval-why').textContent().catch(() => '')) ?? '').trim();
+    if (!/untrusted/i.test(why)) throw new Error(`the card does not say why: "${why}"`);
+    await card.getByRole('button', { name: /this chat/i }).click();
+    await page.getByText(/tool said: .*smoke-two/).first().waitFor(T);
+    await sendLines(page, [`call:shell_run ${JSON.stringify({ command: 'echo smoke-three' })}`]);
+    await page.getByText(/tool said: .*smoke-three/).first().waitFor(T);
+    // Answered cards stay in the timeline; only a card that still waits has its buttons.
+    if ((await page.getByRole('button', { name: /allow once/i }).count()) > 0) throw new Error('the second shell call asked again after "This chat"');
+  });
+  await run(s, 'human-driving latch: banner, "Give control back", then an observation tool works', async (page) => {
+    // A fresh page: with the live-view side panel open the viewer shows its own controls instead of the banner.
+    await page.reload();
+    await page.locator('[class*="railItem"]', { hasText: 'Fulla' }).first().waitFor(T);
+    // The desktop app reports it with PUT /v1/control/state (its heartbeat); the real app's own idle
+    // heartbeat (the shim's bridge here) would overwrite a single call, so repeat it like the app does.
+    const heartbeat = () => fetch(`${ctx.base}/v1/control/state`, { method: 'PUT', headers: auth(), body: JSON.stringify({ mode: 'human_driving' }) }).then((r) => r.ok);
+    if (!(await heartbeat())) throw new Error('PUT /v1/control/state was refused');
+    const beat = setInterval(() => void heartbeat().catch(() => {}), 150);
+    const banner = page.getByTestId('human-driving-banner');
+    try {
+      await banner.waitFor(T).catch(async (e) => {
+        const state = await (await fetch(`${ctx.base}/v1/control/state`, { headers: auth() })).text();
+        throw new Error(`no banner; daemon says ${state}; ${String(e.message).slice(0, 60)}`);
+      });
+    } finally {
+      clearInterval(beat);
+    }
+    if (!/You are driving/.test((await banner.textContent()) ?? '')) throw new Error('banner text is not the human-driving one');
+    await banner.getByRole('button', { name: /give control back/i }).click();
+    await banner.waitFor({ state: 'hidden', timeout: 15000 });
+    await page.locator('[class*="railItem"]', { hasText: 'Fulla' }).first().click();
+    await openFirstChat(page);
+    await sendLines(page, ['call:desktop_list_apps {}']);
+    await page.getByText(/tool said:/).last().waitFor(T);
+    const said = (await page.getByText(/tool said:/).last().textContent()) ?? '';
+    if (/observation paused|controlling the screen/i.test(said)) throw new Error(`observation still paused after giving control back: ${said.slice(0, 160)}`);
+  });
+  await run(s, 'production origins: preflight, health and an owner call answer for the Tauri webview', async () => {
+    // The app's webview is `tauri://localhost` (macOS, Linux) or `http(s)://tauri.localhost` (Windows),
+    // never the vite origin the rest of this run uses: the daemon must answer them, with the owner header.
+    for (const origin of ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost']) {
+      const pre = await fetch(`${ctx.base}/v1/bots`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type,x-praxi-owner-key' } });
+      const allowed = (pre.headers.get('access-control-allow-headers') ?? '').toLowerCase();
+      if (pre.status !== 204 || pre.headers.get('access-control-allow-origin') !== origin || !allowed.includes('x-praxi-owner-key') || !allowed.includes('authorization')) {
+        throw new Error(`${origin}: preflight ${pre.status}, allow-origin ${pre.headers.get('access-control-allow-origin')}, allow-headers "${allowed}"`);
+      }
+      const health = await fetch(`${ctx.base}/v1/health`, { headers: { origin } });
+      if (health.status !== 200 || health.headers.get('access-control-allow-origin') !== origin || (await health.json())?.status !== 'ok') throw new Error(`${origin}: health route`);
+      const owned = await fetch(`${ctx.base}/v1/bots`, { headers: auth({ origin }) });
+      if (owned.status !== 200 || owned.headers.get('access-control-allow-origin') !== origin) throw new Error(`${origin}: GET /v1/bots with the owner key answered ${owned.status}`);
+    }
+    const foreign = await fetch(`${ctx.base}/v1/bots`, { headers: auth({ origin: 'http://evil.example' }) });
+    if (foreign.status !== 403) throw new Error(`a foreign origin got ${foreign.status}, not 403`);
+  });
   await run(s, 'owner routes refuse the general token alone and accept the owner key (card 262)', async () => {
     // The UI flows above already did these things with the owner key; here the same routes are
     // called the way a CLI engine or a script holding only the API token would call them.

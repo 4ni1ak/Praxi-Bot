@@ -84,6 +84,7 @@ import { useBotSkills } from "./state/useBotSkills";
 import { BotEditModal } from "./views/BotEditModal";
 import { BotEmptyView } from "./views/BotEmptyView";
 import { ErrorNotice } from "./components/ErrorNotice";
+import { StartupProblem } from "./components/StartupProblem";
 import { humanService } from "./lib/humanError";
 import { FinishSetupHint } from "./components/FinishSetupHint";
 import { BotProfileModal } from "./views/BotProfileModal";
@@ -165,6 +166,7 @@ function AppShell() {
     workLocalNow,
     homeStale,
     serviceProblem,
+    startup,
     retryInSeconds,
     activeComputerId
   } = useDaemon();
@@ -846,7 +848,9 @@ function AppShell() {
         {route.kind === "home" && !hostEmpty ? (
           <div className={styles.centerPane}>
             <Card padding="lg" className={styles.emptyStateCard}>
-              {phase === "error" ? (
+              {phase !== "ready" && startup ? (
+                <StartupProblem startup={startup} raw={daemonError ?? ""} />
+              ) : phase === "error" ? (
                 <div className={styles.selectedBotContent} data-testid="daemon-offline-empty-state">
                   <span className={`${styles.stateIcon} ${styles.stateIconDanger}`}><ServerOff /></span>
                   <ErrorNotice error={humanService(serviceProblem ?? "down", daemonError ?? "")} />

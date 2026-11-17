@@ -7,10 +7,14 @@
 //! A daemon the app started is stopped again when the app exits; one that was
 //! already running is never touched.
 
+use std::collections::VecDeque;
 use std::ffi::OsString;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::process::{Child, ChildStderr, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -52,6 +56,196 @@ pub struct DaemonHandle {
     fake: Mutex<bool>,
     /// Daemon log length when the current child was spawned.
     log_offset: Mutex<u64>,
+    /// What the start-up screen shows when the daemon does not come up (see [`diagnostics`]).
+    diag: Mutex<DiagState>,
+    /// The last lines the current child wrote to its stderr.
+    tail: Arc<Mutex<VecDeque<String>>>,
+    /// Set by the stderr pump when the child's stderr reached end of file.
+    pump_done: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+/// How far the start of the daemon got; the UI words it (`humanStartup`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// Nothing started yet.
+    #[default]
+    Idle,
+    /// The OS is still creating the process (antivirus scans happen here).
+    Spawning,
+    /// The process runs; its health probe does not answer yet.
+    Waiting,
+    /// Connected.
+    Ready,
+    /// The `bot` sidecar is not where the app looks for it.
+    SidecarMissing,
+    /// The OS refused to run the sidecar (antivirus, `SmartScreen`, policy).
+    SidecarBlocked,
+    /// Any other failure to start the process.
+    SpawnFailed,
+    /// The process ended before it answered; see `exit_code` and `log_tail`.
+    Exited,
+    /// The process runs but never answered within the start timeout.
+    NotResponding,
+    /// Another program holds the daemon's port.
+    PortInUse,
+    /// The daemon answers but the app refused to hand it the token.
+    Unreachable,
+}
+
+#[derive(Debug, Default)]
+struct DiagState {
+    stage: Stage,
+    since: Option<Instant>,
+    error: Option<String>,
+    exit_code: Option<i32>,
+}
+
+/// Everything the "the service does not start" screen shows and copies.
+#[derive(Debug, Clone, Serialize)]
+pub struct Diagnostics {
+    /// How far the start got.
+    pub stage: Stage,
+    /// Milliseconds since the current attempt began.
+    pub elapsed_ms: u64,
+    /// Port the daemon is expected on.
+    pub port: u16,
+    /// `http://127.0.0.1:PORT`.
+    pub base_url: String,
+    /// Data directory in use.
+    pub data_dir: String,
+    /// The `desktop-daemon.log` the app writes the daemon's output to.
+    pub log_path: String,
+    /// The `bot` binary the app tried to run.
+    pub sidecar: String,
+    /// Whether that path is a file.
+    pub sidecar_exists: bool,
+    /// PID of the running child, if any.
+    pub pid: Option<u32>,
+    /// Exit code of a child that ended (Windows NTSTATUS codes are negative).
+    pub exit_code: Option<i32>,
+    /// The reason in English, when known.
+    pub error: Option<String>,
+    /// The daemon's last output lines.
+    pub log_tail: Vec<String>,
+    /// Version of this app.
+    pub app_version: String,
+    /// Operating system.
+    pub os: String,
+}
+
+const TAIL_LINES: usize = 60;
+const MAX_LOG_BYTES: u64 = 512 * 1024;
+const LOG_FILE_NAME: &str = "desktop-daemon.log";
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for a Unix time (UTC; no date crate needed).
+fn format_utc(secs: u64) -> String {
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    let z = i64::try_from(days).unwrap_or(0) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+fn now_stamp() -> String {
+    format_utc(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+    )
+}
+
+/// One timestamped line appended to `desktop-daemon.log` (errors are ignored: a log must never stop the app).
+fn append_log(data_dir: &Path, who: &str, line: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path(data_dir))
+    {
+        let _ = writeln!(f, "{} [{who}] {line}", now_stamp());
+    }
+}
+
+/// Keep the log small: past [`MAX_LOG_BYTES`] it becomes `desktop-daemon.log.1` (one generation).
+fn rotate_log(data_dir: &Path) {
+    let path = log_path(data_dir);
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_LOG_BYTES) {
+        let old = data_dir.join(format!("{LOG_FILE_NAME}.1"));
+        let _ = std::fs::remove_file(&old);
+        let _ = std::fs::rename(&path, &old);
+    }
+}
+
+/// Copy the child's stderr into the log (timestamped) and the in-memory tail.
+fn pump_stderr(
+    stderr: ChildStderr,
+    data_dir: PathBuf,
+    tail: Arc<Mutex<VecDeque<String>>>,
+    done: Arc<AtomicBool>,
+) {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut raw = Vec::new();
+        loop {
+            raw.clear();
+            match reader.read_until(b'\n', &mut raw) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let text = String::from_utf8_lossy(&raw);
+            let line: String = text.trim_end().chars().take(2000).collect();
+            if line.is_empty() {
+                continue;
+            }
+            append_log(&data_dir, "bot", &line);
+            let mut t = tail.lock();
+            if t.len() >= TAIL_LINES {
+                t.pop_front();
+            }
+            t.push_back(line);
+        }
+        done.store(true, Ordering::SeqCst);
+    });
+}
+
+/// `bind` failures as the OS words them, for "another program holds the port".
+fn looks_like_port_clash(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    [
+        "address already in use",
+        "only one usage of each socket address",
+        "os error 10048",
+        "os error 10013",
+        "os error 98",
+        "os error 48",
+    ]
+    .iter()
+    .any(|m| t.contains(m))
+}
+
+/// What a failed `spawn` means for the person (see [`Stage`]).
+fn classify_spawn_error(e: &std::io::Error, sidecar_exists: bool) -> Stage {
+    match (e.kind(), e.raw_os_error()) {
+        // ERROR_VIRUS_INFECTED / ERROR_ACCESS_DISABLED_BY_POLICY / ..._NO_SAFER_UI_BY_POLICY
+        (_, Some(225 | 1260 | 1261)) | (std::io::ErrorKind::PermissionDenied, _) => {
+            Stage::SidecarBlocked
+        }
+        (std::io::ErrorKind::NotFound, _) => Stage::SidecarMissing,
+        _ if !sidecar_exists => Stage::SidecarMissing,
+        _ => Stage::SpawnFailed,
+    }
 }
 
 impl DaemonHandle {
@@ -61,6 +255,16 @@ impl DaemonHandle {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+
+    fn set_stage(&self, stage: Stage, error: Option<String>) {
+        let mut d = self.diag.lock();
+        if stage == Stage::Spawning {
+            d.since = Some(Instant::now());
+            d.exit_code = None;
+        }
+        d.stage = stage;
+        d.error = error;
     }
 
     fn started_by_app(&self) -> bool {
@@ -272,7 +476,7 @@ pub fn owner_key() -> Result<&'static str, String> {
     Ok(KEY.get_or_init(|| key))
 }
 
-fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
+fn spawn_daemon(handle: &DaemonHandle, data_dir: &Path, fake: bool) -> Result<Child, String> {
     let mut cmd = bot_command();
     cmd.arg("serve").arg("--port").arg(port().to_string());
     cmd.arg("--owner-key-stdin");
@@ -284,19 +488,47 @@ fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
     if cfg!(debug_assertions) {
         cmd.env("BOT_ALLOWED_ORIGINS", "http://localhost:1420");
     }
-    let _ = std::fs::create_dir_all(data_dir);
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(data_dir.join("desktop-daemon.log"))
-        .map_or_else(|_| Stdio::null(), Stdio::from);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(log);
+    if let Err(e) = std::fs::create_dir_all(data_dir) {
+        let msg = format!("cannot create the data folder {} ({e})", data_dir.display());
+        handle.set_stage(Stage::SpawnFailed, Some(msg.clone()));
+        return Err(msg);
+    }
+    let bin = bot_binary();
+    let sidecar_exists = Path::new(&bin).is_file();
+    append_log(
+        data_dir,
+        "app",
+        &format!(
+            "starting `{}` serve --port {} (sidecar file present: {sidecar_exists}, fake provider: {fake}, app {})",
+            bin.to_string_lossy(),
+            port(),
+            env!("CARGO_PKG_VERSION"),
+        ),
+    );
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| {
-        format!(
+        let msg = format!(
             "cannot start `{}` ({e}); set PRAXIBOT_BOT_BIN or put `bot` next to the app",
-            bot_binary().to_string_lossy()
-        )
+            bin.to_string_lossy()
+        );
+        append_log(data_dir, "app", &msg);
+        handle.set_stage(classify_spawn_error(&e, sidecar_exists), Some(msg.clone()));
+        msg
     })?;
+    handle.tail.lock().clear();
+    if let Some(stderr) = child.stderr.take() {
+        let done = Arc::new(AtomicBool::new(false));
+        *handle.pump_done.lock() = Some(Arc::clone(&done));
+        pump_stderr(
+            stderr,
+            data_dir.to_path_buf(),
+            Arc::clone(&handle.tail),
+            done,
+        );
+    }
+    append_log(data_dir, "app", &format!("started pid {}", child.id()));
     // One line on the child's stdin, then the pipe is closed: the key is in no
     // argument, file or environment variable.
     if let Some(mut stdin) = child.stdin.take() {
@@ -305,10 +537,19 @@ fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
             Ok(key) => key,
             Err(e) => {
                 let _ = child.kill();
+                handle.set_stage(Stage::SpawnFailed, Some(e.clone()));
                 return Err(e);
             }
         };
-        let _ = writeln!(stdin, "{key}");
+        // Written and flushed, then `stdin` drops at the end of this block and closes the pipe,
+        // so the daemon's `read_line` returns at once.
+        if let Err(e) = writeln!(stdin, "{key}").and_then(|()| stdin.flush()) {
+            append_log(
+                data_dir,
+                "app",
+                &format!("could not hand the owner key to the daemon: {e}"),
+            );
+        }
     }
     Ok(child)
 }
@@ -320,7 +561,7 @@ fn spawn_daemon(data_dir: &Path, fake: bool) -> Result<Child, String> {
 const NO_PROVIDER_MARKER: &str = "no usable provider";
 
 fn log_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("desktop-daemon.log")
+    data_dir.join(LOG_FILE_NAME)
 }
 
 fn log_len(data_dir: &Path) -> u64 {
@@ -340,8 +581,13 @@ fn no_usable_provider_since(data_dir: &Path, offset: u64) -> bool {
 
 /// Spawn the daemon and remember where its log output will start.
 fn spawn_tracked(handle: &DaemonHandle, data: &Path, fake: bool) -> Result<(), String> {
+    handle.set_stage(Stage::Spawning, None);
+    // The OS may take long to create the process (antivirus scan of a new, unsigned program).
+    let _ = std::fs::create_dir_all(data);
+    rotate_log(data);
     let offset = log_len(data);
-    let child = spawn_daemon(data, fake)?;
+    let child = spawn_daemon(handle, data, fake)?;
+    handle.set_stage(Stage::Waiting, None);
     *handle.log_offset.lock() = offset;
     *handle.child.lock() = Some(child);
     *handle.fake.lock() = fake;
@@ -353,14 +599,6 @@ fn child_pid(handle: &DaemonHandle) -> Option<u32> {
     let mut g = handle.child.lock();
     let c = g.as_mut()?;
     matches!(c.try_wait(), Ok(None)).then(|| c.id())
-}
-
-fn child_exited(handle: &DaemonHandle) -> bool {
-    handle
-        .child
-        .lock()
-        .as_mut()
-        .is_some_and(|c| !matches!(c.try_wait(), Ok(None)))
 }
 
 /// Loopback port of `url` when its host is a local one (remote `BOT_URL`s are
@@ -440,6 +678,7 @@ async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
     let data = data_dir()?;
     if healthy(&url).await {
         check_listener(handle, &url, false).await?;
+        handle.set_stage(Stage::Ready, None);
         return connection(handle, url, &data);
     }
     // A previously started child that died is dropped first.
@@ -448,6 +687,12 @@ async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
         if std::env::var_os("BOT_URL").is_some() {
             return Err(format!("no daemon answers at {url}"));
         }
+        if let Some(who) = foreign_listener(&url).await {
+            let msg = format!("port {} is in use by another program{who}", port());
+            append_log(&data, "app", &msg);
+            handle.set_stage(Stage::PortInUse, Some(msg.clone()));
+            return Err(msg);
+        }
         let fake = wants_fake();
         spawn_tracked(handle, &data, fake)?;
     }
@@ -455,17 +700,16 @@ async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
     let deadline = tokio::time::Instant::now() + START_TIMEOUT;
     loop {
         if healthy(&url).await {
-            check_listener(handle, &url, true).await?;
+            if let Err(e) = check_listener(handle, &url, true).await {
+                append_log(&data, "app", &e);
+                handle.set_stage(Stage::Unreachable, Some(e.clone()));
+                return Err(e);
+            }
             break;
         }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(format!(
-                "the daemon did not become healthy at {url} (see {})",
-                data.join("desktop-daemon.log").display()
-            ));
-        }
         // A child that already exited will never answer.
-        if child_exited(handle) {
+        if let Some(code) = child_exit_code(handle) {
+            wait_for_pump(handle).await;
             // No usable provider (none configured, all disabled, key missing):
             // `bot serve` exits immediately.  Retry once with `--fake-provider`
             // so the UI can still connect and the user can fix it, but only
@@ -479,14 +723,165 @@ async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 continue;
             }
-            return Err(format!(
-                "the daemon exited right after start (see {})",
-                data.join("desktop-daemon.log").display()
-            ));
+            return Err(exited(handle, &data, code));
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let msg = format!(
+                "the daemon did not become healthy at {url} (see {})",
+                log_path(&data).display()
+            );
+            append_log(&data, "app", &msg);
+            handle.set_stage(Stage::NotResponding, Some(msg.clone()));
+            return Err(msg);
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
+    handle.set_stage(Stage::Ready, None);
     connection(handle, url, &data)
+}
+
+/// Record that the child ended with `code` and word it.
+fn exited(handle: &DaemonHandle, data: &Path, code: Option<i32>) -> String {
+    let tail: Vec<String> = handle.tail.lock().iter().cloned().collect();
+    let clash = looks_like_port_clash(&tail.join("\n"));
+    let shown = code.map_or_else(|| "unknown".to_owned(), |c| c.to_string());
+    let msg = if clash {
+        format!("port {} is in use by another program", port())
+    } else {
+        format!(
+            "the daemon exited right after start with code {shown} (see {})",
+            log_path(data).display()
+        )
+    };
+    append_log(data, "app", &format!("daemon exited with code {shown}"));
+    {
+        let mut d = handle.diag.lock();
+        d.stage = if clash {
+            Stage::PortInUse
+        } else {
+            Stage::Exited
+        };
+        d.exit_code = code;
+        d.error = Some(msg.clone());
+    }
+    msg
+}
+
+/// `Some(code)` once the app-owned child has ended (`code` is `None` when the OS gave none).
+#[allow(clippy::option_option)] // outer: has it ended; inner: did the OS give a code
+fn child_exit_code(handle: &DaemonHandle) -> Option<Option<i32>> {
+    let mut g = handle.child.lock();
+    let c = g.as_mut()?;
+    match c.try_wait() {
+        Ok(None) => None,
+        Ok(Some(status)) => Some(status.code()),
+        Err(_) => Some(None),
+    }
+}
+
+/// Give the stderr pump a moment to copy the last words of a child that just ended.
+async fn wait_for_pump(handle: &DaemonHandle) {
+    let done = handle.pump_done.lock().clone();
+    let Some(done) = done else { return };
+    for _ in 0..20 {
+        if done.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Whether a socket is open on `url` that is not a Praxi daemon (it accepts connections but never
+/// answers the health probe).  Returns " (pid N)" when the owner is known, else an empty string.
+async fn foreign_listener(url: &str) -> Option<String> {
+    let hp = host_port(url)?;
+    let open = matches!(
+        tokio::time::timeout(PROBE_TIMEOUT, TcpStream::connect(&hp)).await,
+        Ok(Ok(_))
+    );
+    if !open {
+        return None;
+    }
+    // A daemon that is just binding answers within a moment.
+    for _ in 0..4 {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        if healthy(url).await {
+            return None;
+        }
+    }
+    let owners = loopback_port(url)
+        .map(listener::listener_owners)
+        .unwrap_or_default();
+    Some(
+        owners
+            .iter()
+            .next()
+            .map_or_else(String::new, |pid| format!(" (pid {pid})")),
+    )
+}
+
+/// The start-up facts for the "the service does not start" screen.
+#[must_use]
+pub fn diagnostics(handle: &DaemonHandle) -> Diagnostics {
+    let data = data_dir().unwrap_or_default();
+    let bin = bot_binary();
+    let (stage, since, mut error, mut exit_code) = {
+        let d = handle.diag.lock();
+        (d.stage, d.since, d.error.clone(), d.exit_code)
+    };
+    // The process may have ended since the start loop last looked.
+    if matches!(stage, Stage::Waiting | Stage::NotResponding)
+        && let Some(code) = child_exit_code(handle)
+    {
+        exit_code = code;
+        error.get_or_insert_with(|| "the daemon exited".to_owned());
+    }
+    let mut log_tail: Vec<String> = handle.tail.lock().iter().cloned().collect();
+    if log_tail.is_empty() {
+        log_tail = read_tail(&log_path(&data), 30);
+    }
+    Diagnostics {
+        stage,
+        elapsed_ms: since.map_or(0, |s| {
+            u64::try_from(s.elapsed().as_millis()).unwrap_or(u64::MAX)
+        }),
+        port: port(),
+        base_url: base_url().unwrap_or_default(),
+        data_dir: data.display().to_string(),
+        log_path: log_path(&data).display().to_string(),
+        sidecar: bin.to_string_lossy().into_owned(),
+        sidecar_exists: Path::new(&bin).is_file(),
+        pid: child_pid(handle),
+        exit_code,
+        error,
+        log_tail,
+        app_version: env!("CARGO_PKG_VERSION").to_owned(),
+        os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+    }
+}
+
+/// The last `n` lines of a text file (lossy UTF-8; empty when unreadable).
+fn read_tail(path: &Path, n: usize) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let from = bytes.len().saturating_sub(64 * 1024);
+    let text = String::from_utf8_lossy(&bytes[from..]);
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..]
+        .iter()
+        .map(|l| l.chars().take(2000).collect())
+        .collect()
+}
+
+/// The folder that holds `desktop-daemon.log`, created when missing (for "Open log folder").
+///
+/// # Errors
+/// The data directory cannot be determined or created.
+pub fn log_folder() -> Result<PathBuf, String> {
+    let dir = data_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {} ({e})", dir.display()))?;
+    Ok(dir)
 }
 
 /// Output of a `bot` CLI invocation.
@@ -749,5 +1144,75 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn log_timestamps_are_utc() {
+        assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_utc(1_700_000_000), "2023-11-14T22:13:20Z");
+        assert_eq!(format_utc(1_709_164_800), "2024-02-29T00:00:00Z");
+    }
+
+    #[test]
+    fn a_dead_start_is_worded_by_its_cause() {
+        // The OS refuses the program: blocked, not "missing".
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(classify_spawn_error(&denied, true), Stage::SidecarBlocked);
+        let virus = std::io::Error::from_raw_os_error(225);
+        assert_eq!(classify_spawn_error(&virus, true), Stage::SidecarBlocked);
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(classify_spawn_error(&gone, false), Stage::SidecarMissing);
+        // Another port user, as Windows and Linux word a failed bind.
+        assert!(looks_like_port_clash(
+            "Error: Only one usage of each socket address (protocol/network address/port) is normally permitted. (os error 10048)"
+        ));
+        assert!(looks_like_port_clash(
+            "Error: Address already in use (os error 98)"
+        ));
+        assert!(!looks_like_port_clash("Error: OS keychain unavailable"));
+
+        // A child that ended with a missing-DLL status: the code and the last output are kept.
+        let handle = DaemonHandle::default();
+        handle
+            .tail
+            .lock()
+            .push_back("(secret backend: Keyring)".to_owned());
+        let dir = temp_dir("exited");
+        let msg = exited(&handle, &dir, Some(-1_073_741_515));
+        assert!(msg.contains("-1073741515"), "{msg}");
+        {
+            let d = handle.diag.lock();
+            assert_eq!(d.stage, Stage::Exited);
+            assert_eq!(d.exit_code, Some(-1_073_741_515));
+        }
+        let log = std::fs::read_to_string(log_path(&dir)).unwrap();
+        assert!(
+            log.contains("[app] daemon exited with code -1073741515"),
+            "{log}"
+        );
+        handle
+            .tail
+            .lock()
+            .push_back("Error: Address already in use (os error 98)".to_owned());
+        let _ = exited(&handle, &dir, Some(1));
+        assert_eq!(handle.diag.lock().stage, Stage::PortInUse);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_log_is_rotated_once_it_is_large() {
+        let d = temp_dir("rotate");
+        append_log(&d, "app", "small");
+        rotate_log(&d);
+        assert!(log_path(&d).exists());
+        std::fs::write(
+            log_path(&d),
+            vec![b'x'; usize::try_from(MAX_LOG_BYTES).unwrap() + 1],
+        )
+        .unwrap();
+        rotate_log(&d);
+        assert!(!log_path(&d).exists());
+        assert!(d.join("desktop-daemon.log.1").exists());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
