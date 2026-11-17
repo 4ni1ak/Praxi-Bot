@@ -1,4 +1,5 @@
 import { Globe, Maximize2, Monitor } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import {
@@ -14,7 +15,13 @@ import {
   noScreenCode,
   type PanelText
 } from "../lib/computerLabel";
-import { useLiveView } from "../state/LiveViewContext";
+import {
+  type ComputerSide,
+  hasBothComputers,
+  serverDesktopCommand,
+  serverScreenIssue
+} from "../lib/botComputer";
+import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
 import styles from "./BotComputerBlock.module.css";
 
 function panelTone(
@@ -37,10 +44,36 @@ function panelTone(
   return "watch";
 }
 
-export function BotComputerBlock() {
+/**
+ * The computer the bot RUNS ON (card 266-A): the server's screen while a server is home, this
+ * computer otherwise. While a server is home a small switcher also offers "my computer".
+ */
+export function BotComputerBlock({
+  botName,
+  botId
+}: {
+  botName?: string;
+  botId?: string | null;
+}) {
   const { t } = useTranslation();
-  const { activeComputerId, activeHostName } = useDaemon();
-  const onHost = activeComputerId !== LOCAL_COMPUTER;
+  const { activeComputerId, activeHostName, home, workLocalNow, hostState } = useDaemon();
+  const both = hasBothComputers(home, workLocalNow);
+  const [side, setSide] = useState<ComputerSide>("bot");
+  const showingMine = both && side === "mine";
+  const onHost = !showingMine && activeComputerId !== LOCAL_COMPUTER;
+  const serverName = activeHostName ?? t("computerPicker.host");
+  const homeView = useLiveView();
+  const localView = useLocalLiveView();
+  const view = showingMine ? localView : homeView;
+  // This computer's screen is only streamed while it is the one on show.
+  const setLocalDemand = localView.setThumbnailDemand;
+  useEffect(() => {
+    if (!showingMine) {
+      return undefined;
+    }
+    setLocalDemand(true, botId ?? null);
+    return () => setLocalDemand(false, null);
+  }, [showingMine, botId, setLocalDemand]);
   const {
     selectedTarget,
     targetsStatus,
@@ -56,7 +89,7 @@ export function BotComputerBlock() {
     recoverTakeover,
     clearPause,
     isLocalClient
-  } = useLiveView();
+  } = view;
   const panelActions = visibleActions(state, controlState, isLocalClient).panel;
   // Control can outlive the viewer (a failed hand-back keeps it): never leave the
   // bot paused with only a status pill, always offer Bitirdim here too.
@@ -113,16 +146,29 @@ export function BotComputerBlock() {
         }
       : null;
 
+  const issue = onHost ? serverScreenIssue(hostState) : null;
+  const desktopCommand = onHost
+    ? serverDesktopCommand(noScreenCode(availability), serverName)
+    : null;
+  // The server answered but would not list screens: this computer has no screen permission there.
+  const permissionMissing = onHost && !issue && targetsStatus === "failed";
+
   return (
     <section className={styles.block} aria-labelledby="bot-panel-computer">
       <div className={styles.head}>
         <h3 className={styles.label} id="bot-panel-computer">
           {t("botPanel.computer")}
         </h3>
-        <span className={styles.where} data-testid="bot-computer-where" data-computer={onHost ? "host" : "local"}>
+        <span
+          className={styles.where}
+          data-testid="bot-computer-where"
+          data-computer={onHost ? "host" : showingMine ? "mine" : "local"}
+        >
           {onHost
-            ? t("botPanel.runsOnHost", { name: activeHostName ?? t("computerPicker.host") })
-            : t("botPanel.runsOnLocal")}
+            ? t("botPanel.botsComputer", { bot: botName ?? t("botPanel.thisBot"), name: serverName })
+            : showingMine
+              ? t("botPanel.myComputer")
+              : t("botPanel.runsOnLocal")}
         </span>
         <span className={styles.statusPill} data-testid="bot-computer-status">
           <i className={styles.dot} data-tone={tone} aria-hidden="true" />
@@ -130,6 +176,28 @@ export function BotComputerBlock() {
         </span>
       </div>
 
+      {both ? (
+        <div className={styles.switcher} role="group" aria-label={t("botPanel.switcher")}>
+          {(["bot", "mine"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={styles.switchBtn}
+              aria-pressed={side === s}
+              data-testid={`bot-computer-side-${s}`}
+              onClick={() => setSide(s)}
+            >
+              {t(s === "bot" ? "botPanel.sideBot" : "botPanel.sideMine")}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {issue ? (
+        <div className={styles.note} data-testid="bot-computer-issue" data-issue={issue}>
+          {t(`botPanel.serverIssue.${issue}`, { name: serverName })}
+        </div>
+      ) : (
       <button
         type="button"
         className={styles.card}
@@ -172,7 +240,7 @@ export function BotComputerBlock() {
             <KindIcon aria-hidden="true" />
             <span className={styles.host}>
               {selectedTarget
-                ? `${t(`liveView.kind.${selectedTarget.kind}`)} · ${selectedTarget.host_id}`
+                ? `${t(`liveView.kind.${selectedTarget.kind}`)} · ${onHost ? serverName : selectedTarget.host_id}`
                 : t("botPanel.computer")}
             </span>
           </span>
@@ -181,8 +249,22 @@ export function BotComputerBlock() {
           </span>
         </div>
       </button>
+      )}
 
-      {panelActions.includes("open_screen") && summary?.available && !showRelease ? (
+      {desktopCommand && !selectedTarget ? (
+        <div className={styles.note} data-testid="bot-computer-desktop-hint">
+          {t("botPanel.needsDesktop", { name: serverName })}
+          <code className={styles.command}>{desktopCommand}</code>
+        </div>
+      ) : null}
+      {permissionMissing ? (
+        <div className={styles.note} data-testid="bot-computer-permission">
+          {t("botPanel.needsPermission", { name: serverName })}
+          <code className={styles.command}>bot host screen --all-desktops</code>
+        </div>
+      ) : null}
+
+      {panelActions.includes("open_screen") && summary?.available && !showRelease && !issue ? (
         <div className={styles.release}>
           <Button
             variant="secondary"

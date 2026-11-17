@@ -564,6 +564,7 @@
       "noMatch": "Eşleşme yok"
     },
     "conversationLabel": "Bugün",
+    "yesterdayLabel": "Dün",
     "openBot": "{{name}} ayrıntılarını aç",
     "emptyTitle": "Birlikte ne yapalım?",
     "emptyGreeting": "Merhaba, ben {{name}}",
@@ -581,6 +582,8 @@
       "thought": "{{duration}} düşündü",
       "working": "Adım adım ilerliyor",
       "details": "Ayrıntılar",
+      "started": "Başlangıç {{start}}",
+      "startedFinished": "Başlangıç {{start}} · bitiş {{end}}",
       "problems_one": "{{count}} adım başarısız",
       "problems_other": "{{count}} adım başarısız"
     },
@@ -588,7 +591,9 @@
       "seconds_one": "{{count}} saniye",
       "seconds_other": "{{count}} saniye",
       "minutes_one": "{{count}} dakika",
-      "minutes_other": "{{count}} dakika"
+      "minutes_other": "{{count}} dakika",
+      "shortSeconds": "sn",
+      "shortMinutes": "dk"
     },
     "menu": {
       "navigate": "gezin",
@@ -1925,6 +1930,13 @@
         "description": "Sohbet mesajını hangi tuş gönderir.",
         "enter": "Enter",
         "ctrl-enter": "Ctrl+Enter"
+      },
+      "times": {
+        "title": "Mesaj saatlerini göster",
+        "description": "Her mesajın yanında küçük bir saat. Üzerine gelince saniye ve tam tarih görünür.",
+        "off": "Kapalı",
+        "minutes": "Saat:dakika",
+        "seconds": "Saniyeyle"
       }
     },
     "ai": {
@@ -2550,7 +2562,21 @@
       "paused": "Duraklatıldı",
       "trigger": "Bir olay olunca",
       "toggle": "{{name}} açık/kapalı"
-    }
+    },
+    "botsComputer": "{{bot}} botunun bilgisayarı · {{name}}",
+    "thisBot": "Bu bot",
+    "myComputer": "Benim bilgisayarım",
+    "switcher": "Hangi bilgisayar gösterilsin",
+    "sideBot": "Botun bilgisayarı",
+    "sideMine": "Benim bilgisayarım",
+    "serverIssue": {
+      "connecting": "{{name}} sunucusuna bağlanılıyor… yanıt verince ekranı burada görünür.",
+      "offline": "{{name}} yanıt vermiyor. Botlar orada çalışmaya devam eder; bu uygulama kendiliğinden yeniden bağlanır.",
+      "notPaired": "{{name}} bu bilgisayarı artık kabul etmiyor. Yeni bir biletle yeniden eşleştir.",
+      "version": "Bu uygulama ile {{name}} farklı sürümlerde. İkisini aynı sürüme güncelle."
+    },
+    "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
+    "needsPermission": "{{name}} bu bilgisayarın ekranını izlemesine izin vermedi. Sunucuda şunu çalıştır:"
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",

@@ -515,12 +515,22 @@ fi
 if [[ "${VERSION}" == "latest" ]]; then
   # Resolve the tag before downloading. Never trust an arbitrary redirect host
   # or a mutable 'latest' identity as the expected signer/source ref.
-  latest_url="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
-    -o /dev/null --write-out '%{redirect_url}' "https://github.com/${REPO}/releases/latest")" \
-    || die "could not resolve the latest release tag"
   latest_prefix="https://github.com/${REPO}/releases/tag/"
-  [[ "${latest_url}" == "${latest_prefix}"* ]] || die "latest release did not resolve to the expected repository"
-  VERSION="${latest_url#"${latest_prefix}"}"
+  if latest_url="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+    -o /dev/null --write-out '%{redirect_url}' "https://github.com/${REPO}/releases/latest")"; then
+    [[ "${latest_url}" == "${latest_prefix}"* ]] || die "latest release did not resolve to the expected repository"
+    VERSION="${latest_url#"${latest_prefix}"}"
+  else
+    # GitHub's "latest" never points at a pre-release and answers 404 while only pre-releases
+    # exist (v0.1.0-alpha.1). Ask the API of the pinned repository for its newest release instead;
+    # the tag still goes through the same format check and the same pinned provenance identity.
+    api_json="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+      "https://api.github.com/repos/${REPO}/releases?per_page=1")" \
+      || die "could not resolve the latest release tag"
+    VERSION="$(printf '%s' "${api_json}" \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    [[ -n "${VERSION}" ]] || die "could not resolve the latest release tag (no published release)"
+  fi
 fi
 [[ "${VERSION}" =~ ^v[0-9][0-9A-Za-z._+-]*$ ]] || die "invalid release tag (expected v followed by a version)"
 [[ -z "${EXPECTED_SHA}" || "${EXPECTED_SHA}" =~ ^[0-9a-f]{64}$ ]] || die "invalid --sha256"
@@ -693,14 +703,25 @@ if [[ -n "${TRUSTED_ROOT}" ]]; then
   cp -- "${TRUSTED_ROOT}" "${WORK}/trusted_root.jsonl"
   trust_args=(--custom-trusted-root "${WORK}/trusted_root.jsonl")
 fi
-# Identity constraints remain fixed in both online and offline verification.
-gh attestation verify "${WORK}/${ASSET}" --bundle "${WORK}/${BUNDLE_ASSET}" ${trust_args[@]+"${trust_args[@]}"} \
-  --repo "${REPO}" --hostname github.com \
-  --signer-workflow "${SIGNER_WORKFLOW}" \
-  --source-ref "refs/tags/${VERSION}" --deny-self-hosted-runners \
-  --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --predicate-type https://slsa.dev/provenance/v1 --digest-alg sha256 \
-  || die "provenance verification failed; refusing to install (a checksum is not proof of origin)"
+# Identity constraints remain fixed in both online and offline verification. The only accepted
+# source ref is the release tag itself; a PRE-RELEASE tag (v1.2.3-alpha.1, any suffix) may also
+# carry provenance from this repository's linux-release workflow run on main, which is how a
+# maintainer republishes the Linux assets of an existing pre-release. Final tags never do.
+source_refs=("refs/tags/${VERSION}")
+[[ "${VERSION}" == *-* ]] && source_refs+=("refs/heads/main")
+verified=0
+for source_ref in "${source_refs[@]}"; do
+  if gh attestation verify "${WORK}/${ASSET}" --bundle "${WORK}/${BUNDLE_ASSET}" ${trust_args[@]+"${trust_args[@]}"} \
+    --repo "${REPO}" --hostname github.com \
+    --signer-workflow "${SIGNER_WORKFLOW}" \
+    --source-ref "${source_ref}" --deny-self-hosted-runners \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com \
+    --predicate-type https://slsa.dev/provenance/v1 --digest-alg sha256; then
+    verified=1
+    break
+  fi
+done
+[[ "${verified}" -eq 1 ]] || die "provenance verification failed; refusing to install (a checksum is not proof of origin)"
 log "verified release provenance for ${VERSION}"
 if [[ "${VERIFY_ONLY}" -eq 1 ]]; then
   log "verification complete; no installation performed"
