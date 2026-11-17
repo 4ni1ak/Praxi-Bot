@@ -550,6 +550,7 @@
       "failed": "Could not remember this run: {{message}}"
     },
     "stopped": "Stopped the running turn.",
+    "runStopped": "Stopped.",
     "newChatStarted": "Started a new chat.",
     "md": {
       "copy": "Copy",
@@ -825,7 +826,10 @@
       "paused": "Paused",
       "human": "You are in control",
       "elapsed": "Running for {{time}}",
-      "stoppingDetail": "Waiting for the run to end…"
+      "stoppingDetail": "Waiting for the run to end…",
+      "stopUnconfirmed": "The service has not confirmed the stop after 5 seconds, so the run may still be working. Press Force stop to end it.",
+      "stopUnreachable": "The Stop could not reach the computer this bot runs on. It keeps retrying; check the connection.",
+      "forceStop": "Force stop"
     }
   },
   "botForm": {

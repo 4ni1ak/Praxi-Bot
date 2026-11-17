@@ -550,6 +550,7 @@
       "failed": "Bu çalıştırma hatırlanamadı: {{message}}"
     },
     "stopped": "Çalışan tur durduruldu.",
+    "runStopped": "Durduruldu.",
     "newChatStarted": "Yeni sohbet başlatıldı.",
     "md": {
       "copy": "Kopyala",
@@ -825,7 +826,10 @@
       "paused": "Duraklatıldı",
       "human": "Kontrol sizde",
       "elapsed": "{{time}} süredir çalışıyor",
-      "stoppingDetail": "Çalışmanın bitmesi bekleniyor…"
+      "stoppingDetail": "Çalışmanın bitmesi bekleniyor…",
+      "stopUnconfirmed": "Servis durdurmayı 5 saniyedir onaylamadı, çalışma hâlâ sürüyor olabilir. Bitirmek için Zorla durdur'a bas.",
+      "stopUnreachable": "Durdurma, bu botun çalıştığı bilgisayara ulaşamadı. Yeniden deniyor; bağlantıyı kontrol et.",
+      "forceStop": "Zorla durdur"
     }
   },
   "botForm": {

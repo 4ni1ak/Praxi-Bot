@@ -12,7 +12,7 @@
 //   get_autostart / autostart_supported / set_autostart, is_human_driving
 //   get_control_state and the other stop/pause/takeover commands -> an idle control snapshot
 //   plugin:store|*                   -> rejected, so settings fall back to localStorage (as in a browser)
-/* global fetch, URL */
+/* global fetch, URL, setTimeout, clearTimeout */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -71,6 +71,9 @@ function scripted(messages) {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const calls = lines.length > 0 && lines.every((l) => l.startsWith('call:'))
     ? lines.map((l) => { const r = l.slice(5); const i = r.indexOf(' '); return i < 0 ? [r, '{}'] : [r.slice(0, i), r.slice(i + 1)]; }) : null;
+  // `slow:<ms>`: the model starts answering and then stalls (Stop cases hold the provider request open).
+  const slow = /^slow:(\d+)/.exec(text.trim());
+  if (slow) return { slow: Number(slow[1]) };
   const done = messages.slice((lastUser?.[1] ?? 0) + 1).filter((m) => m.role === 'tool').length;
   if (calls && done < calls.length) return { call: { name: calls[done][0], args: calls[done][1], id: `call_${done + 1}` } };
   const last = messages.at(-1);
@@ -106,6 +109,13 @@ function startStub(port) {
         }
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
         res.write(chunk({ role: 'assistant', content: '' }));
+        if (out.slow) {
+          stubLog.push('MODEL_OPEN');
+          res.write(chunk({ content: 'thinking ' }));
+          const timer = setTimeout(() => { res.write(chunk({ content: 'done' })); res.write(chunk({}, 'stop')); res.end('data: [DONE]\n\n'); }, out.slow);
+          res.on('close', () => { clearTimeout(timer); if (!res.writableEnded) stubLog.push('MODEL_ABORTED'); });
+          return;
+        }
         if (out.call) {
           res.write(chunk({ tool_calls: [{ index: 0, id: out.call.id, type: 'function', function: { name: out.call.name, arguments: out.call.args } }] }));
           res.write(chunk({}, 'tool_calls'));
