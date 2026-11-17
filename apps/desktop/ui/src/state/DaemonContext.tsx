@@ -411,7 +411,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
         {
           id: MOCK_HOST_ID,
           name: "Praxi host",
-          state: scenario === "offline" ? "offline" : "connected"
+          state: scenario === "offline" || scenario === "dropped" ? "offline" : "connected"
         } as HostLinkInfo
       ]
     } as HostLinkList);

@@ -2486,7 +2486,21 @@
       "paused": "Duraklatıldı",
       "trigger": "Bir olay olunca",
       "toggle": "{{name}} açık/kapalı"
-    }
+    },
+    "botsComputer": "{{bot}} botunun bilgisayarı · {{name}}",
+    "thisBot": "Bu bot",
+    "myComputer": "Benim bilgisayarım",
+    "switcher": "Hangi bilgisayar gösterilsin",
+    "sideBot": "Botun bilgisayarı",
+    "sideMine": "Benim bilgisayarım",
+    "serverIssue": {
+      "connecting": "{{name}} sunucusuna bağlanılıyor… yanıt verince ekranı burada görünür.",
+      "offline": "{{name}} yanıt vermiyor. Botlar orada çalışmaya devam eder; bu uygulama kendiliğinden yeniden bağlanır.",
+      "notPaired": "{{name}} bu bilgisayarı artık kabul etmiyor. Yeni bir biletle yeniden eşleştir.",
+      "version": "Bu uygulama ile {{name}} farklı sürümlerde. İkisini aynı sürüme güncelle."
+    },
+    "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
+    "needsPermission": "{{name}} bu bilgisayarın ekranını izlemesine izin vermedi. Sunucuda şunu çalıştır:"
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",

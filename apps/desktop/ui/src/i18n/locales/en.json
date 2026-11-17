@@ -2486,7 +2486,21 @@
       "paused": "Paused",
       "trigger": "When something happens",
       "toggle": "Turn {{name}} on or off"
-    }
+    },
+    "botsComputer": "{{bot}}'s computer · {{name}}",
+    "thisBot": "This bot",
+    "myComputer": "My computer",
+    "switcher": "Which computer to show",
+    "sideBot": "Bot's computer",
+    "sideMine": "My computer",
+    "serverIssue": {
+      "connecting": "Connecting to {{name}}… its screen shows up as soon as it answers.",
+      "offline": "{{name}} is not answering. Its bots keep running there; this app reconnects on its own.",
+      "notPaired": "{{name}} no longer accepts this computer. Pair it again with a new ticket.",
+      "version": "This app and {{name}} are on different versions. Update both to the same version."
+    },
+    "needsDesktop": "{{name}} has no desktop session, so there is no screen to show. To add one, run this on this computer:",
+    "needsPermission": "{{name}} has not allowed this computer to watch its screen. On the server, run:"
   },
   "knowledge": {
     "title": "Knowledge and shared brain",

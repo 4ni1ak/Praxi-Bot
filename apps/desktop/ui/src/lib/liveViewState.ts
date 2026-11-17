@@ -626,6 +626,15 @@ export function applyInputAck(
   };
 }
 
+/**
+ * The profile of the view session. Only an explicit, accepted take-over ("Take control" in the
+ * viewer) is `live`; the right panel's preview and every passive look are `watch`, which carries no
+ * input and therefore never says "the human is driving" to the daemon (card 266-A).
+ */
+export function sessionProfile(state: LiveViewControllerState): "live" | "watch" {
+  return isActivelyOwningTakeover(state) ? "live" : "watch";
+}
+
 export function isActivelyOwningTakeover(
   state: LiveViewControllerState
 ): boolean {

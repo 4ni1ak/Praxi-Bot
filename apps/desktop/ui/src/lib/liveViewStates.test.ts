@@ -19,9 +19,11 @@ import {
   canSendLiveInput,
   createInitialLiveViewState,
   foreignPausedTakeover,
+  isActivelyOwningTakeover,
   isLocalBaseUrl,
   markRemoteBaseUrl,
   RELEASE_LEASE_MAX_MS,
+  sessionProfile,
   visibleActions,
   type LiveViewControllerState
 } from "./liveViewState.ts";
@@ -554,4 +556,21 @@ test("a loopback proxy to a paired host is a peer connection, not the local user
   assert.equal(isLocalBaseUrl("http://127.0.0.1:54322"), true);
   unmark();
   assert.equal(isLocalBaseUrl(url), true);
+});
+
+test("a preview never reports the human as driving: only an accepted take-over is live", () => {
+  // The right panel's card, in every state a passive look can reach.
+  let st = watching();
+  for (const step of [
+    (s: LiveViewControllerState) => s,
+    (s: LiveViewControllerState) => applyFrameRendered(s, frame, 2000),
+    (s: LiveViewControllerState) => applyStatusRecord(s, { ...statusActive, input_allowed: false }, 2100)
+  ]) {
+    st = step(st);
+    assert.equal(sessionProfile(st), "watch");
+    assert.equal(isActivelyOwningTakeover(st), false);
+    assert.equal(buildSessionHeartbeat(st).takeover_id, undefined, "no take-over lease is renewed");
+  }
+  // The explicit take-over is the only thing that makes it live.
+  assert.equal(sessionProfile(owning()), "live");
 });
