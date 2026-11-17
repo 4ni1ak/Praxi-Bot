@@ -1334,11 +1334,9 @@
       "runOnServer": "Sunucuda şunu çalıştır:",
       "officialPage": "{{name}} için resmî sayfadan kur",
       "installOnServer": "Sunucuya kur",
-      "installing": "Sunucuda kuruluyor…",
+      "installing": "Sunucuda kuruluyor (gerekirse önce Node.js indirilir)…",
       "installFailed": "Kurulum tamamlanamadı ({{code}}). Çıktıya bak ya da komutu elle çalıştır.",
-      "needNode": "Sunucuda Node.js (npm) yok; önce onu kurman gerekir.",
-      "installNode": "Node.js'i sunucuya kur",
-      "nodeStarted": "Node.js sunucuya kuruluyor. Bir dakika sonra bu CLI'ı yeniden kurmayı dene.",
+      "needNode": "Sunucuda Node.js (npm) yok ve Praxi bu sistemde onu kendi kuramıyor. Node.js 22 LTS'i elle kur, sonra yeniden dene.",
       "signInNote": "Giriş sunucuda bir web adresi (çoğu zaman bir kodla) gösterir. Adresi bu bilgisayarda aç, orada giriş yap ve istenirse kodu sunucudaki terminale yapıştır. Bu bilgisayardaki oturumlar sunucuya kopyalanmaz."
     },
     "chip": {

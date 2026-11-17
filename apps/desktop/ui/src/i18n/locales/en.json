@@ -1334,11 +1334,9 @@
       "runOnServer": "On the server run:",
       "officialPage": "Install {{name}} from the official page",
       "installOnServer": "Install on server",
-      "installing": "Installing on the server…",
+      "installing": "Installing on the server (Node.js is downloaded first when it is missing)…",
       "installFailed": "The install did not finish ({{code}}). Check the output or run the command by hand.",
-      "needNode": "The server has no Node.js (npm); install that first.",
-      "installNode": "Install Node.js on the server",
-      "nodeStarted": "Node.js is being installed on the server. Try this CLI again in a minute.",
+      "needNode": "The server has no Node.js (npm) and Praxi cannot install it on this system. Install Node.js 22 LTS by hand, then try again.",
       "signInNote": "Signing in shows a web address on the server (often with a code). Open the address on this computer, sign in there and, if asked, paste the code into the server's terminal. Sign-ins on this computer are never copied to the server."
     },
     "chip": {

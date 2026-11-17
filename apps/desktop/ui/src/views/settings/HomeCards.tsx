@@ -109,7 +109,6 @@ export function EngineSetup({ engine, onChanged }: { engine: AdminCliEngine; onC
   const { client } = useDaemon();
   const [run, setRun] = useState<AdminCliInstall | null>(null);
   const [problem, setProblem] = useState<{ code: string; text: string } | null>(null);
-  const [nodeAsked, setNodeAsked] = useState(false);
   const installing = run?.state === "installing";
   const finished = run?.state === "done" || run?.state === "failed";
   useEffect(() => {
@@ -136,18 +135,6 @@ export function EngineSetup({ engine, onChanged }: { engine: AdminCliEngine; onC
     } catch (e) {
       const h = humanError(e);
       setProblem({ code: h.code, text: h.title });
-    }
-  };
-  const installNode = async () => {
-    if (!client) {
-      return;
-    }
-    try {
-      await client.installComponent("node");
-      setNodeAsked(true);
-      setProblem(null);
-    } catch (e) {
-      setProblem({ code: "node", text: humanError(e).title });
     }
   };
   const installed = engine.installed || run?.installed === true;
@@ -184,14 +171,13 @@ export function EngineSetup({ engine, onChanged }: { engine: AdminCliEngine; onC
           {problem ? (
             <span className={`${styles.sub} ${styles.subWarn}`}>
               {problem.code === "prerequisite_missing" ? t("home.engines.needNode") : problem.text}
-              {problem.code === "prerequisite_missing" && !nodeAsked ? (
-                <button type="button" className={styles.textBtn} onClick={() => void installNode()}>
-                  {t("home.engines.installNode")}
-                </button>
+              {problem.code === "prerequisite_missing" ? (
+                <a href="https://nodejs.org/en/download" target="_blank" rel="noreferrer">
+                  nodejs.org
+                </a>
               ) : null}
             </span>
           ) : null}
-          {nodeAsked ? <span className={styles.sub}>{t("home.engines.nodeStarted")}</span> : null}
         </>
       ) : signedIn !== true ? (
         <>

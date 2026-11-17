@@ -362,6 +362,8 @@ impl AppState {
             }
         };
         let host_config = host::HostConfig::load(storage.data_dir())?;
+        // Praxi's own Node.js runtime (host installs) is found from here on.
+        cli_provider::node_runtime::register_data_dir(storage.data_dir());
         let cli_models = cli_provider::models::ModelCache::load(Some(
             storage.data_dir().join("cache").join("cli-models.json"),
         ));
@@ -794,7 +796,6 @@ impl AppState {
         Arc::clone(&*self.0.detector.read())
     }
 
-    #[cfg(test)]
     pub(crate) fn set_detector(&self, detector: Arc<cli_provider::Detector>) {
         *self.0.detector.write() = detector;
     }

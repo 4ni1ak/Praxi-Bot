@@ -559,7 +559,9 @@ pub(crate) async fn cli_engines(
     _gate: Gate,
 ) -> Result<Json<Vec<AdminCliEngineDto>>, ApiError> {
     require_admin(&s, peer.as_ref().map(|p| &p.0))?;
-    let rows = s.detector().detect(false).await;
+    let detector = s.detector();
+    let rows = detector.detect(false).await;
+    let npm_ready = cli_provider::install::resolve_installer(detector.environment()).is_ok();
     Ok(Json(
         rows.into_iter()
             .filter_map(|row| {
@@ -573,7 +575,15 @@ pub(crate) async fn cli_engines(
                     install_command: spec
                         .install()
                         .map(cli_provider::registry::InstallCommand::display),
-                    can_install: spec.install().is_some_and(|i| i.verified && i.executable),
+                    // Never offered when the host could not honour it: an npm engine needs npm or a
+                    // machine Praxi can fetch Node.js for.
+                    can_install: spec.install().is_some_and(|i| {
+                        i.verified
+                            && i.executable
+                            && (i.program != "npm"
+                                || npm_ready
+                                || cli_provider::node_runtime::supported_target().is_some())
+                    }),
                     login: spec.login.into(),
                     docs_url: spec.docs_url.into(),
                     id: row.id,
@@ -593,6 +603,19 @@ pub(crate) struct AdminInstallRun {
     pub error: Option<&'static str>,
     pub output: String,
 }
+
+/// Where Node.js is downloaded from, and whether redirects must stay on https. Tests point it at a local server.
+fn node_dist() -> (String, bool) {
+    #[cfg(test)]
+    if let Some(base) = NODE_DIST_TEST.lock().clone() {
+        return (base, false);
+    }
+    (cli_provider::node_runtime::DIST_BASE.to_owned(), true)
+}
+
+#[cfg(test)]
+pub(crate) static NODE_DIST_TEST: parking_lot::Mutex<Option<String>> =
+    parking_lot::Mutex::new(None);
 
 /// Bytes of installer output kept for the progress view.
 const INSTALL_TAIL_BYTES: usize = 4096;
@@ -667,6 +690,7 @@ async fn install_dto(
 #[utoipa::path(post, operation_id = "admin_cli_engine_install", path = "/v1/admin/cli-engines/{id}/install", tag = "admin", security(("bearer" = [])),
     params(("id" = String, Path)),
     responses((status = 202, body = AdminCliInstallDto), (status = 403, body = crate::error::ErrorBody), (status = 409, body = crate::error::ErrorBody)))]
+#[allow(clippy::too_many_lines)] // One admission, bootstrap and install sequence.
 pub(crate) async fn install_cli_engine(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
@@ -676,15 +700,22 @@ pub(crate) async fn install_cli_engine(
     let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
     let spec = installable(&id)?;
     let detector = s.detector();
-    if spec.install().is_some_and(|i| i.program == "npm")
-        && cli_provider::install::resolve_installer(detector.environment()).is_err()
-    {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "prerequisite_missing",
-            "Node.js (npm) is not installed on the server; install it first",
-        ));
-    }
+    let needs_npm = spec.install().is_some_and(|i| i.program == "npm");
+    let npm_present =
+        !needs_npm || cli_provider::install::resolve_installer(detector.environment()).is_ok();
+    // No npm: Praxi fetches its own Node.js below the data dir (no root) when this machine
+    // is one it can honestly do that for; otherwise the owner is told what to do.
+    let bootstrap = if npm_present {
+        None
+    } else {
+        Some(cli_provider::node_runtime::supported_target().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "prerequisite_missing",
+                "Node.js (npm) is not installed on the server and Praxi cannot install it on this system; install Node.js 22 LTS by hand",
+            )
+        })?)
+    };
     let permit = std::sync::Arc::clone(&s.0.cli_installs.running)
         .try_acquire_owned()
         .map_err(|_| ApiError::conflict("an install is already running"))?;
@@ -692,7 +723,7 @@ pub(crate) async fn install_cli_engine(
         &s,
         &admin,
         "provider.cli_install.admin_started",
-        &serde_json::json!({"engine": spec.id}),
+        &serde_json::json!({"engine": spec.id, "bootstraps_node": bootstrap.is_some()}),
     )?;
     s.0.cli_installs.admin.lock().insert(
         spec.id.to_owned(),
@@ -705,18 +736,13 @@ pub(crate) async fn install_cli_engine(
     tokio::spawn(async move {
         let _permit = permit;
         let shutdown = task.shutdown_token();
-        let sink = task.clone();
-        let detector = task.detector();
         let data = task.data_dir();
-        let work = cli_provider::install::run_install(
-            spec.id,
-            detector.environment(),
-            &data,
-            cli_provider::install::INSTALL_TIMEOUT,
-            move |text| {
+        let say = {
+            let sink = task.clone();
+            move |text: &str| {
                 let mut book = sink.0.cli_installs.admin.lock();
                 if let Some(run) = book.get_mut(spec.id) {
-                    run.output.push_str(&text);
+                    run.output.push_str(text);
                     run.output.push('\n');
                     if run.output.len() > INSTALL_TAIL_BYTES {
                         let mut cut = run.output.len() - INSTALL_TAIL_BYTES;
@@ -726,14 +752,55 @@ pub(crate) async fn install_cli_engine(
                         run.output.drain(..cut);
                     }
                 }
-            },
-        );
-        let result = tokio::select! {
-            r = work => r,
-            () = shutdown.cancelled() => Err("shutdown"),
+            }
         };
+        let mut error: Option<&'static str> = None;
+        if let Some(target) = bootstrap {
+            say("Installing Node.js (LTS) into the Praxi data directory...");
+            let (base, https_only) = node_dist();
+            let step = async {
+                let version =
+                    cli_provider::node_runtime::install_node(&base, target, &data, https_only)
+                        .await?;
+                cli_provider::node_runtime::verify_runs(&data, &version).await?;
+                Ok::<String, &'static str>(version)
+            };
+            let result = tokio::select! {
+                r = step => r,
+                () = shutdown.cancelled() => Err("shutdown"),
+            };
+            let _ = audit(
+                &task,
+                &admin,
+                "provider.node_runtime.admin_installed",
+                &serde_json::json!({"engine": spec.id, "version": result.as_ref().ok(), "error": result.as_ref().err()}),
+            );
+            match result {
+                Ok(version) => {
+                    say(&format!("Node.js {version} installed."));
+                    // Detection and installs now see the runtime on the search path.
+                    task.set_detector(std::sync::Arc::new(cli_provider::Detector::new()));
+                }
+                Err(code) => error = Some(code),
+            }
+        }
+        if error.is_none() {
+            let detector = task.detector();
+            let sink = say.clone();
+            let work = cli_provider::install::run_install(
+                spec.id,
+                detector.environment(),
+                &data,
+                cli_provider::install::INSTALL_TIMEOUT,
+                move |text| sink(&text),
+            );
+            let result = tokio::select! {
+                r = work => r,
+                () = shutdown.cancelled() => Err("shutdown"),
+            };
+            error = result.err();
+        }
         let _ = task.detector().detect(true).await;
-        let error = result.err();
         if let Some(run) = task.0.cli_installs.admin.lock().get_mut(spec.id) {
             run.state = if error.is_none() { "done" } else { "failed" };
             run.error = error;

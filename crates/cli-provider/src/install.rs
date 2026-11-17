@@ -142,6 +142,10 @@ async fn run(
     apply_sanitized_env(&mut cmd, env);
     cmd.env("NO_COLOR", "1")
         .env("npm_config_update_notifier", "false");
+    // npm installs go to a user-level prefix (inside the data dir for Praxi's own Node), never a system path.
+    if let Some(prefix) = env.env_vars.get("NPM_CONFIG_PREFIX") {
+        cmd.env("NPM_CONFIG_PREFIX", prefix);
+    }
     #[cfg(windows)]
     let mut wrap = isolate(cmd, crate::detect::SharedJob::new());
     #[cfg(not(windows))]

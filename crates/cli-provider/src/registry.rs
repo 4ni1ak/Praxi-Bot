@@ -139,7 +139,10 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         }),
         install_unix: Some(InstallCommand {
             program: "sh",
-            args: &["-c", "curl https://cursor.com/install -fsS | bash"],
+            args: &[
+                "-c",
+                "curl --proto =https --proto-redir =https --tlsv1.2 -fsS https://cursor.com/install | bash",
+            ],
             verified: true,
             executable: true,
         }),
@@ -197,7 +200,7 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
             program: "sh",
             args: &[
                 "-c",
-                "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+                "curl --proto =https --proto-redir =https --tlsv1.2 -fsSL https://antigravity.google/cli/install.sh | bash",
             ],
             verified: true,
             executable: true,
