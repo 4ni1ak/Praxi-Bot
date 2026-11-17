@@ -34,13 +34,15 @@ async function newSession(ctx, { onboarded }) {
   }, { settings: onboarded ? SETTINGS : EN, fresh: !onboarded });
   const page = await context.newPage();
   const problems = [];
+  const failed = [];
   if (process.env.SMOKE_DEBUG) page.on("console", (m) => process.stdout.write(`[console.${m.type()}] ${m.text().slice(0, 1500)} @ ${m.location().url}:${m.location().lineNumber}${String.fromCharCode(10)}`));
   if (process.env.SMOKE_DEBUG) page.on('requestfailed', (r) => process.stdout.write(`[requestfailed] ${r.url()} ${r.failure()?.errorText}
 `));
   page.on('console', (m) => { if (m.type() === 'error' && !m.location().url.endsWith('/favicon.ico')) problems.push(`console: ${m.text().slice(0, 300)}`); });
   page.on('pageerror', (e) => problems.push(`pageerror: ${String(e).slice(0, 300)}`));
+  page.on('response', (r) => { if (r.status() >= 400 && r.url().includes('/v1/')) failed.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
   page.on('response', (r) => { if (r.status() >= 500 && r.url().includes('/v1/')) problems.push(`HTTP ${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
-  return { context, page, problems };
+  return { context, page, problems, failed };
 }
 
 /** What a person would call "an error on screen" right now. */
@@ -62,8 +64,9 @@ export async function flows(ctx) {
     if (ctx.only && !ctx.only.split(',').some((part) => name.includes(part))) return;
     n += 1;
     const slug = `${String(n).padStart(2, '0')}-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
-    const { page, problems } = session;
+    const { page, problems, failed } = session;
     problems.length = 0;
+    failed.length = 0;
     let error = null;
     try {
       await fn(page);
@@ -71,8 +74,12 @@ export async function flows(ctx) {
       const errs = await visibleErrors(page);
       if (errs.length && !opts.expectError) throw new Error(`error on screen: ${errs.join(' | ')}`);
       // A step that expects the daemon to refuse something sees a 4xx in the console: that is the point of it.
-      const real = opts.expectError ? problems.filter((p) => !p.startsWith('console: Failed to load resource')) : problems;
-      if (real.length) throw new Error(`browser problems: ${[...new Set(real)].join(' | ')}`);
+      let real = opts.expectError ? problems.filter((p) => !p.startsWith('console: Failed to load resource')) : problems;
+      // A daemon starved for a while (a loaded machine) cannot renew view-session heartbeats and expires the
+      // session: the page's late renewals then get 404 and the browser logs each one. That is the daemon
+      // doing its job, so a step whose only failed requests are 404s on /v1/view/sessions/ is not broken by it.
+      if (failed.length > 0 && failed.every((f) => f.startsWith('404 ') && f.includes(' /v1/view/sessions/'))) real = real.filter((p) => !p.startsWith('console: Failed to load resource'));
+      if (real.length) throw new Error(`browser problems: ${[...new Set(real)].join(' | ')} (failed requests: ${[...new Set(failed)].join(', ') || 'none'})`);
     } catch (e) {
       error = String(e.message ?? e).split('\n')[0];
     }
@@ -86,6 +93,8 @@ export async function flows(ctx) {
   };
   // Generous: the machine this runs on is often busy with builds, and a flow that is merely slow must not look broken.
   const T = { timeout: 30000 };
+  // A run that executes a shell command can take 25 s on a loaded machine.
+  const SLOW = { timeout: 90000 };
 
   // ---- first run: skip path, then the API-key path against the stub
   const first = await newSession(ctx, { onboarded: false });
@@ -264,7 +273,11 @@ export async function flows(ctx) {
     await page.getByRole('button', { name: /^stop$/i }).waitFor({ state: 'hidden', timeout: 90000 }).catch(() => {});
     const c = composer(page);
     await c.fill(lines.join('\n'));
+    // The composer ignores Enter while the previous send is still settling (its Send button is disabled
+    // then and the keystroke would be dropped): wait for it to be idle, send, wait for the box to empty.
+    await page.getByRole('button', { name: /^send$/i }).and(page.locator(':enabled')).waitFor({ timeout: 90000 });
     await c.press('Enter');
+    await page.waitForFunction(() => { const el = document.querySelector('textarea[role="combobox"]'); return !el || el.value === ''; }, null, { timeout: 30000 });
   };
   const cards = (page) => page.getByTestId('approval-card');
   await run(s, 'Full level: a read, then shell_run with no untrusted content, asks nothing', async (page) => {
@@ -273,7 +286,7 @@ export async function flows(ctx) {
     await openFirstChat(page);
     await sendLines(page, ['call:schedule_list {}', `call:shell_run ${JSON.stringify({ command: 'echo smoke-one' })}`]);
     // A card would hold the run: the reply of the last step only arrives when nothing asked.
-    await page.getByText(/tool said: .*smoke-one/).first().waitFor(T);
+    await page.getByText(/tool said: .*smoke-one/).first().waitFor(SLOW);
     if ((await cards(page).count()) > 0) throw new Error('an approval card appeared although nothing untrusted was read');
   });
   await run(s, 'after an untrusted read one card offers "This chat"; the next shell call does not ask', async (page) => {
@@ -283,9 +296,9 @@ export async function flows(ctx) {
     const why = ((await card.getByTestId('approval-why').textContent().catch(() => '')) ?? '').trim();
     if (!/untrusted/i.test(why)) throw new Error(`the card does not say why: "${why}"`);
     await card.getByRole('button', { name: /this chat/i }).click();
-    await page.getByText(/tool said: .*smoke-two/).first().waitFor(T);
+    await page.getByText(/tool said: .*smoke-two/).first().waitFor(SLOW);
     await sendLines(page, [`call:shell_run ${JSON.stringify({ command: 'echo smoke-three' })}`]);
-    await page.getByText(/tool said: .*smoke-three/).first().waitFor(T);
+    await page.getByText(/tool said: .*smoke-three/).first().waitFor(SLOW);
     // Answered cards stay in the timeline; only a card that still waits has its buttons.
     if ((await page.getByRole('button', { name: /allow once/i }).count()) > 0) throw new Error('the second shell call asked again after "This chat"');
   });
@@ -295,6 +308,11 @@ export async function flows(ctx) {
     await page.locator('[class*="railItem"]', { hasText: 'Fulla' }).first().waitFor(T);
     // The desktop app reports it with PUT /v1/control/state (its heartbeat); the real app's own idle
     // heartbeat (the shim's bridge here) would overwrite a single call, so repeat it like the app does.
+    // The latch is another reporter's claim: an ownerless human_driving ends the moment the daemon hears
+    // "idle" from anyone, and the page's bridge heartbeats idle every few seconds. Its PUTs are swallowed
+    // for this step, otherwise they race the stand-in below and the page may never see the latch.
+    await page.route('**/v1/control/state', (route) => (route.request().method() === 'PUT'
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }) : route.continue()));
     const heartbeat = () => fetch(`${ctx.base}/v1/control/state`, { method: 'PUT', headers: auth(), body: JSON.stringify({ mode: 'human_driving' }) }).then((r) => r.ok);
     if (!(await heartbeat())) throw new Error('PUT /v1/control/state was refused');
     const beat = setInterval(() => void heartbeat().catch(() => {}), 150);
@@ -310,6 +328,7 @@ export async function flows(ctx) {
     if (!/You are driving/.test((await banner.textContent()) ?? '')) throw new Error('banner text is not the human-driving one');
     await banner.getByRole('button', { name: /give control back/i }).click();
     await banner.waitFor({ state: 'hidden', timeout: 15000 });
+    await page.unroute('**/v1/control/state');
     await page.locator('[class*="railItem"]', { hasText: 'Fulla' }).first().click();
     await openFirstChat(page);
     await sendLines(page, ['call:desktop_list_apps {}']);
