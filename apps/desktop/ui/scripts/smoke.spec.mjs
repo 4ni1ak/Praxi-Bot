@@ -171,6 +171,13 @@ export async function flows(ctx) {
     const text = (await page.getByTestId('model-picker').textContent()) ?? '';
     if (!/large/i.test(text)) throw new Error(`model not saved, picker shows "${text.trim()}"`);
   });
+  await run(s, 'model picker: a coding-CLI group is never shown with 0 models', async (page) => {
+    await page.getByTestId('model-picker').click();
+    await page.getByRole('dialog').waitFor(T);
+    const counts = await page.locator('[data-testid^="model-picker-group-cli:"] [class*="groupCount"]').allTextContents();
+    if (counts.some((c) => c.trim() === '0')) throw new Error(`a CLI group is rendered with 0 models: ${counts.join(',')}`);
+    await page.keyboard.press('Escape');
+  });
   await run(s, 'a pure-read tool call runs and its result is shown', async (page) => {
     await gotoChat(page, 'Atlas');
     await send(page, `call:fs_read ${JSON.stringify({ path: join(ctx.workDir, 'hello.txt') })}`);

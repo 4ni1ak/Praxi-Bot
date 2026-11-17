@@ -679,10 +679,11 @@ export class MockApiClient extends ApiClient {
     // Host administration (review states): the desktop is confirmed, the server has two CLIs.
     if (seg[0] === "admin" && seg[1] === "state") return ok({ granted: new URLSearchParams(window.location.search).get("admin") !== "needs", secrets_available: true, confirm_command: "bot host admin --all-desktops", secrets_hint: null, adopted: true });
     if (seg[0] === "admin" && seg[1] === "cli-engines") {
+      if (seg[3] === "install") return ok({ engine: seg[2] ?? "", state: "done", error: null, output: "", installed: true, signed_in: false });
       return ok([
-        { id: "claude", name: "Claude Code", installed: true, signed_in: true, version: "2.1.42", install_command: null, login: "claude auth login", docs_url: "https://example.com" },
-        { id: "codex", name: "Codex", installed: true, signed_in: false, version: "0.169.0", install_command: null, login: "codex login", docs_url: "https://example.com" },
-        { id: "opencode", name: "OpenCode", installed: false, signed_in: null, version: null, install_command: "npm install -g opencode-ai", login: "opencode auth login", docs_url: "https://example.com" }
+        { id: "claude", name: "Claude Code", installed: true, signed_in: true, version: "2.1.42", install_command: null, can_install: true, login: "claude auth login", docs_url: "https://example.com" },
+        { id: "codex", name: "Codex", installed: true, signed_in: false, version: "0.169.0", install_command: null, can_install: true, login: "codex login", docs_url: "https://example.com" },
+        { id: "opencode", name: "OpenCode", installed: false, signed_in: null, version: null, install_command: "npm install -g opencode-ai", can_install: true, login: "opencode auth login", docs_url: "https://example.com" }
       ]);
     }
     if (seg[0] === "admin" && method === "PUT") return ok({ id: seg[2] ?? "default", enabled: true, has_key: true });

@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, Download, Plug, RefreshCw, Search, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { isMockMode } from "../api/mockMode";
 import {
@@ -16,6 +16,8 @@ import { productBrandKey, providerBrand, sourceLabel } from "../lib/modelBrand";
 import { modelDisplayName } from "../lib/modelName";
 import { matchesQuery } from "../lib/searchText";
 import { THINKING_LEVELS, useThinkingLevel } from "../lib/thinkingLevel";
+import type { AdminCliEngine } from "../api/types";
+import { EngineSetup } from "../views/settings/HomeCards";
 import { useDaemon } from "../state/DaemonContext";
 import { useCliEngineRows } from "../state/useCliEngineRows";
 import { useProviders } from "../state/useProviders";
@@ -30,6 +32,80 @@ export interface ModelPickerAutoOption {
   sub?: string;
   selected: boolean;
   onPick: () => void;
+}
+
+/**
+ * Coding CLIs that are switched on for the bots' home but have no model there: one muted row each
+ * ("Codex - not on <server> yet"), opening the install and sign-in steps. Never an empty group.
+ */
+function MissingEngineRows({ ids, server, testId }: { ids: string[]; server: string; testId: string }) {
+  const { t } = useTranslation();
+  const { client } = useDaemon();
+  const [open, setOpen] = useState<string | null>(null);
+  const [engines, setEngines] = useState<AdminCliEngine[] | null>(null);
+  useEffect(() => {
+    if (open === null || engines !== null || !client) return;
+    let live = true;
+    client.adminCliEngines().then(
+      (list) => live && setEngines(list),
+      () => live && setEngines([])
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, engines, client]);
+  const reload = useCallback(() => setEngines(null), []);
+  return (
+    <>
+      {ids.map((id) => {
+        const engine = engines?.find((e) => `cli:${e.id}` === id);
+        return (
+          <div key={`missing-${id}`} className={styles.group} data-testid={`${testId}-missing-${id}`}>
+            <button
+              type="button"
+              data-picker-row
+              className={styles.groupHead}
+              aria-expanded={open === id}
+              onClick={() => setOpen(open === id ? null : id)}
+            >
+              <ChevronRight aria-hidden="true" className={open === id ? styles.chevOpen : undefined} />
+              <span className={styles.noModels}>
+                {t("modelPicker.notOnServer", { name: sourceLabel(id), server: server || t("computerPicker.host") })}
+                {" · "}
+                {t("modelPicker.howToInstall")}
+              </span>
+            </button>
+            {open === id ? (
+              engine ? (
+                <div className={styles.noModels}>
+                  <EngineSetup engine={engine} onChanged={reload} />
+                </div>
+              ) : (
+                <p className={styles.noModels}>{t("home.engines.loading")}</p>
+              )
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * Only while the bots' home is a server: its missing CLIs as muted rows, and the note that the
+ * subscription CLIs of this computer are used when a bot runs on "this computer". Nothing otherwise.
+ */
+function HostCliExtras({ ids, testId, label }: { ids: string[]; testId: string; label?: ReactNode }) {
+  const { t } = useTranslation();
+  const { home, workLocalNow } = useDaemon();
+  if (home.kind !== "host" || workLocalNow) return null;
+  return (
+    <>
+      {label}
+      {ids.length > 0 ? <MissingEngineRows ids={ids} server={home.name} testId={testId} /> : null}
+      <p className={styles.noModels}>{t("modelPicker.noteLocalClis")}</p>
+    </>
+  );
 }
 
 /** "Connect" / "Install" rows for coding CLIs; mounted only where CLI models can be chosen. */
@@ -503,7 +579,10 @@ export function ModelPicker({
                       <>
                         {sectionLabel("modelPicker.sectionCli")}
                         {sections.cli.map(groupRow)}
+                        <HostCliExtras ids={sections.emptyCli} testId={testId} />
                       </>
+                    ) : sections.emptyCli.length > 0 ? (
+                      <HostCliExtras ids={sections.emptyCli} testId={testId} label={sectionLabel("modelPicker.sectionCli")} />
                     ) : null}
                     {sections.api.length > 0 ? (
                       <>

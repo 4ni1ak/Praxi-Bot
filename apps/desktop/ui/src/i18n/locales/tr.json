@@ -414,6 +414,39 @@
         "executes": "Bu sohbette güvenilmeyen içerik (web sayfası, e-posta, indirilen dosya) var; bu yüzden yazma, komut ve program başlatmadan önce sorar.",
         "always_ask": "Bu işlem izin düzeyi ne olursa olsun her zaman sorar (uygulamalar, gizli bilgiler).",
         "floor": "Ödemeler ve riskli komutlar izin düzeyi ne olursa olsun her zaman sorar."
+      },
+      "plain": {
+        "action": {
+          "shell": "{{where}} üzerinde komut çalıştır: {{command}}",
+          "launch": "{{where}} üzerinde {{name}} programını aç",
+          "browser": "{{where}} üzerindeki tarayıcıda şu sayfayı aç: {{url}}",
+          "screen": "{{where}} ekranını kullan",
+          "generic": "{{where}} üzerinde bir işlem yap"
+        },
+        "where": {
+          "server": "{{name}} sunucusu",
+          "serverUnnamed": "sunucu",
+          "thisComputer": "bu bilgisayar",
+          "user": "senin bilgisayarın ({{name}})"
+        },
+        "reason": {
+          "egress": "Bot şunu okudu: {{list}}. Şimdi {{host}} adresine veri göndermek istiyor.",
+          "egressExecutes": "Bot şunu okudu: {{list}}. Şimdi {{host}} adresine veri göndermek ve bir program başlatmak istiyor; program başlatan çağrılar her seferinde sorar.",
+          "unknownSources": "güvenilmeyen ya da özel içerik"
+        },
+        "source": {
+          "file": "dosya {{name}}",
+          "window": "pencere {{name}}",
+          "page": "sayfa {{name}}",
+          "mailbox": "posta kutusu {{name}}",
+          "mcp": "uygulama {{name}}",
+          "tool": "araç {{name}}",
+          "command": "komut çıktısı",
+          "workflow": "iş akışı kaydı",
+          "memory": "bellek",
+          "skill": "güvenilmeyen beceri"
+        },
+        "details": "Ayrıntılar"
       }
     },
     "question": {
@@ -936,11 +969,26 @@
     "retrying": "{{seconds}} sn sonra yeniden denenecek",
     "restarting": "Yeniden başlatılıyor…",
     "codes": {
-      "host_admin_forbidden": { "title": "Bu bilgisayar o sunucuyu yönetemez", "hint": "Sunucunun kurulumunu yalnızca sahibinin eşleşmiş masaüstü uygulaması değiştirebilir." },
-      "host_admin_required": { "title": "Önce bu bilgisayarı sunucuda onayla", "hint": "Aşağıdaki komutu sunucuda bir kez çalıştırıp yeniden dene." },
-      "secrets_unavailable": { "title": "Sunucu henüz anahtar saklayamıyor", "hint": "Aşağıdaki kurulum notunu sunucuda uygulayıp yeniden dene." },
-      "secret_store_failed": { "title": "Sunucu anahtarı kaydedemedi", "hint": "Yeniden dene. Sürerse sunucunun diskini ve gizli depolamasını kontrol et." },
-      "owner_key_required": { "title": "Bunu yalnızca bu bilgisayarın sahibi yapabilir", "hint": "Başka bir cihazda değil, bu bilgisayardaki Praxi uygulamasını kullan." },
+      "host_admin_forbidden": {
+        "title": "Bu bilgisayar o sunucuyu yönetemez",
+        "hint": "Sunucunun kurulumunu yalnızca sahibinin eşleşmiş masaüstü uygulaması değiştirebilir."
+      },
+      "host_admin_required": {
+        "title": "Önce bu bilgisayarı sunucuda onayla",
+        "hint": "Aşağıdaki komutu sunucuda bir kez çalıştırıp yeniden dene."
+      },
+      "secrets_unavailable": {
+        "title": "Sunucu henüz anahtar saklayamıyor",
+        "hint": "Aşağıdaki kurulum notunu sunucuda uygulayıp yeniden dene."
+      },
+      "secret_store_failed": {
+        "title": "Sunucu anahtarı kaydedemedi",
+        "hint": "Yeniden dene. Sürerse sunucunun diskini ve gizli depolamasını kontrol et."
+      },
+      "owner_key_required": {
+        "title": "Bu izni yalnızca sahibi verebilir",
+        "hint": "Sohbet için izin vermek üzere bu bilgisayardaki Praxi masaüstü uygulamasını kullan."
+      },
       "admin_rate_limit": {
         "title": "Çok fazla yönetim değişikliği",
         "hint": "Bir dakika bekleyip yeniden dene."
@@ -1020,10 +1068,6 @@
       "engine_owner_only": {
         "title": "Bunu yalnızca sahibi değiştirebilir",
         "hint": "Botun çalıştığı bilgisayardaki uygulamayı kullan."
-      },
-      "owner_key_required": {
-        "title": "Bunu yalnızca bu bilgisayardaki Praxi uygulaması yapabilir",
-        "hint": "Bu bilgisayarın Praxi uygulamasını açıp işlemi orada yap."
       },
       "forbidden": {
         "title": "Burada buna izin yok",
@@ -1181,9 +1225,13 @@
         "title": "Çok fazla canlı görünüm açık",
         "hint": "Birini kapatıp yeniden dene."
       },
-      "owner_key_required": {
-        "title": "Bu izni yalnızca sahibi verebilir",
-        "hint": "Sohbet için izin vermek üzere bu bilgisayardaki Praxi masaüstü uygulamasını kullan."
+      "prerequisite_missing": {
+        "title": "Sunucuda gerekli bir bileşen yok",
+        "hint": "Önce Node.js'i sunucuya kur, sonra yeniden dene."
+      },
+      "install_copy_only": {
+        "title": "Bu CLI sunucuya otomatik kurulamaz",
+        "hint": "Gösterilen komutu ya da resmî sayfayı kullan."
       }
     },
     "network": {
@@ -1245,6 +1293,18 @@
     "serviceWrongTarget": {
       "title": "Praxi yanıt vermeyen bir servise bakıyor",
       "hint": "Bu bilgisayara dön ya da yerel servisi yeniden başlat."
+    },
+    "toolWrongMachine": {
+      "title": "Bot yanlış bilgisayara komut gönderdi",
+      "hint": "Bu program ya da yol o bilgisayarın işletim sisteminde yok. Bot kendi bilgisayarında denemeli; yeniden iste."
+    },
+    "toolTargetOffline": {
+      "title": "Bot hedef bilgisayara ulaşamadı",
+      "hint": "Bilgisayar kapalı ya da bağlı değil. Açıp yeniden dene."
+    },
+    "toolNotFound": {
+      "title": "Bot aradığı dosyayı ya da programı bulamadı",
+      "hint": "Adını ya da yerini belirterek yeniden iste."
     }
   },
   "home": {
@@ -1261,10 +1321,20 @@
       "title": "{{name}} üzerindeki kodlama CLI'ları",
       "loading": "Sunucuya soruluyor…",
       "none": "Sunucu hiç kodlama CLI'ı bildirmedi.",
-      "signIn": "Kurulu, giriş gerekli. Sunucuda şunu çalıştır:",
+      "signIn": "Giriş için sunucuda şunu çalıştır:",
       "ready": "Hazır",
-      "notInstalled": "Kurulu değil. Sunucuda şunu çalıştır:",
-      "note": "Bunlar sunucunun kendi araçları. Kurulum ve giriş {{name}} üzerinde yapılır."
+      "notInstalled": "Kurulu değil.",
+      "note": "Bunlar sunucunun kendi araçları. Kurulum ve giriş {{name}} üzerinde yapılır.",
+      "installedUnknown": "Kurulu · giriş durumu bilinmiyor",
+      "runOnServer": "Sunucuda şunu çalıştır:",
+      "officialPage": "{{name}} için resmî sayfadan kur",
+      "installOnServer": "Sunucuya kur",
+      "installing": "Sunucuda kuruluyor…",
+      "installFailed": "Kurulum tamamlanamadı ({{code}}). Çıktıya bak ya da komutu elle çalıştır.",
+      "needNode": "Sunucuda Node.js (npm) yok; önce onu kurman gerekir.",
+      "installNode": "Node.js'i sunucuya kur",
+      "nodeStarted": "Node.js sunucuya kuruluyor. Bir dakika sonra bu CLI'ı yeniden kurmayı dene.",
+      "signInNote": "Giriş sunucuda bir web adresi (çoğu zaman bir kodla) gösterir. Adresi bu bilgisayarda aç, orada giriş yap ve istenirse kodu sunucudaki terminale yapıştır. Bu bilgisayardaki oturumlar sunucuya kopyalanmaz."
     },
     "chip": {
       "local": "Bu bilgisayar",
@@ -1281,7 +1351,9 @@
       "viewScreen": "Ekranını gör",
       "workHere": "Şimdilik bu bilgisayarda çalış",
       "backHome": "{{name}} bilgisayarına dön",
-      "pcOn": "Açık · her işlem burada sana sorar", "pcOff": "Kapalı · botların bu bilgisayarı kullanamaz", "workHereHint": "Geri dönene kadar bu bilgisayarın kendi botlarını gösterir.",
+      "pcOn": "Açık · her işlem burada sana sorar",
+      "pcOff": "Kapalı · botların bu bilgisayarı kullanamaz",
+      "workHereHint": "Geri dönene kadar bu bilgisayarın kendi botlarını gösterir.",
       "backHomeHint": "Şimdilik bu bilgisayarda çalışıyorsun.",
       "stop": "{{name}} üzerindeki her şeyi durdur",
       "stopHint": "Orada şu an süren her çalışmayı durdurur."
@@ -1296,7 +1368,8 @@
       "title": "{{name}} artık botlarının evi",
       "moved": "{{name}} bilgisayarına taşınanlar",
       "stayed": "Bu bilgisayarda kalanlar",
-      "allowPc": "İsteğe bağlı: botların istediğinde bu bilgisayarın ekranına bakabilir ve üzerinde iş yapabilir. Bir şeyi değiştiren her işlem yine burada önce sana sorar.", "stayedBody": "Bu bilgisayar elindeki her şeyi yedek olarak saklar ve bir hedef olarak kalır: bir bottan istediğin zaman bunun üzerinde iş yapmasını isteyebilirsin. Burada hiçbir şey silinmedi.",
+      "allowPc": "İsteğe bağlı: botların istediğinde bu bilgisayarın ekranına bakabilir ve üzerinde iş yapabilir. Bir şeyi değiştiren her işlem yine burada önce sana sorar.",
+      "stayedBody": "Bu bilgisayar elindeki her şeyi yedek olarak saklar ve bir hedef olarak kalır: bir bottan istediğin zaman bunun üzerinde iş yapmasını isteyebilirsin. Burada hiçbir şey silinmedi.",
       "done": "Anladım"
     },
     "target": {
@@ -1814,7 +1887,10 @@
       "fast": "hızlı",
       "balanced": "dengeli",
       "strongest": "zor işler için en iyisi"
-    }
+    },
+    "notOnServer": "{{name}} · {{server}} üzerinde henüz yok",
+    "howToInstall": "Nasıl kurulur",
+    "noteLocalClis": "Bu bilgisayardaki abonelik CLI'ları, bot \"bu bilgisayarda\" çalışırken kullanılır."
   },
   "settingsModal": {
     "title": "Ayarlar",

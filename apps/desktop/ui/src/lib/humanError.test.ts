@@ -91,3 +91,12 @@ test("unknown codes and raw strings fall back to a human sentence; raw text only
   assert.doesNotMatch(layer.humanError({ status: 409, code: "version_conflict", message: "PUT requires expected_version" }).title, /expected_version/);
   await i18n.changeLanguage("en");
 });
+
+test("a tool failure that names the wrong machine or an offline target says so", async () => {
+  await i18n.changeLanguage("tr");
+  const wrong = layer.humanToolError('wrong computer: "/opt/praxi-browser/chrome" looks like a Linux or macOS program or path, but this desktop is a Windows computer.');
+  assert.equal(wrong.code, "toolWrongMachine");
+  assert.match(wrong.title, /yanlış bilgisayar/);
+  assert.equal(layer.humanToolError("PC desktop unavailable: peer networking is disabled").code, "toolTargetOffline");
+  assert.notEqual(layer.humanToolError("something odd happened").code, "toolWrongMachine");
+});

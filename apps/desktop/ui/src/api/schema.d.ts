@@ -20,6 +20,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/cli-engines/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Progress of the install above (poll while `state` is `installing`). */
+        get: operations["admin_cli_engine_install_status"];
+        put?: never;
+        /**
+         * Install one CLI engine ON THE HOST with the registry's fixed command.
+         *     Admin desktop only; one install at a time; output bounded.
+         */
+        post: operations["admin_cli_engine_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/default-provider": {
         parameters: {
             query?: never;
@@ -2558,6 +2579,8 @@ export interface components {
         };
         /** @description What the host reports about one CLI engine, as installed THERE. */
         AdminCliEngineDto: {
+            /** @description The host can run that command itself (a verified, fixed installer). */
+            can_install: boolean;
             docs_url: string;
             id: string;
             /** @description Command that installs it on the host, when one is known. */
@@ -2569,6 +2592,20 @@ export interface components {
             /** @description `None` when the CLI offers no safe way to check. */
             signed_in?: boolean | null;
             version?: string | null;
+        };
+        /** @description `GET/POST /v1/admin/cli-engines/{id}/install`: where the install stands. */
+        AdminCliInstallDto: {
+            engine: string;
+            /** @description Stable code of the last failure (`exit`, `timeout`, `npm_missing`...). */
+            error?: string | null;
+            /** @description Found on the host right now. */
+            installed: boolean;
+            /** @description Last lines of installer output (untrusted text, bounded). */
+            output: string;
+            /** @description Signed in, when the CLI can say. */
+            signed_in?: boolean | null;
+            /** @description `idle`, `installing`, `done` or `failed`. */
+            state: string;
         };
         /** @description `PUT /v1/admin/default-provider`. */
         AdminDefaultInput: {
@@ -5751,6 +5788,72 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_install_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliInstallDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliInstallDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
