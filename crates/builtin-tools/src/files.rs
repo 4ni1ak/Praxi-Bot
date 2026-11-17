@@ -3802,8 +3802,9 @@ fn provenance_after(
         };
         let mark = |p: &Path| {
             if let Some(l) = ledger {
-                l.mark(
-                    &normalize(p),
+                crate::provenance::mark_path(
+                    l,
+                    p,
                     p.is_dir(),
                     "written by a tool in an untrusted run",
                 );
@@ -3860,7 +3861,7 @@ fn provenance_after(
                         !ledger.is_some_and(|l| l.is_trusted_folder(&normalize(&probe)))
                             && external_location(&probe)
                     });
-                    external || ledger.is_some_and(|l| l.is_marked(&normalize(&entry)))
+                    external || is_untrusted(ledger, &entry)
                 })
             }
             _ => false,

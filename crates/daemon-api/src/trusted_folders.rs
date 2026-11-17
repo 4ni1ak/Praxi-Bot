@@ -66,9 +66,9 @@ pub(crate) async fn add(
         .filter(|p| p.is_dir())
         .ok_or_else(|| ApiError::bad_request("that folder does not exist"))?;
     // A drive root would make everything "own content".
-    if real.parent().is_none() {
+    if !builtin_tools::provenance::trust_entry_allowed(&real, &s.data_dir()) {
         return Err(ApiError::bad_request(
-            "choose a project folder, not a drive root",
+            "choose a project folder outside home, Downloads, temporary and Praxi data directories",
         ));
     }
     s.storage()

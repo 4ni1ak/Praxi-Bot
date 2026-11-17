@@ -1233,6 +1233,17 @@ impl Storage {
         Ok(())
     }
 
+    /// Recorded provenance spellings, including entries written before canonical identities.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn untrusted_paths(&self) -> Result<Vec<(String, bool)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT path, tree FROM file_provenance")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Whether `path` (normalised: `/` separators, no trailing slash) is marked, itself or through
     /// a marked ancestor directory.
     ///
