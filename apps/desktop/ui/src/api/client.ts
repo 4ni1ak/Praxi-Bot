@@ -10,6 +10,7 @@ import type {
   AdminProviderInput,
   AdminState,
   CopyPlan,
+  ReclaimResult,
   CopyReport,
   CopyRequest,
   HomeInfo,
@@ -596,6 +597,16 @@ export class ApiClient {
   /** Fire a schedule now (409 while a run of it is still in flight). */
   runScheduleNow(id: string): Promise<AcceptedResponse> {
     return this.request("POST", `/schedules/${id}/run-now`);
+  }
+  /**
+   * Bring a schedule that moved to a server back to this computer. The server's copy is
+   * switched off first; when it cannot be reached the call answers 409 `host_unreachable` until
+   * `confirmHostUnreachable` is set (its copy may then still be active).
+   */
+  reclaimSchedule(id: string, confirmHostUnreachable = false): Promise<ReclaimResult> {
+    return this.request("POST", `/schedules/${id}/reclaim`, {
+      body: { confirm_host_unreachable: confirmHostUnreachable }
+    });
   }
   /** Turn an English / Turkish phrase into a schedule spec. */
   parseSchedule(text: string, tz?: string): Promise<ParsedSchedule> {

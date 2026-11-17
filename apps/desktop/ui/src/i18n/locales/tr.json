@@ -1034,6 +1034,14 @@
         "title": "Bu zamanlama geçerli değil",
         "hint": "Saati ya da tekrar kuralını kontrol edip yeniden dene."
       },
+      "schedule_moved": {
+        "title": "Bu zamanlama sunucuya taşındı",
+        "hint": "Orada çalışır, bu bilgisayarda dondurulmuştur. Satırındaki Bu bilgisayara geri getir düğmesini kullan."
+      },
+      "host_unreachable": {
+        "title": "Sunucu yanıt vermedi",
+        "hint": "Oradaki kopya hâlâ çalışıyor olabilir. Yeniden dene ya da yine de geri getirmeyi onayla."
+      },
       "bad_web_config": {
         "title": "Web arama ayarları geçerli değil",
         "hint": "Anahtarı ya da adresi kontrol edip yeniden kaydet."
@@ -1632,6 +1640,11 @@
       }
     },
     "runNow": "Şimdi çalıştır",
+    "movedTo": "{{name}} sunucusuna taşındı: orada çalışır, bu bilgisayarda dondurulmuştur.",
+    "reclaim": "Bu bilgisayara geri getir",
+    "reclaimAnyway": "Yine de geri getir",
+    "reclaimUnreachable": "{{name}} yanıt vermedi; oradaki kopya hâlâ çalışıyor olabilir. Şimdi geri getirirsen iki bilgisayarda da çalışabilir.",
+    "reclaimed": "{{name}} bu bilgisayara geri döndü.",
     "runNowStarted": "{{name}} başlatıldı.",
     "edit": "Düzenle",
     "delete": "Sil",
@@ -3354,18 +3367,38 @@
     "send": "Sunucuya taşı",
     "sending": "Taşınıyor…",
     "failed": "Olmadı. Sunucunun bağlı olduğundan emin ol ve tekrar dene.",
-    "cannotMove": "Henüz taşınamayanlar: sohbet geçmişi, bellek, zamanlamalar ve tetikleyiciler, uygulama bağlantıları ve CLI oturumları (Claude Code, Codex, agy, OpenCode sunucunun kendisinde giriş yapar).",
-    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez; çalışan bir yedek olarak kalır. İstersen sonra tekrar çalıştırıp eşitleyebilirsin.",
+    "cannotMove": "Henüz taşınamayanlar: bellek, uygulama bağlantıları ve CLI oturumları (Claude Code, Codex, agy, OpenCode sunucunun kendisinde giriş yapar). Sohbetlerde adı geçen dosyalar ve ekler kopyalanmaz; webhook gizli anahtarları geride kalır.",
+    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez. Taşınan zamanlamalar burada dondurulur (yanlışlıkla yeniden açılamaz) ve sunucuda çalışır; Zamanlamalar sayfasındaki satırından geri getirebilirsin. Sonra tekrar çalıştırıp eşitleyebilirsin: asla kopya oluşturmaz.",
     "summary": "{{done}} taşındı, {{skipped}} atlandı, {{failed}} başarısız.",
     "homeFailed": "Öğeler taşındı ama sunucu botlarının evi olarak işaretlenemedi.",
     "kind": {
       "provider": "Model sağlayıcı",
       "providerKey": "Model sağlayıcı ve anahtarı",
       "bot": "Bot",
-      "default": "Varsayılan model"
+      "default": "Varsayılan model",
+      "schedules": "Bu bilgisayarda {{count}} tane; saat dilimleri korunur, buradaki kopyalar kapatılır",
+      "schedulesName": "Zamanlamalar ve tetikleyiciler",
+      "chats": "{{count}} sohbet, {{messages}} mesaj; yazarlar ve saatler korunur",
+      "chatsName": "Sohbet geçmişi",
+      "memory": "Bellek",
+      "memoryName": "Bellek"
+    },
+    "nameTaken": "{{server}} üzerinde {{name}} adında bir bot zaten var.",
+    "keptSeparate": "{{server}} üzerindeki aynı adlı bottan ayrı tutuldu",
+    "answerFirst": "Taşımadan önce sunucuda zaten var olan bot için bir seçim yap.",
+    "choice": {
+      "adopt": "Aynı bot - bağla",
+      "adoptWhy": "Zamanlamaları ve sohbetleri {{server}} üzerindeki o bota eklenecek.",
+      "separate": "Ayrı tut",
+      "separateWhy": "Bu bot ve ona ait her şey burada kalır, taşınmaz."
+    },
+    "counts": {
+      "schedules": "{{count}} taşındı, {{existing}} zaten vardı, {{skipped}} geride kaldı",
+      "chats": "{{count}} mesaj taşındı, {{existing}} zaten vardı, {{skipped}} geride kaldı"
     },
     "blocked": {
-      "cli_engine": "Bu bilgisayarda kalan bir CLI motoru kullanıyor"
+      "cli_engine": "Bu bilgisayarda kalan bir CLI motoru kullanıyor",
+      "no_export": "Henüz taşınmıyor: bellek için dışa aktarma yok"
     },
     "host": {
       "host_admin_required": "Sunucu sahibi bu bilgisayarı sunucuda bir kez onaylamalı. Sunucuda şunu çalıştır:",
@@ -3385,6 +3418,14 @@
       "secret_store_failed": "Sunucu kaydedemedi",
       "host_unreachable": "Sunucu yanıt vermedi",
       "rejected": "Sunucu kabul etmedi",
+      "admin_rate_limit": "Sunucu beklememizi istedi; devam etmek için tekrar çalıştır",
+      "name_taken": "Sunucuda bu adla farklı bir bot zaten var",
+      "kept_separate": "Ayrı tutuldu: hiçbir şey taşınmadı",
+      "choice_not_saved": "Seçimin kaydedilemedi",
+      "bot_not_moved": "Botu sunucuda yok",
+      "id_in_use": "Sunucuda bu kimlikle başka bir şey zaten var",
+      "freeze_failed": "Yerel kopya dondurulamadı; orada hiçbir şey açılmadı",
+      "unreadable": "Burada okunamadı",
       "no_default": "Varsayılan model yok",
       "skipped": "Atlandı",
       "failed": "Başarısız"

@@ -1205,6 +1205,22 @@ impl Storage {
         Ok(())
     }
 
+    /// The recorded origin of a message (`owner`, `imported`, `imported_foreign:<name>`, ...).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn message_source(&self, id: Uuid) -> Result<String> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT source FROM messages WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
     /// Texts of the user messages of `chat` that the owner typed in the desktop app.
     ///
     /// # Errors

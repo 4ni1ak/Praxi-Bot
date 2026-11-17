@@ -1993,6 +1993,7 @@ fn schedule_dto(sc: &Schedule, has_webhook: bool) -> ScheduleDto {
         skipped_by_precheck: 0,
         consecutive_errors: 0,
         origin: sc.origin.as_str().to_owned(),
+        moved_to: None,
     }
 }
 
@@ -2001,6 +2002,7 @@ fn dto_of(s: &AppState, sc: &Schedule) -> Result<ScheduleDto, ApiError> {
     let trigger = store.get_trigger(sc.id)?;
     let has = matches!(trigger, Some(Trigger::Webhook { .. }));
     let mut dto = schedule_dto(sc, has);
+    dto.moved_to = store.frozen_for(sc.id)?;
     if matches!(
         trigger,
         Some(Trigger::FileWatch { .. } | Trigger::Email { .. })
@@ -2256,6 +2258,49 @@ pub(crate) async fn create_schedule(
     ))
 }
 
+/// A schedule moved from the owner's other computer (`host_import`): the same
+/// validation as `POST /v1/schedules` (bot, spec, payload, chat, precheck, trigger),
+/// but the schedule keeps its id and creation time, so a second import finds it
+/// ("exists") and never duplicates it. Next-run times are recomputed on THIS
+/// clock from the spec, whose time zone is part of the spec itself.
+pub(crate) async fn import_schedule(
+    s: &AppState,
+    input: &ScheduleInput,
+    id: TaskId,
+    created_at_ms: i64,
+    origin: scheduler::ScheduleOrigin,
+) -> Result<Schedule, ApiError> {
+    let p = schedule_parts(s, input)?;
+    let mut sc = Schedule::new(
+        BotId(input.bot_id),
+        p.chat_id,
+        input.name.trim(),
+        p.spec,
+        p.payload,
+        p.policy,
+        now_ms(),
+    )?;
+    sc.id = id;
+    sc.created_at = created_at_ms.min(now_ms());
+    sc.origin = origin;
+    if input.enabled == Some(false) {
+        sc.enabled = false;
+        sc.next_run_at = None;
+    }
+    let trigger = schedule_extensions(s, &mut sc, input).await?;
+    let store = s.schedule_store()?;
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.import_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string(),"bot_id":sc.bot_id.to_string()}),
+    )?;
+    store.insert_config(&sc, trigger.flatten().as_ref())?;
+    s.publish_schedule_changed(sc.id.0, ScheduleChangeKind::Created);
+    Ok(store.get(sc.id)?.unwrap_or(sc))
+}
+
 /// Get one schedule.
 #[utoipa::path(get, path = "/v1/schedules/{id}", tag = "schedules", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Schedule id")),
@@ -2281,6 +2326,11 @@ pub(crate) async fn update_schedule(
     ApiJson(input): ApiJson<ScheduleInput>,
 ) -> Result<Json<ScheduleDto>, ApiError> {
     let mut sc = schedule_of_user(&s, &sid)?;
+    // A schedule that moved to a server is frozen here: no update, not even a paused one,
+    // (see `ScheduleStore::freeze`); `POST /v1/schedules/{id}/reclaim` is the way back.
+    if s.schedule_store()?.frozen_for(sc.id)?.is_some() {
+        return Err(scheduler::SchedulerError::Frozen(sc.id.to_string()).into());
+    }
     if peer.is_some()
         && (input.trigger.is_some()
             || input.precheck.is_some()
@@ -2389,6 +2439,9 @@ pub(crate) async fn run_schedule_now(
     Path(sid): Path<String>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), ApiError> {
     let sc = schedule_of_user(&s, &sid)?;
+    if s.schedule_store()?.frozen_for(sc.id)?.is_some() {
+        return Err(scheduler::SchedulerError::Frozen(sc.id.to_string()).into());
+    }
     let scheduler = s.scheduler()?;
     s.leader().with_active(|| scheduler.run_now(sc.id))??;
     Ok((

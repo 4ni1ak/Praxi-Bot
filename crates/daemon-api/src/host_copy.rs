@@ -46,6 +46,19 @@ pub struct CopyBotRow {
     pub model: Option<String>,
     /// The bot cannot be copied (it runs on a CLI engine).
     pub blocked: Option<String>,
+    /// Schedules of this bot on this computer (270-B).
+    #[serde(default)]
+    pub schedules: u32,
+    /// What the server says about this bot: `mapped` (already linked), `name_taken` (a bot of
+    /// that name that this flow did not create exists there: the owner must choose), `free`,
+    /// `separate` (the owner chose to keep them apart) or absent (the server was not asked).
+    #[serde(default)]
+    pub host_state: Option<String>,
+    /// Chats of this bot on this computer, and their messages.
+    #[serde(default)]
+    pub chats: u32,
+    #[serde(default)]
+    pub messages: u32,
 }
 
 /// What a copy could send. Names only; no secret value.
@@ -65,6 +78,7 @@ pub struct CopyPlanDto {
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)] // independent tick boxes of one dialog
 pub struct CopyRequest {
     #[serde(default)]
     pub providers: Vec<String>,
@@ -77,6 +91,22 @@ pub struct CopyRequest {
     /// Nothing is deleted on this computer: it stays a working fallback.
     #[serde(default)]
     pub set_home: bool,
+    /// Also move the schedules and triggers of the moved bots (the local copies are then
+    /// disabled and marked "moved to <server>").
+    #[serde(default)]
+    pub schedules: bool,
+    /// Also move the chat history of the moved bots (messages and run metadata; files and
+    /// attachments named in them are not copied).
+    #[serde(default)]
+    pub chats: bool,
+    /// Local bot ids the owner explicitly wants bound to the server bot that already has the
+    /// same name (otherwise a name collision is refused).
+    #[serde(default)]
+    pub adopt: Vec<String>,
+    /// Local bot ids the owner chose to keep separate from the server's same-named bot: they
+    /// are skipped, with everything that belongs to them, and the answer is remembered.
+    #[serde(default)]
+    pub separate: Vec<String>,
 }
 
 /// `GET /v1/hosts/home`: the host adopted as the bots' home, if any.
@@ -115,6 +145,18 @@ pub struct CopyItemResult {
     /// `done`, `skipped` or `failed`.
     pub status: String,
     pub code: Option<String>,
+    /// For `schedules` / `chats`: how many items moved now (messages for chats) ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// ... were already on the server ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing: Option<u32>,
+    /// ... were left behind (webhook secret, too long, bot not moved) ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<u32>,
+    /// ... or failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -122,14 +164,14 @@ pub struct CopyReport {
     pub items: Vec<CopyItemResult>,
 }
 
-fn local_only(peer: Option<&Extension<crate::PeerIdentity>>) -> Result<(), ApiError> {
+pub(crate) fn local_only(peer: Option<&Extension<crate::PeerIdentity>>) -> Result<(), ApiError> {
     if peer.is_some() {
         return Err(ApiError::forbidden("host links are local only"));
     }
     Ok(())
 }
 
-fn links(s: &AppState) -> Result<std::sync::Arc<dyn HostLinks>, ApiError> {
+pub(crate) fn links(s: &AppState) -> Result<std::sync::Arc<dyn HostLinks>, ApiError> {
     s.host_links()
         .ok_or_else(|| ApiError::unavailable("host links are not available in this daemon"))
 }
@@ -138,7 +180,11 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-fn audit(s: &AppState, action: &str, detail: &serde_json::Value) -> Result<(), ApiError> {
+pub(crate) fn audit(
+    s: &AppState,
+    action: &str,
+    detail: &serde_json::Value,
+) -> Result<(), ApiError> {
     s.storage()
         .append_audit(s.user_id(), None, "local-ui", action, detail)
         .map(|_| ())
@@ -193,13 +239,34 @@ pub(crate) async fn plan(
             custom: p.custom.is_some(),
         })
         .collect();
+    let mut schedule_counts: std::collections::HashMap<uuid::Uuid, u32> =
+        std::collections::HashMap::new();
+    if let Ok(all) = s.schedule_store().and_then(|st| st.list()) {
+        for sc in all {
+            *schedule_counts.entry(sc.bot_id.0).or_default() += 1;
+        }
+    }
+    let mut chat_counts: std::collections::HashMap<uuid::Uuid, (u32, u32)> =
+        std::collections::HashMap::new();
+    for chat in s.storage().list_chats(s.user_id())? {
+        let n = u32::try_from(s.storage().list_messages(chat.id).map_or(0, |m| m.len()))
+            .unwrap_or(u32::MAX);
+        let e = chat_counts.entry(chat.bot_id.0).or_default();
+        e.0 += 1;
+        e.1 = e.1.saturating_add(n);
+    }
     let bots = s
         .storage()
         .list_bots(s.user_id())?
         .into_iter()
         .map(|bot| {
             let executor = bot_executor(&bot.config);
+            let (chats, messages) = chat_counts.get(&bot.id.0).copied().unwrap_or_default();
             CopyBotRow {
+                host_state: None,
+                schedules: schedule_counts.get(&bot.id.0).copied().unwrap_or_default(),
+                chats,
+                messages,
                 id: bot.id.0.to_string(),
                 name: bot.name,
                 blocked: executor
@@ -243,7 +310,57 @@ pub(crate) async fn plan(
             plan.host_code = call.body["error"]["code"].as_str().map(str::to_owned);
         }
     }
+    // Ask the server which bots would collide by name, so the dialog can put the question
+    // before anything is sent. A bot the owner already kept separate is not asked again.
+    if plan.host_accepts == Some(true) {
+        fill_host_states(&s, &id, &mut plan).await?;
+    }
     Ok(Json(plan))
+}
+
+/// Ask the server which bots would collide by name (see `CopyBotRow::host_state`).
+async fn fill_host_states(s: &AppState, id: &str, plan: &mut CopyPlanDto) -> Result<(), ApiError> {
+    let probe: Vec<_> = plan
+        .bots
+        .iter()
+        .filter(|b| b.blocked.is_none())
+        .filter_map(|b| {
+            Some(serde_json::json!({"source_bot_id": b.id.parse::<uuid::Uuid>().ok()?, "name": b.name}))
+        })
+        .collect();
+    let states: std::collections::HashMap<String, String> = links(s)?
+        .call(
+            id,
+            "POST",
+            "/v1/admin/import/bots/check",
+            Some(serde_json::json!({"bots": probe})),
+        )
+        .await
+        .ok()
+        .filter(|c| c.status == 200)
+        .and_then(|c| c.body["items"].as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|i| {
+            Some((
+                i["source_bot_id"].as_str()?.to_owned(),
+                i["state"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    for b in &mut plan.bots {
+        b.host_state = match (states.get(&b.id), b.id.parse::<uuid::Uuid>()) {
+            (Some(st), Ok(bid))
+                if st == "name_taken"
+                    && crate::host_import::kept_separate(&s.data_dir(), id, bid) =>
+            {
+                Some("separate".to_owned())
+            }
+            (Some(st), _) => Some(st.clone()),
+            _ => None,
+        };
+    }
+    Ok(())
 }
 
 fn item(kind: &str, id: &str, name: &str, status: &str, code: Option<&str>) -> CopyItemResult {
@@ -253,6 +370,10 @@ fn item(kind: &str, id: &str, name: &str, status: &str, code: Option<&str>) -> C
         name: name.into(),
         status: status.into(),
         code: code.map(str::to_owned),
+        count: None,
+        existing: None,
+        skipped: None,
+        failed: None,
     }
 }
 
@@ -297,7 +418,8 @@ pub(crate) async fn copy(
         &s,
         "host_link.copy_setup",
         &serde_json::json!({"host": id, "providers": input.providers, "bots": input.bots,
-                            "default_model": input.default_model, "phase": "requested"}),
+                            "default_model": input.default_model, "schedules": input.schedules,
+                            "chats": input.chats, "phase": "requested"}),
     )?;
     let cfg = ProviderConfig::load(&config_path(&s.data_dir()))
         .map_err(|e| ApiError::internal(format!("providers.toml: {e}")))?;
@@ -372,7 +494,8 @@ pub(crate) async fn copy(
     }
 
     let local_bots = s.storage().list_bots(s.user_id())?;
-    let mut host_bot_names: Option<Vec<String>> = None;
+    // Local bot id -> the bot on the host that THIS flow created or the owner adopted.
+    let mut moved_bots: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
     for bid in &input.bots {
         let Some(bot) = local_bots.iter().find(|b| &b.id.0.to_string() == bid) else {
             items.push(item("bot", bid, bid, "skipped", Some("not_found")));
@@ -383,40 +506,66 @@ pub(crate) async fn copy(
             items.push(item("bot", bid, &name, "skipped", Some(code)));
             continue;
         }
+        if input.separate.contains(bid) {
+            // The owner said these are two different bots: remember it, send nothing of it.
+            let kept = crate::host_import::remember_separate(&s.data_dir(), &id, bot.id.0).is_ok();
+            items.push(item(
+                "bot",
+                bid,
+                &name,
+                "skipped",
+                Some(if kept {
+                    "kept_separate"
+                } else {
+                    "choice_not_saved"
+                }),
+            ));
+            continue;
+        }
         if bot_executor(&bot.config).is_some_and(|e| e.starts_with("cli:")) {
             items.push(item("bot", bid, &name, "skipped", Some("cli_engine")));
             continue;
         }
-        if host_bot_names.is_none() {
-            host_bot_names = Some(
-                links
-                    .call(&id, "GET", "/v1/bots", None)
-                    .await
-                    .ok()
-                    .filter(|c| c.status == 200)
-                    .and_then(|c| c.body.as_array().cloned())
-                    .map(|bots| {
-                        bots.iter()
-                            .filter_map(|b| b["name"].as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            );
-        }
-        if host_bot_names.as_deref().is_some_and(|n| n.contains(&name)) {
-            items.push(item("bot", bid, &name, "skipped", Some("exists")));
-            continue;
-        }
-        let body = serde_json::json!({"name": name, "config": portable_config(&bot.config)});
-        match links.call(&id, "POST", "/v1/bots", Some(body)).await {
+        // The host maps (this computer, this bot id) -> its own bot: created by this flow, or
+        // adopted when the owner asked for it. A bot that merely has the same NAME is refused.
+        let body = serde_json::json!({"source_bot_id": bot.id.0, "name": name,
+            "config": portable_config(&bot.config), "adopt": input.adopt.contains(bid)});
+        match links
+            .call(&id, "POST", "/v1/admin/import/bots", Some(body))
+            .await
+        {
             Ok(call) if (200..300).contains(&call.status) => {
-                items.push(item("bot", bid, &name, "done", None));
+                match (call.body["status"].as_str(), call.body["code"].as_str()) {
+                    (Some("done" | "adopted"), _) => {
+                        moved_bots.insert(bot.id.0);
+                        items.push(item("bot", bid, &name, "done", None));
+                    }
+                    (Some("exists"), _) => {
+                        moved_bots.insert(bot.id.0);
+                        items.push(item("bot", bid, &name, "skipped", Some("exists")));
+                    }
+                    (_, code) => {
+                        items.push(item(
+                            "bot",
+                            bid,
+                            &name,
+                            "failed",
+                            Some(code.unwrap_or("rejected")),
+                        ));
+                    }
+                }
             }
             Ok(call) => {
                 let code = call.body["error"]["code"]
                     .as_str()
                     .unwrap_or("rejected")
                     .to_owned();
+                if matches!(
+                    code.as_str(),
+                    "host_admin_required" | "host_admin_forbidden"
+                ) {
+                    stop = Some(code.clone());
+                }
                 items.push(item("bot", bid, &name, "failed", Some(&code)));
             }
             Err(e) => {
@@ -426,6 +575,32 @@ pub(crate) async fn copy(
         }
     }
 
+    if (input.schedules || input.chats) && stop.is_none() {
+        let host_name = links
+            .list()
+            .into_iter()
+            .find(|h| h.id == id)
+            .map_or_else(|| id.clone(), |h| h.name);
+        let mut chats_on_host = std::collections::HashSet::new();
+        if input.chats {
+            let (r, on_host) = crate::host_import::send_chats(&s, &*links, &id, &moved_bots).await;
+            chats_on_host = on_host;
+            items.push(r);
+        }
+        if input.schedules {
+            items.push(
+                crate::host_import::send_schedules(
+                    &s,
+                    &*links,
+                    &id,
+                    &host_name,
+                    &moved_bots,
+                    &chats_on_host,
+                )
+                .await,
+            );
+        }
+    }
     if input.default_model {
         let default = cfg
             .effective_default()

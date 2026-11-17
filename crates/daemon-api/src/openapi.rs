@@ -10,9 +10,9 @@ use utoipa::{Modify, OpenApi};
 
 use crate::{
     changes, components, composio, composio_routes, doctor, doctor_routes, dto, email,
-    email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_links,
-    host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server, routes,
-    skill_management, skills, sse, trusted_folders, web, web_routes,
+    email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_import,
+    host_links, host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server,
+    routes, skill_management, skills, sse, trusted_folders, web, web_routes,
 };
 
 struct Security;
@@ -46,7 +46,7 @@ impl Modify for Security {
     ),
     paths(
         crate::cli_engines::list, crate::cli_engines::refresh_models_route, crate::cli_engines::preview, crate::cli_engines::decide,
-        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_links::forget, host_links::computer_requests, host_links::decide_computer_request, host_links::set_computer_access, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::set_admin, host_admin::state, host_admin::put_provider, host_admin::delete_provider, host_admin::set_default, host_admin::cli_engines, host_admin::install_cli_engine, host_admin::cli_engine_install_status, host_copy::plan, host_copy::copy, trusted_folders::list, trusted_folders::add, trusted_folders::remove, host_copy::home, host_admin::set_home, host::standby, host::activate, host::update,
+        host::status, host_links::list, host_links::pair, host_links::connect, host_links::disconnect, host_links::forget, host_links::computer_requests, host_links::decide_computer_request, host_links::set_computer_access, host_setup::start, host_setup::get, host_setup::host_key, host_setup::cancel, host_setup::ssh_keys, host::invite, host::revoke, host::set_admin, host_admin::state, host_admin::put_provider, host_admin::delete_provider, host_admin::set_default, host_admin::cli_engines, host_admin::install_cli_engine, host_admin::cli_engine_install_status, host_copy::plan, host_copy::copy, trusted_folders::list, trusted_folders::add, trusted_folders::remove, host_copy::home, host_admin::set_home, host_import::import_schedules, host_import::import_chats, host_import::import_bot, host_import::check_bots, host_import::activate_schedules, host_import::release_schedules, host_import::reclaim, host::standby, host::activate, host::update,
         routes::health,
         live_view::targets,
         live_view::availability,
@@ -202,7 +202,7 @@ impl Modify for Security {
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host_links::HostLinkState, host_links::HostLinkInfo, host_links::HostLinkList, host_links::PairHostInput, host_links::HostLinkConnection,
         host_setup::StartHostSetupInput, host_setup::HostSetupState, host_setup::HostSetupStepStatus, host_setup::HostSetupStep, host_setup::HostKeyPrompt, host_setup::HostSetupJob, host_setup::HostKeyAnswer, host_setup::SshKeyHint, host_setup::SshKeyList,
-        host::HostAdminInput, host_admin::AdminStateDto, host_admin::AdminCliEngineDto, host_admin::AdminCliInstallDto, host_admin::AdminProviderInput, host_admin::AdminProviderDto, host_admin::AdminDefaultInput, trusted_folders::TrustedFoldersDto, trusted_folders::TrustFolderInput, host_copy::CopyPlanDto, host_copy::CopyProviderRow, host_copy::CopyBotRow, host_copy::CopyRequest, host_copy::CopyItemResult, host_copy::CopyReport, host_copy::HomeDto, host_admin::AdminHomeInput,
+        host::HostAdminInput, host_admin::AdminStateDto, host_admin::AdminCliEngineDto, host_admin::AdminCliInstallDto, host_admin::AdminProviderInput, host_admin::AdminProviderDto, host_admin::AdminDefaultInput, trusted_folders::TrustedFoldersDto, trusted_folders::TrustFolderInput, host_copy::CopyPlanDto, host_copy::CopyProviderRow, host_copy::CopyBotRow, host_copy::CopyRequest, host_copy::CopyItemResult, host_copy::CopyReport, host_copy::HomeDto, host_admin::AdminHomeInput, host_import::ImportScheduleItem, host_import::ImportSchedulesInput, host_import::ImportScheduleResult, host_import::ImportSchedulesReport, host_import::ImportChat, host_import::ImportRun, host_import::ImportMessage, host_import::ImportChatsInput, host_import::ImportChatsReport, host_import::ImportBotInput, host_import::CheckBotItem, host_import::CheckBotsInput, host_import::CheckBotResult, host_import::CheckBotsReport, host_import::ImportBotResult, host_import::ScheduleIdsInput, host_import::ReclaimInput, host_import::ReclaimDto,
         host::HostStatus, host::HostPeer, host::InviteRole, host::HostInviteInput, host::HostInvite, host::ActivateInput,
         changes::CheckpointComputerDto, changes::CheckpointLocationDto, changes::VerificationDto, changes::ChangeKindDto, changes::DiffOmittedReasonDto, changes::UnifiedDiffDto, changes::FileChangeDto,
         changes::RunChangesDto, changes::RestoreActionDto, changes::RestorePreviewEntryDto,
