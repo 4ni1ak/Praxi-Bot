@@ -694,7 +694,7 @@ export class MockApiClient extends ApiClient {
             { id: "openrouter", has_key: true, model: null, custom: false },
             { id: "local-llm", has_key: false, model: "qwen3", custom: true }
           ],
-          bots: this.bots.slice(0, 3).map((b) => ({ id: b.id, name: b.name, model: null, blocked: null })),
+          bots: this.bots.slice(0, 3).map((b, i) => ({ id: b.id, name: b.name, model: null, blocked: null, schedules: i === 0 ? 3 : 1, chats: i === 0 ? 4 : 1, messages: i === 0 ? 212 : 9 })),
           default_provider: "gemini",
           default_model: "gemini-3.5-flash-lite",
           host_accepts: true,
@@ -702,13 +702,15 @@ export class MockApiClient extends ApiClient {
           host_command: null
         });
       }
-      const req = (opts.body ?? {}) as { providers?: string[]; bots?: string[]; default_model?: boolean; set_home?: boolean };
+      const req = (opts.body ?? {}) as { providers?: string[]; bots?: string[]; default_model?: boolean; set_home?: boolean; schedules?: boolean; chats?: boolean };
       const items = [
         ...(req.providers ?? []).map((id) => ({ kind: "provider", id, name: id, status: "done", code: null })),
         ...(req.bots ?? []).map((id, i) => ({
           kind: "bot", id, name: this.bots.find((b) => b.id === id)?.name ?? id,
           status: i === 0 ? "skipped" : "done", code: i === 0 ? "exists" : null
         })),
+        ...(req.chats ? [{ kind: "chats", id: "all", name: "all", status: "done", code: null, count: 221, existing: 0, skipped: 1, failed: 0 }] : []),
+        ...(req.schedules ? [{ kind: "schedules", id: "all", name: "all", status: "done", code: null, count: 4, existing: 0, skipped: 1, failed: 0 }] : []),
         ...(req.default_model ? [{ kind: "default", id: "default", name: "gemini", status: "done", code: null }] : []),
         ...(req.set_home ? [{ kind: "home", id: "home", name: "home", status: "done", code: null }] : [])
       ];

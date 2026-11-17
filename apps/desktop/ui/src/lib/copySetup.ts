@@ -4,11 +4,14 @@ import type { CopyItemResult, CopyPlan, CopyReport, CopyRequest } from "../api/t
 export interface CopyItem {
   /** `kind:id`, stable across renders. */
   key: string;
-  kind: "provider" | "bot" | "default";
+  kind: "provider" | "bot" | "default" | "schedules" | "chats" | "memory";
   id: string;
   label: string;
   /** `key` (a key goes along), `nokey`, or `model` (a bot). */
-  detail: "key" | "nokey" | "model";
+  detail: "key" | "nokey" | "model" | "extra";
+  /** For schedules / chats / memory: how many items, and (chats) messages. */
+  count?: number;
+  messages?: number;
   model?: string | null;
   /** Why the row cannot be sent (it is shown, disabled). */
   blocked?: string | null;
@@ -35,6 +38,19 @@ export function buildCopyItems(plan: CopyPlan): CopyItem[] {
       blocked: b.blocked
     });
   }
+  // Schedules, chat history and memory move WITH the bots above (their ids on the server).
+  const movable = plan.bots.filter((b) => !b.blocked);
+  const schedules = movable.reduce((n, b) => n + (b.schedules ?? 0), 0);
+  const chats = movable.reduce((n, b) => n + (b.chats ?? 0), 0);
+  const messages = movable.reduce((n, b) => n + (b.messages ?? 0), 0);
+  if (schedules > 0) {
+    items.push({ key: "schedules:all", kind: "schedules", id: "all", label: "schedules", detail: "extra", count: schedules });
+  }
+  if (chats > 0) {
+    items.push({ key: "chats:all", kind: "chats", id: "all", label: "chats", detail: "extra", count: chats, messages });
+  }
+  // The daemon has no memory export yet: listed so nobody assumes it moved.
+  items.push({ key: "memory:all", kind: "memory", id: "all", label: "memory", detail: "extra", blocked: "no_export" });
   if (plan.default_provider) {
     items.push({
       key: "default:default",
@@ -61,7 +77,9 @@ export function toRequest(items: readonly CopyItem[], checked: ReadonlySet<strin
     providers: on.filter((i) => i.kind === "provider").map((i) => i.id),
     bots: on.filter((i) => i.kind === "bot").map((i) => i.id),
     default_model: on.some((i) => i.kind === "default"),
-    set_home: on.length > 0
+    schedules: on.some((i) => i.kind === "schedules"),
+    chats: on.some((i) => i.kind === "chats"),
+    set_home: on.some((i) => ["provider", "bot", "default"].includes(i.kind))
   };
 }
 

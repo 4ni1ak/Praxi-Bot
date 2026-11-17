@@ -204,6 +204,8 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/mcp-server/call"),
     ("PUT", "/v1/admin/default-provider"),
     ("PUT", "/v1/admin/home"),
+    ("POST", "/v1/admin/import/schedules"),
+    ("POST", "/v1/admin/import/chats"),
     ("PUT", "/v1/admin/providers/{}"),
     ("DELETE", "/v1/admin/providers/{}"),
 ];

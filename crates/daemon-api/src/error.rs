@@ -75,6 +75,10 @@ impl ApiError {
         )
     }
 
+    pub(crate) fn code_str(&self) -> String {
+        self.code.to_owned()
+    }
+
     /// HTTP status of the error.
     #[must_use]
     pub fn status(&self) -> StatusCode {

@@ -835,6 +835,10 @@ pub struct ScheduleDto {
     /// Who created it: `user`, or `bot` (a bot's schedule tools, after you
     /// approved it). A bot may change only its own `bot` schedules.
     pub origin: String,
+    /// Name of the server this schedule was moved to. The local copy is then disabled
+    /// (not deleted) so nothing runs twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved_to: Option<String>,
 }
 
 /// Body of `POST /v1/schedules` and `PUT /v1/schedules/{id}`.

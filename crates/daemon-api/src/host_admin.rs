@@ -58,7 +58,7 @@ pub const CONFIRM_COMMAND: &str = "bot host admin --all-desktops";
 pub const SECRETS_HINT: &str = "Set BOT_SECRETS_BACKEND=file and a long random BOT_SECRETS_PASSPHRASE in the host's service environment (/etc/praxi/praxi.env), then restart the service.";
 
 /// The paired desktop that is calling, once it holds the capability.
-struct Admin {
+pub(crate) struct Admin {
     actor: String,
 }
 
@@ -85,7 +85,7 @@ fn require_host(s: &AppState) -> Result<(), ApiError> {
     }
 }
 
-fn require_admin(s: &AppState, peer: Option<&PeerIdentity>) -> Result<Admin, ApiError> {
+pub(crate) fn require_admin(s: &AppState, peer: Option<&PeerIdentity>) -> Result<Admin, ApiError> {
     let peer = is_desktop_peer(peer)?;
     require_host(s)?;
     if !s.leader().peer_is_admin(&peer.key) {
@@ -100,7 +100,7 @@ fn require_admin(s: &AppState, peer: Option<&PeerIdentity>) -> Result<Admin, Api
     })
 }
 
-fn audit(
+pub(crate) fn audit(
     s: &AppState,
     admin: &Admin,
     action: &str,
@@ -585,11 +585,19 @@ pub(crate) async fn cli_engines(
 
 /// The administration routes with their own, small body limit.
 pub(crate) fn routes() -> axum::Router<AppState> {
-    use axum::routing::{get, put};
+    use axum::routing::{get, post, put};
     axum::Router::new()
         .route("/v1/admin/state", get(state))
         .route("/v1/admin/cli-engines", get(cli_engines))
         .route("/v1/admin/home", put(set_home))
+        .route(
+            "/v1/admin/import/schedules",
+            post(crate::host_import::import_schedules),
+        )
+        .route(
+            "/v1/admin/import/chats",
+            post(crate::host_import::import_chats),
+        )
         .route("/v1/admin/default-provider", put(set_default))
         .route(
             "/v1/admin/providers/{id}",

@@ -217,6 +217,7 @@ impl crate::host_links::HostLinks for Recorder {
 
 #[tokio::test]
 async fn copy_setup_is_local_owner_only_and_sends_only_ticked_keys() {
+    let _turn = MOVE_TURN.lock().await;
     let t = setup();
     let store = Arc::new(secret_store::MemoryStore::new());
     t.state.set_secret_store(store.clone());
@@ -408,4 +409,294 @@ executor=\"fake/echo\"
     .await;
     assert_eq!(ok.status, StatusCode::OK);
     r.net.shutdown().await;
+}
+
+// ------------------------------------------------ 270-B: schedules and chats move too
+
+/// The host's own router, called as a paired desktop: what the real peer link does.
+/// `copy-setup` refuses a second concurrent move (one process-wide guard), so the tests that
+/// run one take turns.
+static MOVE_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+struct Loopback {
+    host: AppState,
+    key: String,
+}
+
+#[async_trait]
+impl crate::host_links::HostLinks for Loopback {
+    fn list(&self) -> Vec<crate::host_links::HostLinkInfo> {
+        vec![crate::host_links::HostLinkInfo {
+            computer_access: false,
+            computer_access_always: false,
+            id: "h1".into(),
+            name: "Oracle".into(),
+            state: crate::host_links::HostLinkState::Idle,
+            detail: None,
+        }]
+    }
+    async fn pair(
+        &self,
+        _: &str,
+    ) -> Result<crate::host_links::HostLinkInfo, crate::host_links::HostLinkError> {
+        Err(crate::host_links::HostLinkError::NotFound)
+    }
+    async fn connect(
+        &self,
+        _: &str,
+    ) -> Result<crate::host_links::HostLinkConnection, crate::host_links::HostLinkError> {
+        Err(crate::host_links::HostLinkError::NotFound)
+    }
+    fn disconnect(&self, _: &str) -> bool {
+        false
+    }
+    async fn call(
+        &self,
+        _id: &str,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<crate::host_links::HostCall, crate::host_links::HostLinkError> {
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json")
+            .extension(crate::PeerIdentity {
+                key: self.key.clone(),
+                role: crate::PeerRole::Desktop,
+            })
+            .body(body.map_or_else(Body::empty, |v| Body::from(v.to_string())))
+            .unwrap();
+        let r = crate::peer_router(self.host.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        let status = r.status().as_u16();
+        let bytes = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        Ok(crate::host_links::HostCall {
+            status,
+            body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        })
+    }
+}
+
+async fn owner_post(t: &T, path: &str, body: Value) -> Resp {
+    let (k, v) = auth();
+    send(
+        &t.app,
+        Method::POST,
+        path,
+        Some(body),
+        &[(k, v.as_str()), ("x-praxi-owner-key", OWNER)],
+    )
+    .await
+}
+
+fn add_message(t: &T, chat: &str, role: &str, text: &str, at: i64) {
+    t.state
+        .storage()
+        .insert_message(&storage::Message {
+            id: uuid::Uuid::now_v7(),
+            user_id: t.state.user_id(),
+            chat_id: protocol::ChatId(chat.parse().unwrap()),
+            run_id: None,
+            role: role.into(),
+            content: text.into(),
+            created_at_ms: at,
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: vec![],
+        })
+        .unwrap();
+}
+
+async fn local_with_work(host: &Rig, key: &str) -> (T, String, String, Vec<String>) {
+    let local = setup();
+    local.state.set_host_links(Arc::new(Loopback {
+        host: host.t.state.clone(),
+        key: key.into(),
+    }));
+    let (bot, chat) = make_chat(&local).await;
+    add_message(&local, &chat, "user", "good morning", 1_700_000_000_000);
+    add_message(
+        &local,
+        &chat,
+        "assistant",
+        "good morning, boss",
+        1_700_000_005_000,
+    );
+    let mut ids = Vec::new();
+    for (name, spec, enabled) in [
+        ("nightly", json!({"every": {"seconds": 3600}}), true),
+        (
+            "weekday report",
+            json!({"cron": "0 9 * * 1-5 Europe/Istanbul"}),
+            false,
+        ),
+    ] {
+        let r = call(
+            &local,
+            Method::POST,
+            "/v1/schedules",
+            Some(json!({"bot_id": bot, "chat_id": chat, "name": name, "spec": spec, "enabled": enabled,
+                "payload": {"kind": "agent_prompt", "text": "do the thing"}})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+        ids.push(r.json()["id"].as_str().unwrap().to_owned());
+    }
+    (local, bot, chat, ids)
+}
+
+fn report_line(r: &Resp, kind: &str) -> Value {
+    r.json()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == kind)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+fn host_messages(host: &Rig, chat: &str) -> Vec<storage::Message> {
+    host.t
+        .state
+        .storage()
+        .list_messages(protocol::ChatId(chat.parse().unwrap()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn moving_schedules_and_chats_disables_the_local_copies_and_a_second_sync_adds_nothing() {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    let (local, bot, chat, ids) = local_with_work(&host, &host.admin_key).await;
+    let body = json!({"bots": [bot], "schedules": true, "chats": true});
+
+    let first = owner_post(&local, "/v1/hosts/h1/copy-setup", body.clone()).await;
+    assert_eq!(first.status, StatusCode::OK, "{:?}", first.json());
+    assert_eq!(report_line(&first, "bot")["status"], "done");
+    assert_eq!(report_line(&first, "schedules")["count"], 2);
+    assert_eq!(report_line(&first, "chats")["count"], 2);
+
+    // The host has both schedules under the SAME ids, on its own bot, with the zone and the
+    // paused state intact and its own next-run time.
+    let on_host = call(&host.t, Method::GET, "/v1/schedules", None)
+        .await
+        .json();
+    let on_host = on_host.as_array().unwrap();
+    assert_eq!(on_host.len(), 2);
+    let paused = on_host.iter().find(|s| s["id"] == ids[1]).unwrap();
+    assert_eq!(paused["enabled"], false);
+    assert_eq!(
+        paused["spec"],
+        json!({"cron": "0 9 * * 1-5 Europe/Istanbul"})
+    );
+    assert_eq!(paused["next_run_at_ms"], Value::Null);
+    let live = on_host.iter().find(|s| s["id"] == ids[0]).unwrap();
+    assert_eq!(live["enabled"], true);
+    assert!(live["next_run_at_ms"].as_i64().unwrap() > 0);
+    assert_ne!(live["bot_id"], json!(bot), "the host has its own bot id");
+    assert_eq!(live["chat_id"], json!(chat), "the chat kept its id");
+
+    // The chat looks the same: authors, text and timestamps.
+    let msgs = host_messages(&host, &chat);
+    let got: Vec<_> = msgs
+        .iter()
+        .map(|m| (m.role.as_str(), m.content.as_str(), m.created_at_ms))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("user", "good morning", 1_700_000_000_000),
+            ("assistant", "good morning, boss", 1_700_000_005_000)
+        ]
+    );
+
+    // Local copies: disabled (not deleted) and marked.
+    for id in &ids {
+        let sc = call(&local, Method::GET, &format!("/v1/schedules/{id}"), None)
+            .await
+            .json();
+        assert_eq!(sc["enabled"], false, "{sc}");
+        assert_eq!(sc["moved_to"], "Oracle");
+    }
+
+    // Idempotent: nothing is created twice.
+    let second = owner_post(&local, "/v1/hosts/h1/copy-setup", body).await;
+    assert_eq!(report_line(&second, "schedules")["count"], 0);
+    assert_eq!(report_line(&second, "schedules")["existing"], 2);
+    assert_eq!(report_line(&second, "chats")["count"], 0);
+    let after = call(&host.t, Method::GET, "/v1/schedules", None)
+        .await
+        .json();
+    assert_eq!(after.as_array().unwrap().len(), 2);
+    assert_eq!(host_messages(&host, &chat).len(), 2);
+    // The paused one stays paused on the host after the local copy was disabled.
+    let sc = call(
+        &host.t,
+        Method::GET,
+        &format!("/v1/schedules/{}", ids[1]),
+        None,
+    )
+    .await
+    .json();
+    assert_eq!(sc["enabled"], false);
+    // Only counts reach the audit log.
+    let audit = format!(
+        "{:?}",
+        host.t
+            .state
+            .storage()
+            .list_audit(host.t.state.user_id())
+            .unwrap()
+    );
+    assert!(audit.contains("host.admin.import_chats") && !audit.contains("good morning"));
+}
+
+#[tokio::test]
+async fn a_desktop_without_host_admin_cannot_import_and_nothing_is_disabled_locally() {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    for peer in [
+        (host.legacy_key.as_str(), crate::PeerRole::Desktop),
+        (host.admin_key.as_str(), crate::PeerRole::Phone),
+    ] {
+        for path in ["/v1/admin/import/schedules", "/v1/admin/import/chats"] {
+            let body = if path.ends_with("schedules") {
+                json!({"schedules": []})
+            } else {
+                json!({})
+            };
+            let r = peer_call(&host.t, Some(peer), Method::POST, path, Some(body)).await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN, "{path}");
+        }
+    }
+    let (local, bot, _chat, ids) = local_with_work(&host, &host.legacy_key).await;
+    let r = owner_post(
+        &local,
+        "/v1/hosts/h1/copy-setup",
+        json!({"bots": [bot], "schedules": true, "chats": true}),
+    )
+    .await;
+    let sched = report_line(&r, "schedules");
+    assert_eq!(sched["status"], "failed", "{:?}", r.json());
+    assert_eq!(sched["code"], "host_admin_required");
+    let none = call(&host.t, Method::GET, "/v1/schedules", None)
+        .await
+        .json();
+    assert_eq!(none.as_array().unwrap().len(), 0);
+    let sc = call(
+        &local,
+        Method::GET,
+        &format!("/v1/schedules/{}", ids[0]),
+        None,
+    )
+    .await
+    .json();
+    assert_eq!(
+        sc["enabled"], true,
+        "a failed move leaves the local schedule running"
+    );
+    assert!(sc.get("moved_to").is_none());
 }

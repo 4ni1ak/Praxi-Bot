@@ -3221,18 +3221,29 @@
     "send": "Move to the server",
     "sending": "Moving…",
     "failed": "That did not work. Check that the server is connected and try again.",
-    "cannotMove": "Cannot move yet: chat history, memory, schedules and triggers, app connections, and CLI sign-ins (Claude Code, Codex, agy, OpenCode sign in on the server itself).",
-    "keepLocal": "Nothing is deleted on this computer; it stays a working fallback. You can run this again later to sync.",
+    "cannotMove": "Cannot move yet: memory, app connections, and CLI sign-ins (Claude Code, Codex, agy, OpenCode sign in on the server itself). Files and attachments that chats mention are not copied; webhook secrets stay behind.",
+    "keepLocal": "Nothing is deleted on this computer. Schedules that move are switched off here and marked as moved, so nothing runs twice. You can run this again later to sync: it never duplicates.",
     "summary": "{{done}} moved, {{skipped}} skipped, {{failed}} failed.",
     "homeFailed": "The items moved, but the server could not be marked as your bots' home.",
     "kind": {
       "provider": "Model provider",
       "providerKey": "Model provider and its key",
       "bot": "Bot",
-      "default": "Default model"
+      "default": "Default model",
+      "schedules": "{{count}} on this computer; their time zones are kept, the copies here are switched off",
+      "schedulesName": "Schedules and triggers",
+      "chats": "{{count}} chats, {{messages}} messages; authors and times are kept",
+      "chatsName": "Chat history",
+      "memory": "Memory",
+      "memoryName": "Memory"
+    },
+    "counts": {
+      "schedules": "{{count}} moved, {{existing}} already there, {{skipped}} left behind",
+      "chats": "{{count}} messages moved, {{existing}} already there, {{skipped}} left behind"
     },
     "blocked": {
-      "cli_engine": "Uses a CLI engine that stays on this computer"
+      "cli_engine": "Uses a CLI engine that stays on this computer",
+      "no_export": "Not moved yet: memory has no export"
     },
     "host": {
       "host_admin_required": "The owner must confirm this computer on the server once. Run this on the server:",
@@ -3252,6 +3263,8 @@
       "secret_store_failed": "Server could not save it",
       "host_unreachable": "Server did not answer",
       "rejected": "Server refused it",
+      "admin_rate_limit": "Server asked to wait; run it again to continue",
+      "unreadable": "Could not be read here",
       "no_default": "No default model",
       "skipped": "Skipped",
       "failed": "Failed"

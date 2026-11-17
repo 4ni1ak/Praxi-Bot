@@ -1974,6 +1974,7 @@ fn schedule_dto(sc: &Schedule, has_webhook: bool) -> ScheduleDto {
         skipped_by_precheck: 0,
         consecutive_errors: 0,
         origin: sc.origin.as_str().to_owned(),
+        moved_to: None,
     }
 }
 
@@ -1982,6 +1983,7 @@ fn dto_of(s: &AppState, sc: &Schedule) -> Result<ScheduleDto, ApiError> {
     let trigger = store.get_trigger(sc.id)?;
     let has = matches!(trigger, Some(Trigger::Webhook { .. }));
     let mut dto = schedule_dto(sc, has);
+    dto.moved_to = crate::host_import::moved_to(&s.data_dir(), sc.id.0);
     if matches!(
         trigger,
         Some(Trigger::FileWatch { .. } | Trigger::Email { .. })
@@ -2235,6 +2237,49 @@ pub(crate) async fn create_schedule(
         StatusCode::CREATED,
         Json(dto_of(&s, &store.get(sc.id)?.unwrap_or(sc))?),
     ))
+}
+
+/// A schedule moved from the owner's other computer (`host_import`): the same
+/// validation as `POST /v1/schedules` (bot, spec, payload, chat, precheck, trigger),
+/// but the schedule keeps its id and creation time, so a second import finds it
+/// ("exists") and never duplicates it. Next-run times are recomputed on THIS
+/// clock from the spec, whose time zone is part of the spec itself.
+pub(crate) async fn import_schedule(
+    s: &AppState,
+    input: &ScheduleInput,
+    id: TaskId,
+    created_at_ms: i64,
+    origin: scheduler::ScheduleOrigin,
+) -> Result<Schedule, ApiError> {
+    let p = schedule_parts(s, input)?;
+    let mut sc = Schedule::new(
+        BotId(input.bot_id),
+        p.chat_id,
+        input.name.trim(),
+        p.spec,
+        p.payload,
+        p.policy,
+        now_ms(),
+    )?;
+    sc.id = id;
+    sc.created_at = created_at_ms.min(now_ms());
+    sc.origin = origin;
+    if input.enabled == Some(false) {
+        sc.enabled = false;
+        sc.next_run_at = None;
+    }
+    let trigger = schedule_extensions(s, &mut sc, input).await?;
+    let store = s.schedule_store()?;
+    s.0.storage.append_audit(
+        s.user_id(),
+        None,
+        "user",
+        "schedule.import_intent",
+        &serde_json::json!({"schedule_id":sc.id.to_string(),"bot_id":sc.bot_id.to_string()}),
+    )?;
+    store.insert_config(&sc, trigger.flatten().as_ref())?;
+    s.publish_schedule_changed(sc.id.0, ScheduleChangeKind::Created);
+    Ok(store.get(sc.id)?.unwrap_or(sc))
 }
 
 /// Get one schedule.

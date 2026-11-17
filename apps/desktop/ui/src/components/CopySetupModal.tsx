@@ -121,8 +121,19 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
               .filter((i) => i.kind !== "home")
               .map((i) => (
                 <li key={`${i.kind}:${i.id}`} data-status={i.status}>
-                  <b>{i.name}</b>
-                  <span>{t(`copySetup.result.${resultKey(i)}`, { defaultValue: i.code ?? i.status })}</span>
+                  <b>{i.kind === "schedules" || i.kind === "chats" ? t(`copySetup.kind.${i.kind}Name`) : i.name}</b>
+                  <span>
+                    {i.count !== undefined && i.count !== null
+                      ? t(`copySetup.counts.${i.kind}`, {
+                          count: i.count,
+                          existing: i.existing ?? 0,
+                          skipped: i.skipped ?? 0
+                        })
+                      : t(`copySetup.result.${resultKey(i)}`, { defaultValue: i.code ?? i.status })}
+                    {i.count !== undefined && i.code
+                      ? ` ${t(`copySetup.result.${i.code}`, { defaultValue: i.code })}`
+                      : ""}
+                  </span>
                 </li>
               ))}
           </ul>
@@ -159,11 +170,13 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
                     setChecked(next);
                   }}
                 />
-                <b>{i.label}</b>
+                <b>{i.detail === "extra" ? t(`copySetup.kind.${i.kind}Name`) : i.label}</b>
                 <span>
                   {i.blocked
                     ? t(`copySetup.blocked.${i.blocked}`, { defaultValue: i.blocked })
-                    : t(`copySetup.kind.${i.kind}${i.detail === "key" ? "Key" : ""}`)}
+                    : i.detail === "extra"
+                      ? t(`copySetup.kind.${i.kind}`, { count: i.count ?? 0, messages: i.messages ?? 0 })
+                      : t(`copySetup.kind.${i.kind}${i.detail === "key" ? "Key" : ""}`)}
                 </span>
               </label>
             </li>

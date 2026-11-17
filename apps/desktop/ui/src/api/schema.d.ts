@@ -52,6 +52,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/import/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_import_chats"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_import_schedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/providers/{id}": {
         parameters: {
             query?: never;
@@ -3296,16 +3328,48 @@ export interface components {
         CopyBotRow: {
             /** @description The bot cannot be copied (it runs on a CLI engine). */
             blocked?: string | null;
+            /**
+             * Format: int32
+             * @description Chats of this bot on this computer, and their messages.
+             */
+            chats?: number;
             id: string;
+            /** Format: int32 */
+            messages?: number;
             model?: string | null;
             name: string;
+            /**
+             * Format: int32
+             * @description Schedules of this bot on this computer (270-B).
+             */
+            schedules?: number;
         };
         CopyItemResult: {
             code?: string | null;
+            /**
+             * Format: int32
+             * @description For `schedules` / `chats`: how many items moved now (messages for chats) ...
+             */
+            count?: number | null;
+            /**
+             * Format: int32
+             * @description ... were already on the server ...
+             */
+            existing?: number | null;
+            /**
+             * Format: int32
+             * @description ... or failed.
+             */
+            failed?: number | null;
             id: string;
             /** @description `provider`, `bot` or `default`. */
             kind: string;
             name: string;
+            /**
+             * Format: int32
+             * @description ... were left behind (webhook secret, too long, bot not moved) ...
+             */
+            skipped?: number | null;
             /** @description `done`, `skipped` or `failed`. */
             status: string;
         };
@@ -3333,9 +3397,19 @@ export interface components {
         };
         CopyRequest: {
             bots?: string[];
+            /**
+             * @description Also move the chat history of the moved bots (messages and run metadata; files and
+             *     attachments named in them are not copied).
+             */
+            chats?: boolean;
             /** @description Also set the host's default provider and model to this computer's. */
             default_model?: boolean;
             providers?: string[];
+            /**
+             * @description Also move the schedules and triggers of the moved bots (the local copies are then
+             *     disabled and marked "moved to <server>").
+             */
+            schedules?: boolean;
             /**
              * @description Record the host as the bots' home on both sides when something moved.
              *     Nothing is deleted on this computer: it stays a working fallback.
@@ -4061,6 +4135,124 @@ export interface components {
         };
         /** @enum {string} */
         HumanAction: "login_completed" | "application_opened" | "other";
+        ImportChat: {
+            /**
+             * Format: uuid
+             * @description The bot's id ON THE HOST.
+             */
+            bot_id: string;
+            /** Format: int64 */
+            created_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            title: string;
+        };
+        /** @description One page of a chat move. Chats first, then runs, then messages: send the pages in that order. */
+        ImportChatsInput: {
+            chats?: components["schemas"]["ImportChat"][];
+            messages?: components["schemas"]["ImportMessage"][];
+            runs?: components["schemas"]["ImportRun"][];
+        };
+        /** @description What a page did. Counts only. */
+        ImportChatsReport: {
+            /** Format: int32 */
+            chats: number;
+            /**
+             * Format: int32
+             * @description Items the host already had (an earlier or interrupted sync).
+             */
+            existing: number;
+            /** Format: int32 */
+            messages: number;
+            /**
+             * Format: int32
+             * @description Items refused: unknown bot or chat, malformed, too long.
+             */
+            rejected: number;
+            /** Format: int32 */
+            runs: number;
+        };
+        ImportMessage: {
+            /** Format: uuid */
+            chat_id: string;
+            content: string;
+            /** Format: int64 */
+            created_at_ms: number;
+            exposure_private?: boolean;
+            exposure_sources?: string[];
+            exposure_untrusted?: boolean;
+            /** Format: uuid */
+            id: string;
+            /** @description The author: `user`, `assistant`, `system`, `tool`, ... */
+            role: string;
+            /** Format: uuid */
+            run_id?: string | null;
+        };
+        /** @description Run metadata only: no error text, no spawn parameters, no computer identity. */
+        ImportRun: {
+            /** Format: uuid */
+            bot_id: string;
+            /** Format: uuid */
+            chat_id?: string | null;
+            /** Format: int64 */
+            created_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            /** @description `succeeded`, `failed` or `cancelled`; anything else arrives as `cancelled`. */
+            state: string;
+            /** Format: int64 */
+            updated_at_ms: number;
+        };
+        ImportScheduleItem: {
+            /**
+             * Format: uuid
+             * @description The bot's id ON THE HOST.
+             */
+            bot_id: string;
+            /**
+             * Format: uuid
+             * @description A chat that was moved too (host id = local id); dropped when the host lacks it.
+             */
+            chat_id?: string | null;
+            /** Format: int64 */
+            created_at_ms: number;
+            /** @description Paused state as the owner had it. */
+            enabled: boolean;
+            /**
+             * Format: uuid
+             * @description Preserved: the same id on the host means "already moved".
+             */
+            id: string;
+            misfire_policy?: string | null;
+            name: string;
+            /** @description `user` or `bot`. */
+            origin?: string | null;
+            payload: unknown;
+            precheck?: unknown;
+            /** @description `{"cron": "0 9 * * 1-5 Europe/Istanbul"}`: the zone travels inside the spec. */
+            spec: unknown;
+            /** @description File-watch or e-mail trigger; never a webhook (its secret stays behind). */
+            trigger?: unknown;
+        };
+        ImportScheduleResult: {
+            code?: string | null;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: int64
+             * @description Next firing, recomputed on the host's clock.
+             */
+            next_run_at_ms?: number | null;
+            /** @description `done`, `exists` or `failed`. */
+            status: string;
+        };
+        ImportSchedulesInput: {
+            schedules: components["schemas"]["ImportScheduleItem"][];
+        };
+        ImportSchedulesReport: {
+            items: components["schemas"]["ImportScheduleResult"][];
+        };
         InputBatch: {
             /** Format: int64 */
             control_epoch: number;
@@ -5136,6 +5328,11 @@ export interface components {
              *     while the daemon was down.
              */
             misfire_policy: string;
+            /**
+             * @description Name of the server this schedule was moved to. The local copy is then disabled
+             *     (not deleted) so nothing runs twice.
+             */
+            moved_to?: string | null;
             /** @description Display name. */
             name: string;
             /**
@@ -5817,6 +6014,68 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_import_chats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportChatsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportChatsReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_import_schedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportSchedulesInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSchedulesReport"];
+                };
             };
             403: {
                 headers: {

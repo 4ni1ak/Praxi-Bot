@@ -46,6 +46,14 @@ pub struct CopyBotRow {
     pub model: Option<String>,
     /// The bot cannot be copied (it runs on a CLI engine).
     pub blocked: Option<String>,
+    /// Schedules of this bot on this computer (270-B).
+    #[serde(default)]
+    pub schedules: u32,
+    /// Chats of this bot on this computer, and their messages.
+    #[serde(default)]
+    pub chats: u32,
+    #[serde(default)]
+    pub messages: u32,
 }
 
 /// What a copy could send. Names only; no secret value.
@@ -65,6 +73,7 @@ pub struct CopyPlanDto {
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)] // independent tick boxes of one dialog
 pub struct CopyRequest {
     #[serde(default)]
     pub providers: Vec<String>,
@@ -77,6 +86,14 @@ pub struct CopyRequest {
     /// Nothing is deleted on this computer: it stays a working fallback.
     #[serde(default)]
     pub set_home: bool,
+    /// Also move the schedules and triggers of the moved bots (the local copies are then
+    /// disabled and marked "moved to <server>").
+    #[serde(default)]
+    pub schedules: bool,
+    /// Also move the chat history of the moved bots (messages and run metadata; files and
+    /// attachments named in them are not copied).
+    #[serde(default)]
+    pub chats: bool,
 }
 
 /// `GET /v1/hosts/home`: the host adopted as the bots' home, if any.
@@ -115,6 +132,18 @@ pub struct CopyItemResult {
     /// `done`, `skipped` or `failed`.
     pub status: String,
     pub code: Option<String>,
+    /// For `schedules` / `chats`: how many items moved now (messages for chats) ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    /// ... were already on the server ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing: Option<u32>,
+    /// ... were left behind (webhook secret, too long, bot not moved) ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<u32>,
+    /// ... or failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -193,13 +222,33 @@ pub(crate) async fn plan(
             custom: p.custom.is_some(),
         })
         .collect();
+    let mut schedule_counts: std::collections::HashMap<uuid::Uuid, u32> =
+        std::collections::HashMap::new();
+    if let Ok(all) = s.schedule_store().and_then(|st| st.list()) {
+        for sc in all {
+            *schedule_counts.entry(sc.bot_id.0).or_default() += 1;
+        }
+    }
+    let mut chat_counts: std::collections::HashMap<uuid::Uuid, (u32, u32)> =
+        std::collections::HashMap::new();
+    for chat in s.storage().list_chats(s.user_id())? {
+        let n = u32::try_from(s.storage().list_messages(chat.id).map_or(0, |m| m.len()))
+            .unwrap_or(u32::MAX);
+        let e = chat_counts.entry(chat.bot_id.0).or_default();
+        e.0 += 1;
+        e.1 = e.1.saturating_add(n);
+    }
     let bots = s
         .storage()
         .list_bots(s.user_id())?
         .into_iter()
         .map(|bot| {
             let executor = bot_executor(&bot.config);
+            let (chats, messages) = chat_counts.get(&bot.id.0).copied().unwrap_or_default();
             CopyBotRow {
+                schedules: schedule_counts.get(&bot.id.0).copied().unwrap_or_default(),
+                chats,
+                messages,
                 id: bot.id.0.to_string(),
                 name: bot.name,
                 blocked: executor
@@ -253,6 +302,10 @@ fn item(kind: &str, id: &str, name: &str, status: &str, code: Option<&str>) -> C
         name: name.into(),
         status: status.into(),
         code: code.map(str::to_owned),
+        count: None,
+        existing: None,
+        skipped: None,
+        failed: None,
     }
 }
 
@@ -297,7 +350,8 @@ pub(crate) async fn copy(
         &s,
         "host_link.copy_setup",
         &serde_json::json!({"host": id, "providers": input.providers, "bots": input.bots,
-                            "default_model": input.default_model, "phase": "requested"}),
+                            "default_model": input.default_model, "schedules": input.schedules,
+                            "chats": input.chats, "phase": "requested"}),
     )?;
     let cfg = ProviderConfig::load(&config_path(&s.data_dir()))
         .map_err(|e| ApiError::internal(format!("providers.toml: {e}")))?;
@@ -426,6 +480,64 @@ pub(crate) async fn copy(
         }
     }
 
+    if (input.schedules || input.chats) && stop.is_none() {
+        // The bots that are on the host now (just moved, or there from an earlier move),
+        // by name: local id -> the host's id for the same bot.
+        let wanted: std::collections::HashSet<&str> = items
+            .iter()
+            .filter(|i| {
+                i.kind == "bot"
+                    && (i.status == "done"
+                        || (i.status == "skipped" && i.code.as_deref() == Some("exists")))
+            })
+            .map(|i| i.id.as_str())
+            .collect();
+        let host_bots: Vec<serde_json::Value> = links
+            .call(&id, "GET", "/v1/bots", None)
+            .await
+            .ok()
+            .filter(|c| c.status == 200)
+            .and_then(|c| c.body.as_array().cloned())
+            .unwrap_or_default();
+        let mut bot_map = std::collections::HashMap::new();
+        for b in local_bots
+            .iter()
+            .filter(|b| wanted.contains(b.id.0.to_string().as_str()))
+        {
+            let host_id = host_bots
+                .iter()
+                .find(|h| h["name"].as_str() == Some(b.name.as_str()))
+                .and_then(|h| h["id"].as_str())
+                .and_then(|v| v.parse::<uuid::Uuid>().ok());
+            if let Some(h) = host_id {
+                bot_map.insert(b.id.0, h);
+            }
+        }
+        let host_name = links
+            .list()
+            .into_iter()
+            .find(|h| h.id == id)
+            .map_or_else(|| id.clone(), |h| h.name);
+        let mut chats_on_host = std::collections::HashSet::new();
+        if input.chats {
+            let (r, on_host) = crate::host_import::send_chats(&s, &*links, &id, &bot_map).await;
+            chats_on_host = on_host;
+            items.push(r);
+        }
+        if input.schedules {
+            items.push(
+                crate::host_import::send_schedules(
+                    &s,
+                    &*links,
+                    &id,
+                    &host_name,
+                    &bot_map,
+                    &chats_on_host,
+                )
+                .await,
+            );
+        }
+    }
     if input.default_model {
         let default = cfg
             .effective_default()

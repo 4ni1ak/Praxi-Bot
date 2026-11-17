@@ -3221,18 +3221,29 @@
     "send": "Sunucuya taşı",
     "sending": "Taşınıyor…",
     "failed": "Olmadı. Sunucunun bağlı olduğundan emin ol ve tekrar dene.",
-    "cannotMove": "Henüz taşınamayanlar: sohbet geçmişi, bellek, zamanlamalar ve tetikleyiciler, uygulama bağlantıları ve CLI oturumları (Claude Code, Codex, agy, OpenCode sunucunun kendisinde giriş yapar).",
-    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez; çalışan bir yedek olarak kalır. İstersen sonra tekrar çalıştırıp eşitleyebilirsin.",
+    "cannotMove": "Henüz taşınamayanlar: bellek, uygulama bağlantıları ve CLI oturumları (Claude Code, Codex, agy, OpenCode sunucunun kendisinde giriş yapar). Sohbetlerde adı geçen dosyalar ve ekler kopyalanmaz; webhook gizli anahtarları geride kalır.",
+    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez. Taşınan zamanlamalar burada kapatılır ve taşındı diye işaretlenir; böylece hiçbir şey iki kez çalışmaz. Sonra tekrar çalıştırıp eşitleyebilirsin: asla kopya oluşturmaz.",
     "summary": "{{done}} taşındı, {{skipped}} atlandı, {{failed}} başarısız.",
     "homeFailed": "Öğeler taşındı ama sunucu botlarının evi olarak işaretlenemedi.",
     "kind": {
       "provider": "Model sağlayıcı",
       "providerKey": "Model sağlayıcı ve anahtarı",
       "bot": "Bot",
-      "default": "Varsayılan model"
+      "default": "Varsayılan model",
+      "schedules": "Bu bilgisayarda {{count}} tane; saat dilimleri korunur, buradaki kopyalar kapatılır",
+      "schedulesName": "Zamanlamalar ve tetikleyiciler",
+      "chats": "{{count}} sohbet, {{messages}} mesaj; yazarlar ve saatler korunur",
+      "chatsName": "Sohbet geçmişi",
+      "memory": "Bellek",
+      "memoryName": "Bellek"
+    },
+    "counts": {
+      "schedules": "{{count}} taşındı, {{existing}} zaten vardı, {{skipped}} geride kaldı",
+      "chats": "{{count}} mesaj taşındı, {{existing}} zaten vardı, {{skipped}} geride kaldı"
     },
     "blocked": {
-      "cli_engine": "Bu bilgisayarda kalan bir CLI motoru kullanıyor"
+      "cli_engine": "Bu bilgisayarda kalan bir CLI motoru kullanıyor",
+      "no_export": "Henüz taşınmıyor: bellek için dışa aktarma yok"
     },
     "host": {
       "host_admin_required": "Sunucu sahibi bu bilgisayarı sunucuda bir kez onaylamalı. Sunucuda şunu çalıştır:",
@@ -3252,6 +3263,8 @@
       "secret_store_failed": "Sunucu kaydedemedi",
       "host_unreachable": "Sunucu yanıt vermedi",
       "rejected": "Sunucu kabul etmedi",
+      "admin_rate_limit": "Sunucu beklememizi istedi; devam etmek için tekrar çalıştır",
+      "unreadable": "Burada okunamadı",
       "no_default": "Varsayılan model yok",
       "skipped": "Atlandı",
       "failed": "Başarısız"

@@ -33,6 +33,7 @@ mod fill_routes;
 pub mod host;
 pub mod host_admin;
 pub mod host_copy;
+pub mod host_import;
 pub mod host_links;
 pub mod host_setup;
 mod knowledge;
