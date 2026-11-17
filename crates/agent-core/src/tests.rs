@@ -7812,9 +7812,9 @@ async fn legacy_unscoped_computer_grants_are_inert_and_effective_policy_lists_sc
 }
 
 #[tokio::test]
-async fn auto_emits_when_it_leaves_an_unreachable_paired_pc() {
+async fn auto_on_a_host_stays_on_the_bots_own_computer_even_with_a_pc_online() {
     let env = setup();
-    let fake = Fake::new(vec![text("on host"), text("in browser")]);
+    let fake = Fake::new(vec![text("on host"), text("in browser"), text("on pc")]);
     let lp = make_loop(
         &env.storage,
         env.bot,
@@ -7823,42 +7823,30 @@ async fn auto_emits_when_it_leaves_an_unreachable_paired_pc() {
         profile("[runtime]\ncomputer = \"auto\"\n"),
         cfg(Policy::full()),
     );
-    lp.set_computer_provider(machine_provider(MACHINE_A, Some("host"), None, true));
-    let mut rx = lp.subscribe();
+    let target_of = |run| {
+        env.storage
+            .get_run(run)
+            .unwrap()
+            .unwrap()
+            .computer_target
+            .unwrap_or_default()
+    };
+    // The paired PC is online, but the bot lives on the host: it works there.
+    lp.set_computer_provider(machine_provider(
+        MACHINE_A,
+        Some("host"),
+        Some("pc-online"),
+        false,
+    ));
     let run = lp.run_turn(env.chat, "go").unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
-    let notice = until(&mut rx, |e| {
-        matches!(e, Event::Error(err) if err.recoverable && err.message == "auto: PC not reachable, using host")
-    })
-    .await;
-    assert!(matches!(notice, Event::Error(_)));
-    assert_eq!(
-        env.storage
-            .get_run(run)
-            .unwrap()
-            .unwrap()
-            .computer_target
-            .as_deref(),
-        Some("host")
-    );
+    assert_eq!(target_of(run), "host");
 
-    lp.set_computer_provider(machine_provider(MACHINE_A, None, None, true));
+    // No host display: its own browser, never the PC, and no "PC not reachable" fallback.
+    lp.set_computer_provider(machine_provider(MACHINE_A, None, Some("pc-online"), true));
     let run = lp.run_turn(env.chat, "browser").unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
-    let notice = until(&mut rx, |e| {
-        matches!(e, Event::Error(err) if err.recoverable && err.message == "auto: PC not reachable, using browser")
-    })
-    .await;
-    assert!(matches!(notice, Event::Error(_)));
-    assert_eq!(
-        env.storage
-            .get_run(run)
-            .unwrap()
-            .unwrap()
-            .computer_target
-            .as_deref(),
-        Some("browser")
-    );
+    assert_eq!(target_of(run), "browser");
 }
 
 #[tokio::test]
