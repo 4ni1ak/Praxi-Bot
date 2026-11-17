@@ -104,6 +104,9 @@ pub struct Params {
     pub mode: Mode,
     /// The desktop app's own version without a leading `v` (what the host must run).
     pub app_version: String,
+    /// The release tag this app was built from (`v0.1.0-alpha.1`), when the build knows it. A
+    /// pre-release tag is not `v<app_version>`: the server must fetch the tag that really exists.
+    pub release_tag: Option<String>,
     /// Install the virtual display and desktop session too.
     pub desktop: bool,
     /// Pause between health attempts right after a (re)start.
@@ -152,6 +155,11 @@ fn fail_from(id: &'static str, title: &str, e: &TransportError) -> StepResult {
 }
 
 /// Install step without permission to install: pair with what is there.
+/// The GitHub release tag the server downloads: the tag the app was built from, else `v<version>`.
+fn install_tag(release_tag: Option<&str>, app: &str) -> Result<String, crate::Error> {
+    crate::validate::version_tag(release_tag.filter(|t| !t.is_empty()).unwrap_or(app))
+}
+
 fn detect_only(existing: &Existing, app: &str) -> StepResult {
     const T: &str = "Install Praxi";
     match existing {
@@ -516,7 +524,18 @@ impl Engine<'_> {
             return Some(());
         }
 
-        let tag = format!("v{app}");
+        let tag = match install_tag(self.params.release_tag.as_deref(), &app) {
+            Ok(tag) => tag,
+            Err(e) => {
+                let r = StepResult::fail(
+                    "install",
+                    T,
+                    format!("cannot tell which release to install: {e}"),
+                    "Update the desktop app to a published release.",
+                );
+                return self.finish(report, r);
+            }
+        };
         self.ui.note(&format!(
             "installing {tag} on {name} (this takes a few minutes)"
         ));
@@ -1159,5 +1178,20 @@ impl Engine<'_> {
             HostKeyState::Trusted { .. } => Ok(()),
             _ => Err(Error::Failed("host key not trusted".into())),
         }
+    }
+}
+
+#[cfg(test)]
+mod install_tag_tests {
+    use super::install_tag;
+
+    #[test]
+    fn a_pre_release_app_installs_its_own_tag_not_v_plus_the_cargo_version() {
+        assert_eq!(install_tag(None, "0.1.0").unwrap(), "v0.1.0");
+        assert_eq!(
+            install_tag(Some("v0.1.0-alpha.1"), "0.1.0").unwrap(),
+            "v0.1.0-alpha.1"
+        );
+        assert!(install_tag(Some("v0.1.0; rm -rf /"), "0.1.0").is_err());
     }
 }

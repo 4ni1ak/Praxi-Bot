@@ -515,12 +515,22 @@ fi
 if [[ "${VERSION}" == "latest" ]]; then
   # Resolve the tag before downloading. Never trust an arbitrary redirect host
   # or a mutable 'latest' identity as the expected signer/source ref.
-  latest_url="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
-    -o /dev/null --write-out '%{redirect_url}' "https://github.com/${REPO}/releases/latest")" \
-    || die "could not resolve the latest release tag"
   latest_prefix="https://github.com/${REPO}/releases/tag/"
-  [[ "${latest_url}" == "${latest_prefix}"* ]] || die "latest release did not resolve to the expected repository"
-  VERSION="${latest_url#"${latest_prefix}"}"
+  if latest_url="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+    -o /dev/null --write-out '%{redirect_url}' "https://github.com/${REPO}/releases/latest")"; then
+    [[ "${latest_url}" == "${latest_prefix}"* ]] || die "latest release did not resolve to the expected repository"
+    VERSION="${latest_url#"${latest_prefix}"}"
+  else
+    # GitHub's "latest" never points at a pre-release and answers 404 while only pre-releases
+    # exist (v0.1.0-alpha.1). Ask the API of the pinned repository for its newest release instead;
+    # the tag still goes through the same format check and the same pinned provenance identity.
+    api_json="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+      "https://api.github.com/repos/${REPO}/releases?per_page=1")" \
+      || die "could not resolve the latest release tag"
+    VERSION="$(printf '%s' "${api_json}" \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    [[ -n "${VERSION}" ]] || die "could not resolve the latest release tag (no published release)"
+  fi
 fi
 [[ "${VERSION}" =~ ^v[0-9][0-9A-Za-z._+-]*$ ]] || die "invalid release tag (expected v followed by a version)"
 [[ -z "${EXPECTED_SHA}" || "${EXPECTED_SHA}" =~ ^[0-9a-f]{64}$ ]] || die "invalid --sha256"
