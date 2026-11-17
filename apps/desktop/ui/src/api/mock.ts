@@ -808,7 +808,7 @@ export class MockApiClient extends ApiClient {
         return ok({
           local_version: "0.1.0-mock",
           local_api_version: "1",
-          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" ? "offline" : "connected", detail: null }] : []
+          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" || mockHostScenario() === "dropped" ? "offline" : "connected", detail: null }] : []
         });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));

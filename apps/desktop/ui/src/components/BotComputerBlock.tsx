@@ -264,7 +264,7 @@ export function BotComputerBlock({
         </div>
       ) : null}
 
-      {panelActions.includes("open_screen") && summary?.available && !showRelease ? (
+      {panelActions.includes("open_screen") && summary?.available && !showRelease && !issue ? (
         <div className={styles.release}>
           <Button
             variant="secondary"
