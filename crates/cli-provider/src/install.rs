@@ -142,6 +142,10 @@ async fn run(
     apply_sanitized_env(&mut cmd, env);
     cmd.env("NO_COLOR", "1")
         .env("npm_config_update_notifier", "false");
+    // npm installs go to a user-level prefix (inside the data dir for Praxi's own Node), never a system path.
+    if let Some(prefix) = env.env_vars.get("NPM_CONFIG_PREFIX") {
+        cmd.env("NPM_CONFIG_PREFIX", prefix);
+    }
     #[cfg(windows)]
     let mut wrap = isolate(cmd, crate::detect::SharedJob::new());
     #[cfg(not(windows))]
@@ -232,7 +236,7 @@ mod tests {
     async fn unverified_commands_cannot_execute() {
         let dir = tempfile::tempdir().unwrap();
         let env = PathEnv::for_test(dir.path().into());
-        for id in ["gemini", "agy", "npm;whoami"] {
+        for id in ["gemini", "npm;whoami"] {
             assert_eq!(
                 run_install(id, &env, dir.path(), INSTALL_TIMEOUT, |_| {}).await,
                 Err("copy_only")

@@ -113,11 +113,22 @@ fn load(data: &Path) -> Registry {
         .unwrap_or_default()
 }
 
+/// Write `bytes` to `path` so that a crash leaves the old or the new file, never a torn one:
+/// write a temporary file, flush it to disk (`fsync`), then rename it over the target.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("json.tmp");
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, path)
+}
+
 fn save(data: &Path, reg: &Registry) -> Result<(), ApiError> {
-    let tmp = data.join(format!("{REGISTRY_FILE}.tmp"));
-    std::fs::write(&tmp, serde_json::to_vec(reg).map_err(ApiError::internal)?)
-        .and_then(|()| std::fs::rename(&tmp, data.join(REGISTRY_FILE)))
+    serde_json::to_vec(reg)
         .map_err(ApiError::internal)
+        .and_then(|b| write_atomic(&data.join(REGISTRY_FILE), &b).map_err(ApiError::internal))
 }
 
 fn bot_key(device: &str, source: Uuid) -> String {
@@ -235,6 +246,81 @@ pub(crate) async fn import_bot(
         save(&data, &reg)?;
     }
     Ok(bot_result(host_bot.1, None, Some(host_bot.0)))
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckBotItem {
+    pub source_bot_id: Uuid,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckBotsInput {
+    pub bots: Vec<CheckBotItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CheckBotResult {
+    pub source_bot_id: Uuid,
+    /// `mapped` (linked to a server bot already), `name_taken` (a bot with this name that this
+    /// flow did not create exists: ask the owner) or `free`.
+    pub state: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CheckBotsReport {
+    pub items: Vec<CheckBotResult>,
+}
+
+/// What would happen to each bot, so the dialog can ask before anything is sent.
+#[utoipa::path(post, operation_id = "admin_check_bots", path = "/v1/admin/import/bots/check", tag = "admin", security(("bearer" = [])),
+    request_body = CheckBotsInput,
+    responses((status = 200, body = CheckBotsReport), (status = 403, body = crate::error::ErrorBody)))]
+pub(crate) async fn check_bots(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+    ApiJson(input): ApiJson<CheckBotsInput>,
+) -> Result<Json<CheckBotsReport>, ApiError> {
+    require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    if input.bots.len() > 64 {
+        return Err(ApiError::bad_request("too many bots"));
+    }
+    let device = device_of(peer.as_ref());
+    let reg = {
+        let _g = REGISTRY_LOCK.lock();
+        load(&s.data_dir())
+    };
+    let names: HashSet<String> = s
+        .storage()
+        .list_bots(s.user_id())?
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    let items = input
+        .bots
+        .into_iter()
+        .map(|b| {
+            let mapped = reg
+                .bots
+                .get(&bot_key(&device, b.source_bot_id))
+                .is_some_and(|h| s.bot_of_user(BotId(*h)).is_ok());
+            let state = if mapped {
+                "mapped"
+            } else if names.contains(&b.name) {
+                "name_taken"
+            } else {
+                "free"
+            };
+            CheckBotResult {
+                source_bot_id: b.source_bot_id,
+                state: state.into(),
+            }
+        })
+        .collect();
+    Ok(Json(CheckBotsReport { items }))
 }
 
 // ------------------------------------------------------------------ host side: schedules
@@ -829,9 +915,35 @@ fn read_moved(data: &Path) -> BTreeMap<String, Moved> {
 }
 
 fn write_moved(data: &Path, moved: &BTreeMap<String, Moved>) -> std::io::Result<()> {
-    let tmp = data.join(format!("{MOVED_FILE}.tmp"));
-    std::fs::write(&tmp, serde_json::to_vec(moved)?)?;
-    std::fs::rename(tmp, data.join(MOVED_FILE))
+    write_atomic(&data.join(MOVED_FILE), &serde_json::to_vec(moved)?)
+}
+
+const CHOICES_FILE: &str = "bot-link-choices.json";
+
+/// The owner's answer to "a bot with this name already exists on the server", remembered per
+/// (server, bot): `separate` means "keep them separate". (A link answer lives in the host's
+/// mapping.) The question is asked once.
+fn choice_key(host: &str, bot: Uuid) -> String {
+    format!("{host}/{bot}")
+}
+
+pub(crate) fn kept_separate(data: &Path, host: &str, bot: Uuid) -> bool {
+    std::fs::read(data.join(CHOICES_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok())
+        .is_some_and(|m| {
+            m.get(&choice_key(host, bot))
+                .is_some_and(|v| v == "separate")
+        })
+}
+
+pub(crate) fn remember_separate(data: &Path, host: &str, bot: Uuid) -> std::io::Result<()> {
+    let mut m: BTreeMap<String, String> = std::fs::read(data.join(CHOICES_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    m.insert(choice_key(host, bot), "separate".into());
+    write_atomic(&data.join(CHOICES_FILE), &serde_json::to_vec(&m)?)
 }
 
 /// `POST` with a pause and a retry when the host's administration budget is used up.

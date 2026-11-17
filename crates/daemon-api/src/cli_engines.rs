@@ -89,13 +89,15 @@ struct Pending {
 }
 pub(crate) struct InstallBook {
     pending: parking_lot::Mutex<HashMap<Uuid, Pending>>,
-    running: Arc<tokio::sync::Semaphore>,
+    pub(crate) running: Arc<tokio::sync::Semaphore>,
+    pub(crate) admin: parking_lot::Mutex<HashMap<String, crate::host_admin::AdminInstallRun>>,
 }
 impl Default for InstallBook {
     fn default() -> Self {
         Self {
             pending: parking_lot::Mutex::new(HashMap::new()),
             running: Arc::new(tokio::sync::Semaphore::new(1)),
+            admin: parking_lot::Mutex::new(HashMap::new()),
         }
     }
 }

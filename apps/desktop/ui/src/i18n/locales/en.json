@@ -414,6 +414,39 @@
         "executes": "Untrusted content (a web page, mail, download) is in this chat, so typing, shell commands and launching programs ask first.",
         "always_ask": "This action always asks, whatever the permission level (apps, secrets).",
         "floor": "Payments and risky commands always ask, whatever the permission level."
+      },
+      "plain": {
+        "action": {
+          "shell": "Run a command on {{where}}: {{command}}",
+          "launch": "Open the program {{name}} on {{where}}",
+          "browser": "Open this page in the browser on {{where}}: {{url}}",
+          "screen": "Use the screen of {{where}}",
+          "generic": "Do something on {{where}}"
+        },
+        "where": {
+          "server": "the {{name}} server",
+          "serverUnnamed": "the server",
+          "thisComputer": "this computer",
+          "user": "your computer ({{name}})"
+        },
+        "reason": {
+          "egress": "The bot read {{list}} and now wants to send data to {{host}}.",
+          "egressExecutes": "The bot read {{list}} and now wants to send data to {{host}} and start a program. Calls that start a program always ask.",
+          "unknownSources": "untrusted or private content"
+        },
+        "source": {
+          "file": "file {{name}}",
+          "window": "window {{name}}",
+          "page": "page {{name}}",
+          "mailbox": "mailbox {{name}}",
+          "mcp": "app {{name}}",
+          "tool": "tool {{name}}",
+          "command": "command output",
+          "workflow": "workflow replay",
+          "memory": "memory",
+          "skill": "untrusted skill"
+        },
+        "details": "Details"
       }
     },
     "question": {
@@ -941,11 +974,26 @@
     "retrying": "Trying again in {{seconds}} s",
     "restarting": "Restarting…",
     "codes": {
-      "host_admin_forbidden": { "title": "This computer may not manage that server", "hint": "Only the owner's paired desktop can change the server's setup." },
-      "host_admin_required": { "title": "Confirm this computer on the server first", "hint": "Run the command shown below on the server once, then try again." },
-      "secrets_unavailable": { "title": "The server cannot store keys yet", "hint": "Follow the setup note shown below on the server, then try again." },
-      "secret_store_failed": { "title": "The server could not save the key", "hint": "Try again. If it keeps failing, check the server's disk and its secret store." },
-      "owner_key_required": { "title": "Only the owner of this computer can do that", "hint": "Use the Praxi app on this computer, not another device." },
+      "host_admin_forbidden": {
+        "title": "This computer may not manage that server",
+        "hint": "Only the owner's paired desktop can change the server's setup."
+      },
+      "host_admin_required": {
+        "title": "Confirm this computer on the server first",
+        "hint": "Run the command shown below on the server once, then try again."
+      },
+      "secrets_unavailable": {
+        "title": "The server cannot store keys yet",
+        "hint": "Follow the setup note shown below on the server, then try again."
+      },
+      "secret_store_failed": {
+        "title": "The server could not save the key",
+        "hint": "Try again. If it keeps failing, check the server's disk and its secret store."
+      },
+      "owner_key_required": {
+        "title": "Only the owner can give this permission",
+        "hint": "Use the Praxi desktop app on this computer to allow it for the chat."
+      },
       "admin_rate_limit": {
         "title": "Too many administration changes",
         "hint": "Wait a minute and try again."
@@ -1033,10 +1081,6 @@
       "engine_owner_only": {
         "title": "Only the owner can change this",
         "hint": "Use the app on the computer that runs the bot."
-      },
-      "owner_key_required": {
-        "title": "Only the Praxi app on this computer can do this",
-        "hint": "Open this computer's Praxi app and use it there."
       },
       "forbidden": {
         "title": "You are not allowed to do that here",
@@ -1194,9 +1238,13 @@
         "title": "Too many live views are open",
         "hint": "Close one and try again."
       },
-      "owner_key_required": {
-        "title": "Only the owner can give this permission",
-        "hint": "Use the Praxi desktop app on this computer to allow it for the chat."
+      "prerequisite_missing": {
+        "title": "The server is missing a required component",
+        "hint": "Install Node.js on the server first, then try again."
+      },
+      "install_copy_only": {
+        "title": "This CLI cannot be installed on the server automatically",
+        "hint": "Use the command shown or the official page."
       }
     },
     "network": {
@@ -1258,6 +1306,18 @@
     "serviceWrongTarget": {
       "title": "Praxi is pointed at a service that does not answer",
       "hint": "Switch back to This computer, or restart the local service."
+    },
+    "toolWrongMachine": {
+      "title": "The bot sent a command to the wrong computer",
+      "hint": "That program or path does not exist on that computer's operating system. The bot should try on its own computer; ask again."
+    },
+    "toolTargetOffline": {
+      "title": "The bot could not reach the target computer",
+      "hint": "It is off or not connected. Turn it on and try again."
+    },
+    "toolNotFound": {
+      "title": "The bot could not find the file or program",
+      "hint": "Ask again and say its name or location."
     },
     "startup": {
       "starting": {
@@ -1333,10 +1393,18 @@
       "title": "Coding CLIs on {{name}}",
       "loading": "Asking the server…",
       "none": "The server reported no coding CLIs.",
-      "signIn": "Installed, sign-in needed. On the server run:",
+      "signIn": "To sign in, run on the server:",
       "ready": "Ready",
-      "notInstalled": "Not installed. On the server run:",
-      "note": "These are the server's own tools. Installing and signing in happens on {{name}}."
+      "notInstalled": "Not installed.",
+      "note": "These are the server's own tools. Installing and signing in happens on {{name}}.",
+      "installedUnknown": "Installed · sign-in state unknown",
+      "runOnServer": "On the server run:",
+      "officialPage": "Install {{name}} from the official page",
+      "installOnServer": "Install on server",
+      "installing": "Installing on the server (Node.js is downloaded first when it is missing)…",
+      "installFailed": "The install did not finish ({{code}}). Check the output or run the command by hand.",
+      "needNode": "The server has no Node.js (npm) and Praxi cannot install it on this system. Install Node.js 22 LTS by hand, then try again.",
+      "signInNote": "Signing in shows a web address on the server (often with a code). Open the address on this computer, sign in there and, if asked, paste the code into the server's terminal. Sign-ins on this computer are never copied to the server."
     },
     "chip": {
       "local": "This computer",
@@ -1353,7 +1421,9 @@
       "viewScreen": "View its screen",
       "workHere": "Work on this computer for now",
       "backHome": "Back to {{name}}",
-      "pcOn": "On · every action asks you here", "pcOff": "Off · your bots cannot use this computer", "workHereHint": "Shows this computer's own bots until you go back.",
+      "pcOn": "On · every action asks you here",
+      "pcOff": "Off · your bots cannot use this computer",
+      "workHereHint": "Shows this computer's own bots until you go back.",
       "backHomeHint": "You are working on this computer for now.",
       "stop": "Stop everything on {{name}}",
       "stopHint": "Stops every run that is going on there right now."
@@ -1368,7 +1438,8 @@
       "title": "{{name}} is now your bots' home",
       "moved": "Moved to {{name}}",
       "stayed": "Stays on this computer",
-      "allowPc": "Optional: your bots may then look at this computer's screen and act on it when you ask. Every action that changes something still asks you here first.", "stayedBody": "This computer keeps everything it had as a fallback and stays a target: ask a bot to do something on it any time. Nothing was deleted here.",
+      "allowPc": "Optional: your bots may then look at this computer's screen and act on it when you ask. Every action that changes something still asks you here first.",
+      "stayedBody": "This computer keeps everything it had as a fallback and stays a target: ask a bot to do something on it any time. Nothing was deleted here.",
       "done": "Got it"
     },
     "target": {
@@ -1891,7 +1962,10 @@
       "fast": "fast",
       "balanced": "balanced",
       "strongest": "best for hard tasks"
-    }
+    },
+    "notOnServer": "{{name}} · not on {{server}} yet",
+    "howToInstall": "How to install",
+    "noteLocalClis": "Subscription CLIs on this computer are used when a bot runs on \"this computer\"."
   },
   "settingsModal": {
     "title": "Settings",
@@ -3309,6 +3383,15 @@
       "memory": "Memory",
       "memoryName": "Memory"
     },
+    "nameTaken": "A bot named {{name}} already exists on {{server}}.",
+    "keptSeparate": "Kept separate from the bot of the same name on {{server}}",
+    "answerFirst": "Choose what to do with the bot that already exists on the server before moving.",
+    "choice": {
+      "adopt": "It is the same bot - link them",
+      "adoptWhy": "Its schedules and chats will be added to that bot on {{server}}.",
+      "separate": "Keep them separate",
+      "separateWhy": "This bot and everything that belongs to it stays here and is not moved."
+    },
     "counts": {
       "schedules": "{{count}} moved, {{existing}} already there, {{skipped}} left behind",
       "chats": "{{count}} messages moved, {{existing}} already there, {{skipped}} left behind"
@@ -3337,6 +3420,8 @@
       "rejected": "Server refused it",
       "admin_rate_limit": "Server asked to wait; run it again to continue",
       "name_taken": "A different bot with this name already exists on the server",
+      "kept_separate": "Kept separate: nothing of it moved",
+      "choice_not_saved": "Could not save your choice",
       "bot_not_moved": "Its bot is not on the server",
       "id_in_use": "The server already has something with this id",
       "freeze_failed": "Could not freeze the local copy; nothing was switched on there",

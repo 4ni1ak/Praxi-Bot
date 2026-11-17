@@ -281,6 +281,34 @@ fn union(a: Option<ControlRect>, b: Option<ControlRect>) -> Option<ControlRect> 
     }
 }
 
+/// Why `executable` cannot be started on a desktop whose platform is `platform`,
+/// when it plainly belongs to another operating system (a `/opt/...` path on
+/// Windows, `chrome.exe` or `C:\...` on Linux/macOS). Decided before any
+/// approval is raised: the user is never asked about a call that cannot work.
+fn foreign_launch_refusal(platform: &str, executable: &str) -> Option<String> {
+    let exe = executable.trim();
+    let drive = {
+        let b = exe.as_bytes();
+        b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == 0x5c || b[2] == b'/')
+    };
+    let (os, other) = match platform {
+        "windows" if exe.starts_with('/') => ("Windows", "Linux or macOS"),
+        "linux" | "macos" if drive || exe.to_ascii_lowercase().ends_with(".exe") => (
+            if platform == "linux" {
+                "Linux"
+            } else {
+                "macOS"
+            },
+            "Windows",
+        ),
+        _ => return None,
+    };
+    Some(format!(
+        "wrong computer: {exe:?} looks like a {other} program or path, but this desktop is a {os} computer. \
+Nothing was started and the user was not asked. Use a program name or path that exists on {os}; to open a web page use browser_open when it is listed."
+    ))
+}
+
 fn derr(e: &DesktopError) -> ToolError {
     let hint = match e {
         DesktopError::ElementNotFound { .. } => STALE_HINT,
@@ -1251,6 +1279,12 @@ impl DesktopTool {
             }
             Op::Launch => {
                 let i: LaunchIn = parse(input)?;
+                if let Some(reason) = foreign_launch_refusal(
+                    &sh.backend(run_id)?.capabilities().platform,
+                    &i.executable,
+                ) {
+                    return Err(exec_err(reason));
+                }
                 let permit = sh
                     .gate(run_id, "launch", i.executable.clone(), None)
                     .await?;
@@ -1656,6 +1690,18 @@ impl Tool for DesktopTool {
         ctx: &ToolContext,
         input: &Value,
     ) -> Result<Option<Value>, ToolError> {
+        if matches!(self.op, Op::Launch) {
+            // A program of another operating system (a Linux path on a Windows PC)
+            // is refused here, BEFORE any approval card: the user is never asked
+            // about a call that cannot work.
+            if let Some(exe) = input.get("executable").and_then(Value::as_str)
+                && let Ok(backend) = self.shared.backend(&ctx.run_id)
+                && let Some(reason) = foreign_launch_refusal(&backend.capabilities().platform, exe)
+            {
+                return Err(ToolError::Execution(reason));
+            }
+            return Ok(None);
+        }
         let Some(key) = self.text_key() else {
             return Ok(None);
         };
@@ -1985,6 +2031,25 @@ pub(crate) mod fake {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_program_of_another_os_is_refused_before_any_card() {
+        let linux_on_windows =
+            foreign_launch_refusal("windows", "/opt/praxi-browser/chrome").unwrap();
+        assert!(
+            linux_on_windows.starts_with("wrong computer:")
+                && linux_on_windows.contains("Windows computer")
+        );
+        assert!(
+            foreign_launch_refusal("linux", "chrome.exe")
+                .unwrap()
+                .contains("Linux computer")
+        );
+        assert!(foreign_launch_refusal("linux", r"C:\Program Files\x.exe").is_some());
+        assert!(foreign_launch_refusal("windows", "notepad.exe").is_none());
+        assert!(foreign_launch_refusal("windows", "ms-settings:display").is_none());
+        assert!(foreign_launch_refusal("linux", "/usr/bin/firefox").is_none());
+    }
+
     use super::fake::FakeDesktop;
     use super::*;
     use tool_registry::ContentPart;

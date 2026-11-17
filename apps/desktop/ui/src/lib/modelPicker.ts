@@ -337,14 +337,24 @@ export interface PickerSections {
   cli: SourceGroup[];
   /** One group per API provider (billed per use). */
   api: SourceGroup[];
+  /** Coding CLIs that are switched on but have no model to offer (not installed or not signed in
+   *  where this list comes from). Never rendered as an empty group; the picker words them as one
+   *  muted "not on <server> yet" row or leaves them out. */
+  emptyCli: string[];
 }
 
 /** Split provider groups into the CLI and API sections with their recommended models. */
 export function pickerSections(groups: ModelGroup[], current?: string | null): PickerSections {
-  const out: PickerSections = { cli: [], api: [] };
+  const out: PickerSections = { cli: [], api: [], emptyCli: [] };
   for (const g of groups) {
     const cli = g.provider.startsWith("cli:");
     const models = g.models.filter((m) => !isCliDefault(m));
+    // A CLI with no listed model is not a group: "Codex 0" tells the owner nothing. A group that
+    // holds the current choice stays so the choice is visible.
+    if (cli && models.length === 0 && !g.models.some((m) => m.ref === current)) {
+      out.emptyCli.push(g.provider);
+      continue;
+    }
     const recommended = sourceRecommendations(g);
     const cur = models.find((m) => m.ref === current);
     if (cur && !recommended.some((r) => r.option.ref === cur.ref)) {

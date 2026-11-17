@@ -200,3 +200,25 @@ test("model names fall back to a prettified id and a CLI model shows as a name",
   const m = g.find((x) => x.provider === "cli:opencode")!.models[0];
   assert.notEqual(m.displayName, m.model);
 });
+
+test("a CLI without any listed model is never a group: it is reported apart", () => {
+  const d = {
+    active: [],
+    catalog: [],
+    default_provider: "gemini",
+    configured: [
+      { id: "gemini", active: true, custom: false, default_model: "flash", enabled: true, has_key: true, is_default: true, models: [] },
+      { id: "cli:claude", active: true, custom: false, default_model: null, enabled: true, has_key: false, is_default: false, models: ["opus", "sonnet"] },
+      { id: "cli:codex", active: true, custom: false, default_model: null, enabled: true, has_key: false, is_default: false, models: [] },
+      { id: "cli:agy", active: true, custom: false, default_model: null, enabled: true, has_key: false, is_default: false, models: [] }
+    ]
+  } as unknown as ProvidersDto;
+  const sec = pickerSections(modelGroups(d));
+  assert.deepEqual(sec.cli.map((g) => g.provider), ["cli:claude"]);
+  assert.deepEqual(sec.emptyCli.sort(), ["cli:agy", "cli:codex"]);
+  for (const g of [...sec.cli, ...sec.api]) {
+    assert.ok(g.cli ? g.total > 0 : true, `${g.provider} is rendered with 0 models`);
+  }
+  // The current choice keeps its group visible.
+  assert.deepEqual(pickerSections(modelGroups(d, "cli:codex/default"), "cli:codex/default").cli.map((g) => g.provider), ["cli:claude", "cli:codex"]);
+});

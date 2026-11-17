@@ -49,6 +49,11 @@ pub struct CopyBotRow {
     /// Schedules of this bot on this computer (270-B).
     #[serde(default)]
     pub schedules: u32,
+    /// What the server says about this bot: `mapped` (already linked), `name_taken` (a bot of
+    /// that name that this flow did not create exists there: the owner must choose), `free`,
+    /// `separate` (the owner chose to keep them apart) or absent (the server was not asked).
+    #[serde(default)]
+    pub host_state: Option<String>,
     /// Chats of this bot on this computer, and their messages.
     #[serde(default)]
     pub chats: u32,
@@ -98,6 +103,10 @@ pub struct CopyRequest {
     /// same name (otherwise a name collision is refused).
     #[serde(default)]
     pub adopt: Vec<String>,
+    /// Local bot ids the owner chose to keep separate from the server's same-named bot: they
+    /// are skipped, with everything that belongs to them, and the answer is remembered.
+    #[serde(default)]
+    pub separate: Vec<String>,
 }
 
 /// `GET /v1/hosts/home`: the host adopted as the bots' home, if any.
@@ -254,6 +263,7 @@ pub(crate) async fn plan(
             let executor = bot_executor(&bot.config);
             let (chats, messages) = chat_counts.get(&bot.id.0).copied().unwrap_or_default();
             CopyBotRow {
+                host_state: None,
                 schedules: schedule_counts.get(&bot.id.0).copied().unwrap_or_default(),
                 chats,
                 messages,
@@ -300,7 +310,57 @@ pub(crate) async fn plan(
             plan.host_code = call.body["error"]["code"].as_str().map(str::to_owned);
         }
     }
+    // Ask the server which bots would collide by name, so the dialog can put the question
+    // before anything is sent. A bot the owner already kept separate is not asked again.
+    if plan.host_accepts == Some(true) {
+        fill_host_states(&s, &id, &mut plan).await?;
+    }
     Ok(Json(plan))
+}
+
+/// Ask the server which bots would collide by name (see `CopyBotRow::host_state`).
+async fn fill_host_states(s: &AppState, id: &str, plan: &mut CopyPlanDto) -> Result<(), ApiError> {
+    let probe: Vec<_> = plan
+        .bots
+        .iter()
+        .filter(|b| b.blocked.is_none())
+        .filter_map(|b| {
+            Some(serde_json::json!({"source_bot_id": b.id.parse::<uuid::Uuid>().ok()?, "name": b.name}))
+        })
+        .collect();
+    let states: std::collections::HashMap<String, String> = links(s)?
+        .call(
+            id,
+            "POST",
+            "/v1/admin/import/bots/check",
+            Some(serde_json::json!({"bots": probe})),
+        )
+        .await
+        .ok()
+        .filter(|c| c.status == 200)
+        .and_then(|c| c.body["items"].as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|i| {
+            Some((
+                i["source_bot_id"].as_str()?.to_owned(),
+                i["state"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    for b in &mut plan.bots {
+        b.host_state = match (states.get(&b.id), b.id.parse::<uuid::Uuid>()) {
+            (Some(st), Ok(bid))
+                if st == "name_taken"
+                    && crate::host_import::kept_separate(&s.data_dir(), id, bid) =>
+            {
+                Some("separate".to_owned())
+            }
+            (Some(st), _) => Some(st.clone()),
+            _ => None,
+        };
+    }
+    Ok(())
 }
 
 fn item(kind: &str, id: &str, name: &str, status: &str, code: Option<&str>) -> CopyItemResult {
@@ -444,6 +504,22 @@ pub(crate) async fn copy(
         let name = bot.name.clone();
         if let Some(code) = &stop {
             items.push(item("bot", bid, &name, "skipped", Some(code)));
+            continue;
+        }
+        if input.separate.contains(bid) {
+            // The owner said these are two different bots: remember it, send nothing of it.
+            let kept = crate::host_import::remember_separate(&s.data_dir(), &id, bot.id.0).is_ok();
+            items.push(item(
+                "bot",
+                bid,
+                &name,
+                "skipped",
+                Some(if kept {
+                    "kept_separate"
+                } else {
+                    "choice_not_saved"
+                }),
+            ));
             continue;
         }
         if bot_executor(&bot.config).is_some_and(|e| e.starts_with("cli:")) {

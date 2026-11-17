@@ -210,8 +210,10 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/admin/import/schedules"),
     ("POST", "/v1/admin/import/chats"),
     ("POST", "/v1/admin/import/bots"),
+    ("POST", "/v1/admin/import/bots/check"),
     ("POST", "/v1/admin/import/schedules/activate"),
     ("POST", "/v1/admin/import/schedules/release"),
+    ("POST", "/v1/admin/cli-engines/{}/install"),
     ("PUT", "/v1/admin/providers/{}"),
     ("DELETE", "/v1/admin/providers/{}"),
 ];

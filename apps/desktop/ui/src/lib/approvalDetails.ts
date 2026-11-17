@@ -118,6 +118,10 @@ export interface EgressApprovalDetails {
   payloadChars?: number;
   /** Non-printing characters shown in the payload as `<U+XXXX>`. */
   hiddenChars?: number;
+  /** Stable code of why it asks (`egress`, `egress_executes`); absent on older daemons. */
+  reasonCode?: string;
+  /** The call also starts a program on the computer. */
+  executes?: boolean;
 }
 
 /** Parse an egress card, including one nested beside a schedule card. */
@@ -140,7 +144,9 @@ export function egressDetails(details: unknown): EgressApprovalDetails | null {
     reviewFullPayload: raw.review_full_payload === true,
     payloadLines: count(raw.payload_lines),
     payloadChars: count(raw.payload_chars),
-    hiddenChars: count(raw.hidden_chars)
+    hiddenChars: count(raw.hidden_chars),
+    reasonCode: typeof raw.reason_code === "string" ? raw.reason_code : undefined,
+    executes: raw.executes === true ? true : undefined
   };
 }
 

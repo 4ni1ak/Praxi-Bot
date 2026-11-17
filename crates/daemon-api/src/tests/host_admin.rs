@@ -1062,3 +1062,104 @@ async fn a_moved_schedule_is_frozen_cannot_be_enabled_and_only_an_owner_reclaim_
         again.json()
     );
 }
+
+#[tokio::test]
+async fn engine_install_on_the_host_is_admin_only_and_allow_listed() {
+    let r = rig().await;
+    let ok_peer = Some((r.admin_key.as_str(), crate::PeerRole::Desktop));
+    // Every other caller is refused before anything is looked at or started.
+    for (peer, code) in [
+        (
+            Some((r.legacy_key.as_str(), crate::PeerRole::Desktop)),
+            "host_admin_required",
+        ),
+        (Some((r.admin_key.as_str(), crate::PeerRole::Phone)), "-"),
+        (None, "-"),
+    ] {
+        for path in [
+            "/v1/admin/cli-engines/claude/install",
+            "/v1/admin/cli-engines/agy/install",
+        ] {
+            let denied = peer_call(&r.t, peer, Method::POST, path, None).await;
+            assert_eq!(denied.status, StatusCode::FORBIDDEN, "{path}");
+            if code != "-" {
+                assert_eq!(denied.json()["error"]["code"], code);
+            }
+        }
+    }
+    // The admin can only name an engine id: unknown ids and engines without a
+    // verified installer (Gemini CLI is retired) are refused, never run.
+    let unknown = peer_call(
+        &r.t,
+        ok_peer,
+        Method::POST,
+        "/v1/admin/cli-engines/claude;whoami/install",
+        None,
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    let retired = peer_call(
+        &r.t,
+        ok_peer,
+        Method::POST,
+        "/v1/admin/cli-engines/gemini/install",
+        None,
+    )
+    .await;
+    assert_eq!(retired.status, StatusCode::CONFLICT);
+    assert_eq!(retired.json()["error"]["code"], "install_copy_only");
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_plan_asks_about_same_named_bots_and_the_answer_is_remembered() {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    let (local, bot, _chat, _ids) = local_with_work(&host, &host.admin_key).await;
+    // A bot of the same name that this flow did not create (made by hand or by the old flow).
+    let r = call(
+        &host.t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": super::PROFILE })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    let state_of = |plan: &Value| {
+        plan["bots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["id"] == json!(bot))
+            .unwrap()["host_state"]
+            .clone()
+    };
+    let plan = call(&local, Method::GET, "/v1/hosts/h1/copy-setup", None).await;
+    assert_eq!(state_of(&plan.json()), "name_taken", "{:?}", plan.json());
+
+    // "Keep them separate": nothing of the bot moves and the question is not asked again.
+    let body = json!({"bots": [bot], "schedules": true, "chats": true, "separate": [bot]});
+    let kept = owner_post(&local, "/v1/hosts/h1/copy-setup", body).await;
+    let line = report_line(&kept, "bot");
+    assert_eq!(line["status"], "skipped");
+    assert_eq!(line["code"], "kept_separate");
+    let none = call(&host.t, Method::GET, "/v1/schedules", None)
+        .await
+        .json();
+    assert_eq!(none.as_array().unwrap().len(), 0);
+    let plan = call(&local, Method::GET, "/v1/hosts/h1/copy-setup", None).await;
+    assert_eq!(state_of(&plan.json()), "separate");
+
+    // "It is the same bot - link them" is the only way to bind; afterwards it is `mapped`.
+    let body = json!({"bots": [bot], "schedules": true, "adopt": [bot]});
+    let linked = owner_post(&local, "/v1/hosts/h1/copy-setup", body).await;
+    assert_eq!(
+        report_line(&linked, "bot")["status"],
+        "done",
+        "{:?}",
+        linked.json()
+    );
+    assert_eq!(report_line(&linked, "schedules")["count"], 2);
+    let plan = call(&local, Method::GET, "/v1/hosts/h1/copy-setup", None).await;
+    assert_eq!(state_of(&plan.json()), "mapped");
+}

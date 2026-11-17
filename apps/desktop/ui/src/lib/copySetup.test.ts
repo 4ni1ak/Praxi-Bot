@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CopyPlan, CopyReport } from "../api/types.ts";
-import { buildCopyItems, defaultChecked, resultKey, summarizeReport, toRequest } from "./copySetup.ts";
+import { buildCopyItems, defaultChecked, resultKey, summarizeReport, toRequest, unanswered } from "./copySetup.ts";
 
 const plan: CopyPlan = {
   providers: [
@@ -66,4 +66,23 @@ test("the report is summed per item and a home failure is surfaced", () => {
   assert.deepEqual(summarizeReport(report), { done: 1, skipped: 1, failed: 1, homeFailed: true });
   assert.equal(resultKey(report.items[1]), "exists");
   assert.equal(resultKey(report.items[0]), "done");
+});
+
+test("a same-named server bot needs an explicit answer: link sends adopt, separate sends only the answer", () => {
+  const items = buildCopyItems({
+    ...plan,
+    bots: [{ id: "b1", name: "Atlas", model: "gemini/m", blocked: null, host_state: "name_taken", schedules: 1, chats: 1, messages: 3 }]
+  });
+  const checked = defaultChecked(items);
+  assert.deepEqual(unanswered(items, checked, {}), ["b1"]);
+  // Unanswered: the bot is never sent, never linked silently.
+  assert.deepEqual(toRequest(items, checked, {}).bots, []);
+  const link = toRequest(items, checked, { b1: "adopt" });
+  assert.deepEqual([link.bots, link.adopt, link.separate], [["b1"], ["b1"], []]);
+  const apart = toRequest(items, checked, { b1: "separate" });
+  assert.deepEqual([apart.adopt, apart.separate], [[], ["b1"]]);
+  assert.deepEqual(unanswered(items, checked, { b1: "separate" }), []);
+  // An answer given earlier is remembered by the daemon: the bot comes back unticked.
+  const again = buildCopyItems({ ...plan, bots: [{ id: "b1", name: "Atlas", model: null, blocked: null, host_state: "separate" }] });
+  assert.equal(defaultChecked(again).has("bot:b1"), false);
 });

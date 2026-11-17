@@ -614,6 +614,16 @@ impl TurnExecutor {
             (Some(d), None) => Some(d),
             (None, s) => s,
         };
+        // A host-homed bot is told, every run, which computer it is on.
+        let skills = match (self.sh.place_block(&ctx), skills) {
+            (Some(p), Some(s)) => Some(format!(
+                "{p}
+
+{s}"
+            )),
+            (Some(p), None) => Some(p),
+            (None, s) => s,
+        };
         let lookup = |n: &str| self.sh.tools.get(n).map(|t| t.spec().clone());
         let spill_dir = self
             .sh

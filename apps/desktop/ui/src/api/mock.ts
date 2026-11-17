@@ -123,7 +123,7 @@ const LONG_PROMPT = Array.from({ length: 9 }, (_, i) => `${i + 1}. Geçen haftan
 const SCHEDULES = [
   { id: "sch-1", origin: "user", bot_id: ATLAS, name: "Haftalık özet", enabled: true, has_webhook: false, created_at_ms: NOW, last_run_at_ms: NOW - 6 * 86400000, next_run_at_ms: NOW + 86400000, misfire_policy: "skip", spec: { cron: "0 9 * * 1 Europe/Istanbul" }, payload: { kind: "agent_prompt", text: "Geçen haftanın GitHub ve takvim hareketlerinden kısa bir özet hazırla." } },
   { id: "sch-2", origin: "bot", bot_id: NOVA, name: "Kaynak taraması", enabled: true, has_webhook: true, created_at_ms: NOW, last_run_at_ms: null, next_run_at_ms: NOW + 3600000, misfire_policy: "run_once", spec: { every: { seconds: 3600 } }, payload: { kind: "agent_prompt", text: "Takip listesindeki sitelerde yeni içerik var mı bak." } },
-  { id: "sch-3", origin: "user", bot_id: "bot-milo", name: "Yedek kontrolü", enabled: false, has_webhook: false, created_at_ms: NOW, last_run_at_ms: NOW - 86400000, next_run_at_ms: null, misfire_policy: "skip", spec: { cron: "30 22 * * * Europe/Istanbul" }, payload: { kind: "workflow", name: "backup-check", params: {} } }
+  { id: "sch-3", origin: "user", bot_id: "bot-milo", name: "Yedek kontrolü", enabled: false, moved_to: "Praxi host", has_webhook: false, created_at_ms: NOW, last_run_at_ms: NOW - 86400000, next_run_at_ms: null, misfire_policy: "skip", spec: { cron: "30 22 * * * Europe/Istanbul" }, payload: { kind: "workflow", name: "backup-check", params: {} } }
 ] as unknown as import("./types").Schedule[];
 const CHAT_ID = "33333333-3333-4333-8333-333333333333";
 const CHATS: Chat[] = [
@@ -679,10 +679,11 @@ export class MockApiClient extends ApiClient {
     // Host administration (review states): the desktop is confirmed, the server has two CLIs.
     if (seg[0] === "admin" && seg[1] === "state") return ok({ granted: new URLSearchParams(window.location.search).get("admin") !== "needs", secrets_available: true, confirm_command: "bot host admin --all-desktops", secrets_hint: null, adopted: true });
     if (seg[0] === "admin" && seg[1] === "cli-engines") {
+      if (seg[3] === "install") return ok({ engine: seg[2] ?? "", state: "done", error: null, output: "", installed: true, signed_in: false });
       return ok([
-        { id: "claude", name: "Claude Code", installed: true, signed_in: true, version: "2.1.42", install_command: null, login: "claude auth login", docs_url: "https://example.com" },
-        { id: "codex", name: "Codex", installed: true, signed_in: false, version: "0.169.0", install_command: null, login: "codex login", docs_url: "https://example.com" },
-        { id: "opencode", name: "OpenCode", installed: false, signed_in: null, version: null, install_command: "npm install -g opencode-ai", login: "opencode auth login", docs_url: "https://example.com" }
+        { id: "claude", name: "Claude Code", installed: true, signed_in: true, version: "2.1.42", install_command: null, can_install: true, login: "claude auth login", docs_url: "https://example.com" },
+        { id: "codex", name: "Codex", installed: true, signed_in: false, version: "0.169.0", install_command: null, can_install: true, login: "codex login", docs_url: "https://example.com" },
+        { id: "opencode", name: "OpenCode", installed: false, signed_in: null, version: null, install_command: "npm install -g opencode-ai", can_install: true, login: "opencode auth login", docs_url: "https://example.com" }
       ]);
     }
     if (seg[0] === "admin" && method === "PUT") return ok({ id: seg[2] ?? "default", enabled: true, has_key: true });
@@ -694,7 +695,7 @@ export class MockApiClient extends ApiClient {
             { id: "openrouter", has_key: true, model: null, custom: false },
             { id: "local-llm", has_key: false, model: "qwen3", custom: true }
           ],
-          bots: this.bots.slice(0, 3).map((b, i) => ({ id: b.id, name: b.name, model: null, blocked: null, schedules: i === 0 ? 3 : 1, chats: i === 0 ? 4 : 1, messages: i === 0 ? 212 : 9 })),
+          bots: this.bots.slice(0, 3).map((b, i) => ({ id: b.id, name: b.name, model: null, blocked: null, schedules: i === 0 ? 3 : 1, chats: i === 0 ? 4 : 1, messages: i === 0 ? 212 : 9, host_state: i === 1 ? "name_taken" : "free" })),
           default_provider: "gemini",
           default_model: "gemini-3.5-flash-lite",
           host_accepts: true,
@@ -702,12 +703,13 @@ export class MockApiClient extends ApiClient {
           host_command: null
         });
       }
-      const req = (opts.body ?? {}) as { providers?: string[]; bots?: string[]; default_model?: boolean; set_home?: boolean; schedules?: boolean; chats?: boolean };
+      const req = (opts.body ?? {}) as { providers?: string[]; bots?: string[]; default_model?: boolean; set_home?: boolean; schedules?: boolean; chats?: boolean; separate?: string[]; adopt?: string[] };
       const items = [
         ...(req.providers ?? []).map((id) => ({ kind: "provider", id, name: id, status: "done", code: null })),
         ...(req.bots ?? []).map((id, i) => ({
           kind: "bot", id, name: this.bots.find((b) => b.id === id)?.name ?? id,
-          status: i === 0 ? "skipped" : "done", code: i === 0 ? "exists" : null
+          status: i === 0 || (req.separate ?? []).includes(id) ? "skipped" : "done",
+          code: (req.separate ?? []).includes(id) ? "kept_separate" : i === 0 ? "exists" : null
         })),
         ...(req.chats ? [{ kind: "chats", id: "all", name: "all", status: "done", code: null, count: 221, existing: 0, skipped: 1, failed: 0 }] : []),
         ...(req.schedules ? [{ kind: "schedules", id: "all", name: "all", status: "done", code: null, count: 4, existing: 0, skipped: 1, failed: 0 }] : []),

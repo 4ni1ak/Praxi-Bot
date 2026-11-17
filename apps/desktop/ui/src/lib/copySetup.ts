@@ -13,6 +13,8 @@ export interface CopyItem {
   count?: number;
   messages?: number;
   model?: string | null;
+  /** For a bot: what the server said (`name_taken` means the owner must choose). */
+  hostState?: string | null;
   /** Why the row cannot be sent (it is shown, disabled). */
   blocked?: string | null;
 }
@@ -35,7 +37,8 @@ export function buildCopyItems(plan: CopyPlan): CopyItem[] {
       label: b.name,
       detail: "model",
       model: b.model,
-      blocked: b.blocked
+      blocked: b.blocked,
+      hostState: b.host_state ?? null
     });
   }
   // Schedules, chat history and memory move WITH the bots above (their ids on the server).
@@ -67,15 +70,39 @@ export function buildCopyItems(plan: CopyPlan): CopyItem[] {
 
 /** Everything that can be sent starts ticked. */
 export function defaultChecked(items: readonly CopyItem[]): Set<string> {
-  return new Set(items.filter((i) => !i.blocked).map((i) => i.key));
+  return new Set(items.filter((i) => !i.blocked && i.hostState !== "separate").map((i) => i.key));
+}
+
+/** The owner's answer to "a bot with this name already exists on the server". */
+export type LinkChoice = "adopt" | "separate";
+
+const asked = (i: CopyItem) => i.kind === "bot" && i.hostState === "name_taken";
+
+/** Ticked bots that still need an answer; nothing is linked or skipped until they have one. */
+export function unanswered(
+  items: readonly CopyItem[],
+  checked: ReadonlySet<string>,
+  choices: Readonly<Record<string, LinkChoice>>
+): string[] {
+  return items.filter((i) => asked(i) && checked.has(i.key) && !choices[i.id]).map((i) => i.id);
 }
 
 /** The request for the ticked rows. A key is only ever named by its provider id. */
-export function toRequest(items: readonly CopyItem[], checked: ReadonlySet<string>): CopyRequest {
+export function toRequest(
+  items: readonly CopyItem[],
+  checked: ReadonlySet<string>,
+  choices: Readonly<Record<string, LinkChoice>> = {}
+): CopyRequest {
   const on = items.filter((i) => checked.has(i.key) && !i.blocked);
+  const bots = on.filter((i) => i.kind === "bot");
+  // A same-named bot is only sent after an explicit answer: linked, or kept separate (then
+  // only the answer is sent and nothing of the bot moves).
+  const sendable = bots.filter((i) => !asked(i) || choices[i.id] === "adopt");
   return {
     providers: on.filter((i) => i.kind === "provider").map((i) => i.id),
-    bots: on.filter((i) => i.kind === "bot").map((i) => i.id),
+    bots: [...sendable, ...bots.filter((i) => asked(i) && choices[i.id] === "separate")].map((i) => i.id),
+    adopt: bots.filter((i) => asked(i) && choices[i.id] === "adopt").map((i) => i.id),
+    separate: bots.filter((i) => asked(i) && choices[i.id] === "separate").map((i) => i.id),
     default_model: on.some((i) => i.kind === "default"),
     schedules: on.some((i) => i.kind === "schedules"),
     chats: on.some((i) => i.kind === "chats"),

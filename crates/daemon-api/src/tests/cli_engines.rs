@@ -9,7 +9,7 @@ async fn registry_is_authenticated_and_preserves_confinement() {
     assert_eq!(response.status, StatusCode::OK);
     let body = response.json();
     let rows = body.as_array().unwrap();
-    assert_eq!(rows.len(), 6);
+    assert_eq!(rows.len(), 5);
     let claude = rows
         .iter()
         .find(|r| r["detected"]["id"] == "claude")
@@ -33,11 +33,10 @@ async fn registry_is_authenticated_and_preserves_confinement() {
     assert_eq!(levels.len(), 4);
     assert_eq!(levels[2]["offered"], false, "OpenCode has no Auto reviewer");
     assert_eq!(levels[2]["applied"], "ask");
-    let gemini = rows
-        .iter()
-        .find(|r| r["detected"]["id"] == "gemini")
-        .unwrap();
-    assert_eq!(gemini["native"]["support"], "experimental");
+    assert!(
+        rows.iter().all(|r| r["detected"]["id"] != "gemini"),
+        "retired Gemini CLI is never offered"
+    );
     assert_eq!(
         opencode["install"]["args"],
         json!(["install", "-g", "opencode-ai"])
