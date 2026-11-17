@@ -680,6 +680,27 @@ export class MockApiClient extends ApiClient {
     if (seg[0] === "admin" && seg[1] === "state") return ok({ granted: new URLSearchParams(window.location.search).get("admin") !== "needs", secrets_available: true, confirm_command: "bot host admin --all-desktops", secrets_hint: null, adopted: true });
     if (seg[0] === "admin" && seg[1] === "cli-engines") {
       if (seg[3] === "install") return ok({ engine: seg[2] ?? "", state: "done", error: null, output: "", installed: true, signed_in: false });
+      if (seg[3] === "login") {
+        // Review states for the server sign-in: ?signin=device|paste|verifying|done|failed|manual.
+        const engine = seg[2] ?? "";
+        const scenario = new URLSearchParams(window.location.search).get("signin") ?? (engine === "codex" ? "device" : "paste");
+        const base = { engine, job_id: "mock-job", flow: engine === "codex" ? "device_code" : "paste_code", url: null, code: null, error: null, command: null, installed: true, signed_in: false };
+        if (engine === "opencode" || scenario === "manual") {
+          if (method === "POST" && seg[4] === undefined) throw new ApiError(409, "login_manual", "run `opencode auth login` on the server");
+          return ok({ ...base, state: "idle", flow: "manual", command: "opencode auth login" });
+        }
+        if (method === "DELETE") return ok({ ...base, state: "cancelled" });
+        if (seg[4] === "code") return ok({ ...base, state: "verifying" });
+        const page = "https://claude.com/cai/oauth/authorize?code=true&state=abc";
+        const device = "https://auth.openai.com/codex/device";
+        switch (scenario) {
+          case "verifying": return ok({ ...base, state: "verifying" });
+          case "done": return ok({ ...base, state: "done", signed_in: true });
+          case "failed": return ok({ ...base, state: "failed", error: "login_code_rejected" });
+          case "device": return ok({ ...base, flow: "device_code", state: "needs_browser", url: device, code: "ABCD-1234" });
+          default: return ok({ ...base, flow: "paste_code", state: "needs_code", url: page });
+        }
+      }
       return ok([
         { id: "claude", name: "Claude Code", installed: true, signed_in: true, version: "2.1.42", install_command: null, can_install: true, login: "claude auth login", docs_url: "https://example.com" },
         { id: "codex", name: "Codex", installed: true, signed_in: false, version: "0.169.0", install_command: null, can_install: true, login: "codex login", docs_url: "https://example.com" },

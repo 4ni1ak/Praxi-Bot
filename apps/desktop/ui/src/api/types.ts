@@ -47,6 +47,7 @@ export type AdminProviderInput = S["AdminProviderInput"];
 export type AdminProvider = S["AdminProviderDto"];
 export type AdminCliEngine = S["AdminCliEngineDto"];
 export type AdminCliInstall = S["AdminCliInstallDto"];
+export type AdminCliLogin = S["AdminCliLoginDto"];
 export type HomeInfo = S["HomeDto"];
 export type StopRunsInput = S["StopRunsInput"];
 export type StopRunsResponse = S["StopRunsResponse"];

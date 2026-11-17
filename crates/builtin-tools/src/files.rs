@@ -3990,6 +3990,23 @@ mod tests {
     }
 
     #[test]
+    fn the_installed_cli_runtimes_and_cli_sign_in_stores_are_protected_from_file_tools() {
+        let data = std::env::temp_dir().join("praxi-data-protected-check");
+        for path in [
+            data.join("runtimes/npm-global/bin/claude"),
+            data.join("runtimes/node-v22.1.0-linux-x64/bin/node"),
+            data.join("cli-install-pins.json"),
+            std::path::PathBuf::from("/home/praxi/.claude/.credentials.json"),
+            std::path::PathBuf::from("/home/praxi/.codex/auth.json"),
+            std::path::PathBuf::from("/home/praxi/.local/share/opencode/auth.json"),
+        ] {
+            assert!(is_protected(&path, &data), "{}", path.display());
+        }
+        // Scratch space under the data dir stays usable.
+        assert!(!is_protected(&data.join("files/notes.txt"), &data));
+    }
+
+    #[test]
     fn search_hit_lines_name_their_file() {
         assert_eq!(search_hit_path("src/a.rs:12: let x = 1;"), Some("src/a.rs"));
         assert_eq!(

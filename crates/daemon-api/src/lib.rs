@@ -16,6 +16,7 @@ pub mod auth;
 mod bot_engine;
 pub mod changes;
 mod cli_engines;
+mod cli_login;
 pub mod components;
 pub mod composio;
 mod composio_routes;
@@ -249,6 +250,7 @@ struct Inner {
     /// CLI provider detector (`GET /v1/providers/detected`).
     detector: parking_lot::RwLock<Arc<cli_provider::Detector>>,
     cli_installs: cli_engines::InstallBook,
+    cli_logins: cli_login::LoginBook,
     /// Live model lists of the coding CLIs (disk-cached, refreshed in the background).
     cli_models: Arc<cli_provider::models::ModelCache>,
     /// The running scheduler (see [`AppState::start_scheduler`]).
@@ -415,6 +417,7 @@ impl AppState {
             policy_load_error: parking_lot::Mutex::new(policy_load_error),
             detector: parking_lot::RwLock::new(Arc::new(cli_provider::Detector::new())),
             cli_installs: cli_engines::InstallBook::default(),
+            cli_logins: cli_login::LoginBook::default(),
             cli_models,
             scheduler: parking_lot::Mutex::new(None),
             leader: OnceLock::new(),

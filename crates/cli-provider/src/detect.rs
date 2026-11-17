@@ -292,7 +292,7 @@ pub fn find_candidate(argv0: &str, env: &PathEnv) -> Option<PathBuf> {
     None
 }
 
-fn is_batch_file(path: &Path) -> bool {
+pub(crate) fn is_batch_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))

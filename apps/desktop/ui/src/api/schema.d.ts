@@ -41,6 +41,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/cli-engines/{id}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`).
+         *     Needs the `job` id and the desktop that started it.
+         */
+        get: operations["admin_cli_engine_login_status"];
+        put?: never;
+        /**
+         * Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time; the sign-in
+         *     belongs to the desktop that started it.
+         */
+        post: operations["admin_cli_engine_login"];
+        /**
+         * Stop the sign-in (the whole process tree is killed). Needs the `job` id and the desktop that
+         *     started it: a stale window cannot cancel a newer sign-in.
+         */
+        delete: operations["admin_cli_engine_login_cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/cli-engines/{id}/login/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in,
+         *     and only from the desktop that started it, naming that very sign-in.
+         */
+        post: operations["admin_cli_engine_login_code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/default-provider": {
         parameters: {
             query?: never;
@@ -2744,6 +2792,37 @@ export interface components {
             /** @description `idle`, `installing`, `done` or `failed`. */
             state: string;
         };
+        /** @description `GET/POST/DELETE /v1/admin/cli-engines/{id}/login`: where the sign-in stands. */
+        AdminCliLoginDto: {
+            /** @description The one-time code to type on that page (device-code flow). */
+            code?: string | null;
+            /** @description The exact command to run over SSH for a `manual` engine. */
+            command?: string | null;
+            engine: string;
+            /** @description Stable code of the failure (`login_start_timeout`, `login_code_rejected`, ...). */
+            error?: string | null;
+            /**
+             * @description How this engine can be signed in from the desktop: `device_code`, `paste_code` or
+             *     `manual` (it cannot be driven remotely: run `command` over SSH).
+             */
+            flow: string;
+            /** @description Found on the host right now. */
+            installed: boolean;
+            /**
+             * @description Unpredictable id of this sign-in; status, code and cancel must present it (and come from
+             *     the desktop that started it).
+             */
+            job_id?: string | null;
+            /** @description Signed in, when the CLI can say. */
+            signed_in?: boolean | null;
+            /**
+             * @description `idle`, `starting`, `needs_browser`, `needs_code`, `verifying`, `done`, `failed`,
+             *     `timed_out` or `cancelled`.
+             */
+            state: string;
+            /** @description The vendor's sign-in page (verified against its allow-listed hosts). */
+            url?: string | null;
+        };
         /** @description `PUT /v1/admin/default-provider`. */
         AdminDefaultInput: {
             id: string;
@@ -2752,6 +2831,13 @@ export interface components {
         /** @description `PUT /v1/admin/home`. */
         AdminHomeInput: {
             adopted: boolean;
+        };
+        /** @description `POST .../login/code`: the code the vendor's page showed. */
+        AdminLoginCodeInput: {
+            /** @description One line, 8-1024 plain characters. Never logged, echoed or stored; zeroised after use. */
+            code: string;
+            /** @description The sign-in this code is for (`job_id` of the start answer). */
+            job_id: string;
         };
         /** @description The provider as stored on the host. */
         AdminProviderDto: {
@@ -6232,6 +6318,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminCliInstallDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The `job_id` the sign-in was started with. */
+                job: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The `job_id` the sign-in was started with. */
+                job: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login_code: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminLoginCodeInput"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
                 };
             };
             403: {

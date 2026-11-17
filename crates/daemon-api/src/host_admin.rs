@@ -801,6 +801,10 @@ pub(crate) async fn install_cli_engine(
             error = result.err();
         }
         let _ = task.detector().detect(true).await;
+        if error.is_none() {
+            // The entry point as the install flow left it: a later sign-in runs nothing else.
+            crate::cli_login::record_install_pin(&task, spec.id).await;
+        }
         if let Some(run) = task.0.cli_installs.admin.lock().get_mut(spec.id) {
             run.state = if error.is_none() { "done" } else { "failed" };
             run.error = error;
@@ -840,6 +844,16 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         .route(
             "/v1/admin/cli-engines/{id}/install",
             get(cli_engine_install_status).post(install_cli_engine),
+        )
+        .route(
+            "/v1/admin/cli-engines/{id}/login",
+            get(crate::cli_login::login_status)
+                .post(crate::cli_login::start_login)
+                .delete(crate::cli_login::cancel_login),
+        )
+        .route(
+            "/v1/admin/cli-engines/{id}/login/code",
+            post(crate::cli_login::login_code),
         )
         .route("/v1/admin/home", put(set_home))
         .route(

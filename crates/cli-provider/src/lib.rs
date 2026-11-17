@@ -6,6 +6,7 @@
 pub mod detect;
 pub mod install;
 pub mod levels;
+pub mod login;
 pub mod models;
 pub mod node_runtime;
 pub mod opencode;
