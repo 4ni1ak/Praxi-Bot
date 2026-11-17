@@ -1034,6 +1034,18 @@
         "title": "Bu zamanlama geçerli değil",
         "hint": "Saati ya da tekrar kuralını kontrol edip yeniden dene."
       },
+      "login_busy": {
+        "title": "Sunucuda başka bir giriş sürüyor",
+        "hint": "Onu bitir ya da iptal et, sonra yeniden dene."
+      },
+      "login_manual": {
+        "title": "Bu motorda buradan giriş yapılamaz",
+        "hint": "Giriş komutunu sunucuda bir kez çalıştır (giriş penceresinde gösterilir)."
+      },
+      "not_installed": {
+        "title": "Sunucuda henüz kurulu değil",
+        "hint": "Önce sunucuya kur, sonra giriş yap."
+      },
       "schedule_moved": {
         "title": "Bu zamanlama sunucuya taşındı",
         "hint": "Orada çalışır, bu bilgisayarda dondurulmuştur. Satırındaki Bu bilgisayara geri getir düğmesini kullan."
@@ -1404,6 +1416,7 @@
       "installing": "Sunucuda kuruluyor (gerekirse önce Node.js indirilir)…",
       "installFailed": "Kurulum tamamlanamadı ({{code}}). Çıktıya bak ya da komutu elle çalıştır.",
       "needNode": "Sunucuda Node.js (npm) yok ve Praxi bu sistemde onu kendi kuramıyor. Node.js 22 LTS'i elle kur, sonra yeniden dene.",
+      "signInOnServer": "{{server}} üzerinde giriş yap",
       "signInNote": "Giriş sunucuda bir web adresi (çoğu zaman bir kodla) gösterir. Adresi bu bilgisayarda aç, orada giriş yap ve istenirse kodu sunucudaki terminale yapıştır. Bu bilgisayardaki oturumlar sunucuya kopyalanmaz."
     },
     "chip": {
@@ -3359,6 +3372,51 @@
         "msg": "Sunucu kurulurken bir şey ters gitti.",
         "fix": "Tekrar dene. Sürekli başarısız olursa ayrıntıları kopyala."
       }
+    }
+  },
+  "serverSignIn": {
+    "title": "{{server}} üzerinde {{name}} girişi",
+    "lead": "Giriş {{server}} üzerinde yapılır; bu bilgisayar kapalıyken de botlar hesabını kullanabilir. Bu bilgisayardan hiçbir şey kopyalanmaz.",
+    "starting": "{{server}} üzerinde giriş başlatılıyor…",
+    "step1": "1. Bu sayfayı aç ve giriş yap",
+    "openPage": "Sayfayı aç",
+    "copyLink": "Bağlantıyı kopyala",
+    "codeLabel": "Tek kullanımlık kodun",
+    "typeCode": "Bu kodu o sayfaya yaz.",
+    "waitingDevice": "O sayfada işlemi bitirmen bekleniyor. Bu pencere kendiliğinden güncellenir.",
+    "step2": "2. Sayfanın gösterdiği kodu yapıştır",
+    "pastePlaceholder": "Kodu buraya yapıştır",
+    "pasteLabel": "Giriş sayfasındaki kod",
+    "send": "Kodu gönder",
+    "verifying": "Giriş sunucuda doğrulanıyor…",
+    "done": "{{name}} {{server}} üzerinde giriş yaptı.",
+    "retry": "Yeniden dene",
+    "note": "Yapıştırdığın kod doğrudan sunucudaki girişe gider. Kaydedilmez ve yeniden gösterilmez.",
+    "error": {
+      "not_installed": "{{name}} sunucuda henüz kurulu değil.",
+      "spawn_failed": "{{name}} sunucuda başlatılamadı.",
+      "login_start_timeout": "{{name}} zamanında bir giriş sayfası göstermedi. Sunucuda kurulu ve güncel olduğunu kontrol edip yeniden dene.",
+      "login_timed_out": "Giriş on dakika içinde bitirilmedi. Yeniden başlat.",
+      "login_code_rejected": "Sunucudaki {{name}} bu kodu kabul etmedi. Yeniden başlatıp yeni kodu yapıştır.",
+      "login_not_confirmed": "Giriş bitti ama sunucu bir hesabı doğrulayamadı. Yeniden dene.",
+      "login_cli_outdated": "Sunucudaki {{name}} bu giriş için çok eski. Sunucuda güncelleyip yeniden dene.",
+      "device_auth_disabled": "Bu hesapta cihaz girişi kapalı. Hesabının güvenlik ayarlarında açıp yeniden dene.",
+      "login_expired": "Giriş kodunun süresi doldu. Yeni kod için yeniden başlat.",
+      "login_failed": "Giriş tamamlanmadı. Yeniden dene.",
+      "timed_out": "Giriş on dakika içinde bitirilmedi. Yeniden başlat.",
+      "cancelled": "Giriş iptal edildi."
+    },
+    "manual": {
+      "generic": "{{name}} bu pencereden giriş yapamaz: girişi sunucunun kendisinde bir tarayıcı ister. {{server}} üzerinde SSH ile bir kez şunu çalıştır:",
+      "opencode": "OpenCode hangi sağlayıcının bağlanacağını sorar, bu yüzden buradan yürütülmez. Aşağıdan bir API anahtarı kullan ya da {{server}} üzerinde SSH ile bir kez şunu çalıştır:"
+    },
+    "apiKey": {
+      "open": "Bunun yerine API anahtarı kullan",
+      "placeholder": "API anahtarı",
+      "label": "{{provider}} için API anahtarı",
+      "save": "Anahtarı kaydet",
+      "saved": "Anahtar {{server}} üzerine kaydedildi. Oradaki botlar hemen kullanabilir.",
+      "note": "Anahtar sunucunun kendi gizli deposunda saklanır ve bir daha gösterilmez."
     }
   },
   "copySetup": {

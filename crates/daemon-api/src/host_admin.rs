@@ -841,6 +841,16 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             "/v1/admin/cli-engines/{id}/install",
             get(cli_engine_install_status).post(install_cli_engine),
         )
+        .route(
+            "/v1/admin/cli-engines/{id}/login",
+            get(crate::cli_login::login_status)
+                .post(crate::cli_login::start_login)
+                .delete(crate::cli_login::cancel_login),
+        )
+        .route(
+            "/v1/admin/cli-engines/{id}/login/code",
+            post(crate::cli_login::login_code),
+        )
         .route("/v1/admin/home", put(set_home))
         .route(
             "/v1/admin/import/schedules",

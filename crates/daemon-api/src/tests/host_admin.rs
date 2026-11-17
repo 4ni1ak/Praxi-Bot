@@ -1163,3 +1163,358 @@ async fn the_plan_asks_about_same_named_bots_and_the_answer_is_remembered() {
     let plan = call(&local, Method::GET, "/v1/hosts/h1/copy-setup", None).await;
     assert_eq!(state_of(&plan.json()), "mapped");
 }
+
+// ------------------------------------------------ 273: sign in on the server
+
+/// One sign-in test at a time (the shortened limits are process-wide).
+static LOGIN_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn login_fixture() -> std::path::PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    exe.parent().unwrap().parent().unwrap().join(format!(
+        "daemon-login-fixture{}",
+        std::env::consts::EXE_SUFFIX
+    ))
+}
+
+/// A host whose `claude` and `codex` are the hermetic fixture, with its own HOME.
+fn install_fake_clis(r: &Rig, mode: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    for name in ["claude", "codex"] {
+        std::fs::copy(
+            login_fixture(),
+            bin.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .unwrap();
+    }
+    let env = cli_provider::detect::PathEnv::for_test(bin)
+        .with_env_var("HOME", home.to_string_lossy())
+        .with_env_var("USERPROFILE", home.to_string_lossy())
+        .with_env_var("FAKE_MODE", mode);
+    r.t.state
+        .set_detector(Arc::new(cli_provider::Detector::with_env(env)));
+    (dir, home)
+}
+
+async fn admin_call(r: &Rig, method: Method, path: &str, body: Option<Value>) -> Resp {
+    peer_call(
+        &r.t,
+        Some((&r.admin_key, crate::PeerRole::Desktop)),
+        method,
+        path,
+        body,
+    )
+    .await
+}
+
+async fn wait_login_state(r: &Rig, engine: &str, want: &[&str]) -> Value {
+    for _ in 0..200 {
+        let v = admin_call(
+            r,
+            Method::GET,
+            &format!("/v1/admin/cli-engines/{engine}/login"),
+            None,
+        )
+        .await
+        .json();
+        if want.contains(&v["state"].as_str().unwrap_or("")) {
+            return v;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("never reached {want:?}");
+}
+
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+}
+
+async fn expect_dead(pid: u32) {
+    for _ in 0..100 {
+        if !pid_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("process {pid} survived");
+}
+
+fn read_pid(home: &std::path::Path, name: &str) -> u32 {
+    std::fs::read_to_string(home.join(name))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_paste_code_sign_in_shows_the_link_forwards_one_code_to_stdin_and_confirms() {
+    let _turn = LOGIN_TURN.lock().await;
+    let r = rig().await;
+    let (_dir, home) = install_fake_clis(&r, "");
+    let path = "/v1/admin/cli-engines/claude/login";
+    let started = admin_call(&r, Method::POST, path, None).await;
+    assert_eq!(started.status, StatusCode::ACCEPTED, "{:?}", started.json());
+    assert_eq!(started.json()["flow"], "paste_code");
+
+    // The page is the vendor's; no code is wanted before it showed.
+    let waiting = wait_login_state(&r, "claude", &["needs_code"]).await;
+    assert!(
+        waiting["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://claude.com/cai/oauth/authorize")
+    );
+    let bad = admin_call(
+        &r,
+        Method::POST,
+        &format!("{path}/code"),
+        Some(json!({"code": "no way"})),
+    )
+    .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    assert!(
+        !home.join("stdin-code").exists(),
+        "a malformed code never reaches the CLI"
+    );
+
+    // The pasted code goes to the process' stdin, once.
+    let code = "GOODCODE#abc";
+    let sent = admin_call(
+        &r,
+        Method::POST,
+        &format!("{path}/code"),
+        Some(json!({"code": code})),
+    )
+    .await;
+    assert_eq!(sent.status, StatusCode::ACCEPTED, "{:?}", sent.json());
+    assert!(
+        !String::from_utf8_lossy(&sent.body).contains(code),
+        "never echoed"
+    );
+    let again = admin_call(
+        &r,
+        Method::POST,
+        &format!("{path}/code"),
+        Some(json!({"code": code})),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::CONFLICT);
+    let done = wait_login_state(&r, "claude", &["done", "failed"]).await;
+    assert_eq!(done["state"], "done", "{done}");
+    assert_eq!(done["signed_in"], true);
+    assert_eq!(
+        std::fs::read_to_string(home.join("stdin-code")).unwrap(),
+        code
+    );
+
+    // Nothing secret anywhere we control: status, audit.
+    let status = admin_call(&r, Method::GET, path, None).await;
+    assert!(!String::from_utf8_lossy(&status.body).contains("GOODCODE"));
+    let audit = format!(
+        "{:?}",
+        r.t.state.storage().list_audit(r.t.state.user_id()).unwrap()
+    );
+    assert!(audit.contains("provider.cli_login.admin_started"));
+    assert!(audit.contains("provider.cli_login.admin_finished"));
+    assert!(!audit.contains("GOODCODE") && !audit.contains("oauth/authorize"));
+    // A working sign-in is never replaced.
+    let again = admin_call(&r, Method::POST, path, None).await;
+    assert_eq!(again.json()["state"], "done");
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_device_code_sign_in_shows_page_and_code_and_finishes_when_the_cli_does() {
+    let _turn = LOGIN_TURN.lock().await;
+    let r = rig().await;
+    let (_dir, home) = install_fake_clis(&r, "");
+    let path = "/v1/admin/cli-engines/codex/login";
+    let started = admin_call(&r, Method::POST, path, None).await;
+    assert_eq!(started.status, StatusCode::ACCEPTED, "{:?}", started.json());
+    let waiting = wait_login_state(&r, "codex", &["needs_browser"]).await;
+    assert_eq!(waiting["url"], "https://auth.openai.com/codex/device");
+    assert_eq!(waiting["code"], "ABCD-1234");
+    // This flow takes no pasted code.
+    let paste = admin_call(
+        &r,
+        Method::POST,
+        &format!("{path}/code"),
+        Some(json!({"code": "ABCD1234XYZ"})),
+    )
+    .await;
+    assert_eq!(paste.status, StatusCode::CONFLICT);
+    // The owner approves in the browser: the CLI exits 0 and the host confirms.
+    std::fs::write(home.join("approve"), "yes").unwrap();
+    let done = wait_login_state(&r, "codex", &["done", "failed"]).await;
+    assert_eq!(done["state"], "done", "{done}");
+    assert_eq!(done["signed_in"], true);
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancel_and_timeout_kill_the_whole_process_tree() {
+    let _turn = LOGIN_TURN.lock().await;
+    let r = rig().await;
+    let (_dir, home) = install_fake_clis(&r, "");
+    let path = "/v1/admin/cli-engines/claude/login";
+
+    // Cancel while waiting for the code.
+    assert_eq!(
+        admin_call(&r, Method::POST, path, None).await.status,
+        StatusCode::ACCEPTED
+    );
+    wait_login_state(&r, "claude", &["needs_code"]).await;
+    let (leader, child) = (
+        read_pid(&home, "login-pid"),
+        read_pid(&home, "grandchild-pid"),
+    );
+    assert!(pid_alive(leader) && pid_alive(child));
+    let busy = admin_call(&r, Method::POST, "/v1/admin/cli-engines/codex/login", None).await;
+    assert_eq!(busy.status, StatusCode::CONFLICT, "one sign-in at a time");
+    assert_eq!(busy.json()["error"]["code"], "login_busy");
+    let cancelled = admin_call(&r, Method::DELETE, path, None).await;
+    assert_eq!(
+        cancelled.json()["state"],
+        "cancelled",
+        "{:?}",
+        cancelled.json()
+    );
+    expect_dead(leader).await;
+    expect_dead(child).await;
+
+    // The overall limit: shortened for the test, same code path as the ten minutes.
+    super::super::cli_login::LIFETIME_TEST_MS.store(1500, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        admin_call(&r, Method::POST, path, None).await.status,
+        StatusCode::ACCEPTED
+    );
+    wait_login_state(&r, "claude", &["needs_code"]).await;
+    let (leader, child) = (
+        read_pid(&home, "login-pid"),
+        read_pid(&home, "grandchild-pid"),
+    );
+    let timed = wait_login_state(&r, "claude", &["timed_out", "failed"]).await;
+    super::super::cli_login::LIFETIME_TEST_MS.store(0, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(timed["state"], "timed_out", "{timed}");
+    expect_dead(leader).await;
+    expect_dead(child).await;
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cli_that_never_shows_a_page_fails_and_its_tree_dies() {
+    let _turn = LOGIN_TURN.lock().await;
+    let r = rig().await;
+    let (_dir, home) = install_fake_clis(&r, "no-link");
+    super::super::cli_login::STARTUP_TEST_MS.store(600, std::sync::atomic::Ordering::SeqCst);
+    let path = "/v1/admin/cli-engines/claude/login";
+    assert_eq!(
+        admin_call(&r, Method::POST, path, None).await.status,
+        StatusCode::ACCEPTED
+    );
+    let failed = wait_login_state(&r, "claude", &["failed"]).await;
+    super::super::cli_login::STARTUP_TEST_MS.store(0, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(failed["error"], "login_start_timeout");
+    expect_dead(read_pid(&home, "login-pid")).await;
+    expect_dead(read_pid(&home, "grandchild-pid")).await;
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn only_the_admin_desktop_can_sign_in_and_manual_engines_say_what_to_run() {
+    let _turn = LOGIN_TURN.lock().await;
+    let r = rig().await;
+    let (_dir, _home) = install_fake_clis(&r, "");
+    let routes = [
+        (Method::GET, "/v1/admin/cli-engines/claude/login"),
+        (Method::POST, "/v1/admin/cli-engines/claude/login"),
+        (Method::DELETE, "/v1/admin/cli-engines/claude/login"),
+        (Method::POST, "/v1/admin/cli-engines/claude/login/code"),
+    ];
+    for peer in [
+        Some((r.legacy_key.as_str(), crate::PeerRole::Desktop)),
+        Some((r.admin_key.as_str(), crate::PeerRole::Phone)),
+        None,
+    ] {
+        for (method, path) in &routes {
+            let body = path
+                .ends_with("/code")
+                .then(|| json!({"code": "GOODCODE#abc"}));
+            let resp = peer_call(&r.t, peer, method.clone(), path, body).await;
+            assert!(
+                matches!(
+                    resp.status,
+                    StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED | StatusCode::NOT_FOUND
+                ),
+                "{method} {path}: {}",
+                resp.status
+            );
+        }
+    }
+    assert_eq!(
+        admin_call(
+            &r,
+            Method::POST,
+            "/v1/admin/cli-engines/claude;whoami/login",
+            None
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+    // OpenCode, Cursor and Antigravity have no flow that can be driven from here.
+    for (engine, command) in [
+        ("opencode", "opencode auth login"),
+        ("cursor", "cursor-agent login"),
+        ("agy", "agy"),
+    ] {
+        let resp = admin_call(
+            &r,
+            Method::POST,
+            &format!("/v1/admin/cli-engines/{engine}/login"),
+            None,
+        )
+        .await;
+        if resp.status == StatusCode::NOT_FOUND {
+            continue; // not in this build's registry
+        }
+        assert_eq!(resp.status, StatusCode::CONFLICT, "{engine}");
+        assert_eq!(resp.json()["error"]["code"], "login_manual");
+        assert!(
+            resp.json()["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(command)
+        );
+        let status = admin_call(
+            &r,
+            Method::GET,
+            &format!("/v1/admin/cli-engines/{engine}/login"),
+            None,
+        )
+        .await
+        .json();
+        assert_eq!(status["flow"], "manual");
+        assert_eq!(status["command"], command);
+    }
+    r.net.shutdown().await;
+}

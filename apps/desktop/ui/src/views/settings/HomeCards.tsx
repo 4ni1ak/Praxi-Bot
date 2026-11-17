@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { AdminCliEngine, AdminCliInstall, AdminState } from "../../api/types";
 import { humanError } from "../../lib/humanError";
 import { useDaemon } from "../../state/DaemonContext";
+import { ServerSignInModal } from "../../components/ServerSignInModal";
 import { DetectedAccountsBlock } from "./DetectedAccountsBlock";
 import styles from "./AiPage.module.css";
 
@@ -106,7 +107,9 @@ export function HostAdminNote() {
  */
 export function EngineSetup({ engine, onChanged }: { engine: AdminCliEngine; onChanged?: () => void }) {
   const { t } = useTranslation();
-  const { client } = useDaemon();
+  const { client, home } = useDaemon();
+  const serverName = home.kind === "host" ? home.name : t("computerPicker.host");
+  const [signingIn, setSigningIn] = useState(false);
   const [run, setRun] = useState<AdminCliInstall | null>(null);
   const [problem, setProblem] = useState<{ code: string; text: string } | null>(null);
   const installing = run?.state === "installing";
@@ -181,9 +184,27 @@ export function EngineSetup({ engine, onChanged }: { engine: AdminCliEngine; onC
         </>
       ) : signedIn !== true ? (
         <>
+          <button
+            type="button"
+            className={styles.textBtn}
+            data-testid={`engine-signin-${engine.id}`}
+            onClick={() => setSigningIn(true)}
+          >
+            {t("home.engines.signInOnServer", { server: serverName })}
+          </button>
           <span className={styles.sub}>{t("home.engines.signIn")}</span>
           <CopyBlock text={engine.login} />
           <span className={styles.sub}>{t("home.engines.signInNote")}</span>
+          <ServerSignInModal
+            open={signingIn}
+            engine={engine}
+            serverName={serverName}
+            onClose={() => setSigningIn(false)}
+            onDone={() => {
+              setSigningIn(false);
+              onChanged?.();
+            }}
+          />
         </>
       ) : null}
     </>

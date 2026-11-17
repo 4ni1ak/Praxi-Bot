@@ -1034,6 +1034,18 @@
         "title": "That schedule is not valid",
         "hint": "Check the time or repeat rule and try again."
       },
+      "login_busy": {
+        "title": "Another sign-in is running on the server",
+        "hint": "Finish or cancel it, then try again."
+      },
+      "login_manual": {
+        "title": "This engine cannot be signed in from here",
+        "hint": "Run its login command once on the server (shown in the sign-in window)."
+      },
+      "not_installed": {
+        "title": "Not installed on the server yet",
+        "hint": "Install it on the server first, then sign in."
+      },
       "schedule_moved": {
         "title": "That schedule moved to a server",
         "hint": "It runs there and is frozen on this computer. Use Bring back to this computer on its row."
@@ -1404,6 +1416,7 @@
       "installing": "Installing on the server (Node.js is downloaded first when it is missing)…",
       "installFailed": "The install did not finish ({{code}}). Check the output or run the command by hand.",
       "needNode": "The server has no Node.js (npm) and Praxi cannot install it on this system. Install Node.js 22 LTS by hand, then try again.",
+      "signInOnServer": "Sign in on {{server}}",
       "signInNote": "Signing in shows a web address on the server (often with a code). Open the address on this computer, sign in there and, if asked, paste the code into the server's terminal. Sign-ins on this computer are never copied to the server."
     },
     "chip": {
@@ -3359,6 +3372,51 @@
         "msg": "Something went wrong while setting up the server.",
         "fix": "Try again. If it keeps failing, copy the details."
       }
+    }
+  },
+  "serverSignIn": {
+    "title": "Sign in to {{name}} on {{server}}",
+    "lead": "The sign-in runs on {{server}} itself, so its bots can use your account when this computer is off. Nothing is copied from this computer.",
+    "starting": "Starting the sign-in on {{server}}…",
+    "step1": "1. Open this page and sign in",
+    "openPage": "Open the page",
+    "copyLink": "Copy link",
+    "codeLabel": "Your one-time code",
+    "typeCode": "Type this code on that page.",
+    "waitingDevice": "Waiting for you to finish on that page. This window updates by itself.",
+    "step2": "2. Paste the code the page shows",
+    "pastePlaceholder": "Paste the code here",
+    "pasteLabel": "Code from the sign-in page",
+    "send": "Send code",
+    "verifying": "Checking the sign-in on the server…",
+    "done": "{{name}} is signed in on {{server}}.",
+    "retry": "Try again",
+    "note": "The code you paste goes straight to the sign-in on the server. It is never saved or shown again.",
+    "error": {
+      "not_installed": "{{name}} is not installed on the server yet.",
+      "spawn_failed": "{{name}} could not be started on the server.",
+      "login_start_timeout": "{{name}} did not show a sign-in page in time. Check that it is installed and up to date on the server, then try again.",
+      "login_timed_out": "The sign-in was not finished within ten minutes. Start it again.",
+      "login_code_rejected": "The server's {{name}} did not accept that code. Start again and paste the new code.",
+      "login_not_confirmed": "The sign-in ended but the server could not confirm an account. Try again.",
+      "login_cli_outdated": "The server's {{name}} is too old for this sign-in. Update it on the server, then try again.",
+      "device_auth_disabled": "Device sign-in is turned off for this account. Enable it in your account's security settings, then try again.",
+      "login_expired": "The sign-in code expired. Start again for a new one.",
+      "login_failed": "The sign-in did not finish. Try again.",
+      "timed_out": "The sign-in was not finished within ten minutes. Start it again.",
+      "cancelled": "The sign-in was cancelled."
+    },
+    "manual": {
+      "generic": "{{name}} cannot be signed in from this window: its login needs a browser on the server itself. Run this once over SSH on {{server}}:",
+      "opencode": "OpenCode asks which provider to connect, so it is not driven from here. Use an API key below, or run this once over SSH on {{server}}:"
+    },
+    "apiKey": {
+      "open": "Use an API key instead",
+      "placeholder": "API key",
+      "label": "API key for {{provider}}",
+      "save": "Save key",
+      "saved": "Key saved on {{server}}. Bots there can use it right away.",
+      "note": "The key is stored in the server's own secret store and never shown again."
     }
   },
   "copySetup": {

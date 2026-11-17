@@ -6,6 +6,7 @@ import type {
   AcceptedResponse,
   AdminCliEngine,
   AdminCliInstall,
+  AdminCliLogin,
   AdminProvider,
   AdminProviderInput,
   AdminState,
@@ -383,6 +384,23 @@ export class ApiClient {
   }
   adminCliEngineInstallStatus(id: string): Promise<AdminCliInstall> {
     return this.request("GET", `/admin/cli-engines/${encodeURIComponent(id)}/install`);
+  }
+  /**
+   * Start the engine's own sign-in ON THE HOST (admin desktop only). The answer says which page
+   * to open and which code to type or paste back; 409 `login_manual` when it cannot be driven.
+   */
+  adminCliEngineLogin(id: string): Promise<AdminCliLogin> {
+    return this.request("POST", `/admin/cli-engines/${encodeURIComponent(id)}/login`);
+  }
+  adminCliEngineLoginStatus(id: string): Promise<AdminCliLogin> {
+    return this.request("GET", `/admin/cli-engines/${encodeURIComponent(id)}/login`);
+  }
+  /** The code the vendor's page showed; goes to the waiting server process only. */
+  adminCliEngineLoginCode(id: string, code: string): Promise<AdminCliLogin> {
+    return this.request("POST", `/admin/cli-engines/${encodeURIComponent(id)}/login/code`, { body: { code } });
+  }
+  adminCliEngineLoginCancel(id: string): Promise<AdminCliLogin> {
+    return this.request("DELETE", `/admin/cli-engines/${encodeURIComponent(id)}/login`);
   }
   /** Pair with a host using the ticket from `bot host invite --role desktop`. */
   pairHost(ticket: string): Promise<HostLinkInfo> {

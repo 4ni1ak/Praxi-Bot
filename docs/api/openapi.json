@@ -148,6 +148,216 @@
         ]
       }
     },
+    "/v1/admin/cli-engines/{id}/login": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`).",
+        "operationId": "admin_cli_engine_login_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCliLoginDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time.",
+        "operationId": "admin_cli_engine_login",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCliLoginDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Stop the sign-in (the whole process tree is killed).",
+        "operationId": "admin_cli_engine_login_cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCliLoginDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/cli-engines/{id}/login/code": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in.",
+        "operationId": "admin_cli_engine_login_code",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginCodeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCliLoginDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/admin/default-provider": {
       "put": {
         "tags": [
@@ -9178,6 +9388,68 @@
           }
         }
       },
+      "AdminCliLoginDto": {
+        "type": "object",
+        "description": "`GET/POST/DELETE /v1/admin/cli-engines/{id}/login`: where the sign-in stands.",
+        "required": [
+          "engine",
+          "state",
+          "flow",
+          "installed"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The one-time code to type on that page (device-code flow)."
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact command to run over SSH for a `manual` engine."
+          },
+          "engine": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable code of the failure (`login_start_timeout`, `login_code_rejected`, ...)."
+          },
+          "flow": {
+            "type": "string",
+            "description": "How this engine can be signed in from the desktop: `device_code`, `paste_code` or\n`manual` (it cannot be driven remotely: run `command` over SSH)."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Found on the host right now."
+          },
+          "signed_in": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Signed in, when the CLI can say."
+          },
+          "state": {
+            "type": "string",
+            "description": "`idle`, `starting`, `needs_browser`, `needs_code`, `verifying`, `done`, `failed`,\n`timed_out` or `cancelled`."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The vendor's sign-in page (verified against its allow-listed hosts)."
+          }
+        }
+      },
       "AdminDefaultInput": {
         "type": "object",
         "description": "`PUT /v1/admin/default-provider`.",
@@ -9206,6 +9478,20 @@
         "properties": {
           "adopted": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminLoginCodeInput": {
+        "type": "object",
+        "description": "`POST .../login/code`: the code the vendor's page showed.",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "One line, 8-1024 plain characters. Never logged, echoed or stored."
           }
         },
         "additionalProperties": false
