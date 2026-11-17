@@ -986,6 +986,14 @@
         "title": "Bu zamanlama geçerli değil",
         "hint": "Saati ya da tekrar kuralını kontrol edip yeniden dene."
       },
+      "schedule_moved": {
+        "title": "Bu zamanlama sunucuya taşındı",
+        "hint": "Orada çalışır, bu bilgisayarda dondurulmuştur. Satırındaki Bu bilgisayara geri getir düğmesini kullan."
+      },
+      "host_unreachable": {
+        "title": "Sunucu yanıt vermedi",
+        "hint": "Oradaki kopya hâlâ çalışıyor olabilir. Yeniden dene ya da yine de geri getirmeyi onayla."
+      },
       "bad_web_config": {
         "title": "Web arama ayarları geçerli değil",
         "hint": "Anahtarı ya da adresi kontrol edip yeniden kaydet."
@@ -1561,6 +1569,11 @@
       }
     },
     "runNow": "Şimdi çalıştır",
+    "movedTo": "{{name}} sunucusuna taşındı: orada çalışır, bu bilgisayarda dondurulmuştur.",
+    "reclaim": "Bu bilgisayara geri getir",
+    "reclaimAnyway": "Yine de geri getir",
+    "reclaimUnreachable": "{{name}} yanıt vermedi; oradaki kopya hâlâ çalışıyor olabilir. Şimdi geri getirirsen iki bilgisayarda da çalışabilir.",
+    "reclaimed": "{{name}} bu bilgisayara geri döndü.",
     "runNowStarted": "{{name}} başlatıldı.",
     "edit": "Düzenle",
     "delete": "Sil",
@@ -3281,7 +3294,7 @@
     "sending": "Taşınıyor…",
     "failed": "Olmadı. Sunucunun bağlı olduğundan emin ol ve tekrar dene.",
     "cannotMove": "Henüz taşınamayanlar: bellek, uygulama bağlantıları ve CLI oturumları (Claude Code, Codex, agy, OpenCode sunucunun kendisinde giriş yapar). Sohbetlerde adı geçen dosyalar ve ekler kopyalanmaz; webhook gizli anahtarları geride kalır.",
-    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez. Taşınan zamanlamalar burada kapatılır ve taşındı diye işaretlenir; böylece hiçbir şey iki kez çalışmaz. Sonra tekrar çalıştırıp eşitleyebilirsin: asla kopya oluşturmaz.",
+    "keepLocal": "Bu bilgisayarda hiçbir şey silinmez. Taşınan zamanlamalar burada dondurulur (yanlışlıkla yeniden açılamaz) ve sunucuda çalışır; Zamanlamalar sayfasındaki satırından geri getirebilirsin. Sonra tekrar çalıştırıp eşitleyebilirsin: asla kopya oluşturmaz.",
     "summary": "{{done}} taşındı, {{skipped}} atlandı, {{failed}} başarısız.",
     "homeFailed": "Öğeler taşındı ama sunucu botlarının evi olarak işaretlenemedi.",
     "kind": {
@@ -3323,6 +3336,10 @@
       "host_unreachable": "Sunucu yanıt vermedi",
       "rejected": "Sunucu kabul etmedi",
       "admin_rate_limit": "Sunucu beklememizi istedi; devam etmek için tekrar çalıştır",
+      "name_taken": "Sunucuda bu adla farklı bir bot zaten var",
+      "bot_not_moved": "Botu sunucuda yok",
+      "id_in_use": "Sunucuda bu kimlikle başka bir şey zaten var",
+      "freeze_failed": "Yerel kopya dondurulamadı; orada hiçbir şey açılmadı",
       "unreadable": "Burada okunamadı",
       "no_default": "Varsayılan model yok",
       "skipped": "Atlandı",

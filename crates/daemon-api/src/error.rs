@@ -128,6 +128,11 @@ impl From<scheduler::SchedulerError> for ApiError {
             E::NotFound(w) => Self::not_found(w),
             E::Disabled(m) => Self::conflict(format!("schedule {m} is disabled")),
             E::Busy(m) => Self::conflict(format!("schedule {m} is already running")),
+            E::Frozen(m) => Self::new(
+                StatusCode::CONFLICT,
+                "schedule_moved",
+                format!("schedule {m} moved to a server; use reclaim to bring it back"),
+            ),
             E::InvalidSignature => Self::new(
                 StatusCode::UNAUTHORIZED,
                 "invalid_signature",

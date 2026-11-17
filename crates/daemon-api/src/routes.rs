@@ -2002,7 +2002,7 @@ fn dto_of(s: &AppState, sc: &Schedule) -> Result<ScheduleDto, ApiError> {
     let trigger = store.get_trigger(sc.id)?;
     let has = matches!(trigger, Some(Trigger::Webhook { .. }));
     let mut dto = schedule_dto(sc, has);
-    dto.moved_to = crate::host_import::moved_to(&s.data_dir(), sc.id.0);
+    dto.moved_to = store.frozen_for(sc.id)?;
     if matches!(
         trigger,
         Some(Trigger::FileWatch { .. } | Trigger::Email { .. })
@@ -2326,6 +2326,11 @@ pub(crate) async fn update_schedule(
     ApiJson(input): ApiJson<ScheduleInput>,
 ) -> Result<Json<ScheduleDto>, ApiError> {
     let mut sc = schedule_of_user(&s, &sid)?;
+    // A schedule that moved to a server is frozen here: no update, not even a paused one,
+    // (see `ScheduleStore::freeze`); `POST /v1/schedules/{id}/reclaim` is the way back.
+    if s.schedule_store()?.frozen_for(sc.id)?.is_some() {
+        return Err(scheduler::SchedulerError::Frozen(sc.id.to_string()).into());
+    }
     if peer.is_some()
         && (input.trigger.is_some()
             || input.precheck.is_some()
@@ -2434,6 +2439,9 @@ pub(crate) async fn run_schedule_now(
     Path(sid): Path<String>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), ApiError> {
     let sc = schedule_of_user(&s, &sid)?;
+    if s.schedule_store()?.frozen_for(sc.id)?.is_some() {
+        return Err(scheduler::SchedulerError::Frozen(sc.id.to_string()).into());
+    }
     let scheduler = s.scheduler()?;
     s.leader().with_active(|| scheduler.run_now(sc.id))??;
     Ok((

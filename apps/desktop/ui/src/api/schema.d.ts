@@ -52,6 +52,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/import/bots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_import_bot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/import/chats": {
         parameters: {
             query?: never;
@@ -78,6 +94,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["admin_import_schedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/schedules/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_activate_schedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/schedules/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_release_schedules"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2246,6 +2294,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/schedules/{id}/reclaim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/schedules/{id}/reclaim`: "bring this schedule back to this computer". Owner key
+         *     only. The server's copy is switched off FIRST; when it cannot be reached the owner must
+         *     confirm explicitly and is told that the copy there may still be active.
+         */
+        post: operations["schedule_reclaim"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schedules/{id}/run-now": {
         parameters: {
             query?: never;
@@ -3415,6 +3484,11 @@ export interface components {
             items: components["schemas"]["CopyItemResult"][];
         };
         CopyRequest: {
+            /**
+             * @description Local bot ids the owner explicitly wants bound to the server bot that already has the
+             *     same name (otherwise a name collision is refused).
+             */
+            adopt?: string[];
             bots?: string[];
             /**
              * @description Also move the chat history of the moved bots (messages and run metadata; files and
@@ -4154,16 +4228,35 @@ export interface components {
         };
         /** @enum {string} */
         HumanAction: "login_completed" | "application_opened" | "other";
-        ImportChat: {
+        ImportBotInput: {
+            /** @description The owner asked to bind this bot to the host bot that already has its name. */
+            adopt?: boolean;
+            config: unknown;
+            name: string;
             /**
              * Format: uuid
-             * @description The bot's id ON THE HOST.
+             * @description The bot's id on the sending computer.
              */
-            bot_id: string;
+            source_bot_id: string;
+        };
+        ImportBotResult: {
+            /** @description `name_taken`: a different bot with this name already exists on the server. */
+            code?: string | null;
+            /** Format: uuid */
+            host_bot_id?: string | null;
+            /** @description `done` (created), `exists` (already mapped), `adopted` or `failed`. */
+            status: string;
+        };
+        ImportChat: {
             /** Format: int64 */
             created_at_ms: number;
             /** Format: uuid */
             id: string;
+            /**
+             * Format: uuid
+             * @description The bot's id on the SENDING computer.
+             */
+            source_bot_id: string;
             title: string;
         };
         /** @description One page of a chat move. Chats first, then runs, then messages: send the pages in that order. */
@@ -4178,14 +4271,14 @@ export interface components {
             chats: number;
             /**
              * Format: int32
-             * @description Items the host already had (an earlier or interrupted sync).
+             * @description Items the host already had from this device (an earlier or interrupted sync).
              */
             existing: number;
             /** Format: int32 */
             messages: number;
             /**
              * Format: int32
-             * @description Items refused: unknown bot or chat, malformed, too long.
+             * @description Items refused: unmapped bot, an id that belongs to something else, malformed, too long.
              */
             rejected: number;
             /** Format: int32 */
@@ -4200,6 +4293,8 @@ export interface components {
             exposure_private?: boolean;
             exposure_sources?: string[];
             exposure_untrusted?: boolean;
+            /** @description For a reply of a bot that did NOT move: its name. The reply stays foreign, quoted data. */
+            foreign_author?: string | null;
             /** Format: uuid */
             id: string;
             /** @description The author: `user`, `assistant`, `system`, `tool`, ... */
@@ -4210,14 +4305,14 @@ export interface components {
         /** @description Run metadata only: no error text, no spawn parameters, no computer identity. */
         ImportRun: {
             /** Format: uuid */
-            bot_id: string;
-            /** Format: uuid */
             chat_id?: string | null;
             /** Format: int64 */
             created_at_ms: number;
             /** Format: uuid */
             id: string;
             kind: string;
+            /** Format: uuid */
+            source_bot_id: string;
             /** @description `succeeded`, `failed` or `cancelled`; anything else arrives as `cancelled`. */
             state: string;
             /** Format: int64 */
@@ -4226,17 +4321,12 @@ export interface components {
         ImportScheduleItem: {
             /**
              * Format: uuid
-             * @description The bot's id ON THE HOST.
-             */
-            bot_id: string;
-            /**
-             * Format: uuid
-             * @description A chat that was moved too (host id = local id); dropped when the host lacks it.
+             * @description A chat that was moved too (host id = source id); dropped unless bound to this bot.
              */
             chat_id?: string | null;
             /** Format: int64 */
             created_at_ms: number;
-            /** @description Paused state as the owner had it. */
+            /** @description What the owner had; the schedule is imported DISABLED and activated later. */
             enabled: boolean;
             /**
              * Format: uuid
@@ -4249,6 +4339,11 @@ export interface components {
             origin?: string | null;
             payload: unknown;
             precheck?: unknown;
+            /**
+             * Format: uuid
+             * @description The bot's id on the SENDING computer; the host maps it (see the module docs).
+             */
+            source_bot_id: string;
             /** @description `{"cron": "0 9 * * 1-5 Europe/Istanbul"}`: the zone travels inside the spec. */
             spec: unknown;
             /** @description File-watch or e-mail trigger; never a webhook (its secret stays behind). */
@@ -4260,10 +4355,12 @@ export interface components {
             id: string;
             /**
              * Format: int64
-             * @description Next firing, recomputed on the host's clock.
+             * @description Next firing, recomputed on the host's clock (only once active).
              */
             next_run_at_ms?: number | null;
-            /** @description `done`, `exists` or `failed`. */
+            /** @description `staged`, `active` or `released`. */
+            stage?: string | null;
+            /** @description `done` (imported, disabled), `exists`, `active`, `paused`, `released` or `failed`. */
             status: string;
         };
         ImportSchedulesInput: {
@@ -5073,6 +5170,23 @@ export interface components {
         };
         /** @enum {string} */
         Reason: "browser_idle" | "remote_node_live_view" | "unsupported" | "unavailable" | "expired" | "revoked" | "disconnected" | "stale" | "geometry_changed" | "refresh_pending" | "frame_budget_exceeded" | "drain_timeout" | "audit_failed" | "reset_failed" | "partial_injection" | "rate_limited" | "restart" | "persistence_failed" | "local_override";
+        ReclaimDto: {
+            /** @description The local copy runs again (it was enabled before the move). */
+            enabled: boolean;
+            /** @description The server was not asked or did not answer: its copy may still be active. */
+            host_copy_may_be_active: boolean;
+            /** @description The server confirmed that its copy is switched off. */
+            host_released: boolean;
+            /** Format: uuid */
+            schedule_id: string;
+        };
+        ReclaimInput: {
+            /**
+             * @description The server cannot be reached: bring the schedule back anyway. The copy there may still
+             *     be active and then both computers run it.
+             */
+            confirm_host_unreachable?: boolean;
+        };
         RecordHeader: (components["schemas"]["FrameMetadata"] & {
             /** Format: int64 */
             sent_at_ms: number;
@@ -5384,6 +5498,9 @@ export interface components {
             spec: unknown;
             /** @description Non-webhook trigger definition; never includes webhook secrets. */
             trigger?: unknown;
+        };
+        ScheduleIdsInput: {
+            ids: string[];
         };
         /** @description Body of `POST /v1/schedules` and `PUT /v1/schedules/{id}`. */
         ScheduleInput: {
@@ -6052,6 +6169,37 @@ export interface operations {
             };
         };
     };
+    admin_import_bot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportBotInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportBotResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     admin_import_chats: {
         parameters: {
             query?: never;
@@ -6093,6 +6241,68 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImportSchedulesInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSchedulesReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_activate_schedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleIdsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSchedulesReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_release_schedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleIdsInput"];
             };
         };
         responses: {
@@ -10955,6 +11165,40 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    schedule_reclaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReclaimInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReclaimDto"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

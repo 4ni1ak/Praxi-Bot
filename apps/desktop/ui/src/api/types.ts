@@ -64,6 +64,7 @@ export type Schedule = S["ScheduleDto"];
 export type ScheduleInput = S["ScheduleInput"];
 export type ParsedSchedule = S["ParsedSchedule"];
 export type AcceptedResponse = S["AcceptedResponse"];
+export type ReclaimResult = S["ReclaimDto"];
 export type ErrorBody = S["ErrorBody"];
 export type ControlStateDto = S["ControlStateDto"];
 export type ControlModeName = NonNullable<ControlStateDto["mode"]>;

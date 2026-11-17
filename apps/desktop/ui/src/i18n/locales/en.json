@@ -986,6 +986,14 @@
         "title": "That schedule is not valid",
         "hint": "Check the time or repeat rule and try again."
       },
+      "schedule_moved": {
+        "title": "That schedule moved to a server",
+        "hint": "It runs there and is frozen on this computer. Use Bring back to this computer on its row."
+      },
+      "host_unreachable": {
+        "title": "The server did not answer",
+        "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway."
+      },
       "bad_web_config": {
         "title": "The web search settings are not valid",
         "hint": "Check the key or address and save again."
@@ -1561,6 +1569,11 @@
       }
     },
     "runNow": "Run now",
+    "movedTo": "Moved to {{name}}: it runs there and is frozen on this computer.",
+    "reclaim": "Bring back to this computer",
+    "reclaimAnyway": "Bring it back anyway",
+    "reclaimUnreachable": "{{name}} did not answer, so its copy may still be running there. Bringing it back now could run it on both computers.",
+    "reclaimed": "{{name}} is back on this computer.",
     "runNowStarted": "{{name}} started.",
     "edit": "Edit",
     "delete": "Delete",
@@ -3281,7 +3294,7 @@
     "sending": "Moving…",
     "failed": "That did not work. Check that the server is connected and try again.",
     "cannotMove": "Cannot move yet: memory, app connections, and CLI sign-ins (Claude Code, Codex, agy, OpenCode sign in on the server itself). Files and attachments that chats mention are not copied; webhook secrets stay behind.",
-    "keepLocal": "Nothing is deleted on this computer. Schedules that move are switched off here and marked as moved, so nothing runs twice. You can run this again later to sync: it never duplicates.",
+    "keepLocal": "Nothing is deleted on this computer. Schedules that move are frozen here (they cannot be switched on again by accident) and run on the server; you can bring one back from its row on the Schedules page. You can run this again later to sync: it never duplicates.",
     "summary": "{{done}} moved, {{skipped}} skipped, {{failed}} failed.",
     "homeFailed": "The items moved, but the server could not be marked as your bots' home.",
     "kind": {
@@ -3323,6 +3336,10 @@
       "host_unreachable": "Server did not answer",
       "rejected": "Server refused it",
       "admin_rate_limit": "Server asked to wait; run it again to continue",
+      "name_taken": "A different bot with this name already exists on the server",
+      "bot_not_moved": "Its bot is not on the server",
+      "id_in_use": "The server already has something with this id",
+      "freeze_failed": "Could not freeze the local copy; nothing was switched on there",
       "unreadable": "Could not be read here",
       "no_default": "No default model",
       "skipped": "Skipped",

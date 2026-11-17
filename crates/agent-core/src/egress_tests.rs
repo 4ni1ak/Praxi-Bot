@@ -3202,3 +3202,77 @@ async fn a_url_in_a_message_from_another_source_does_not_waive_the_gate() {
         lp.cancel(run).unwrap();
     }
 }
+
+#[tokio::test]
+async fn an_imported_user_row_with_a_url_never_waives_the_taint_approval() {
+    // A chat moved here from another computer holds a user row with a URL. It carries the
+    // `imported` source, so it is not "typed in the desktop app" on THIS computer: the
+    // browser_open of that URL still asks, while the owner's own typed URL (control) does not.
+    for (source, asks) in [("imported", true), ("owner", false)] {
+        let env = setup();
+        let id = uuid::Uuid::now_v7();
+        env.storage
+            .insert_message(&storage::Message {
+                id,
+                user_id: env.user,
+                chat_id: env.chat,
+                run_id: None,
+                role: "user".into(),
+                content: "open https://example.com/imported".into(),
+                created_at_ms: 1,
+                exposure_untrusted: false,
+                exposure_private: false,
+                exposure_sources: vec![],
+            })
+            .unwrap();
+        env.storage.set_message_source(id, source).unwrap();
+        let page = read_tool("fs_read", ContentClass::untrusted_private());
+        let open = open_tool();
+        let fake = Fake::new(vec![
+            calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+            calls(&[(
+                "c2",
+                "browser_open",
+                json!({"url": "https://example.com/imported"}),
+            )]),
+            text("done"),
+        ]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[t(&page), t(&open)],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        let mut rx = lp.subscribe();
+        let run = lp
+            .send_user_message_from(
+                env.chat,
+                "read page.html please",
+                crate::MessageMode::Steer,
+                "owner",
+            )
+            .map(|d| match d {
+                crate::Delivery::NewTurn(r) => r,
+                _ => unreachable!(),
+            })
+            .unwrap();
+        if asks {
+            until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+            assert_eq!(
+                open.count.load(Ordering::SeqCst),
+                0,
+                "imported URL must ask"
+            );
+            lp.cancel(run).unwrap();
+        } else {
+            until(&mut rx, |e| matches!(e, Event::RunFinished(_))).await;
+            assert_eq!(
+                open.count.load(Ordering::SeqCst),
+                1,
+                "owner-typed URL is waived"
+            );
+        }
+    }
+}

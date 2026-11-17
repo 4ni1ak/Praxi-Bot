@@ -26,7 +26,7 @@ export const DAEMON_ERROR_CODES = [
   "session_expired", "setup_required", "skill_conflict", "skill_contains_secret", "skill_not_found",
   "skill_storage", "skill_too_large", "too_many_requests", "too_many_skills", "too_many_streams",
   "unauthorized", "unavailable", "unsupported_media_type", "version_conflict", "view_media_type",
-  "view_quota",
+  "view_quota", "schedule_moved", "host_unreachable",
   "host_admin_forbidden", "host_admin_required", "secrets_unavailable", "secret_store_failed", "owner_key_required"
 ] as const;
 

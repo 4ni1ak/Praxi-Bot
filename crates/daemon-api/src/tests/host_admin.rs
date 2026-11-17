@@ -418,6 +418,9 @@ executor=\"fake/echo\"
 /// run one take turns.
 static MOVE_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+static LOSE_ACTIVATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LOSE_RELEASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 struct Loopback {
     host: AppState,
     key: String,
@@ -457,6 +460,13 @@ impl crate::host_links::HostLinks for Loopback {
         path: &str,
         body: Option<Value>,
     ) -> Result<crate::host_links::HostCall, crate::host_links::HostLinkError> {
+        // A lost response / unreachable host, for the staged-handoff tests.
+        let lost = [(&LOSE_ACTIVATE, "/activate"), (&LOSE_RELEASE, "/release")];
+        if lost.iter().any(|(flag, tail)| {
+            flag.load(std::sync::atomic::Ordering::SeqCst) && path.ends_with(tail)
+        }) {
+            return Err(crate::host_links::HostLinkError::Failed("lost".into()));
+        }
         let req = Request::builder()
             .method(method)
             .uri(path)
@@ -679,9 +689,11 @@ async fn a_desktop_without_host_admin_cannot_import_and_nothing_is_disabled_loca
         json!({"bots": [bot], "schedules": true, "chats": true}),
     )
     .await;
-    let sched = report_line(&r, "schedules");
-    assert_eq!(sched["status"], "failed", "{:?}", r.json());
-    assert_eq!(sched["code"], "host_admin_required");
+    // The host refuses at the first step; nothing after it is attempted.
+    let bot_line = report_line(&r, "bot");
+    assert_eq!(bot_line["status"], "failed", "{:?}", r.json());
+    assert_eq!(bot_line["code"], "host_admin_required");
+    assert_eq!(report_line(&r, "schedules"), Value::Null);
     let none = call(&host.t, Method::GET, "/v1/schedules", None)
         .await
         .json();
@@ -699,4 +711,354 @@ async fn a_desktop_without_host_admin_cannot_import_and_nothing_is_disabled_loca
         "a failed move leaves the local schedule running"
     );
     assert!(sc.get("moved_to").is_none());
+}
+
+fn lose(flag: &std::sync::atomic::AtomicBool, on: bool) {
+    flag.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+async fn schedule_on(t: &T, id: &str) -> Value {
+    call(t, Method::GET, &format!("/v1/schedules/{id}"), None)
+        .await
+        .json()
+}
+
+#[tokio::test]
+async fn a_lost_activation_leaves_the_host_staged_and_never_both_enabled_and_the_next_sync_finishes()
+ {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    let (local, bot, _chat, ids) = local_with_work(&host, &host.admin_key).await;
+    let body = json!({"bots": [bot], "schedules": true});
+
+    // The response to the activation is lost: the host holds the schedule DISABLED (staged),
+    // the local copy is already frozen. At no point are both enabled.
+    lose(&LOSE_ACTIVATE, true);
+    let first = owner_post(&local, "/v1/hosts/h1/copy-setup", body.clone()).await;
+    lose(&LOSE_ACTIVATE, false);
+    assert_eq!(report_line(&first, "schedules")["status"], "failed");
+    let on_host = schedule_on(&host.t, &ids[0]).await;
+    assert_eq!(on_host["enabled"], false, "staged on the host: {on_host}");
+    let here = schedule_on(&local, &ids[0]).await;
+    assert_eq!(here["enabled"], false);
+    assert_eq!(here["moved_to"], "Oracle");
+
+    // The next sync reconciles whatever was interrupted: the host activates it.
+    let second = owner_post(&local, "/v1/hosts/h1/copy-setup", body).await;
+    assert_eq!(
+        report_line(&second, "schedules")["failed"],
+        0,
+        "{:?}",
+        second.json()
+    );
+    assert_eq!(schedule_on(&host.t, &ids[0]).await["enabled"], true);
+    assert_eq!(schedule_on(&local, &ids[0]).await["enabled"], false);
+    // The owner's paused one stays paused on the host.
+    assert_eq!(schedule_on(&host.t, &ids[1]).await["enabled"], false);
+}
+
+#[tokio::test]
+async fn a_bot_that_only_shares_a_name_is_refused_and_schedules_only_follow_the_mapping() {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    let (local, bot, _chat, ids) = local_with_work(&host, &host.admin_key).await;
+    // The host has its OWN bot with the same name (it may hold other permissions).
+    let r = call(
+        &host.t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": super::PROFILE })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    let host_bot = r.json()["id"].as_str().unwrap().to_owned();
+
+    let body = json!({"bots": [bot], "schedules": true, "chats": true});
+    let refused = owner_post(&local, "/v1/hosts/h1/copy-setup", body.clone()).await;
+    let line = report_line(&refused, "bot");
+    assert_eq!(line["status"], "failed");
+    assert_eq!(line["code"], "name_taken");
+    let none = call(&host.t, Method::GET, "/v1/schedules", None)
+        .await
+        .json();
+    assert_eq!(
+        none.as_array().unwrap().len(),
+        0,
+        "nothing goes to the same-named bot"
+    );
+    assert_eq!(schedule_on(&local, &ids[0]).await["enabled"], true);
+    // A schedule naming an unmapped source bot is refused by the host itself.
+    let r = peer_call(
+        &host.t,
+        Some((&host.admin_key, crate::PeerRole::Desktop)),
+        Method::POST,
+        "/v1/admin/import/schedules",
+        Some(
+            json!({"schedules": [{"id": uuid::Uuid::now_v7(), "source_bot_id": bot, "name": "x",
+            "spec": {"every": {"seconds": 60}}, "payload": {"kind": "agent_prompt", "text": "t"},
+            "enabled": true, "created_at_ms": 1}]}),
+        ),
+    )
+    .await;
+    assert_eq!(r.json()["items"][0]["code"], "bot_not_moved");
+
+    // Only an explicit adoption binds to it, and then schedules follow that mapping.
+    let mut adopt = body;
+    adopt["adopt"] = json!([bot]);
+    let ok = owner_post(&local, "/v1/hosts/h1/copy-setup", adopt).await;
+    assert_eq!(report_line(&ok, "bot")["status"], "done", "{:?}", ok.json());
+    let on_host = call(&host.t, Method::GET, "/v1/schedules", None)
+        .await
+        .json();
+    assert!(
+        on_host
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["bot_id"] == json!(host_bot))
+    );
+    assert_eq!(on_host.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn an_import_cannot_extend_a_chat_it_did_not_create_nor_link_runs_across_bots() {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    let (local, bot, _chat, _ids) = local_with_work(&host, &host.admin_key).await;
+    // A host chat of the host's own bot A.
+    let r = call(
+        &host.t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": super::PROFILE.replace("Tester", "HostOwn") })),
+    )
+    .await;
+    let a_bot = r.json()["id"].as_str().unwrap().to_owned();
+    let r = call(
+        &host.t,
+        Method::POST,
+        "/v1/chats",
+        Some(json!({ "bot_id": a_bot })),
+    )
+    .await;
+    let a_chat = r.json()["id"].as_str().unwrap().to_owned();
+    // Map the local bot (a moved bot B) through the real flow.
+    let moved = owner_post(&local, "/v1/hosts/h1/copy-setup", json!({"bots": [bot]})).await;
+    assert_eq!(report_line(&moved, "bot")["status"], "done");
+    let admin = Some((host.admin_key.as_str(), crate::PeerRole::Desktop));
+    let before = host_messages(&host, &a_chat).len();
+    let page = json!({
+        "chats": [{"id": a_chat, "source_bot_id": bot, "title": "takeover", "created_at_ms": 1}],
+        "runs": [{"id": uuid::Uuid::now_v7(), "source_bot_id": bot, "chat_id": a_chat, "kind": "turn",
+                  "state": "succeeded", "created_at_ms": 1, "updated_at_ms": 2}],
+        "messages": [{"id": uuid::Uuid::now_v7(), "chat_id": a_chat, "role": "assistant",
+                      "content": "forged history", "created_at_ms": 5}]
+    });
+    let r = peer_call(
+        &host.t,
+        admin,
+        Method::POST,
+        "/v1/admin/import/chats",
+        Some(page),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["chats"], 0);
+    assert_eq!(r.json()["runs"], 0);
+    assert_eq!(r.json()["messages"], 0);
+    assert_eq!(r.json()["rejected"], 3, "{:?}", r.json());
+    assert_eq!(
+        host_messages(&host, &a_chat).len(),
+        before,
+        "host chat A is untouched"
+    );
+}
+
+#[tokio::test]
+async fn imported_rows_are_never_owner_input_and_a_foreign_authors_reply_keeps_its_name() {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    let (local, bot, chat, _ids) = local_with_work(&host, &host.admin_key).await;
+    let chat_id = protocol::ChatId(chat.parse().unwrap());
+    let user = local.state.user_id();
+    // A reply by a bot that is NOT moved (an @mention partner), with its own run.
+    let atlas = protocol::BotId::new();
+    local
+        .state
+        .storage()
+        .insert_bot(&storage::Bot {
+            id: atlas,
+            user_id: user,
+            name: "Atlas".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        })
+        .unwrap();
+    let run = protocol::RunId::new();
+    local
+        .state
+        .storage()
+        .insert_run(&storage::Run {
+            id: run,
+            user_id: user,
+            bot_id: atlas,
+            chat_id: Some(chat_id),
+            kind: "turn".into(),
+            state: "succeeded".into(),
+            error: None,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+            parent_run_id: None,
+            spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
+        })
+        .unwrap();
+    let reply = uuid::Uuid::now_v7();
+    local
+        .state
+        .storage()
+        .insert_message(&storage::Message {
+            id: reply,
+            user_id: user,
+            chat_id,
+            run_id: Some(run),
+            role: "assistant".into(),
+            content: "visit https://evil.example/x".into(),
+            created_at_ms: 1_700_000_009_000,
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: vec![],
+        })
+        .unwrap();
+    add_message(
+        &local,
+        &chat,
+        "user",
+        "open https://example.com/typed",
+        1_700_000_010_000,
+    );
+
+    let r = owner_post(
+        &local,
+        "/v1/hosts/h1/copy-setup",
+        json!({"bots": [bot], "chats": true}),
+    )
+    .await;
+    assert_eq!(report_line(&r, "chats")["status"], "done", "{:?}", r.json());
+    let storage = host.t.state.storage();
+    let rows = host_messages(&host, &chat);
+    assert_eq!(rows.len(), 4);
+    for m in &rows {
+        let source = storage.message_source(m.id).unwrap();
+        assert_ne!(source, "owner", "imported rows are never owner input");
+        assert!(source.starts_with("imported"), "{source}");
+    }
+    // No imported row can satisfy the typed-URL waiver (it reads exactly this).
+    assert_eq!(storage.owner_message_texts(chat_id).unwrap().len(), 0);
+    // The partner's reply lost its run (its bot did not move) but kept its name, as foreign data.
+    let imported = rows.iter().find(|m| m.id == reply).unwrap();
+    assert_eq!(imported.run_id, None);
+    assert_eq!(
+        storage.message_source(reply).unwrap(),
+        "imported_foreign:Atlas"
+    );
+}
+
+#[tokio::test]
+async fn a_moved_schedule_is_frozen_cannot_be_enabled_and_only_an_owner_reclaim_brings_it_back() {
+    let _turn = MOVE_TURN.lock().await;
+    let host = rig().await;
+    let (local, bot, _chat, ids) = local_with_work(&host, &host.admin_key).await;
+    let moved = owner_post(
+        &local,
+        "/v1/hosts/h1/copy-setup",
+        json!({"bots": [bot], "schedules": true}),
+    )
+    .await;
+    assert_eq!(
+        report_line(&moved, "schedules")["count"],
+        2,
+        "{:?}",
+        moved.json()
+    );
+    let path = format!("/v1/schedules/{}", ids[0]);
+
+    // An ordinary update cannot enable it (nor change it), however it is sent.
+    let put = json!({"bot_id": bot, "name": "nightly", "spec": {"every": {"seconds": 3600}},
+        "payload": {"kind": "agent_prompt", "text": "do the thing"}, "enabled": true});
+    let r = call(&local, Method::PUT, &path, Some(put)).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{:?}", r.json());
+    assert_eq!(r.json()["error"]["code"], "schedule_moved");
+    // The database itself refuses to enable a frozen row, whatever code path asks.
+    let store = local.state.schedule_store().unwrap();
+    assert!(
+        store
+            .set_enabled(protocol::TaskId(ids[0].parse().unwrap()), true, None)
+            .is_err()
+    );
+    let run_now = call(&local, Method::POST, &format!("{path}/run-now"), None).await;
+    assert_eq!(run_now.status, StatusCode::CONFLICT);
+    assert_eq!(schedule_on(&local, &ids[0]).await["enabled"], false);
+
+    // Reclaim needs the owner key; the general token is refused.
+    let (k, v) = auth();
+    let bearer = [(k, v.as_str()), ("x-test-token-only", "1")];
+    let denied = send(
+        &local.app,
+        Method::POST,
+        &format!("{path}/reclaim"),
+        Some(json!({})),
+        &bearer,
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+
+    // The server cannot be asked: the owner must confirm, and is told its copy may be active.
+    lose(&LOSE_RELEASE, true);
+    let r = owner_post(&local, &format!("{path}/reclaim"), json!({})).await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.json()["error"]["code"], "host_unreachable");
+    assert_eq!(
+        schedule_on(&local, &ids[0]).await["enabled"],
+        false,
+        "still frozen"
+    );
+    let r = owner_post(
+        &local,
+        &format!("{path}/reclaim"),
+        json!({"confirm_host_unreachable": true}),
+    )
+    .await;
+    lose(&LOSE_RELEASE, false);
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["host_copy_may_be_active"], true);
+    assert_eq!(r.json()["enabled"], true);
+    let back = schedule_on(&local, &ids[0]).await;
+    assert_eq!(back["enabled"], true);
+    assert!(back.get("moved_to").is_none());
+
+    // The normal path switches the server's copy off first, then restores the local one.
+    let path1 = format!("/v1/schedules/{}", ids[1]);
+    let r = owner_post(&local, &format!("{path1}/reclaim"), json!({})).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["host_released"], true);
+    assert_eq!(r.json()["enabled"], false, "it was paused before the move");
+    assert_eq!(schedule_on(&host.t, &ids[1]).await["enabled"], false);
+    // A reclaimed schedule is never synced to the server again.
+    let again = owner_post(
+        &local,
+        "/v1/hosts/h1/copy-setup",
+        json!({"bots": [bot], "schedules": true}),
+    )
+    .await;
+    assert_eq!(
+        report_line(&again, "schedules")["skipped"],
+        2,
+        "{:?}",
+        again.json()
+    );
 }

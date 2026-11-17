@@ -116,6 +116,7 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/schedules/{}"),
     ("DELETE", "/v1/schedules/{}"),
     ("POST", "/v1/schedules/{}/run-now"),
+    ("POST", "/v1/schedules/{}/reclaim"),
     ("POST", "/v1/channels/telegram/pair-code"),
     // providers, tool servers, installs
     ("POST", "/v1/providers/cli/install"),
@@ -208,6 +209,9 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/admin/home"),
     ("POST", "/v1/admin/import/schedules"),
     ("POST", "/v1/admin/import/chats"),
+    ("POST", "/v1/admin/import/bots"),
+    ("POST", "/v1/admin/import/schedules/activate"),
+    ("POST", "/v1/admin/import/schedules/release"),
     ("PUT", "/v1/admin/providers/{}"),
     ("DELETE", "/v1/admin/providers/{}"),
 ];

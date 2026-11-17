@@ -1207,6 +1207,7 @@ fn api_routes() -> Router<AppState> {
                 .delete(r::delete_schedule),
         )
         .route("/v1/schedules/{id}/run-now", post(r::run_schedule_now))
+        .route("/v1/schedules/{id}/reclaim", post(host_import::reclaim))
         .route(
             "/v1/webhooks/{id}",
             post(r::webhook).layer(axum::extract::DefaultBodyLimit::max(r::WEBHOOK_MAX_BODY)),

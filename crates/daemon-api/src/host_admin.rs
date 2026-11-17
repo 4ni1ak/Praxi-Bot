@@ -598,6 +598,18 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             "/v1/admin/import/chats",
             post(crate::host_import::import_chats),
         )
+        .route(
+            "/v1/admin/import/bots",
+            post(crate::host_import::import_bot),
+        )
+        .route(
+            "/v1/admin/import/schedules/activate",
+            post(crate::host_import::activate_schedules),
+        )
+        .route(
+            "/v1/admin/import/schedules/release",
+            post(crate::host_import::release_schedules),
+        )
         .route("/v1/admin/default-provider", put(set_default))
         .route(
             "/v1/admin/providers/{id}",
