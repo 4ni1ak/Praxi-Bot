@@ -32,6 +32,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "daemon_connect",
     "owner_key",
     "daemon_restart",
+    "daemon_diagnostics",
+    "open_log_folder",
     "providers_cli",
     "get_autostart",
     "set_autostart",

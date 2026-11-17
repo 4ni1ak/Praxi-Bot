@@ -1,3 +1,4 @@
+import { isLocalBaseUrl } from "../lib/liveViewState";
 import {
   ArrowDown,
   ArrowLeft,
@@ -21,9 +22,9 @@ import {
   useState
 } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
+import { ownerKey } from "../lib/ownerKey";
 import { BotAvatar, Button } from "ui";
-import { isMockMode, MOCK_BASE_URL } from "../api/mockMode";
+import { isMockMode } from "../api/mockMode";
 import { ApiError } from "../api/client";
 import type { Bot, Message, SendMode } from "../api/types";
 import {
@@ -585,7 +586,8 @@ export function ChatView({
       const res = await client.sendMessage(
         chatId,
         body,
-        active ? mode : undefined
+        active ? mode : undefined,
+        await ownerKey(client.baseUrl)
       );
       if (res.delivery === "stopped") {
         toast.show(t("chat.stopped"), "info");
@@ -807,6 +809,11 @@ export function ChatView({
           <ApprovalCard
             tool={item}
             serverName={home.kind === "host" ? home.name : null}
+            onTrustFolder={client && isLocalBaseUrl(client.baseUrl) ? async (folder) => {
+              const key = await ownerKey(client.baseUrl);
+              if (!key) throw new Error(t("folderTrust.ownerRequired"));
+              await client.setFolderTrust(folder, true, key);
+            } : undefined}
             onDecide={async (decision, scope, reason) => {
               if (!client) {
                 return;
@@ -814,17 +821,15 @@ export function ChatView({
               // A standing choice ("always for this chat") carries the owner's authority, which
               // only the desktop app's own window holds; a plain approval needs no key.
               const standing = decision === "approve" && scope !== undefined && scope !== "once" && scope !== "run_control";
-              const ownerKey = !standing
+              const key = !standing
                 ? undefined
-                : client.baseUrl === MOCK_BASE_URL
-                  ? "mock"
-                  : await invoke<string>("owner_key").catch(() => undefined);
+                : await ownerKey(client.baseUrl);
               await client.decideApproval(
                 item.callId,
                 decision,
                 scope,
                 reason,
-                ownerKey
+                key
               );
             }}
           />

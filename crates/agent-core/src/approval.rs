@@ -380,12 +380,18 @@ impl Shared {
     }
 
     /// Tool class and destination a taint-gate grant is keyed on: web (`browser_open`, per
-    /// origin), shell, desktop input. Browser actions on the CURRENT page are not grantable: the
-    /// daemon cannot observe that page's origin at decision time, and an unknown destination
+    /// origin), page actions (browser-reported origin), shell, desktop input. An unknown page
     /// stays once-only (a grant for site A must never cover site B). `None` for everything else
     /// (sends, schedules, apps, program launches).
-    pub(crate) fn gate_key(name: &str, input: &Value) -> Option<(&'static str, String)> {
+    pub(crate) fn gate_key(
+        name: &str,
+        input: &Value,
+        page_origin: Option<&str>,
+    ) -> Option<(&'static str, String)> {
         match name {
+            // A page action is bound to the origin the browser reported when it was resolved
+            // (checked again by the tool when it runs); unknown stays once-only.
+            n if crate::shared::is_page_action(n) => page_origin.map(|o| ("page", o.to_owned())),
             "shell_run" | "script_run" => Some(("shell", String::new())),
             "desktop_type" | "desktop_key" | "desktop_set_value" | "desktop_drag" => {
                 Some(("desktop_input", String::new()))
@@ -399,9 +405,9 @@ impl Shared {
     /// destination (scheme, userinfo, host, port, path, query, fragment) must be equal after
     /// standard normalisation only (case of scheme and host, default port, trailing dot), and
     /// the call must be a plain navigation: any other field (`dialog`, `prompt_text`, `profile`)
-    /// can carry model-chosen text, so such a call stays behind approval. Not detected: whether a
-    /// message was typed by the local user (a peer's or Telegram's steering text and a block the
-    /// user pasted from a page are both `user` messages in the chat).
+    /// can carry model-chosen text, so such a call stays behind approval. Only messages tagged
+    /// `owner` count (typed in the desktop app); a block the owner pasted from a page is still
+    /// theirs by this test (the app cannot tell a paste from typing).
     fn user_typed_url(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
         if name != "browser_open" || input.as_object().is_none_or(|o| o.len() != 1) {
             return false;
@@ -424,15 +430,14 @@ impl Shared {
         let Some(want) = input.get("url").and_then(Value::as_str).and_then(parts) else {
             return false;
         };
-        let Ok((messages, _)) =
-            crate::history::messages_in_context(&self.storage, ctx.chat_id, None, None)
-        else {
+        // Only messages the owner typed in the desktop app (tagged `owner` by the route that
+        // received them): not a peer's, Telegram's, a schedule's or another local client's.
+        let Ok(texts) = self.storage.owner_message_texts(ctx.chat_id) else {
             return false;
         };
-        messages
+        texts
             .iter()
-            .filter(|m| m.role == "user")
-            .flat_map(|m| m.content.split_whitespace())
+            .flat_map(|m| m.split_whitespace())
             .filter(|w| w.starts_with("http://") || w.starts_with("https://"))
             .map(|w| {
                 w.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\''])
@@ -449,10 +454,11 @@ impl Shared {
         name: &str,
         category: PermissionCategory,
         input: &Value,
+        page_origin: Option<&str>,
     ) -> bool {
         if ctx.initiator != InitiatorKind::Human
             || self.must_ask(name, input)
-            || Self::gate_key(name, input).is_none()
+            || Self::gate_key(name, input, page_origin).is_none()
         {
             return false;
         }
@@ -487,12 +493,14 @@ impl Shared {
         if self.user_typed_url(ctx, name, input) {
             return true;
         }
-        Self::gate_key(name, input).is_some_and(|(class, dest)| {
-            self.grants
-                .lock()
-                .gate_chat
-                .contains(&(ctx.chat_id, ctx.bot_id, class, dest))
-        })
+        Self::gate_key(name, input, ctx.page_origin.lock().as_deref()).is_some_and(
+            |(class, dest)| {
+                self.grants
+                    .lock()
+                    .gate_chat
+                    .contains(&(ctx.chat_id, ctx.bot_id, class, dest))
+            },
+        )
     }
 
     /// The taint gate for this call: egress after a read, or a program start
@@ -1112,7 +1120,8 @@ impl Shared {
         // A card that only the taint gate asks (a bot whose level allows the call) is not
         // once-only: it offers "always for this chat" for this tool class and site. The egress
         // disclosure in `details` is not tool-specific data.
-        let gate_grant = self.gate_grantable(ctx, name, category, input);
+        let page_origin = ctx.page_origin.lock().clone();
+        let gate_grant = self.gate_grantable(ctx, name, category, input, page_origin.as_deref());
         let once_only = !gate_grant
             && (details.is_some()
                 || must_ask
@@ -1199,6 +1208,7 @@ impl Shared {
                     by,
                     parked_at,
                     showed_disclosure,
+                    page_origin,
                     target: target.filter(|_| grantable),
                 })
             }
@@ -1373,6 +1383,8 @@ pub(crate) struct ExecPermit {
     /// disclosure. Captured then, not recomputed after the user answers:
     /// another call can taint the run while this card is open.
     pub(crate) showed_disclosure: bool,
+    /// Immutable origin approved by this card, even if a later call observes another page.
+    page_origin: Option<String>,
     /// The eligible control target the card offered a grant for. `Some` only
     /// when the card offered [`ApprovalScope::RunControl`].
     target: Option<ControlTarget>,
@@ -1430,14 +1442,20 @@ impl ExecPermit {
         };
         // A taint-gate card never creates a tool-wide or standing grant: the choice is kept
         // for this chat, keyed on tool class and site.
-        let gate_grant =
-            matches!(
-                scope,
-                ApprovalScope::ThisChat | ApprovalScope::Always | ApprovalScope::AlwaysCategory
-            ) && self
-                .sh
-                .gate_grantable(&self.ctx, &self.name, self.category, &self.input);
-        if gate_grant && let Some((class, dest)) = Shared::gate_key(&self.name, &self.input) {
+        let gate_grant = matches!(
+            scope,
+            ApprovalScope::ThisChat | ApprovalScope::Always | ApprovalScope::AlwaysCategory
+        ) && self.sh.gate_grantable(
+            &self.ctx,
+            &self.name,
+            self.category,
+            &self.input,
+            self.page_origin.as_deref(),
+        );
+        if gate_grant
+            && let Some((class, dest)) =
+                Shared::gate_key(&self.name, &self.input, self.page_origin.as_deref())
+        {
             {
                 self.sh.grants.lock().gate_chat.insert((
                     self.ctx.chat_id,
@@ -1644,6 +1662,17 @@ impl ToolGate for LoopGate {
         }
     }
 
+    fn note_output_exposure(&self, run_id: &str, exposure: &tool_registry::OutputExposure) {
+        let Ok(id) = run_id.parse::<Uuid>() else {
+            return;
+        };
+        if let Some(sh) = self.sh.upgrade()
+            && let Some(ctx) = sh.runs.lock().get(&RunId(id))
+        {
+            taint::ExecFact::from_exposure(exposure, "file read").apply(&mut ctx.taint.lock());
+        }
+    }
+
     fn content_untrusted(&self, run_id: &str) -> bool {
         let Ok(id) = run_id.parse::<uuid::Uuid>() else {
             return false;
@@ -1671,7 +1700,7 @@ impl ToolGate for LoopGate {
     }
 
     async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
-        self.authorize_inner(req).await.map(|_| ())
+        self.authorize_inner(req, false).await.map(|_| ())
     }
 
     fn revoke_control(&self, run_id: &str) {
@@ -1690,7 +1719,15 @@ impl ToolGate for LoopGate {
         &self,
         req: &GateRequest,
     ) -> Result<Option<tool_registry::ControlIdentity>, String> {
-        self.authorize_inner(req).await
+        self.authorize_inner(req, false)
+            .await
+            .map(|(identity, _)| identity)
+    }
+
+    async fn authorize_page(&self, req: &GateRequest) -> Result<Option<String>, String> {
+        self.authorize_inner(req, true)
+            .await
+            .map(|(_, origin)| origin)
     }
 }
 
@@ -1703,7 +1740,8 @@ impl LoopGate {
     async fn authorize_inner(
         &self,
         req: &GateRequest,
-    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        page_guard: bool,
+    ) -> Result<(Option<tool_registry::ControlIdentity>, Option<String>), String> {
         let sh = self.sh.upgrade().ok_or("agent loop is gone")?;
         let run_id = req
             .run_id
@@ -1718,6 +1756,25 @@ impl LoopGate {
             .ok_or("script has no active run")?;
         if !ctx.profile.tool_visible(&req.tool) || !ctx.profile.category_visible(req.category) {
             return Err(format!("unknown tool: {}", req.tool));
+        }
+        let origin = if page_guard && crate::shared::is_page_action(&req.tool) {
+            let tctx = tool_registry::ToolContext {
+                run_id: req.run_id.clone(),
+                bot_id: Some(ctx.bot_id.to_string()),
+                ..tool_registry::ToolContext::default()
+            };
+            if let Some(tool) = sh.tools.get(&req.tool) {
+                tool.current_origin(&tctx, &req.input).await
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Native replay sends through its own driver without a registry tool guard;
+        // it stays once-only. Registry callers receive the origin to enforce at execution.
+        if crate::shared::is_page_action(&req.tool) {
+            ctx.page_origin.lock().clone_from(&origin);
         }
         let target = req.control.as_ref();
         let result = match sh.decide_with_target(
@@ -1747,6 +1804,12 @@ impl LoopGate {
                 {
                     Ok(())
                 } else {
+                    // Field/standing-grant inspection awaited above. Another concurrent
+                    // script call may have observed a different page meanwhile; bind this
+                    // card to this call's own observation before it captures the origin.
+                    if crate::shared::is_page_action(&req.tool) {
+                        ctx.page_origin.lock().clone_from(&origin);
+                    }
                     sh.request_approval(
                         &ctx,
                         ToolCallId::new(),
@@ -1779,9 +1842,12 @@ impl LoopGate {
             crate::control::acquire_computer_slot(&sh, &ctx).await?;
         }
         note_gate(&ctx, req);
-        Ok(target
-            .filter(|t| ctx.control_covers(&req.tool, req.category, t))
-            .map(|t| t.identity.clone()))
+        Ok((
+            target
+                .filter(|t| ctx.control_covers(&req.tool, req.category, t))
+                .map(|t| t.identity.clone()),
+            origin,
+        ))
     }
 }
 

@@ -27,6 +27,12 @@ pub fn trusted(pids: &BTreeSet<u32>, expect: Expect, same_user: impl Fn(u32) -> 
         })
 }
 
+/// PIDs listening on loopback `port` (empty when none or when the OS cannot say), for messages only.
+#[must_use]
+pub fn listener_owners(port: u16) -> BTreeSet<u32> {
+    platform::listener_pids(port).unwrap_or_default()
+}
+
 /// Check the listeners on loopback `port`.
 ///
 /// # Errors

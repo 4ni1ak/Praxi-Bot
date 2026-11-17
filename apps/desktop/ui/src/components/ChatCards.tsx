@@ -187,6 +187,7 @@ export interface ApprovalCardProps {
   expiresAtMs?: number;
   /** Name of the server that is the bots' home; `null` when the home is this computer. */
   serverName?: string | null;
+  onTrustFolder?: (folder: string) => Promise<void>;
 }
 
 /** What a bot-made schedule will do, shown before the user approves it. */
@@ -356,7 +357,8 @@ export function ApprovalCard({
   tool,
   onDecide,
   expiresAtMs,
-  serverName = null
+  serverName = null,
+  onTrustFolder
 }: ApprovalCardProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -374,6 +376,9 @@ export function ApprovalCard({
   const brain = brainDetails(tool.details);
   const unrenderable =
     (tool.details as { kind?: unknown } | null | undefined)?.kind === "app_action" && !app;
+  const [trustedFolders, setTrustedFolders] = useState<string[]>([]);
+  const folderFacts = (tool.details as { trust_folders?: unknown } | null)?.trust_folders;
+  const folders = Array.isArray(folderFacts) ? folderFacts.filter((f): f is string => typeof f === "string") : [];
   const facts = tool.details as { why?: unknown; once_only?: unknown } | null | undefined;
   const why = typeof facts?.why === "string" ? facts.why : null;
   // The daemon says whether a standing choice may be offered; older events: any details mean once only.
@@ -495,6 +500,17 @@ export function ApprovalCard({
         ) : (
           detailBody
         )}
+        {onTrustFolder ? folders.map((folder) => (
+          <Button key={folder} size="sm" variant="secondary" disabled={disabled || trustedFolders.includes(folder)}
+            onClick={() => {
+              setBusy(true);
+              setError(null);
+              void onTrustFolder(folder).then(() => setTrustedFolders((prev) => [...prev, folder]))
+                .catch((e: unknown) => setError(humanLine(e))).finally(() => setBusy(false));
+            }}>
+            {t(trustedFolders.includes(folder) ? "folderTrust.saved" : "folderTrust.action", { folder })}
+          </Button>
+        )) : null}
         <div className={styles.actions}>
           <Button
             size="sm"

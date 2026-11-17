@@ -7954,6 +7954,120 @@
         ]
       }
     },
+    "/v1/trusted-folders": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "The folders Praxi treats as the owner's own content.",
+        "operationId": "list_trusted_folders",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustedFoldersDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Trust a folder (\"I trust this folder\"). Owner key required.",
+        "operationId": "trust_folder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrustFolderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustedFoldersDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Stop trusting a folder. Owner key required.",
+        "operationId": "untrust_folder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrustFolderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustedFoldersDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/usage": {
       "get": {
         "tags": [
@@ -16757,6 +16871,34 @@
           },
           "reason": {
             "$ref": "#/components/schemas/Reason"
+          }
+        }
+      },
+      "TrustFolderInput": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "An existing directory (an absolute path)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrustedFoldersDto": {
+        "type": "object",
+        "required": [
+          "folders"
+        ],
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Folders, as stored (normalised: `/` separators, lower case on Windows)."
           }
         }
       },

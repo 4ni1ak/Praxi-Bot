@@ -1310,6 +1310,65 @@
     "toolNotFound": {
       "title": "The bot could not find the file or program",
       "hint": "Ask again and say its name or location."
+    },
+    "startup": {
+      "starting": {
+        "title": "Praxi's service is taking longer than usual to start",
+        "hint": "Praxi keeps waiting; nothing is lost. If this does not change, restart the service."
+      },
+      "spawning": {
+        "title": "Windows is still launching Praxi's service",
+        "hint": "Antivirus or SmartScreen may be checking the program. The first start can take a minute."
+      },
+      "sidecarMissing": {
+        "title": "Praxi's service program is missing",
+        "hint": "The file {{file}} was not found. Reinstall Praxi and do not remove files from its folder."
+      },
+      "sidecarBlocked": {
+        "title": "Windows blocked Praxi's service",
+        "hint": "Antivirus, SmartScreen or a policy refused to run it. Allow bot.exe in Praxi's folder, then try again."
+      },
+      "spawnFailed": {
+        "title": "Praxi's service could not be started",
+        "hint": "The details below say why. Try again or restart the service."
+      },
+      "exited": {
+        "title": "Praxi's service stopped right after starting (exit code {{code}})",
+        "hint": "The last lines of its log are below. If this repeats, copy the details and send them."
+      },
+      "exitedDll": {
+        "title": "Praxi's service cannot start: a Windows component is missing (exit code {{code}})",
+        "hint": "Install the Microsoft Visual C++ Redistributable (x64) from Microsoft, then try again."
+      },
+      "exitedBadImage": {
+        "title": "Praxi's service file is damaged or does not fit this computer (exit code {{code}})",
+        "hint": "Reinstall Praxi. If it repeats, copy the details and send them."
+      },
+      "exitedCrash": {
+        "title": "Praxi's service crashed while starting (exit code {{code}})",
+        "hint": "Copy the details below and send them: they name the exit code and the last step it reached."
+      },
+      "notResponding": {
+        "title": "Praxi's service is running but does not answer",
+        "hint": "It may be slow on this computer. Restart the service; if it repeats, copy the details."
+      },
+      "portInUse": {
+        "title": "Port {{port}} is used by another program",
+        "hint": "Close that program or restart the computer, then try again."
+      },
+      "unreachable": {
+        "title": "Praxi's service answers, but the app does not trust it",
+        "hint": "Another program may be using port {{port}}. Restart the service."
+      }
+    },
+    "startupPanel": {
+      "retry": "Try again",
+      "restart": "Restart service",
+      "copy": "Copy details",
+      "copied": "Copied",
+      "openLogs": "Open log folder",
+      "logTitle": "Last lines of the service log",
+      "waited": "Waiting for {{seconds}} s"
     }
   },
   "home": {
@@ -3330,5 +3389,14 @@
       "skipped": "Skipped",
       "failed": "Failed"
     }
+  },
+  "folderTrust": {
+    "title": "Trusted folders",
+    "description": "Folders you trust are treated as your own content. Files fetched by a bot still count as outside content. Current tasks keep the content they already read.",
+    "action": "I trust this folder — don't treat {{folder}} as outside content",
+    "saved": "Trusted: {{folder}}",
+    "empty": "No trusted folders yet. Trust a folder from an approval card after reading it.",
+    "remove": "Remove trust for {{folder}}",
+    "ownerRequired": "Open the desktop app on this computer to change folder trust."
   }
 }

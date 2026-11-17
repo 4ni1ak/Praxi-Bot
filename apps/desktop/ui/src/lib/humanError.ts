@@ -1,4 +1,5 @@
 import i18n from "i18next";
+import type { StartupDiagnostics } from "../api/connection.ts";
 import { hostRefusalKey } from "./hostMode.ts";
 
 /**
@@ -200,5 +201,71 @@ export function humanService(problem: ServiceProblem, raw = ""): HumanError {
     hint: tr(`errors.${key}.hint`),
     action: problem === "starting" ? undefined : "restartService",
     details: raw
+  };
+}
+
+/** NTSTATUS codes a Windows process ends with when it dies before it can print anything. */
+const EXIT_KINDS: Record<number, "exitedDll" | "exitedBadImage" | "exitedCrash"> = {
+  [-1073741515]: "exitedDll", // 0xC0000135 STATUS_DLL_NOT_FOUND
+  [-1073741701]: "exitedBadImage", // 0xC000007B STATUS_INVALID_IMAGE_FORMAT
+  [-1073741502]: "exitedDll", // 0xC0000142 STATUS_DLL_INIT_FAILED
+  [-1073741795]: "exitedCrash", // 0xC000001D STATUS_ILLEGAL_INSTRUCTION
+  [-1073741819]: "exitedCrash", // 0xC0000005 STATUS_ACCESS_VIOLATION
+  [-1073741571]: "exitedCrash", // 0xC00000FD STATUS_STACK_OVERFLOW
+  [-1073740791]: "exitedCrash" // 0xC0000409 STATUS_STACK_BUFFER_OVERRUN
+};
+
+/** `-1073741515` as `-1073741515 (0xC0000135)`; small codes as they are. */
+export function exitCodeLabel(code: number): string {
+  return code < 0 ? `${code} (0x${(code >>> 0).toString(16).toUpperCase()})` : String(code);
+}
+
+/** Which `errors.startup.*` text describes this start-up state. */
+export function startupKey(d: StartupDiagnostics): string {
+  switch (d.stage) {
+    case "sidecar_missing": return "sidecarMissing";
+    case "sidecar_blocked": return "sidecarBlocked";
+    case "spawn_failed": return "spawnFailed";
+    case "port_in_use": return "portInUse";
+    case "unreachable": return "unreachable";
+    case "not_responding": return "notResponding";
+    case "exited": return d.exit_code === null ? "exited" : (EXIT_KINDS[d.exit_code] ?? "exited");
+    case "spawning": return "spawning";
+    default: return "starting";
+  }
+}
+
+/** Everything worth pasting into a bug report about a service that does not start. */
+export function startupReport(d: StartupDiagnostics, raw = ""): string {
+  const lines = [
+    `Praxi ${d.app_version} on ${d.os}`,
+    `stage: ${d.stage} after ${Math.round(d.elapsed_ms / 1000)} s`,
+    `service: ${d.sidecar} (file present: ${d.sidecar_exists ? "yes" : "no"})`,
+    `address: ${d.base_url}`,
+    `data folder: ${d.data_dir}`,
+    `log: ${d.log_path}`
+  ];
+  if (d.pid !== null) lines.push(`process id: ${d.pid}`);
+  if (d.exit_code !== null) lines.push(`exit code: ${exitCodeLabel(d.exit_code)}`);
+  if (d.error) lines.push(`error: ${d.error}`);
+  if (raw && raw !== d.error) lines.push(`app said: ${raw}`);
+  if (d.log_tail.length > 0) lines.push("", "last lines of the service log:", ...d.log_tail);
+  return lines.join("\n");
+}
+
+/** The state of a local service that is slow or does not start, in words, with the facts behind it. */
+export function humanStartup(d: StartupDiagnostics, raw = ""): HumanError {
+  const key = startupKey(d);
+  const params = {
+    code: d.exit_code === null ? "" : exitCodeLabel(d.exit_code),
+    port: String(d.port),
+    file: d.sidecar
+  };
+  return {
+    code: `startup.${key}`,
+    title: tr(`errors.startup.${key}.title`, params),
+    hint: tr(`errors.startup.${key}.hint`, params),
+    action: undefined,
+    details: startupReport(d, raw)
   };
 }

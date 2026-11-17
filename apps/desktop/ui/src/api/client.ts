@@ -490,13 +490,24 @@ export class ApiClient {
   listMessages(chatId: string): Promise<Message[]> {
     return this.request("GET", `/chats/${chatId}/messages`);
   }
+  trustedFolders(): Promise<{ folders: string[] }> {
+    return this.request("GET", "/trusted-folders");
+  }
+  setFolderTrust(path: string, trusted: boolean, key: string): Promise<{ folders: string[] }> {
+    return this.request(trusted ? "POST" : "DELETE", "/trusted-folders", {
+      body: { path }, headers: { "x-praxi-owner-key": key }
+    });
+  }
+
   sendMessage(
     chatId: string,
     text: string,
-    mode?: SendMode
+    mode?: SendMode,
+    ownerKey?: string
   ): Promise<SendResponse> {
     return this.request("POST", `/chats/${chatId}/messages`, {
-      body: { text, mode }
+      body: { text, mode },
+      ...(ownerKey ? { headers: { "x-praxi-owner-key": ownerKey, "x-praxi-message-source": "local_ui" } } : {})
     });
   }
 

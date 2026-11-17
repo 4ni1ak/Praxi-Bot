@@ -868,6 +868,14 @@ impl daemon_api::DoctorHost for ServeDoctorHost {
     }
 }
 
+/// Start-up progress, one line per step with the milliseconds since the first one, so the
+/// daemon log of a machine where `serve` stops early says exactly where it stopped.
+fn step(name: &str) {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    eprintln!("startup: {name} (+{} ms)", start.elapsed().as_millis());
+}
+
 /// Run the daemon until a stop request (see [`shutdown_signal`]); running tool
 /// steps get `grace` to finish, everything else live is paused for the next start.
 ///
@@ -891,6 +899,7 @@ pub fn serve(
         owner_key,
     } = opts;
     let (port, json, grace) = (*port, *json, *grace);
+    step("begin");
     let mut ownership = daemon_api::host::HostConfig::load(data_dir)?;
     if *host_mode {
         ownership.mode = daemon_api::host::HostMode::Host;
@@ -904,7 +913,9 @@ pub fn serve(
         ownership.save(data_dir)?;
     }
     let storage = Arc::new(Storage::open(data_dir)?);
+    step("database open");
     let token = load_or_create_token(data_dir)?;
+    step("api token ready");
     if !token.restricted {
         eprintln!(
             "warning: could not restrict {} to the current user",
@@ -928,6 +939,7 @@ pub fn serve(
         }) as Arc<dyn SecretStore>
     });
     let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
+    step("desktop backend capabilities read");
     let views = Arc::new(live_view::TargetRegistry::default());
     // This computer's screen becomes a (lazy) view target. Opening it can touch
     // the OS, so it is probed on a worker thread with a deadline: the API starts
@@ -948,6 +960,7 @@ pub fn serve(
     let dynamic_desktop = effective_peer_enabled;
     let local_desktop = desktop.clone();
     let skill_index = skill_index_with_assignments(&storage, data_dir);
+    step("skill index built");
     // Owner-stored fill secrets live in the same secret store as everything
     // else, under `fill/`; every value is registered with the production
     // redactor as it is stored and as it is read, on top of the periodic
@@ -975,15 +988,18 @@ pub fn serve(
         skill_index.clone(),
         fill_secrets.clone(),
     )?;
+    step("agent built");
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
     let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
+    step("web tools registered");
     let web_host =
         crate::web_host::WebHost::new(data_dir, port, mcp_tools.clone(), telegram_store.clone());
     let recovered = agent.recover()?;
+    step("interrupted runs recovered");
     let mut cfg = DaemonConfig::new(api_token.clone());
     cfg.shutdown_grace = grace;
     // Extra browser origins (e.g. the desktop app's dev server), comma separated.
@@ -991,6 +1007,7 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
+    step("app state built");
     // The owner key: handed over by the desktop app on stdin (memory only), else
     // the `owner-key` file of this data dir (0600) for a terminal `bot serve`,
     // a host and the `bot` commands the owner runs in a terminal (card 262).
@@ -1008,6 +1025,7 @@ pub fn serve(
         .set_skills(skill_index)
         .map_err(|e| format!("skills wiring: {e}"))?;
     register_schedule_tools(data_dir, &state);
+    step("schedule tools registered");
     if let Some(f) = &fill_secrets {
         state.set_fill_secrets(Arc::clone(f));
     }
@@ -1022,6 +1040,7 @@ pub fn serve(
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    step("runtime built");
     rt.block_on(async {
         // Backstop poll: pick up secrets stored behind the daemon's back (the CLI,
         // the environment).  Runs with or without a secret store.
@@ -1078,6 +1097,7 @@ pub fn serve(
                 .map(|h| h as Arc<dyn peer_network::RpcHandler>),
         )
         .await?;
+        step("peer stack handled");
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
         }
@@ -1085,12 +1105,15 @@ pub fn serve(
         // has nobody at its screen to grant them again. Pairing
         // reconciliation below still revokes devices that are gone.
         state.load_screen_privileges().await;
+        step("screen privileges loaded");
         if let Some(pc) = pc_target {
             // This computer's links to paired hosts (`/v1/hosts`); the peer
             // endpoint starts lazily unless `--peer` already started one.
             crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone(), pc);
         }
+        step("host links installed");
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
+        step("computer identity read");
         let computer = Arc::new(crate::computer::CliComputerProvider::new(
             host_is_host,
             local_desktop,
@@ -1114,6 +1137,7 @@ pub fn serve(
             );
         }
         agent.reconcile_waiting_for_pc_runs()?;
+        step("computer grants reconciled");
         // A revoked pairing loses screen privileges, live sessions and takeover
         // within a couple of seconds, wherever the revoke happened.
         if let Some(net) = peer.clone() {
@@ -1158,6 +1182,7 @@ pub fn serve(
             Some(mcp_redactor),
             Some(mcp_registrar),
         );
+        step("mcp host started");
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
         state.set_components(crate::components_host::ComponentHost::system());
         // Composio app connections: the key stays in the secret store (reserved
@@ -1192,10 +1217,12 @@ pub fn serve(
         if configured > 0 {
             eprintln!("mcp: {configured} server(s) configured");
         }
+        step("components and apps wired");
         // Loopback only: never bind another interface.
         let listener =
             tokio::net::TcpListener::bind(SocketAddr::from((DAEMON_BIND_IP, port))).await?;
         let addr = listener.local_addr()?;
+        step("port bound");
         // The Telegram channel (when a token is stored and it is enabled) talks
         // to this daemon through its own loopback address.
         let telegram = telegram_store.as_ref().map(|store| {
@@ -1224,6 +1251,7 @@ pub fn serve(
                 );
             }
         }
+        step("listening");
         if json {
             println!(
                 "{}",

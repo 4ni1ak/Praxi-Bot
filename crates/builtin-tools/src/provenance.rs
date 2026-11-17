@@ -22,6 +22,10 @@ pub trait Provenance: Send + Sync {
     fn is_marked(&self, normalized: &str) -> bool;
     /// Record a file, or with `tree` everything under a directory. Best effort.
     fn mark(&self, normalized: &str, tree: bool, origin: &str);
+    /// The path is, or lies inside, a folder the owner trusts as their own content.
+    fn is_trusted_folder(&self, _normalized: &str) -> bool {
+        false
+    }
 }
 
 /// The ledger kept in the daemon's storage (table `file_provenance`).
@@ -29,10 +33,29 @@ pub struct StorageProvenance(pub std::sync::Arc<storage::Storage>);
 
 impl Provenance for StorageProvenance {
     fn is_marked(&self, normalized: &str) -> bool {
-        self.0.is_untrusted_path(normalized).unwrap_or(false)
+        if self.0.is_untrusted_path(normalized).unwrap_or(true) {
+            return true;
+        }
+        if normalized == UNRESOLVED {
+            return false;
+        }
+        // Old ledgers contain literal ../ and alias spellings. Reconcile on reads too,
+        // so upgrading cannot leave already-fetched files protected only by folder trust.
+        let Ok(paths) = self.0.untrusted_paths() else {
+            return true;
+        };
+        paths.into_iter().any(|(path, tree)| {
+            let Some(key) = identity(Path::new(&path)) else {
+                return true;
+            };
+            key == normalized || (tree && normalized.starts_with(&format!("{key}/")))
+        })
     }
     fn mark(&self, normalized: &str, tree: bool, origin: &str) {
         let _ = self.0.mark_untrusted_path(normalized, tree, origin);
+    }
+    fn is_trusted_folder(&self, normalized: &str) -> bool {
+        self.0.is_trusted_path(normalized).unwrap_or(false)
     }
 }
 
@@ -50,6 +73,70 @@ pub fn normalize(path: &Path) -> String {
         s = s.to_lowercase();
     }
     s
+}
+
+/// Resolve the filesystem's identity, or its nearest existing ancestor for a new destination.
+/// Ask the OS about the WHOLE ancestor path: Windows and Unix resolve alias/.. differently.
+#[must_use]
+pub fn identity(path: &Path) -> Option<String> {
+    fn resolve(path: &Path) -> Option<PathBuf> {
+        match std::fs::canonicalize(path) {
+            Ok(real) => Some(real),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // A dangling link is not a known new destination.
+                if !std::fs::symlink_metadata(path)
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                {
+                    return None;
+                }
+                let parent = resolve(path.parent()?)?;
+                Some(parent.join(path.file_name()?))
+            }
+            Err(_) => None,
+        }
+    }
+    resolve(&std::path::absolute(path).ok()?).map(|p| normalize(&p))
+}
+
+// An unresolved fetch may have written anywhere through an alias. Persist a fail-closed
+// marker: folder trust must not turn that uncertainty into trusted instructions.
+const UNRESOLVED: &str = "praxi:unresolved-provenance";
+
+pub fn mark_path(ledger: &dyn Provenance, path: &Path, tree: bool, origin: &str) {
+    let literal = normalize(path);
+    ledger.mark(&literal, tree, origin);
+    match identity(path) {
+        Some(key) if key != literal => ledger.mark(&key, tree, origin),
+        Some(_) => {}
+        None => ledger.mark(UNRESOLVED, false, origin),
+    }
+}
+
+/// Reject roots, home itself, external directories and the Praxi data tree (or its ancestors).
+#[must_use]
+pub fn trust_entry_allowed(path: &Path, data: &Path) -> bool {
+    let Some(key) = identity(path) else {
+        return false;
+    };
+    let lower = format!("{}/", key.to_lowercase());
+    if too_broad(path) || EXTERNAL_PARTS.iter().any(|part| lower.contains(part)) {
+        return false;
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+        && identity(Path::new(&home)).as_deref() == Some(key.as_str())
+    {
+        return false;
+    }
+    let Some(temp) = identity(&std::env::temp_dir()) else {
+        return false;
+    };
+    if key == temp || key.starts_with(&format!("{temp}/")) {
+        return false;
+    }
+    let Some(data) = identity(data) else {
+        return false;
+    };
+    key != data && !key.starts_with(&format!("{data}/")) && !data.starts_with(&format!("{key}/"))
 }
 
 /// Locations whose content is external by rule: downloads, temp, browser / mail / package caches.
@@ -96,8 +183,7 @@ pub fn external_location(path: &Path) -> bool {
     in_git_work_tree_with_remote(path)
 }
 
-/// A git work tree with a remote configured. A folder the owner explicitly trusts is a follow-up
-/// (there is no such action yet), so every such tree counts: a README can carry injected text.
+/// A git work tree with a remote configured. Folder trust is applied by `is_untrusted`.
 fn in_git_work_tree_with_remote(path: &Path) -> bool {
     let mut dir = Some(path);
     for _ in 0..16 {
@@ -118,7 +204,41 @@ fn in_git_work_tree_with_remote(path: &Path) -> bool {
 /// Untrusted by rule or by the ledger.
 #[must_use]
 pub fn is_untrusted(ledger: Option<&dyn Provenance>, path: &Path) -> bool {
-    external_location(path) || ledger.is_some_and(|l| l.is_marked(&normalize(path)))
+    let Some(normalized) = identity(path) else {
+        return true;
+    };
+    // What a bot fetched or wrote in an untrusted run stays untrusted even inside a folder the
+    // owner trusts; the owner's trust only lifts the by-rule classification.
+    if ledger.is_some_and(|l| {
+        l.is_marked(UNRESOLVED) || l.is_marked(&normalize(path)) || l.is_marked(&normalized)
+    }) {
+        return true;
+    }
+    if ledger.is_some_and(|l| l.is_trusted_folder(&normalized)) {
+        return false;
+    }
+    external_location(Path::new(&normalized)) || external_location(path)
+}
+
+/// The git work tree (with a remote) that contains `path`: the folder the owner can be offered
+/// to trust. `None` when the path is not in such a tree.
+#[must_use]
+pub fn git_work_tree_root(path: &Path) -> Option<PathBuf> {
+    let mut dir = Some(path);
+    for _ in 0..16 {
+        let d = dir?;
+        let git = d.join(".git");
+        if git.is_dir() {
+            return std::fs::read_to_string(git.join("config"))
+                .is_ok_and(|c| c.contains("[remote \""))
+                .then(|| d.to_path_buf());
+        }
+        if git.is_file() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
 }
 
 /// Directories too broad to mark as a tree (a drive root or the home directory).
@@ -269,7 +389,7 @@ mod tests {
     use parking_lot::Mutex;
 
     #[derive(Default)]
-    struct Mem(Mutex<Vec<(String, bool)>>);
+    struct Mem(Mutex<Vec<(String, bool)>>, Mutex<Vec<String>>);
     impl Provenance for Mem {
         fn is_marked(&self, n: &str) -> bool {
             self.0
@@ -279,6 +399,12 @@ mod tests {
         }
         fn mark(&self, n: &str, tree: bool, _: &str) {
             self.0.lock().push((n.to_owned(), tree));
+        }
+        fn is_trusted_folder(&self, n: &str) -> bool {
+            self.1
+                .lock()
+                .iter()
+                .any(|p| n == p || n.starts_with(&format!("{p}/")))
         }
     }
 
@@ -347,5 +473,127 @@ mod tests {
         assert_eq!(t("wget https://x.test/p/f.tgz"), one("/work/f.tgz", false));
         assert_eq!(t("unzip a.zip -d /work/u"), one("/work/u", true));
         assert_eq!(t("ls -la"), Vec::<(String, bool)>::new());
+    }
+
+    #[test]
+    fn fetched_identity_survives_parent_traversal_aliases_and_fetch_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        let ledger = Mem::default();
+        ledger.1.lock().push(identity(&repo).unwrap());
+        let spelling = repo.join("sub").join("..").join("payload.txt");
+        mark_path(&ledger, &spelling, false, "curl");
+        std::fs::write(&spelling, "untrusted instructions").unwrap();
+        mark_path(&ledger, &spelling, false, "curl completed");
+        assert!(is_untrusted(Some(&ledger), &repo.join("payload.txt")));
+        let storage = std::sync::Arc::new(storage::Storage::open_in_memory(dir.path()).unwrap());
+        storage.trust_folder(&identity(&repo).unwrap()).unwrap();
+        storage
+            .mark_untrusted_path(&normalize(&spelling), false, "legacy curl")
+            .unwrap();
+        assert!(is_untrusted(
+            Some(&StorageProvenance(storage)),
+            &repo.join("payload.txt")
+        ));
+
+        let aliases = dir.path().join("aliases");
+        std::fs::create_dir(&aliases).unwrap();
+        let alias = aliases.join("alias");
+        #[cfg(windows)]
+        assert!(
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&alias)
+                .arg(&repo)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&repo, &alias).unwrap();
+        let parent_spelling = alias.join("..");
+        assert_eq!(
+            identity(&parent_spelling.join("ancestor.txt")),
+            Some(normalize(
+                &std::fs::canonicalize(&parent_spelling)
+                    .unwrap()
+                    .join("ancestor.txt")
+            ))
+        );
+        let destination = alias.join("new.txt");
+        mark_path(&ledger, &destination, false, "curl started");
+        assert_eq!(identity(&destination), identity(&repo.join("new.txt")));
+        // The fetch may replace an alias: reconcile its final destination as well.
+        let final_repo = dir.path().join("final-repo");
+        std::fs::create_dir(&final_repo).unwrap();
+        ledger.1.lock().push(identity(&final_repo).unwrap());
+        #[cfg(windows)]
+        std::fs::remove_dir(&alias).unwrap();
+        #[cfg(unix)]
+        std::fs::remove_file(&alias).unwrap();
+        #[cfg(windows)]
+        assert!(
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&alias)
+                .arg(&final_repo)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&final_repo, &alias).unwrap();
+        std::fs::write(&destination, "download").unwrap();
+        mark_path(&ledger, &destination, false, "curl completed");
+        assert!(is_untrusted(Some(&ledger), &final_repo.join("new.txt")));
+        assert!(is_untrusted(Some(&ledger), &repo.join("new.txt")));
+        assert!(!trust_entry_allowed(dir.path(), &repo));
+        assert!(!trust_entry_allowed(&std::env::temp_dir(), &repo));
+        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+            assert!(!trust_entry_allowed(Path::new(&home), &repo));
+        }
+    }
+
+    #[test]
+    fn a_trusted_folder_lifts_the_rules_but_not_what_a_bot_fetched_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("mine");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join(".git").join("config"),
+            "[remote \"origin\"]
+ url = x
+",
+        )
+        .unwrap();
+        let readme = repo.join("README.md");
+        let ledger = Mem::default();
+        assert!(
+            is_untrusted(Some(&ledger), &readme),
+            "a work tree with a remote is outside content"
+        );
+        assert_eq!(
+            git_work_tree_root(&readme).as_deref(),
+            Some(repo.as_path()),
+            "the folder to offer"
+        );
+        ledger.1.lock().push(normalize(&repo));
+        assert!(
+            !is_untrusted(Some(&ledger), &readme),
+            "trusted by the owner"
+        );
+        assert!(!is_untrusted(
+            Some(&ledger),
+            &repo.join("src").join("lib.rs")
+        ));
+        // a bot cloned something into the trusted folder: the ledger mark wins
+        ledger.mark(&normalize(&repo.join("vendor")), true, "git clone");
+        assert!(is_untrusted(
+            Some(&ledger),
+            &repo.join("vendor").join("x").join("README.md")
+        ));
     }
 }

@@ -178,6 +178,7 @@ mod tests {
             bot_id: None,
             content_tainted: false,
             exposure_untrusted: false,
+            expected_origin: None,
             control_guard: None,
         };
         let text = "é".repeat(2000);
@@ -214,6 +215,7 @@ mod tests {
                     bot_id: None,
                     content_tainted: false,
                     exposure_untrusted: false,
+                    expected_origin: None,
                     control_guard: None,
                 };
                 let out = finish_text(&ctx, dir.path(), text.clone());
@@ -236,6 +238,7 @@ mod tests {
             bot_id: None,
             content_tainted: false,
             exposure_untrusted: false,
+            expected_origin: None,
             control_guard: None,
         };
         let out = finish_text(&ctx, &blocker.join("sub"), "é".repeat(500));
