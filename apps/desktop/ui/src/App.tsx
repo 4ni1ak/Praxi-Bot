@@ -1049,6 +1049,7 @@ function AppShell() {
         }}
       />
       <LiveViewer />
+      {activeComputerId !== LOCAL_COMPUTER ? <LiveViewer source="local" /> : null}
     </SidebarLayout>
   );
 }
@@ -1063,7 +1064,7 @@ export function ComputerScope({ children }: { children: ReactNode }) {
   const { activeComputerId } = useDaemon();
   const plan = computerScopePlan(activeComputerId, LOCAL_COMPUTER);
   return (
-    <LiveViewProvider>
+    <LiveViewProvider scope="local">
       {plan.localBridge ? <ControlBridgeHost /> : null}
       {!plan.hostSession ? (
         <Fragment key={LOCAL_COMPUTER}>{children}</Fragment>

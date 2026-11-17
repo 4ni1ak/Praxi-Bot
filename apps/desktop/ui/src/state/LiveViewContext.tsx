@@ -50,6 +50,7 @@ import {
   needsPauseRecovery,
   pickDefaultTarget,
   planViewerClose,
+  sessionProfile,
   type RecoveryPrompt,
   shouldOverrideOnStop,
   type LiveViewControllerState
@@ -132,6 +133,11 @@ interface LiveViewContextValue {
 }
 
 const LiveViewContext = createContext<LiveViewContextValue | null>(null);
+/**
+ * THIS computer's live view, whichever computer the views show. While a server is home the nearest
+ * `LiveViewContext` is the server's; the "my computer" screen of the right panel reads this one.
+ */
+const LocalLiveViewContext = createContext<LiveViewContextValue | null>(null);
 
 function initialMockViewerOpen(): boolean {
   if (!isMockMode() || typeof window === "undefined") {
@@ -140,7 +146,14 @@ function initialMockViewerOpen(): boolean {
   return new URLSearchParams(window.location.search).get("lv") === "open";
 }
 
-export function LiveViewProvider({ children }: { children: ReactNode }) {
+export function LiveViewProvider({
+  children,
+  scope = "home"
+}: {
+  children: ReactNode;
+  /** `local`: this computer's own provider (the outer one), also published as the local view. */
+  scope?: "home" | "local";
+}) {
   const { client, onDaemonEvent, bots } = useDaemon();
 
   const clientIdRef = useRef<string>(crypto.randomUUID());
@@ -463,7 +476,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   });
 
   const owning = isActivelyOwningTakeover(state);
-  const desiredProfile = owning ? "live" : "watch";
+  const desiredProfile = sessionProfile(state);
   const desiredMaxWidth = viewerOpen ? 1600 : 960;
   const desiredMaxHeight = viewerOpen ? 1000 : 600;
   const desiredQuality = owning ? 78 : viewerOpen ? 72 : 55;
@@ -596,7 +609,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           client.createViewSession({
             client_id: clientIdRef.current,
             target_id: selectedTarget.target_id,
-            profile: isActivelyOwningTakeover(stateRef.current) ? "live" : "watch",
+            profile: sessionProfile(stateRef.current),
             codecs: selectedTarget.capabilities.codecs,
             max_width: viewerOpen ? 1600 : 960,
             max_height: viewerOpen ? 1000 : 600,
@@ -1158,9 +1171,24 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   return (
     <LiveViewContext.Provider value={value}>
-      {children}
+      {scope === "local" ? (
+        <LocalLiveViewContext.Provider value={value}>{children}</LocalLiveViewContext.Provider>
+      ) : (
+        children
+      )}
     </LiveViewContext.Provider>
   );
+}
+
+/** This computer's live view (the same as `useLiveView()` while no server is selected). */
+export function useLocalLiveView(): LiveViewContextValue {
+  const local = useContext(LocalLiveViewContext);
+  const home = useContext(LiveViewContext);
+  const ctx = local ?? home;
+  if (!ctx) {
+    throw new Error("useLocalLiveView must be used inside LiveViewProvider");
+  }
+  return ctx;
 }
 
 export function useLiveView(): LiveViewContextValue {

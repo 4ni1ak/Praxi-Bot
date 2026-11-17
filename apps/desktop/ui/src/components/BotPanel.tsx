@@ -229,7 +229,7 @@ export function BotPanel({
                 case "upcoming":
                   return <UpcomingBlock key={id} rows={upcoming.rows} onToggle={upcoming.toggle} />;
                 case "computer":
-                  return <BotComputerBlock key={id} />;
+                  return <BotComputerBlock key={id} botName={bot.name} botId={bot.id} />;
                 default:
                   return <QuotaBlock key={id} />;
               }

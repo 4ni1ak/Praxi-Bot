@@ -1153,7 +1153,15 @@ export class MockApiClient extends ApiClient {
   ): Promise<unknown> {
     const [, sub, id, action] = seg;
     if (sub === "targets" && method === "GET") {
+      // Review state (mock mode only): `?lv=nodisplay` is a server without a desktop session.
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("lv") === "nodisplay") {
+        return [];
+      }
       return this.liveView.listTargets();
+    }
+    if (sub === "availability" && method === "GET") {
+      const none = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("lv") === "nodisplay";
+      return none ? [{ kind: "desktop", code: "no_display" }] : [];
     }
     if (sub === "privileges" && method === "PUT" && id) {
       return undefined;

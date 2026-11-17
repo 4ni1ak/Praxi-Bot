@@ -40,7 +40,7 @@ import {
 import { viewerKeyAction } from "../lib/liveViewLayers";
 import { layerStack } from "../lib/modalStack";
 import { useDaemon } from "../state/DaemonContext";
-import { useLiveView } from "../state/LiveViewContext";
+import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
 import { requestStop } from "../state/appStop";
 import styles from "./LiveViewer.module.css";
 
@@ -65,9 +65,16 @@ function targetOptionHint(
   return parts.join(" · ");
 }
 
-export function LiveViewer() {
+/**
+ * The screen viewer. `source="local"` is the one of THIS computer while a server is home (the
+ * right panel's "my computer" screen); by default it follows the views' computer.
+ */
+export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = {}) {
   const { t } = useTranslation();
   const { bots, needs } = useDaemon();
+  const homeView = useLiveView();
+  const localView = useLocalLiveView();
+  const view = source === "local" ? localView : homeView;
   const {
     targets,
     selectedTarget,
@@ -90,7 +97,7 @@ export function LiveViewer() {
     enqueueInput,
     resetInputState,
     setComposing
-  } = useLiveView();
+  } = view;
 
   const [selectedOutcome, setSelectedOutcome] = useState<HumanAction | "none">(
     "none"
