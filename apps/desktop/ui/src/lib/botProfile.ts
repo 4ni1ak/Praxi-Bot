@@ -49,6 +49,8 @@ export interface BotDraft {
   allowEgressAfterReads: boolean;
   computer: "local";
   browser: "local";
+  /** The paired server this bot uses as ITS computer (`runtime.computer = "server:<key>"`), or `null`. */
+  serverComputer: string | null;
   /** File access: "This computer" (default) or "Folder only". */
   files: BotFilesDraft;
 }
@@ -194,6 +196,7 @@ export function draftFromBot(bot?: Bot): BotDraft {
     allowEgressAfterReads: perms.allow_egress_after_reads === true,
     computer: "local",
     browser: "local",
+    serverComputer: serverOfRuntime(obj(cfg.runtime).computer),
     files: filesFromConfig(obj(cfg.files))
   };
 }
@@ -310,9 +313,17 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
   // `runtime` (computer / browser target) is not edited by this form.  An existing bot keeps it
   // exactly as stored (any target: off, browser, host, auto, a node id ...); only a new bot gets
   // the form's default.
+  const serverChanged = serverOfRuntime(obj(old.runtime).computer) !== draft.serverComputer;
+  const serverTarget = draft.serverComputer ? `server:${draft.serverComputer}` : "auto";
   const runtime = existing
-    ? old.runtime
-    : { ...obj(old.runtime), computer: draft.computer, browser: draft.browser };
+    ? serverChanged
+      ? { ...obj(old.runtime), computer: serverTarget }
+      : old.runtime
+    : {
+        ...obj(old.runtime),
+        computer: draft.serverComputer ? serverTarget : draft.computer,
+        browser: draft.browser
+      };
 
   return {
     ...old,
@@ -322,6 +333,11 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
     ...(files === undefined ? {} : { files }),
     ...(runtime === undefined ? {} : { runtime })
   };
+}
+
+/** The server key of a stored `server:<key>` computer target, else `null`. */
+export function serverOfRuntime(value: unknown): string | null {
+  return typeof value === "string" && value.startsWith("server:") && value.length > 7 ? value.slice(7) : null;
 }
 
 /** How a stored `runtime` target reads in the UI (read-only): the value as stored, or `auto`. */

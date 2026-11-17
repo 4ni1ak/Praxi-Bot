@@ -549,10 +549,15 @@ export function AdvancedFields({
   deleteBlocked,
   chatCount,
   runCount,
-  onDelete
+  onDelete,
+  servers,
+  onServerComputer
 }: {
   draft: BotDraft;
   customText: CustomText;
+  /** Paired servers the bot may use as its computer (with `onServerComputer`, the control is shown). */
+  servers?: ReadonlyArray<{ id: string; name: string }>;
+  onServerComputer?: (id: string | null) => void;
   onCustomText: (role: CustomRole, text: string) => void;
   /** Where the bot runs, as stored (read-only here: this form never changes it). */
   computerTarget: string;
@@ -604,10 +609,22 @@ export function AdvancedFields({
         </div>
         <SettingGroup>
           <SettingRow title={t("botForm.computer")}>
-            <span className={dialogStyles.chip} data-testid="bot-edit-computer">
-              <MonitorSmartphone aria-hidden="true" />
-              <span>{targetText(t, computerTarget)}</span>
-            </span>
+            {servers && servers.length > 0 && onServerComputer ? (
+              <Segmented
+                label={t("botForm.computer")}
+                value={draft.serverComputer ?? ""}
+                options={[
+                  { value: "", label: t("home.server.thisComputer"), testId: "bot-edit-computer-local" },
+                  ...servers.map((h) => ({ value: h.id, label: h.name || t("home.server.unknown") }))
+                ]}
+                onChange={(v) => onServerComputer(v === "" ? null : v)}
+              />
+            ) : (
+              <span className={dialogStyles.chip} data-testid="bot-edit-computer">
+                <MonitorSmartphone aria-hidden="true" />
+                <span>{targetText(t, computerTarget)}</span>
+              </span>
+            )}
           </SettingRow>
           <SettingRow title={t("botForm.browser")}>
             <span className={dialogStyles.chip} data-testid="bot-edit-browser">

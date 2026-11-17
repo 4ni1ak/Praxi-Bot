@@ -333,3 +333,19 @@ test("botView preserves stored shape when it differs from fallbackBotShape(id)",
   assert.equal(view.shape, "heart");
   assert.equal(botShape(view.id, view.shape).id, "heart");
 });
+
+import { configFromDraft as cfgFromDraft, draftFromBot as draftOf } from "./botProfile.ts";
+
+test("the bot's computer can be set to a paired server and back, and stays put when untouched", () => {
+  const bot = { id: "b", name: "A", config: { runtime: { computer: "auto", browser: "auto" } }, created_at_ms: 1 };
+  const draft = draftOf(bot as never);
+  assert.equal(draft.serverComputer, null);
+  const toServer = cfgFromDraft({ ...draft, serverComputer: "abc123" }, bot as never) as { runtime: unknown };
+  assert.deepEqual(toServer.runtime, { computer: "server:abc123", browser: "auto" });
+  const served = { ...bot, config: toServer };
+  assert.equal(draftOf(served as never).serverComputer, "abc123");
+  const same = cfgFromDraft(draftOf(served as never), served as never) as { runtime: unknown };
+  assert.deepEqual(same.runtime, { computer: "server:abc123", browser: "auto" });
+  const back = cfgFromDraft({ ...draftOf(served as never), serverComputer: null }, served as never) as { runtime: unknown };
+  assert.deepEqual(back.runtime, { computer: "auto", browser: "auto" });
+});

@@ -148,7 +148,7 @@ function BotEditDialog({
   const { t } = useTranslation();
   const toast = useToast();
   const uid = useId();
-  const { client, bots, chats, refreshBots } = useDaemon();
+  const { client, bots, chats, refreshBots, hostList } = useDaemon();
   const { providersDto, servers, setServers, allowed, setAllowed, initialApps, setInitialApps } =
     useBotFormDeps(client, bot.id, true);
 
@@ -472,6 +472,8 @@ function BotEditDialog({
               onCustomText={setCustom}
               computerTarget={runtimeTargetLabel(baseline.config, "computer")}
               browserTarget={runtimeTargetLabel(baseline.config, "browser")}
+              servers={hostList?.hosts ?? []}
+              onServerComputer={(id) => patch({ serverComputer: id })}
               deleteBlocked={deleteBlocked}
               chatCount={chatCount}
               runCount={runCount ?? 0}

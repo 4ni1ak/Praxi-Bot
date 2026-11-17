@@ -57,6 +57,11 @@ pub trait BrowserDriver: Send + Sync {
     fn for_headless(&self, _headless: bool) -> Option<Arc<dyn BrowserDriver>> {
         None
     }
+    /// Put a destination policy on every request this driver's browser makes
+    /// (loopback, link-local/metadata and private ranges). Used for browsers a
+    /// paired computer drives; the local managed-browser tools do not set one.
+    /// Takes effect for sessions launched afterwards. Default: ignored.
+    fn set_destination_check(&self, _check: browser_cdp::DestinationCheck) {}
     /// Close every browser this driver owns (bot deleted, daemon stopping).
     async fn close_all(&self) {}
     /// Navigate to `url` (starting the browser if needed); returns the page snapshot.
@@ -211,6 +216,8 @@ pub struct CdpDriver {
     /// Live-view slot of this bot's browser: idle until a session launches,
     /// then bound to its page. Capture stays lazy (viewer-driven).
     view: Option<Arc<browser_cdp::BrowserViewTarget>>,
+    /// Network destination policy of served sessions (`None`: unrestricted).
+    destination: parking_lot::RwLock<Option<browser_cdp::DestinationCheck>>,
 }
 
 /// Reports whether real bot work is going on (see [`CdpDriver::set_activity_probe`]).
@@ -307,6 +314,7 @@ impl CdpDriver {
             activity: Arc::new(std::sync::RwLock::new(None)),
             reaper_started: std::sync::atomic::AtomicBool::new(false),
             view: None,
+            destination: parking_lot::RwLock::new(None),
         }
     }
 
@@ -377,6 +385,7 @@ impl CdpDriver {
             executable: self.settings.executable.clone(),
             headless,
             user_data_dir: self.profile_path(profile)?,
+            destination_check: self.destination.read().clone(),
             ..LaunchOptions::default()
         };
         let browser = Browser::launch(opts).await.map_err(s)?;
@@ -628,6 +637,10 @@ impl BrowserDriver for CdpDriver {
         !self.desired_headless() && browser_cdp::host::has_display()
     }
 
+    fn set_destination_check(&self, check: browser_cdp::DestinationCheck) {
+        *self.destination.write() = Some(check);
+    }
+
     fn for_headless(&self, headless: bool) -> Option<Arc<dyn BrowserDriver>> {
         if headless == self.settings.headless {
             return None;
@@ -651,6 +664,7 @@ impl BrowserDriver for CdpDriver {
                     // alternate driver binds it when it launches (and retires
                     // the other mode's page from it).
                     driver.view.clone_from(&self.view);
+                    (*driver.destination.write()).clone_from(&self.destination.read());
                     Arc::new(driver)
                 })
                 .clone(),

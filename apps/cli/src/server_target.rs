@@ -50,6 +50,21 @@ pub struct ServerTargetHandler {
 impl ServerTargetHandler {
     #[must_use]
     pub fn new(deps: ServerTargetDeps) -> Self {
+        if let Some(browser) = &deps.browser {
+            // The served browser never reaches this server's own network: not
+            // loopback (the daemon API, admin UIs), not link-local or cloud
+            // metadata, and no private range either (nobody at this host can
+            // allow one; the owner answers on the brain side).
+            browser.set_destination_check(browser_cdp::DestinationCheck::new(|url| async move {
+                match browser_cdp::classify_url(&url).await {
+                    browser_cdp::Verdict::Allow => Ok(()),
+                    browser_cdp::Verdict::Block(why) => Err(format!("blocked: {why}")),
+                    browser_cdp::Verdict::Private(host) => Err(format!(
+                        "blocked: {host} is inside this server's own network"
+                    )),
+                }
+            }));
+        }
         Self { deps }
     }
 
@@ -136,6 +151,13 @@ impl ServerTargetHandler {
                     "only http and https pages can be opened",
                 ));
             }
+            if browser_cdp::classify_url(url).await != browser_cdp::Verdict::Allow {
+                return Err(self.refuse(
+                    peer,
+                    RPC_BROWSER,
+                    "that address is inside this server's own network and is not reachable",
+                ));
+            }
             detail["url"] = Value::String((self.deps.redact)(url));
         }
         (self.deps.audit)("server_target.browser", detail).map_err(|e| {
@@ -174,10 +196,14 @@ mod tests {
     #[derive(Default)]
     struct Browser {
         opened: Mutex<Vec<String>>,
+        check: Mutex<Option<browser_cdp::DestinationCheck>>,
     }
 
     #[async_trait]
     impl BrowserDriver for Browser {
+        fn set_destination_check(&self, check: browser_cdp::DestinationCheck) {
+            *self.check.lock() = Some(check);
+        }
         async fn open(&self, url: &str, _: Option<&str>) -> Result<String, String> {
             self.opened.lock().push(url.to_owned());
             Ok(format!("opened {url} token hunter2"))
@@ -320,6 +346,34 @@ mod tests {
             .await;
         assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
         assert!(browser.opened.lock().is_empty() && browser2.opened.lock().is_empty());
+    }
+
+    /// Blocker 4 (server direction): the served browser never reaches the
+    /// server's own network, directly or through a redirect or subresource.
+    #[tokio::test]
+    async fn the_served_browser_cannot_reach_the_servers_internal_services() {
+        let (h, browser, _dir) = rig("desktop", true);
+        let me = device(Role::Desktop, true);
+        for url in [
+            "http://127.0.0.1:8123/v1/status",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.5/",
+        ] {
+            let res = h.handle(&me, RPC_BROWSER, open(url)).await;
+            assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{url}");
+        }
+        assert!(browser.opened.lock().is_empty());
+        // The policy installed on the browser itself (redirect hops, subresources).
+        let check = browser.check.lock().clone().expect("a policy is installed");
+        for url in [
+            "http://127.0.0.1:8123/",
+            "http://[::1]/",
+            "http://169.254.169.254/",
+            "http://192.168.0.10/",
+        ] {
+            assert!(check.check(url.into()).await.is_err(), "{url}");
+        }
+        assert!(check.check("https://93.184.216.34/".into()).await.is_ok());
     }
 
     /// Only web pages open; nothing but the browser family exists here.

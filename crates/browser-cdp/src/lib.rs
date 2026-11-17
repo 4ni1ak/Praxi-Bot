@@ -23,6 +23,7 @@
 pub mod actions;
 pub mod browser;
 pub mod client;
+pub mod destination;
 pub mod diff;
 pub mod dom;
 pub mod error;
@@ -41,6 +42,7 @@ pub use client::{
     CdpClient, CdpClientConfig, CdpEvent, DEFAULT_MAX_SCREENCAST_EVENT_BYTES,
     DEFAULT_MAX_SCREENCAST_IMAGE_BYTES, ScreencastMetadata,
 };
+pub use destination::{AddrClass, DestinationCheck, Verdict, classify_ip, classify_url};
 pub use diff::{SnapshotDiff, diff, diff_text};
 pub use error::{Error, Result};
 pub use launch::{LaunchOptions, find_browser};

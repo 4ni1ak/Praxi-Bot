@@ -421,7 +421,14 @@
           "launch": "{{where}} üzerinde {{name}} programını aç",
           "browser": "{{where}} üzerindeki tarayıcıda şu sayfayı aç: {{url}}",
           "screen": "{{where}} ekranını kullan",
-          "generic": "{{where}} üzerinde bir işlem yap"
+          "generic": "{{where}} üzerinde bir işlem yap",
+          "pcShell": "SİZİN bilgisayarınızda komut çalıştır: {{command}}",
+          "pcWrite": "SİZİN bilgisayarınızda dosya yaz: {{path}}",
+          "pcRead": "SİZİN bilgisayarınızdaki dosyaları oku: {{path}}",
+          "pcBrowserOpen": "Bu sayfayı SİZİN bilgisayarınızdaki tarayıcıda aç: {{url}}",
+          "pcBrowser": "SİZİN bilgisayarınızdaki tarayıcıyı kullan",
+          "pcLaunch": "{{name}} programını SİZİN bilgisayarınızda aç",
+          "pcScreen": "SİZİN bilgisayarınızın ekranını kullan"
         },
         "where": {
           "server": "{{name}} sunucusu",

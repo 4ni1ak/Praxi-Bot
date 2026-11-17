@@ -306,6 +306,8 @@ pub struct CdpClient {
     rejected_events: Arc<AtomicU64>,
     rejected_screencast_events: Arc<AtomicU64>,
     unsubscribed_screencast_events: Arc<AtomicU64>,
+    /// Destination policy of a served session (see [`crate::destination`]).
+    destination: StdMutex<Option<crate::destination::DestinationCheck>>,
 }
 
 #[derive(Default)]
@@ -425,7 +427,67 @@ impl CdpClient {
             rejected_events,
             rejected_screencast_events,
             unsubscribed_screencast_events,
+            destination: StdMutex::new(None),
         }))
+    }
+
+    /// Put a destination policy on every request this browser makes. Pages
+    /// attached afterwards enable `Fetch` interception; each paused request
+    /// (navigation, redirect hop, subresource) is continued only when `check`
+    /// allows its URL and failed otherwise. Fails closed: a request whose
+    /// decision never arrives stays paused.
+    pub fn set_destination_check(self: &Arc<Self>, check: crate::destination::DestinationCheck) {
+        if let Ok(mut slot) = self.destination.lock() {
+            *slot = Some(check.clone());
+        }
+        let mut rx = self.subscribe();
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(ev) if ev.method == "Fetch.requestPaused" => {
+                        let Some(client) = weak.upgrade() else { break };
+                        let check = check.clone();
+                        tokio::spawn(async move {
+                            let id = ev.params["requestId"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned();
+                            let url = ev.params["request"]["url"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned();
+                            let session = ev.session_id.as_deref();
+                            if check.check(url).await.is_ok() {
+                                let _ = client
+                                    .send_on(
+                                        session,
+                                        "Fetch.continueRequest",
+                                        json!({"requestId": id}),
+                                    )
+                                    .await;
+                            } else {
+                                let _ = client
+                                    .send_on(
+                                        session,
+                                        "Fetch.failRequest",
+                                        json!({"requestId": id, "errorReason": "BlockedByClient"}),
+                                    )
+                                    .await;
+                            }
+                        });
+                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
+    /// Whether a destination policy is installed on this client.
+    #[must_use]
+    pub fn has_destination_check(&self) -> bool {
+        self.destination.lock().is_ok_and(|s| s.is_some())
     }
 
     /// Subscribe to all events (every session). Subscribe *before* sending the command that triggers them.
