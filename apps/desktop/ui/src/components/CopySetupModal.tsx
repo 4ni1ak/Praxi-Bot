@@ -8,7 +8,9 @@ import {
   defaultChecked,
   resultKey,
   summarizeReport,
-  toRequest
+  toRequest,
+  unanswered,
+  type LinkChoice
 } from "../lib/copySetup";
 import { MOCK_BASE_URL } from "../api/mockMode";
 import { setHostComputerAccess } from "./ComputerAccess";
@@ -48,6 +50,8 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
   const [failed, setFailed] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // Answers to "a bot with this name already exists on the server" (never defaulted).
+  const [choices, setChoices] = useState<Record<string, LinkChoice>>({});
   // Optional last step, off by default: let this server's bots use THIS computer too.
   const [allowPc, setAllowPc] = useState(false);
   const [report, setReport] = useState<CopyReport | null>(null);
@@ -76,7 +80,7 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
     setBusy(true);
     try {
       const ownerKey = client?.baseUrl === MOCK_BASE_URL ? "mock" : await invoke<string>("owner_key");
-      setReport(await localApi.copySetup(hostId, toRequest(items, checked), ownerKey));
+      setReport(await localApi.copySetup(hostId, toRequest(items, checked, choices), ownerKey));
       // The home is recorded on both sides: the app follows it right away (no picking).
       void refreshHome();
       const link = hostList?.hosts.find((h) => h.id === hostId);
@@ -94,6 +98,7 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
   const refused = plan?.host_accepts === false && plan.host_code;
   const summary = report ? summarizeReport(report) : null;
   const hostName = hostList?.hosts.find((h) => h.id === hostId)?.name ?? t("computerPicker.host");
+  const pending = unanswered(items, checked, choices);
   const adopted = Boolean(summary && !summary.homeFailed && summary.done > 0);
   return (
     <div className={styles.root} data-testid="copy-setup">
@@ -121,8 +126,19 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
               .filter((i) => i.kind !== "home")
               .map((i) => (
                 <li key={`${i.kind}:${i.id}`} data-status={i.status}>
-                  <b>{i.name}</b>
-                  <span>{t(`copySetup.result.${resultKey(i)}`, { defaultValue: i.code ?? i.status })}</span>
+                  <b>{i.kind === "schedules" || i.kind === "chats" ? t(`copySetup.kind.${i.kind}Name`) : i.name}</b>
+                  <span>
+                    {i.count !== undefined && i.count !== null
+                      ? t(`copySetup.counts.${i.kind}`, {
+                          count: i.count,
+                          existing: i.existing ?? 0,
+                          skipped: i.skipped ?? 0
+                        })
+                      : t(`copySetup.result.${resultKey(i)}`, { defaultValue: i.code ?? i.status })}
+                    {i.count !== undefined && i.code
+                      ? ` ${t(`copySetup.result.${i.code}`, { defaultValue: i.code })}`
+                      : ""}
+                  </span>
                 </li>
               ))}
           </ul>
@@ -159,13 +175,38 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
                     setChecked(next);
                   }}
                 />
-                <b>{i.label}</b>
+                <b>{i.detail === "extra" ? t(`copySetup.kind.${i.kind}Name`) : i.label}</b>
                 <span>
-                  {i.blocked
+                  {i.hostState === "separate"
+                    ? t("copySetup.keptSeparate", { server: hostName })
+                    : i.blocked
                     ? t(`copySetup.blocked.${i.blocked}`, { defaultValue: i.blocked })
-                    : t(`copySetup.kind.${i.kind}${i.detail === "key" ? "Key" : ""}`)}
+                    : i.detail === "extra"
+                      ? t(`copySetup.kind.${i.kind}`, { count: i.count ?? 0, messages: i.messages ?? 0 })
+                      : t(`copySetup.kind.${i.kind}${i.detail === "key" ? "Key" : ""}`)}
                 </span>
               </label>
+              {i.kind === "bot" && i.hostState === "name_taken" && checked.has(i.key) ? (
+                <div className={styles.question} role="group" data-testid={`adopt-question-${i.id}`}>
+                  <p>{t("copySetup.nameTaken", { name: i.label, server: hostName })}</p>
+                  {(["adopt", "separate"] as const).map((c) => (
+                    <label key={c}>
+                      <input
+                        type="radio"
+                        name={`link-${i.id}`}
+                        checked={choices[i.id] === c}
+                        data-testid={`${c}-${i.id}`}
+                        onChange={() => setChoices({ ...choices, [i.id]: c })}
+                      />
+                      <span>
+                        <b>{t(`copySetup.choice.${c}`)}</b>
+                        <br />
+                        {t(`copySetup.choice.${c}Why`, { server: hostName })}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -176,6 +217,9 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
           <b>{t("computerAccess.title")}.</b> {t("home.adopted.allowPc")}
         </label>
       )}
+      {!report && pending.length > 0 ? (
+        <p className={styles.note} role="status">{t("copySetup.answerFirst")}</p>
+      ) : null}
       <p className={styles.note}>{t("copySetup.cannotMove")}</p>
       <p className={styles.note}>{t("copySetup.keepLocal")}</p>
       <div className={styles.actions}>
@@ -185,7 +229,7 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
         {report ? null : (
           <Button
             variant="primary"
-            disabled={busy || checked.size === 0 || Boolean(refused)}
+            disabled={busy || checked.size === 0 || Boolean(refused) || pending.length > 0}
             onClick={() => void send()}
             data-testid="copy-setup-send"
           >

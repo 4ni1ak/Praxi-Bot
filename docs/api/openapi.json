@@ -241,6 +241,277 @@
         ]
       }
     },
+    "/v1/admin/import/bots": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_import_bot",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportBotInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportBotResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/import/bots/check": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "What would happen to each bot, so the dialog can ask before anything is sent.",
+        "operationId": "admin_check_bots",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckBotsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckBotsReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/import/chats": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_import_chats",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportChatsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportChatsReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/import/schedules": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_import_schedules",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportSchedulesInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSchedulesReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/import/schedules/activate": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_activate_schedules",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleIdsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSchedulesReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/import/schedules/release": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_release_schedules",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleIdsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSchedulesReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/admin/providers/{id}": {
       "put": {
         "tags": [
@@ -7482,6 +7753,64 @@
         ]
       }
     },
+    "/v1/schedules/{id}/reclaim": {
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "`POST /v1/schedules/{id}/reclaim`: \"bring this schedule back to this computer\". Owner key\nonly. The server's copy is switched off FIRST; when it cannot be reached the owner must\nconfirm explicitly and is told that the copy there may still be active.",
+        "operationId": "schedule_reclaim",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReclaimInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReclaimDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/schedules/{id}/run-now": {
       "post": {
         "tags": [
@@ -9722,6 +10051,69 @@
           }
         }
       },
+      "CheckBotItem": {
+        "type": "object",
+        "required": [
+          "source_bot_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source_bot_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CheckBotResult": {
+        "type": "object",
+        "required": [
+          "source_bot_id",
+          "state"
+        ],
+        "properties": {
+          "source_bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "description": "`mapped` (linked to a server bot already), `name_taken` (a bot with this name that this\nflow did not create exists: ask the owner) or `free`."
+          }
+        }
+      },
+      "CheckBotsInput": {
+        "type": "object",
+        "required": [
+          "bots"
+        ],
+        "properties": {
+          "bots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckBotItem"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CheckBotsReport": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckBotResult"
+            }
+          }
+        }
+      },
       "CheckpointComputerDto": {
         "type": "object",
         "description": "Run computer binding and the actual location of its file checkpoints.\nComputer targeting routes desktop/browser actions only. Built-in file tools\nalways execute in this daemon, even when the run uses a remote desktop node.\nAny future remote file-tool dispatch must add checkpoint origin validation\nand refuse local restore of remote-origin entries before enabling that path.",
@@ -10672,8 +11064,26 @@
             ],
             "description": "The bot cannot be copied (it runs on a CLI engine)."
           },
+          "chats": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Chats of this bot on this computer, and their messages.",
+            "minimum": 0
+          },
+          "host_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the server says about this bot: `mapped` (already linked), `name_taken` (a bot of\nthat name that this flow did not create exists there: the owner must choose), `free`,\n`separate` (the owner chose to keep them apart) or absent (the server was not asked)."
+          },
           "id": {
             "type": "string"
+          },
+          "messages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "model": {
             "type": [
@@ -10683,6 +11093,12 @@
           },
           "name": {
             "type": "string"
+          },
+          "schedules": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Schedules of this bot on this computer (270-B).",
+            "minimum": 0
           }
         }
       },
@@ -10701,6 +11117,33 @@
               "null"
             ]
           },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "For `schedules` / `chats`: how many items moved now (messages for chats) ...",
+            "minimum": 0
+          },
+          "existing": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "... were already on the server ...",
+            "minimum": 0
+          },
+          "failed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "... or failed.",
+            "minimum": 0
+          },
           "id": {
             "type": "string"
           },
@@ -10710,6 +11153,15 @@
           },
           "name": {
             "type": "string"
+          },
+          "skipped": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "... were left behind (webhook secret, too long, bot not moved) ...",
+            "minimum": 0
           },
           "status": {
             "type": "string",
@@ -10814,11 +11266,22 @@
       "CopyRequest": {
         "type": "object",
         "properties": {
+          "adopt": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Local bot ids the owner explicitly wants bound to the server bot that already has the\nsame name (otherwise a name collision is refused)."
+          },
           "bots": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "chats": {
+            "type": "boolean",
+            "description": "Also move the chat history of the moved bots (messages and run metadata; files and\nattachments named in them are not copied)."
           },
           "default_model": {
             "type": "boolean",
@@ -10829,6 +11292,17 @@
             "items": {
               "type": "string"
             }
+          },
+          "schedules": {
+            "type": "boolean",
+            "description": "Also move the schedules and triggers of the moved bots (the local copies are then\ndisabled and marked \"moved to <server>\")."
+          },
+          "separate": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Local bot ids the owner chose to keep separate from the server's same-named bot: they\nare skipped, with everything that belongs to them, and the answer is remembered."
           },
           "set_home": {
             "type": "boolean",
@@ -12807,6 +13281,384 @@
           "application_opened",
           "other"
         ]
+      },
+      "ImportBotInput": {
+        "type": "object",
+        "required": [
+          "source_bot_id",
+          "name",
+          "config"
+        ],
+        "properties": {
+          "adopt": {
+            "type": "boolean",
+            "description": "The owner asked to bind this bot to the host bot that already has its name."
+          },
+          "config": {},
+          "name": {
+            "type": "string"
+          },
+          "source_bot_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The bot's id on the sending computer."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportBotResult": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`name_taken`: a different bot with this name already exists on the server."
+          },
+          "host_bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`done` (created), `exists` (already mapped), `adopted` or `failed`."
+          }
+        }
+      },
+      "ImportChat": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_bot_id",
+          "title",
+          "created_at_ms"
+        ],
+        "properties": {
+          "created_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_bot_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The bot's id on the SENDING computer."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportChatsInput": {
+        "type": "object",
+        "description": "One page of a chat move. Chats first, then runs, then messages: send the pages in that order.",
+        "properties": {
+          "chats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportChat"
+            }
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportMessage"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportRun"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportChatsReport": {
+        "type": "object",
+        "description": "What a page did. Counts only.",
+        "required": [
+          "chats",
+          "runs",
+          "messages",
+          "existing",
+          "rejected"
+        ],
+        "properties": {
+          "chats": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "existing": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items the host already had from this device (an earlier or interrupted sync).",
+            "minimum": 0
+          },
+          "messages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items refused: unmapped bot, an id that belongs to something else, malformed, too long.",
+            "minimum": 0
+          },
+          "runs": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "ImportMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "chat_id",
+          "role",
+          "content",
+          "created_at_ms"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "exposure_private": {
+            "type": "boolean"
+          },
+          "exposure_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exposure_untrusted": {
+            "type": "boolean"
+          },
+          "foreign_author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a reply of a bot that did NOT move: its name. The reply stays foreign, quoted data."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "description": "The author: `user`, `assistant`, `system`, `tool`, ..."
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportRun": {
+        "type": "object",
+        "description": "Run metadata only: no error text, no spawn parameters, no computer identity.",
+        "required": [
+          "id",
+          "source_bot_id",
+          "kind",
+          "state",
+          "created_at_ms",
+          "updated_at_ms"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "source_bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "description": "`succeeded`, `failed` or `cancelled`; anything else arrives as `cancelled`."
+          },
+          "updated_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportScheduleItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_bot_id",
+          "name",
+          "spec",
+          "payload",
+          "enabled",
+          "created_at_ms"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A chat that was moved too (host id = source id); dropped unless bound to this bot."
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "What the owner had; the schedule is imported DISABLED and activated later."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Preserved: the same id on the host means \"already moved\"."
+          },
+          "misfire_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`user` or `bot`."
+          },
+          "payload": {},
+          "precheck": {},
+          "source_bot_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The bot's id on the SENDING computer; the host maps it (see the module docs)."
+          },
+          "spec": {
+            "description": "`{\"cron\": \"0 9 * * 1-5 Europe/Istanbul\"}`: the zone travels inside the spec."
+          },
+          "trigger": {
+            "description": "File-watch or e-mail trigger; never a webhook (its secret stays behind)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportScheduleResult": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "next_run_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Next firing, recomputed on the host's clock (only once active)."
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`staged`, `active` or `released`."
+          },
+          "status": {
+            "type": "string",
+            "description": "`done` (imported, disabled), `exists`, `active`, `paused`, `released` or `failed`."
+          }
+        }
+      },
+      "ImportSchedulesInput": {
+        "type": "object",
+        "required": [
+          "schedules"
+        ],
+        "properties": {
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportScheduleItem"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportSchedulesReport": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportScheduleResult"
+            }
+          }
+        }
       },
       "InputBatch": {
         "type": "object",
@@ -15153,6 +16005,43 @@
           "local_override"
         ]
       },
+      "ReclaimDto": {
+        "type": "object",
+        "required": [
+          "schedule_id",
+          "host_released",
+          "host_copy_may_be_active",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The local copy runs again (it was enabled before the move)."
+          },
+          "host_copy_may_be_active": {
+            "type": "boolean",
+            "description": "The server was not asked or did not answer: its copy may still be active."
+          },
+          "host_released": {
+            "type": "boolean",
+            "description": "The server confirmed that its copy is switched off."
+          },
+          "schedule_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ReclaimInput": {
+        "type": "object",
+        "properties": {
+          "confirm_host_unreachable": {
+            "type": "boolean",
+            "description": "The server cannot be reached: bring the schedule back anyway. The copy there may still\nbe active and then both computers run it."
+          }
+        },
+        "additionalProperties": false
+      },
       "RecordHeader": {
         "oneOf": [
           {
@@ -15882,6 +16771,13 @@
             "type": "string",
             "description": "`skip`, `run_once` or `run_all`: what happens to occurrences missed\nwhile the daemon was down."
           },
+          "moved_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the server this schedule was moved to. The local copy is then disabled\n(not deleted) so nothing runs twice."
+          },
           "name": {
             "type": "string",
             "description": "Display name."
@@ -15917,6 +16813,22 @@
             "description": "Non-webhook trigger definition; never includes webhook secrets."
           }
         }
+      },
+      "ScheduleIdsInput": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "ScheduleInput": {
         "type": "object",

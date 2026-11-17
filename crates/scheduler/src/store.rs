@@ -37,10 +37,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0012_triggers_prechecks",
         include_str!("../migrations/0012_triggers_prechecks.sql"),
     ),
+    (
+        "0013_frozen_schedules",
+        include_str!("../migrations/0013_frozen_schedules.sql"),
+    ),
 ];
 
 /// Schema version produced by the newest embedded migration.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 /// Terminal occurrence rows kept per schedule; older ones are pruned in the
 /// transaction that finishes an occurrence. Unresolved rows are never pruned.
@@ -506,6 +510,58 @@ impl ScheduleStore {
         if changed > 0 {
             self.notify();
         }
+        Ok(changed > 0)
+    }
+
+    /// Freeze a schedule that moved to `host`: disabled, no next run, and (by a database
+    /// trigger) impossible to enable again until [`Self::unfreeze`]. Idempotent.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors; a failure means the schedule is NOT frozen.
+    pub fn freeze(&self, id: TaskId, host: &str) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
+            "UPDATE schedules SET enabled = 0, next_run_at_ms = NULL, frozen_for = ?2,              revision = revision + 1 WHERE id = ?1",
+            params![id.to_string(), host],
+        )?;
+        if changed > 0 {
+            cancel_pending(&tx, id)?;
+        }
+        tx.commit()?;
+        drop(conn);
+        if changed > 0 {
+            self.notify();
+        }
+        Ok(changed > 0)
+    }
+
+    /// The server a frozen schedule moved to, `None` when it is not frozen.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn frozen_for(&self, id: TaskId) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT frozen_for FROM schedules WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Lift the freeze (the owner reclaimed the schedule). It stays disabled; enabling is a
+    /// separate, ordinary update.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn unfreeze(&self, id: TaskId) -> Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE schedules SET frozen_for = NULL, revision = revision + 1              WHERE id = ?1 AND frozen_for IS NOT NULL",
+            [id.to_string()],
+        )?;
         Ok(changed > 0)
     }
 

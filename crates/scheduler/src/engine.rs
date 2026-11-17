@@ -298,6 +298,9 @@ impl Scheduler {
             .store
             .get(id)?
             .ok_or_else(|| SchedulerError::NotFound(format!("schedule {id}")))?;
+        if self.inner.store.frozen_for(id)?.is_some() {
+            return Err(SchedulerError::Frozen(id.to_string()));
+        }
         let Some(guard) = try_acquire_in_flight(&self.inner, &schedule) else {
             return Err(SchedulerError::Busy(id.to_string()));
         };
@@ -678,6 +681,10 @@ pub(crate) async fn execute_checked(
     executor: &dyn ScheduleExecutor,
     schedule: &Schedule,
 ) -> Result<()> {
+    // A schedule that moved to a server never fires here, whichever ingress asked.
+    if store.frozen_for(schedule.id)?.is_some() {
+        return Ok(());
+    }
     let mut fired = schedule.clone();
     if fired.precheck.is_some() {
         let mut state = store.check_state(schedule)?;

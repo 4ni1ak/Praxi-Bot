@@ -1034,6 +1034,14 @@
         "title": "That schedule is not valid",
         "hint": "Check the time or repeat rule and try again."
       },
+      "schedule_moved": {
+        "title": "That schedule moved to a server",
+        "hint": "It runs there and is frozen on this computer. Use Bring back to this computer on its row."
+      },
+      "host_unreachable": {
+        "title": "The server did not answer",
+        "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway."
+      },
       "bad_web_config": {
         "title": "The web search settings are not valid",
         "hint": "Check the key or address and save again."
@@ -1638,6 +1646,11 @@
       }
     },
     "runNow": "Run now",
+    "movedTo": "Moved to {{name}}: it runs there and is frozen on this computer.",
+    "reclaim": "Bring back to this computer",
+    "reclaimAnyway": "Bring it back anyway",
+    "reclaimUnreachable": "{{name}} did not answer, so its copy may still be running there. Bringing it back now could run it on both computers.",
+    "reclaimed": "{{name}} is back on this computer.",
     "runNowStarted": "{{name}} started.",
     "edit": "Edit",
     "delete": "Delete",
@@ -3373,18 +3386,38 @@
     "send": "Move to the server",
     "sending": "Moving…",
     "failed": "That did not work. Check that the server is connected and try again.",
-    "cannotMove": "Cannot move yet: chat history, memory, schedules and triggers, app connections, and CLI sign-ins (Claude Code, Codex, agy, OpenCode sign in on the server itself).",
-    "keepLocal": "Nothing is deleted on this computer; it stays a working fallback. You can run this again later to sync.",
+    "cannotMove": "Cannot move yet: memory, app connections, and CLI sign-ins (Claude Code, Codex, agy, OpenCode sign in on the server itself). Files and attachments that chats mention are not copied; webhook secrets stay behind.",
+    "keepLocal": "Nothing is deleted on this computer. Schedules that move are frozen here (they cannot be switched on again by accident) and run on the server; you can bring one back from its row on the Schedules page. You can run this again later to sync: it never duplicates.",
     "summary": "{{done}} moved, {{skipped}} skipped, {{failed}} failed.",
     "homeFailed": "The items moved, but the server could not be marked as your bots' home.",
     "kind": {
       "provider": "Model provider",
       "providerKey": "Model provider and its key",
       "bot": "Bot",
-      "default": "Default model"
+      "default": "Default model",
+      "schedules": "{{count}} on this computer; their time zones are kept, the copies here are switched off",
+      "schedulesName": "Schedules and triggers",
+      "chats": "{{count}} chats, {{messages}} messages; authors and times are kept",
+      "chatsName": "Chat history",
+      "memory": "Memory",
+      "memoryName": "Memory"
+    },
+    "nameTaken": "A bot named {{name}} already exists on {{server}}.",
+    "keptSeparate": "Kept separate from the bot of the same name on {{server}}",
+    "answerFirst": "Choose what to do with the bot that already exists on the server before moving.",
+    "choice": {
+      "adopt": "It is the same bot - link them",
+      "adoptWhy": "Its schedules and chats will be added to that bot on {{server}}.",
+      "separate": "Keep them separate",
+      "separateWhy": "This bot and everything that belongs to it stays here and is not moved."
+    },
+    "counts": {
+      "schedules": "{{count}} moved, {{existing}} already there, {{skipped}} left behind",
+      "chats": "{{count}} messages moved, {{existing}} already there, {{skipped}} left behind"
     },
     "blocked": {
-      "cli_engine": "Uses a CLI engine that stays on this computer"
+      "cli_engine": "Uses a CLI engine that stays on this computer",
+      "no_export": "Not moved yet: memory has no export"
     },
     "host": {
       "host_admin_required": "The owner must confirm this computer on the server once. Run this on the server:",
@@ -3404,6 +3437,14 @@
       "secret_store_failed": "Server could not save it",
       "host_unreachable": "Server did not answer",
       "rejected": "Server refused it",
+      "admin_rate_limit": "Server asked to wait; run it again to continue",
+      "name_taken": "A different bot with this name already exists on the server",
+      "kept_separate": "Kept separate: nothing of it moved",
+      "choice_not_saved": "Could not save your choice",
+      "bot_not_moved": "Its bot is not on the server",
+      "id_in_use": "The server already has something with this id",
+      "freeze_failed": "Could not freeze the local copy; nothing was switched on there",
+      "unreadable": "Could not be read here",
       "no_default": "No default model",
       "skipped": "Skipped",
       "failed": "Failed"
