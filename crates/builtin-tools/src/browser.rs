@@ -132,6 +132,10 @@ pub trait BrowserDriver: Send + Sync {
     ) -> Result<(Vec<u8>, &'static str), String>;
     /// Evaluate JavaScript in the page.
     async fn eval(&self, js: &str) -> Result<Value, String>;
+    /// Browser-reported origin of the receiving ref, or the focused frame for a key press.
+    async fn input_origin(&self, r: Option<&str>) -> Option<String> {
+        self.field_target(r?).await.ok()?.frame_origin
+    }
     /// URL of the top-level page of the current session as the BROWSER reports it (target
     /// info, not page script). `None`: no session, or the driver cannot tell.
     async fn current_url(&self) -> Option<String> {
@@ -582,23 +586,8 @@ tokio::task_local! {
     static EXPECTED_PAGE_ORIGIN: Option<String>;
 }
 
-async fn check_session_origin(session: &Session, expected: &str) -> Result<(), String> {
-    let current = session.page.target_id();
-    let now = session
-        .browser
-        .pages()
-        .await
-        .map_err(s)?
-        .into_iter()
-        .find(|t| t.target_id == current)
-        .and_then(|t| origin_of(&t.url));
-    if now.as_deref() != Some(expected) {
-        return Err(format!(
-            "page origin changed from {expected} to {}; action refused: observe the page and ask again",
-            now.as_deref().unwrap_or("unknown")
-        ));
-    }
-    Ok(())
+fn expected_input_origin() -> Option<String> {
+    EXPECTED_PAGE_ORIGIN.try_with(Clone::clone).ok().flatten()
 }
 
 /// Run `$body` against the cached session. A closed browser is replaced inside
@@ -613,9 +602,6 @@ macro_rules! with_session {
             let mut guard = $self.session.lock().await;
             let step = {
                 let $sess = $self.ensure(&mut guard, $profile, $allow_launch).await?;
-                if let Some(expected) = EXPECTED_PAGE_ORIGIN.try_with(Clone::clone).ok().flatten() {
-                    check_session_origin($sess, &expected).await?;
-                }
                 $body
             };
             if let Some(session) = guard.as_mut() {
@@ -718,7 +704,9 @@ impl BrowserDriver for CdpDriver {
             prompt_text: prompt_text.map(str::to_string),
         };
         let acted = with_session!(self, None, |sess| {
-            sess.page.click_with(r, &dialog_opts).await
+            sess.page
+                .click_with_origin(r, &dialog_opts, expected_input_origin().as_deref())
+                .await
         })?;
         render_action(&acted)
     }
@@ -728,8 +716,22 @@ impl BrowserDriver for CdpDriver {
     }
 
     async fn fill(&self, r: &str, text: &str) -> Result<String, String> {
-        let acted = with_session!(self, None, |sess| { sess.page.fill(r, text).await })?;
+        let acted = with_session!(self, None, |sess| {
+            sess.page
+                .fill_with_origin(r, text, expected_input_origin().as_deref())
+                .await
+        })?;
         render_action(&acted)
+    }
+
+    async fn input_origin(&self, r: Option<&str>) -> Option<String> {
+        let result: Result<Option<String>, String> = async {
+            with_session!(self, None, false, |sess| {
+                sess.page.input_origin(r).await
+            })
+        }
+        .await;
+        result.ok().flatten()
     }
 
     async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
@@ -752,13 +754,19 @@ impl BrowserDriver for CdpDriver {
 
     async fn select(&self, r: &str, value: &str) -> Result<String, String> {
         let acted = with_session!(self, None, |sess| {
-            sess.page.select_option(r, value).await
+            sess.page
+                .select_option_with_origin(r, value, expected_input_origin().as_deref())
+                .await
         })?;
         render_action(&acted)
     }
 
     async fn press(&self, key: &str) -> Result<String, String> {
-        let acted = with_session!(self, None, |sess| { sess.page.press_key(key).await })?;
+        let acted = with_session!(self, None, |sess| {
+            sess.page
+                .press_key_with_origin(key, expected_input_origin().as_deref())
+                .await
+        })?;
         render_action(&acted)
     }
 
@@ -1939,13 +1947,21 @@ impl Tool for BrowserTool {
         &self.spec
     }
 
-    async fn current_origin(&self, ctx: &ToolContext, _input: &Value) -> Option<String> {
+    async fn current_origin(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
         // Only the actions that act on the page that is open now (not open/eval/tabs/back).
         if !matches!(self.op, Op::Click | Op::Fill | Op::Select | Op::Press) {
             return None;
         }
         let shared = self.select_shared(ctx).ok()?;
-        origin_of(&shared.driver.current_url().await?)
+        shared
+            .driver
+            .input_origin(if self.op == Op::Press {
+                None
+            } else {
+                input.get("ref")?.as_str()
+            })
+            .await
+            .and_then(|o| origin_of(&o))
     }
 
     fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
@@ -2028,20 +2044,15 @@ impl Tool for BrowserTool {
             ));
         }
         let shared = self.select_shared(ctx)?;
-        // Execution-time guard: the allowance was given for the page on one origin; if the page
-        // moved (a navigation or a redirect since), refuse and let the loop ask again.
+        // Recheck the receiving frame after approval. The CDP driver repeats this
+        // check with the session lock held immediately before sending input.
         if let Some(expected) = &ctx.expected_origin
             && matches!(self.op, Op::Click | Op::Fill | Op::Select | Op::Press)
         {
-            let now = shared
-                .driver
-                .current_url()
-                .await
-                .as_deref()
-                .and_then(origin_of);
+            let now = self.current_origin(ctx, &input).await;
             if now.as_deref() != Some(expected.as_str()) {
                 return Err(exec_err(format!(
-                    "the page is no longer on {expected} (it is on {}): look at the page again, then repeat the action so it can be approved for the new site",
+                    "the receiving frame is no longer on {expected} (it is on {}): look at the page again, then repeat the action so it can be approved for the new site",
                     now.as_deref().unwrap_or("an unknown page")
                 )));
             }
@@ -2111,6 +2122,13 @@ pub(crate) mod fake {
 
     #[async_trait]
     impl BrowserDriver for FakeBrowser {
+        async fn input_origin(&self, r: Option<&str>) -> Option<String> {
+            self.targets
+                .lock()
+                .get(r.unwrap_or("focused"))
+                .and_then(|t| t.frame_origin.clone())
+        }
+
         async fn current_url(&self) -> Option<String> {
             self.url.lock().clone()
         }
@@ -2397,6 +2415,56 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(fake.calls.lock().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn page_grants_follow_receiving_and_focused_frames_not_the_top_url() {
+        let (_dir, fake, tools) = build();
+        *fake.url.lock() = Some("https://owner.test/".into());
+        let target = |origin: Option<&str>| FieldTarget {
+            name: "embedded input".into(),
+            role: "textbox".into(),
+            frame_origin: origin.map(str::to_owned),
+            top_origin: Some("https://owner.test".into()),
+        };
+        fake.targets
+            .lock()
+            .insert("e1".into(), target(Some("https://attacker.test")));
+        fake.targets
+            .lock()
+            .insert("focused".into(), target(Some("https://attacker.test")));
+        let ctx = ToolContext {
+            expected_origin: Some("https://owner.test:443".into()),
+            ..ToolContext::default()
+        };
+        let fill = get(&tools, "browser_fill");
+        let input = json!({"ref":"e1", "text":"private document"});
+        assert_eq!(
+            fill.current_origin(&ctx, &input).await.as_deref(),
+            Some("https://attacker.test:443")
+        );
+        assert!(fill.call(&ctx, input.clone()).await.is_err());
+        let press = get(&tools, "browser_press");
+        assert_eq!(
+            press
+                .current_origin(&ctx, &json!({"key":"Enter"}))
+                .await
+                .as_deref(),
+            Some("https://attacker.test:443")
+        );
+        assert!(press.call(&ctx, json!({"key":"Enter"})).await.is_err());
+        // A sandboxed/opaque receiver never supplies a reusable origin.
+        fake.targets.lock().insert("e1".into(), target(None));
+        assert!(fill.current_origin(&ctx, &input).await.is_none());
+        assert!(fill.call(&ctx, input.clone()).await.is_err());
+        assert!(
+            fake.calls.lock().is_empty(),
+            "no rejected input reached the driver"
+        );
+        fake.targets
+            .lock()
+            .insert("e1".into(), target(Some("https://owner.test")));
+        assert!(fill.call(&ctx, input).await.is_ok());
     }
 
     #[tokio::test]
