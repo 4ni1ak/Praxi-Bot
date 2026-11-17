@@ -703,14 +703,25 @@ if [[ -n "${TRUSTED_ROOT}" ]]; then
   cp -- "${TRUSTED_ROOT}" "${WORK}/trusted_root.jsonl"
   trust_args=(--custom-trusted-root "${WORK}/trusted_root.jsonl")
 fi
-# Identity constraints remain fixed in both online and offline verification.
-gh attestation verify "${WORK}/${ASSET}" --bundle "${WORK}/${BUNDLE_ASSET}" ${trust_args[@]+"${trust_args[@]}"} \
-  --repo "${REPO}" --hostname github.com \
-  --signer-workflow "${SIGNER_WORKFLOW}" \
-  --source-ref "refs/tags/${VERSION}" --deny-self-hosted-runners \
-  --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --predicate-type https://slsa.dev/provenance/v1 --digest-alg sha256 \
-  || die "provenance verification failed; refusing to install (a checksum is not proof of origin)"
+# Identity constraints remain fixed in both online and offline verification. The only accepted
+# source ref is the release tag itself; a PRE-RELEASE tag (v1.2.3-alpha.1, any suffix) may also
+# carry provenance from this repository's linux-release workflow run on main, which is how a
+# maintainer republishes the Linux assets of an existing pre-release. Final tags never do.
+source_refs=("refs/tags/${VERSION}")
+[[ "${VERSION}" == *-* ]] && source_refs+=("refs/heads/main")
+verified=0
+for source_ref in "${source_refs[@]}"; do
+  if gh attestation verify "${WORK}/${ASSET}" --bundle "${WORK}/${BUNDLE_ASSET}" ${trust_args[@]+"${trust_args[@]}"} \
+    --repo "${REPO}" --hostname github.com \
+    --signer-workflow "${SIGNER_WORKFLOW}" \
+    --source-ref "${source_ref}" --deny-self-hosted-runners \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com \
+    --predicate-type https://slsa.dev/provenance/v1 --digest-alg sha256; then
+    verified=1
+    break
+  fi
+done
+[[ "${verified}" -eq 1 ]] || die "provenance verification failed; refusing to install (a checksum is not proof of origin)"
 log "verified release provenance for ${VERSION}"
 if [[ "${VERIFY_ONLY}" -eq 1 ]]; then
   log "verification complete; no installation performed"
