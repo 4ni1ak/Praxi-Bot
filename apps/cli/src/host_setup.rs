@@ -362,6 +362,7 @@ impl Worker {
                 record: self.record.clone(),
                 mode: Mode::Add,
                 app_version: env!("CARGO_PKG_VERSION").to_owned(),
+                release_tag: option_env!("PRAXI_RELEASE_TAG").map(str::to_owned),
                 desktop: true,
                 retry_delay: Duration::from_secs(5),
                 allow_install: install_available(),
