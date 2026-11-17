@@ -195,6 +195,8 @@ pub struct AdminCliEngineDto {
     pub version: Option<String>,
     /// Command that installs it on the host, when one is known.
     pub install_command: Option<String>,
+    /// The host can run that command itself (a verified, fixed installer).
+    pub can_install: bool,
     /// How to sign in on the host.
     pub login: String,
     pub docs_url: String,
@@ -557,7 +559,9 @@ pub(crate) async fn cli_engines(
     _gate: Gate,
 ) -> Result<Json<Vec<AdminCliEngineDto>>, ApiError> {
     require_admin(&s, peer.as_ref().map(|p| &p.0))?;
-    let rows = s.detector().detect(false).await;
+    let detector = s.detector();
+    let rows = detector.detect(false).await;
+    let npm_ready = cli_provider::install::resolve_installer(detector.environment()).is_ok();
     Ok(Json(
         rows.into_iter()
             .filter_map(|row| {
@@ -571,6 +575,15 @@ pub(crate) async fn cli_engines(
                     install_command: spec
                         .install()
                         .map(cli_provider::registry::InstallCommand::display),
+                    // Never offered when the host could not honour it: an npm engine needs npm or a
+                    // machine Praxi can fetch Node.js for.
+                    can_install: spec.install().is_some_and(|i| {
+                        i.verified
+                            && i.executable
+                            && (i.program != "npm"
+                                || npm_ready
+                                || cli_provider::node_runtime::supported_target().is_some())
+                    }),
                     login: spec.login.into(),
                     docs_url: spec.docs_url.into(),
                     id: row.id,
@@ -583,12 +596,251 @@ pub(crate) async fn cli_engines(
     ))
 }
 
+/// Progress of an install the owner's desktop started on this host.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AdminInstallRun {
+    pub state: &'static str,
+    pub error: Option<&'static str>,
+    pub output: String,
+}
+
+/// Where Node.js is downloaded from, and whether redirects must stay on https. Tests point it at a local server.
+fn node_dist() -> (String, bool) {
+    #[cfg(test)]
+    if let Some(base) = NODE_DIST_TEST.lock().clone() {
+        return (base, false);
+    }
+    (cli_provider::node_runtime::DIST_BASE.to_owned(), true)
+}
+
+#[cfg(test)]
+pub(crate) static NODE_DIST_TEST: parking_lot::Mutex<Option<String>> =
+    parking_lot::Mutex::new(None);
+
+/// Bytes of installer output kept for the progress view.
+const INSTALL_TAIL_BYTES: usize = 4096;
+
+/// `GET/POST /v1/admin/cli-engines/{id}/install`: where the install stands.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AdminCliInstallDto {
+    pub engine: String,
+    /// `idle`, `installing`, `done` or `failed`.
+    pub state: String,
+    /// Stable code of the last failure (`exit`, `timeout`, `npm_missing`...).
+    pub error: Option<String>,
+    /// Last lines of installer output (untrusted text, bounded).
+    pub output: String,
+    /// Found on the host right now.
+    pub installed: bool,
+    /// Signed in, when the CLI can say.
+    pub signed_in: Option<bool>,
+}
+
+/// Only fixed registry argv runs; the client names an engine id, nothing else.
+fn installable(id: &str) -> Result<&'static cli_provider::registry::CliEngineSpec, ApiError> {
+    let spec =
+        cli_provider::engine_spec(id).ok_or_else(|| ApiError::not_found("unknown engine"))?;
+    if spec.install().is_some_and(|i| i.verified && i.executable) {
+        Ok(spec)
+    } else {
+        Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "install_copy_only",
+            "this engine has no verified installer: use the command or the official page",
+        ))
+    }
+}
+
+async fn install_dto(
+    s: &AppState,
+    spec: &cli_provider::registry::CliEngineSpec,
+) -> AdminCliInstallDto {
+    let run =
+        s.0.cli_installs
+            .admin
+            .lock()
+            .get(spec.id)
+            .cloned()
+            .unwrap_or_else(|| AdminInstallRun {
+                state: "idle",
+                ..AdminInstallRun::default()
+            });
+    let row = s
+        .detector()
+        .detect(false)
+        .await
+        .into_iter()
+        .find(|r| r.id == spec.id);
+    AdminCliInstallDto {
+        engine: spec.id.into(),
+        state: run.state.into(),
+        error: run.error.map(str::to_owned),
+        output: run.output,
+        installed: row.as_ref().is_some_and(|r| r.installed),
+        signed_in: row.and_then(|r| match r.auth {
+            cli_provider::AuthState::SignedIn => Some(true),
+            cli_provider::AuthState::SignedOut => Some(false),
+            cli_provider::AuthState::Unknown => None,
+        }),
+    }
+}
+
+/// Install one CLI engine ON THE HOST with the registry's fixed command.
+/// Admin desktop only; one install at a time; output bounded.
+#[utoipa::path(post, operation_id = "admin_cli_engine_install", path = "/v1/admin/cli-engines/{id}/install", tag = "admin", security(("bearer" = [])),
+    params(("id" = String, Path)),
+    responses((status = 202, body = AdminCliInstallDto), (status = 403, body = crate::error::ErrorBody), (status = 409, body = crate::error::ErrorBody)))]
+#[allow(clippy::too_many_lines)] // One admission, bootstrap and install sequence.
+pub(crate) async fn install_cli_engine(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<AdminCliInstallDto>), ApiError> {
+    let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    let spec = installable(&id)?;
+    let detector = s.detector();
+    let needs_npm = spec.install().is_some_and(|i| i.program == "npm");
+    let npm_present =
+        !needs_npm || cli_provider::install::resolve_installer(detector.environment()).is_ok();
+    // No npm: Praxi fetches its own Node.js below the data dir (no root) when this machine
+    // is one it can honestly do that for; otherwise the owner is told what to do.
+    let bootstrap = if npm_present {
+        None
+    } else {
+        Some(cli_provider::node_runtime::supported_target().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "prerequisite_missing",
+                "Node.js (npm) is not installed on the server and Praxi cannot install it on this system; install Node.js 22 LTS by hand",
+            )
+        })?)
+    };
+    let permit = std::sync::Arc::clone(&s.0.cli_installs.running)
+        .try_acquire_owned()
+        .map_err(|_| ApiError::conflict("an install is already running"))?;
+    audit(
+        &s,
+        &admin,
+        "provider.cli_install.admin_started",
+        &serde_json::json!({"engine": spec.id, "bootstraps_node": bootstrap.is_some()}),
+    )?;
+    s.0.cli_installs.admin.lock().insert(
+        spec.id.to_owned(),
+        AdminInstallRun {
+            state: "installing",
+            ..AdminInstallRun::default()
+        },
+    );
+    let task = s.clone();
+    tokio::spawn(async move {
+        let _permit = permit;
+        let shutdown = task.shutdown_token();
+        let data = task.data_dir();
+        let say = {
+            let sink = task.clone();
+            move |text: &str| {
+                let mut book = sink.0.cli_installs.admin.lock();
+                if let Some(run) = book.get_mut(spec.id) {
+                    run.output.push_str(text);
+                    run.output.push('\n');
+                    if run.output.len() > INSTALL_TAIL_BYTES {
+                        let mut cut = run.output.len() - INSTALL_TAIL_BYTES;
+                        while !run.output.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                        run.output.drain(..cut);
+                    }
+                }
+            }
+        };
+        let mut error: Option<&'static str> = None;
+        if let Some(target) = bootstrap {
+            say("Installing Node.js (LTS) into the Praxi data directory...");
+            let (base, https_only) = node_dist();
+            let step = async {
+                let version =
+                    cli_provider::node_runtime::install_node(&base, target, &data, https_only)
+                        .await?;
+                cli_provider::node_runtime::verify_runs(&data, &version).await?;
+                Ok::<String, &'static str>(version)
+            };
+            let result = tokio::select! {
+                r = step => r,
+                () = shutdown.cancelled() => Err("shutdown"),
+            };
+            let _ = audit(
+                &task,
+                &admin,
+                "provider.node_runtime.admin_installed",
+                &serde_json::json!({"engine": spec.id, "version": result.as_ref().ok(), "error": result.as_ref().err()}),
+            );
+            match result {
+                Ok(version) => {
+                    say(&format!("Node.js {version} installed."));
+                    // Detection and installs now see the runtime on the search path.
+                    task.set_detector(std::sync::Arc::new(cli_provider::Detector::new()));
+                }
+                Err(code) => error = Some(code),
+            }
+        }
+        if error.is_none() {
+            let detector = task.detector();
+            let sink = say.clone();
+            let work = cli_provider::install::run_install(
+                spec.id,
+                detector.environment(),
+                &data,
+                cli_provider::install::INSTALL_TIMEOUT,
+                move |text| sink(&text),
+            );
+            let result = tokio::select! {
+                r = work => r,
+                () = shutdown.cancelled() => Err("shutdown"),
+            };
+            error = result.err();
+        }
+        let _ = task.detector().detect(true).await;
+        if let Some(run) = task.0.cli_installs.admin.lock().get_mut(spec.id) {
+            run.state = if error.is_none() { "done" } else { "failed" };
+            run.error = error;
+        }
+        let _ = audit(
+            &task,
+            &admin,
+            "provider.cli_install.admin_finished",
+            &serde_json::json!({"engine": spec.id, "error": error}),
+        );
+    });
+    Ok((StatusCode::ACCEPTED, Json(install_dto(&s, spec).await)))
+}
+
+/// Progress of the install above (poll while `state` is `installing`).
+#[utoipa::path(get, operation_id = "admin_cli_engine_install_status", path = "/v1/admin/cli-engines/{id}/install", tag = "admin", security(("bearer" = [])),
+    params(("id" = String, Path)),
+    responses((status = 200, body = AdminCliInstallDto), (status = 403, body = crate::error::ErrorBody)))]
+pub(crate) async fn cli_engine_install_status(
+    State(s): State<AppState>,
+    peer: Option<Extension<PeerIdentity>>,
+    _gate: Gate,
+    Path(id): Path<String>,
+) -> Result<Json<AdminCliInstallDto>, ApiError> {
+    require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    let spec =
+        cli_provider::engine_spec(&id).ok_or_else(|| ApiError::not_found("unknown engine"))?;
+    Ok(Json(install_dto(&s, spec).await))
+}
+
 /// The administration routes with their own, small body limit.
 pub(crate) fn routes() -> axum::Router<AppState> {
     use axum::routing::{get, put};
     axum::Router::new()
         .route("/v1/admin/state", get(state))
         .route("/v1/admin/cli-engines", get(cli_engines))
+        .route(
+            "/v1/admin/cli-engines/{id}/install",
+            get(cli_engine_install_status).post(install_cli_engine),
+        )
         .route("/v1/admin/home", put(set_home))
         .route("/v1/admin/default-provider", put(set_default))
         .route(

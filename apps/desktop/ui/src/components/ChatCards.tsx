@@ -33,6 +33,7 @@ import { StepIcon } from "./StepIcon";
 import formStyles from "./Form.module.css";
 import styles from "./ChatCards.module.css";
 import { humanLine, humanToolError } from "../lib/humanError";
+import { actionText, reasonLine, type T } from "../lib/approvalPlain";
 import { ErrorNotice } from "./ErrorNotice";
 
 const brandName = (name: string): string | null => {
@@ -184,6 +185,8 @@ export interface ApprovalCardProps {
   ) => Promise<void>;
   /** Auto-deny deadline (epoch ms), when the daemon sets a timeout. */
   expiresAtMs?: number;
+  /** Name of the server that is the bots' home; `null` when the home is this computer. */
+  serverName?: string | null;
   onTrustFolder?: (folder: string) => Promise<void>;
 }
 
@@ -354,6 +357,7 @@ export function ApprovalCard({
   tool,
   onDecide,
   expiresAtMs,
+  serverName = null,
   onTrustFolder
 }: ApprovalCardProps) {
   const { t } = useTranslation();
@@ -397,6 +401,23 @@ export function ApprovalCard({
 
   const disabled = busy || remaining === 0;
   const glyph = describeTool(tool.name, tool.input, brandName);
+  const tt = t as unknown as T;
+  const plainAction = actionText(tool.name, tool.input, { computer, serverName }, tt);
+  const plainReason = egress ? reasonLine(egress, tt) : null;
+  const detailBody = (
+    <>
+      {computer && (egress || schedule) ? (
+        <p className={styles.bodyLabel} data-testid="approval-computer">
+          {t("chat.approval.computer", {
+            kind: computer.kind,
+            name: computer.name,
+            id: computer.nodeId
+          })}
+        </p>
+      ) : null}
+      {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
+    </>
+  );
   return (
     <div
       className={[styles.approval, outbound ? styles.outbound : ""]
@@ -452,8 +473,11 @@ export function ApprovalCard({
         ) : (
           <>
             <p className={styles.approvalSummary}>
-              {egress?.reason || tool.summary || tool.name}
+              {plainAction || plainReason || egress?.reason || tool.summary || tool.name}
             </p>
+            {plainAction && plainReason ? (
+              <p className={styles.bodyLabel} data-testid="approval-reason">{plainReason}</p>
+            ) : null}
             <div className={styles.approvalMeta}>
               <span className={styles.approvalTool}>{tool.name}</span>
               <span className={styles.inputSummary}>
@@ -467,17 +491,15 @@ export function ApprovalCard({
             {t(`chat.approval.why.${why}`, { defaultValue: "" })}
           </p>
         ) : null}
-        {computer && (egress || schedule) ? (
-          <p className={styles.bodyLabel} data-testid="approval-computer">
-            {t("chat.approval.computer", {
-              kind: computer.kind,
-              name: computer.name,
-              id: computer.nodeId
-            })}
-          </p>
-        ) : null}
         {control ? <ControlGrantBody d={control} /> : null}
-        {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
+        {plainAction && (egress || computer) ? (
+          <details open={egress?.reviewFullPayload === true} data-testid="approval-details">
+            <summary className={styles.bodyLabel}>{t("chat.approval.plain.details")}</summary>
+            {detailBody}
+          </details>
+        ) : (
+          detailBody
+        )}
         {onTrustFolder ? folders.map((folder) => (
           <Button key={folder} size="sm" variant="secondary" disabled={disabled || trustedFolders.includes(folder)}
             onClick={() => {

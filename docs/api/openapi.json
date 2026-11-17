@@ -48,6 +48,106 @@
         ]
       }
     },
+    "/v1/admin/cli-engines/{id}/install": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Progress of the install above (poll while `state` is `installing`).",
+        "operationId": "admin_cli_engine_install_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCliInstallDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Install one CLI engine ON THE HOST with the registry's fixed command.\nAdmin desktop only; one install at a time; output bounded.",
+        "operationId": "admin_cli_engine_install",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCliInstallDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/admin/default-provider": {
       "put": {
         "tags": [
@@ -8661,10 +8761,15 @@
           "id",
           "name",
           "installed",
+          "can_install",
           "login",
           "docs_url"
         ],
         "properties": {
+          "can_install": {
+            "type": "boolean",
+            "description": "The host can run that command itself (a verified, fixed installer)."
+          },
           "docs_url": {
             "type": "string"
           },
@@ -8700,6 +8805,47 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "AdminCliInstallDto": {
+        "type": "object",
+        "description": "`GET/POST /v1/admin/cli-engines/{id}/install`: where the install stands.",
+        "required": [
+          "engine",
+          "state",
+          "output",
+          "installed"
+        ],
+        "properties": {
+          "engine": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable code of the last failure (`exit`, `timeout`, `npm_missing`...)."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Found on the host right now."
+          },
+          "output": {
+            "type": "string",
+            "description": "Last lines of installer output (untrusted text, bounded)."
+          },
+          "signed_in": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Signed in, when the CLI can say."
+          },
+          "state": {
+            "type": "string",
+            "description": "`idle`, `installing`, `done` or `failed`."
           }
         }
       },

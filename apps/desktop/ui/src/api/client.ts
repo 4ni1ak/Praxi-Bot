@@ -5,6 +5,7 @@ import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, Know
 import type {
   AcceptedResponse,
   AdminCliEngine,
+  AdminCliInstall,
   AdminProvider,
   AdminProviderInput,
   AdminState,
@@ -374,6 +375,13 @@ export class ApiClient {
   }
   adminCliEngines(): Promise<AdminCliEngine[]> {
     return this.request("GET", "/admin/cli-engines");
+  }
+  /** Install one CLI engine ON THE HOST (admin desktop only; the host runs its registry command). */
+  adminCliEngineInstall(id: string): Promise<AdminCliInstall> {
+    return this.request("POST", `/admin/cli-engines/${encodeURIComponent(id)}/install`);
+  }
+  adminCliEngineInstallStatus(id: string): Promise<AdminCliInstall> {
+    return this.request("GET", `/admin/cli-engines/${encodeURIComponent(id)}/install`);
   }
   /** Pair with a host using the ticket from `bot host invite --role desktop`. */
   pairHost(ticket: string): Promise<HostLinkInfo> {

@@ -139,7 +139,10 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         }),
         install_unix: Some(InstallCommand {
             program: "sh",
-            args: &["-c", "curl https://cursor.com/install -fsS | bash"],
+            args: &[
+                "-c",
+                "curl --proto =https --proto-redir =https --tlsv1.2 -fsS https://cursor.com/install | bash",
+            ],
             verified: true,
             executable: true,
         }),
@@ -162,6 +165,8 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         login: "opencode auth login",
         docs_url: "https://opencode.ai/docs/",
     },
+    // Retired by the vendor: never offered or installable; kept only so an install that
+    // already exists keeps working (see `Detector::detect_fresh`).
     CliEngineSpec {
         id: "gemini",
         display_name: "Gemini CLI",
@@ -171,8 +176,8 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         version_args: &["--version"],
         auth_args: &[],
         minimum_version: None,
-        install_windows: npm(&["install", "-g", "@google/gemini-cli"], false),
-        install_unix: npm(&["install", "-g", "@google/gemini-cli"], false),
+        install_windows: None,
+        install_unix: None,
         models: &["default", "gemini-2.5-pro", "gemini-2.5-flash"],
         login: "gemini",
         docs_url: "https://github.com/google-gemini/gemini-cli",
@@ -189,7 +194,17 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         auth_args: &[],
         minimum_version: None,
         install_windows: None,
-        install_unix: None,
+        // Official installer, verified in the HyperFrames agent setup reference
+        // (faydali-repo). No Windows installer is verified: the UI shows the docs page.
+        install_unix: Some(InstallCommand {
+            program: "sh",
+            args: &[
+                "-c",
+                "curl --proto =https --proto-redir =https --tlsv1.2 -fsSL https://antigravity.google/cli/install.sh | bash",
+            ],
+            verified: true,
+            executable: true,
+        }),
         models: &["default"],
         login: "agy",
         docs_url: "https://antigravity.google/docs",
@@ -219,14 +234,13 @@ mod tests {
                     assert!(install.verified);
                     if install.program != "npm" {
                         assert!(matches!(install.program, "powershell.exe" | "sh"));
-                        assert_eq!(spec.id, "cursor");
-                        assert!(
-                            install
-                                .args
-                                .last()
-                                .unwrap()
-                                .contains("https://cursor.com/install")
-                        );
+                        assert!(matches!(spec.id, "cursor" | "agy"));
+                        let url = if spec.id == "cursor" {
+                            "https://cursor.com/install"
+                        } else {
+                            "https://antigravity.google/cli/install.sh"
+                        };
+                        assert!(install.args.last().unwrap().contains(url));
                         continue;
                     }
                     assert_eq!(&install.args[..2], ["install", "-g"]);

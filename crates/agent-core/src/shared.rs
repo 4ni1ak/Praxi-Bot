@@ -918,7 +918,11 @@ fn auto_unreachable_notice(
     provider: &dyn ComputerProvider,
     rc: &RunComputer,
 ) -> Option<String> {
-    if !matches!(target, ComputerTarget::Auto) || !provider.paired_pc_unreachable() {
+    // A host-homed bot never "falls back" from the PC: its own computer is the default.
+    if !matches!(target, ComputerTarget::Auto)
+        || provider.is_host()
+        || !provider.paired_pc_unreachable()
+    {
         return None;
     }
     let using = match rc.label {
@@ -1831,14 +1835,41 @@ impl Shared {
             return None;
         }
         let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
-        crate::discovery_prompt::block(
+        let own_screen = self.is_host_homed() && ctx.resolved_computer.label == ComputerLabel::Host;
+        crate::discovery_prompt::block_for(
             visible
                 .iter()
                 .filter(|s| {
                     self.decide(ctx, &s.name, s.effect, s.category, &Value::Null) != Decision::Deny
                 })
                 .map(|s| s.name.as_str()),
+            own_screen,
         )
+    }
+
+    /// This daemon is an always-on host (the bots' own computer).
+    fn is_host_homed(&self) -> bool {
+        self.computer_provider
+            .read()
+            .as_ref()
+            .is_some_and(|p| p.is_host())
+    }
+
+    /// The per-run "where you run" block, only for a host-homed daemon: which
+    /// machine the shell, files, desktop and browser tools act on, its OS and
+    /// shell, and how the user's computer is addressed. Fixed for the run.
+    pub(crate) fn place_block(&self, ctx: &RunCtx) -> Option<String> {
+        if !self.is_host_homed() {
+            return None;
+        }
+        let rc = &ctx.resolved_computer;
+        let platform = rc.desktop.as_ref().map(|d| d.capabilities().platform);
+        crate::discovery_prompt::place_block(&crate::discovery_prompt::Place {
+            label: rc.label,
+            node_name: rc.node.as_ref().map(|n| n.name.as_str()),
+            desktop_platform: platform.as_deref(),
+            browser: rc.browser,
+        })
     }
 
     pub fn audit(&self, ctx: &RunCtx, actor: &str, action: &str, detail: &serde_json::Value) {

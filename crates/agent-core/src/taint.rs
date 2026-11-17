@@ -315,7 +315,10 @@ pub(crate) fn source_label(name: &str, input: &Value) -> String {
                 .unwrap_or("desktop")
         ),
         "process_list" => "window desktop".to_owned(),
-        _ => format!("file {name}"),
+        // A shell or script result is command output, not a file: the card must not say
+        // the run "read file shell_run".
+        "shell_run" | "script_run" => "command output".to_owned(),
+        other => format!("tool {other}"),
     }
 }
 
@@ -817,6 +820,7 @@ pub(crate) fn egress_record(taint: &ContentTaint, name: &str, input: &Value) -> 
         "kind": "egress",
         "trust_folders": taint.trust_folders,
         "reason": reason,
+        "reason_code": "egress",
         "read": read,
         "host": host,
         "payload": payload,
@@ -841,6 +845,8 @@ pub(crate) fn note_executes_on_egress(value: &mut Value) {
             "{reason} This call also starts a program on this computer, so it asks every time, even when sending data after reads is allowed."
         )),
     );
+    obj.insert("reason_code".to_owned(), json!("egress_executes"));
+    obj.insert("executes".to_owned(), json!(true));
 }
 
 /// Replace `payload` with the text the user can see, and record its real size.
@@ -946,6 +952,28 @@ mod card_tests {
     };
 
     use super::{ContentTaint, egress_payload};
+
+    #[test]
+    fn a_shell_result_is_never_recorded_as_a_file_and_the_card_carries_codes() {
+        assert_eq!(
+            super::source_label("shell_run", &json!({})),
+            "command output"
+        );
+        assert_eq!(
+            super::source_label("something_new", &json!({})),
+            "tool something_new"
+        );
+        let mut t = ContentTaint::default();
+        t.note(
+            tool_registry::ContentClass::untrusted_private(),
+            &super::source_label("desktop_list_apps", &json!({})),
+        );
+        let mut card = super::egress_record(&t, "shell_run", &json!({"command": "ls"})).unwrap();
+        assert_eq!(card["reason_code"], "egress");
+        super::note_executes_on_egress(&mut card);
+        assert_eq!(card["reason_code"], "egress_executes");
+        assert_eq!(card["executes"], true);
+    }
 
     #[test]
     fn skill_write_card_shows_the_verbatim_document_only_once() {

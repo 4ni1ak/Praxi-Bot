@@ -92,6 +92,15 @@ test("unknown codes and raw strings fall back to a human sentence; raw text only
   await i18n.changeLanguage("en");
 });
 
+test("a tool failure that names the wrong machine or an offline target says so", async () => {
+  await i18n.changeLanguage("tr");
+  const wrong = layer.humanToolError('wrong computer: "/opt/praxi-browser/chrome" looks like a Linux or macOS program or path, but this desktop is a Windows computer.');
+  assert.equal(wrong.code, "toolWrongMachine");
+  assert.match(wrong.title, /yanlış bilgisayar/);
+  assert.equal(layer.humanToolError("PC desktop unavailable: peer networking is disabled").code, "toolTargetOffline");
+  assert.notEqual(layer.humanToolError("something odd happened").code, "toolWrongMachine");
+});
+
 test("a service that does not start is worded by its cause, with the exit code and log in the details", async () => {
   const base: Omit<import("../api/connection.ts").StartupDiagnostics, "stage" | "exit_code"> & { exit_code: number | null } = {
     elapsed_ms: 21_000, port: 47821, base_url: "http://127.0.0.1:47821", data_dir: "C:/Users/x/data",

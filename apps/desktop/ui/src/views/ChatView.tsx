@@ -189,7 +189,8 @@ export function ChatView({
     refreshRuns,
     refreshChats,
     refreshBots,
-    restartDaemon
+    restartDaemon,
+    home
   } = useDaemon();
   const chat = chats.find((c) => c.id === chatId);
   const bot = bots.find((b) => b.id === chat?.bot_id);
@@ -807,6 +808,7 @@ export function ChatView({
         return item.status === "awaiting_approval" ? (
           <ApprovalCard
             tool={item}
+            serverName={home.kind === "host" ? home.name : null}
             onTrustFolder={client && isLocalBaseUrl(client.baseUrl) ? async (folder) => {
               const key = await ownerKey(client.baseUrl);
               if (!key) throw new Error(t("folderTrust.ownerRequired"));

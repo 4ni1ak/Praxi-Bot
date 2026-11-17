@@ -161,6 +161,9 @@ impl PathEnv {
             sealed_fixture: false,
         };
         crate::search::augment(&mut env);
+        if let Some(data) = crate::node_runtime::registered_data_dir() {
+            env = env.with_node_runtime(data);
+        }
         env
     }
 
@@ -188,6 +191,24 @@ impl PathEnv {
             env_vars: HashMap::new(),
             sealed_fixture: true,
         }
+    }
+
+    /// Put Praxi's own Node.js runtime (and its npm prefix) in front of the search path, when one
+    /// is installed below `data`, and make `npm install -g` use the prefix inside it.
+    #[must_use]
+    pub fn with_node_runtime(mut self, data: &std::path::Path) -> Self {
+        let dirs = crate::node_runtime::path_dirs(data);
+        if dirs.is_empty() {
+            return self;
+        }
+        self.path_dirs.splice(0..0, dirs);
+        self.env_vars.insert(
+            "NPM_CONFIG_PREFIX".to_owned(),
+            crate::node_runtime::npm_prefix(data)
+                .to_string_lossy()
+                .into_owned(),
+        );
+        self
     }
 
     #[must_use]
@@ -1259,7 +1280,11 @@ impl Detector {
             self.probe_agy(),
         );
 
-        vec![claude, codex, cursor, opencode, gemini, agy]
+        let mut rows = vec![claude, codex, cursor, opencode, gemini, agy];
+        // Gemini CLI is retired (Antigravity replaces it): never offered for install,
+        // listed only where it is already installed so that setup keeps working.
+        rows.retain(|r| r.id != "gemini" || r.installed);
+        rows
     }
 
     #[allow(clippy::too_many_lines)]

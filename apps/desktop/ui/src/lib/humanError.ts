@@ -27,7 +27,7 @@ export const DAEMON_ERROR_CODES = [
   "skill_storage", "skill_too_large", "too_many_requests", "too_many_skills", "too_many_streams",
   "unauthorized", "unavailable", "unsupported_media_type", "version_conflict", "view_media_type",
   "view_quota",
-  "host_admin_forbidden", "host_admin_required", "secrets_unavailable", "secret_store_failed", "owner_key_required"
+  "prerequisite_missing", "install_copy_only", "host_admin_forbidden", "host_admin_required", "secrets_unavailable", "secret_store_failed", "owner_key_required"
 ] as const;
 
 export type ErrorAction = "retry" | "reload" | "restartService" | "settings";
@@ -79,8 +79,11 @@ const STATUS_CODE: Record<number, string> = {
 /** Raw-text patterns, for tool results and plain errors that carry no code. First match wins. */
 const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) => Record<string, string>)?]> = [
   [/user is controlling the screen|observation paused/i, "toolScreenControl"],
+  [/wrong computer:/i, "toolWrongMachine"],
+  [/waiting for the pc|pc desktop unavailable|computer is offline|desktop backend is unavailable|peer is not connected/i, "toolTargetOffline"],
   [/`?([\w.-]+)`? was not found on path|command not found: ?`?([\w.-]+)/i, "toolMissingProgram", (m) => ({ name: m[1] ?? m[2] ?? "" })],
   [/managed on the host itself/i, "hostManaged"],
+  [/no such file or directory|cannot find the (file|path)|os error 2(?![0-9])/i, "toolNotFound"],
   [/expected_version|reload and retry/i, "codes.version_conflict"],
   [/providers_require_app_daemon|_outside_tauri|daemon_unavailable/i, "desktop_only"],
   [/denied|not allowed by the user|user rejected/i, "toolDenied"],
