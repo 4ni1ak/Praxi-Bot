@@ -2323,6 +2323,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Model and token usage of one run (read-only; feeds the chat's message info). */
+        get: operations["run_usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schedules": {
         parameters: {
             query?: never;
@@ -5189,6 +5206,11 @@ export interface components {
              * @description Run that produced / carried it.
              */
             run_id?: string | null;
+            /**
+             * @description Where a user message came from (`owner` = this app, `telegram`, `peer`,
+             *     `local_api`); absent for older messages and for replies.
+             */
+            source?: string | null;
         };
         /**
          * @description What to do when the chat already has a running turn.
@@ -5559,6 +5581,29 @@ export interface components {
              * @description Last state change.
              */
             updated_at_ms: number;
+        };
+        /** @description What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`). */
+        RunUsageDto: {
+            /**
+             * Format: int64
+             * @description Completion tokens of the run's own model calls.
+             */
+            completion_tokens: number;
+            /**
+             * @description `provider/model` the run's turn used (the last executor call); absent
+             *     when no model call was recorded.
+             */
+            model?: string | null;
+            /**
+             * Format: int64
+             * @description Number of model calls of the run.
+             */
+            model_calls: number;
+            /**
+             * Format: int64
+             * @description Prompt tokens of the run's own model calls (reported by the provider).
+             */
+            prompt_tokens: number;
         };
         /** @description Bot `[runtime]` settings (ADR-0027 §7). */
         RuntimeConfigDto: {
@@ -11399,6 +11444,36 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    run_usage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunUsageDto"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

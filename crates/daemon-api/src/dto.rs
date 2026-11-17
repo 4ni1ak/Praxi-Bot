@@ -282,6 +282,25 @@ pub struct MessageDto {
     pub content: String,
     /// Creation time.
     pub created_at_ms: i64,
+    /// Where a user message came from (`owner` = this app, `telegram`, `peer`,
+    /// `local_api`); absent for older messages and for replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`).
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RunUsageDto {
+    /// `provider/model` the run's turn used (the last executor call); absent
+    /// when no model call was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Prompt tokens of the run's own model calls (reported by the provider).
+    pub prompt_tokens: u64,
+    /// Completion tokens of the run's own model calls.
+    pub completion_tokens: u64,
+    /// Number of model calls of the run.
+    pub model_calls: u64,
 }
 
 /// What to do when the chat already has a running turn.
