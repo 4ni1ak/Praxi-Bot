@@ -131,7 +131,7 @@ async function main() {
     log('building `bot` (debug)...');
     const b = spawnSync('cargo', ['build', '-p', 'cli'], { cwd: repo, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: targetDir, CARGO_INCREMENTAL: '0', CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? '3' } });
     if (b.status !== 0) throw new Error('cargo build failed');
-    // The hermetic fake coding CLI of the native-tools tests; the run installs it as `agy` (below).
+    // The hermetic fake coding CLI of the native-tools tests; the run installs it as `cursor-agent` (below).
     const f = spawnSync('cargo', ['build', '-p', 'cli-provider', '--bin', 'native-cli-fixture'], { cwd: repo, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: targetDir, CARGO_INCREMENTAL: '0', CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? '3' } });
     if (f.status !== 0) throw new Error('cargo build of the fake CLI failed');
   }
@@ -146,11 +146,11 @@ async function main() {
   const [stubPort, daemonPort, uiPort] = [await freePort(), await freePort(), await freePort()];
   const ownerKey = randomBytes(32).toString('hex');
   const stubUrl = `http://127.0.0.1:${stubPort}/v1`;
-  // A fake `agy` first on the daemon's PATH: it speaks ACP and needs the CLI's own tools.
+  // A fake `cursor-agent` first on the daemon's PATH: it speaks ACP and needs the CLI's own tools.
   const fixture = join(targetDir, 'debug', process.platform === 'win32' ? 'native-cli-fixture.exe' : 'native-cli-fixture');
   const fakeBin = join(tmp, 'fakebin');
   mkdirSync(fakeBin, { recursive: true });
-  if (existsSync(fixture)) copyFileSync(fixture, join(fakeBin, process.platform === 'win32' ? 'agy.exe' : 'agy'));
+  if (existsSync(fixture)) copyFileSync(fixture, join(fakeBin, process.platform === 'win32' ? 'cursor-agent.exe' : 'cursor-agent'));
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? process.env.Path ?? ''}`, BOT_DATA_DIR: dataDir, BOT_SECRETS_BACKEND: 'file', BOT_SECRETS_PASSPHRASE: 'smoke-passphrase-smoke-passphrase', BOT_ALLOWED_ORIGINS: `http://127.0.0.1:${uiPort},http://localhost:${uiPort}` };
   // Async on purpose: the stub lives in this process and must keep answering while the CLI tests a provider.
   const cli = (a, extraEnv = {}) => new Promise((ok) => {

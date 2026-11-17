@@ -377,13 +377,13 @@ export async function flows(ctx) {
   });
   await s.context.close();
 
-  // ---- a coding CLI that only works with its own tools (a fake `agy` on PATH speaking ACP; the harness
+  // ---- a coding CLI that only works with its own tools (a fake `cursor-agent` on PATH speaking ACP; the harness
   // cannot use real subscriptions): pick it in the wizard, give the one consent, the reply arrives.
   const cli = await newSession(ctx, { onboarded: false });
   await run(cli, 'a CLI model that needs its own tools: one consent step, then its reply arrives', async (page) => {
     await page.goto(ctx.uiUrl);
     await page.getByTestId('onboarding-view').waitFor(T);
-    await page.getByTestId('fr-cli-agy').click();
+    await page.getByTestId('fr-cli-cursor').click();
     await page.getByTestId('fr-connected').waitFor({ timeout: 60000 });
     await page.getByTestId('fr-next').click();
     await page.getByTestId('fr-level-balanced').waitFor(T);
