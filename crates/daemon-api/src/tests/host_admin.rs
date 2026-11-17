@@ -409,3 +409,51 @@ executor=\"fake/echo\"
     assert_eq!(ok.status, StatusCode::OK);
     r.net.shutdown().await;
 }
+
+#[tokio::test]
+async fn engine_install_on_the_host_is_admin_only_and_allow_listed() {
+    let r = rig().await;
+    let ok_peer = Some((r.admin_key.as_str(), crate::PeerRole::Desktop));
+    // Every other caller is refused before anything is looked at or started.
+    for (peer, code) in [
+        (
+            Some((r.legacy_key.as_str(), crate::PeerRole::Desktop)),
+            "host_admin_required",
+        ),
+        (Some((r.admin_key.as_str(), crate::PeerRole::Phone)), "-"),
+        (None, "-"),
+    ] {
+        for path in [
+            "/v1/admin/cli-engines/claude/install",
+            "/v1/admin/cli-engines/agy/install",
+        ] {
+            let denied = peer_call(&r.t, peer, Method::POST, path, None).await;
+            assert_eq!(denied.status, StatusCode::FORBIDDEN, "{path}");
+            if code != "-" {
+                assert_eq!(denied.json()["error"]["code"], code);
+            }
+        }
+    }
+    // The admin can only name an engine id: unknown ids and engines without a
+    // verified installer (Gemini CLI is retired) are refused, never run.
+    let unknown = peer_call(
+        &r.t,
+        ok_peer,
+        Method::POST,
+        "/v1/admin/cli-engines/claude;whoami/install",
+        None,
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    let retired = peer_call(
+        &r.t,
+        ok_peer,
+        Method::POST,
+        "/v1/admin/cli-engines/gemini/install",
+        None,
+    )
+    .await;
+    assert_eq!(retired.status, StatusCode::CONFLICT);
+    assert_eq!(retired.json()["error"]["code"], "install_copy_only");
+    r.net.shutdown().await;
+}

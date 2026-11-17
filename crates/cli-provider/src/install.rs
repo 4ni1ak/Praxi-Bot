@@ -232,7 +232,7 @@ mod tests {
     async fn unverified_commands_cannot_execute() {
         let dir = tempfile::tempdir().unwrap();
         let env = PathEnv::for_test(dir.path().into());
-        for id in ["gemini", "agy", "npm;whoami"] {
+        for id in ["gemini", "npm;whoami"] {
             assert_eq!(
                 run_install(id, &env, dir.path(), INSTALL_TIMEOUT, |_| {}).await,
                 Err("copy_only")

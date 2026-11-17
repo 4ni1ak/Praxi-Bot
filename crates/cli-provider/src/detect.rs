@@ -1259,7 +1259,11 @@ impl Detector {
             self.probe_agy(),
         );
 
-        vec![claude, codex, cursor, opencode, gemini, agy]
+        let mut rows = vec![claude, codex, cursor, opencode, gemini, agy];
+        // Gemini CLI is retired (Antigravity replaces it): never offered for install,
+        // listed only where it is already installed so that setup keeps working.
+        rows.retain(|r| r.id != "gemini" || r.installed);
+        rows
     }
 
     #[allow(clippy::too_many_lines)]

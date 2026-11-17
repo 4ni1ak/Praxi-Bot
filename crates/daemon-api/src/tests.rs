@@ -2243,21 +2243,18 @@ async fn providers_detected_requires_auth() {
 }
 
 #[tokio::test]
-async fn providers_detected_reports_six_rows() {
+async fn providers_detected_reports_five_rows_without_the_retired_gemini_cli() {
     let t = setup();
     let r = call(&t, Method::GET, "/v1/providers/detected", None).await;
     assert_eq!(r.status, StatusCode::OK);
     let list = r.json();
     let items = list.as_array().unwrap();
-    assert_eq!(items.len(), 6);
+    assert_eq!(items.len(), 5);
     let ids: Vec<&str> = items
         .iter()
         .map(|item| item["id"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        ids,
-        vec!["claude", "codex", "cursor", "opencode", "gemini", "agy"]
-    );
+    assert_eq!(ids, vec!["claude", "codex", "cursor", "opencode", "agy"]);
     for row in items {
         assert_eq!(row["runnable"], false);
     }
@@ -2296,10 +2293,12 @@ async fn providers_detected_sentinel_token_is_never_leaked_or_read() {
     let list = r.json();
     let items = list.as_array().unwrap();
     let opencode = items.iter().find(|x| x["id"] == "opencode").unwrap();
-    let gemini = items.iter().find(|x| x["id"] == "gemini").unwrap();
+    assert!(
+        items.iter().all(|x| x["id"] != "gemini"),
+        "retired and not installed: never listed"
+    );
 
     assert_eq!(opencode["auth"], "unknown");
-    assert_eq!(gemini["auth"], "unknown");
 }
 
 // ----------------------------------------------------------- usage cost
