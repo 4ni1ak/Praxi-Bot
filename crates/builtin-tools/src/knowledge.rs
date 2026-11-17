@@ -190,6 +190,7 @@ fn output(text: &str) -> ToolOutput {
         // Trusted tool metadata, outside `content`: the run counts as having
         // read untrusted private text whatever the model-visible bytes say.
         exposure: Some(OutputExposure {
+            trust_folder: None,
             ingests_untrusted: true,
             reads_private: true,
             label: "knowledge".to_owned(),

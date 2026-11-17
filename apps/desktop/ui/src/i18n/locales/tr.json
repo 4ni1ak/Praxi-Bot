@@ -3315,5 +3315,14 @@
       "skipped": "Atlandı",
       "failed": "Başarısız"
     }
+  },
+  "folderTrust": {
+    "title": "Güvenilen klasörler",
+    "description": "Güvendiğiniz klasörler kendi içeriğiniz olarak değerlendirilir. Botun indirdiği dosyalar dış içerik sayılmaya devam eder. Mevcut görevler okudukları içeriği korur.",
+    "action": "Bu klasöre güveniyorum — {{folder}} klasörünü dış içerik sayma",
+    "saved": "Güveniliyor: {{folder}}",
+    "empty": "Henüz güvenilen klasör yok. Bir klasörü okuduktan sonra onay kartından güvenebilirsiniz.",
+    "remove": "{{folder}} klasörüne güveni kaldır",
+    "ownerRequired": "Klasör güvenini değiştirmek için bu bilgisayardaki masaüstü uygulamasını açın."
   }
 }

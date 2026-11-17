@@ -959,6 +959,8 @@ pub(crate) async fn list_messages(
               (status = 422, body = ErrorBody)))]
 pub(crate) async fn send_message(
     State(s): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::Extension(actor): axum::Extension<crate::live_view::Actor>,
     Path(cid): Path<String>,
     ApiJson(input): ApiJson<SendMessage>,
 ) -> Result<(StatusCode, Json<SendResponse>), ApiError> {
@@ -970,12 +972,29 @@ pub(crate) async fn send_message(
         Mode::Steer => MessageMode::Steer,
         Mode::Queue => MessageMode::Queue,
     };
-    let (delivery, run_id) = match s.agent().send_user_message(chat.id, &input.text, mode)? {
-        Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
-        Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
-        Delivery::Queued => (DeliveryKind::Queued, None),
-        Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
+    // Source hints can only reduce authority; only the app's owner-key request is local UI.
+    let hint = headers
+        .get("x-praxi-message-source")
+        .and_then(|v| v.to_str().ok());
+    let source = if !actor.local {
+        "peer"
+    } else if hint == Some("telegram") {
+        "telegram"
+    } else if hint == Some("local_ui") && s.owner_ok(&headers) {
+        "owner"
+    } else {
+        "local_api"
     };
+    let (delivery, run_id) =
+        match s
+            .agent()
+            .send_user_message_from(chat.id, &input.text, mode, source)?
+        {
+            Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
+            Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
+            Delivery::Queued => (DeliveryKind::Queued, None),
+            Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
+        };
     Ok((
         StatusCode::ACCEPTED,
         Json(SendResponse { delivery, run_id }),

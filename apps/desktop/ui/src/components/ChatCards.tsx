@@ -184,6 +184,7 @@ export interface ApprovalCardProps {
   ) => Promise<void>;
   /** Auto-deny deadline (epoch ms), when the daemon sets a timeout. */
   expiresAtMs?: number;
+  onTrustFolder?: (folder: string) => Promise<void>;
 }
 
 /** What a bot-made schedule will do, shown before the user approves it. */
@@ -352,7 +353,8 @@ function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
 export function ApprovalCard({
   tool,
   onDecide,
-  expiresAtMs
+  expiresAtMs,
+  onTrustFolder
 }: ApprovalCardProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -370,6 +372,9 @@ export function ApprovalCard({
   const brain = brainDetails(tool.details);
   const unrenderable =
     (tool.details as { kind?: unknown } | null | undefined)?.kind === "app_action" && !app;
+  const [trustedFolders, setTrustedFolders] = useState<string[]>([]);
+  const folderFacts = (tool.details as { trust_folders?: unknown } | null)?.trust_folders;
+  const folders = Array.isArray(folderFacts) ? folderFacts.filter((f): f is string => typeof f === "string") : [];
   const facts = tool.details as { why?: unknown; once_only?: unknown } | null | undefined;
   const why = typeof facts?.why === "string" ? facts.why : null;
   // The daemon says whether a standing choice may be offered; older events: any details mean once only.
@@ -473,6 +478,17 @@ export function ApprovalCard({
         ) : null}
         {control ? <ControlGrantBody d={control} /> : null}
         {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
+        {onTrustFolder ? folders.map((folder) => (
+          <Button key={folder} size="sm" variant="secondary" disabled={disabled || trustedFolders.includes(folder)}
+            onClick={() => {
+              setBusy(true);
+              setError(null);
+              void onTrustFolder(folder).then(() => setTrustedFolders((prev) => [...prev, folder]))
+                .catch((e: unknown) => setError(humanLine(e))).finally(() => setBusy(false));
+            }}>
+            {t(trustedFolders.includes(folder) ? "folderTrust.saved" : "folderTrust.action", { folder })}
+          </Button>
+        )) : null}
         <div className={styles.actions}>
           <Button
             size="sm"

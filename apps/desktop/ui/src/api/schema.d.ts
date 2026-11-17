@@ -2307,6 +2307,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/trusted-folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The folders Praxi treats as the owner's own content. */
+        get: operations["list_trusted_folders"];
+        put?: never;
+        /** Trust a folder ("I trust this folder"). Owner key required. */
+        post: operations["trust_folder"];
+        /** Stop trusting a folder. Owner key required. */
+        delete: operations["untrust_folder"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/usage": {
         parameters: {
             query?: never;
@@ -5549,6 +5568,14 @@ export interface components {
             host_id: string;
             kind: components["schemas"]["TargetKind"];
             reason: components["schemas"]["Reason"];
+        };
+        TrustFolderInput: {
+            /** @description An existing directory (an absolute path). */
+            path: string;
+        };
+        TrustedFoldersDto: {
+            /** @description Folders, as stored (normalised: `/` separators, lower case on Windows). */
+            folders: string[];
         };
         /**
          * @description Why a kind of screen is not offered, as a small FIXED set. Peers only ever
@@ -11001,6 +11028,87 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_trusted_folders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedFoldersDto"];
+                };
+            };
+        };
+    };
+    trust_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustFolderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedFoldersDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    untrust_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustFolderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedFoldersDto"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

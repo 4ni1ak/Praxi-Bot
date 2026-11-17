@@ -165,6 +165,7 @@ fn list_output(index: &SkillIndex) -> ToolOutput {
     // A listed skill stored as untrusted carries text a tainted run wrote.
     // The output then counts as untrusted, not only private.
     let exposure = skills.iter().any(|s| s.untrusted).then(|| OutputExposure {
+        trust_folder: None,
         ingests_untrusted: true,
         reads_private: true,
         label: "skill list".to_owned(),

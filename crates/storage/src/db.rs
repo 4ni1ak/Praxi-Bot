@@ -1136,6 +1136,89 @@ impl Storage {
         Ok(())
     }
 
+    /// Treat the folder (normalised path) as the owner's own content.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn trust_folder(&self, path: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT OR IGNORE INTO trusted_folders (path, added_at_ms) VALUES (?1, ?2)",
+            params![path, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Stop trusting the folder. Returns whether it was listed.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn untrust_folder(&self, path: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .execute("DELETE FROM trusted_folders WHERE path = ?1", params![path])?
+            > 0)
+    }
+
+    /// The trusted folders, oldest first.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn trusted_folders(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT path FROM trusted_folders ORDER BY added_at_ms, path")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Whether `path` (normalised) is a trusted folder or lies inside one.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn is_trusted_path(&self, path: &str) -> Result<bool> {
+        let conn = self.conn();
+        let mut probe = Some(path);
+        while let Some(p) = probe {
+            let hit: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM trusted_folders WHERE path = ?1",
+                    params![p],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if hit.is_some() {
+                return Ok(true);
+            }
+            probe = p.rfind('/').filter(|i| *i > 0).map(|i| &p[..i]);
+        }
+        Ok(false)
+    }
+
+    /// Record authenticated message origin before the message can drive a tool call.
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn set_message_source(&self, id: Uuid, source: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE messages SET source = ?2 WHERE id = ?1",
+            params![id.to_string(), source],
+        )?;
+        Ok(())
+    }
+
+    /// Texts of the user messages of `chat` that the owner typed in the desktop app.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn owner_message_texts(&self, chat: ChatId) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' AND source = 'owner'
+             ORDER BY created_at_ms DESC LIMIT 200",
+        )?;
+        let rows = stmt.query_map(params![chat.to_string()], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Record that the file (or, with `tree`, everything under the directory) at the already
     /// normalised `path` has an untrusted origin. Idempotent; a tree mark is never downgraded.
     ///
@@ -1148,6 +1231,17 @@ impl Storage {
             params![path, i64::from(tree), origin, now_ms()],
         )?;
         Ok(())
+    }
+
+    /// Recorded provenance spellings, including entries written before canonical identities.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn untrusted_paths(&self) -> Result<Vec<(String, bool)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT path, tree FROM file_provenance")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Whether `path` (normalised: `/` separators, no trailing slash) is marked, itself or through
