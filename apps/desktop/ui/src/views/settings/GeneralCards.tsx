@@ -10,6 +10,7 @@ import {
   DEFAULT_STOP_HOTKEY,
   HOTKEY_PRESETS
 } from "../../config/product";
+import { MESSAGE_TIMES_VALUES } from "../../lib/messageTime";
 import { SEND_WITH_VALUES } from "../../lib/settingsPrefs";
 import { NotificationSettings } from "../NotificationSettings";
 import styles from "../SettingsModal.module.css";
@@ -92,6 +93,26 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
         />
       </SettingRow>,
       { keywords: "enter ctrl gonder send" }
+    ),
+    card(
+      "times",
+      t("settingsModal.general.times.title"),
+      t("settingsModal.general.times.description"),
+      <SettingRow
+        title={t("settingsModal.general.times.title")}
+        description={t("settingsModal.general.times.description")}
+      >
+        <Segmented
+          label={t("settingsModal.general.times.title")}
+          value={settings.messageTimes}
+          onChange={(messageTimes) => update({ messageTimes })}
+          options={MESSAGE_TIMES_VALUES.map((v) => ({
+            value: v,
+            label: t(`settingsModal.general.times.${v}`)
+          }))}
+        />
+      </SettingRow>,
+      { keywords: "saat zaman time clock seconds saniye mesaj" }
     ),
     card(
       "autostart",
