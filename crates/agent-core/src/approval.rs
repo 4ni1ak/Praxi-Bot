@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
 
 use async_trait::async_trait;
-use builtin_tools::{GateRequest, ToolGate, raw_command_for};
+use builtin_tools::{GateRequest, ToolGate, cwd_for, raw_command_for};
 use parking_lot::Mutex;
 use permission_engine::{ActionRequest, Decision, Policy, egress_must_ask, executes_must_ask};
 use protocol::event::{ApprovalNeeded, QuestionAsked, ToolCallApproved, ToolCallDenied};
@@ -251,6 +251,7 @@ impl Shared {
                 .clone_into(&mut raw_command);
         }
         let req = ActionRequest {
+            cwd: cwd_for(name, input),
             category,
             raw_command,
             // Preserve the bot's existing Human/Schedule policy as well as any new
@@ -279,6 +280,7 @@ impl Shared {
             InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
         ) {
             let source_req = ActionRequest {
+                cwd: req.cwd.clone(),
                 category,
                 raw_command: req.raw_command.clone(),
                 initiator: ctx.initiator,
@@ -471,6 +473,7 @@ impl Shared {
                 .clone_into(&mut raw);
         }
         let req = ActionRequest {
+            cwd: cwd_for(name, input),
             category,
             raw_command: raw,
             initiator: InitiatorKind::Human,
@@ -658,6 +661,7 @@ impl Shared {
                 .clone_into(&mut raw);
         }
         let req = ActionRequest {
+            cwd: cwd_for(name, input),
             category,
             raw_command: raw,
             initiator: InitiatorKind::Human,
@@ -752,6 +756,7 @@ impl Shared {
         ];
         for c in cats {
             let req = ActionRequest {
+                cwd: None,
                 category: c,
                 raw_command: String::new(),
                 initiator: InitiatorKind::Schedule,
@@ -816,6 +821,7 @@ impl Shared {
         category: PermissionCategory,
     ) -> (Decision, bool, Vec<String>) {
         let req = ActionRequest {
+            cwd: None,
             category,
             raw_command: String::new(),
             initiator: InitiatorKind::Human,

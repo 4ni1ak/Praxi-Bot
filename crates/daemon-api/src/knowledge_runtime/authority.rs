@@ -136,6 +136,7 @@ fn decision(state: &AppState, bot: BotId) -> Result<Decision, ApiError> {
         effective.policy.as_ref(),
         None,
         &ActionRequest {
+            cwd: None,
             category: PermissionCategory::Remote,
             raw_command: String::new(),
             initiator: InitiatorKind::Human,

@@ -433,6 +433,7 @@ impl AgentLoop {
         };
         let policy = self.sh.global_policy.read();
         let request = ActionRequest {
+            cwd: None,
             category: PermissionCategory::Remote,
             raw_command: String::new(),
             initiator: ctx.initiator,

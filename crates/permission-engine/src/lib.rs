@@ -14,6 +14,6 @@ pub use protocol::{InitiatorKind, PermissionCategory};
 
 pub use egress::{ContentExposure, egress_must_ask, executes_must_ask};
 pub use error::PolicyError;
-pub use never_list::NeverList;
+pub use never_list::{CliStores, NeverList, set_data_dir};
 pub use policy::{Level, Limits, Policy, Rule};
 pub use resolver::{ActionRequest, Decision, PermissionResolver};

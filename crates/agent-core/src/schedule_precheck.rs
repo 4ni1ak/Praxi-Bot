@@ -27,6 +27,7 @@ fn check(sh: &Shared, bot_id: BotId, name: &str, input: &Value) -> Result<(), St
         return Err("schedule reads require a visible, noninteractive Read tool".into());
     }
     let req = ActionRequest {
+        cwd: None,
         category: spec.category,
         raw_command: builtin_tools::raw_command_for(name, input),
         initiator: InitiatorKind::Schedule,

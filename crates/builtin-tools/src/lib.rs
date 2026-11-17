@@ -69,7 +69,7 @@ pub use schedule::{
     SchedulePreview, ScheduleRequest, ScheduleView,
 };
 pub use script::{
-    GateHost, GateRequest, ResolverGate, SCRIPT_TOOL_NAME, ToolGate, raw_command_for,
+    GateHost, GateRequest, ResolverGate, SCRIPT_TOOL_NAME, ToolGate, cwd_for, raw_command_for,
 };
 
 pub use connector_email;
