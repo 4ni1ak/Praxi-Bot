@@ -3854,9 +3854,12 @@ fn provenance_after(
                     let Some(rel) = rel else { return false };
                     let entry = base.join(rel);
                     let dir = entry.parent().map(Path::to_path_buf).unwrap_or_default();
-                    let external = *dirs
-                        .entry(dir)
-                        .or_insert_with_key(|d| external_location(&d.join("x")));
+                    let external = *dirs.entry(dir).or_insert_with_key(|d| {
+                        let probe = d.join("x");
+                        // a folder the owner trusts lifts the by-rule classification
+                        !ledger.is_some_and(|l| l.is_trusted_folder(&normalize(&probe)))
+                            && external_location(&probe)
+                    });
                     external || ledger.is_some_and(|l| l.is_marked(&normalize(&entry)))
                 })
             }
@@ -3933,15 +3936,30 @@ impl Tool for FsTool {
                 blocking(move || with_base_dir(base, || do_cp_restore(&sh, &i.id))).await?
             }
         };
-        let untrusted = {
+        let (untrusted, trust_folder) = {
             let (sh, text, base) = (sh_after, text.clone(), base_after);
             let (op, untrusted_run) = (self.op, ctx.exposure_untrusted);
-            blocking(move || Ok(provenance_after(&sh, op, &raw, &text, base, untrusted_run)))
-                .await?
+            blocking(move || {
+                let untrusted = provenance_after(&sh, op, &raw, &text, base.clone(), untrusted_run);
+                let folder =
+                    if untrusted && matches!(op, Op::Read | Op::List | Op::Search | Op::Edit) {
+                        with_base_dir(base, || {
+                            let path = raw.get("path").and_then(Value::as_str)?;
+                            let path = validate_path(&sh, path, Follow::Content).ok()?;
+                            crate::provenance::git_work_tree_root(&path)
+                                .map(|p| crate::provenance::normalize(&p))
+                        })
+                    } else {
+                        None
+                    };
+                Ok((untrusted, folder))
+            })
+            .await?
         };
         let mut out = finish_text(ctx, &self.shared.spill_dir, text);
         if untrusted {
             out.exposure = Some(tool_registry::OutputExposure {
+                trust_folder,
                 ingests_untrusted: true,
                 reads_private: true,
                 label: String::new(),
@@ -4056,6 +4074,7 @@ mod tests {
             bot_id: None,
             content_tainted: false,
             exposure_untrusted: false,
+            expected_origin: None,
             control_guard: None,
         }
     }
@@ -6209,6 +6228,7 @@ mod tests {
                 bot_id: None,
                 content_tainted: false,
                 exposure_untrusted: false,
+                expected_origin: None,
                 control_guard: None,
             };
             async move { reader.call(&c, json!({"path": p})).await }

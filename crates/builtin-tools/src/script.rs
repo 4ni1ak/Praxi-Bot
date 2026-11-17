@@ -77,6 +77,13 @@ pub trait ToolGate: Send + Sync {
         self.authorize(req).await.map(|()| None)
     }
 
+    /// Authorize a registry tool call whose caller forwards the origin to `ToolContext`.
+    /// # Errors
+    /// A human-readable denial reason.
+    async fn authorize_page(&self, req: &GateRequest) -> Result<Option<String>, String> {
+        self.authorize(req).await.map(|()| None)
+    }
+
     /// Withdraw every task-wide permission of `run_id`. A caller that sent a
     /// guarded call itself (workflow replay) calls this when that send stopped
     /// or failed, as the agent loop does for its own tool calls. The default
@@ -86,6 +93,15 @@ pub trait ToolGate: Send + Sync {
     /// Record content consumed by a composite tool before its inner calls run.
     /// Only host code supplies this classification; model input cannot clear it.
     fn note_exposure(&self, _run_id: &str, _content: ContentClass, _label: &str) {}
+
+    /// Record trusted host metadata carried by a tool result, including a folder trust offer.
+    fn note_output_exposure(&self, run_id: &str, exposure: &tool_registry::OutputExposure) {
+        self.note_exposure(
+            run_id,
+            ContentClass::declared(exposure.ingests_untrusted, exposure.reads_private, false),
+            &exposure.label,
+        );
+    }
 
     /// Whether `run_id` has already read untrusted or private content.
     ///
@@ -261,13 +277,14 @@ impl ScriptHost for GateHost {
             content: spec.content,
             control: None,
         };
-        self.gate.authorize(&req).await?;
+        let expected_origin = self.gate.authorize_page(&req).await?;
         let ctx = ToolContext {
             run_id: self.run_id.clone(),
             max_inline_bytes: self.max_inline_bytes,
             bot_id: self.bot_id.clone(),
             content_tainted: self.gate.content_tainted(&self.run_id),
             exposure_untrusted: self.gate.content_untrusted(&self.run_id),
+            expected_origin,
             // A script is never covered by a run-scoped control grant.
             control_guard: None,
         };
@@ -282,11 +299,7 @@ impl ScriptHost for GateHost {
         if let Ok(o) = &out
             && let Some(exposure) = &o.exposure
         {
-            self.gate.note_exposure(
-                &self.run_id,
-                ContentClass::declared(exposure.ingests_untrusted, exposure.reads_private, false),
-                &exposure.label,
-            );
+            self.gate.note_output_exposure(&self.run_id, exposure);
         }
         out.map(|o| output_to_json(&o)).map_err(|e| e.to_string())
     }

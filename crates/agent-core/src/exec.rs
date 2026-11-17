@@ -47,6 +47,7 @@ struct PlannedClass {
     ingests_untrusted: bool,
     reads_private: bool,
     label: String,
+    page_origin: Option<String>,
 }
 
 fn external_agent_text(text: &str) -> String {
@@ -1032,6 +1033,16 @@ impl TurnExecutor {
                 }
                 _ => None,
             };
+            // Page actions are judged against the origin the browser reports right now.
+            if crate::shared::is_page_action(&resolved.name) {
+                let tctx = ToolContext {
+                    run_id: ctx.run_id.to_string(),
+                    bot_id: Some(ctx.bot_id.to_string()),
+                    ..ToolContext::default()
+                };
+                let origin = resolved.tool.current_origin(&tctx, &resolved.input).await;
+                *ctx.page_origin.lock() = origin;
+            }
             if resolved.name == builtin_tools::knowledge::KNOWLEDGE_SEARCH
                 && let Ok(mut request) = serde_json::from_value::<
                     memory_store::knowledge::SearchRequest,
@@ -1088,11 +1099,15 @@ impl TurnExecutor {
                     ingests_untrusted: spec.content.ingests_untrusted,
                     reads_private: spec.content.reads_private,
                     label: taint::source_label(&resolved.name, &resolved.input),
+                    page_origin: crate::shared::is_page_action(&resolved.name)
+                        .then(|| ctx.page_origin.lock().clone())
+                        .flatten(),
                 },
                 None => PlannedClass {
                     ingests_untrusted: false,
                     reads_private: false,
                     label: String::new(),
+                    page_origin: None,
                 },
             };
             let slot = if matches!(decision, Decision::Deny) && carried.is_none() {
@@ -1257,7 +1272,16 @@ impl TurnExecutor {
                         return (user_denied(reason), true, None, None, not_run);
                     }
                     let (text, is_error, duration_ms, own_spill, exposure) = self
-                        .run_tool(run, ctx_ref, call_id, &tool, input, meta, target)
+                        .run_tool(
+                            run,
+                            ctx_ref,
+                            call_id,
+                            &tool,
+                            input,
+                            meta,
+                            target,
+                            class.page_origin.clone(),
+                        )
                         .await;
                     // The result is in the model context even when the tool
                     // returned an error. A denial before this point is not.
@@ -1344,6 +1368,7 @@ impl TurnExecutor {
         input: Value,
         meta: bool,
         target: Option<tool_registry::ControlTarget>,
+        expected_origin: Option<String>,
     ) -> (
         String,
         bool,
@@ -1403,6 +1428,7 @@ impl TurnExecutor {
                     bot_id: Some(run.bot_id.to_string()),
                     content_tainted: exposure.is_tainted(),
                     exposure_untrusted: exposure.untrusted,
+                    expected_origin,
                     control_guard,
                 };
                 tool.call(&tctx, input).await
@@ -1543,10 +1569,7 @@ fn fact_note(ctx: &RunCtx, fact: &taint::ExecFact) {
     if !fact.ran {
         return;
     }
-    ctx.taint.lock().note(
-        tool_registry::ContentClass::declared(fact.ingests_untrusted, fact.reads_private, false),
-        &fact.label,
-    );
+    fact.apply(&mut ctx.taint.lock());
 }
 
 /// External descriptions and schemas included in `specs`, as they were at
@@ -1563,6 +1586,7 @@ fn metadata_facts(specs: &[ToolSpec]) -> Vec<taint::ExecFact> {
                 ingests_untrusted: true,
                 reads_private: false,
                 label: taint::source_label(&spec.name, &json!({})),
+                trust_folder: None,
             }
         })
         .collect()

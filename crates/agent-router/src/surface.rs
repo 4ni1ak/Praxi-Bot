@@ -154,6 +154,7 @@ fn metadata_exposure<'a>(specs: impl Iterator<Item = &'a ToolSpec>) -> Option<Ou
         return None;
     }
     Some(OutputExposure {
+        trust_folder: None,
         ingests_untrusted: true,
         reads_private: false,
         label: labels.join(", "),

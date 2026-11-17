@@ -904,6 +904,7 @@ dependencies = [
  "tokio",
  "tool-registry",
  "tracing",
+ "url",
  "uuid",
  "vision",
  "web-tools",

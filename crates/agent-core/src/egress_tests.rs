@@ -765,6 +765,7 @@ async fn discovery_output_exposure_taints_the_following_egress() {
         "mcp:evil/leak description",
     );
     finder.exposure = Some(tool_registry::OutputExposure {
+        trust_folder: None,
         ingests_untrusted: true,
         reads_private: true,
         label: "mcp evil".into(),
@@ -2961,9 +2962,9 @@ async fn a_full_level_gate_card_offers_a_chat_grant_per_site_and_the_grant_is_re
 }
 
 #[test]
-fn a_site_grant_is_bound_to_scheme_host_and_port_and_page_actions_are_not_grantable() {
+fn a_site_grant_is_bound_to_scheme_host_and_port_and_observed_page_origin() {
     use crate::shared::Shared;
-    let key = |u: &str| Shared::gate_key("browser_open", &json!({ "url": u }));
+    let key = |u: &str| Shared::gate_key("browser_open", &json!({ "url": u }), None);
     let a = key("https://a.example/x");
     assert!(a.is_some());
     assert_eq!(
@@ -2976,15 +2977,28 @@ fn a_site_grant_is_bound_to_scheme_host_and_port_and_page_actions_are_not_granta
     assert_ne!(a, key("https://b.example/x"), "host");
     assert_eq!(key("about:blank"), None, "no origin: once-only");
     assert_eq!(key("file:///c:/x"), None);
-    // a fill / eval / press acts on the CURRENT page, whose origin the daemon cannot see here
+    // page actions are bound to the origin the browser reported; eval and tabs never are
+    let page = Some("https://a.example:443");
     for tool in [
         "browser_fill",
-        "browser_eval",
         "browser_press",
         "browser_click",
+        "browser_select",
     ] {
+        let input = json!({"ref": "e1"});
         assert_eq!(
-            Shared::gate_key(tool, &json!({"ref": "e1"})),
+            Shared::gate_key(tool, &input, None),
+            None,
+            "{tool}: unknown origin"
+        );
+        assert_eq!(
+            Shared::gate_key(tool, &input, page),
+            Some(("page", "https://a.example:443".to_owned()))
+        );
+    }
+    for tool in ["browser_eval", "browser_tabs", "browser_back"] {
+        assert_eq!(
+            Shared::gate_key(tool, &json!({"js": "1"}), page),
             None,
             "{tool}"
         );
@@ -3021,10 +3035,16 @@ async fn the_typed_url_waiver_needs_the_complete_url_and_a_plain_navigation() {
     );
     let mut rx = lp.subscribe();
     let run = lp
-        .run_turn(
+        .send_user_message_from(
             env.chat,
             "read it, then open https://example.com/typed#top please",
+            crate::MessageMode::Steer,
+            "owner",
         )
+        .map(|d| match d {
+            crate::Delivery::NewTurn(r) => r,
+            _ => unreachable!(),
+        })
         .unwrap();
     let card = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
     let Event::ApprovalNeeded(card) = card else {
@@ -3061,7 +3081,16 @@ async fn the_typed_url_waiver_needs_the_complete_url_and_a_plain_navigation() {
     );
     let mut rx = lp.subscribe();
     let run = lp
-        .run_turn(env.chat, "open https://example.com/typed")
+        .send_user_message_from(
+            env.chat,
+            "open https://example.com/typed",
+            crate::MessageMode::Steer,
+            "owner",
+        )
+        .map(|d| match d {
+            crate::Delivery::NewTurn(r) => r,
+            _ => unreachable!(),
+        })
         .unwrap();
     let card = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
     let Event::ApprovalNeeded(card) = card else {
@@ -3070,4 +3099,106 @@ async fn the_typed_url_waiver_needs_the_complete_url_and_a_plain_navigation() {
     assert_eq!(card.input["prompt_text"], "PRIVATE");
     assert_eq!(open.count.load(Ordering::SeqCst), 0);
     lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn a_page_action_grant_covers_the_same_origin_and_not_the_page_it_moved_to() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted_private());
+    let mut fill = with_class(
+        "browser_fill",
+        Effect::Write,
+        PermissionCategory::Browser,
+        ContentClass::all(),
+        "filled",
+    );
+    *fill.page_origin.lock() = Some("https://a.example:443".to_owned());
+    // the second fill submits a form that lands on another site
+    fill.moves_to = Some("https://b.example:443".to_owned());
+    let (seen, fill) = (fill.seen_expected.clone(), Arc::new(fill));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[("c2", "browser_fill", json!({"ref": "e1", "text": "x"}))]),
+        calls(&[("c3", "browser_fill", json!({"ref": "e2", "text": "y"}))]),
+        calls(&[("c4", "browser_fill", json!({"ref": "e3", "text": "z"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&fill)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "browse").unwrap();
+    let first = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(first) = first else {
+        unreachable!()
+    };
+    assert_eq!(
+        first.details.as_ref().unwrap()["once_only"],
+        false,
+        "grantable on a known origin"
+    );
+    lp.approve(first.call_id, crate::ApprovalScope::ThisChat, env.user)
+        .unwrap();
+    // the page is now on origin B: the grant for A does not cover the next fill
+    let second = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(second) = second else {
+        unreachable!()
+    };
+    assert_eq!(second.input["ref"], "e3");
+    assert_eq!(
+        *seen.lock(),
+        vec![Some("https://a.example:443".to_owned()); 2],
+        "the tool was told the origin it was allowed on"
+    );
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn a_url_in_a_message_from_another_source_does_not_waive_the_gate() {
+    // Same exact URL, but the message was not typed by the owner in the desktop app (a peer,
+    // Telegram, another local client, a schedule: tagged otherwise or not at all).
+    for source in ["peer", "telegram", "unknown"] {
+        let env = setup();
+        let page = read_tool("fs_read", ContentClass::untrusted_private());
+        let open = open_tool();
+        let fake = Fake::new(vec![
+            calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+            calls(&[(
+                "c2",
+                "browser_open",
+                json!({"url": "https://example.com/typed"}),
+            )]),
+            text("done"),
+        ]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[t(&page), t(&open)],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        let mut rx = lp.subscribe();
+        let run = lp
+            .send_user_message_from(
+                env.chat,
+                "open https://example.com/typed",
+                crate::MessageMode::Steer,
+                source,
+            )
+            .map(|d| match d {
+                crate::Delivery::NewTurn(r) => r,
+                _ => unreachable!(),
+            })
+            .unwrap();
+        let card = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+        assert!(matches!(card, Event::ApprovalNeeded(_)), "{source:?}");
+        assert_eq!(open.count.load(Ordering::SeqCst), 0, "{source:?}");
+        lp.cancel(run).unwrap();
+    }
 }

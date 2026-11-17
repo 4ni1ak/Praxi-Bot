@@ -579,6 +579,7 @@ mod tests {
             bot_id: None,
             content_tainted: false,
             exposure_untrusted: false,
+            expected_origin: None,
             control_guard: None,
         };
         let out = t

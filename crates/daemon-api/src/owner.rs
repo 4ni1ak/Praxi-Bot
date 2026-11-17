@@ -88,6 +88,8 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/view/privileges/{}"),
     // policy, bot authority
     ("PUT", "/v1/policy"),
+    ("POST", "/v1/trusted-folders"),
+    ("DELETE", "/v1/trusted-folders"),
     ("PUT", "/v1/bots/{}/files"),
     ("PUT", "/v1/bots/{}/engine"),
     ("POST", "/v1/bots/{}/engine/kill"),

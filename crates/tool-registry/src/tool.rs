@@ -42,6 +42,9 @@ pub struct OutputExposure {
     pub reads_private: bool,
     /// Short source label for an approval card. Empty means the caller picks one.
     pub label: String,
+    /// A validated local repository folder whose read caused this exposure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_folder: Option<String>,
 }
 
 /// The result of a successful tool call.
@@ -149,6 +152,10 @@ pub struct ToolContext {
     /// The run holds UNTRUSTED content (a page, mail, a download, another bot's reply). Files
     /// written or moved by a tool in such a run get an untrusted origin mark.
     pub exposure_untrusted: bool,
+    /// The origin (`scheme://host:port`) the loop saw the browser page on when it allowed this
+    /// page action. The browser tool refuses to act if the page is on another origin by then
+    /// (a navigation or redirect in between), so an allowance never follows the page elsewhere.
+    pub expected_origin: Option<String>,
     /// Set by the loop only when a run-scoped control grant covers this call:
     /// the tool must send its input through the backend's guarded path, so the
     /// window that would receive it is checked against this program right
@@ -164,6 +171,7 @@ impl Default for ToolContext {
             bot_id: None,
             content_tainted: false,
             exposure_untrusted: false,
+            expected_origin: None,
             control_guard: None,
         }
     }
@@ -256,6 +264,12 @@ pub trait Tool: Send + Sync {
     /// `None` (the default) means the tool has no such target, so no grant is
     /// offered for it and behaviour is unchanged.
     async fn control_target(&self, _ctx: &ToolContext, _input: &Value) -> Option<ControlTarget> {
+        None
+    }
+
+    /// The origin a page action would act on right now, read from the browser itself (`None`:
+    /// not a page action, no session, or unknown: the call then stays once-only).
+    async fn current_origin(&self, _ctx: &ToolContext, _input: &Value) -> Option<String> {
         None
     }
 

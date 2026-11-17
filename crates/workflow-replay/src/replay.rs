@@ -828,17 +828,32 @@ impl Replayer {
         let spec = tool.spec();
         // Gate on the resolved tool's real name (`mcp_srv__x` may alias
         // `mcp_srv.x`), so profile globs and "always" grants match.
-        self.authorize(gate, &spec.name, spec.category, spec.effect, input.clone())
-            .await?;
+        let expected_origin = gate
+            .authorize_page(&GateRequest {
+                run_id: self.opts.run_id.clone(),
+                tool: spec.name.clone(),
+                category: spec.category,
+                effect: spec.effect,
+                raw_command: raw_command_for(&spec.name, &input),
+                input: input.clone(),
+                content: spec.content,
+                control: None,
+            })
+            .await
+            .map_err(Stop::Denied)?;
         let ctx = ToolContext {
             run_id: self.opts.run_id.clone(),
             bot_id: self.opts.bot_id.clone(),
             content_tainted: gate.content_tainted(&self.opts.run_id),
             exposure_untrusted: gate.content_untrusted(&self.opts.run_id),
+            expected_origin,
             ..ToolContext::default()
         };
         match tool.call(&ctx, input).await {
             Ok(out) => {
+                if let Some(exposure) = &out.exposure {
+                    gate.note_output_exposure(&self.opts.run_id, exposure);
+                }
                 let text: String = out
                     .content
                     .iter()

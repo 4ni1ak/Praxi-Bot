@@ -22,6 +22,10 @@ pub trait Provenance: Send + Sync {
     fn is_marked(&self, normalized: &str) -> bool;
     /// Record a file, or with `tree` everything under a directory. Best effort.
     fn mark(&self, normalized: &str, tree: bool, origin: &str);
+    /// The path is, or lies inside, a folder the owner trusts as their own content.
+    fn is_trusted_folder(&self, _normalized: &str) -> bool {
+        false
+    }
 }
 
 /// The ledger kept in the daemon's storage (table `file_provenance`).
@@ -33,6 +37,9 @@ impl Provenance for StorageProvenance {
     }
     fn mark(&self, normalized: &str, tree: bool, origin: &str) {
         let _ = self.0.mark_untrusted_path(normalized, tree, origin);
+    }
+    fn is_trusted_folder(&self, normalized: &str) -> bool {
+        self.0.is_trusted_path(normalized).unwrap_or(false)
     }
 }
 
@@ -96,8 +103,7 @@ pub fn external_location(path: &Path) -> bool {
     in_git_work_tree_with_remote(path)
 }
 
-/// A git work tree with a remote configured. A folder the owner explicitly trusts is a follow-up
-/// (there is no such action yet), so every such tree counts: a README can carry injected text.
+/// A git work tree with a remote configured. Folder trust is applied by `is_untrusted`.
 fn in_git_work_tree_with_remote(path: &Path) -> bool {
     let mut dir = Some(path);
     for _ in 0..16 {
@@ -118,7 +124,37 @@ fn in_git_work_tree_with_remote(path: &Path) -> bool {
 /// Untrusted by rule or by the ledger.
 #[must_use]
 pub fn is_untrusted(ledger: Option<&dyn Provenance>, path: &Path) -> bool {
-    external_location(path) || ledger.is_some_and(|l| l.is_marked(&normalize(path)))
+    let normalized = normalize(path);
+    // What a bot fetched or wrote in an untrusted run stays untrusted even inside a folder the
+    // owner trusts; the owner's trust only lifts the by-rule classification.
+    if ledger.is_some_and(|l| l.is_marked(&normalized)) {
+        return true;
+    }
+    if ledger.is_some_and(|l| l.is_trusted_folder(&normalized)) {
+        return false;
+    }
+    external_location(path)
+}
+
+/// The git work tree (with a remote) that contains `path`: the folder the owner can be offered
+/// to trust. `None` when the path is not in such a tree.
+#[must_use]
+pub fn git_work_tree_root(path: &Path) -> Option<PathBuf> {
+    let mut dir = Some(path);
+    for _ in 0..16 {
+        let d = dir?;
+        let git = d.join(".git");
+        if git.is_dir() {
+            return std::fs::read_to_string(git.join("config"))
+                .is_ok_and(|c| c.contains("[remote \""))
+                .then(|| d.to_path_buf());
+        }
+        if git.is_file() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
 }
 
 /// Directories too broad to mark as a tree (a drive root or the home directory).
@@ -269,7 +305,7 @@ mod tests {
     use parking_lot::Mutex;
 
     #[derive(Default)]
-    struct Mem(Mutex<Vec<(String, bool)>>);
+    struct Mem(Mutex<Vec<(String, bool)>>, Mutex<Vec<String>>);
     impl Provenance for Mem {
         fn is_marked(&self, n: &str) -> bool {
             self.0
@@ -279,6 +315,12 @@ mod tests {
         }
         fn mark(&self, n: &str, tree: bool, _: &str) {
             self.0.lock().push((n.to_owned(), tree));
+        }
+        fn is_trusted_folder(&self, n: &str) -> bool {
+            self.1
+                .lock()
+                .iter()
+                .any(|p| n == p || n.starts_with(&format!("{p}/")))
         }
     }
 
@@ -347,5 +389,45 @@ mod tests {
         assert_eq!(t("wget https://x.test/p/f.tgz"), one("/work/f.tgz", false));
         assert_eq!(t("unzip a.zip -d /work/u"), one("/work/u", true));
         assert_eq!(t("ls -la"), Vec::<(String, bool)>::new());
+    }
+
+    #[test]
+    fn a_trusted_folder_lifts_the_rules_but_not_what_a_bot_fetched_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("mine");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join(".git").join("config"),
+            "[remote \"origin\"]
+ url = x
+",
+        )
+        .unwrap();
+        let readme = repo.join("README.md");
+        let ledger = Mem::default();
+        assert!(
+            is_untrusted(Some(&ledger), &readme),
+            "a work tree with a remote is outside content"
+        );
+        assert_eq!(
+            git_work_tree_root(&readme).as_deref(),
+            Some(repo.as_path()),
+            "the folder to offer"
+        );
+        ledger.1.lock().push(normalize(&repo));
+        assert!(
+            !is_untrusted(Some(&ledger), &readme),
+            "trusted by the owner"
+        );
+        assert!(!is_untrusted(
+            Some(&ledger),
+            &repo.join("src").join("lib.rs")
+        ));
+        // a bot cloned something into the trusted folder: the ledger mark wins
+        ledger.mark(&normalize(&repo.join("vendor")), true, "git clone");
+        assert!(is_untrusted(
+            Some(&ledger),
+            &repo.join("vendor").join("x").join("README.md")
+        ));
     }
 }

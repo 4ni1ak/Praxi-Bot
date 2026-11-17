@@ -132,6 +132,26 @@ pub trait BrowserDriver: Send + Sync {
     ) -> Result<(Vec<u8>, &'static str), String>;
     /// Evaluate JavaScript in the page.
     async fn eval(&self, js: &str) -> Result<Value, String>;
+    /// URL of the top-level page of the current session as the BROWSER reports it (target
+    /// info, not page script). `None`: no session, or the driver cannot tell.
+    async fn current_url(&self) -> Option<String> {
+        None
+    }
+}
+
+/// `scheme://host:port` of an http(s) URL: lower case, no trailing dot, default port explicit.
+#[must_use]
+pub fn origin_of(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    Some(format!(
+        "{}://{host}:{}",
+        url.scheme(),
+        url.port_or_known_default()?
+    ))
 }
 
 /// Runtime browser settings.
@@ -557,6 +577,30 @@ async fn close_session(view: Option<&browser_cdp::BrowserViewTarget>, session: S
     let _ = session.browser.close().await;
 }
 
+tokio::task_local! {
+    // Carried across control-gate waits, then checked with the session lock held.
+    static EXPECTED_PAGE_ORIGIN: Option<String>;
+}
+
+async fn check_session_origin(session: &Session, expected: &str) -> Result<(), String> {
+    let current = session.page.target_id();
+    let now = session
+        .browser
+        .pages()
+        .await
+        .map_err(s)?
+        .into_iter()
+        .find(|t| t.target_id == current)
+        .and_then(|t| origin_of(&t.url));
+    if now.as_deref() != Some(expected) {
+        return Err(format!(
+            "page origin changed from {expected} to {}; action refused: observe the page and ask again",
+            now.as_deref().unwrap_or("unknown")
+        ));
+    }
+    Ok(())
+}
+
 /// Run `$body` against the cached session. A closed browser is replaced inside
 /// `ensure`. A terminal transport error evicts the session and retries once.
 macro_rules! with_session {
@@ -569,6 +613,9 @@ macro_rules! with_session {
             let mut guard = $self.session.lock().await;
             let step = {
                 let $sess = $self.ensure(&mut guard, $profile, $allow_launch).await?;
+                if let Some(expected) = EXPECTED_PAGE_ORIGIN.try_with(Clone::clone).ok().flatten() {
+                    check_session_origin($sess, &expected).await?;
+                }
                 $body
             };
             if let Some(session) = guard.as_mut() {
@@ -804,6 +851,23 @@ impl BrowserDriver for CdpDriver {
 
     async fn eval(&self, js: &str) -> Result<Value, String> {
         with_session!(self, None, |sess| { sess.page.evaluate(js).await })
+    }
+
+    async fn current_url(&self) -> Option<String> {
+        // Never starts a browser just to ask.
+        let listed: Result<Option<String>, String> = async {
+            with_session!(self, None, false, |sess| {
+                let current = sess.page.target_id().to_string();
+                sess.browser.pages().await.map(|pages| {
+                    pages
+                        .into_iter()
+                        .find(|t| t.target_id == current)
+                        .map(|t| t.url)
+                })
+            })
+        }
+        .await;
+        listed.ok().flatten()
     }
 }
 
@@ -1875,6 +1939,15 @@ impl Tool for BrowserTool {
         &self.spec
     }
 
+    async fn current_origin(&self, ctx: &ToolContext, _input: &Value) -> Option<String> {
+        // Only the actions that act on the page that is open now (not open/eval/tabs/back).
+        if !matches!(self.op, Op::Click | Op::Fill | Op::Select | Op::Press) {
+            return None;
+        }
+        let shared = self.select_shared(ctx).ok()?;
+        origin_of(&shared.driver.current_url().await?)
+    }
+
     fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
         if !matches!(self.op, Op::Open) {
             return None;
@@ -1955,12 +2028,35 @@ impl Tool for BrowserTool {
             ));
         }
         let shared = self.select_shared(ctx)?;
+        // Execution-time guard: the allowance was given for the page on one origin; if the page
+        // moved (a navigation or a redirect since), refuse and let the loop ask again.
+        if let Some(expected) = &ctx.expected_origin
+            && matches!(self.op, Op::Click | Op::Fill | Op::Select | Op::Press)
+        {
+            let now = shared
+                .driver
+                .current_url()
+                .await
+                .as_deref()
+                .and_then(origin_of);
+            if now.as_deref() != Some(expected.as_str()) {
+                return Err(exec_err(format!(
+                    "the page is no longer on {expected} (it is on {}): look at the page again, then repeat the action so it can be approved for the new site",
+                    now.as_deref().unwrap_or("an unknown page")
+                )));
+            }
+        }
         let selected = BrowserTool {
             spec: self.spec.clone(),
             op: self.op,
             shared,
         };
-        let text = selected.run(&ctx.run_id, input).await?;
+        let text = EXPECTED_PAGE_ORIGIN
+            .scope(
+                ctx.expected_origin.clone(),
+                selected.run(&ctx.run_id, input),
+            )
+            .await?;
         Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
     }
 }
@@ -1979,6 +2075,8 @@ pub(crate) mod fake {
         pub calls: PMutex<Vec<String>>,
         /// When set, mutating actions go through the desktop control gate.
         pub on_desktop: bool,
+        /// The URL `current_url` reports (`None`: unknown).
+        pub url: PMutex<Option<String>>,
         /// Runs inside every backend call (a human takeover landing mid-call).
         pub hook: PMutex<Option<FakeHook>>,
         /// Where each ref lives (for `field_target`); an unknown ref errors.
@@ -2013,6 +2111,10 @@ pub(crate) mod fake {
 
     #[async_trait]
     impl BrowserDriver for FakeBrowser {
+        async fn current_url(&self) -> Option<String> {
+            self.url.lock().clone()
+        }
+
         fn on_desktop(&self) -> bool {
             self.on_desktop
         }

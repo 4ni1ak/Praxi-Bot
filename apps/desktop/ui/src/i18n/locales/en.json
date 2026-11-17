@@ -3230,5 +3230,14 @@
       "skipped": "Skipped",
       "failed": "Failed"
     }
+  },
+  "folderTrust": {
+    "title": "Trusted folders",
+    "description": "Folders you trust are treated as your own content. Files fetched by a bot still count as outside content. Current tasks keep the content they already read.",
+    "action": "I trust this folder — don't treat {{folder}} as outside content",
+    "saved": "Trusted: {{folder}}",
+    "empty": "No trusted folders yet. Trust a folder from an approval card after reading it.",
+    "remove": "Remove trust for {{folder}}",
+    "ownerRequired": "Open the desktop app on this computer to change folder trust."
   }
 }
