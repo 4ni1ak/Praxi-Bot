@@ -604,7 +604,7 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
               > "$RUNNER_TEMP/existing-assets" 2>/dev/null; then
             # The release already exists (the Windows installer was attached first): add the Linux
-            # assets. Never overwrite: a name that is already there aborts, and no --clobber exists.
+            # assets. Never overwrite: a name that is already there aborts (no overwrite flag is used).
             for asset in "${assets[@]}"; do
               if grep -Fxq -- "$(basename "$asset")" "$RUNNER_TEMP/existing-assets"; then
                 echo "refusing to overwrite existing release asset $(basename "$asset"); use a new version" >&2
