@@ -135,10 +135,10 @@ jobs:
             openssl dgst -sha256 -sign "$fixture_root/key.pem" "$fixture_root/statement" | openssl base64 -A >> "$output"
             printf '\n' >> "$output"
           }
-          make_bundle "$FIXTURE_RELEASE/praxi-linux.sigstore.json" emreocell/Praxi-Bot refs/tags/v0.0.0-audit github-hosted
-          make_bundle "$fixture_root/wrong-repo.bundle" attacker/Praxi-Bot refs/tags/v0.0.0-audit github-hosted
+          make_bundle "$FIXTURE_RELEASE/praxi-linux.sigstore.json" emreocell/Praxi-Bot refs/tags/v0.0.0 github-hosted
+          make_bundle "$fixture_root/wrong-repo.bundle" attacker/Praxi-Bot refs/tags/v0.0.0 github-hosted
           make_bundle "$fixture_root/wrong-ref.bundle" emreocell/Praxi-Bot refs/tags/v0.0.0-other github-hosted
-          make_bundle "$fixture_root/self-hosted.bundle" emreocell/Praxi-Bot refs/tags/v0.0.0-audit self-hosted
+          make_bundle "$fixture_root/self-hosted.bundle" emreocell/Praxi-Bot refs/tags/v0.0.0 self-hosted
           make_bundle "$fixture_root/main-ref.bundle" emreocell/Praxi-Bot refs/heads/main github-hosted
           mkdir "$fixture_root/attacker"
           printf '#!/bin/sh\necho attacker fixture\n' > "$fixture_root/payload/praxi-linux-x86_64/bin/bot"
@@ -206,11 +206,11 @@ jobs:
           if [[ "$url" == https://github.com/emreocell/Praxi-Bot/releases/latest ]]; then
             # GitHub answers 404 for "latest" while only pre-releases exist.
             [[ "${FIXTURE_LATEST_404:-0}" != 1 ]] || exit 22
-            printf '%s' "${FIXTURE_LATEST_URL:-https://github.com/emreocell/Praxi-Bot/releases/tag/v0.0.0-audit}"
+            printf '%s' "${FIXTURE_LATEST_URL:-https://github.com/emreocell/Praxi-Bot/releases/tag/v0.0.0}"
           elif [[ "$url" == 'https://api.github.com/repos/emreocell/Praxi-Bot/releases?per_page=1' ]]; then
-            printf '%s\n' '[{"tag_name": "v0.0.0-audit", "prerelease": true}]'
+            printf '%s\n' '[{"tag_name": "v0.0.0", "prerelease": true}]'
           else
-            [[ "$url" == https://github.com/emreocell/Praxi-Bot/releases/download/v0.0.0-audit/* ]] || exit 2
+            [[ "$url" == https://github.com/emreocell/Praxi-Bot/releases/download/v0.0.0/* ]] || exit 2
             cp -- "$FIXTURE_RELEASE/${url##*/}" "$output"
           fi
           CURL
@@ -235,23 +235,23 @@ jobs:
             echo "PASS: $name rejected before installation"
           }
 
-          bash "$script" --verify-only --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset"
+          bash "$script" --verify-only --version v0.0.0 --file "$FIXTURE_RELEASE/$asset"
           echo 'PASS: signed local fixture accepted'
           bash "$script" --verify-only
           echo 'PASS: latest resolved to a concrete tag and signed download accepted'
           expect_rejected tampered-with-matching-checksum 'provenance verification failed' \
-            bash "$script" --verify-only --version v0.0.0-audit --file "$fixture_root/attacker/$asset"
+            bash "$script" --verify-only --version v0.0.0 --file "$fixture_root/attacker/$asset"
           grep -Fq 'checksum OK' "$fixture_root/tampered-with-matching-checksum.log"
           for kind in wrong-repo wrong-ref self-hosted; do
             expect_rejected "$kind" 'provenance verification failed' bash "$script" --verify-only \
-              --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" --bundle "$fixture_root/$kind.bundle"
+              --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" --bundle "$fixture_root/$kind.bundle"
           done
           expect_rejected missing-bundle 'provenance bundle not found' bash "$script" --verify-only \
-            --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" --bundle "$fixture_root/missing.bundle"
+            --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" --bundle "$fixture_root/missing.bundle"
           expect_rejected checksum-is-not-a-bypass "unknown argument '--insecure-skip-verify'" \
             bash "$script" --verify-only --file "$fixture_root/attacker/$asset" --insecure-skip-verify
           expect_rejected unexpected-latest-host 'latest release did not resolve to the expected repository' \
-            env FIXTURE_LATEST_URL=https://attacker.invalid/releases/tag/v0.0.0-audit bash "$script" --verify-only
+            env FIXTURE_LATEST_URL=https://attacker.invalid/releases/tag/v0.0.0 bash "$script" --verify-only
           mkdir "$fixture_root/no-gh"
           cat > "$fixture_root/no-gh/uname" <<UNAME
           #!$BASH
@@ -259,14 +259,14 @@ jobs:
           UNAME
           chmod +x "$fixture_root/no-gh/uname"
           expect_rejected missing-verifier 'trusted GitHub CLI (gh) is required' \
-            env PATH="$fixture_root/no-gh" "$BASH" "$script" --verify-only --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset"
+            env PATH="$fixture_root/no-gh" "$BASH" "$script" --verify-only --version v0.0.0 --file "$FIXTURE_RELEASE/$asset"
           [[ ! -e "$FIXTURE_MUTATIONS" ]] || { cat "$FIXTURE_MUTATIONS"; exit 1; }
           # Exercise the exact documented bootstrap, replacing only its example tag.
           bash "$script" --help | awk '/^  \($/ {capture=1} capture {sub(/^  /, ""); print} /^\)$/ {capture=0}' \
-            | sed 's/version=v0.1.0/version=v0.0.0-audit/' > "$fixture_root/bootstrap.sh"
+            | sed 's/version=v0.1.0/version=v0.0.0/' > "$fixture_root/bootstrap.sh"
           bash -n "$fixture_root/bootstrap.sh"
           cp "$script" "$FIXTURE_RELEASE/install-linux.sh"
-          make_bundle "$FIXTURE_RELEASE/praxi-linux.sigstore.json" emreocell/Praxi-Bot refs/tags/v0.0.0-audit github-hosted \
+          make_bundle "$FIXTURE_RELEASE/praxi-linux.sigstore.json" emreocell/Praxi-Bot refs/tags/v0.0.0 github-hosted \
             "$FIXTURE_RELEASE/install-linux.sh"
           mkdir "$fixture_root/bootstrap-bin"
           cat > "$fixture_root/bootstrap-bin/sudo" <<'SUDO'
@@ -282,55 +282,55 @@ jobs:
             bash "$fixture_root/bootstrap.sh"
           [[ ! -e "$fixture_root/bootstrap-executed" && ! -e "$FIXTURE_MUTATIONS" ]]
           [[ "$(wc -l < "$FIXTURE_CALLS")" -eq 8 ]]
-          make_bundle "$FIXTURE_RELEASE/praxi-linux.sigstore.json" emreocell/Praxi-Bot refs/tags/v0.0.0-audit github-hosted
+          make_bundle "$FIXTURE_RELEASE/praxi-linux.sigstore.json" emreocell/Praxi-Bot refs/tags/v0.0.0 github-hosted
           # Only pre-releases published: "latest" is a 404, the pinned repository's API names the tag.
           env FIXTURE_LATEST_404=1 bash "$script" --verify-only
           echo 'PASS: latest falls back to the newest (pre-)release of the pinned repository'
           # Provenance of a run on main is accepted for a PRE-RELEASE tag only, never for a final one.
           expect_rejected main-ref-for-a-final-tag 'provenance verification failed' \
-            bash "$script" --verify-only --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" \
+            bash "$script" --verify-only --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" \
               --bundle "$fixture_root/main-ref.bundle"
-          bash "$script" --verify-only --version v0.0.0-audit-pre.1 --file "$FIXTURE_RELEASE/$asset" \
+          bash "$script" --verify-only --version v0.0.0-pre.1 --file "$FIXTURE_RELEASE/$asset" \
             --bundle "$fixture_root/main-ref.bundle"
           echo 'PASS: main-ref provenance accepted for a pre-release tag only'
           # Offline verification must pass an explicitly trusted root and cannot
           # reach curl, package managers, services, or extraction.
           printf '{"fixture":"independently acquired root"}\n' > "$fixture_root/trusted_root.jsonl"
           env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline \
-            --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" \
+            --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" \
             --custom-trusted-root "$fixture_root/trusted_root.jsonl"
           expect_rejected offline-without-explicit-root '--offline requires' \
             env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline \
-              --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset"
+              --version v0.0.0 --file "$FIXTURE_RELEASE/$asset"
           expect_rejected offline-latest '--offline requires' \
             env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline \
               --file "$FIXTURE_RELEASE/$asset" --custom-trusted-root "$fixture_root/trusted_root.jsonl"
           expect_rejected offline-missing-archive '--offline requires' \
             env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline \
-              --version v0.0.0-audit --custom-trusted-root "$fixture_root/trusted_root.jsonl"
+              --version v0.0.0 --custom-trusted-root "$fixture_root/trusted_root.jsonl"
           expect_rejected missing-root 'trusted root file is missing or empty' \
             env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline \
-              --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" \
+              --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" \
               --custom-trusted-root "$fixture_root/missing-root"
           printf 'untrusted-root' > "$fixture_root/untrusted-root"
           expect_rejected untrusted-root 'provenance verification failed' \
             env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline \
-              --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" \
+              --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" \
               --custom-trusted-root "$fixture_root/untrusted-root"
           expect_rejected offline-wrong-ref 'provenance verification failed' \
             env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline \
-              --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" \
+              --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" \
               --bundle "$fixture_root/wrong-ref.bundle" \
               --custom-trusted-root "$fixture_root/trusted_root.jsonl"
           expect_rejected old-verifier 'GitHub CLI >= 2.80.0 is required' \
-            env FIXTURE_GH_VERSION=2.79.0 bash "$script" --verify-only --version v0.0.0-audit \
+            env FIXTURE_GH_VERSION=2.79.0 bash "$script" --verify-only --version v0.0.0 \
               --file "$FIXTURE_RELEASE/$asset"
           expect_rejected malformed-verifier 'unrecognized version' \
-            env FIXTURE_GH_VERSION=unknown bash "$script" --verify-only --version v0.0.0-audit \
+            env FIXTURE_GH_VERSION=unknown bash "$script" --verify-only --version v0.0.0 \
               --file "$FIXTURE_RELEASE/$asset"
           expect_rejected offline-desktop '--offline cannot download' \
             env FIXTURE_NO_NETWORK=1 bash "$script" --verify-only --offline --with-desktop \
-              --version v0.0.0-audit --file "$FIXTURE_RELEASE/$asset" \
+              --version v0.0.0 --file "$FIXTURE_RELEASE/$asset" \
               --custom-trusted-root "$fixture_root/trusted_root.jsonl"
           [[ ! -e "$FIXTURE_MUTATIONS" ]]
           echo 'PASS: explicit-root offline verification and verifier version floor'
